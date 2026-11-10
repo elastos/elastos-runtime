@@ -808,8 +808,8 @@ function remotePreflightCommand({
     '! printf \'%s\\n\' "$process_snapshot" | /usr/bin/grep -F -- "${supervisor_marker_prefix}${supervisor_binding_hash}" >/dev/null',
     "command -v lsof >/dev/null 2>&1",
     ...checkedPorts.flatMap((port) => [
-      `! lsof -nP -iTCP:${shellQuote(String(port))} 2>/dev/null | grep -q .`,
-      `! lsof -nP -iUDP:${shellQuote(String(port))} 2>/dev/null | grep -q .`,
+      `! lsof -nP -iTCP:${shellQuote(String(port))} 2>/dev/null | grep . >/dev/null`,
+      `! lsof -nP -iUDP:${shellQuote(String(port))} 2>/dev/null | grep . >/dev/null`,
     ]),
     "printf '%s\\n' PREFLIGHT_OK",
   ].join("\n");
@@ -1418,8 +1418,8 @@ function remoteTransportAbsenceChecks(
       `[ ! -e ${shellQuote(socketPath)} ]`,
       `[ ! -e ${shellQuote(pidPath)} ]`,
       lsofPrelude,
-      `! lsof -nP -iTCP:${shellQuote(String(relayPort))} 2>/dev/null | grep -q .`,
-      `! lsof -nP -iUDP:${shellQuote(String(relayPort))} 2>/dev/null | grep -q .`,
+      `! lsof -nP -iTCP:${shellQuote(String(relayPort))} 2>/dev/null | grep . >/dev/null`,
+      `! lsof -nP -iUDP:${shellQuote(String(relayPort))} 2>/dev/null | grep . >/dev/null`,
     );
   return [
     {
@@ -1445,7 +1445,7 @@ function remoteTransportAbsenceChecks(
       command: exactCheck(
         "# elastos_absence_field=turn_listener_absent",
         lsofPrelude,
-        `! lsof -nP -iTCP:${shellQuote(String(turn.listen_port))} -sTCP:LISTEN 2>/dev/null | grep -q .`,
+        `! lsof -nP -iTCP:${shellQuote(String(turn.listen_port))} -sTCP:LISTEN 2>/dev/null | grep . >/dev/null`,
       ),
     },
     {
@@ -1456,8 +1456,8 @@ function remoteTransportAbsenceChecks(
         `port=${shellQuote(String(turn.relay_port_min))}`,
         `relay_max=${shellQuote(String(turn.relay_port_max))}`,
         'while [ "$port" -le "$relay_max" ]; do',
-        '  ! lsof -nP -iTCP:"$port" 2>/dev/null | grep -q .',
-        '  ! lsof -nP -iUDP:"$port" 2>/dev/null | grep -q .',
+        '  ! lsof -nP -iTCP:"$port" 2>/dev/null | grep . >/dev/null',
+        '  ! lsof -nP -iUDP:"$port" 2>/dev/null | grep . >/dev/null',
         '  port=$((port + 1))',
         "done",
       ),

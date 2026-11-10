@@ -245,7 +245,7 @@ else
 fi
 [[ "$CARGO_TARGET_DIR" == /* ]] || die "Cargo target directory must resolve to an absolute path"
 export CARGO_TARGET_DIR ELASTOS_RELEASE_VERSION="$VERSION"
-rustup target list --installed | grep -Fxq "$TARGET" || die "Required Rust target is not installed: $TARGET"
+rustup target list --installed | grep -Fx "$TARGET" >/dev/null || die "Required Rust target is not installed: $TARGET"
 # Native macOS uses the same Cargo cache as normal source-home builds. Linux
 # keeps its explicit musl target; the receipt still records the actual target.
 BUILD_TARGET="$TARGET"

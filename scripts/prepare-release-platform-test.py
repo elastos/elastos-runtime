@@ -696,6 +696,16 @@ class PrepareWorkerTest(unittest.TestCase):
         self.assertFalse(output.exists())
         self.assertFalse((self.root / "cargo.log").exists())
 
+    def test_installed_target_check_reads_delayed_output(self):
+        (self.root / "mock/rustup").write_text(
+            '#!/bin/sh\n'
+            'printf "aarch64-apple-darwin\\n"\n'
+            'sleep 0.2\n'
+            'printf "x86_64-unknown-linux-musl\\naarch64-unknown-linux-musl\\n"\n')
+        output, result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((output / "platform-input.json").is_file())
+
     def test_success_uses_real_packaging_and_receipt(self):
         output, result = self.prepare()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

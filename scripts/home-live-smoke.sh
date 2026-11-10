@@ -66,7 +66,7 @@ need_cmd sed
 echo "[home-live-smoke] fetch live Home shell"
 home_html="$(get "/apps/home/")"
 if [[ -z "$HOME_VERSION" ]]; then
-    HOME_VERSION="$(grep -oE 'shell\.js\?v=[^"]+' <<<"$home_html" | sed 's/^shell\.js?v=//' | head -n1)"
+    HOME_VERSION="$(grep -oE 'shell\.js\?v=[^"]+' <<<"$home_html" | sed 's/^shell\.js?v=//' | sed -n 1p)"
     if [[ -z "$HOME_VERSION" ]]; then
         echo "[home-live-smoke] could not discover Home asset version from home-shell-host.js tag" >&2
         exit 1

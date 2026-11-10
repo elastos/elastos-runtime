@@ -1108,11 +1108,11 @@ start_browser_audio_stack() {
     wireplumber >"$ELASTOS_BROWSER_VM_WIREPLUMBER_LOG" 2>&1 &
     wireplumber_pid=$!
     for _ in $(seq 1 120); do
-      pw-cli ls Client 2>/dev/null | grep -q "WirePlumber" && break
+      pw-cli ls Client 2>/dev/null | grep "WirePlumber" >/dev/null && break
       kill -0 "$wireplumber_pid" 2>/dev/null || exit 1
       sleep 0.1
     done
-    pw-cli ls Client 2>/dev/null | grep -q "WirePlumber" || exit 1
+    pw-cli ls Client 2>/dev/null | grep "WirePlumber" >/dev/null || exit 1
 
     pipewire-pulse >"$ELASTOS_BROWSER_VM_PIPEWIRE_PULSE_LOG" 2>&1 &
     wait
@@ -1129,7 +1129,7 @@ start_browser_audio_stack() {
 
   : >"$ELASTOS_BROWSER_VM_LOG_DIR/browser-vm-pipewire-null-sink.log"
   for _ in $(seq 1 80); do
-    if pw-cli ls Node 2>/dev/null | grep -q 'auto_null'; then
+    if pw-cli ls Node 2>/dev/null | grep 'auto_null' >/dev/null; then
       return 0
     fi
     {
@@ -1798,9 +1798,9 @@ setup_media_relay_network() {
 has_media_relay_ipv4() {
   iface="$1"
   if command -v ip >/dev/null 2>&1; then
-    ip -4 addr show dev "$iface" 2>/dev/null | grep -q ' inet '
+    ip -4 addr show dev "$iface" 2>/dev/null | grep ' inet ' >/dev/null
   elif command -v busybox >/dev/null 2>&1; then
-    busybox ip -4 addr show dev "$iface" 2>/dev/null | grep -q ' inet '
+    busybox ip -4 addr show dev "$iface" 2>/dev/null | grep ' inet ' >/dev/null
   else
     return 1
   fi

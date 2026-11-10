@@ -17,7 +17,7 @@ TEST_HOME="$(mktemp -d /tmp/elastos-gossip-proof-XXXXXX)"
 # Setup minimal environment
 mkdir -p "$TEST_HOME/xdg-data/elastos/bin"
 for name in shell localhost-provider did-provider; do
-    src=$(find "$ROOT/elastos/target/release" "$ROOT/capsules/did-provider/target/release" -name "$name" -type f -executable 2>/dev/null | head -1)
+    src=$(find "$ROOT/elastos/target/release" "$ROOT/capsules/did-provider/target/release" -name "$name" -type f -executable 2>/dev/null | sed -n 1p)
     [[ -n "$src" ]] && cp "$src" "$TEST_HOME/xdg-data/elastos/bin/$name"
 done
 

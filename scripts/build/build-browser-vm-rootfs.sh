@@ -362,7 +362,7 @@ as_root chroot "$rootfs_dir" /usr/bin/env KERNEL_VERSION="$kernel_version" /bin/
 set -eu
 test -f "/boot/vmlinuz-${KERNEL_VERSION}"
 test -d "/lib/modules/${KERNEL_VERSION}"
-find "/lib/modules/${KERNEL_VERSION}" -name "*vsock*.ko*" | grep -q .
+find "/lib/modules/${KERNEL_VERSION}" -name "*vsock*.ko*" | grep . >/dev/null
 test -x /bin/busybox
 test -x /usr/bin/node
 test -x /usr/lib/chromium/chromium
@@ -412,7 +412,7 @@ if "Failed to add {} to pipeline" in text:
 if "emitting ICE candidate" not in text:
     raise SystemExit("Selkies must log outbound ICE candidates at info level")
 PY
-gst-inspect-1.0 webrtcbin | grep -q 'ice-transport-policy'
+gst-inspect-1.0 webrtcbin | grep 'ice-transport-policy' >/dev/null
 gst-inspect-1.0 nice >/dev/null 2>&1
 gst-inspect-1.0 pulsesrc >/dev/null 2>&1
 Xvfb :98 -screen 0 320x240x24 -nolisten tcp -ac >/tmp/elastos-selkies-help-xvfb.log 2>&1 &
