@@ -140,3 +140,13 @@ test("vendored model views load the current shared progress modules", async () =
     assert.match(html, /model-management\.js\?v=download-progress-20261112/);
   }
 });
+
+for (const [size, expected] of [[undefined, "Size unknown"], [null, "Size unknown"], [0, "0 B"]]) {
+  test(`Library properties preserve the size meaning for ${size}`, async () => {
+    const { createLibraryDialog } = await import("../capsules/library/browser/src/dialog.js");
+    const dialog = { classList: { remove() {} }, innerHTML: "" };
+    const view = createLibraryDialog({ dialog, roots: () => [] });
+    view.showProperties({ uri: "localhost://Users/fixture/Documents/notes.txt", name: "notes.txt", kind: "file", size });
+    assert.match(dialog.innerHTML, new RegExp(expected));
+  });
+}
