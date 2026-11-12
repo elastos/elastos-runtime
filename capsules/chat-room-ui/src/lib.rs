@@ -10480,7 +10480,13 @@ fn format_bytes(size_bytes: u64) -> String {
     let mut scale = 1_u128;
     let mut unit = 0;
     let units = ["B", "KB", "MB", "GB", "TB"];
-    while unit < units.len() - 1 && size_bytes as u128 >= scale * 1000 {
+    while unit < units.len() - 1
+        && (if unit == 0 {
+            size_bytes as u128 >= scale * 1000
+        } else {
+            (size_bytes as u128 * 10 + scale / 2) / scale >= 10_000
+        })
+    {
         scale *= 1000;
         unit += 1;
     }

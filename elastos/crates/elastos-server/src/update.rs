@@ -293,7 +293,13 @@ pub fn format_bytes(bytes: usize) -> String {
     let mut scale = 1_u128;
     let mut unit = 0;
     let units = ["B", "KB", "MB", "GB", "TB"];
-    while unit < units.len() - 1 && bytes as u128 >= scale * 1000 {
+    while unit < units.len() - 1
+        && (if unit == 0 {
+            bytes as u128 >= scale * 1000
+        } else {
+            (bytes as u128 * 10 + scale / 2) / scale >= 10_000
+        })
+    {
         scale *= 1000;
         unit += 1;
     }
