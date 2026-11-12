@@ -107,12 +107,16 @@ function requireReachable(metadata, graphName, source, target) {
 function inspectGraph(manifestPath, graphName) {
   const metadata = loadMetadata(manifestPath);
   const expected = new Map([
-    ["iroh", ["1.0.2"]],
+    ["iroh", ["1.4.1"]],
+    ["iroh-base", ["1.4.1"]],
+    ["iroh-dns", ["1.4.1"]],
+    ["iroh-relay", ["1.4.1"]],
     ["iroh-gossip", ["0.101.0"]],
     ["iroh-mdns-address-lookup", ["0.4.0"]],
     ["distributed-topic-tracker", ["0.3.5"]],
-    ["hickory-proto", ["0.26.1"]],
-    ["hickory-resolver", ["0.26.1"]],
+    ["hickory-proto", ["0.26.2"]],
+    ["hickory-resolver", []],
+    ["n0-dns-resolver", ["0.1.0"]],
     ["ed25519-dalek", ["2.2.0", "3.0.0-rc.0"]],
     ["crossbeam-epoch", ["0.9.20"]],
     ["quinn", ["0.11.9"]],
@@ -131,7 +135,7 @@ function inspectGraph(manifestPath, graphName) {
     metadata,
     graphName,
     { name: "distributed-topic-tracker", version: "0.3.5" },
-    { name: "iroh", version: "1.0.2" },
+    { name: "iroh", version: "1.4.1" },
   );
   requireReachable(
     metadata,
@@ -148,7 +152,7 @@ function inspectGraph(manifestPath, graphName) {
   requireReachable(
     metadata,
     graphName,
-    { name: "iroh", version: "1.0.2" },
+    { name: "iroh", version: "1.4.1" },
     { name: "ed25519-dalek", version: "3.0.0-rc.0" },
   );
   requireReachable(
@@ -203,7 +207,7 @@ const serverManifest = requireText(
   "the Ed25519 3 transport boundary must remain explicit",
 );
 for (const declaration of [
-  /^iroh = "=1\.0\.2"$/m,
+  /^iroh = "=1\.4\.1"$/m,
   /^iroh-gossip = "=0\.101\.0"$/m,
   /^iroh-mdns-address-lookup = "=0\.4\.0"$/m,
   /^distributed-topic-tracker = "=0\.3\.5"$/m,
