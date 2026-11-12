@@ -1426,9 +1426,11 @@ async fn run_upgrade_with_restart(
         }
     }
     println!("  Components verified (SHA-256 ✓)");
-    mismatched((|| {
-        crate::installed_release::admit_descriptor(comp_info, comp_sha256, comp_data.len() as u64)
-    })())?;
+    mismatched(crate::installed_release::admit_descriptor(
+        comp_info,
+        comp_sha256,
+        comp_data.len() as u64,
+    ))?;
     // These bytes already match the signed digest, so a refusal here is the publisher's.
     let value: serde_json::Value = refused((|| {
         anyhow::ensure!(
