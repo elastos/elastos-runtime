@@ -131,7 +131,8 @@ test("System, model and Library transfer states stay accessible in light and dar
       const assistant = page.frameLocator("iframe");
       await assistant.locator(".agent-model-download").getByText("0.8 GB of 2.0 GB · 37%", { exact: true }).waitFor();
       await assistant.locator("html").evaluate((node, theme) => node.setAttribute("data-el-theme", theme), theme);
-      assert((await assistant.locator(".agent-model-download .transfer-progress span").evaluate(transferContrast)).ratio >= 4.5);
+      const assistantContrast = await assistant.locator(".agent-model-download .transfer-progress span").evaluate(transferContrast);
+      assert(assistantContrast.ratio >= 4.5, `${theme} Assistant contrast: ${JSON.stringify(assistantContrast)}`);
       await screenshot(`assistant-model-download-${theme}`);
       await page.setViewportSize({ width: 390, height: 844 });
       await assistant.locator("html").evaluate(node => node.setAttribute("data-el-form-factor", "phone"));
@@ -145,6 +146,9 @@ test("System, model and Library transfer states stay accessible in light and dar
     }
     assert.deepEqual(errors, []);
     assert.deepEqual(fixture.requestFailures, []);
+  } catch (error) {
+    if (screenshots) await page.screenshot({ path: `${screenshots}/failure.png` });
+    throw error;
   } finally {
     await browser.close();
     await fixture.close();
