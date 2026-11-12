@@ -959,6 +959,7 @@ async fn apply_keeps_a_head_cid_mismatch_retryable_and_records_no_refusal() {
         host_ready: true,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     controller
@@ -2298,6 +2299,7 @@ fn consumed_request_completion_preserves_a_different_request_identity() {
         child: None,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
         request: Some(choice.clone()),
         previous_binary_sha256: String::new(),
@@ -2388,6 +2390,7 @@ async fn pre_restart_reconciliation_retires_only_consumed_request_after_both_loc
         child: None,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
         request: None,
         previous_binary_sha256: String::new(),
@@ -3195,6 +3198,7 @@ async fn recovery_with_an_owned_ready_child_publishes_its_terminal_result() {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     // A failed readiness proof retains recovery rather than publishing success.
@@ -3262,6 +3266,7 @@ async fn every_home_start_has_one_finite_readiness_budget() {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
 
@@ -3314,6 +3319,7 @@ async fn initial_home_loader_failure_names_the_private_log_and_keeps_the_install
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     // The signed fixture bytes have no native executable format.
@@ -3564,6 +3570,7 @@ async fn restart_scenario(
             host_ready: false,
             carrier: None,
             carrier_close: None,
+            download_meter: Default::default(),
             test_readiness: candidate_budget,
         },
         starts: Vec::new(),
@@ -3895,6 +3902,7 @@ fn retained_controller(fixture: &PrivateFixture) -> Controller {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     }
 }
@@ -4269,6 +4277,7 @@ async fn stopped_home_with_unreconciled_child_record_reports_failure_and_retains
         host_ready: true,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     let stopped = controller.stop_child().await;
@@ -4556,6 +4565,7 @@ async fn staged_support_skips_linux_only_home_component_on_darwin() {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     let components = serde_json::to_vec(&json!({
@@ -4601,6 +4611,7 @@ async fn staged_support_replaces_a_component_left_by_an_interrupted_undo() {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     // The description is unchanged; the installed bytes are another release's.
@@ -4999,6 +5010,7 @@ async fn stage_before_stop_preserves_home_on_fetch_or_verify_failure_and_restart
                 host_ready: true,
                 carrier: None,
                 carrier_close: None,
+                download_meter: Default::default(),
                 test_readiness: None,
             },
             host: Some(
@@ -5321,7 +5333,8 @@ async fn restarting_network_update(symlinked_parent: bool) {
             let alias = fixture.data.join("linked-bin");
             symlink(&fixture.data, &alias).unwrap();
             let mut sources = crate::sources::load_trusted_sources(&fixture.data).unwrap();
-            sources.sources[0].install_path = alias.join("installed-runtime").to_str().unwrap().into();
+            sources.sources[0].install_path =
+                alias.join("installed-runtime").to_str().unwrap().into();
             crate::sources::save_trusted_sources(&fixture.data, &sources).unwrap();
         }
         if outcome == "isolated" {
@@ -5368,6 +5381,7 @@ async fn restarting_network_update(symlinked_parent: bool) {
                 host_ready: true,
                 carrier: None,
                 carrier_close: None,
+                download_meter: Default::default(),
                 test_readiness: None,
             },
             host: Some(
@@ -5413,7 +5427,8 @@ async fn restarting_network_update(symlinked_parent: bool) {
                 if network_fetch {
                     let progress = status(&data)?.unwrap();
                     assert_eq!(
-                        progress.total_bytes, Some(payload_total),
+                        progress.total_bytes,
+                        Some(payload_total),
                         "metadata holds the signed payload total"
                     );
                     assert!(progress.completed_bytes >= components_count);
@@ -5438,8 +5453,9 @@ async fn restarting_network_update(symlinked_parent: bool) {
                         Some(payload_total),
                         "the signed payload total resumes unchanged"
                     );
-                    assert_eq!(
-                        progress.completed_bytes, payload_completed,
+                    assert!(progress.completed_bytes >= components_count);
+                    assert!(
+                        progress.completed_bytes <= payload_completed,
                         "metadata bytes are outside the payload count"
                     );
                     assert_eq!(progress.message, crate::update::DOWNLOAD_MESSAGE);
@@ -5677,6 +5693,7 @@ fn download_progress_controller(fixture: &PrivateFixture) -> Controller {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     }
 }
@@ -5798,7 +5815,7 @@ async fn update_fetch_reports_monotonic_bytes_against_one_total_over_carrier() {
             send.write_all(&(bytes.len() as u64).to_be_bytes())
                 .await
                 .unwrap();
-            tokio::time::sleep(Duration::from_millis(110)).await;
+            tokio::time::sleep(Duration::from_millis(1050)).await;
             let half = bytes.len() / 2;
             send.write_all(&bytes[..half]).await.unwrap();
             // With no Carrier progress scope this waits for an impossible
@@ -5835,12 +5852,14 @@ async fn update_fetch_reports_monotonic_bytes_against_one_total_over_carrier() {
         let received = track_update_fetch(
             &fixture.directory,
             &request.id,
+            &controller.download_meter,
             client.fetch_content(&raw_cid(bytes), None),
         )
         .await
         .unwrap();
         assert_eq!(&received, bytes);
-        let progress = status(&fixture.data).unwrap().unwrap();
+        let meter = controller.download_meter.lock().unwrap();
+        let progress = meter.progress.as_ref().unwrap();
         assert_eq!(progress.total_bytes, Some(total));
         observed.lock().unwrap().push(progress.completed_bytes);
     }
@@ -5863,12 +5882,24 @@ async fn advisory_progress_errors_preserve_status_and_fetch() {
         let (_, request, _) = choice_fixture();
         controller.request = Some(request.clone());
         controller.download_plan(250, Some(1000)).unwrap();
-        controller.publish("downloading", crate::update::DOWNLOAD_MESSAGE).unwrap();
+        controller
+            .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+            .unwrap();
         fs::write(fixture.directory.join(DOWNLOAD_PROGRESS), record).unwrap();
         let current = status(&fixture.data).unwrap().unwrap();
         assert_eq!(current.message, crate::update::DOWNLOAD_MESSAGE);
         assert_eq!((current.completed_bytes, current.total_bytes), (0, None));
-        assert_eq!(track_update_fetch(&fixture.directory, &request.id, async { Ok(vec![1, 2]) }).await.unwrap(), vec![1, 2]);
+        assert_eq!(
+            track_update_fetch(
+                &fixture.directory,
+                &request.id,
+                &controller.download_meter,
+                async { Ok(vec![1, 2]) }
+            )
+            .await
+            .unwrap(),
+            vec![1, 2]
+        );
     }
 }
 
@@ -5881,12 +5912,17 @@ fn future_progress_fields_are_optional_and_terminal_phases_remove_progress() {
         let (_, request, _) = choice_fixture();
         controller.request = Some(request);
         controller.download_plan(250, Some(1000)).unwrap();
-        controller.publish("downloading", crate::update::DOWNLOAD_MESSAGE).unwrap();
+        controller
+            .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+            .unwrap();
         let path = fixture.directory.join(DOWNLOAD_PROGRESS);
         let mut record: Value = read_private_json(&path).unwrap();
         record["future_field"] = json!(true);
         write_private(&path, &record).unwrap();
-        assert_eq!(status(&fixture.data).unwrap().unwrap().total_bytes, Some(1000));
+        assert_eq!(
+            status(&fixture.data).unwrap().unwrap().total_bytes,
+            Some(1000)
+        );
         controller.publish(phase, "Update ended.").unwrap();
         assert!(!path.exists(), "{phase} must remove advisory progress");
     }
@@ -5902,7 +5938,11 @@ fn progress_plan_writes_at_most_once_per_second() {
     let path = fixture.directory.join(DOWNLOAD_PROGRESS);
     let before = fs::read(&path).unwrap();
     controller.download_plan(500, Some(1000)).unwrap();
-    assert_eq!(fs::read(&path).unwrap(), before, "rapid plan writes are coalesced");
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "rapid plan writes are coalesced"
+    );
     std::thread::sleep(Duration::from_millis(1050));
     controller.download_plan(750, Some(1000)).unwrap();
     let progress: DownloadProgress = read_private_json(&path).unwrap();

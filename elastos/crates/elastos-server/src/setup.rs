@@ -4182,13 +4182,12 @@ pub(crate) async fn stage_planned_update_support(
         }
         paths.insert(relative, dest);
     }
-    // The catalogue pin has no signed size. Its separate phase stays indeterminate.
+    // The catalogue pin has no signed size. Hold the payload bar during verification.
     if plan.manifest.model_catalog.as_ref().is_some_and(|trust| {
         !installed_model_catalog_matches(&data_dir.join(MODEL_CATALOG_FILE), trust)
     }) {
-        owner.download_plan(0, None)?;
         owner.progress(
-            "downloading",
+            "verifying",
             "Checking the model catalogue. Home restarts when the update is ready.",
         )?;
     }

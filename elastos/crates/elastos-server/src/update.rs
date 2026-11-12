@@ -845,7 +845,7 @@ pub(crate) const DOWNLOAD_MESSAGE: &str =
 
 pub(crate) trait RestartOwner: Send {
     fn progress(&self, phase: &str, message: &str) -> anyhow::Result<()>;
-    /// A fixed signed-size phase, or an unknown-size metadata phase.
+    /// The signed payload count and its fixed total, when known.
     fn download_plan(&self, completed: u64, total: Option<u64>) -> anyhow::Result<()>;
 
     fn plan(
@@ -1395,7 +1395,6 @@ async fn run_upgrade_with_restart(
             .unwrap_or_default()
     );
     if let Some(owner) = restart_owner.as_ref() {
-        owner.download_plan(0, None)?;
         owner.progress(
             "downloading",
             "Checking the update files. Home restarts when the update is ready.",
@@ -1513,7 +1512,9 @@ async fn run_upgrade_with_restart(
         )?;
         let records = crate::capsule_record::UpdateRecords::new(
             &previous.release,
-            next_admission.take().context("update release admission missing")?,
+            next_admission
+                .take()
+                .context("update release admission missing")?,
             &source.publisher_dids,
         );
         let old_components = std::fs::read(data_dir.join("components.json"))?;
@@ -1576,12 +1577,11 @@ async fn run_upgrade_with_restart(
         binary_data.len() as u64,
     ))?;
 
-    // Network pins and repair of the installed catalogue have no signed byte
-    // sizes in this payload. Keep their fetches out of its signed-size count.
+    // Metadata has no signed size. Hold the payload count while checking it;
+    // the controller pauses transport counting during verification.
     if let Some(owner) = restart_owner.as_ref() {
-        owner.download_plan(0, None)?;
         owner.progress(
-            "downloading",
+            "verifying",
             "Checking update metadata. Home restarts when the update is ready.",
         )?;
     }
@@ -1633,7 +1633,9 @@ async fn run_upgrade_with_restart(
         let old_components = std::fs::read(data_dir.join("components.json")).ok();
         let records = crate::capsule_record::UpdateRecords::new(
             &previous.release,
-            next_admission.take().context("update release admission missing")?,
+            next_admission
+                .take()
+                .context("update release admission missing")?,
             &source.publisher_dids,
         );
         let changed_capsules =
