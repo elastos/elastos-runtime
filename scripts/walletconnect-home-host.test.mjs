@@ -13,6 +13,9 @@ const origin = "http://localhost:61180";
 const connector = "wallet-walletconnect";
 
 async function fixture(scenario) {
+  const clock = Date.now;
+  const events = new Map();
+  let changed = false;
   globalThis.document = { querySelector() { return null; } };
   globalThis.location = { origin };
   globalThis.window = { addEventListener() {}, dispatchEvent() {} };
@@ -21,14 +24,20 @@ async function fixture(scenario) {
   const host = await import(`../capsules/home/browser/home-wallet-connector-host.js?fixture=${scenario}`);
   const calls = [];
   globalThis.__wcFixtureProvider = {
-    connected: true, on() {},
+    connected: true, on(name, callback) { events.set(name, callback); },
     async request(input, expiry) {
       calls.push({ ...input, expiry });
       if (input.method === "eth_requestAccounts") return [address];
       if (input.method === "personal_sign") return signature;
-      if (input.method === "eth_accounts") return [scenario === "wrong-account" ? `0x${"ab".repeat(20)}` : address];
-      if (input.method === "eth_chainId") return scenario === "wrong-chain" ? "0x1" : "0x14";
-      if (input.method === "eth_sendTransaction") return transactionHash;
+      if (input.method === "eth_accounts") return [scenario === "wrong-account" || changed && scenario === "account-change-during-send" ? `0x${"ab".repeat(20)}` : address];
+      if (input.method === "eth_chainId") return scenario === "wrong-chain" || changed && scenario === "chain-change-during-send" ? "0x1" : "0x14";
+      if (input.method === "eth_sendTransaction") {
+        changed = true;
+        if (scenario === "account-change-during-send") events.get("accountsChanged")?.([]);
+        if (scenario === "chain-change-during-send") events.get("chainChanged")?.("0x1");
+        if (scenario === "expired-during-send") Date.now = () => clock() + 601000;
+        return transactionHash;
+      }
       throw new Error(`Unexpected wallet call: ${input.method}`);
     },
   };
@@ -78,8 +87,10 @@ async function fixture(scenario) {
     requestId: "request:fixture", connectorId: scenario === "wrong-capsule" ? "wallet-metamask" : connector,
     connectorToken: "connector-fixture", action: scenario.startsWith("link") ? { kind: "link" } : { kind: "approve", approvalRequestId: "approval:fixture" } };
   if (scenario === "injected-payload") data.action.payload = { to: "attacker" };
-  assert.equal(host.handleHomeWalletConnectorEffect({ source: { postMessage: reply } }, context, data), true);
-  return { response: await complete, calls, routes };
+  try {
+    assert.equal(host.handleHomeWalletConnectorEffect({ source: { postMessage: reply } }, context, data), true);
+    return { response: await complete, calls, routes };
+  } finally { Date.now = clock; }
 }
 
 test("trusted Home signs the exact Runtime transaction once", async () => {
@@ -96,6 +107,15 @@ for (const scenario of ["wrong-account", "wrong-chain", "wrong-capsule", "expire
     assert.equal(typeof result.response.error, "string");
     assert.equal(result.calls.filter(c => c.method === "eth_sendTransaction").length, 0);
     assert.equal(result.routes.filter(p => p.endsWith("/complete")).length, 0);
+  });
+}
+
+for (const scenario of ["account-change-during-send", "chain-change-during-send", "expired-during-send"]) {
+  test(`trusted Home refuses completion after ${scenario}`, async () => {
+    const result = await fixture(scenario);
+    assert.equal(typeof result.response.error, "string");
+    assert.equal(result.calls.filter(call => call.method === "eth_sendTransaction").length, 1);
+    assert.equal(result.routes.filter(path => path.endsWith("/complete")).length, 0);
   });
 }
 

@@ -261,6 +261,14 @@ async function linkEvmWallet(connectorToken, provider = selectMetaMaskCompatible
     method: "personal_sign",
     params: [walletConnectSignData(challenge.message, connectorId), signer],
   }), 16 * 1024, "Wallet returned an invalid signature.");
+  if (connectorId === WALLETCONNECT_ID) {
+    const currentSigner = requireEvmAddress(await currentEvmAccount(provider));
+    const currentChain = requireEvmChainId(await provider.request({ method: "eth_chainId" }));
+    ensureSameAddress(currentSigner, address, "Wallet account changed. Connect again.");
+    if (generation !== walletConnectGeneration || currentChain !== chainId || challenge.expires_at <= Date.now() / 1000) {
+      throw new Error("Wallet changed or the challenge expired. Connect again.");
+    }
+  }
   const verified = await runtimePost(
     "/api/apps/home/wallet-connector/evm/link/verify",
     connectorBody(connectorId, connectorToken, {
@@ -329,15 +337,17 @@ async function completeApproval(connectorId, connectorToken, approvalRequestId) 
 
 async function completeEvmApproval(provider, connectorToken, handoff, evmChains, connectorId = METAMASK_CONNECTOR_ID, binding) {
   const generation = walletConnectGeneration;
-  const checkBinding = async () => {
+  const checkBinding = async (startingRequest = true) => {
     if (connectorId !== WALLETCONNECT_ID) return;
     const chain = `eip155:${requireEvmChainId(await provider.request({ method: "eth_chainId" }))}`;
+    const account = requireEvmAddress(await currentEvmAccount(provider));
+    ensureSameAddress(account, handoff.signer, "Wallet changed. Request a new review.");
     if (chain !== binding.chain_namespace || generation !== walletConnectGeneration
         || !Number.isSafeInteger(binding.expires_at) || binding.expires_at <= Date.now() / 1000) {
       throw new Error("Wallet request changed or expired. Request a new review.");
     }
     const ttl = binding.expires_at - Math.ceil(Date.now() / 1000);
-    if (ttl < 300) throw new Error("Wallet request expires soon. Request a fresh review.");
+    if (startingRequest && ttl < 300) throw new Error("Wallet request expires soon. Request a fresh review.");
     return ttl;
   };
   const signer = requireEvmAddress(await currentEvmAccount(provider));
@@ -356,6 +366,7 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
       method: "eth_sendTransaction",
       params: [handoff.transaction],
     }, expiry), 512, "Wallet returned an invalid transaction hash.");
+    await checkBinding(false);
     const completed = await runtimePost(path, connectorBody(connectorId, connectorToken, {
       payload_hash: handoff.payload_hash,
       signer: currentSigner,
@@ -373,6 +384,7 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
   const expiry = await checkBinding();
   const signature = requireProviderResult(await provider.request({ method, params }, expiry), 16 * 1024,
     "Wallet returned an invalid signature.");
+  await checkBinding(false);
   const completed = await runtimePost(path, connectorBody(connectorId, connectorToken, {
     payload_hash: handoff.payload_hash,
     signature,
