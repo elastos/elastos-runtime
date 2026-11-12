@@ -7,7 +7,8 @@ const HOST_EFFECT_TYPE = "home:wallet-connector-effect";
 const HOST_EFFECT_SCHEMA = "elastos.home.wallet-connector-effect/v1";
 const HOST_RESULT_TYPE = "home:wallet-connector-effect-result";
 const HOST_RESULT_SCHEMA = "elastos.home.wallet-connector-effect-result/v1";
-const HOST_EFFECT_TIMEOUT_MS = 180_000;
+// Cover QR pairing (180 s), the Runtime approval window (600 s), and delivery.
+const HOST_EFFECT_TIMEOUT_MS = 810_000;
 const connectButton = document.querySelector("#wallet-connect");
 const statusNode = document.querySelector("#wallet-status");
 const stateNode = document.querySelector("#wallet-state");
@@ -230,7 +231,7 @@ function requestHomeWalletEffect(action) {
     const timeout = window.setTimeout(() => {
       finish();
       reject(new Error("Wallet request timed out."));
-    }, action.kind === "status" ? 10000 : HOST_EFFECT_TIMEOUT_MS);
+    }, action.kind === "status" ? 10000 : ["approve", "link"].includes(action.kind) ? HOST_EFFECT_TIMEOUT_MS : 30000);
     const finish = () => {
       window.clearTimeout(timeout);
       window.removeEventListener("message", onMessage);
