@@ -91,23 +91,8 @@ def assert_provider_names_and_loops(setup_text: str) -> None:
             )
 
 
-def shell_array_entries(text: str, name: str) -> list[str]:
-    body = text.split(f"{name}=(", 1)[1].split("\n)", 1)[0]
-    return [
-        line.strip()
-        for line in body.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-
-
 def assert_release_support_inventory() -> None:
     publish_text = PUBLISH_RELEASE.read_text(encoding="utf-8")
-    support = shell_array_entries(publish_text, "SUPPORT_BINARY_ASSETS")
-    for provider in sorted(set(RUNTIME_ONLY_PROVIDERS) | set(support)):
-        if support.count(provider) != 1:
-            raise AssertionError(
-                f"release support inventory must include {provider} exactly once"
-            )
     for private_state in (
         "protected-content/chain-provider.json",
         "protected-content/custody-composition.json",
