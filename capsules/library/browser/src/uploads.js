@@ -1,5 +1,5 @@
-import { createTransferProgress, announceTransferProgress } from "../transfer-progress.js";
-import { escapeHtml } from "./model.js";
+import { createTransferProgress, announceTransferProgress } from "../transfer-progress.js?v=download-progress-20261112";
+import { escapeHtml } from "./model.js?v=download-progress-20261112";
 
 export function createLibraryUploads({ container, perf, state }) {
   let uploadRenderFrame = 0;
@@ -45,7 +45,7 @@ export function createLibraryUploads({ container, perf, state }) {
       const upload = state.uploads[index];
       const active = ["Queued", "Preparing", "Uploading", "Saving"].includes(upload.status);
       meter.hidden = !active || upload.total_bytes === 0;
-      if (!meter.hidden) meter.append(createTransferProgress(upload.completed_bytes, upload.total_bytes, "Upload progress"));
+      if (!meter.hidden) meter.append(createTransferProgress(upload.completed_bytes, upload.total_bytes, `Upload progress for ${upload.name}`));
     });
   }
 
