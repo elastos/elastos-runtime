@@ -11775,7 +11775,7 @@ async fn browser_internet_expired_request_keeps_inbox_allow_with_fresh_passkey()
         .expect("expired Browser request keeps an Allow entry in Inbox");
     assert_eq!(entry["kind"], "browser_internet_decision");
     assert_eq!(entry["action_ref"]["action_id"], "browser-internet-request");
-    assert!(entry["body"].as_str().unwrap().contains("expired"));
+    assert_eq!(entry["body"], "This request expired.");
     assert_eq!(summary["notifications"]["unread_count"], 0);
     assert_eq!(
         serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),

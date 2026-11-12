@@ -549,7 +549,7 @@ globalThis.fetch = async (url, init = {}) => {
       }
       return jsonResponse({
         attach_kind: "iframe",
-        route: "/apps/browser/?home_origin=http%3A%2F%2Flocalhost%3A61180#home_token=browser-token",
+        route: "/apps/browser/?browser_instance=browser:focus-owner&home_origin=http%3A%2F%2Flocalhost%3A61180#home_token=browser-token",
         target: "browser",
         title: "Browser",
       });
@@ -2445,7 +2445,9 @@ sendChildMessage("null", browserFrameWindow, {
   const source={parent:shellFrameWindow,postMessage(){}};
   sendChildMessage("null",source,{type:"home:app-ready",homeToken:"inbox-token"});
   const focus=()=>shellMessages.filter(m=>m.payload?.command==="focus-browser");
-  const intent={type:"home:focus-browser",homeToken:"inbox-token"};const before=focus().length;
+  const intent={type:"home:focus-browser",homeToken:"inbox-token",requestId:"permission-request"};const before=focus().length;
+  sendChildMessage("null",browserFrameWindow,{type:"home:open-target",homeToken:"browser-token",target:"inbox",query:{notification_id:"browser-internet:permission",browser_request_id:"permission-request"}});
+  sendChildMessage("null",browserFrameWindow,{type:"home:open-target",homeToken:"browser-token",target:"inbox",query:{notification_id:"browser-internet:permission"}});
   sendChildMessage("null",browserFrameWindow,{...intent,homeToken:"browser-token"});
   sendChildMessage("null",source,{...intent,target:"browser"});
   sendChildMessage("https://evil.invalid",source,intent);
@@ -2453,6 +2455,10 @@ sendChildMessage("null", browserFrameWindow, {
   assert(focus().length===before,"Only exact trusted Inbox focus is accepted");
   sendChildMessage("null",source,intent);
   assert(focus().length===before+1,"Inbox focus reaches GUI without opening a new window");
+  assert(!Object.hasOwn(shellMessages.filter(m=>m.payload?.command==="open-target" && m.payload.target==="inbox").at(-1).payload.query,"browser_request_id"), "Home keeps window routing out of Inbox selection");
+  assert(focus().at(-1).payload.browserInstance === "browser:focus-owner", "Home binds Allow focus to the Browser that opened its permission entry");
+  sendChildMessage("null",source,intent);
+  assert(!focus().at(-1).payload.browserInstance, "Home consumes the requester after Allow");
 }
 const connectorLaunchesBeforeBrowserRequest = requests.filter(
   (request) =>

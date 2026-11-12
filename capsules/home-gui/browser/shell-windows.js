@@ -1547,6 +1547,10 @@ export function renewBrowserWindowAuthority(id, options = {}) {
 function activateTargetGroup(targetId) {
   const visibleTop = topBrowserWindowEntryForTarget(targetId, { includeHidden: false });
   const entry = visibleTop || topBrowserWindowEntryForTarget(targetId);
+  return activateWindowEntry(entry);
+}
+
+function activateWindowEntry(entry) {
   if (!entry) {
     return false;
   }
@@ -2639,6 +2643,9 @@ export function handleShellResize() {
   persistBrowserSession();
 }
 
-export function focusOpenBrowserWindow() {
-  return activateTargetGroup("browser");
+export function focusOpenBrowserWindow(browserInstance = "") {
+  if (!browserInstance) return activateTargetGroup("browser");
+  const entry = browserWindowEntriesForTarget("browser")
+    .find(entry => entry.launchQuery?.browser_instance === browserInstance);
+  return activateWindowEntry(entry);
 }

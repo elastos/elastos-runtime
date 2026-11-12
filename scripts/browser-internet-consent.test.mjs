@@ -37,7 +37,7 @@ async function screen(page, name) {
   await page.screenshot({path:`${process.env.BROWSER_INTERNET_SCREENSHOTS}/${process.env.BROWSER_INTERNET_SCREEN_THEME === "dark" ? "dark-" : ""}${name}.png`});
 }
 async function fixture() {
-  const state = {consent:"off", expired:false, grantedRequestId:"fixture", requests:0, reads:0, failedReads:0, opens:[], actions:[], navigations:[]};
+  const state = {consent:"off", expired:false, grantedRequestId:"fixture", requests:0, requestAttempts:0, stopPending:false, reads:0, failedReads:0, opens:[], actions:[], navigations:[]};
   const server=http.createServer(async (req,res) => {
     const url=new URL(req.url,"http://localhost");
     res.setHeader("access-control-allow-origin","*");
@@ -71,8 +71,12 @@ async function fixture() {
         addEventListener('message',e=>{
           if(e.source!==window.top)return;
           const action=e.data?.fixtureAction;
-          if(action?.type==='home:open-target')windows.openTarget(action.target,{query:action.query});
-          if(action?.type==='home:focus-browser')windows.focusOpenBrowserWindow();
+          if(action?.type==='home:open-target') {
+            const owner=[...core.shellState.windows.values()].find(entry=>new URL(entry.node.querySelector('iframe')?.dataset.route || '/',location.href).hash==='#home_token='+action.homeToken);
+            if(owner?.targetId==='browser' && action.target==='inbox' && action.query.browser_request_id)window.requestingBrowserInstance=owner.launchQuery.browser_instance;
+            windows.openTarget(action.target,{query:action.target==='inbox' ? {notification_id:action.query.notification_id} : action.query});
+          }
+          if(action?.type==='home:focus-browser')windows.focusOpenBrowserWindow(window.requestingBrowserInstance || '');
         });
         window.fixtureShell={core,windows,stages};
       </script>`);return;
@@ -95,12 +99,14 @@ async function fixture() {
       if(req.method==="GET" && state.failedReads>0) {state.failedReads--;res.statusCode=503;json({error:"Fixture read failed"});return;}
       if(input?.action === "revoke") {assert.equal(input.step_up_token,"fixture-step-up");state.consent="revoked";}
       if (input?.action === "end") {json({status:"ended"});return;}
-      if (input?.action === "request") {state.requests++;state.consent="requested";state.expired=false;await state.requestBarrier;}
-      json({status:state.consent,request_id:state.consent==="granted"?state.grantedRequestId:undefined,request:state.expired?null:{resource:"elastos://browser/internet",grant_id:"fixture-grant",request_id:"fixture",text:consentText,expires_at:Math.floor(Date.now()/1000)+3600}});return;
+      if (input?.action === "request" && state.stopPending) {state.requestAttempts++;res.statusCode=403;json({error:"Finish stopping Browser internet before requesting it again"});return;}
+      if (input?.action === "request") {state.requestAttempts++;state.requests++;state.consent="requested";state.expired=false;await state.requestBarrier;}
+      json({status:state.consent,stop_pending:state.stopPending,request_id:state.consent==="granted"?state.grantedRequestId:undefined,request:state.expired?null:{resource:"elastos://browser/internet",grant_id:"fixture-grant",request_id:"fixture",text:consentText,expires_at:Math.floor(Date.now()/1000)+3600}});return;
     }
     if (url.pathname === "/api/apps/inbox/summary") {
-      const pending=state.consent === "requested";
-      const body=pending?consentText:state.consent === "granted"?"Browser can open websites. Allowed with your passkey.":state.consent === "refused"?"Browser cannot open websites. Not allowed.":"Browser cannot open websites. Turned off.";
+      const expired=state.consent === "requested" && state.expired;
+      const pending=state.consent === "requested" && !expired;
+      const body=expired?"This request expired.":pending?consentText:state.consent === "granted"?"Browser can open websites. Allowed with your passkey.":state.consent === "refused"?"Browser cannot open websites. Not allowed.":"Browser cannot open websites. Turned off.";
       json({notifications:{unread_count:pending?1:0,attention_count:pending?1:0,entries:[{
         id:"browser-internet:permission",source_app:"browser",kind:pending?"browser_internet_request":"browser_internet_decision",
         title:pending?"Allow Browser to use the internet?":"Browser internet access",body,severity:pending?"attention":"info",read:!pending,created_at:1794312000,
@@ -586,5 +592,104 @@ test("566e renewing authority preserves the current page and does not repeat the
       else assert.equal(f.state.navigations.at(-1)?.url,"https://example.com/explicit");
       await page.close();
     });
+  } finally {await browser.close();await f.close();}
+});
+
+
+test("566r2 expired Inbox entry dates the expiry and renews through a fresh passkey", async () => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    f.state.consent="requested";f.state.expired=true;
+    const page=await browser.newPage();await page.goto(f.url+"?app=inbox");
+    const inbox=page.frameLocator("iframe");
+    await inbox.getByRole("button",{name:"Allow",exact:true}).waitFor();
+    const body=await inbox.locator("#entry-detail .entry-body").innerText();
+    assert.match(body,/This request expired on .+\./);
+    assert.equal(await inbox.locator("#pending-count").innerText(),"0");
+    await page.evaluate(()=>holdPasskey=true);
+    await inbox.getByRole("button",{name:"Allow",exact:true}).click();
+    await page.waitForFunction(()=>approvals.length===1);
+    assert.equal(f.state.requests,1);assert.equal(f.state.actions.length,0);
+    await page.evaluate(()=>completeFixturePasskey());
+    await inbox.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
+    assert.equal(f.state.actions.length,1);assert.equal(f.state.opens.length,0);
+    await page.close();
+  } finally {await browser.close();await f.close();}
+});
+
+test("566r2 Return waits for Turn Off then files once and navigates only after Allow", async () => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    f.state.consent="revoked";f.state.stopPending=true;
+    const page=await browser.newPage();await page.goto(f.url+"?flow=1");
+    const frame=page.frameLocator('iframe[data-app="browser"]');
+    await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
+    await frame.locator("#browser-url").fill("https://example.com/stop-first");
+    await frame.locator("#browser-url").press("Enter");
+    await frame.locator("#browser-internet-hint").filter({hasText:"Your request will open in Inbox"}).waitFor({timeout:4000});
+    await frame.locator("#browser-url").fill("https://example.com/stop-latest");
+    await frame.locator("#browser-url").press("Enter");
+    await page.waitForTimeout(2300);
+    assert.equal(await frame.locator("#browser-internet-hint").isVisible(),true,"next poll preserves the waiting message");
+    assert.equal(f.state.requests,0);assert.equal(f.state.opens.length,0);
+    f.state.stopPending=false;
+    const inbox=page.frameLocator('iframe[data-app="inbox"]');
+    await inbox.getByRole("button",{name:"Allow",exact:true}).waitFor({timeout:5000});
+    assert.equal(f.state.requests,1);assert.equal(f.state.opens.length,0);
+    await page.evaluate(()=>holdPasskey=true);
+    await inbox.getByRole("button",{name:"Allow",exact:true}).click();await page.waitForFunction(()=>approvals.length===1);
+    await page.waitForTimeout(2200);assert.equal(f.state.opens.length,0);
+    const opened=page.waitForResponse(r=>r.url().endsWith("/api/apps/browser/open"));
+    await page.evaluate(()=>completeFixturePasskey());await opened;
+    await page.waitForTimeout(2300);
+    assert.deepEqual(f.state.opens.map(open=>open.url),["https://example.com/stop-latest"]);
+    assert.equal(f.state.requests,1);await page.close();
+    // Closing a waiting window cancels its request.
+    f.state.consent="revoked";f.state.stopPending=true;f.state.requests=0;
+    const closed=await browser.newPage();await closed.goto(f.url+"?restore=1");
+    const b=closed.frameLocator("iframe");await b.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
+    await b.locator("#browser-url").fill("https://example.com/closed");await b.locator("#browser-url").press("Enter");
+    await b.locator("#browser-internet-hint").filter({hasText:"Your request will open in Inbox"}).waitFor();
+    await closed.close();f.state.stopPending=false;await new Promise(r=>setTimeout(r,500));assert.equal(f.state.requests,0);
+  } finally {await browser.close();await f.close();}
+});
+
+test("566r2 Allow returns to the requesting Browser among several windows", async () => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    f.state.consent="revoked";
+    const page=await browser.newPage();await page.goto(f.url+"shell");
+    const gui=await (await page.locator("#gui").elementHandle()).contentFrame();await gui.waitForFunction(()=>window.fixtureShell);
+    await gui.evaluate(()=>fixtureShell.windows.openTarget("browser"));
+    const first=gui.frameLocator('iframe[title="browser"]').first();await first.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
+    const owner=await gui.evaluate(()=>[...fixtureShell.core.shellState.windows.values()][0].id);
+    await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{newWindow:true,authorizedLaunch:{target:'browser',title:'browser',attach_kind:'iframe',launch_status:'launched',route:'/apps/browser/?browser_restore=1&browser_instance=browser:other#home_token=other'}}));
+    await gui.locator('iframe[title="browser"]').nth(1).waitFor();
+    await first.locator("#browser-url").fill("https://example.com/owner");await first.locator("#browser-url").press("Enter");
+    const inbox=gui.frameLocator('iframe[title="inbox"]');await inbox.getByRole("button",{name:"Allow",exact:true}).waitFor();
+    await inbox.getByRole("button",{name:"Allow",exact:true}).click();
+    await gui.waitForFunction(id=>fixtureShell.core.shellState.activeWindowId===id,owner,{timeout:5000});
+    await page.waitForTimeout(2300);assert.deepEqual(f.state.opens.map(open=>open.url),["https://example.com/owner"]);
+    assert.equal(await gui.evaluate(()=>fixtureShell.windows.focusOpenBrowserWindow('browser:closed')),false,"a closed requester does not focus an unrelated Browser");
+    await page.close();
+  } finally {await browser.close();await f.close();}
+});
+
+test("566r2 renewal with access on and no page keeps Browser empty", async () => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    f.state.consent="revoked";
+    const page=await browser.newPage();await page.goto(f.url+"shell");
+    const gui=await (await page.locator("#gui").elementHandle()).contentFrame();await gui.waitForFunction(()=>window.fixtureShell);
+    await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/first"}}));
+    const frame=gui.frameLocator('iframe[title="browser"]');await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
+    f.state.consent="granted";await frame.locator("#browser-internet-request").waitFor({state:"hidden",timeout:5000});
+    assert.equal(f.state.opens.length,0);assert.equal(f.state.recoverableUrl,undefined);
+    await gui.evaluate(async()=>{const {core,windows}=fixtureShell;await windows.renewBrowserWindowAuthority([...core.shellState.windows.keys()][0]);});
+    await page.waitForTimeout(2500);assert.equal(f.state.opens.length,0,"renewal does not reopen the first address when there is no page");
+    assert.equal(f.state.requests,0);
+    const opened=page.waitForResponse(r=>r.url().endsWith("/api/apps/browser/open"));
+    await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/explicit"}}));await opened;
+    assert.deepEqual(f.state.opens.map(open=>open.url),["https://example.com/explicit"]);await page.close();
   } finally {await browser.close();await f.close();}
 });

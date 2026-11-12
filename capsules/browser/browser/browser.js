@@ -188,6 +188,7 @@ let pendingInternetNavigation = null;
 let internetContinuationUrl = null;
 let internetRequestPromise = null;
 let internetRequestedUrl = "";
+let internetWaitingForStop = false;
 
 function stopInternetPolling() {
   browserInternetPollingActive = false;
@@ -232,16 +233,19 @@ function renderInternetConsent(consent) {
     ? "Internet access is off for Browser." : waiting
     ? "Waiting for your answer in Inbox." : "Browser can't open websites yet";
   const hint = document.querySelector("#browser-internet-hint");
-  hint.hidden = off || waiting;
-  hint.textContent = "Type a website address to open it.";
+  hint.hidden = (off || waiting) && !internetWaitingForStop;
+  hint.textContent = internetWaitingForStop
+    ? "Browser is stopping internet access. Your request will open in Inbox when it stops."
+    : "Type a website address to open it.";
   const button = document.querySelector("#browser-internet-review");
   button.hidden = !off && !waiting;
   button.textContent = off ? "Open Inbox" : "Show Request";
   button.dataset.off = String(off);
 }
 
-function showInternetRequest() {
-  openInternetControl("inbox", { notification_id: "browser-internet:permission" });
+function showInternetRequest(requestId = "") {
+  openInternetControl("inbox", { notification_id: "browser-internet:permission",
+    ...(requestId ? {browser_request_id:requestId} : {}) });
 }
 
 async function requestInternetNavigation(value) {
@@ -251,17 +255,40 @@ async function requestInternetNavigation(value) {
   pendingInternetNavigation = null;
   if (internetRequestPromise) return internetRequestPromise;
   internetRequestPromise = (async () => {
-    const consent = await fetchJson("/api/apps/browser/internet", {method:"POST",body:{action:"request"}});
+    let consent;
+    while (browserInternetPollingActive && !homeWindowCloseInFlight && !homeWindowTerminalCloseConfirmed) {
+      try {
+        consent = await fetchJson("/api/apps/browser/internet", {method:"POST",body:{action:"request"}});
+        break;
+      } catch (error) {
+        if (isAuthoritySessionError(error)) throw error;
+        const stopping = await fetchJson("/api/apps/browser/internet");
+        if (stopping.status !== "revoked" || typeof stopping.stop_pending !== "boolean") throw error;
+        internetWaitingForStop = true;
+        renderInternetConsent(stopping);
+        // Runtime owns the stop barrier. Retry this one action after it clears.
+        do {
+          await new Promise(resolve => window.setTimeout(resolve, 250));
+          if (!browserInternetPollingActive || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) return;
+          consent = await fetchJson("/api/apps/browser/internet");
+        } while (consent.stop_pending);
+      }
+    }
     if (!browserInternetPollingActive || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) return;
+    internetWaitingForStop = false;
     renderInternetConsent(consent);
     pendingInternetNavigation = {
       url: internetRequestedUrl, requestId: consent.request_id || consent.request?.request_id,
       expiresAt: consent.request?.expires_at || 0,
     };
-    if (consent.status !== "granted") showInternetRequest();
+    if (consent.status !== "granted") showInternetRequest(pendingInternetNavigation.requestId);
   })();
   try { await internetRequestPromise; }
-  finally { internetRequestPromise = null; }
+  finally {
+    internetRequestPromise = null;
+    internetWaitingForStop = false;
+    if (browserInternetPollingActive && currentInternetConsent) renderInternetConsent(currentInternetConsent);
+  }
 }
 
 async function checkBrowserInternet(initialUrl, { initialCheck = true } = {}) {

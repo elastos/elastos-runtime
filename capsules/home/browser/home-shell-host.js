@@ -57,6 +57,9 @@ import {
   MAX_EXTERNAL_LINK_LENGTH,
 } from "./home-external-link.js?v=home-links-20261101a";
 
+// Home binds the permission return to the verified Browser frame that asked.
+let browserInternetRequester = null;
+
 const SUMMARY_REFRESH_DEBOUNCE_MS = 150;
 const SUMMARY_REFRESH_RETRY_MS = 700;
 const HOME_EVENTS_WAIT_MS = 25_000;
@@ -2148,8 +2151,12 @@ window.addEventListener("message", (event) => {
   }
   if (data.type === "home:focus-browser") {
     if (context.kind === "app-frame" && context.targetId === "inbox"
-      && hasExactMessageKeys(data, ["type", "homeToken"])) {
-      postToActiveShell({type:"home:gui-command", command:"focus-browser"});
+      && hasExactMessageKeys(data, ["type", "homeToken", "requestId"])
+      && typeof data.requestId === "string" && data.requestId.length > 0 && data.requestId.length <= 256) {
+      postToActiveShell({type:"home:gui-command", command:"focus-browser",
+        ...(browserInternetRequester?.requestId === data.requestId
+          ? {browserInstance:browserInternetRequester.browserInstance} : {})});
+      browserInternetRequester = null;
     }
     return;
   }
@@ -2176,8 +2183,16 @@ window.addEventListener("message", (event) => {
   if (context.targetId === "browser" && target === "inbox") {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
       || !data.query || typeof data.query !== "object" || Array.isArray(data.query)
-      || Object.keys(data.query).length !== 1
+      || !hasExactMessageKeys(data.query, data.query.browser_request_id === undefined
+        ? ["notification_id"] : ["notification_id", "browser_request_id"])
       || data.query.notification_id !== "browser-internet:permission") return;
+    if (data.query.browser_request_id !== undefined) {
+      if (typeof data.query.browser_request_id !== "string" || !data.query.browser_request_id
+        || data.query.browser_request_id.length > 256) return;
+      if (context.browserInstance && browserInternetRequester?.requestId !== data.query.browser_request_id) {
+        browserInternetRequester = {requestId:data.query.browser_request_id, browserInstance:context.browserInstance};
+      }
+    }
   }
   if (context.targetId === "chat-room" && ["people", "inbox"].includes(target)) {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
@@ -2214,7 +2229,9 @@ window.addEventListener("message", (event) => {
     });
     return;
   }
-  const query = data.query && typeof data.query === "object" ? data.query : {};
+  const query = context.targetId === "browser" && target === "inbox"
+    ? {notification_id: "browser-internet:permission"}
+    : data.query && typeof data.query === "object" ? data.query : {};
   if (target === "library" && query.mode && query.mode !== "browse") {
     Promise.resolve().then(() => openLibraryPicker(context, data)).catch((error) => {
       replyToShellRequest(event, data.requestId, null, error);

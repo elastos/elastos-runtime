@@ -521,7 +521,7 @@
         const stepUpToken = await requestPasskeyStepUp("browser.internet.grant", current.request);
         await inboxAction(expected, {step_up_token:stepUpToken});
         setStatus("Browser can open websites.");await loadInbox();notifyHome();
-        window.top.postMessage({type:"home:focus-browser",homeToken:state.homeToken},homeParentOrigin);
+        window.top.postMessage({type:"home:focus-browser",homeToken:state.homeToken,requestId:current.request.request_id},homeParentOrigin);
       } finally {setButtonsDisabled(false);}
     }
 
