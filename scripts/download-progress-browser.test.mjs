@@ -36,6 +36,15 @@ test("System, model and Library transfer states stay accessible in light and dar
   let assistantView = false;
   const downloadMessage = "Downloading the update. Home restarts when the update is ready.";
   const metadataMessage = "Checking update metadata. Home restarts when the update is ready.";
+  const changes = [
+    "# Home improvements",
+    "See download progress while Home prepares an update.",
+    "Keep release notes visible until the update is ready.",
+    "Reconnect to Home after the update restarts it.",
+    "Open System again to check an update in progress.",
+    "Retry an interrupted download from the update card.",
+    "Read update progress in light and dark themes.",
+  ];
   let theme = "light", completed = 25000000, total = 100000000, phase = "downloading", message = downloadMessage;
   const fixture = await startSystemFixtureServer({ title: "Download progress fixture", async onApiRequest({ request, response, url }) {
     const json = value => { jsonResponse(response, value); return true; };
@@ -56,7 +65,9 @@ test("System, model and Library transfer states stay accessible in light and dar
       runtime: { version: "2.0.1" },
       source: { configured: true, name: "Fixture publisher", channel: "stable", installed_version: "2.0.1",
         mode: "installed", update_policy: "manual", update_checks_allowed: true },
-      runtime_update: { configured: true, available: false, can_apply: false, current_version: "2.0.1",
+      runtime_update: { configured: true, available: phase === "ready", can_apply: phase === "ready", current_version: "2.0.1",
+        new_version: "2.0.2", source_name: "Fixture publisher", channel: "stable", publisher: "Fixture publisher",
+        publisher_did: "did:key:zFixture", head_cid: cid, release_cid: cid, changes,
         controller: { id: "fixture-update", current_version: "2.0.1", new_version: "2.0.2", phase,
           message, completed_bytes: completed, total_bytes: total } } });
     if (url.pathname === "/api/capsules/catalog") return json({ schema: "elastos.capsules.catalog/v1", model_catalog_state: "verified", capsules: [
@@ -103,10 +114,31 @@ test("System, model and Library transfer states stay accessible in light and dar
   };
   try {
     for (theme of ["light", "dark"]) {
-      completed = 25000000; total = 100000000; phase = "downloading"; message = downloadMessage;
+      completed = 25000000; total = 100000000; phase = "ready"; message = "";
       await page.goto(`${fixture.baseUrl}/fixture?settings=about`);
       const system = page.frameLocator("#system-frame");
+      const card = system.locator("#runtime-update");
       const progress = system.locator("#runtime-update-progress");
+      await card.getByText("Update to 2.0.2", { exact: true }).waitFor();
+      await card.getByRole("button", { name: "Update and restart Home" }).waitFor();
+      await system.locator("[data-field=runtime-status]").getByText("2.0.1", { exact: true }).waitFor();
+      assert.equal(await progress.isVisible(), false, "an offer has no active download bar");
+      assert.equal(await card.locator("[data-field=update-changes] li").count(), 6);
+      assert.equal(await card.getByRole("heading", { name: "Home improvements", exact: true }).count(), 1);
+      assert.equal(await card.locator("[data-field=update-changes] li").allTextContents().then(items => items.join("\n")), changes.slice(1).join("\n"));
+      assert.equal(await card.locator("dt").allTextContents().then(items => items.join(",")), "Publisher");
+      const assertOrder = async () => assert.equal(await card.evaluate(node => {
+        const selectors = ["#runtime-update-status", "#runtime-update-progress", "[data-field=update-notes]", "#runtime-update-apply"];
+        return selectors.every((selector, index) => index === 0 || Boolean(node.querySelector(selectors[index - 1])
+          .compareDocumentPosition(node.querySelector(selector)) & Node.DOCUMENT_POSITION_FOLLOWING));
+      }), true, "status, progress, notes, then action in reading order");
+      await assertOrder();
+      await screenshot(`system-update-offer-${theme}`);
+      phase = "downloading"; message = downloadMessage;
+      await card.getByText("Updating to 2.0.2", { exact: true }).waitFor({ timeout: 9000 });
+      await card.getByRole("heading", { name: "What's new", exact: true }).waitFor();
+      await card.getByText(changes.at(-1), { exact: true }).waitFor();
+      await assertOrder();
       await progress.getByText("25.0 MB of 100.0 MB · 25%", { exact: true }).waitFor();
       const colors = await progress.locator(".transfer-progress span").evaluate(transferContrast);
       assert.equal(colors.theme, theme);

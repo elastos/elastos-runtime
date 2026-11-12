@@ -3866,15 +3866,20 @@ function renderRuntimeUpdate(update) {
   }
   const choice = runtimeUpdatePending?.intent || runtimeUpdate;
   const inProgress = runtimeUpdatePending || ["staging", "downloading", "verifying", "restarting"].includes(phase);
-  setTextFields("update-current-version", readText(choice?.current_version) || readText(controller?.current_version));
-  setTextFields("update-new-version", readText(choice?.new_version) || readText(controller?.new_version));
+  const newVersion = runtimeUpdatePending ? readText(choice?.new_version)
+    : inProgress ? readText(controller?.new_version) || readText(choice?.new_version)
+      : readText(choice?.new_version);
+  setTextFields("update-heading", newVersion && (inProgress || runtimeUpdate?.available === true)
+    ? `${inProgress ? "Updating" : "Update"} to ${newVersion}` : "Home update");
   const publisher = readText(runtimeUpdatePending?.publisher || runtimeUpdate?.publisher);
   setTextFields("update-publisher", publisher);
   setHiddenFields("update-publisher-row", !publisher);
   const hideOffer = runtimeUpdate?.available !== true && !inProgress;
   setHiddenFields("update-offer", hideOffer);
   const changes = updateNoteItems(runtimeUpdatePending?.changes || runtimeUpdate?.changes);
-  setHiddenFields("update-changes", hideOffer || (inProgress && !changes.length && runtimeUpdate?.available !== true));
+  const hideNotes = hideOffer || (inProgress && !changes.length && runtimeUpdate?.available !== true);
+  setHiddenFields("update-notes", hideNotes);
+  setHiddenFields("update-changes", hideNotes);
   setUpdateNotes(changes);
   const actionable = runtimeUpdateCanApply();
   runtimeUpdateButton.hidden = !actionable && !runtimeUpdatePending;

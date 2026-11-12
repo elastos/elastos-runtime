@@ -628,8 +628,7 @@ function updateFixture(overrides = {}) {
 test("Home update requires a verified complete offer and a controller that can apply", () => {
   const f = updateFixture();
   assert.equal(f.button.hidden, false);
-  assert.equal(f.fields.get("update-current-version"), "1.0.0");
-  assert.equal(f.fields.get("update-new-version"), "1.1.0");
+  assert.equal(f.fields.get("update-heading"), "Update to 1.1.0");
   assert.equal(f.fields.get("update-publisher"), "did:key:verified");
   assert.equal(f.fields.get("update-changes"), "A signed change.\nAnother signed change.");
   for (const refusal of [null, { configured: false }, { available: false }, { can_apply: false },
@@ -650,11 +649,29 @@ test("Home update requires a verified complete offer and a controller that can a
   f.context.renderRuntimeUpdate({ configured: true, available: false, can_apply: false,
     controller: { phase: "restarting", current_version: "1.0.0", new_version: "1.1.0" } });
   assert.equal(f.hiddenFields.get("update-offer"), false, "reopened System keeps durable progress versions");
-  assert.equal(f.fields.get("update-current-version"), "1.0.0");
-  assert.equal(f.fields.get("update-new-version"), "1.1.0");
+  assert.equal(f.fields.get("update-heading"), "Updating to 1.1.0");
   assert.equal(f.hiddenFields.get("update-publisher-row"), true, "progress does not invent a publisher");
   f.context.renderRuntimeUpdate(null);
   assert.equal(f.timers.size, 0, "source Home without an installed controller has no update polling");
+});
+
+test("Home update heading follows the real target through active and inactive states", () => {
+  const f = updateFixture();
+  for (const phase of ["staging", "downloading", "verifying", "restarting"]) {
+    f.context.renderRuntimeUpdate({ configured: true, available: false,
+      controller: { phase, new_version: "2.0.2" } });
+    assert.equal(f.fields.get("update-heading"), "Updating to 2.0.2", phase);
+  }
+  f.context.renderRuntimeUpdate({ ...f.offer, new_version: "2.1.0",
+    controller: { phase: "downloading", new_version: "2.0.2" } });
+  assert.equal(f.fields.get("update-heading"), "Updating to 2.0.2", "active controller owns the target");
+  f.context.renderRuntimeUpdate({ ...f.offer, new_version: "2.1.0-rc.3" });
+  assert.equal(f.fields.get("update-heading"), "Update to 2.1.0-rc.3");
+  for (const phase of ["ready", "updated", "restored", "failed"]) {
+    const inactive = updateFixture();
+    inactive.context.renderRuntimeUpdate({ configured: true, available: false, controller: { phase } });
+    assert.equal(inactive.fields.get("update-heading"), "Home update", phase);
+  }
 });
 
 test("update notes draw as text lists under headings without Markdown marks", () => {
@@ -741,7 +758,7 @@ test("Home update freezes one exact passkey intent and retries a lost response w
   assert.deepEqual(JSON.parse(f.posts[0].body), { ...intent, step_up_token: "approved-exact-choice" });
   assert.equal(intent.release_cid, "release-exact");
   assert.equal(intent.new_version, "1.1.0");
-  assert.equal(f.fields.get("update-new-version"), "1.1.0", "progress retains the approved choice");
+  assert.equal(f.fields.get("update-heading"), "Updating to 1.1.0", "progress retains the approved choice");
   await f.context.onRuntimeUpdateApply();
   assert.equal(f.approvals.length, 1, "queued choice has one action");
   f.context.renderRuntimeUpdate({ ...f.offer, controller: { phase: "updated", id: "another-choice", message: "Other result" } });
