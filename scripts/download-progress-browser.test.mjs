@@ -123,6 +123,7 @@ test("System, model and Library transfer states stay accessible in light and dar
       assert((await assistant.locator(".agent-model-download .transfer-progress span").evaluate(transferContrast)).ratio >= 4.5);
       await screenshot(`assistant-model-download-${theme}`);
       await page.setViewportSize({ width: 390, height: 844 });
+      await assistant.locator("html").evaluate(node => node.setAttribute("data-el-form-factor", "phone"));
       assert.equal(await assistant.locator(".agent-model-download").evaluate(node => {
         const box = node.getBoundingClientRect();
         return node.scrollWidth <= node.clientWidth && box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight;
