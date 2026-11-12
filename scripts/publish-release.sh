@@ -106,7 +106,6 @@ SUPPORT_BINARY_ASSETS=(
     object-provider
     chain-provider
     wallet-provider
-    object-provider
     content-block-graph-provider
     drm-provider
     rights-provider
