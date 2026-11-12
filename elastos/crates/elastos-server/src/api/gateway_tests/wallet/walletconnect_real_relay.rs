@@ -30,8 +30,9 @@ fn relay_auth() -> String {
 async fn walletconnect_real_project_opens_through_runtime_and_exit() {
     let file = std::env::var_os("ELASTOS_WALLETCONNECT_PROJECT_FILE")
         .expect("set ELASTOS_WALLETCONNECT_PROJECT_FILE");
-    let project = std::fs::read_to_string(file).expect("read operator project file");
-    let project = project.trim();
+    let bytes = gateway_walletconnect::read_bytes(std::path::Path::new(&file), 129)
+        .expect("read bounded operator project file").expect("operator project file exists");
+    let project = std::str::from_utf8(&bytes).expect("operator project file is UTF-8").trim();
     assert!(project.len() >= 8 && project.len() <= 128);
     assert!(project
         .bytes()
