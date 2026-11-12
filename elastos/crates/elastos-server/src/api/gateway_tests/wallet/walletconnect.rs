@@ -1,7 +1,7 @@
 use super::super::*;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{connect_async, tungstenite::{client::IntoClientRequest, Message}};
 
 const INTERNET: &str = "/api/apps/wallet-walletconnect/internet";
 const STORAGE: &str = "/api/apps/wallet-walletconnect/storage";
@@ -287,10 +287,12 @@ impl Fixture {
         relay: &str,
     ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
     {
-        let (mut socket, _) = connect_async(format!(
+        let mut request = format!(
             "ws://{}/api/apps/wallet-walletconnect/relay",
             self.addr
-        ))
+        ).into_client_request().unwrap();
+        request.headers_mut().insert("origin", format!("http://{}", self.addr).parse().unwrap());
+        let (mut socket, _) = connect_async(request)
         .await
         .unwrap();
         socket
@@ -316,6 +318,25 @@ impl Fixture {
         );
         socket
     }
+}
+
+#[tokio::test]
+async fn walletconnect_websocket_upgrade_requires_same_home_origin_and_first_frame_admission() {
+    let f = Fixture::new().await;
+    for origin in [None, Some("null"), Some("https://other.example")] {
+        let mut request = format!("ws://{}/api/apps/wallet-walletconnect/relay", f.addr)
+            .into_client_request().unwrap();
+        if let Some(origin) = origin {
+            request.headers_mut().insert("origin", origin.parse().unwrap());
+        }
+        let result = connect_async(request).await;
+        assert!(matches!(result, Err(tokio_tungstenite::tungstenite::Error::Http(ref response)) if response.status() == StatusCode::FORBIDDEN));
+    }
+    // This matches the browser API: same-Home Origin, no custom auth header,
+    // and a refused first-frame ticket. Upgrading grants no Exit access.
+    let mut socket = f.connect_ticket("refused", RELAY).await;
+    assert!(matches!(socket.next().await, Some(Ok(Message::Close(_))) | None));
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -390,7 +411,10 @@ async fn walletconnect_storage_is_principal_scoped_and_survives_service_restart(
     assert_eq!(status, StatusCode::OK);
     let (status, _) = f.route(&f.inbox, STORAGE, None).await;
     assert_ne!(status, StatusCode::OK);
-    let other = passkey_authority_with_name(f.data.path(), Some("other-wc"));
+    let other = passkey_authority_with_name_role_credential(
+        f.data.path(), Some("other-wc"), crate::auth::RuntimePrincipalRole::Admin, "other-wc-credential",
+    );
+    assert_ne!(other.principal_id, runtime_wallet_authority_for_app_token(f.data.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &f.connector).home_launch_context().principal_id);
     let token = projection_launch_token_for_authority_context(
         f.data.path(),
         WALLET_WALLETCONNECT_CAPSULE_ID,
@@ -550,7 +574,9 @@ async fn walletconnect_refuses_malformed_writes_and_cross_principal_host_authori
     }
     let (_, stored) = f.route(&f.connector, STORAGE, None).await;
     assert_eq!(stored, json!({}));
-    let other = passkey_authority_with_name(f.data.path(), Some("different-host"));
+    let other = passkey_authority_with_name_role_credential(
+        f.data.path(), Some("different-host"), crate::auth::RuntimePrincipalRole::Admin, "different-host-credential",
+    );
     for path in [
         STORAGE,
         "/api/apps/wallet-walletconnect/relay-admission",

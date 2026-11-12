@@ -253,6 +253,13 @@ pub(super) async fn gateway_admission(
     let sign_in = sign_in_route(path, method) && same_gateway_origin(headers);
     let ticket =
         read && gateway_home_terminal::admitted_terminal_ticket(path, request.uri().query()).await;
+    // The browser WebSocket API cannot send a launch-token header. Trusted Home
+    // may upgrade this one transport; its first frame must redeem the short-lived
+    // admission issued through the separately authenticated Home route.
+    let walletconnect_transport = method == Method::GET
+        && path == "/api/apps/wallet-walletconnect/relay"
+        && origin.is_some_and(|origin| origin != "null")
+        && same_gateway_origin(headers);
     let runtime_session = runtime_operator_route(path, method)
         && headers.contains_key("authorization")
         && !headers.contains_key("origin")
@@ -272,7 +279,7 @@ pub(super) async fn gateway_admission(
     // or lost its session. Another app's token stays the generic refusal, and
     // so does every other route.
     let mut browser_launch_renewal = None;
-    if !public && !sign_in && !ticket && !runtime_session {
+    if !public && !sign_in && !ticket && !walletconnect_transport && !runtime_session {
         match gateway_home_token::require_gateway_launch(&state.data_dir, headers) {
             Ok(()) => {}
             Err(_) if browser_api_path(path) => {
