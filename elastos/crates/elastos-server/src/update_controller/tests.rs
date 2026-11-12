@@ -5027,6 +5027,7 @@ async fn stage_before_stop_preserves_home_on_fetch_or_verify_failure_and_restart
         let components_cid = raw_cid(&components);
         let app_cid = raw_cid(&app);
         let original_sources = fs::read(fixture.data.join("sources.json")).unwrap();
+        let expected_total = (binary.len() + components.len() + support.len() + app.len()) as u64;
         let items = std::collections::BTreeMap::from([
             (request.head_cid.clone(), head),
             (request.release_cid.clone(), release),
@@ -5088,6 +5089,7 @@ async fn stage_before_stop_preserves_home_on_fetch_or_verify_failure_and_restart
                     let status = status(&data)?.unwrap();
                     assert_eq!(status.phase, "downloading");
                     assert_eq!(status.message, crate::update::DOWNLOAD_MESSAGE);
+                    assert_eq!(status.total_bytes, Some(expected_total), "one signed-size plan for binary, components, support and cached app: {outcome}");
                 }
                 if outcome.ends_with("fetch") && failure_target {
                     return Err(crate::update::UpdateSourceUnavailable.into());

@@ -738,12 +738,13 @@ function syncModelTrigger() {
     tier.hidden = true;
   }
   announceTransferProgress(btn.parentElement, downloading?.download?.completed ?? null, downloading?.download?.total, "Model download");
-  let progress = btn.parentElement.querySelector(".agent-model-download");
+  const toolbar = btn.closest(".agent-composer-toolbar");
+  let progress = toolbar?.parentElement.querySelector(".agent-model-download");
   if (downloading?.download) {
     if (!progress) {
       progress = document.createElement("div");
       progress.className = "agent-model-download";
-      btn.after(progress);
+      toolbar.after(progress);
     }
     progress.replaceChildren(createTransferProgress(downloading.download.completed, downloading.download.total, "Model download progress"));
   } else progress?.remove();
