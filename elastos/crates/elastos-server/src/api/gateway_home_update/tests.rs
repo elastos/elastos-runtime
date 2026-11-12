@@ -749,8 +749,16 @@ async fn system_update_summary_stays_fast_while_check_is_pending_and_keeps_queue
     assert_eq!(summary["can_apply"], false);
     assert!(summary["new_version"].is_null());
     let public_status = summary["controller"].as_object().unwrap();
-    assert_eq!(public_status.len(), 5);
-    for field in ["id", "phase", "current_version", "new_version", "message"] {
+    assert_eq!(public_status.len(), 7);
+    for field in [
+        "id",
+        "phase",
+        "current_version",
+        "new_version",
+        "message",
+        "completed_bytes",
+        "total_bytes",
+    ] {
         assert!(public_status.contains_key(field), "{field}");
     }
     for field in [
@@ -761,6 +769,8 @@ async fn system_update_summary_stays_fast_while_check_is_pending_and_keeps_queue
     ] {
         assert!(!public_status.contains_key(field), "{field}");
     }
+    assert_eq!(public_status["completed_bytes"], 0);
+    assert!(public_status["total_bytes"].is_null());
     release.send(Some(cached_offer())).unwrap();
     let completed = tokio::time::timeout(std::time::Duration::from_millis(500), async {
         loop {

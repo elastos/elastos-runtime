@@ -3289,12 +3289,17 @@ mod tests {
 
     #[tokio::test]
     async fn wrong_signed_artifact_content_stops_before_install() {
+        use sha2::Digest as _;
+        let components =
+            br#"{"schema":"elastos.components/v1","external":{},"capsules":{},"profiles":{}}"#
+                .to_vec();
+        let components_cid = raw_cid(&components);
         let release = binding_envelope(
             serde_json::json!({
                 "schema": "elastos.release/v1", "version": "0.7.1", "channel": "stable",
                 "platforms": {(detect_release_platform()): {
                     "binary": {"cid": "binary-a", "sha256": "a".repeat(64)},
-                    "components": {"cid": "components-a", "sha256": "b".repeat(64)}
+                    "components": {"cid": components_cid, "sha256": hex::encode(sha2::Sha256::digest(&components)), "size": components.len()}
                 }}
             }),
             "elastos.release.v1",
@@ -3312,6 +3317,8 @@ mod tests {
         let fetch: FetchFn = Box::new(move |cid| {
             let bytes = if cid == requested_release_cid {
                 release.clone()
+            } else if cid == components_cid {
+                components.clone()
             } else if cid == "binary-a" {
                 b"wrong binary".to_vec()
             } else {
