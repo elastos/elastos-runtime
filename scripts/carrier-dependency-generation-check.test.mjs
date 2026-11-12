@@ -24,6 +24,7 @@ function compatibleGraph() {
     ["quick-xml", "0.41.0"],
     ["bincode", "1.3.3"],
     ["elastos-identity", "2.0.1"],
+    ["x25519-dalek", "2.0.1"],
   ];
   const packages = entries.map(([name, version]) => ({ name, version, id: `${name}@${version}` }));
   const edges = new Map([
@@ -32,7 +33,7 @@ function compatibleGraph() {
   ]);
   return {
     packages,
-    resolve: { nodes: packages.map(({ id }) => ({ id, deps: (edges.get(id) || []).map(pkg => ({ pkg })) })) },
+    resolve: { nodes: packages.map(({ id }) => ({ id, features: id === "x25519-dalek@2.0.1" ? ["static_secrets", "zeroize"] : [], deps: (edges.get(id) || []).map(pkg => ({ pkg })) })) },
   };
 }
 
@@ -122,3 +123,9 @@ for (const version of ["0.3.5", "0.4.0"]) {
     assert.throws(() => inspectMetadata(graph, "fixture"), /resolves distributed-topic-tracker as/);
   });
 }
+
+test("rejects HPKE private keys without zeroization", () => {
+  const graph = compatibleGraph();
+  graph.resolve.nodes.find(node => node.id === "x25519-dalek@2.0.1").features = ["static_secrets"];
+  assert.throws(() => inspectMetadata(graph, "fixture"), /X25519 2.x private keys must enable zeroize/);
+});

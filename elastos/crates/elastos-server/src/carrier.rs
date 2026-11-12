@@ -9856,6 +9856,14 @@ pub(crate) mod tests {
         }
     }
 
+    #[test]
+    fn test_carrier_dependency_removal_preserves_hpke_key_erasure() {
+        assert!(
+            std::mem::needs_drop::<x25519_dalek::StaticSecret>(),
+            "HPKE's X25519 private keys keep zeroize-on-drop without the topic tracker"
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_carrier_gossip_send_preserves_five_second_timeouts_and_errors() {
         for operation in ["broadcast", "join_peers"] {

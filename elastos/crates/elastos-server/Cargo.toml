@@ -90,6 +90,8 @@ base64 = "0.22"
 
 # Ed25519 signing (for provenance attestations)
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+# Preserve HPKE key erasure independently of Carrier's other dependency features.
+x25519-dalek = { version = "2.0.1", default-features = false, features = ["zeroize"] }
 # Directory helpers
 dirs = "5.0"
 

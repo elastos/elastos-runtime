@@ -151,6 +151,12 @@ export function inspectMetadata(metadata, graphName) {
     { name: "ed25519-dalek", version: "3.0.0-rc.0" },
   );
 
+  const hpkeKeyId = packageId(metadata, "x25519-dalek", "2.0.1");
+  const hpkeKeyFeatures = metadata.resolve.nodes.find(node => node.id === hpkeKeyId)?.features || [];
+  if (!hpkeKeyFeatures.includes("zeroize")) {
+    fail(`${graphName} X25519 2.x private keys must enable zeroize`);
+  }
+
   return Object.fromEntries(expected);
 }
 
