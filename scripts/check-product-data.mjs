@@ -229,7 +229,6 @@ export function parsePublishData(shellSource, rustSource) {
     shellDefault: shell("DEFAULT_CAPSULES"), shellRequired: shell("REQUIRED_SUPPORTED_CAPSULES"),
     rustHome: rust("HOME_PUBLISH_CAPSULES"),
   };
-  unique(shell("SUPPORT_BINARY_ASSETS"), "SUPPORT_BINARY_ASSETS: support binary assets");
   for (const [name, values] of Object.entries(lists)) {
     assert(values.length > 0 && values.every((value) => typeof value === "string" && /^[a-z0-9][a-z0-9-]*$/.test(value)), `${name}: invalid publish capsule data`);
     unique(values, `${name}: publish capsules`);

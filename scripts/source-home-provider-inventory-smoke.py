@@ -103,7 +103,7 @@ def shell_array_entries(text: str, name: str) -> list[str]:
 def assert_release_support_inventory() -> None:
     publish_text = PUBLISH_RELEASE.read_text(encoding="utf-8")
     support = shell_array_entries(publish_text, "SUPPORT_BINARY_ASSETS")
-    for provider in RUNTIME_ONLY_PROVIDERS:
+    for provider in sorted(set(RUNTIME_ONLY_PROVIDERS) | set(support)):
         if support.count(provider) != 1:
             raise AssertionError(
                 f"release support inventory must include {provider} exactly once"

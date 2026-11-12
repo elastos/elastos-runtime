@@ -54,10 +54,6 @@ test("publish parser reads declared values and ignores comments", () => {
   assert.throws(() => parsePublishData(shellPublish, rustPublish.replace('"people"', "true")), /invalid publish capsule data/);
 });
 
-test("publish parser refuses duplicate support binary assets", () => {
-  assert.throws(() => parsePublishData(shellPublish.replace("SUPPORT_BINARY_ASSETS=(", "SUPPORT_BINARY_ASSETS=(\n    object-provider"), rustPublish), /SUPPORT_BINARY_ASSETS:.*duplicate entries/);
-});
-
 for (const [name, shell, rust, message] of [
   ["shell default", shellPublish.replace(/(DEFAULT_CAPSULES=\([\s\S]*?)\n    home-gui\n/, "$1\n"), rustPublish, /shellDefault: published capsules/],
   ["shell required", shellPublish.replace(/(REQUIRED_SUPPORTED_CAPSULES=\([\s\S]*?)\n    wallet-provider\n/, "$1\n"), rustPublish, /shellRequired: missing Home capsule/],
