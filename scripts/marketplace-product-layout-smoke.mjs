@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,9 +9,7 @@ import { assertPhoneDrawer, DRAWER_SETTLE_MS, PHONE_VIEWPORT, setPhoneFormFactor
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const browserRoot = join(repoRoot, "capsules/marketplace/browser");
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 
 const normalToken = "marketplace-layout-token";
 const errorToken = "marketplace-error-token";
@@ -832,7 +830,7 @@ async function assertModelsPhone(page, frame) {
 
 async function run() {
   const { notFoundPaths, requestLog, server, state } = startServer();
-  const browser = await chromium.launch({ executablePath: brave, headless: true });
+  const browser = await chromium.launch({ ...productSmokeLaunchOptions(), headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const pageErrors = [];
   const consoleErrors = [];

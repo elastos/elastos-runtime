@@ -3,9 +3,8 @@ import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { assertPhoneDrawer, DRAWER_SETTLE_MS, PHONE_VIEWPORT, setPhoneFormFactor } from "./lib/phone-drawer-assert.mjs";
 
 const PHONE_SCREENSHOT = "/tmp/documents-phone-390x844.png";
@@ -13,11 +12,7 @@ const PHONE_DRAWER_SCREENSHOT = "/tmp/documents-phone-drawer-390x844.png";
 const PHONE_MORE_SCREENSHOT = "/tmp/documents-phone-more-390x844.png";
 const PHONE_TOUCH_TARGET_PX = 44;
 
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const playwrightModule = process.env.ELASTOS_PLAYWRIGHT_MODULE
-  ? await import(pathToFileURL(process.env.ELASTOS_PLAYWRIGHT_MODULE).href)
-  : createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url))("playwright");
-const { chromium } = playwrightModule.chromium ? playwrightModule : playwrightModule.default;
+const { chromium } = await importProductSmokePlaywright();
 
 const capsuleRoot = path.resolve("capsules/documents/browser");
 const homeClipboardClientPath = path.resolve("capsules/home/browser/home-clipboard-client.js");
@@ -562,7 +557,7 @@ async function run() {
   const { port } = server.address();
   let browser;
   try {
-    browser = await chromium.launch({ headless: true, executablePath: brave });
+    browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
     const consoleErrors = [];
     const pageErrors = [];
     const failedRequests = [];

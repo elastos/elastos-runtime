@@ -3595,7 +3595,8 @@ impl Provider for MockBrowserEngineProvider {
                     "protocol_version": "2.1",
                     "page_id": page_id,
                     "adapter": adapter,
-                    "engine": "selkies_gstreamer",
+                    "engine": "chromium_microvm",
+                    "isolation": {"schema":"elastos.browser.engine.isolation/v1","kind":"per_launch_vm_target"},
                     "url": request.get("url").cloned().unwrap_or_else(|| json!("")),
                     "stream_id": stream_id,
                     "runtime_cleanup": {
@@ -3604,7 +3605,7 @@ impl Provider for MockBrowserEngineProvider {
                         "generation": generation,
                         "stream_id": stream_id,
                         "adapter": adapter,
-                        "engine": "selkies_gstreamer"
+                        "engine": "chromium_microvm"
                     },
                     "network_mode": "runtime_net_only",
                     "direct_network": false,
@@ -3624,12 +3625,8 @@ impl Provider for MockBrowserEngineProvider {
                         "media_transport": "runtime_relay",
                         "audio": true,
                         "video": true,
-                        "ice_servers": [{
-                            "urls": ["turn:127.0.0.1:3478"],
-                            "username_present": true,
-                            "credential_present": true,
-                            "credential_length": 16
-                        }]
+                        "offerer": "engine",
+                        "ice_connection_policy": "engine_relay_only"
                     },
                     "view": {
                         "schema": "elastos.browser.view/v1",
@@ -3663,12 +3660,8 @@ impl Provider for MockBrowserEngineProvider {
                         "media_transport": "runtime_relay",
                         "audio": true,
                         "video": true,
-                        "ice_servers": [{
-                            "urls": ["turn:127.0.0.1:3478"],
-                            "username_present": true,
-                            "credential_present": true,
-                            "credential_length": 16
-                        }]
+                        "offerer": "engine",
+                        "ice_connection_policy": "engine_relay_only"
                     },
                     "actual_url": "https://glidefinance.io/",
                     "webrtc_connection_state": "connected",
@@ -3799,22 +3792,22 @@ impl Provider for MockBrowserEngineProvider {
                 "adapters": [
                     {
                         "id": "mock-browser-engine",
-                        "engine": "selkies_gstreamer",
+                        "engine": "chromium_microvm",
                         "default": true,
-                        "backing_substrate": "operator_rbi",
+                        "backing_substrate": "local_microvm",
                         "supported_display_modes": ["webrtc_remote_display"],
-                        "supported_guarantee_levels": ["operator_rbi"],
+                        "supported_guarantee_levels": ["mechanism_microvm"],
                         "network_mode": "runtime_net_only",
                         "direct_network": false,
                         "wallet_injection": false
                     },
                     {
                         "id": "mock-jetson-engine",
-                        "engine": "selkies_gstreamer",
+                        "engine": "chromium_microvm",
                         "default": false,
-                        "backing_substrate": "operator_rbi",
+                        "backing_substrate": "local_microvm",
                         "supported_display_modes": ["webrtc_remote_display"],
-                        "supported_guarantee_levels": ["operator_rbi"],
+                        "supported_guarantee_levels": ["mechanism_microvm"],
                         "network_mode": "runtime_net_only",
                         "direct_network": false,
                         "wallet_injection": false
@@ -3826,7 +3819,7 @@ impl Provider for MockBrowserEngineProvider {
                 "required_byte_transport": "adapter_ipc",
                 "display_session_schema": "elastos.browser.display-session/v1",
                 "supported_display_modes": ["webrtc_remote_display"],
-                "supported_guarantee_levels": ["operator_rbi"],
+                "supported_guarantee_levels": ["mechanism_microvm"],
                 "operations": ["status", "launch", "attach_stream", "page_status", "diagnostics", "input", "webrtc_signal", "close_page"]
             }
         }))
@@ -4234,7 +4227,7 @@ impl Provider for MockReconciliatingBrowserEngineProvider {
                                 "protocol_version": "2.1",
                                 "page_id": page_id,
                                 "adapter": "mock-browser-engine",
-                                "engine": "selkies_gstreamer",
+                                "engine": "chromium_microvm",
                                 "stream_id": stream_id,
                                 "runtime_cleanup": {
                                     "schema": "elastos.browser.engine-cleanup-binding/v2",
@@ -4242,7 +4235,7 @@ impl Provider for MockReconciliatingBrowserEngineProvider {
                                     "generation": generation,
                                     "stream_id": stream_id,
                                     "adapter": "mock-browser-engine",
-                                    "engine": "selkies_gstreamer",
+                                    "engine": "chromium_microvm",
                                     "control_socket_path": "/tmp/mock-browser-late-effect.sock"
                                 }
                             }
@@ -4481,11 +4474,11 @@ impl Provider for MockRejectingBrowserEngineProvider {
                     "adapter_count": 1,
                     "adapters": [{
                         "id": "mock-browser-engine",
-                        "engine": "selkies_gstreamer",
+                        "engine": "chromium_microvm",
                         "default": true,
-                        "backing_substrate": "operator_rbi",
+                        "backing_substrate": "local_microvm",
                         "supported_display_modes": ["webrtc_remote_display"],
-                        "supported_guarantee_levels": ["operator_rbi"],
+                        "supported_guarantee_levels": ["mechanism_microvm"],
                         "network_mode": "runtime_net_only",
                         "direct_network": false,
                         "wallet_injection": false
@@ -4496,7 +4489,7 @@ impl Provider for MockRejectingBrowserEngineProvider {
                     "required_byte_transport": "adapter_ipc",
                     "display_session_schema": "elastos.browser.display-session/v1",
                     "supported_display_modes": ["webrtc_remote_display"],
-                    "supported_guarantee_levels": ["operator_rbi"],
+                    "supported_guarantee_levels": ["mechanism_microvm"],
                     "operations": ["status", "launch"]
                 }
             })),

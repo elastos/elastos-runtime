@@ -60,6 +60,9 @@ export function runtimeOpenOutcome(error) {
 }
 
 export function friendlyOpenError(error) {
+  if (error?.payload?.code === "browser_internet_grant_required") {
+    return "Internet access is off for Browser. Open Inbox to change it.";
+  }
   const text = sanitizedErrorText(error);
   if (isAuthoritySessionError(error)) {
     return "Browser session expired. Reopening from Home...";
@@ -132,7 +135,7 @@ export function friendlyOpenError(error) {
   }
   if (outcome?.state === "terminal_pre_effect_failure") {
     if (error.status === 403) {
-      return "This page was blocked by your Exit Node settings.";
+      return "This page was blocked by your connection settings.";
     }
     if (/This Browser profile requires an approved transfer/i.test(text)) {
       return text;
@@ -158,7 +161,7 @@ export function friendlyOpenError(error) {
     return "Browser Engine failed to start cleanly. Runtime is finishing cleanup; no Browser page or VM remains acquired.";
   }
   if (error.status === 403) {
-    return "This page was blocked by your Exit Node settings.";
+    return "This page was blocked by your connection settings.";
   }
   if (error.status === 503) {
     return "Browser is temporarily unavailable. Refresh Browser or choose another Browser Engine.";

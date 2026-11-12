@@ -7,13 +7,14 @@ import {
   isAuthoritySessionError,
   runtimeOpenOutcome,
 } from "./browser-status.js";
+import { createRuntimeApi } from "./browser-runtime-api.js";
 
 test("destination policy denial preserves Browser authority and close ownership", () => {
   const error = openError("terminal_pre_effect_failure");
   error.status = 403;
   error.message = "private host blocked: localhost";
   assert.equal(isAuthoritySessionError(error), false);
-  assert.equal(friendlyOpenError(error), "This page was blocked by your Exit Node settings.");
+  assert.equal(friendlyOpenError(error), "This page was blocked by your connection settings.");
 
   error.payload.outcome.state = "cleanup_pending";
   error.payload.outcome.effects.vm_acquired = true;
@@ -29,6 +30,41 @@ test("authentication failures still request Home authority renewal", () => {
   ]) {
     assert.equal(isAuthoritySessionError(error), true);
     assert.match(friendlyOpenError(error), /session expired/);
+  }
+});
+
+test("exact front-door launch refusal bytes tell Browser to reopen from Home", async () => {
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const body of [
+      "home launch token expired",
+      "home launch token auth session is not active",
+    ]) {
+      globalThis.fetch = async () => new Response(body, { status: 403 });
+      const error = await createRuntimeApi({}).fetchJson("/api/apps/browser/open").then(
+        () => {
+          throw new Error("expected the launch token refusal");
+        },
+        (failure) => failure,
+      );
+      assert.equal(error.status, 403);
+      assert.equal(error.message, body);
+      assert.equal(isAuthoritySessionError(error), true);
+      assert.equal(friendlyOpenError(error), "Browser session expired. Reopening from Home...");
+    }
+    const generic = "Gateway request requires an admitted host and caller";
+    globalThis.fetch = async () => new Response(generic, { status: 403 });
+    const refused = await createRuntimeApi({}).fetchJson("/api/apps/browser/open").then(
+      () => {
+        throw new Error("expected the generic refusal");
+      },
+      (failure) => failure,
+    );
+    assert.equal(refused.message, generic);
+    assert.equal(isAuthoritySessionError(refused), false);
+    assert.equal(friendlyOpenError(refused), "This page was blocked by your connection settings.");
+  } finally {
+    globalThis.fetch = previousFetch;
   }
 });
 

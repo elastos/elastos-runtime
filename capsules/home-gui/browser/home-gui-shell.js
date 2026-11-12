@@ -1,3 +1,4 @@
+import { focusOpenBrowserWindow } from "./shell-windows.js?v=home-20261101d";
 import {
   bindHomeGuiInteractions,
   attachAuthorizedHomeGuiTarget,
@@ -210,6 +211,10 @@ function handleGuiCommand(message) {
     postToHome({ type: "home:frame-authority-renewed", requestId: message.requestId,
       oldHomeToken: message.homeToken, freshHomeToken, ok });
     return ok;
+  }
+  if (command === "focus-browser") {
+    if (!hasExactKeys(message, ["type", "command"])) return false;
+    return focusOpenBrowserWindow();
   }
   if (command === "open-target") {
     return openHomeGuiTarget(message.target, { query: message.query || {} });

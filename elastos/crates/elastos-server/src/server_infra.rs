@@ -980,35 +980,6 @@ async fn setup_server_infrastructure_impl(
         Err(_) => tracing::warn!("Skipping media-provider due to verification failure"),
     }
 
-    if let Some(path) = crate::find_installed_provider_binary("operator-drive-adapter") {
-        if let Err(e) = verify_provider_binary("operator-drive-adapter", &path) {
-            tracing::warn!(
-                "Skipping operator-drive-adapter due to verification failure: {}",
-                e
-            );
-        } else {
-            let adapter_config = provider::BridgeProviderConfig {
-                base_path: data_dir.to_string_lossy().to_string(),
-                read_only: false,
-                extra: operator_drive_adapter_config_from_env(&data_dir)
-                    .unwrap_or(serde_json::Value::Null),
-                ..Default::default()
-            };
-            match provider::ProviderBridge::spawn(&path, adapter_config).await {
-                Ok(bridge) => {
-                    let provider: Arc<dyn provider::Provider> =
-                        Arc::new(provider::CapsuleProvider::with_scheme(
-                            Arc::new(bridge),
-                            "operator-drive-adapter",
-                        ));
-                    provider_registry.register(provider).await;
-                    tracing::info!("operator-drive-adapter capsule from {}", path.display());
-                }
-                Err(e) => tracing::warn!("Failed to spawn operator-drive-adapter: {}", e),
-            }
-        }
-    }
-
     match binaries::resolve_verified_native_provider_binary("ipfs-provider") {
         Ok(Some(path)) => {
             match register_ipfs_provider_plane_with_role(&provider_registry, &path, ipfs_role).await
@@ -1641,6 +1612,7 @@ async fn setup_server_infrastructure_impl(
         .as_ref()
         .map(|service| service.gateway_context())
         .unwrap_or_default();
+    collaboration_context.capability_manager = Some(capability_manager.clone());
     collaboration_context.carrier_endpoint = carrier_service
         .as_ref()
         .and_then(|service| service.endpoint());
@@ -2103,14 +2075,6 @@ fn browser_engine_adapter_config_from_env(data_dir: &std::path::Path) -> Option<
         data_dir,
         "ELASTOS_BROWSER_ENGINE_ADAPTER_CONFIG",
         "browser-engine-adapter.json",
-    )
-}
-
-fn operator_drive_adapter_config_from_env(data_dir: &std::path::Path) -> Option<serde_json::Value> {
-    provider_config_from_env_or_file(
-        data_dir,
-        "ELASTOS_OPERATOR_DRIVE_ADAPTER_CONFIG",
-        "operator-drive-adapter.json",
     )
 }
 
@@ -3800,27 +3764,6 @@ mod tests {
         assert_eq!(
             config["adapters"][0]["display_modes"][0],
             "webrtc_remote_display"
-        );
-    }
-
-    #[test]
-    fn operator_drive_adapter_config_prefers_explicit_json() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _guard = EnvGuard::new(&["ELASTOS_OPERATOR_DRIVE_ADAPTER_CONFIG"]);
-        std::env::set_var(
-            "ELASTOS_OPERATOR_DRIVE_ADAPTER_CONFIG",
-            r#"{"operator_endpoint":{"url":"http://127.0.0.1:9797/operator-drive","authorization":"Bearer secret"}}"#,
-        );
-
-        let data_dir = crate::sources::default_data_dir();
-        let config = operator_drive_adapter_config_from_env(&data_dir).unwrap();
-        assert_eq!(
-            config["operator_endpoint"]["url"],
-            "http://127.0.0.1:9797/operator-drive"
-        );
-        assert_eq!(
-            config["operator_endpoint"]["authorization"],
-            "Bearer secret"
         );
     }
 

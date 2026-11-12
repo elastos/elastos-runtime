@@ -120,6 +120,7 @@ enum BrowserOpenFailureBody {
 #[derive(Debug, Clone, Copy)]
 enum BrowserOpenFailureCode {
     RequestRejected,
+    InternetGrantRequired,
     RuntimeError,
     ProviderError,
     ProfileTransferRequired,
@@ -132,6 +133,7 @@ impl BrowserOpenFailureCode {
     fn as_str(self) -> &'static str {
         match self {
             Self::RequestRejected => "request_rejected",
+            Self::InternetGrantRequired => "browser_internet_grant_required",
             Self::RuntimeError => "runtime_error",
             Self::ProviderError => "provider_error",
             Self::ProfileTransferRequired => "profile_transfer_required",
@@ -467,7 +469,7 @@ pub(super) async fn browser_app_summary(
     }
     // This flag describes Runtime's request parser, never a guest capability.
     engine_adapter["display_attach_supported"] = serde_json::json!(true);
-    let net = browser_net_summary(state.provider_registry.as_ref(), &context.principal_id).await;
+    let net = browser_net_summary(&state, &context).await;
     let wallet_accounts = system_wallet_accounts_summary(&state, &authority).await;
     let wallet_status = if wallet_accounts.linked_count > 0 {
         "configured"
@@ -621,6 +623,11 @@ pub(super) async fn browser_app_open(
             Ok(authority) => authority,
             Err(err) => return gateway_provider_error_response("browser", err),
         };
+    if let Err(error) =
+        gateway_browser_internet::effect_for_authority(&state, &authority, true).await
+    {
+        return gateway_browser_internet::refusal(error);
+    }
     let context = authority.home_launch_context();
     let home_token = home_launch_token_header(&headers);
     let request_origin = match browser_request_origin(&headers) {
@@ -796,6 +803,10 @@ pub(in crate::api::gateway) async fn execute_browser_open(
     request_origin: Option<String>,
     platform: &str,
 ) -> Result<serde_json::Value, BrowserOpenFailure> {
+    let internet = gateway_browser_internet::effect_for_authority(state, &authority, true).await
+        .map_err(|error| BrowserOpenFailure::message(StatusCode::FORBIDDEN,
+            BrowserOpenFailureCode::InternetGrantRequired,
+            "Browser needs permission to use this computer's internet connection. Review the request in Inbox.", error))?;
     let BrowserOpenRequest {
         url: requested_url,
         reason,
@@ -816,7 +827,7 @@ pub(in crate::api::gateway) async fn execute_browser_open(
     };
     if let Err(err) = validate_browser_launch_contract(display_mode, guarantee_level) {
         return Err(BrowserOpenFailure::request(
-            "Choose a supported display_mode and guarantee_level; operator_rbi requires webrtc_remote_display.",
+            "Browser requires a VM Engine and a WebRTC display.",
             err,
         ));
     }
@@ -1017,29 +1028,36 @@ pub(in crate::api::gateway) async fn execute_browser_open(
         "stream_nonce": stream_nonce,
         "remote_exit_id": remote_exit_id,
     });
-    let stream_session =
-        match browser_reserve_stream_session(registry.as_ref(), &stream_request).await {
-            Ok(receipt) => receipt,
-            Err((provider, err)) => {
-                release_browser_launch(&launch_reservation).await;
-                let mut failure = BrowserOpenFailure::provider(provider, err);
-                if failure.public.status == StatusCode::FORBIDDEN {
-                    failure.public.body = BrowserOpenFailureBody::ExitPolicy {
-                        host: url::Url::parse(&url)
-                            .expect("validated Browser URL")
-                            .host_str()
-                            .expect("validated Browser host")
-                            .to_owned(),
-                    };
-                }
-                return Err(failure);
+    let stream_session = match internet
+        .fence
+        .scope(browser_reserve_stream_session(
+            registry.as_ref(),
+            &stream_request,
+        ))
+        .await
+    {
+        Ok(receipt) => receipt,
+        Err((provider, err)) => {
+            release_browser_launch(&launch_reservation).await;
+            let mut failure = BrowserOpenFailure::provider(provider, err);
+            if failure.public.status == StatusCode::FORBIDDEN {
+                failure.public.body = BrowserOpenFailureBody::ExitPolicy {
+                    host: url::Url::parse(&url)
+                        .expect("validated Browser URL")
+                        .host_str()
+                        .expect("validated Browser host")
+                        .to_owned(),
+                };
             }
-        };
+            return Err(failure);
+        }
+    };
     let stream_cleanup = browser_stream_cleanup(&stream_session);
     let stream_session = match browser_attach_runtime_stream_path(
         &state.data_dir,
         stream_session,
         state.carrier_endpoint.as_ref(),
+        internet.clone(),
     )
     .await
     {
@@ -1077,9 +1095,9 @@ pub(in crate::api::gateway) async fn execute_browser_open(
     };
     let mut remote_viewer = None;
     let prepared_transport = if let Some(choice) = &remote_choice {
-        gateway_browser_remote::prepare_consumer(state, choice, &launch_reservation, &context.principal_id,
+        internet.fence.scope(gateway_browser_remote::prepare_consumer(state, choice, &launch_reservation, &context.principal_id,
             &profile, &stream_session, &serde_json::json!({"url":url,"viewport":viewport,"display_mode":display_mode,"guarantee_level":guarantee_level,
-                "owner_launch_id":authority.verified_context().launch_id(),"browser_instance":browser_instance})).await
+                "owner_launch_id":authority.verified_context().launch_id(),"browser_instance":browser_instance}))).await
             .map(|(transport, viewer)| {remote_viewer = Some(viewer); Some(transport)})
     } else {
         prepare_browser_vz_transport_launch(
@@ -1221,7 +1239,11 @@ pub(in crate::api::gateway) async fn execute_browser_open(
             );
         }
     }
-    let engine_response = match browser_provider_resource_result(state, engine_call).await {
+    let engine_response = match internet
+        .fence
+        .scope(browser_provider_resource_result(state, engine_call))
+        .await
+    {
         Ok(value) => value,
         Err(failure) => {
             let message = format!("{:#}", failure.diagnostic);

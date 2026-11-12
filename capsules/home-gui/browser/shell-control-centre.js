@@ -515,10 +515,9 @@ function syncQuickOpen(summary) {
       quickInboxDetail.textContent = "Unavailable";
     } else {
       const notifications = summary?.notifications || {};
-      const entries = Array.isArray(notifications.entries) ? notifications.entries : [];
       const semanticCount =
         Number(notifications.attention_count || 0) || Number(notifications.unread_count || 0);
-      const badgeCount = Math.max(0, semanticCount || entries.length);
+      const badgeCount = Math.max(0, semanticCount);
       quickInboxDetail.textContent =
         badgeCount > 0 ? `${formatBadgeCount(badgeCount)} pending` : "Open";
     }

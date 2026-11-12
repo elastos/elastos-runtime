@@ -75,6 +75,8 @@ import {
   regenerateLastAgentTurn,
   updateJumpToLatestVisibility,
   ensureJumpToLatest,
+  followTranscriptToEnd,
+  jumpTranscriptToEnd,
   setStreamStatus,
   openCodeArtifact,
   refreshEmptyModelHint,
@@ -398,8 +400,6 @@ function toggleSidebarCollapsed() {
   setSidebarCollapsed(!collapsed);
 }
 
-/* A reader this close to the transcript's end counts as at the end. */
-const READER_AT_END_PX = 8;
 let lastComposerColumnKey = "";
 let lastComposerClearance = -1;
 /* During a turn the column stays put while the stream grows. */
@@ -449,12 +449,6 @@ function syncComposerGeometry({ clearanceOnly = false } = {}) {
   if (columnKey === lastComposerColumnKey && clearance === lastComposerClearance) {
     return;
   }
-  /* Measured before the writes: a reader at the end stays at the end, so the
-     newest message and the turn's status line stay above the composer as it
-     grows. */
-  const scroller = streamScrollEl();
-  const atEnd = Boolean(scroller) &&
-    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= READER_AT_END_PX;
   composerGeometrySyncing = true;
   const root = document.documentElement;
   if (clearance !== lastComposerClearance) {
@@ -466,9 +460,7 @@ function syncComposerGeometry({ clearanceOnly = false } = {}) {
     root.style.setProperty("--agent-column-left", `${left}px`);
     lastComposerColumnKey = columnKey;
   }
-  if (atEnd) {
-    scroller.scrollTop = scroller.scrollHeight;
-  }
+  scrollStreamToEnd();
   requestAnimationFrame(() => {
     composerGeometrySyncing = false;
   });
@@ -574,21 +566,9 @@ function clearEmptyState() {
   document.querySelector(".agent-harness-empty")?.remove();
 }
 
-/** Pin the transcript to the end after layout settles (markdown/code can grow). */
+/** Appends preserve the reader's follow choice. */
 function scrollStreamToEnd() {
-  const scroller = streamScrollEl();
-  if (!scroller) {
-    return;
-  }
-  scroller.scrollTop = scroller.scrollHeight;
-  /* One follow-up frame is enough for layout settle. The old double-rAF
-     pin-every-call pattern stacked dozens of scroll writes per second during
-     live tokens and helped peg the Brave renderer at ~100% CPU. */
-  if (!turnBusy) {
-    requestAnimationFrame(() => {
-      scroller.scrollTop = scroller.scrollHeight;
-    });
-  }
+  followTranscriptToEnd(streamScrollEl());
 }
 
 function titleEl() {
@@ -1607,7 +1587,7 @@ export function bindAgentHarness() {
     }
     if (event.target.closest?.("[data-agent-jump-latest]")) {
       event.preventDefault();
-      scrollStreamToEnd();
+      jumpTranscriptToEnd(streamScrollEl());
       updateJumpToLatestVisibility();
       return;
     }

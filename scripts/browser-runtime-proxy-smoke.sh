@@ -8,8 +8,10 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_dir="$(mktemp -d)"
 local_exit_pid=""
+site_pid=""
 
 cleanup() {
+  if [[ -n "$site_pid" ]]; then kill "$site_pid" >/dev/null 2>&1 || true; fi
   if [[ -n "${daemon_pid:-}" ]]; then
     kill "$daemon_pid" >/dev/null 2>&1 || true
   fi
@@ -22,22 +24,30 @@ trap cleanup EXIT
 
 cd "$repo_root"
 
-smoke_url="${BROWSER_SMOKE_URL:-https://example.com/}"
-smoke_allowed_hosts="${BROWSER_SMOKE_ALLOWED_HOSTS:-}"
+# This helper exercises proxy mechanics against an isolated local site.
+# Runtime product admission is tested separately and refuses this non-VM engine.
+SITE_PORT_FILE="$tmp_dir/site-port" node - <<'NODE' &
+const http = require("node:http");
+const fs = require("node:fs");
+const server = http.createServer((_req,res) => {
+  res.writeHead(200,{"content-type":"text/html","cache-control":"no-store"});
+  res.end("<!doctype html><title>Browser proxy fixture</title><h1>Local Browser fixture</h1>");
+});
+server.listen(0,"127.0.0.1",() => fs.writeFileSync(process.env.SITE_PORT_FILE,String(server.address().port)));
+NODE
+site_pid="$!"
+for _ in {1..100}; do [[ -s "$tmp_dir/site-port" ]] && break; sleep 0.05; done
+site_port="$(cat "$tmp_dir/site-port")"
+smoke_url="${BROWSER_SMOKE_URL:-http://127.0.0.1:$site_port/}"
+smoke_expected_url="$smoke_url"
+smoke_allowed_hosts="127.0.0.1"
 smoke_principal_id="${BROWSER_SMOKE_PRINCIPAL_ID:-person:local:browser-runtime-proxy-smoke}"
-smoke_host="$(SMOKE_URL="$smoke_url" node - <<'NODE'
-const value = process.env.SMOKE_URL;
-const parsed = new URL(value);
-console.log(parsed.hostname);
+SMOKE_URL="$smoke_url" node - <<'NODE'
+const u = new URL(process.env.SMOKE_URL);
+if (u.hostname !== "127.0.0.1" || u.protocol !== "http:") throw new Error("Playwright smoke requires a local HTTP fixture");
 NODE
-)"
-if [[ -z "$smoke_allowed_hosts" ]]; then
-  smoke_allowed_hosts="$smoke_host"
-fi
-smoke_expected_url="$(SMOKE_URL="$smoke_url" node - <<'NODE'
-console.log(new URL(process.env.SMOKE_URL).toString());
-NODE
-)"
+site_port="$(SMOKE_URL="$smoke_url" node -e 'console.log(new URL(process.env.SMOKE_URL).port)')"
+export BROWSER_SMOKE_URL="$smoke_url"
 
 cargo build --quiet --manifest-path elastos/tools/browser-local-exit/Cargo.toml
 
@@ -52,19 +62,11 @@ const config = {
   relay_ipc_path: "$local_exit_socket",
   allowed_hosts: allowedHosts,
   allowed_schemes: ["tcp"],
-  allowed_ports: [80, 443],
+  allowed_ports: [$site_port],
   address_family: process.env.BROWSER_SMOKE_ADDRESS_FAMILY || "prefer_ipv4",
   replace_existing_socket: true,
-  allow_private_targets: false
+  allow_private_targets: true
 };
-if (process.env.BROWSER_SMOKE_UPSTREAM_HTTP_PROXY) {
-  config.upstream_http_proxy = {
-    url: process.env.BROWSER_SMOKE_UPSTREAM_HTTP_PROXY,
-  };
-  if (process.env.BROWSER_SMOKE_UPSTREAM_PROXY_AUTHORIZATION) {
-    config.upstream_http_proxy.authorization_header = process.env.BROWSER_SMOKE_UPSTREAM_PROXY_AUTHORIZATION;
-  }
-}
 console.log(JSON.stringify(config));
 NODE
 )" \
@@ -92,7 +94,7 @@ console.log(JSON.stringify({
   profile_root: "$profile_root",
   allowed_hosts: allowedHosts,
   allowed_protocols: ["http", "https"],
-  allowed_ports: [80, 443],
+  allowed_ports: [$site_port],
   viewport: { width: 1024, height: 720 },
   headless: process.env.BROWSER_SMOKE_HEADLESS === "0" ? false : true,
   launch_timeout_ms: 30000,
@@ -107,7 +109,7 @@ const request = {
   engine: "chromium",
   stream_id: "stream:browser-runtime-proxy-smoke",
   principal_id: process.env.BROWSER_SMOKE_PRINCIPAL_ID,
-  url: process.env.BROWSER_SMOKE_URL || "https://example.com/",
+  url: process.env.BROWSER_SMOKE_URL,
   display_mode: "webrtc_remote_display",
   guarantee_level: "diagnostic",
   network_mode: "runtime_net_only",

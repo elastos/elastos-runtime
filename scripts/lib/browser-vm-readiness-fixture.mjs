@@ -77,7 +77,7 @@ sys.argv = sys.argv[1:]
 exec(compile(sys.stdin.read(), "<whole-preflight>", "exec"), {"__name__": "__main__"})
 `);
   const interpreter = path.join(root, "fixture-python");
-  fs.writeFileSync(interpreter, '#!/bin/sh\nexec "$FIXTURE_REAL_PYTHON" "$FIXTURE_BOOTSTRAP" "$@"\n', { mode: 0o755 });
+  fs.writeFileSync(interpreter, '#!/bin/bash\nexec "$FIXTURE_REAL_PYTHON" "$1" "$2" "$3" "$4" "$FIXTURE_BOOTSTRAP" "${@:5}"\n', { mode: 0o755 });
   const legacyCalls = path.join(root, "legacy-calls");
   fs.writeFileSync(path.join(root, "scripts/browser-vm-linux-network.py"),
     `from pathlib import Path\nPath(${JSON.stringify(legacyCalls)}).write_text("retired helper executed")\n`);

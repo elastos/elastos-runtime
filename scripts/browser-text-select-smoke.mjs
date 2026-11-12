@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const browserRoot = join(repoRoot, "capsules/browser/browser");
@@ -58,7 +59,7 @@ bindBrowserInputSurface({
 window.ready = true;
 </script>`;
 
-const browser = await chromium.launch({ headless: true, ...(process.env.BRAVE_BIN ? { executablePath: process.env.BRAVE_BIN } : {}) });
+const browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
 try {
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
   const pageErrors = [];

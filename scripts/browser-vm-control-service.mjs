@@ -127,6 +127,7 @@ function readinessInputStamps(dataDir, launcher) {
     artifact("ELASTOS_BROWSER_VM_KERNEL", "bin/vmlinux"),
     artifact("ELASTOS_BROWSER_VM_INITRAMFS", "bin/initrd"),
     path.join(dataDir, "scripts/browser-vm-artifact-preflight.sh"),
+    path.join(dataDir, "scripts/browser-python.mjs"),
   ];
   if (linux) {
     files.push(artifact("ELASTOS_BROWSER_VM_CROSVM_BIN", "bin/crosvm"), "/dev/kvm");
@@ -145,12 +146,16 @@ function readinessInputStamps(dataDir, launcher) {
     return [file, info.dev, info.ino, info.mode, info.uid, info.gid, info.rdev].map(String);
   };
   try {
+    // The shell prefers the bundled Node when executable, then searches PATH.
+    let node = path.join(dataDir, "bin/node");
+    try { fs.accessSync(node, fs.constants.X_OK); } catch { node = "node"; }
     return JSON.stringify({
       host: [process.platform, process.arch, os.release()],
       env: READINESS_INPUT_ENV.map((key) => [key, process.env[key] ?? null]),
       files: files.map((file) => (file === "/dev/kvm" ? deviceStamp : stamp)(file)),
-      // The preflight runs these through the same PATH; debugfs is optional.
+      // Stamp the tools selected by the preflight; debugfs is optional.
       tools: [
+        ["node", node],
         ["python", process.env.ELASTOS_BROWSER_VM_PYTHON || "python3"],
         ["debugfs", process.env.ELASTOS_DEBUGFS_BIN || "debugfs"],
       ].map(([name, command]) => {

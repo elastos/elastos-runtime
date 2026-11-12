@@ -1,0 +1,458 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Assistant follow input regression</title>
+<link rel="stylesheet" href="/capsules/assistant/browser/agent-harness.css">
+<style>
+  html, body { margin: 0; }
+  #viewport { position: relative; width: 520px; height: 420px; }
+  #agent-harness-stream-column { position: relative; }
+  #agent-harness-stream-column > input { position: absolute; left: 24px; bottom: 200px; width: 80px; }
+  #agent-harness-stream-column > textarea { position: absolute; left: 120px; bottom: 200px; width: 100px; height: 40px; }
+  #agent-harness-stream-column > select { position: absolute; left: 240px; bottom: 200px; }
+  #agent-harness-stream-column > [contenteditable] { position: absolute; left: 320px; bottom: 200px; }
+  #selection { position: absolute; bottom: 24px; left: 24px; white-space: nowrap; user-select: text; -webkit-user-select: text; }
+</style>
+<div id="viewport" class="agent-harness-stream-viewport">
+  <div id="agent-harness-stream" class="agent-harness-stream">
+    <div id="agent-harness-stream-column" class="agent-harness-stream-column">
+      <span id="selection">Select this sentence at the end.</span><button id="message">Copy message</button><input><textarea></textarea><select><option>One</option></select><span contenteditable>Draft</span>
+    </div>
+  </div>
+</div>
+<button id="outside">Outside transcript</button>
+<script type="module">
+  const s = document.querySelector("#agent-harness-stream");
+  const c = document.querySelector("#agent-harness-stream-column");
+  const viewport = document.querySelector("#viewport");
+  const matrix = new URLSearchParams(location.search).has("matrix");
+  const fallback = new URLSearchParams(location.search).has("fallback");
+  const swallow = new URLSearchParams(location.search).has("swallow");
+  if (fallback) {
+    // Exercise the missing-scrollend path in each real engine.
+    for (let proto = s; proto; proto = Object.getPrototypeOf(proto)) delete proto.onscrollend;
+  }
+  if (fallback || swallow) s.addEventListener("scrollend", event => event.stopImmediatePropagation(), true);
+  const mod = await import("/capsules/assistant/browser/agent-stream.js");
+  const context = { followUpQueue: [], streamGeneration: 0, activeSessionId: "follow-fixture", sessions: [{
+    id: "follow-fixture", messages: [], lastTurn: { turnId: "follow-fixture", providerRunId: "follow-fixture",
+      state: "streaming", startedAt: Date.now() },
+  }] };
+  mod.bindAgentStream(context, { streamScrollEl: () => s, streamEl: () => c, streamViewportEl: () => viewport,
+    clearEmptyState() {}, scrollStreamToEnd() {} });
+  Object.assign(s.style, { height: "400px", maxHeight: "400px", width: "480px", padding: "0px",
+    flex: "none", overflowAnchor: "none", webkitMaskImage: "none", maskImage: "none" });
+  s.classList.add("is-live-streaming");
+  mod.ensureJumpToLatest();
+  const result = { userAgent: navigator.userAgent, matrix, phase: "done", fallback, swallow, nativeScrollend: "onscrollend" in s, cases: {}, failures: [] };
+  window.addEventListener("error", event => result.failures.push(event.message));
+  window.addEventListener("unhandledrejection", event => result.failures.push(String(event.reason)));
+  const frames = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const settle = async () => { await frames(); await new Promise(resolve => setTimeout(resolve, 180)); };
+  const snap = () => ({ top: s.scrollTop, fromEnd: s.scrollHeight - s.clientHeight - s.scrollTop,
+    follow: s.classList.contains("is-follow-bottom"), jump: !viewport.querySelector("[data-agent-jump-latest]").hidden });
+  const expect = (ok, label) => {
+    result.checks ||= {};
+    result.checks[label] = Boolean(ok);
+    if (!ok) result.failures.push(label);
+  };
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  let sequence = 0;
+  let delivered = 0;
+  let chunk = "reply ";
+  let completed = false;
+  if (matrix) {
+    // Exercise each revision's real live-turn path. Only the model service is a fixture.
+    const fetchAsset = window.fetch.bind(window);
+    window.fetch = async (url, init) => {
+      const path = new URL(url, location.href).pathname;
+      if (path === "/api/provider/model/runs_get") return Response.json({ run_id: "follow-fixture" });
+      if (path === "/api/provider/model/runs_events") {
+        while (delivered === sequence) await delay(10);
+        delivered = sequence;
+        return Response.json({ events: [{ sequence, kind: completed ? "completed" : "text_delta", data: completed ? {} : { text: chunk } }],
+          next_cursor: sequence, has_more: false });
+      }
+      return fetchAsset(url, init);
+    };
+    mod.startTurnForPrompt("");
+  }
+  const flush = async () => {
+    if (!matrix) { mod.followTranscriptToEnd(s); return; }
+    sequence++;
+    const deadline = performance.now() + 3000;
+    while (mod.getLiveTurnCanonical().appliedSeq < sequence) {
+      if (performance.now() > deadline) throw new Error("live turn did not flush");
+      await delay(10);
+    }
+    await frames();
+  };
+  const jump = () => {
+    if (mod.jumpTranscriptToEnd) mod.jumpTranscriptToEnd(s);
+    else viewport.querySelector("[data-agent-jump-latest]").click();
+  };
+  let sampling = true;
+  let jumpWhileFollowing = 0;
+  let watchFlash = false;
+  const flashFrames = [];
+  const sample = () => {
+    if (!sampling) return;
+    const state = snap();
+    if (state.follow && state.jump) jumpWhileFollowing++;
+    if (watchFlash && state.jump) flashFrames.push(state);
+    requestAnimationFrame(sample);
+  };
+  requestAnimationFrame(sample);
+  const wheel = deltaY => s.dispatchEvent(new WheelEvent("wheel", { deltaY, bubbles: true }));
+  const key = (target, key, shiftKey = false) => {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey, bubbles: true }));
+    target.dispatchEvent(new KeyboardEvent("keyup", { key, shiftKey, bubbles: true }));
+  };
+  const pointer = type => {
+    const b = s.getBoundingClientRect();
+    s.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: b.right - 3, clientY: b.bottom - 14 }));
+  };
+  const reset = async () => {
+    getSelection().removeAllRanges();
+    document.activeElement.blur();
+    s.style.height = "400px";
+    c.style.height = "2600px";
+    jump(); await frames();
+  };
+  const grow = async () => { c.style.height = `${c.offsetHeight + 100}px`; await flush(); await settle(); return snap(); };
+  const heldGrowth = async label => {
+    await settle();
+    const held = snap();
+    const after = await grow();
+    result.cases[label] = { held, after };
+    expect(held.fromEnd > 8 && !held.follow && held.jump && after.top === held.top, label);
+  };
+  const followingGrowth = async label => {
+    await settle();
+    const held = snap();
+    const after = await grow();
+    result.cases[label] = { held, after };
+    expect(held.follow && !held.jump && after.follow && !after.jump && after.fromEnd <= 8, label);
+  };
+  try {
+    const control = document.createElement("div");
+    control.style.cssText = "position:absolute;left:600px;top:0;height:400px;width:100px;overflow:auto;overflow-anchor:none";
+    const content = control.appendChild(document.createElement("div"));
+    content.style.height = "2600px";
+    document.body.append(control);
+    control.scrollTop = control.scrollHeight;
+    content.style.height = "2700px";
+    await settle();
+    result.controlGap = control.scrollHeight - control.clientHeight - control.scrollTop;
+    expect(result.controlGap === 100, "control without pin stays 100px short");
+    control.remove();
+    if (matrix) {
+      await flush();
+      // Geometry is controlled; rendering and follow listeners remain the real module.
+      c.querySelector(".agent-msg-agent").style.cssText = "position:absolute;top:0;left:0";
+      for (const node of c.querySelectorAll(".agent-progress")) node.style.cssText = "position:absolute;top:0;left:0";
+    }
+    for (const [label, resize] of [
+      ["content growth with a queued pin scroll", () => { c.style.height = "2700px"; }],
+      ["composer resize with a queued pin scroll", () => { s.style.height = "320px"; }],
+    ]) {
+      await reset();
+      const before = snap();
+      resize();
+      // Deliver a queued pin's scroll notification before ResizeObserver can pin.
+      s.dispatchEvent(new Event("scroll"));
+      await settle();
+      const after = snap();
+      result.cases[label] = { before, after };
+      expect(before.follow && after.follow && !after.jump && after.fromEnd <= 8, label);
+    }
+    await reset();
+    const native = async (phase, extra = {}, element = s) => {
+      const firstEvent = events.length;
+      const before = snap();
+      const box = element.getBoundingClientRect();
+      const request = { phase, ...extra, rect: { x: box.x, y: box.y, width: box.width, height: box.height } };
+      (result.nativeInputs ||= []).push(request);
+      const trusted = await new Promise(resolve => {
+        window.__continue = resolve;
+        window.__input = request;
+        window.webkit?.messageHandlers.probe.postMessage(JSON.stringify(request));
+      });
+      expect(trusted, `native ${phase} driver available`);
+      window.__input = null;
+      // WKWebView dispatches native events after the script-message handler returns.
+      // Allow the key animation and its 150 ms quiet period to finish.
+      await delay(extra.waitMs ?? 650);
+      const received = events.slice(firstEvent);
+      if (phase === "key") {
+        const keyName = extra.key === "Shift+Space" ? " " : extra.key;
+        expect(received.some(e => e.type === "keydown" && e.trusted && e.key === keyName
+          && e.shift === (extra.key === "Shift+Space") && !e.ctrl && !e.meta && !e.alt),
+          `trusted ${extra.key} with requested modifiers received`);
+      }
+      (result.inputEvidence ||= []).push({ phase, extra, before, after: snap(), events: received });
+    };
+    const events = [];
+    for (const name of ["keydown", "keyup", "pointerdown", "pointerup", "wheel", "scroll", "scrollend"]) {
+      document.addEventListener(name, event => events.push({ type: name, key: event.key,
+        time: performance.now(), shift: event.shiftKey, ctrl: event.ctrlKey, meta: event.metaKey, alt: event.altKey, deltaY: event.deltaY, trusted: event.isTrusted, target: event.target.id, x: event.clientX, y: event.clientY, top: s.scrollTop, follow: snap().follow }), true);
+    }
+    const focusMessage = () => document.querySelector("#message").focus({ preventScroll: true });
+    await native("drag-away");
+    await heldGrowth("native scrollbar away then growth");
+    await native("drag-back");
+    await followingGrowth("native scrollbar return then growth");
+
+    for (const [name, attempt] of [["PageUp", 1], ["PageUp", 2], ["PageUp", 3], ["Home", 1]]) {
+      await reset(); focusMessage();
+      events.length = 0;
+      await native("key", { key: name });
+      const label = `native ${name}${attempt > 1 ? ` repeat ${attempt}` : ""}`;
+      await heldGrowth(`${label} on message button then growth`);
+      result.cases[`${label} events`] = events.slice();
+      expect(events.some(e => e.key === name && e.trusted), `trusted ${name} received`);
+    }
+    await reset(); wheel(-500); s.scrollBy(0, -500); await settle(); focusMessage();
+    events.length = 0;
+    await native("key", { key: "End" });
+    await followingGrowth("native End then growth");
+    result.cases["native End events"] = events.slice();
+
+    await reset();
+    events.length = 0;
+    await native("select", {}, document.querySelector("#selection"));
+    result.cases["native selection"] = { text: getSelection().toString(), events: events.slice() };
+    expect(getSelection().toString().length > 0, "native text selection received");
+    await followingGrowth("native selection at end then growth");
+    getSelection().removeAllRanges();
+
+    await reset(); focusMessage();
+    // Cancel only the default movement, after the module has seen the real key.
+    // System WebKit also has this no-movement case on a focused message button.
+    const preventArrow = event => { if (event.key === "ArrowUp") event.preventDefault(); };
+    document.addEventListener("keydown", preventArrow);
+    events.length = 0;
+    const beforeArrow = s.scrollTop;
+    await native("key", { key: "ArrowUp" });
+    document.removeEventListener("keydown", preventArrow);
+    expect(s.scrollTop === beforeArrow, "ArrowUp default did not scroll");
+    expect(events.some(e => e.key === "ArrowUp" && e.trusted), "trusted ArrowUp received");
+    await followingGrowth("native ArrowUp without scroll then growth");
+    result.cases["native ArrowUp events"] = events.slice();
+
+    await reset(); document.querySelector("#outside").focus({ preventScroll: true });
+    events.length = 0;
+    await native("key", { key: "ArrowUp" });
+    expect(events.every(e => e.follow), "outside key keeps follow throughout press");
+    await followingGrowth("native ArrowUp outside transcript then growth");
+
+    await reset(); wheel(-450); s.scrollBy(0, -450); await settle();
+    pointer("pointerdown"); s.scrollTop = s.scrollHeight;
+    await settle();
+    expect(!snap().follow, "held pointer keeps gesture open at end");
+    pointer("pointerup");
+    await followingGrowth("scroll ends before pointerup then growth");
+
+    // A late scroll after a quiet gap must leave follow again. Native wheels
+    // can coalesce, so control the two positions and keep actual scroll events.
+    await reset(); key(document.querySelector("#message"), "PageUp");
+    s.scrollBy(0, -1); s.dispatchEvent(new Event("scrollend"));
+    await new Promise(resolve => setTimeout(resolve, 220));
+    const quietGap = snap();
+    result.cases["quiet gap within 8px"] = quietGap;
+    s.scrollBy(0, -80);
+    await heldGrowth("1px then 220ms quiet then 80px and growth");
+
+    await reset();
+    events.length = 0;
+    const holdTop = s.scrollTop;
+    await native("hold", { waitMs: 250 });
+    const duringHold = snap();
+    c.style.height = "2750px";
+    await frames();
+    const duringHoldGrowth = snap();
+    await native("release", { waitMs: 450 });
+    result.cases["stationary scrollbar hold with 150px growth"] = { duringHold, duringHoldGrowth, after: snap(), events: events.slice() };
+    expect(duringHold.top === holdTop && duringHoldGrowth.top === holdTop,
+      "stationary hold has no scroll movement before release");
+    expect(events.some(e => e.type === "pointerdown" && e.trusted) && events.some(e => e.type === "pointerup" && e.trusted),
+      "trusted stationary scrollbar press received");
+    expect(snap().fromEnd === 0 && snap().follow && !snap().jump,
+      "stationary scrollbar hold with 150px growth");
+
+    await reset();
+    pointer("pointerdown"); pointer("pointerup");
+    // WebKit can deliver the drag's scroll after release, as measured by review.
+    await new Promise(requestAnimationFrame);
+    s.scrollBy(0, -450);
+    await heldGrowth("scrollbar scroll after release then growth");
+
+    await reset();
+    c.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    expect(!snap().follow, "pointerdown within transcript leaves follow");
+    c.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true }));
+    s.scrollBy(0, -400);
+    await heldGrowth("cancelled pointer then scroll away and growth");
+
+    for (const name of ["PageUp", "Home", "ArrowUp", "Shift+Space"]) {
+      await reset();
+      const button = document.querySelector("#message");
+      button.focus({ preventScroll: true });
+      key(button, name === "Shift+Space" ? " " : name, name === "Shift+Space");
+      s.scrollBy(0, name === "Home" ? -s.scrollHeight : -400);
+      await heldGrowth(`${name} on focused message button then growth`);
+    }
+    await reset();
+    wheel(-180); wheel(2);
+    result.cases["wheel before movement"] = snap();
+    expect(!snap().follow, "downward wheel cannot resume before movement");
+    s.scrollBy(0, -178);
+    await heldGrowth("downward wheel lands 178px short then growth");
+
+    await reset();
+    wheel(-9);
+    for (let step = 0; step < 3; step++) {
+      const moved = new Promise(resolve => s.addEventListener("scroll", resolve, { once: true }));
+      s.scrollBy(0, -3);
+      await moved;
+    }
+    c.style.height = "2700px";
+    await heldGrowth("small steps accumulate past 8px before growth");
+
+    for (const input of ["wheel", "drag"]) {
+      for (const distance of [8, 9]) {
+        await reset();
+        wheel(-400); s.scrollBy(0, -400); await settle();
+        if (input === "wheel") wheel(400 - distance);
+        else { pointer("pointerdown"); pointer("pointerup"); }
+        s.scrollTop = s.scrollHeight - s.clientHeight - distance;
+        if (distance === 8) await followingGrowth(`${input} settles within 8px then growth`);
+        else await heldGrowth(`${input} settles 9px short then growth`);
+      }
+    }
+    await reset();
+    wheel(2);
+    const beforeGrowth = s.scrollTop;
+    c.style.height = "2700px"; if (!matrix) mod.followTranscriptToEnd(s);
+    expect(s.scrollTop === beforeGrowth && !snap().follow, "growth never pins during a downward gesture");
+    await followingGrowth("no-scroll gesture with growth restores follow");
+
+    await reset();
+    key(document.body, "PageUp"); s.scrollBy(0, -400);
+    await heldGrowth("body scroll key then growth");
+
+    const touch = (type, y) => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperty(event, "touches", { value: type === "touchend" ? [] : [{ clientY: y }] });
+      s.dispatchEvent(event);
+    };
+    await reset();
+    touch("touchstart", 100); touch("touchend", 100);
+    await followingGrowth("touch press without scroll then growth");
+    touch("touchstart", 100); touch("touchmove", 200); s.scrollBy(0, -400); touch("touchend", 200);
+    await heldGrowth("touch away then growth");
+    touch("touchstart", 200); touch("touchmove", 100); s.scrollTop = s.scrollHeight; touch("touchend", 100);
+    await followingGrowth("touch return then growth");
+
+    for (const selector of ["input", "textarea", "select", "[contenteditable]"]) {
+      await reset();
+      const target = c.querySelector(selector);
+      target.focus({ preventScroll: true }); key(target, "PageUp");
+      await followingGrowth(`${selector} keeps follow`);
+    }
+    if (matrix) {
+      for (const selector of ["input", "textarea", "select", "[contenteditable]"]) {
+        for (const name of ["PageUp", "Home", "ArrowUp"]) {
+          await reset(); c.querySelector(selector).focus({ preventScroll: true });
+          await native("key", { key: name });
+          await followingGrowth(`native ${name} in ${selector}`);
+        }
+      }
+      for (const name of ["ArrowUp", "Shift+Space"]) {
+        await reset(); focusMessage();
+        await native("key", { key: name });
+        await heldGrowth(`native ${name} on message button`);
+      }
+      await reset(); document.activeElement.blur();
+      await native("key", { key: "PageUp" });
+      await heldGrowth("native PageUp on body");
+      await reset();
+      await native("wheel", { deltas: [-80, -60, -40, -20] });
+      await heldGrowth("native wheel flick away");
+      await native("wheel", { deltas: [70] });
+      await heldGrowth("native downward wheel stops short");
+      await native("wheel", { deltas: [3000] });
+      await followingGrowth("native wheel return to end");
+      await reset();
+      await native("wheel", { deltas: [-80, -60, -40], momentum: true, gapMs: 220 });
+      await heldGrowth("native momentum wheels with 220ms posting gaps");
+      await reset();
+      await native("wheel", { deltas: [-236] });
+      await native("wheel", { deltas: [-6, -40], gapMs: 220 });
+      await heldGrowth("native wheel gap already far from end");
+      await reset(); s.scrollBy(0, -400);
+      await heldGrowth("scroll without an input event then growth");
+      await reset(); wheel(-1); s.scrollBy(0, -1); await delay(220);
+      await followingGrowth("1px then quiet and growth without a second scroll");
+      await reset();
+      c.style.height = "2300px"; s.scrollTop; c.style.height = "2400px";
+      await flush(); await followingGrowth("clamp and growth in one task");
+      await reset(); s.style.height = "320px";
+      await flush(); await followingGrowth("composer resize while following");
+      await reset(); await native("wheel", { deltas: [-400] });
+      const composerTop = s.scrollTop;
+      s.style.height = "320px"; await flush();
+      expect(s.scrollTop === composerTop, "composer resize preserves reader position");
+      await heldGrowth("composer resize after reader leaves");
+      await reset(); await native("wheel", { deltas: [-500] });
+      const finishTop = s.scrollTop;
+      // Hold in the content, so the scrollbar track cannot page as a side effect.
+      await native("hold", { content: true, waitMs: 250 });
+      c.style.height = "2780px"; await flush();
+      expect(s.scrollTop === finishTop && !snap().follow, "finish while reader holds away preserves position");
+      await native("release", { content: true });
+      await heldGrowth("finish while reader holds away");
+    }
+    await reset();
+    await followingGrowth("growth");
+    await reset();
+    c.style.height = "2300px"; await settle(); c.style.height = "2400px";
+    await followingGrowth("clamp then growth");
+    for (const distance of [16, 400]) {
+      await reset(); wheel(-distance); s.scrollBy(0, -distance);
+      // A first chunk can precede the scroll event.
+      c.style.height = "2720px"; await flush();
+      await heldGrowth(`${distance}px reader and first chunk`);
+    }
+    jump();
+    await followingGrowth("Jump to latest");
+    if (matrix) {
+      await reset();
+      c.style.height = "auto";
+      const spacer = document.createElement("div");
+      spacer.style.height = "2600px"; c.prepend(spacer);
+      c.querySelector(".agent-msg-agent").style.cssText = "";
+      for (const node of c.querySelectorAll(".agent-progress")) node.style.cssText = "";
+      jump(); await settle();
+      watchFlash = true;
+      chunk = "\n\n## A streamed reply\n\n" + "A sentence that fills the reply while it grows. ".repeat(30);
+      for (let i = 0; i < 6; i++) await flush();
+      completed = true; sequence++;
+      const deadline = performance.now() + 4000;
+      while (context.turnBusy || mod.getLiveTurnCanonical().phase !== "presentation_done") {
+        if (performance.now() > deadline) break;
+        await delay(20);
+      }
+      await delay(500); await frames(); watchFlash = false;
+      result.cases["stream growth and completion without Jump flash"] = { flashFrames, after: snap(),
+        phase: mod.getLiveTurnCanonical().phase, turn: context.sessions[0].lastTurn };
+      expect(!context.turnBusy && !context.sessions[0].lastTurn.error, "stream completes successfully");
+      expect(flashFrames.length === 0 && snap().fromEnd <= 8 && !snap().jump,
+        "stream growth and completion without Jump flash");
+    }
+  } catch (error) { result.failures.push(String(error.stack || error)); }
+  sampling = false;
+  result.jumpWhileFollowing = jumpWhileFollowing;
+  expect(jumpWhileFollowing === 0, "Jump stays hidden on every following frame");
+  window.__report = result;
+  window.webkit?.messageHandlers.probe.postMessage(JSON.stringify(result));
+</script>

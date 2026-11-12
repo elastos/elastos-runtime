@@ -159,7 +159,7 @@ async function settle() {
 }
 
 function extractInboxScript(html) {
-  assert(html.includes('<script src="./inbox.js"></script>'), "Inbox script reference not found");
+  assert.match(html, /<script src="\.\/inbox\.js(?:\?[^"\s]*)?"><\/script>/, "Inbox script reference not found");
   return fs.readFileSync(new URL("../capsules/inbox/browser/inbox.js", import.meta.url), "utf8");
 }
 

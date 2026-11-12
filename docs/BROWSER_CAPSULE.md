@@ -131,7 +131,7 @@ adapter.
 
 ## Browser / Net / Exit ABI
 
-The browser capsule should target these contracts:
+Runtime owns these backend contracts:
 
 ```text
 elastos://net/resolve
@@ -140,11 +140,11 @@ elastos://net/stream
 elastos://net/http
 ```
 
-`elastos://net/http` is optional and constrained. General browsing should prefer
-a stream relay where the browser engine owns TLS. HTTP-fetch proxying is useful
-for controlled content, caching, diagnostics, or compatibility, but it makes the
-runtime or exit provider a content proxy and should not be the default browser
-path.
+Browser opens a VM session through `/api/apps/browser/open`. The Browser frame's
+legacy Net HTTP, connect, resolve and stream routes return 410. The VM engine
+owns TLS and uses Runtime's guarded stream relay. Apps cannot request raw Net
+or Exit capabilities or use existing tokens to reach those providers. Direct
+owner shell writes to Net and Exit require an explicit capability token.
 
 Wallet account, proof, approval, signing, Recovery, and transaction operations
 are not capsule-visible provider resources. The generic Wallet provider surface
@@ -417,6 +417,18 @@ engine display_session.initial_offer
 
 Browser UI supports both roles without fallback. The display session declares
 the role; the UI follows that one role and fails closed on mismatched signaling.
+
+Browser internet starts off on both new and updated Homes. The current Inbox
+card states what the owner permits and how to stop it. Allow needs a passkey and
+is bound to Runtime's request ID and expiry. Browser Settings offers Manage in
+Inbox. Inbox confirms Turn Off and requires a passkey. Stop blocks later dispatch and cancels
+Runtime-owned streams; calls already accepted by a provider can finish. Home's
+approval display still has the trusted-display gap tracked in #178, as described
+in SECURITY.md.
+
+Runtime refuses internet through every non-VM Browser adapter, including the
+test-only hosted sender. Its standalone tests use local fixtures on explicit
+local ports; they do not establish Runtime product admission.
 
 The test-only hosted sender is implemented in `browser-playwright-engine`: it uses
 Playwright Chromium behind a loopback Runtime HTTP CONNECT proxy, and that proxy

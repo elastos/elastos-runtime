@@ -329,6 +329,35 @@ const settled = frame => frame.locator("#agent-harness-stream").evaluate(() =>
   new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
 const presented = frame => frame.locator('.agent-msg-agent[data-stream-phase="presentation_done"]').waitFor({ state: "attached", timeout: 10000 });
 
+test("Leaving a running reply releases its follow before the next chat takes the transcript", async t => {
+  let release;
+  const app = await openAssistant(t, { firstReply: new Promise(done => { release = done; }) });
+  t.after(() => release());
+  await app.send("Keep this reply running");
+  await until(() => app.creates.length === 1, "the first reply starts");
+  const scroller = app.frame.locator("#agent-harness-stream");
+  const markers = () => scroller.evaluate(el => ({
+    following: el.classList.contains("is-follow-bottom"),
+    streaming: el.classList.contains("is-live-streaming"),
+  }));
+  assert.deepEqual(await markers(), { following: true, streaming: true });
+  await app.frame.locator("#agent-harness-new-chat").click();
+  await app.frame.locator(".agent-harness-empty").waitFor({ state: "visible", timeout: 5000 });
+  await settled(app.frame);
+  assert.deepEqual(await markers(), { following: false, streaming: false },
+    "the idle transcript releases the detached reply's follow");
+
+  // The old response arriving later belongs to its old chat.
+  release();
+  await app.send("A question in the new chat", "Reply 2");
+  await presented(app.frame);
+  await settled(app.frame);
+  assert.deepEqual(await app.userTexts(), ["A question in the new chat"]);
+  assert.deepEqual(await app.replyTexts(), ["Reply 2"]);
+  assert.deepEqual(await markers(), { following: false, streaming: false });
+  assert.deepEqual(app.errors, []);
+});
+
 test("A long streamed reply ends with its actions above the composer and the transcript at the bottom", async t => {
   const app = await openAssistant(t, { eventsPage: longReply() });
   await app.composer.fill("Write a long answer");
@@ -340,6 +369,30 @@ test("A long streamed reply ends with its actions above the composer and the tra
   assert.ok(end.actionsBottom <= end.composerTop,
     `the actions row (bottom ${end.actionsBottom}) is above the composer (top ${end.composerTop})`);
   assert.ok(end.fromBottom < 4, `the transcript is at the bottom (${end.fromBottom}px left)`);
+  assert.deepEqual(app.errors, []);
+});
+
+test("Edit/resubmit and New chat reset a reader who left the end", async t => {
+  const app = await openAssistant(t, { eventsPage: longReply() });
+  await app.send("Write a long answer", "Last paragraph of the reply.");
+  await presented(app.frame);
+  await settled(app.frame);
+  await app.frame.locator("#agent-harness-stream").evaluate(el => { el.dispatchEvent(new WheelEvent("wheel", { deltaY: -400 })); el.scrollBy(0, -400); });
+  await settled(app.frame);
+  assert.ok((await scrollState(app.frame)).fromBottom > 300);
+  const form = await app.startEdit(0);
+  await app.resubmit(form, "Write the revised answer", "Last paragraph of the reply.");
+  await presented(app.frame);
+  await settled(app.frame);
+  assert.ok((await scrollState(app.frame)).fromBottom <= 8, "the revised reply follows to the end");
+  await app.frame.locator("#agent-harness-stream").evaluate(el => { el.dispatchEvent(new WheelEvent("wheel", { deltaY: -400 })); el.scrollBy(0, -400); });
+  await settled(app.frame);
+  await app.frame.locator("#agent-harness-new-chat").click();
+  await app.frame.locator(".agent-harness-empty").waitFor({ state: "visible" });
+  await app.send("Write in the new chat", "Last paragraph of the reply.");
+  await presented(app.frame);
+  await settled(app.frame);
+  assert.ok((await scrollState(app.frame)).fromBottom <= 8, "the new chat follows its reply to the end");
   assert.deepEqual(app.errors, []);
 });
 

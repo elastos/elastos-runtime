@@ -506,6 +506,7 @@ export async function modelRunCall(op, body = {}) {
     const error = new Error(data?.message || data?.code || `model ${op} failed (${res.status})`);
     error.code = data?.code || "model_error";
     error.status = res.status;
+    if (typeof data?.reason === "string" && data.reason) error.reason = data.reason;
     if (data?.code === "approval_required") error.approvalOfferId = body.offer_id;
     const expiredRefusal = op === "runs_create" && res.status === 409 && isExpiredInvocationRefusal(data, body);
     if (expiredRefusal) {

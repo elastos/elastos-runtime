@@ -5,7 +5,8 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, brave } from "./system-uiux-fixture.mjs";
+import { chromium } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 // Studio is a mode control only while the Runtime advertises an image or video
 // offer. The real Assistant capsule runs against fixture Runtime responses to
@@ -132,7 +133,7 @@ const called = path => fixture.calls.some(call => call.path.endsWith(path));
 let browser, page, stage = "launch";
 try {
   server.listen(0, "127.0.0.1"); await once(server, "listening");
-  browser = await chromium.launch({ executablePath: brave, headless: true });
+  browser = await chromium.launch({ ...productSmokeLaunchOptions(), headless: true });
   const open = async () => {
     if (page) await page.close();
     page = await browser.newPage({ viewport: { width: 1280, height: 900 } });

@@ -260,6 +260,12 @@
       outline: none;
     }
 
+    .action-secondary:focus-visible,
+    .entry-action:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
     .entry-split {
       display: grid;
       grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
@@ -555,7 +561,13 @@
         gap: 8px;
       }
 
-      .entry-split {
+      .action-secondary:focus-visible,
+    .entry-action:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .entry-split {
         grid-template-columns: 1fr;
         grid-template-rows: minmax(160px, 42%) minmax(0, 1fr);
       }
@@ -621,6 +633,9 @@
       min-height: var(--el-touch-target);
       padding-inline: 14px;
     }
+    #browser-internet-confirm {border:1px solid var(--line);border-radius:16px;max-width:440px;padding:24px;color:var(--ink);background:var(--panel);}
+    #browser-internet-confirm::backdrop {background:rgba(0,0,0,.3);}
+    #browser-internet-confirm .entry-actions {justify-content:flex-end;}
   </style>
 </head>
 <body>
@@ -668,6 +683,12 @@
     </main>
   </section>
 
-  <script src="./inbox.js"></script>
+  <dialog id="browser-internet-confirm" aria-labelledby="browser-internet-question">
+    <form method="dialog">
+      <p id="browser-internet-question">Turn off internet access for Browser? Open Browser windows stop loading pages.</p>
+      <div class="entry-actions"><button class="entry-action" value="cancel">Cancel</button><button class="entry-action danger" value="off">Turn Off</button></div>
+    </form>
+  </dialog>
+  <script src="./inbox.js?v=inbox-20261110c"></script>
 </body>
 </html>

@@ -1418,6 +1418,7 @@ impl Controller {
             record.phase,
             RestartPhase::CandidateReady | RestartPhase::PreviousReady
         ) {
+            transaction.repair_restart_support(record.phase == RestartPhase::PreviousReady)?;
             crate::update::verify_restart_support(&transaction)?;
             transaction.finish_restart()?;
             self.finish_request()?;
@@ -1431,6 +1432,7 @@ impl Controller {
         if record.phase == RestartPhase::PreviousRunning {
             // The failed previous generation is gone (proved above); the restored
             // release is started again.
+            transaction.repair_restart_support(true)?;
             transaction.retire_previous_start()?;
         } else {
             transaction.restore_for_restart()?;

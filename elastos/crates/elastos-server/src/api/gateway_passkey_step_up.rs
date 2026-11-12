@@ -217,7 +217,20 @@ async fn passkey_step_up_begin_inner(
     )?;
     require_hosted_step_up_launch(&host_context, &launch)?;
     let operation = validate_step_up_operation(&input.operation)?;
-    let request_sha256 = canonical_request_sha256(&input.request)?;
+    let request = if matches!(
+        operation.as_str(),
+        gateway_browser_internet::GRANT_OPERATION | gateway_browser_internet::REVOKE_OPERATION
+    ) {
+        let stored = gateway_browser_internet::step_up_request(state, &launch, &operation).await?;
+        anyhow::ensure!(
+            input.request == stored,
+            "Browser internet request has changed; review the current request"
+        );
+        stored
+    } else {
+        input.request
+    };
+    let request_sha256 = canonical_request_sha256(&request)?;
     let passkey = passkey_for_launch(&state.data_dir, &launch)?;
     let rp = super::super::handlers::identity::derive_rp(headers)?;
     if passkey.rp_id != rp.id {
@@ -1502,6 +1515,7 @@ mod tests {
             collaboration_presence_product_port: None,
             carrier_endpoint: None,
             collaboration_discovery_service: None,
+            browser_internet: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             cache_dir: data_dir.path().join("cache"),
             data_dir: data_dir.path().to_path_buf(),

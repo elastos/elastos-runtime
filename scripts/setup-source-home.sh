@@ -858,6 +858,7 @@ install_browser_runtime_helpers() {
         "${DATA_DIR}/scripts/browser-vm-linux-network.py"
     install -m 755 "${ROOT}/scripts/browser-vm-engine-preflight.sh" \
         "${DATA_DIR}/scripts/browser-vm-engine-preflight.sh"
+    install -m 755 "${ROOT}/scripts/browser-python.mjs" "${DATA_DIR}/scripts/browser-python.mjs"
     install -m 755 "${ROOT}/scripts/browser-vm-artifact-preflight.sh" \
         "${DATA_DIR}/scripts/browser-vm-artifact-preflight.sh"
     install -m 755 "${ROOT}/scripts/browser-vm-target-preflight.sh" \

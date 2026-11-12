@@ -1048,6 +1048,7 @@ pub(super) async fn exercise_revoked_remote_preparation_cleanup(
         &gateway.data_dir,
         stream,
         gateway.carrier_endpoint.as_ref(),
+        gateway_browser_internet::transport_fixture(),
     )
     .await
     .unwrap();

@@ -2,7 +2,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import path from "node:path";
 import { PHONE_VIEWPORT, setPhoneFormFactor } from "./lib/phone-drawer-assert.mjs";
 
@@ -11,9 +11,7 @@ const PHONE_SEARCH_SCREENSHOT = "/tmp/library-phone-search-390x844.png";
 // Longer than the 160 ms search field width transition.
 const SEARCH_SETTLE_MS = 250;
 
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 
 const capsuleRoot = path.resolve("capsules/library/browser");
 const homeClipboardClientPath = path.resolve("capsules/home/browser/home-clipboard-client.js");
@@ -311,7 +309,7 @@ async function run() {
   const server = createAppServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
-  const browser = await chromium.launch({ headless: true, executablePath: brave });
+  const browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const consoleErrors = [];

@@ -9,6 +9,7 @@ const end = source.indexOf("\nasync function navigateBrowser(", start);
 function harness() {
   const pending = [], statusNode = { dataset: {}, firstChild: null };
   const context = vm.createContext({
+    browserInternetAllowed: true,
     normalizeUrl: value => value, currentBrowserUrl: () => "https://example.test/",
     sameBrowserStreamTarget: () => true, clearAddressDraft() {},
     currentPage: { page_id: "page:one" }, selectedBrowserEngineId: "engine:one",

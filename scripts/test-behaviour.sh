@@ -20,11 +20,15 @@ if [ "${1:-}" = inputs ]; then
     npm install --prefix "$core" --no-save --package-lock=false playwright-core@1.59.1 node@24.21.0
   fi
   # Tests use both SDK pins; keep both browser builds in the shared cache.
+  # The 1.60 pin installs the headless shell. Default headless launches use it.
+  # The core pin installs full Chromium. Product smokes click through that binary.
+  # The same install keeps the matching headless shell. Launches that do not
+  # name an executable use that shell.
   export PLAYWRIGHT_SKIP_BROWSER_GC=1
   # --with-deps installs Linux system libraries and needs root; CI only.
   "${browser}/node_modules/.bin/playwright" install chromium --only-shell ${CI:+--with-deps}
   # The 1.59.1 installer stalls extracting Chromium under Node 26.
-  "${core}/node_modules/node/bin/node" "${core}/node_modules/playwright-core/cli.js" install chromium-headless-shell
+  "${core}/node_modules/node/bin/node" "${core}/node_modules/playwright-core/cli.js" install chromium
   exit 0
 fi
 
@@ -34,4 +38,4 @@ if ! installed "$browser" playwright 1.60.0 || ! installed "$core" playwright-co
 fi
 export NODE_PATH="${browser}/node_modules"
 export BROWSER_OPERATOR_PLAYWRIGHT_CORE="${core}/node_modules/playwright-core"
-exec node --test --test-force-exit --test-timeout=60000 --test-reporter=spec elastos/esp/projections.test.mjs scripts/*.test.mjs scripts/build/*.test.mjs scripts/lib/*.test.mjs capsules/*/browser/*.test.mjs capsules/*/browser/src/*.test.mjs scripts/home-fixture-contracts-smoke.mjs scripts/documents-save-conflict-smoke.mjs scripts/gba-save-conflict-smoke.mjs scripts/assistant-shell-smoke.mjs scripts/model-preparation-failure-smoke.mjs scripts/model-management-browser-smoke.mjs scripts/assistant-message-copy-browser-smoke.mjs scripts/assistant-reply-layout-browser-smoke.mjs scripts/home-update-reload-browser-smoke.mjs scripts/browser-text-select-smoke.mjs
+exec node --test --test-force-exit --test-timeout=60000 --test-reporter=spec elastos/esp/projections.test.mjs scripts/*.test.mjs scripts/build/*.test.mjs scripts/lib/*.test.mjs capsules/*/browser/*.test.mjs capsules/*/browser/src/*.test.mjs scripts/home-fixture-contracts-smoke.mjs scripts/documents-save-conflict-smoke.mjs scripts/gba-save-conflict-smoke.mjs scripts/assistant-shell-smoke.mjs scripts/model-preparation-failure-smoke.mjs scripts/model-management-browser-smoke.mjs scripts/assistant-message-copy-browser-smoke.mjs scripts/assistant-reply-layout-browser-smoke.mjs scripts/assistant-follow-input-browser-smoke.mjs scripts/home-update-reload-browser-smoke.mjs scripts/browser-text-select-smoke.mjs

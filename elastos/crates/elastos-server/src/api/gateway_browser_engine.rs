@@ -85,6 +85,7 @@ where
     let mut candidates = inventory
         .adapters
         .iter()
+        .filter(|adapter| adapter.engine == "chromium_microvm")
         .filter(|adapter| adapter.supports(display_mode, guarantee_level))
         .filter(|adapter| requested_adapter.is_none_or(|id| adapter.id == id))
         .filter(|adapter| {
@@ -411,10 +412,18 @@ fn visible_string_array(value: Option<&serde_json::Value>) -> serde_json::Value 
 }
 
 pub(in crate::api::gateway) async fn browser_net_summary(
-    registry: Option<&Arc<ProviderRegistry>>,
-    principal_id: &str,
+    state: &GatewayState,
+    context: &HomeLaunchTokenContext,
 ) -> serde_json::Value {
-    let exit_provider = browser_exit_summary(registry, principal_id).await;
+    let registry = state.provider_registry.as_ref();
+    let principal_id = context.principal_id.as_str();
+    let contact_names = super::super::gateway_home_system::browser_exit_contact_names(
+        &state.data_dir,
+        context,
+        state.collaboration_discovery_service.as_ref(),
+    )
+    .unwrap_or_default();
+    let exit_provider = browser_exit_summary(registry, principal_id, &contact_names).await;
     let Some(registry) = registry else {
         return serde_json::json!({
             "status": "fail_closed",
@@ -479,6 +488,7 @@ pub(in crate::api::gateway) async fn browser_net_summary(
 async fn browser_exit_summary(
     registry: Option<&Arc<ProviderRegistry>>,
     principal_id: &str,
+    contact_names: &BTreeMap<String, String>,
 ) -> serde_json::Value {
     let Some(registry) = registry else {
         return serde_json::Value::Null;
@@ -512,14 +522,17 @@ async fn browser_exit_summary(
                 "direct_network": false,
                 "backend_count": data.get("backend_count").cloned().unwrap_or_else(|| serde_json::json!(0)),
                 "remote_carrier_exit_count": data.get("remote_carrier_exit_count").cloned().unwrap_or_else(|| serde_json::json!(0)),
-                "remote_carrier_exits": browser_visible_remote_carrier_exits(&data),
+                "remote_carrier_exits": browser_visible_remote_carrier_exits(&data, contact_names),
             })
         }
         _ => serde_json::Value::Null,
     }
 }
 
-fn browser_visible_remote_carrier_exits(data: &serde_json::Value) -> serde_json::Value {
+fn browser_visible_remote_carrier_exits(
+    data: &serde_json::Value,
+    contact_names: &BTreeMap<String, String>,
+) -> serde_json::Value {
     let Some(exits) = data
         .get("remote_carrier_exits")
         .and_then(|value| value.as_array())
@@ -531,6 +544,16 @@ fn browser_visible_remote_carrier_exits(data: &serde_json::Value) -> serde_json:
             .iter()
             .map(|exit| {
                 let mut visible = exit.clone();
+                if let Some(fields) = visible.as_object_mut() {
+                    fields.remove("contact_name");
+                    if let Some(name) = exit
+                        .get("peer_did")
+                        .and_then(|value| value.as_str())
+                        .and_then(|peer| contact_names.get(peer))
+                    {
+                        fields.insert("contact_name".into(), serde_json::json!(name));
+                    }
+                }
                 scrub_exit_authority_fields(&mut visible);
                 visible
             })
@@ -675,6 +698,38 @@ mod tests {
             .await
             .unwrap();
         (registry, calls)
+    }
+
+    #[tokio::test]
+    async fn browser_internet_refuses_every_non_vm_engine() {
+        for engine in [
+            "hosted_remote_browser",
+            "playwright",
+            "native_browser",
+            "diagnostic_playwright",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut adapter = image_adapter("candidate", "configured_provider", true);
+            adapter["engine"] = json!(engine);
+            let (registry, calls) =
+                image_registry("capsule-provider", vec![adapter], Duration::ZERO).await;
+            let result = resolve_browser_engine_adapter_with_preparation(
+                &registry,
+                dir.path(),
+                "darwin-arm64",
+                "person:test",
+                Some("candidate"),
+                BrowserDisplayMode::WebrtcRemoteDisplay,
+                BrowserGuaranteeLevel::MechanismMicrovm,
+                || async { panic!("non-VM adapter acquired an image") },
+            )
+            .await;
+            assert!(
+                result.is_err(),
+                "non-VM adapter {engine} reached Runtime admission"
+            );
+            assert_eq!(*calls.lock().unwrap(), ["status"]);
+        }
     }
 
     #[test]
@@ -1153,23 +1208,27 @@ mod tests {
 
     #[test]
     fn browser_visible_remote_carrier_exits_redacts_transport_identity_and_authority() {
-        let visible = browser_visible_remote_carrier_exits(&json!({
-            "remote_carrier_exits": [{
-                "id": "shared-exit",
-                "grant_id": "grant:test",
-                "peer_did": "did:key:z6Mktest",
-                "connect_ticket": "ticket:secret",
-                "allowed_principals": ["person:local:test"],
-                "carrier": {
-                    "peer_did": "did:key:z6Mknested",
-                    "connect_ticket": "ticket:nested"
-                }
-            }]
-        }));
+        let visible = browser_visible_remote_carrier_exits(
+            &json!({
+                "remote_carrier_exits": [{
+                    "id": "shared-exit",
+                    "grant_id": "grant:test",
+                    "peer_did": "did:key:z6Mktest",
+                    "connect_ticket": "ticket:secret",
+                    "allowed_principals": ["person:local:test"],
+                    "carrier": {
+                        "peer_did": "did:key:z6Mknested",
+                        "connect_ticket": "ticket:nested"
+                    }
+                }]
+            }),
+            &BTreeMap::from([("did:key:z6Mktest".into(), "Sasha".into())]),
+        );
         let exits = visible
             .as_array()
             .expect("remote exits should stay an array");
         assert_eq!(exits.len(), 1);
+        assert_eq!(exits[0]["contact_name"], "Sasha");
         let exit = exits[0].as_object().expect("exit should stay an object");
         assert!(!exit.contains_key("peer_did"));
         assert!(!exit.contains_key("connect_ticket"));
@@ -1180,6 +1239,14 @@ mod tests {
             .is_some_and(|carrier| {
                 !carrier.contains_key("peer_did") && !carrier.contains_key("connect_ticket")
             }));
+        let unrecognized = browser_visible_remote_carrier_exits(
+            &json!({
+                "remote_carrier_exits": [{"id":"unknown", "peer_did":"unknown-peer", "contact_name":"Unverified name"}]
+            }),
+            &BTreeMap::new(),
+        );
+        assert!(unrecognized[0].get("contact_name").is_none());
+        assert!(unrecognized[0].get("peer_did").is_none());
     }
 }
 

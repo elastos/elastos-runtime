@@ -6,7 +6,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, brave } from "./system-uiux-fixture.mjs";
+import { chromium } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 // Render the real canonical capsule. Only Runtime storage/provider responses
 // are fixtures; migration, session selection and save recovery use the client.
@@ -158,7 +159,7 @@ const proofDir = ownedProof
 await mkdir(proofDir, { recursive: true });
 try {
   server.listen(0, "127.0.0.1"); await once(server, "listening");
-  browser = await chromium.launch({ executablePath: brave, headless: true });
+  browser = await chromium.launch({ ...productSmokeLaunchOptions(), headless: true });
   const openPage = async () => {
     const next = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     next.on("pageerror", error => pageErrors.push(String(error)));

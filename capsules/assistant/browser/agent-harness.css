@@ -2012,7 +2012,7 @@ html[data-agent-reasoning="off"] .agent-thinking {
   contain: content;
 }
 
-.agent-msg:not(.is-streaming) {
+.agent-msg:not(.is-streaming):not(.is-newest-reply) {
   content-visibility: auto;
   contain-intrinsic-size: auto 400px;
 }

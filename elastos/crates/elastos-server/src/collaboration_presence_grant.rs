@@ -436,7 +436,10 @@ pub(crate) async fn presence_grant(
         authority
             .manager
             .revoke(*token.id(), "profile changed")
-            .await;
+            .await
+            .unwrap_or_else(
+                |error| tracing::error!(%error, "Presence revocation persistence failed"),
+            );
         authority.forget(&grant.token_id);
         drop_grant(data_dir, principal_id, &grant.token_id);
         return None;
@@ -557,7 +560,10 @@ pub(crate) async fn own_presence_operation_authorized(
             authority
                 .manager
                 .revoke(*token.id(), "profile changed")
-                .await;
+                .await
+                .unwrap_or_else(
+                    |error| tracing::error!(%error, "Presence revocation persistence failed"),
+                );
         }
         false
     } else {
@@ -597,7 +603,7 @@ pub(crate) async fn set_presence_grant(
         authority
             .manager
             .revoke(token_id, "community presence changed")
-            .await;
+            .await?;
         authority.forget(&current.token_id);
     }
     file.grants.retain(|grant| &grant.scope != scope);
@@ -1003,7 +1009,8 @@ mod tests {
         authority
             .manager()
             .revoke(*held_token(data, &principal).id(), "test")
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             gate(&authority, data, &principal, ME, runtime, 30).await,
             None

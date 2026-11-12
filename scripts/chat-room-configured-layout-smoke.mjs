@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const browserRoot = join(repoRoot, "capsules/chat-room/browser");
@@ -33,12 +33,7 @@ const directDid = "did:key:z6Mkd4e5f6";
 const sharedCid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3w2pz3hftb5xg3mh5g4xq7y5u";
 const sharedUri = `elastos://${sharedCid}`;
 const directLinkUrl = "https://example.invalid/chat-direct-link?from=direct";
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const playwrightModule = process.env.ELASTOS_PLAYWRIGHT_MODULE
-  ? await import(pathToFileURL(process.env.ELASTOS_PLAYWRIGHT_MODULE).href)
-  : require("playwright");
-const { chromium } = playwrightModule.chromium ? playwrightModule : playwrightModule.default;
+const { chromium } = await importProductSmokePlaywright();
 
 function assert(condition, message, details = undefined) {
   if (!condition) {
@@ -997,7 +992,7 @@ async function runScenario(scenario) {
   const port = server.address().port;
   const url = `http://127.0.0.1:${port}/fixture`;
   const context = await chromium.launchPersistentContext(profile, {
-    executablePath: brave,
+    ...productSmokeLaunchOptions(),
     headless: true,
     viewport: { width: scenario.endsWith("-phone") ? 375 : 1280, height: 900 },
     ...(scenario === "history-status-order-calendar" ? { timezoneId: "America/New_York" } : {}),

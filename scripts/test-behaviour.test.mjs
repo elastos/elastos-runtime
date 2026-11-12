@@ -70,7 +70,7 @@ for (const ci of ["", "true"]) {
       const commands = readFileSync(log, "utf8").trim().split("\n").map(JSON.parse).slice(attempt * 2);
       assert.deepEqual(commands, [
         { revision: 1223, args: ["install", "chromium", "--only-shell", ...(ci ? ["--with-deps"] : [])], cache: env.PLAYWRIGHT_BROWSERS_PATH, gc: "1", installerNode: "host" },
-        { revision: 1217, args: ["install", "chromium-headless-shell"], cache: env.PLAYWRIGHT_BROWSERS_PATH, gc: "1", installerNode: "24.21.0" },
+        { revision: 1217, args: ["install", "chromium"], cache: env.PLAYWRIGHT_BROWSERS_PATH, gc: "1", installerNode: "24.21.0" },
       ]);
       assert.deepEqual(readdirSync(env.PLAYWRIGHT_BROWSERS_PATH).sort(), ["shell-1217", "shell-1223"]);
     }

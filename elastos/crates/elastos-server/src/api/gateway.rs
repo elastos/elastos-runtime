@@ -47,11 +47,14 @@ mod gateway_assistant;
 mod gateway_assistant_workspace_v2;
 #[path = "gateway_browser.rs"]
 mod gateway_browser;
+#[path = "gateway_browser_internet.rs"]
+mod gateway_browser_internet;
 pub(crate) use gateway_browser::gateway_browser_operator::{
     register_browser_operator_sessions, BrowserOperatorService,
 };
 pub(crate) use gateway_browser::gateway_browser_remote::invoke as invoke_remote_browser_engine;
 pub(crate) use gateway_browser::gateway_browser_remote::provider_transport_ready as browser_remote_provider_transport_ready;
+pub(crate) use gateway_browser_internet::BrowserInternetService;
 #[path = "gateway_capsule_catalog.rs"]
 mod gateway_capsule_catalog;
 #[path = "gateway_collaboration_presence.rs"]
@@ -92,9 +95,9 @@ mod gateway_model_remote;
 mod gateway_model_service;
 pub(in crate::api) use gateway_model_service::deny_grant_and_settle as deny_model_grant_and_settle;
 pub(crate) use gateway_model_service::{
-    invoke as invoke_remote_model, model_grant_id, ModelServiceGrant, MODEL_GRANT_SCHEMA,
-    MODEL_GRANT_SCOPE, MODEL_GRANT_TTL_SECS, MODEL_LOCAL_OFFER, MODEL_OPERATIONS,
-    MODEL_SERVICE_KIND, MODEL_SERVICE_URI,
+    invoke as invoke_remote_model, model_grant_id, ModelServiceGrant, MODEL_AUTHORITY_TIMEOUT_CODE,
+    MODEL_GRANT_SCHEMA, MODEL_GRANT_SCOPE, MODEL_GRANT_TTL_SECS, MODEL_LOCAL_OFFER,
+    MODEL_OPERATIONS, MODEL_SERVICE_KIND, MODEL_SERVICE_URI,
 };
 #[path = "gateway_origin.rs"]
 mod gateway_origin;
@@ -501,6 +504,7 @@ struct WalletPricePolicy {
 
 #[derive(Clone)]
 pub struct GatewayState {
+    pub(crate) browser_internet: Arc<BrowserInternetService>,
     pub(crate) carrier_endpoint: Option<iroh::Endpoint>,
     pub provider_registry: Option<Arc<ProviderRegistry>>,
     pub(crate) collaboration_chat_product_port:
@@ -579,6 +583,10 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
 
     Router::new()
         .merge(user_content)
+        .route(
+            "/api/apps/browser/internet",
+            get(gateway_browser_internet::summary).post(gateway_browser_internet::action),
+        )
         .route("/healthz", get(healthz))
         .route(
             "/api/auth/evm/challenge",
@@ -1059,7 +1067,12 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
             get(home_background_image),
         )
         .route("/api/apps/home/runtime/ensure", post(home_runtime_ensure))
-        .route("/api/apps/home/launch", post(home_launch))
+        .route(
+            "/api/apps/home/launch",
+            post(|state, headers, input| async move {
+                home_launch(state, headers, input, &crate::setup::detect_platform()).await
+            }),
+        )
         .route("/api/apps/home/external-link", post(home_external_link))
         .route(
             "/api/apps/home/shared-content/check",

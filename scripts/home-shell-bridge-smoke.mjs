@@ -562,7 +562,7 @@ globalThis.fetch = async (url, init = {}) => {
         title: "System",
       });
     }
-    if (["assistant", "home-agent", "marketplace"].includes(body?.target)) {
+    if (["assistant", "home-agent", "marketplace", "inbox"].includes(body?.target)) {
       return jsonResponse({ attach_kind: "iframe", target: body.target,
         route: `/apps/${body.target}/?home_origin=http%3A%2F%2Flocalhost%3A61180#home_token=${body.target}-token` });
     }
@@ -2405,6 +2405,55 @@ sendChildMessage("null", browserFrameWindow, {
   type: "home:app-ready",
   homeToken: "browser-token",
 });
+// Exercise the real Home policy, not a parent that accepts every capsule message.
+{
+  const opened = () => shellMessages.filter(m => m.payload?.command === "open-target").map(m => m.payload);
+  const intent = (target, query) => ({ type: "home:open-target", target, query, homeToken: "browser-token" });
+  const before = opened().length;
+  for (const target of ["inbox", "system"]) {
+    const exact = target === "inbox" ? { notification_id: "browser-internet:permission" } : { settings: "security" };
+    for (const query of [undefined, null, [], "security", {}, { other: "security" },
+      target === "inbox" ? { notification_id: "other" } : { settings: "accounts" },
+      { ...exact, extra: "injected" }]) {
+      sendChildMessage("null", browserFrameWindow, intent(target, query));
+    }
+    sendChildMessage("null", browserFrameWindow, { ...intent(target, exact), extra: "injected" });
+    sendChildMessage("https://evil.invalid", browserFrameWindow, intent(target, exact));
+    sendChildMessage("null", {}, intent(target, exact));
+    sendChildMessage("null", browserFrameWindow, { ...intent(target, exact), homeToken: "wrong" });
+  }
+  sendChildMessage("null", browserFrameWindow, intent("system", {settings:"security"}));
+  sendChildMessage("null", browserFrameWindow, intent("people", {}));
+  sendChildMessage("null", browserFrameWindow, intent("browser", { url: "https://evil.invalid" }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert(opened().length === before, "Browser permission shortcuts reject other queries, apps, fields and untrusted sources");
+  const expected = [
+    ["inbox", { notification_id: "browser-internet:permission" }],
+    ["library", { mode: "browse" }],
+  ];
+  for (const [target, query] of expected) {
+    sendChildMessage("null", browserFrameWindow, intent(target, query));
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  assert(JSON.stringify(opened().slice(before).map(({target, query}) => [target, query])) === JSON.stringify(expected),
+    "Browser opens the selected permission request, Security, and existing Library route", opened().slice(before));
+  console.log("Browser permission routes: exact Inbox and Security accepted; invalid routes rejected; Library preserved");
+}
+{
+  sendChildMessage("null", shellFrameWindow, {type:"home:launch-target",requestId:"launch-focus-inbox",target:"inbox",query:{},homeToken:"gui-token"});
+  for(let i=0;i<50 && !shellMessages.some(m=>m.payload?.requestId==="launch-focus-inbox");i++) await new Promise(r=>setTimeout(r,0));
+  const source={parent:shellFrameWindow,postMessage(){}};
+  sendChildMessage("null",source,{type:"home:app-ready",homeToken:"inbox-token"});
+  const focus=()=>shellMessages.filter(m=>m.payload?.command==="focus-browser");
+  const intent={type:"home:focus-browser",homeToken:"inbox-token"};const before=focus().length;
+  sendChildMessage("null",browserFrameWindow,{...intent,homeToken:"browser-token"});
+  sendChildMessage("null",source,{...intent,target:"browser"});
+  sendChildMessage("https://evil.invalid",source,intent);
+  sendChildMessage("null",{},intent);
+  assert(focus().length===before,"Only exact trusted Inbox focus is accepted");
+  sendChildMessage("null",source,intent);
+  assert(focus().length===before+1,"Inbox focus reaches GUI without opening a new window");
+}
 const connectorLaunchesBeforeBrowserRequest = requests.filter(
   (request) =>
     request.url === "/api/apps/home/launch" &&

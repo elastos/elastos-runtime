@@ -8,8 +8,10 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_dir="$(mktemp -d)"
 local_exit_pid=""
+site_pid=""
 
 cleanup() {
+  if [[ -n "$site_pid" ]]; then kill "$site_pid" >/dev/null 2>&1 || true; fi
   if [[ -n "${daemon_pid:-}" ]]; then
     kill "$daemon_pid" >/dev/null 2>&1 || true
   fi
@@ -22,6 +24,29 @@ trap cleanup EXIT
 
 cd "$repo_root"
 
+# A deterministic local dapp exercises the ESC connection flow. This helper
+# does not claim live Glide or Runtime non-VM internet admission.
+SITE_PORT_FILE="$tmp_dir/site-port" node - <<'NODE' &
+const http = require("node:http"); const fs = require("node:fs");
+const html = `<!doctype html><title>ESC wallet connection fixture</title>
+<button id="connect" style="position:absolute;left:80px;top:160px;width:180px;height:70px">Connect wallet</button>
+<button id="wallet" hidden style="position:absolute;left:480px;top:415px;width:180px;height:70px">Home Wallet</button>
+<p id="result"></p><script>
+connect.onclick=()=>{wallet.hidden=false};
+wallet.onclick=async()=>{try{const accounts=await window.ethereum.request({method:"eth_requestAccounts"});
+const chain=await window.ethereum.request({method:"eth_chainId"});
+if(chain!=="0x14") throw new Error("Expected ESC");
+result.textContent="Connected with "+accounts[0].slice(0,4)+"..."+accounts[0].slice(-4);
+}catch(e){result.textContent=String(e)}};
+</script>`;
+const server=http.createServer((_req,res)=>{res.writeHead(200,{"content-type":"text/html","cache-control":"no-store"});res.end(html)});
+server.listen(0,"127.0.0.1",()=>fs.writeFileSync(process.env.SITE_PORT_FILE,String(server.address().port)));
+NODE
+site_pid="$!"
+for _ in {1..100}; do [[ -s "$tmp_dir/site-port" ]] && break; sleep 0.05; done
+site_port="$(cat "$tmp_dir/site-port")"
+export BROWSER_SMOKE_URL="http://127.0.0.1:$site_port/"
+
 cargo build --quiet --manifest-path elastos/tools/browser-local-exit/Cargo.toml
 
 local_exit_socket="$tmp_dir/local-exit.sock"
@@ -32,12 +57,12 @@ ELASTOS_BROWSER_LOCAL_EXIT_CONFIG="$(node - <<NODE
 console.log(JSON.stringify({
   schema: "elastos.browser.local-exit.config/v1",
   relay_ipc_path: "$local_exit_socket",
-  allowed_hosts: ["*"],
+  allowed_hosts: ["127.0.0.1"],
   allowed_schemes: ["tcp"],
-  allowed_ports: [80, 443],
+  allowed_ports: [$site_port],
   address_family: process.env.BROWSER_SMOKE_ADDRESS_FAMILY || "prefer_ipv4",
   replace_existing_socket: true,
-  allow_private_targets: false
+  allow_private_targets: true
 }));
 NODE
 )" \
@@ -61,9 +86,9 @@ console.log(JSON.stringify({
   control_socket_path: "$control_socket",
   local_exit_socket_path: "$local_exit_socket",
   profile_root: "$profile_root",
-  allowed_hosts: ["*"],
+  allowed_hosts: ["127.0.0.1"],
   allowed_protocols: ["http", "https"],
-  allowed_ports: [80, 443],
+  allowed_ports: [$site_port],
   viewport: { width: 1280, height: 900 },
   headless: true,
   launch_timeout_ms: 30000,
@@ -77,7 +102,7 @@ console.log(JSON.stringify({
   adapter: "playwright-glide-smoke",
   engine: "chromium",
   stream_id: "stream:browser-glide-wallet-smoke",
-  url: "https://glidefinance.io/",
+  url: process.env.BROWSER_SMOKE_URL,
   display_mode: "webrtc_remote_display",
   guarantee_level: "operator_rbi",
   network_mode: "runtime_net_only",
@@ -171,11 +196,11 @@ async function pageText() {
 
 (async () => {
   assert(result.schema === "elastos.browser.engine.supervisor-result/v1", "unexpected launch result schema");
-  assert(result.actual_url === "https://glidefinance.io/", `unexpected Glide URL: ${result.actual_url}`);
+  assert(result.actual_url === process.env.BROWSER_SMOKE_URL, `unexpected local fixture URL: ${result.actual_url}`);
   assert(result.network_mode === "runtime_net_only", "launch did not stay runtime_net_only");
   assert(result.direct_network === false, "launch reported direct network access");
   assert(result.wallet_bridge?.mode === "runtime_mediated_eip1193", "wallet bridge was not Runtime-mediated");
-  assert(result.wallet_bridge?.default_chain_namespace === "eip155:20", "Glide smoke did not start on ESC");
+  assert(result.wallet_bridge?.default_chain_namespace === "eip155:20", "ESC fixture did not start on ESC");
 
   await sleep(5000);
   await input({ type: "click", x: 140, y: 190 });
@@ -190,7 +215,7 @@ async function pageText() {
       break;
     }
   }
-  assert(/Connected with 0x11\.\.\.1111/i.test(text) || /0x\.\.\.1111/i.test(text), `Glide did not show the connected ESC account: ${text.slice(0, 500)}`);
+  assert(/Connected with 0x11\.\.\.1111/i.test(text) || /0x\.\.\.1111/i.test(text), `ESC fixture did not show the connected ESC account: ${text.slice(0, 500)}`);
 
   const status = await request("GET", "/status");
   if (Number.isInteger(status.pid) && status.pid > 1) {

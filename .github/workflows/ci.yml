@@ -469,7 +469,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '26'
-      # The smokes default to a macOS Brave install unless BRAVE_BIN is set.
+      # Product smokes launch Playwright Chromium. BRAVE_BIN names another executable.
+      # This job installs Chromium for the engine package and points BRAVE_BIN at it.
       - name: browser layout smokes
         run: |
           BRAVE_BIN="$(cd elastos/tools/browser-playwright-engine && node -p "require('playwright').chromium.executablePath()")"

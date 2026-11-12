@@ -247,6 +247,7 @@ fn runtime_state(
         cache_dir: data_dir.join("cache"),
         provider_registry: Some(registry),
         carrier_endpoint: Some(endpoint),
+        browser_internet: Default::default(),
         identity_manager: Arc::new(OnceLock::new()),
         collaboration_chat_product_port: None,
         collaboration_presence_product_port: None,
@@ -1682,7 +1683,10 @@ pub(super) async fn select(
         &context.principal_id,
         grant["peer_did"].as_str(),
     )?;
-    inventory.select(Some(&adapter_id), mode, guarantee)?;
+    ensure!(
+        inventory.select(Some(&adapter_id), mode, guarantee)?.engine == "chromium_microvm",
+        "Browser internet requires a VM engine"
+    );
     let readiness = tokio::time::timeout_at(
         deadline,
         crate::carrier::probe_browser_engine(registry, &grant, "readiness", Some(&adapter_id)),
@@ -2443,6 +2447,7 @@ mod tests {
             cache_dir: root.path().join("cache"),
             provider_registry: Some(registry),
             carrier_endpoint: None,
+            browser_internet: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             collaboration_chat_product_port: None,
             collaboration_presence_product_port: None,

@@ -16,6 +16,7 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const schema = "elastos.assistant.workspace/v2";
@@ -186,7 +187,7 @@ const pageErrors = [];
 try {
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ headless: true, ...(process.env.BRAVE_BIN ? { executablePath: process.env.BRAVE_BIN } : {}) });
+  browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   const open = async (document, query = "") => {
