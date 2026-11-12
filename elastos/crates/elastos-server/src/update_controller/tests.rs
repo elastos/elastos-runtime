@@ -5745,7 +5745,11 @@ fn download_status_reads_both_legacy_directions_and_binds_progress_to_its_owner(
         .unwrap();
     assert!(!fixture.directory.join(DOWNLOAD_PROGRESS).exists());
     assert_eq!(status(&fixture.data).unwrap().unwrap().total_bytes, None);
-    fs::write(fixture.directory.join(DOWNLOAD_PROGRESS), saved_progress).unwrap();
+    fixture.file(
+        &fixture.directory.join(DOWNLOAD_PROGRESS),
+        &saved_progress,
+        0o600,
+    );
     controller.request.as_mut().unwrap().id = "e".repeat(32);
     controller
         .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
@@ -5816,7 +5820,7 @@ async fn update_fetch_reports_monotonic_bytes_against_one_total_over_carrier() {
             send.write_all(&(bytes.len() as u64).to_be_bytes())
                 .await
                 .unwrap();
-            tokio::time::sleep(Duration::from_millis(1050)).await;
+            tokio::time::sleep(Duration::from_millis(110)).await;
             let half = bytes.len() / 2;
             send.write_all(&bytes[..half]).await.unwrap();
             // With no Carrier progress scope this waits for an impossible
@@ -5850,6 +5854,10 @@ async fn update_fetch_reports_monotonic_bytes_against_one_total_over_carrier() {
         .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
         .unwrap();
     for bytes in &items {
+        // Rate limiting has its own elapsed-time test. Make this transport
+        // observation eligible without exceeding Carrier's one-second idle limit.
+        controller.download_meter.lock().unwrap().last_write =
+            std::time::Instant::now().checked_sub(Duration::from_secs(1));
         let received = track_update_fetch(
             &fixture.directory,
             &request.id,
