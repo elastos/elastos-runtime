@@ -1197,7 +1197,6 @@ dependencies = [
  "nix 0.29.0",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "zeroize",
 ]
 
@@ -1548,9 +1547,7 @@ dependencies = [
  "elastos-common",
  "elastos-guest",
  "serde_json",
- "tempfile",
  "tokio",
- "tracing",
  "uuid",
  "wasmtime",
 ]
@@ -1564,8 +1561,6 @@ dependencies = [
  "elastos-compute",
  "libc",
  "nix 0.29.0",
- "serde",
- "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -1674,8 +1669,6 @@ dependencies = [
  "nix 0.29.0",
  "rand 0.10.2",
  "rand 0.9.5",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
  "sha2 0.10.9",
  "sha3 0.10.9",
  "subtle",
@@ -1745,7 +1738,6 @@ dependencies = [
 name = "elastos-runtime"
 version = "2.0.1"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64",
  "bincode",
@@ -1755,7 +1747,6 @@ dependencies = [
  "elastos-compute",
  "elastos-model-contract",
  "elastos-namespace",
- "elastos-storage",
  "flate2",
  "hex",
  "libc",
@@ -1782,7 +1773,6 @@ dependencies = [
  "axum",
  "axum-server",
  "base64",
- "bs58",
  "cid",
  "clap",
  "custody-provider",
@@ -1797,7 +1787,6 @@ dependencies = [
  "elastos-crosvm",
  "elastos-identity",
  "elastos-model-contract",
- "elastos-namespace",
  "elastos-protected-content-contracts",
  "elastos-protected-content-custody",
  "elastos-protected-content-provider-contracts",
