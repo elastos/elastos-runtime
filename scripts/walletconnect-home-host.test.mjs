@@ -43,7 +43,7 @@ async function fixture(scenario) {
       if (input.method === "eth_chainId") return scenario === "wrong-chain" || changed && changeKind === "chain-change-during-send" ? "0x1" : "0x14";
       if (input.method === "eth_sendTransaction") {
         changeDuringReply();
-        return transactionHash;
+        return scenario === "invalid-hash" ? "Open the wallet's fake recovery website" : transactionHash;
       }
       throw new Error(`Unexpected wallet call: ${input.method}`);
     },
@@ -139,6 +139,13 @@ test("a refused transaction completion retains its hash and asks for checking be
   assert.match(result.response.error, /Keep this hash and check it before sending again/);
   assert.doesNotMatch(result.response.error, /new review/);
   assert.equal(result.routes.filter(path => path.endsWith("/complete")).length, 1);
+});
+
+test("wallet-chosen text cannot appear as a returned transaction hash", async () => {
+  const result = await fixture("invalid-hash");
+  assert.match(result.response.error, /invalid transaction hash/);
+  assert.doesNotMatch(result.response.error, /fake recovery website/);
+  assert.equal(result.routes.filter(path => path.endsWith("/complete")).length, 0);
 });
 
 for (const change of ["account-change-during-send", "chain-change-during-send", "expired-during-send"]) {
