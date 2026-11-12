@@ -1,3 +1,4 @@
+import { formatBytes } from "./byte-format.js";
 export const BROWSER_ONE_WINDOW_MESSAGE =
   "Only one Browser window can be open at a time. Close the other one first.";
 
@@ -255,11 +256,11 @@ export function browserMetricsText(status, {
       : "n/a";
   const videoBytes =
     Number.isFinite(Number(latestWebrtcStats?.video_bytes_received))
-      ? `${Math.round(Number(latestWebrtcStats.video_bytes_received) / 1024)}KiB`
+      ? formatBytes(latestWebrtcStats.video_bytes_received)
       : "n/a";
   const audioBytes =
     Number.isFinite(Number(latestWebrtcStats?.audio_bytes_received))
-      ? `${Math.round(Number(latestWebrtcStats.audio_bytes_received) / 1024)}KiB`
+      ? formatBytes(latestWebrtcStats.audio_bytes_received)
       : "n/a";
   const audioState = remoteAudioExpected ? (remoteAudioUnlocked ? "on" : "muted") : "n/a";
   const rtt =

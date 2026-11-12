@@ -501,6 +501,8 @@ fn configure_update_summary(data_dir: &std::path::Path) {
                 .unwrap(),
             host_pid: Some(std::process::id()),
             generation: "a".repeat(32),
+            completed_bytes: 0,
+            total_bytes: None,
         })
         .unwrap(),
     )
@@ -1387,6 +1389,8 @@ async fn system_update_exact_retry_recovers_both_queue_write_boundaries() {
                     .unwrap(),
                     host_pid: Some(std::process::id()),
                     generation: "a".repeat(32),
+                    completed_bytes: 0,
+                    total_bytes: None,
                 })
                 .unwrap(),
             )

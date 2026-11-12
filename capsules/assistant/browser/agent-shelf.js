@@ -1,3 +1,4 @@
+import { formatBytes } from "./byte-format.js";
 /* Agent composer — the pill Home's Shelf hands over to.
    UI ≠ authority (Principle 16): the composer never mints grants or Carrier
    authority. Home GUI owns the Shelf morph and the place; this module owns
@@ -329,10 +330,10 @@ function renderComposerAttachments() {
           : file.kind === "text"
             ? "Text"
             : file.text
-              ? `text · ${Math.max(1, Math.round(String(file.text).length / 1024))} KB`
+              ? `text · ${formatBytes(new TextEncoder().encode(String(file.text)).length)}`
               : file.uri
                 ? "desktop · reference"
-                : `${Math.max(1, Math.round((file.size || 0) / 1024))} KB`;
+                : `${formatBytes(file.size)}`;
     main.querySelector(".agent-attach-chip-meta").textContent = meta;
     const remove = document.createElement("button");
     remove.type = "button";

@@ -1,5 +1,7 @@
+import { formatBytes } from "./byte-format.js";
+import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js";
 /* Shared model presentation. Runtime owns admission, execution and retention. */
-(() => {
+
   const CID = /^bafybei[a-z2-7]{52}$/;
   const STATES = new Set(["capacity_pending", "reserved", "preparing", "verifying", "admission_pending", "admitted", "reclaimed", "failed", "uncertain", "cancelled", "expired"]);
   const active = p => p && ["capacity_pending", "reserved", "preparing", "verifying", "admission_pending", "uncertain"].includes(p.state);
@@ -115,11 +117,6 @@
     }
     return entries.length === 1 ? entries[0] : null;
   }
-  function formatBytes(bytes) {
-    const units = ["B", "KB", "MB", "GB", "TB"];
-    const rank = bytes ? Math.min(4, Math.floor(Math.log(bytes) / Math.log(1000))) : 0;
-    return `${(bytes / 1000 ** rank).toLocaleString(undefined, { maximumFractionDigits: rank ? 2 : 0 })} ${units[rank]}`;
-  }
   // Waiting for space names how much this model still needs, so the user knows what to free.
   const capacityText = p => p.failure_class === "cache_budget_unavailable"
     ? "Waiting for room in the local cache budget. Remove an unneeded model or increase the budget and it continues."
@@ -139,7 +136,7 @@
       dispatch_ready: output.dispatch_ready, dispatch_unavailable_reason: output.dispatch_unavailable_reason,
       offer_id: output.offer_id, preparation }, cid);
   }
-  window.ElastosModelManagement = {
+  export const ElastosModelManagement = {
     // Compact mode is the Marketplace detail: root is its Status list, so each
     // fact is a list row led by a copy of itemMarker; the actions go to
     // actionsRoot (the detail footer) and Refresh appears only when a read failed.
@@ -409,11 +406,11 @@
         row.append(fact(label));
         if (compact) row.append(fact(`Download size: ${formatBytes(model.content_size_bytes)}`, "model-size"));
         row.append(fact((compact ? COMPACT_MEMORY_FIT_TEXT : MEMORY_FIT_TEXT)[model.model_memory_fit], "model-memory-fit"));
+        announceTransferProgress(root.parentElement, active(p) ? p.completed_bytes : null, p?.total_bytes, "Model download");
         if (active(p)) {
-          const progress = element("progress"); progress.max = p.total_bytes || 1; progress.value = p.completed_bytes;
-          progress.setAttribute("aria-label", "Preparation progress");
-          const done = fact(`${formatBytes(p.completed_bytes)} of ${formatBytes(p.total_bytes)}`);
-          if (compact) { done.append(progress); row.append(done); } else row.append(progress, done);
+          const progress = createTransferProgress(p.completed_bytes, p.total_bytes, "Model download progress");
+          if (compact) { const item = fact(""); item.append(progress); row.append(item); }
+          else row.append(progress);
         }
         const controls = actionsRoot || element("div", "", "model-controls");
         const useLabel = r.dispatch_unavailable_reason === "catalog_updated" ? "Use"
@@ -466,6 +463,7 @@
       }
       function setVisible(value) {
         if (visible === value) return;
+        if (!value) announceTransferProgress(root.parentElement, null, null);
         visible = value; root.hidden = !value; ++generation; stopRead();
         if (show()) void load();
       }
@@ -480,4 +478,6 @@
       return { setVisible, refresh: load, destroy };
     },
   };
-})();
+
+if (typeof window !== "undefined") window.ElastosModelManagement = ElastosModelManagement;
+export { capacityText, parseRuntime, operationRuntime, failureText, catalogEntries, selectCatalogEntry, phaseOf, PHASE_TEXT, COMPACT_PHASE_TEXT, DISPATCH_UNAVAILABLE_TEXT };

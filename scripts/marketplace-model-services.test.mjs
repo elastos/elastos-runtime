@@ -1,3 +1,4 @@
+import { detailPublisher, rowSubtitle } from "../capsules/marketplace/browser/model-services.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
@@ -111,7 +112,7 @@ test("Models show catalog and shared rows in one list, and a plain line when the
 function publisherFixture() {
   const source = readFileSync(new URL("../capsules/marketplace/browser/marketplace.js", import.meta.url), "utf8");
   const context = vm.createContext({
-    state: {}, homeToken: "fixture", publicError: value => value,
+    state: {}, detailPublisher, rowSubtitle, homeToken: "fixture", publicError: value => value,
     publicTitle: capsule => capsule.name, publicDescription: () => "", appCategory: () => "apps",
     catalogIconRoute: () => "", appIcon: () => "", appGradient: () => "", appBadges: () => [],
     acceptedContentLabels: () => [], executableActions: () => [], appSortKey: app => app.id,
@@ -119,7 +120,6 @@ function publisherFixture() {
   for (const [start, end] of [
     ["  async function loadCatalogData()", "  async function loadMediaData()"],
     ["  function listedInMarketplace(", "  function appCategory("],
-    ["  function modelSizeLabel(", "  function renderAppRow("],
     ["  function packageLabel(", "  function openApp("],
   ]) vm.runInContext(source.slice(source.indexOf(start), source.indexOf(end)), context);
   return context;

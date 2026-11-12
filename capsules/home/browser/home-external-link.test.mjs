@@ -41,7 +41,7 @@ test('shared file asks one short question naming the sender, with the stated siz
   assert.equal(h.address.hidden, true);
   assert.equal(h.address.textContent, '');
   assert.equal(h.host.hidden, true);
-  assert.equal(h.size.textContent, '30 bytes');
+  assert.equal(h.size.textContent, '30 B');
   assert.equal(h.status.hidden, true);
   assert.equal(h.openButton.textContent, 'Get');
   assert.equal(h.cancelButton.textContent, 'Cancel');
@@ -328,7 +328,7 @@ for (const [label, bytes, target] of [
 });
 
 test('shared file sheet uses the byte count shown in a Chat post', () => {
-  for (const [bytes, size] of [[30, '30 bytes'], [1024, '1.0 KB'], [3328, '3.2 KB'], [3840, '3.8 KB'], [3565158, '3.4 MB'], [1073741824, '1.0 GB']]) {
+  for (const [bytes, size] of [[30, '30 B'], [999, '999 B'], [1000, '1.0 KB'], [3328, '3.3 KB'], [3840, '3.8 KB'], [3565158, '3.6 MB'], [1000000000, '1.0 GB']]) {
     const h = harness(); h.prompt.show(h.begin(), { ...result(), size_bytes: bytes });
     assert.equal(h.size.textContent, size);
   }

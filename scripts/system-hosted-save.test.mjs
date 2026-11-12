@@ -573,7 +573,7 @@ function updateFixture(overrides = {}) {
   const panel = { hidden: true }, status = { textContent: "" }, top = {};
   const context = vm.createContext({
     AbortController,
-    runtimeUpdateNode: panel, runtimeUpdateButton: button, runtimeUpdateStatusNode: status,
+    runtimeUpdateNode: panel, runtimeUpdateButton: button, runtimeUpdateStatusNode: status, runtimeUpdateProgressNode: null,
     runtimeUpdate: undefined, runtimeUpdatePending: null, runtimeUpdateBusy: false, sourceChannelBusy: false, sourceChannelChoice: null,
     runtimeUpdateActive: true, runtimeUpdateTimer: 0, runtimeUpdateReconnects: 0,
     runtimeUpdateRequests: new Set(), runtimeUpdateInProgressSeen: false, runtimeUpdateFeedback: "",
@@ -992,7 +992,7 @@ test("the restart gets the full polling budget however long the download took", 
   await f.context.onRuntimeUpdateApply();
   const id = f.context.runtimeUpdatePending.intent.request_id;
   f.context.refreshSystemSummary = async () => f.context.renderRuntimeUpdate(
-    { ...f.offer, controller: { id, phase: "downloading", message: "Downloading the update (88 MB)." } });
+    { ...f.offer, controller: { id, phase: "downloading", message: "Downloading the update." } });
   await f.advance(600_000);
   f.context.refreshSystemSummary = async () => { throw new TypeError("connection refused"); };
   await f.advance(130_000);
@@ -1130,7 +1130,7 @@ test("System shows matching download and verification progress while Home stays 
   await f.context.onRuntimeUpdateApply();
   const id = f.context.runtimeUpdatePending.intent.request_id;
   for (const [phase, message] of [
-    ["downloading", "Downloading the update (88 MB). Home restarts when the update is ready."],
+    ["downloading", "Downloading the update. Home restarts when the update is ready."],
     ["verifying", "Verifying the update. Home restarts when the update is ready."],
   ]) {
     f.context.renderRuntimeUpdate({ ...f.offer, controller: { id, phase, message } });
@@ -1194,7 +1194,7 @@ test("a slow update keeps polling while Home reports the approved download", asy
   const f = updateFixture();
   await f.context.onRuntimeUpdateApply();
   const id = f.context.runtimeUpdatePending.intent.request_id;
-  const message = "Downloading the update (88 MB). Home restarts when the update is ready.";
+  const message = "Downloading the update. Home restarts when the update is ready.";
   f.context.refreshSystemSummary = async () => f.context.renderRuntimeUpdate({ ...f.offer, controller: { id, phase: "downloading", message } });
   for (let poll = 0; poll < 100; poll += 1) await f.context.pollRuntimeUpdate();
   assert.equal(f.status.textContent, message);

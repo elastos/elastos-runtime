@@ -3943,17 +3943,35 @@ async fn refresh_support(
     Ok(refreshed)
 }
 
-/// Prepare installed support in an isolated tree. The release transaction owns
-/// publication and rollback; setup owns archive validation and cache metadata.
-pub(crate) async fn stage_update_support(
+/// The admitted downloads and removals, fixed before the first payload fetch.
+pub(crate) struct UpdateSupportPlan {
+    assets: Vec<UpdateSupportAsset>,
+    removals: std::collections::BTreeSet<PathBuf>,
+    manifest: ComponentsManifest,
+}
+
+struct UpdateSupportAsset {
+    relative: PathBuf,
+    row: crate::capsule_record::AdmittedRow,
+    component: Option<Component>,
+    metadata: bool,
+}
+
+impl UpdateSupportPlan {
+    pub(crate) fn download_size(&self) -> Option<u64> {
+        self.assets.iter().try_fold(0_u64, |total, asset| {
+            total.checked_add(asset.row.info().size?)
+        })
+    }
+}
+
+pub(crate) fn plan_update_support_stage(
     data_dir: &Path,
     old_bytes: &[u8],
     new_bytes: &[u8],
     platform: &str,
     records: &crate::capsule_record::UpdateRecords,
-    fetch: &crate::update::FetchFn,
-    owner: &mut dyn crate::update::RestartOwner,
-) -> anyhow::Result<(tempfile::TempDir, Vec<(PathBuf, PathBuf)>)> {
+) -> anyhow::Result<UpdateSupportPlan> {
     for bytes in [old_bytes, new_bytes] {
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         anyhow::ensure!(
@@ -3963,33 +3981,31 @@ pub(crate) async fn stage_update_support(
     }
     let old: ComponentsManifest = serde_json::from_slice(old_bytes)?;
     let new: ComponentsManifest = serde_json::from_slice(new_bytes)?;
-    // System updates run from the installed Home.
     let plan = plan_update_support(data_dir, &old, &new, platform, true, records);
     admit_planned_records(&plan, platform, records)?;
-    let stage = tempfile::tempdir_in(data_dir)?;
-    let mut paths = std::collections::BTreeMap::new();
+    let mut assets = Vec::new();
+    let mut removals = std::collections::BTreeSet::new();
+    let mut covered = std::collections::BTreeSet::new();
     for item in plan {
-        let SupportUpdate {
-            name,
-            component,
-            info,
-            old: old_component,
-            ..
-        } = item;
-        let mut assets = Vec::new();
+        let mut rows = Vec::new();
         if item.artifact {
-            let path = resolve_install_path(component, Some(info))
+            let path = resolve_install_path(item.component, Some(item.info))
                 .ok_or_else(|| anyhow::anyhow!("support install path missing"))?;
-            if let Some(old_path) = old_component
+            if let Some(old_path) = item
+                .old
                 .and_then(|old| resolve_install_path(old, resolve_platform_info(old, platform)))
             {
                 if path != old_path {
-                    paths.insert(PathBuf::from(old_path), PathBuf::new());
+                    removals.insert(PathBuf::from(old_path));
                 }
             }
-            assets.push((PathBuf::from(path), info, false));
+            rows.push((PathBuf::from(path), item.info, false));
+            if item.info.binary_path.is_some() {
+                covered.insert(PathBuf::from("bin").join(item.name));
+            }
         }
-        if let Some(metadata) = component
+        if let Some(metadata) = item
+            .component
             .capsule_metadata
             .as_ref()
             .filter(|_| item.metadata)
@@ -3998,48 +4014,132 @@ pub(crate) async fn stage_update_support(
                 .ok_or_else(|| anyhow::anyhow!("support metadata unavailable"))?;
             let path = resolve_component_capsule_metadata_install_path(metadata, Some(info))
                 .ok_or_else(|| anyhow::anyhow!("support metadata path missing"))?;
-            validate_capsule_component_install_path(name, path)?;
-            assets.push((PathBuf::from(path), info, true));
+            validate_capsule_component_install_path(item.name, path)?;
+            rows.push((PathBuf::from(path), info, true));
         }
-        for (relative, asset, metadata) in assets {
+        for (relative, info, metadata) in rows {
             crate::install_transaction::validate_support_path(&relative)?;
-            let row = records.next.row(name, asset)?;
-            // One line per fetched asset; unchanged support is never named here.
-            println!(
-                "  Downloading support asset {name} ({}){}...",
-                relative.display(),
-                asset
-                    .size
-                    .map(|size| format!(" [{}]", crate::update::format_bytes(size as usize)))
-                    .unwrap_or_default()
-            );
-            let bytes = fetch_admitted_row(fetch, &row, &mut *owner).await?;
-            let dest = stage.path().join(&relative);
-            if asset.extract_path.is_some() {
+            covered.insert(relative.clone());
+            assets.push(UpdateSupportAsset {
+                relative,
+                row: records.next.row(item.name, info)?,
+                component: Some(item.component.clone()),
+                metadata,
+            });
+        }
+    }
+    for (name, component) in &old.external {
+        if name != browser_vm_image::NAME && !new.external.contains_key(name) {
+            if let Some(path) =
+                resolve_install_path(component, resolve_platform_info(component, platform))
+            {
+                removals.insert(PathBuf::from(path));
+            }
+        }
+    }
+    covered.extend(removals.iter().cloned());
+    for name in old.capsules.keys().chain(new.capsules.keys()) {
+        let relative = PathBuf::from("capsules").join(name);
+        crate::install_transaction::validate_support_path(&relative)?;
+        let changed = match (old.capsules.get(name), new.capsules.get(name)) {
+            (Some(old), Some(new)) => old.cid != new.cid || old.sha256 != new.sha256,
+            _ => true,
+        };
+        if !changed
+            || covered
+                .iter()
+                .any(|path| path.starts_with(&relative) || relative.starts_with(path))
+        {
+            continue;
+        }
+        covered.insert(relative.clone());
+        let Some(entry) = new.capsules.get(name) else {
+            removals.insert(relative);
+            continue;
+        };
+        if data_dir.join(&relative).exists() {
+            assets.push(UpdateSupportAsset {
+                relative,
+                row: records.next.registry_entry(name, entry)?,
+                component: None,
+                metadata: false,
+            });
+        }
+    }
+    Ok(UpdateSupportPlan {
+        assets,
+        removals,
+        manifest: new,
+    })
+}
+
+#[cfg(test)]
+pub(crate) async fn stage_update_support(
+    data_dir: &Path,
+    old_bytes: &[u8],
+    new_bytes: &[u8],
+    platform: &str,
+    records: &crate::capsule_record::UpdateRecords,
+    fetch: &crate::update::FetchFn,
+    owner: &mut dyn crate::update::RestartOwner,
+) -> anyhow::Result<(tempfile::TempDir, Vec<(PathBuf, PathBuf)>)> {
+    let plan = plan_update_support_stage(data_dir, old_bytes, new_bytes, platform, records)?;
+    stage_planned_update_support(data_dir, plan, platform, fetch, owner).await
+}
+
+/// Stage exactly the rows that supplied the fixed download total.
+pub(crate) async fn stage_planned_update_support(
+    data_dir: &Path,
+    plan: UpdateSupportPlan,
+    platform: &str,
+    fetch: &crate::update::FetchFn,
+    owner: &mut dyn crate::update::RestartOwner,
+) -> anyhow::Result<(tempfile::TempDir, Vec<(PathBuf, PathBuf)>)> {
+    let stage = tempfile::tempdir_in(data_dir)?;
+    let mut paths: std::collections::BTreeMap<_, _> = plan
+        .removals
+        .into_iter()
+        .map(|path| (path, PathBuf::new()))
+        .collect();
+    for asset in plan.assets {
+        let UpdateSupportAsset {
+            relative,
+            row,
+            component,
+            metadata,
+        } = asset;
+        let name = row.name();
+        let info = row.info();
+        println!(
+            "  Downloading support asset {name} ({})...",
+            relative.display()
+        );
+        let bytes = fetch_admitted_row(fetch, &row, &mut *owner).await?;
+        let dest = stage.path().join(&relative);
+        if let Some(component) = component {
+            if info.extract_path.is_some() {
                 extract_from_tarball(&bytes, &dest, &row)?;
             } else {
                 atomic_write_file(&dest, &bytes)?;
                 fs::set_permissions(&dest, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
             }
             if metadata {
-                write_platform_cache_metadata(asset, &dest)?;
-                write_archive_executable_receipt(component, platform, asset, &dest)?;
+                write_platform_cache_metadata(info, &dest)?;
+                write_archive_executable_receipt(&component, platform, info, &dest)?;
                 anyhow::ensure!(
-                    installed_component_capsule_metadata_stale_reason(name, component, &dest)
+                    installed_component_capsule_metadata_stale_reason(name, &component, &dest)
                         .is_none(),
                     "support capsule metadata verification failed"
                 );
             } else {
-                write_cache_metadata(&new, Some(asset), platform, name, &dest)?;
+                write_cache_metadata(&plan.manifest, Some(info), platform, name, &dest)?;
             }
-            paths.insert(relative, dest.clone());
-            if !metadata && asset.binary_path.is_some() {
-                // Bundle aliases point to the final owned installation, not staging.
-                let relative = PathBuf::from("bin").join(name);
-                crate::install_transaction::validate_support_path(&relative)?;
-                let link = stage.path().join(&relative);
+            if !metadata && info.binary_path.is_some() {
+                let alias = PathBuf::from("bin").join(name);
+                crate::install_transaction::validate_support_path(&alias)?;
+                let link = stage.path().join(&alias);
                 fs::create_dir_all(link.parent().unwrap())?;
-                let binary = Path::new(asset.binary_path.as_deref().unwrap());
+                let binary = Path::new(info.binary_path.as_deref().unwrap());
                 anyhow::ensure!(
                     !binary.is_absolute()
                         && binary
@@ -4051,68 +4151,49 @@ pub(crate) async fn stage_update_support(
                 std::os::unix::fs::symlink(
                     data_dir
                         .join(
-                            asset
-                                .install_path
+                            info.install_path
                                 .as_deref()
                                 .ok_or_else(|| anyhow::anyhow!("bundle install path missing"))?,
                         )
                         .join(binary),
                     &link,
                 )?;
-                paths.insert(relative, link);
+                paths.insert(alias, link);
             }
+        } else {
+            fs::create_dir_all(&dest)?;
+            tar::Archive::new(flate2::read::GzDecoder::new(bytes.as_slice())).unpack(&dest)?;
+            anyhow::ensure!(
+                dest.join("capsule.json").is_file(),
+                "capsule manifest missing"
+            );
+            fs::write(
+                dest.join(CACHED_CID_FILE),
+                format!("{}\n", info.cid.as_deref().unwrap()),
+            )?;
+            write_artifact_sha256_receipt(
+                &dest,
+                info.checksum
+                    .as_deref()
+                    .unwrap()
+                    .strip_prefix("sha256:")
+                    .unwrap(),
+            )?;
         }
-    }
-    for (name, component) in &old.external {
-        if name == browser_vm_image::NAME {
-            continue;
-        }
-        if !new.external.contains_key(name) {
-            if let Some(path) =
-                resolve_install_path(component, resolve_platform_info(component, platform))
-            {
-                paths.insert(PathBuf::from(path), PathBuf::new());
-            }
-        }
-    }
-    for name in old.capsules.keys().chain(new.capsules.keys()) {
-        let relative = PathBuf::from("capsules").join(name);
-        crate::install_transaction::validate_support_path(&relative)?;
-        let changed = match (old.capsules.get(name), new.capsules.get(name)) {
-            (Some(old), Some(new)) => old.cid != new.cid || old.sha256 != new.sha256,
-            _ => true,
-        };
-        if !changed
-            || paths
-                .keys()
-                .any(|path| path.starts_with(&relative) || relative.starts_with(path))
-        {
-            continue;
-        }
-        let Some(entry) = new.capsules.get(name) else {
-            paths.insert(relative, PathBuf::new());
-            continue;
-        };
-        // Uninstalled optional apps remain on demand. A cached app must be ready
-        // before activation, with the same archive and cache contract as supervisor.
-        if !data_dir.join(&relative).exists() {
-            continue;
-        }
-        let row = records.next.registry_entry(name, entry)?;
-        let bytes = fetch_admitted_row(fetch, &row, &mut *owner).await?;
-        let dest = stage.path().join(&relative);
-        fs::create_dir_all(&dest)?;
-        tar::Archive::new(flate2::read::GzDecoder::new(bytes.as_slice())).unpack(&dest)?;
-        anyhow::ensure!(
-            dest.join("capsule.json").is_file(),
-            "capsule manifest missing"
-        );
-        fs::write(dest.join(CACHED_CID_FILE), format!("{}\n", entry.cid))?;
-        write_artifact_sha256_receipt(&dest, &entry.sha256)?;
         paths.insert(relative, dest);
     }
+    // The catalogue pin has no signed size. Its separate phase stays indeterminate.
+    if plan.manifest.model_catalog.as_ref().is_some_and(|trust| {
+        !installed_model_catalog_matches(&data_dir.join(MODEL_CATALOG_FILE), trust)
+    }) {
+        owner.download_plan(0, None)?;
+        owner.progress(
+            "downloading",
+            "Checking the model catalogue. Home restarts when the update is ready.",
+        )?;
+    }
     if let Some((relative, source)) =
-        stage_model_catalog(data_dir, &new, stage.path(), fetch).await?
+        stage_model_catalog(data_dir, &plan.manifest, stage.path(), fetch).await?
     {
         paths.insert(relative, source);
     }
@@ -4172,7 +4253,7 @@ async fn fetch_admitted_row(
         );
         format!("release-path:{path}")
     };
-    owner.progress("downloading", &crate::update::download_message(asset.size))?;
+    owner.progress("downloading", crate::update::DOWNLOAD_MESSAGE)?;
     let bytes = fetch(key).await?;
     owner.progress(
         "verifying",
@@ -7759,6 +7840,9 @@ pub(crate) mod tests {
 
         struct Owner;
         impl crate::update::RestartOwner for Owner {
+            fn download_plan(&self, _completed: u64, _total: Option<u64>) -> anyhow::Result<()> {
+                Ok(())
+            }
             fn progress(&self, _: &str, _: &str) -> anyhow::Result<()> {
                 Ok(())
             }
@@ -8207,6 +8291,9 @@ pub(crate) mod tests {
     async fn runtime_support_update_defers_installed_browser_image_to_engine_selection() {
         struct UnusedOwner;
         impl crate::update::RestartOwner for UnusedOwner {
+            fn download_plan(&self, _completed: u64, _total: Option<u64>) -> anyhow::Result<()> {
+                Ok(())
+            }
             fn progress(&self, _: &str, _: &str) -> anyhow::Result<()> {
                 panic!("image acquisition belongs to Engine selection")
             }
@@ -8287,6 +8374,9 @@ pub(crate) mod tests {
         use std::pin::Pin;
         struct Owner;
         impl crate::update::RestartOwner for Owner {
+            fn download_plan(&self, _completed: u64, _total: Option<u64>) -> anyhow::Result<()> {
+                Ok(())
+            }
             fn progress(&self, _: &str, _: &str) -> anyhow::Result<()> {
                 Ok(())
             }

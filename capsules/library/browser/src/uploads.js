@@ -1,3 +1,4 @@
+import { createTransferProgress, announceTransferProgress } from "../transfer-progress.js";
 import { escapeHtml } from "./model.js";
 
 export function createLibraryUploads({ container, perf, state }) {
@@ -33,11 +34,18 @@ export function createLibraryUploads({ container, perf, state }) {
           <div class="upload-name">${escapeHtml(upload.name)}</div>
           <div>${escapeHtml(upload.status)}</div>
         </div>
-        <div class="upload-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(upload.progress)}">
-          <div class="upload-fill" style="--progress: ${Math.max(0, Math.min(100, upload.progress))}%"></div>
-        </div>
+        <div class="upload-meter"></div>
       </div>
     `).join("");
+    const active = state.uploads.filter(upload => ["Queued", "Preparing", "Uploading", "Saving"].includes(upload.status));
+    announceTransferProgress(container.parentElement, active.length ? active.reduce((sum, upload) => sum + (upload.completed_bytes || 0), 0) : null,
+      active.every(upload => Number.isFinite(upload.total_bytes)) ? active.reduce((sum, upload) => sum + upload.total_bytes, 0) : null, "File upload");
+    container.querySelectorAll(".upload-meter").forEach((meter, index) => {
+      const upload = state.uploads[index];
+      const active = ["Queued", "Preparing", "Uploading", "Saving"].includes(upload.status);
+      meter.hidden = !active || upload.total_bytes === 0;
+      if (!meter.hidden) meter.append(createTransferProgress(upload.completed_bytes, upload.total_bytes, "Upload progress"));
+    });
   }
 
   function setUploadProgress(id, patch) {

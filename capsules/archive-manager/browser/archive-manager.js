@@ -1,3 +1,4 @@
+import { formatBytes } from "./byte-format.js";
     import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js";
     const params = new URLSearchParams(window.location.search);
     const homeToken = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("home_token") || "";
@@ -632,14 +633,6 @@
       const clean = String(uri || "").replace(/\/+$/, "");
       const index = clean.lastIndexOf("/");
       return index > "localhost://".length ? clean.slice(0, index) : clean;
-    }
-
-    function formatBytes(value) {
-      if (value == null || Number.isNaN(Number(value))) return "size unknown";
-      const bytes = Number(value);
-      if (bytes < 1024) return `${bytes} B`;
-      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-      return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
     }
 
     function escapeHtml(value) {

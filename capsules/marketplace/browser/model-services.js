@@ -1,3 +1,4 @@
+import { formatBytes } from "./byte-format.js";
 import { eligibleTextOffers, offerSelectionFacts } from "./model-contract.js";
 
 export const REMOTE_MODEL_ID = /^remote:[A-Za-z0-9_-]{1,128}:[A-Za-z0-9_.:-]{1,160}$/;
@@ -19,4 +20,14 @@ export function sharedModelOffers(payload, now = Date.now() / 1000) {
     id: offer.id, title: offer.title, owner: offer.remote_service.display_name || "Provider Home",
     expiresAt: offer.remote_service.expires_at, facts: offerSelectionFacts(offer),
   }));
+}
+
+const MODEL_FIT_LABELS = { fits: "Fits this device", insufficient: "Needs more memory", unavailable: "Memory not checked" };
+export function detailPublisher(app) {
+  return app.developer ? "Verified publisher" : "";
+}
+export function rowSubtitle(app) {
+  if (!app.modelCid) return detailPublisher(app);
+  const fit = Object.hasOwn(MODEL_FIT_LABELS, app.modelFit) ? MODEL_FIT_LABELS[app.modelFit] : "";
+  return [formatBytes(app.contentBytes), fit].filter(Boolean).join(" · ");
 }

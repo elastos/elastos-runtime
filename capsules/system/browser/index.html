@@ -6,10 +6,11 @@
 <title>System · ElastOS</title>
 <script src="./elastos-theme.js"></script>
 <script src="./elastos-drawer.js"></script>
-<script src="./model-management.js"></script>
+<script type="module" src="./model-management.js"></script>
 <link rel="stylesheet" href="./model-management.css">
 <script src="./elastos-accent-picker.js"></script>
-<link rel="stylesheet" href="./elastos-ui.css">
+<link rel="stylesheet" href="./transfer-progress.css">
+  <link rel="stylesheet" href="./elastos-ui.css">
 <link rel="stylesheet" href="./style.css?v=system-20261110-inbox">
 </head>
 <body>
@@ -408,6 +409,7 @@
                   <div>
                     <div class="pc2-card-label">Home update</div>
                     <p id="runtime-update-status" class="pc2-card-sublabel" role="status" aria-live="polite"></p>
+                    <div id="runtime-update-progress" hidden></div>
                   </div>
                   <button id="runtime-update-apply" class="pc2-btn pc2-btn-secondary" type="button" hidden disabled>Update and restart Home</button>
                 </div>

@@ -1,3 +1,4 @@
+import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js";
 import {
   gatePreviewAuditView,
   inspectActionRequestValidation,
@@ -62,6 +63,7 @@ const technicalInspectRefreshButton = document.querySelector("#technical-inspect
 const deviceDidCopyButton = document.querySelector("#device-did-copy");
 const runtimeUpdateNode = document.querySelector("#runtime-update");
 const runtimeUpdateButton = document.querySelector("#runtime-update-apply");
+const runtimeUpdateProgressNode = document.querySelector("#runtime-update-progress");
 const runtimeUpdateStatusNode = document.querySelector("#runtime-update-status");
 const sourceChannelChoice = document.querySelector("#source-channel-choice");
 const sourceChannelStatus = document.querySelector("#source-channel-status");
@@ -3855,6 +3857,12 @@ function renderRuntimeUpdate(update) {
     showRuntimeUpdateStatus(readText(controller.message) || "Home is back. Reloading System…");
     reloadForRuntimeUpdate();
     return;
+  }
+  if (runtimeUpdateProgressNode) {
+    const show = ["staging", "downloading", "verifying"].includes(phase);
+    runtimeUpdateProgressNode.hidden = !show;
+    announceTransferProgress(runtimeUpdateProgressNode.parentElement, show ? controller?.completed_bytes ?? 0 : null, controller?.total_bytes, "Update download");
+    runtimeUpdateProgressNode.replaceChildren(...(show ? [createTransferProgress(controller?.completed_bytes, controller?.total_bytes, "Update download progress")] : []));
   }
   const choice = runtimeUpdatePending?.intent || runtimeUpdate;
   const inProgress = runtimeUpdatePending || ["staging", "downloading", "verifying", "restarting"].includes(phase);

@@ -1,16 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import vm from "node:vm";
+import { ElastosModelManagement, capacityText, parseRuntime, operationRuntime, failureText, catalogEntries, selectCatalogEntry, phaseOf, PHASE_TEXT, COMPACT_PHASE_TEXT, DISPATCH_UNAVAILABLE_TEXT } from "../capsules/_shared/model-management.js";
 
 const source = readFileSync(new URL("../capsules/_shared/model-management.js", import.meta.url), "utf8");
 for (const capsule of ["system", "marketplace"]) {
   assert.equal(readFileSync(new URL(`../capsules/${capsule}/browser/model-management.js`, import.meta.url), "utf8"), source);
 }
-const context = { window: {} };
-vm.runInNewContext(source.replace("window.ElastosModelManagement = {",
-  "window.testFailure = { capacityText, parseRuntime, operationRuntime, failureText, catalogEntries, selectCatalogEntry, phaseOf, PHASE_TEXT, COMPACT_PHASE_TEXT, DISPATCH_UNAVAILABLE_TEXT }; window.ElastosModelManagement = {"), context);
-const { capacityText, parseRuntime, operationRuntime, failureText, catalogEntries, selectCatalogEntry, phaseOf, PHASE_TEXT, COMPACT_PHASE_TEXT, DISPATCH_UNAVAILABLE_TEXT } = context.window.testFailure;
 const cid = `bafybei${"a".repeat(52)}`;
 const preparation = { operation_id: "fixture", cid, state: "failed", total_bytes: 1024,
   completed_bytes: 512, cancel_requested: false, admitted: false, activation_pending: false };
@@ -110,7 +106,7 @@ assert.deepEqual(plain(COMPACT_PHASE_TEXT), { ...plain(PHASE_TEXT), absent: "Not
   reclaimed: "Removed from this device", cancelled: "Stopped before finishing", expired: "Not finished in time" });
 assert.deepEqual(Object.keys(PHASE_TEXT).sort(), Object.keys(phases).filter(name => !["failed", "capacity"].includes(name)).sort(), "every phase except failed and capacity reads its copy from the table");
 assert.equal(capacityText({ total_bytes: 3e9, completed_bytes: 1e9 }),
-  "Waiting for free space. This model needs 2 GB on this Home, plus 2 GB kept free. Free some space and it continues.");
+  "Waiting for free space. This model needs 2.0 GB on this Home, plus 2 GB kept free. Free some space and it continues.");
 assert.equal(capacityText({ total_bytes: 3e9, completed_bytes: 1e9, failure_class: "cache_budget_unavailable" }),
   "Waiting for room in the local cache budget. Remove an unneeded model or increase the budget and it continues.");
 console.log("PASS model preparation failure: safe classes, operation/catalog parity, unknown history, strict rejection, shared copies, explicit two-entry selection, phase copy tables");
@@ -169,8 +165,8 @@ const fixtureContext = {
     return { ok: true, text: async () => JSON.stringify(result) };
   },
 };
-vm.runInNewContext(source, fixtureContext);
-const control = fixtureContext.window.ElastosModelManagement.create({ root: fixtureRoot, capsule: "marketplace", token: "fixture", cid, compact: true });
+for (const [key, value] of Object.entries(fixtureContext)) Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+const control = ElastosModelManagement.create({ root: fixtureRoot, capsule: "marketplace", token: "fixture", cid, compact: true });
 const pendingPolls = () => [...timers].filter(([, timer]) => timer.delay === 1500);
 const tickPoll = async () => {
   const pending = pendingPolls();

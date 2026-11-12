@@ -110,6 +110,26 @@ for target_dir in "${TARGETS[@]}"; do
   fi
 done
 
+# File sizes and transfer progress share one source in every consuming capsule.
+for target_dir in home/browser assistant/browser system/browser library/browser archive-manager/browser marketplace/browser browser/browser; do
+  assets=(byte-format.js)
+  case "$target_dir" in
+    assistant/browser|system/browser|library/browser|marketplace/browser) assets+=(transfer-progress.js transfer-progress.css) ;;
+  esac
+  for asset in "${assets[@]}"; do
+    source="capsules/_shared/$asset"
+    target="capsules/$target_dir/$asset"
+    if [[ "$MODE" == "--check" ]]; then
+      if ! cmp -s "$source" "$target"; then
+        echo "[vendor-ui] DRIFT: $target" >&2
+        FAILED=1
+      fi
+    else
+      cp "$source" "$target"
+    fi
+  done
+done
+
 # Marketplace uses only the controller; its compact rows take Marketplace's own list styles.
 for model_target in marketplace/browser/model-management.js system/browser/model-management.js system/browser/model-management.css; do
   model_source="capsules/_shared/${model_target##*/}"

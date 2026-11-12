@@ -8797,7 +8797,7 @@ mod tests {
         assert_eq!(
             unknown.lines,
             vec![
-                "notes.txt · 30 bytes".to_string(),
+                "notes.txt · 30 B".to_string(),
                 "Couldn't confirm the post. Check Community, or try again.".to_string(),
             ]
         );
@@ -10446,18 +10446,18 @@ fn local_date_text(timestamp_secs: u64, same_year: bool) -> String {
 }
 
 fn format_bytes(size_bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-    let size = size_bytes as f64;
-    if size >= GB {
-        format!("{:.1} GB", size / GB)
-    } else if size >= MB {
-        format!("{:.1} MB", size / MB)
-    } else if size >= KB {
-        format!("{:.1} KB", size / KB)
+    let mut scale = 1_u128;
+    let mut unit = 0;
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    while unit < units.len() - 1 && size_bytes as u128 >= scale * 1000 {
+        scale *= 1000;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{size_bytes} B")
     } else {
-        format!("{} bytes", size_bytes)
+        let tenths = (size_bytes as u128 * 10 + scale / 2) / scale;
+        format!("{}.{} {}", tenths / 10, tenths % 10, units[unit])
     }
 }
 

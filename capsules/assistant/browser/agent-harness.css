@@ -3908,3 +3908,5 @@ html[data-agent-reasoning="off"] .agent-thinking {
 :root[data-el-form-factor="phone"] :is(.agent-prompt-textarea, .agent-prompt-param input) {
   font-size: 16px;
 }
+
+.agent-model-download { max-width: 320px; padding: 4px 8px; }
