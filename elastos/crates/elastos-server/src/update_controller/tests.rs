@@ -5270,6 +5270,15 @@ async fn stage_before_stop_preserves_home_on_fetch_or_verify_failure_and_restart
 
 #[tokio::test]
 async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_activation() {
+    restarting_network_update(false).await;
+}
+
+#[tokio::test]
+async fn system_update_with_symlinked_binary_parent() {
+    restarting_network_update(true).await;
+}
+
+async fn restarting_network_update(symlinked_parent: bool) {
     let config_file = crate::collaboration_startup::COLLABORATION_STARTUP_CONFIG_FILE;
     for outcome in [
         "joined",
@@ -5308,6 +5317,13 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
         let components = serde_json::to_vec(&value).unwrap();
         fixture.publish_installed_release_with_components(&old_components);
         publish_retained_receipt(&fixture);
+        if symlinked_parent {
+            let alias = fixture.data.join("linked-bin");
+            symlink(&fixture.data, &alias).unwrap();
+            let mut sources = crate::sources::load_trusted_sources(&fixture.data).unwrap();
+            sources.sources[0].install_path = alias.join("installed-runtime").to_str().unwrap().into();
+            crate::sources::save_trusted_sources(&fixture.data, &sources).unwrap();
+        }
         if outcome == "isolated" {
             crate::collaboration_release_network::choose_isolated(&fixture.data).unwrap();
         }
@@ -5372,6 +5388,7 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
         } else {
             network.clone()
         };
+        let components_count = components.len() as u64;
         let payload_completed = (binary.len() + components.len()) as u64;
         let payload_total = payload_completed + b"new support".len() as u64;
         let items = std::collections::BTreeMap::from([
@@ -5396,9 +5413,11 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
                 if network_fetch {
                     let progress = status(&data)?.unwrap();
                     assert_eq!(
-                        progress.total_bytes, None,
-                        "unsized network metadata has its own phase"
+                        progress.total_bytes, Some(payload_total),
+                        "metadata holds the signed payload total"
                     );
+                    assert!(progress.completed_bytes >= components_count);
+                    assert!(progress.completed_bytes <= payload_completed);
                     assert_eq!(
                         progress.message,
                         "Checking update metadata. Home restarts when the update is ready."
@@ -5702,10 +5721,13 @@ fn download_status_reads_both_legacy_directions_and_binds_progress_to_its_owner(
         (joined.completed_bytes, joined.total_bytes),
         (250, Some(1000))
     );
+    let saved_progress = fs::read(fixture.directory.join(DOWNLOAD_PROGRESS)).unwrap();
     controller
         .publish("updated", "Home is up to date.")
         .unwrap();
+    assert!(!fixture.directory.join(DOWNLOAD_PROGRESS).exists());
     assert_eq!(status(&fixture.data).unwrap().unwrap().total_bytes, None);
+    fs::write(fixture.directory.join(DOWNLOAD_PROGRESS), saved_progress).unwrap();
     controller.request.as_mut().unwrap().id = "e".repeat(32);
     controller
         .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
@@ -5830,4 +5852,59 @@ async fn update_fetch_reports_monotonic_bytes_against_one_total_over_carrier() {
     client.close().await;
     endpoint.close().await;
     serving.await.unwrap();
+}
+
+#[tokio::test]
+async fn advisory_progress_errors_preserve_status_and_fetch() {
+    use crate::update::RestartOwner;
+    for record in [b"broken".as_slice(), br#"{"future_shape":true}"#, b""] {
+        let fixture = PrivateFixture::new();
+        let mut controller = download_progress_controller(&fixture);
+        let (_, request, _) = choice_fixture();
+        controller.request = Some(request.clone());
+        controller.download_plan(250, Some(1000)).unwrap();
+        controller.publish("downloading", crate::update::DOWNLOAD_MESSAGE).unwrap();
+        fs::write(fixture.directory.join(DOWNLOAD_PROGRESS), record).unwrap();
+        let current = status(&fixture.data).unwrap().unwrap();
+        assert_eq!(current.message, crate::update::DOWNLOAD_MESSAGE);
+        assert_eq!((current.completed_bytes, current.total_bytes), (0, None));
+        assert_eq!(track_update_fetch(&fixture.directory, &request.id, async { Ok(vec![1, 2]) }).await.unwrap(), vec![1, 2]);
+    }
+}
+
+#[test]
+fn future_progress_fields_are_optional_and_terminal_phases_remove_progress() {
+    use crate::update::RestartOwner;
+    for phase in ["updated", "failed", "restored", "recovery_required", "idle"] {
+        let fixture = PrivateFixture::new();
+        let mut controller = download_progress_controller(&fixture);
+        let (_, request, _) = choice_fixture();
+        controller.request = Some(request);
+        controller.download_plan(250, Some(1000)).unwrap();
+        controller.publish("downloading", crate::update::DOWNLOAD_MESSAGE).unwrap();
+        let path = fixture.directory.join(DOWNLOAD_PROGRESS);
+        let mut record: Value = read_private_json(&path).unwrap();
+        record["future_field"] = json!(true);
+        write_private(&path, &record).unwrap();
+        assert_eq!(status(&fixture.data).unwrap().unwrap().total_bytes, Some(1000));
+        controller.publish(phase, "Update ended.").unwrap();
+        assert!(!path.exists(), "{phase} must remove advisory progress");
+    }
+}
+
+#[test]
+fn progress_plan_writes_at_most_once_per_second() {
+    use crate::update::RestartOwner;
+    let fixture = PrivateFixture::new();
+    let mut controller = download_progress_controller(&fixture);
+    controller.request = Some(choice_fixture().1);
+    controller.download_plan(250, Some(1000)).unwrap();
+    let path = fixture.directory.join(DOWNLOAD_PROGRESS);
+    let before = fs::read(&path).unwrap();
+    controller.download_plan(500, Some(1000)).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), before, "rapid plan writes are coalesced");
+    std::thread::sleep(Duration::from_millis(1050));
+    controller.download_plan(750, Some(1000)).unwrap();
+    let progress: DownloadProgress = read_private_json(&path).unwrap();
+    assert_eq!(progress.completed_bytes, 750);
 }
