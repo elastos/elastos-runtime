@@ -370,8 +370,8 @@ function startServer(scenario) {
         response.writeHead(200, { "content-type":"application/javascript", "content-length":body.length });
         response.end(body); return;
       }
-      if (url.pathname === "/home-external-link.js") {
-        const body = await readFile(join(repoRoot, "capsules/home/browser/home-external-link.js"));
+      if (["/home-external-link.js", "/byte-format.js"].includes(url.pathname)) {
+        const body = await readFile(join(repoRoot, "capsules/home/browser", url.pathname.slice(1)));
         response.writeHead(200, { "content-type": "application/javascript" }); response.end(body); return;
       }
       if (url.pathname.startsWith("/api/apps/home/shared-content/")) {
@@ -1053,7 +1053,7 @@ async function runScenario(scenario) {
         if (gesture === 'click') await link.click(); else { await link.focus(); await link.press(gesture); }
         await page.locator('#shared-sheet').waitFor({ state: 'visible' });
         assert(await page.locator('#title').innerText() === 'Get this file from Alma?', "contact sheet title differs");
-        assert(await page.locator('#size').innerText() === '30 bytes', "contact sheet size differs");
+        assert(await page.locator('#size').innerText() === '30 B', "contact sheet size differs");
         assert(await page.locator('#open').innerText() === 'Get', "contact sheet button differs");
         for (const hidden of ['#address', '#host', '#kind', '#status']) {
           assert(!(await page.locator(hidden).isVisible()), `contact sheet shows ${hidden}`);
