@@ -216,13 +216,44 @@ try {
     await status(button).waitFor({ state: "detached", timeout: 10000 });
     await resetClipboard("clipboard before copy");
     await hover?.hover();
-    await button.click();
-    await promptRoot().waitFor({ state: "visible", timeout: 3000 }).catch(async () => {
-      const said = await status(button).textContent({ timeout: 500 }).catch(() => "");
-      throw new Error(`${label}: Copy did not ask Home to write the clipboard${said ? ` (it said "${said}")` : ""}`);
+    // Observe before the actual click so feedback survives its 2.4 s lifetime
+    // in diagnostics, including when the driver holds a click's return.
+    const observation = await button.evaluateHandle(node => {
+      const timeline = [];
+      let clickedAt, previous, frame;
+      const record = () => {
+        if (clickedAt === undefined) return;
+        const state = {
+          statusText: node.nextElementSibling?.matches(".agent-copy-status") ? node.nextElementSibling.textContent : null,
+          "data-copy-pending": node.getAttribute("data-copy-pending"),
+          button: { connected: node.isConnected, disabled: node.disabled,
+            ariaDisabled: node.getAttribute("aria-disabled"), copied: node.getAttribute("data-copied"),
+            visible: node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) },
+        };
+        const current = JSON.stringify(state);
+        if (current === previous) return;
+        previous = current;
+        timeline.push({ atMs: Math.round((performance.now() - clickedAt) * 10) / 10, ...state });
+      };
+      const sample = () => { record(); frame = requestAnimationFrame(sample); };
+      const start = () => { clickedAt = performance.now(); sample(); };
+      node.addEventListener("click", start, { capture: true, once: true });
+      const observer = new MutationObserver(record);
+      observer.observe(node.ownerDocument.documentElement, {
+        childList: true, subtree: true, attributes: true, characterData: true,
+      });
+      return { timeline, stop() {
+        record(); observer.disconnect(); cancelAnimationFrame(frame);
+        node.removeEventListener("click", start, true);
+      } };
     });
-    await page.locator("#home-clipboard-allow").click();
     try {
+      await button.click();
+      await promptRoot().waitFor({ state: "visible", timeout: 3000 }).catch(async () => {
+        const said = await status(button).textContent({ timeout: 500 }).catch(() => "");
+        throw new Error(`${label}: Copy did not ask Home to write the clipboard${said ? ` (it said "${said}")` : ""}`);
+      });
+      await page.locator("#home-clipboard-allow").click();
       const feedback = status(button).filter({ hasText: /^Copied$/ });
       await feedback.waitFor({ state: "visible", timeout: 10000 });
       // The clicked button must keep visible feedback for a person to read,
@@ -260,7 +291,11 @@ try {
         prompt: { hidden: document.querySelector("#home-clipboard-prompt").hidden,
           text: document.querySelector("#home-clipboard-copy").textContent },
       }));
-      throw new Error(`${label}: Copy feedback failed: ${JSON.stringify({ ...buttonState, ...home })}`, { cause: error });
+      const timeline = await observation.evaluate(trace => trace.timeline);
+      throw new Error(`${label}: Copy feedback failed: ${JSON.stringify({ ...buttonState, ...home, timeline })}`, { cause: error });
+    } finally {
+      await observation.evaluate(trace => trace.stop());
+      await observation.dispose();
     }
     assert.equal(await clipboard(), expected, `${label}: the clipboard holds the exact text`);
   }
