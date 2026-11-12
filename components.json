@@ -1651,6 +1651,7 @@
         "people",
         "wallet-metamask",
         "wallet-unisat",
+        "wallet-walletconnect",
         "wallet",
         "object-provider",
         "kubo",

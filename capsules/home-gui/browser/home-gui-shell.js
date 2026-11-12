@@ -50,6 +50,7 @@ const BROWSER_AUTHORITY_RENEWAL_RESULT_TYPE =
 const AUTHORIZED_ATTACHMENT_TARGET_TITLES = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
+  "wallet-walletconnect": "WalletConnect",
 });
 let currentSummary = null;
 let sessionRestore = null;

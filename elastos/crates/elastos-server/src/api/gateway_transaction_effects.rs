@@ -3461,6 +3461,7 @@ mod approved_request_resume_tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             cache_dir: root.join("cache"),
             data_dir: root.join("data"),

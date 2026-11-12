@@ -165,10 +165,7 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_complete(
 }
 
 fn require_capsule_owned_connector_effects(connector_id: &str) -> anyhow::Result<()> {
-    if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
-        return Ok(());
-    }
-    if connector_id == WALLET_METAMASK_CAPSULE_ID || connector_id == WALLET_UNISAT_CAPSULE_ID {
+    if is_wallet_connector_capsule_id(connector_id) {
         anyhow::bail!(
             "wallet connector injected-wallet effects require the trusted Home host bridge"
         );
@@ -218,11 +215,10 @@ pub(crate) fn ensure_wallet_connector_configured(
     validate_walletconnect_connector_config(&config)?;
 
     let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
-    let bytes = std::fs::read(&sdk_path).map_err(|err| {
-        anyhow::anyhow!(
-            "WalletConnect connector is not configured: pinned SDK asset missing ({err})"
-        )
-    })?;
+    let bytes =
+        gateway_walletconnect::read_bytes(&sdk_path, 8 * 1024 * 1024)?.ok_or_else(|| {
+            anyhow::anyhow!("WalletConnect connector is not configured: pinned SDK asset missing")
+        })?;
     let digest = format!("{:x}", Sha256::digest(&bytes));
     if !digest.eq_ignore_ascii_case(config.sdk_sha256.trim()) {
         anyhow::bail!("WalletConnect connector is not configured: pinned SDK hash mismatch");
@@ -233,9 +229,14 @@ pub(crate) fn ensure_wallet_connector_configured(
 pub(in crate::api::gateway) fn load_walletconnect_connector_config(
     data_dir: &FsPath,
 ) -> anyhow::Result<WalletConnectConnectorConfig> {
-    let path = data_dir.join(WALLETCONNECT_CONFIG_PATH);
-    let bytes = std::fs::read(&path).map_err(|err| {
-        anyhow::anyhow!("WalletConnect connector is not configured: pinned config missing ({err})")
+    let operator = data_dir.join(WALLETCONNECT_CONFIG_PATH);
+    let path = if operator.try_exists()? {
+        operator
+    } else {
+        data_dir.join("capsules/wallet-walletconnect/vendor/connector.json")
+    };
+    let bytes = gateway_walletconnect::read_bytes(&path, 8192)?.ok_or_else(|| {
+        anyhow::anyhow!("WalletConnect connector is not configured: pinned config missing")
     })?;
     serde_json::from_slice(&bytes).map_err(|err| {
         anyhow::anyhow!("WalletConnect connector is not configured: invalid pinned config ({err})")

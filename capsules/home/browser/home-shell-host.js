@@ -83,6 +83,7 @@ const HOME_GUI_AUTHORIZED_ATTACHMENT_SCHEMA =
 const WALLET_CONNECTOR_TARGET_TITLES = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
+  "wallet-walletconnect": "WalletConnect",
 });
 const WALLET_CONNECTOR_TARGETS = new Set(
   Object.keys(WALLET_CONNECTOR_TARGET_TITLES),
@@ -101,7 +102,7 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   marketplace: "runtime-target",
   people: new Set(["chat-room", "inbox", "system"]),
   system: "visible-target",
-  "wallet": new Set(["wallet-metamask", "wallet-unisat"]),
+  "wallet": new Set(["wallet-metamask", "wallet-unisat", "wallet-walletconnect"]),
 });
 const SHELL_MESSAGE_DELIVER_TARGET_SOURCES = Object.freeze({
   "chat-room": new Set(["documents"]),

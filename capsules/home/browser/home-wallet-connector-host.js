@@ -9,7 +9,14 @@ const RUNTIME_REQUEST_SCHEMA = "elastos.home.wallet-connector.effect.request/v1"
 const RUNTIME_RESULT_SCHEMA = "elastos.home.wallet-connector.effect.result/v1";
 const METAMASK_CONNECTOR_ID = "wallet-metamask";
 const UNISAT_CONNECTOR_ID = "wallet-unisat";
-const CONNECTOR_IDS = new Set([METAMASK_CONNECTOR_ID, UNISAT_CONNECTOR_ID]);
+const WALLETCONNECT_ID = "wallet-walletconnect";
+const CONNECTOR_IDS = new Set([METAMASK_CONNECTOR_ID, UNISAT_CONNECTOR_ID, WALLETCONNECT_ID]);
+let walletConnectProvider = null;
+let walletConnectToken = "";
+let walletConnectGeneration = 0;
+let walletConnectPrincipal = "";
+let walletConnectAdapter = null;
+const observedWalletConnectProviders = new WeakSet();
 const METAMASK_RDNS = "io.metamask";
 const BRAVE_RDNS = "com.brave.wallet";
 const MAX_EIP6963_PROVIDERS = 32;
@@ -159,7 +166,62 @@ function selectMetaMaskCompatibleProvider() {
   throw new Error("MetaMask or Brave Wallet was not found in this browser profile.");
 }
 
+async function walletConnect(connectorToken) {
+  const api = (path, init = {}) => fetchJson(`/api/apps/wallet-walletconnect/${path}`, {
+    ...init, headers: { "x-elastos-walletconnect-connector": connectorToken },
+  });
+  const config = await api("host-config", { method: "POST" });
+  if (config.internet.status !== "granted") throw new Error("Allow WalletConnect internet access in Inbox, then connect again.");
+  if (walletConnectToken && walletConnectToken !== connectorToken) {
+    await walletConnectProvider?.signer.client.core.relayer.transportClose();
+  }
+  // Each principal has its own bundled SDK module state and Core storage prefix.
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(config.principal_id));
+  const instance = [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  const adapter = await import(`${config.sdk_asset_path}?instance=${instance}`);
+  walletConnectProvider = await adapter.connectWalletConnectEvm({
+    contextKey: config.principal_id, projectId: config.projectId, chains: [1, 20, 8453, 11155111], api,
+    runtimeUrl: new URL("/api/apps/wallet-walletconnect", location.origin).href,
+    relayUrl: `${location.origin.replace(/^http/, "ws")}/api/apps/wallet-walletconnect/relay`,
+    metadata: { name: "ElastOS Home", description: "Runtime wallet approval", url: location.origin, icons: [] },
+  });
+  walletConnectToken = connectorToken;
+  walletConnectPrincipal = config.principal_id;
+  walletConnectAdapter = adapter;
+  if (!observedWalletConnectProviders.has(walletConnectProvider)) {
+    const current = walletConnectProvider;
+    observedWalletConnectProviders.add(current);
+    for (const event of ["accountsChanged", "chainChanged", "disconnect"]) {
+      current.on(event, () => { if (walletConnectProvider === current) walletConnectGeneration++; });
+    }
+  }
+  return walletConnectProvider;
+}
+
 async function performConnectorEffect(connectorId, connectorToken, action) {
+  if (connectorId === WALLETCONNECT_ID && action.kind === "status") {
+    const current = await fetchJson("/api/apps/wallet-walletconnect/host-config", {
+      headers: { "x-elastos-walletconnect-connector": connectorToken },
+    });
+    const connected = current.internet.status === "granted" && current.principal_id === walletConnectPrincipal
+      && walletConnectProvider?.session?.expiry > Date.now() / 1000
+      && walletConnectProvider?.connected && walletConnectProvider?.signer?.client.core.relayer.connected;
+    return Object.freeze({ status: connected ? "connected" : "disconnected", revision: walletConnectGeneration });
+  }
+  if (connectorId === WALLETCONNECT_ID && action.kind === "disconnect") {
+    walletConnectGeneration++;
+    const api = (path, init = {}) => fetchJson(`/api/apps/wallet-walletconnect/${path}`, {
+      ...init, headers: { "x-elastos-walletconnect-connector": connectorToken },
+    });
+    const current = await api("host-config");
+    if (walletConnectPrincipal === current.principal_id) await walletConnectAdapter?.disconnectWalletConnectEvm({ api });
+    else await walletConnectProvider?.signer.client.core.relayer.transportClose();
+    walletConnectProvider = null; walletConnectToken = ""; walletConnectPrincipal = "";
+    return Object.freeze({ status: "disconnected" });
+  }
+  if (connectorId === WALLETCONNECT_ID && action.kind === "link") {
+    return linkEvmWallet(connectorToken, await walletConnect(connectorToken), WALLETCONNECT_ID);
+  }
   if (connectorId === METAMASK_CONNECTOR_ID && action.kind === "link") {
     return linkEvmWallet(connectorToken);
   }
@@ -172,33 +234,41 @@ async function performConnectorEffect(connectorId, connectorToken, action) {
   throw new Error("Unsupported wallet request.");
 }
 
-async function linkEvmWallet(connectorToken) {
-  const provider = selectMetaMaskCompatibleProvider();
+function walletConnectSignData(message, connectorId) {
+  if (connectorId !== WALLETCONNECT_ID) return message;
+  if (/^0[xX](?:[0-9a-fA-F]{2})*$/.test(message)) return "0x" + message.slice(2);
+  return "0x" + [...new TextEncoder().encode(message)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function linkEvmWallet(connectorToken, provider = selectMetaMaskCompatibleProvider(), connectorId = METAMASK_CONNECTOR_ID) {
+  const generation = walletConnectGeneration;
   const accounts = await provider.request({ method: "eth_requestAccounts" });
   const address = requireEvmAddress(firstProviderAccount(accounts));
   const chainId = requireEvmChainId(await provider.request({ method: "eth_chainId" }));
   const challengeResult = await runtimePost(
     "/api/apps/home/wallet-connector/evm/link/challenge",
-    connectorBody(METAMASK_CONNECTOR_ID, connectorToken, {
+    connectorBody(connectorId, connectorToken, {
       address,
       chain_id: chainId,
     }),
   );
-  const challenge = requireEvmChallenge(challengeResult);
+  const challenge = requireEvmChallenge(challengeResult, connectorId);
   const signer = requireEvmAddress(await currentEvmAccount(provider));
   ensureSameAddress(signer, address, "Wallet account changed before signing.");
+  if (connectorId === WALLETCONNECT_ID && (generation !== walletConnectGeneration || !Number.isSafeInteger(challenge.expires_at) || challenge.expires_at <= Date.now() / 1000)) throw new Error("Wallet changed. Connect again.");
+  if (connectorId === WALLETCONNECT_ID && requireEvmChainId(await provider.request({ method: "eth_chainId" })) !== chainId) throw new Error("Wallet network changed. Connect again.");
   const signature = requireProviderResult(await provider.request({
     method: "personal_sign",
-    params: [challenge.message, signer],
+    params: [walletConnectSignData(challenge.message, connectorId), signer],
   }), 16 * 1024, "Wallet returned an invalid signature.");
   const verified = await runtimePost(
     "/api/apps/home/wallet-connector/evm/link/verify",
-    connectorBody(METAMASK_CONNECTOR_ID, connectorToken, {
+    connectorBody(connectorId, connectorToken, {
       message: challenge.message,
       signature,
     }),
   );
-  requireRuntimeCompletion(verified, "evm_link_complete", METAMASK_CONNECTOR_ID, "linked");
+  requireRuntimeCompletion(verified, "evm_link_complete", connectorId, "linked");
   return Object.freeze({ status: "linked" });
 }
 
@@ -230,26 +300,46 @@ async function linkBitcoinWallet(connectorToken) {
 }
 
 async function completeApproval(connectorId, connectorToken, approvalRequestId) {
-  const provider = connectorId === METAMASK_CONNECTOR_ID
-    ? selectMetaMaskCompatibleProvider()
-    : requireUniSatProvider();
+  const provider = connectorId === WALLETCONNECT_ID ? await walletConnect(connectorToken)
+    : connectorId === METAMASK_CONNECTOR_ID ? selectMetaMaskCompatibleProvider() : requireUniSatProvider();
   const encodedRequestId = encodeURIComponent(approvalRequestId);
+  if (connectorId === WALLETCONNECT_ID) {
+    const review = await runtimePost(`/api/apps/home/wallet-connector/approvals/${encodedRequestId}/review`, connectorBody(connectorId, connectorToken));
+    ensureSameAddress(await currentEvmAccount(provider), review.address, "Select the requested account in your phone wallet, then review again.");
+    const chain = `eip155:${requireEvmChainId(await provider.request({ method: "eth_chainId" }))}`;
+    if (chain !== review.chain_namespace) throw new Error("Select the request network in your phone wallet, then review again.");
+    if (!Number.isSafeInteger(review.expires_at) || review.expires_at - Math.ceil(Date.now() / 1000) < 300) {
+      throw new Error("Wallet request expires soon. Request a fresh review.");
+    }
+  }
   const response = await runtimePost(
     `/api/apps/home/wallet-connector/approvals/${encodedRequestId}/handoff`,
     connectorBody(connectorId, connectorToken),
   );
-  const { handoff, evmChains } = requireHandoffResponse(
+  const { handoff, evmChains, binding } = requireHandoffResponse(
     response,
     connectorId,
     approvalRequestId,
   );
-  if (connectorId === METAMASK_CONNECTOR_ID) {
-    return completeEvmApproval(provider, connectorToken, handoff, evmChains);
+  if (connectorId !== UNISAT_CONNECTOR_ID) {
+    return completeEvmApproval(provider, connectorToken, handoff, evmChains, connectorId, binding);
   }
   return completeBitcoinApproval(provider, connectorToken, handoff);
 }
 
-async function completeEvmApproval(provider, connectorToken, handoff, evmChains) {
+async function completeEvmApproval(provider, connectorToken, handoff, evmChains, connectorId = METAMASK_CONNECTOR_ID, binding) {
+  const generation = walletConnectGeneration;
+  const checkBinding = async () => {
+    if (connectorId !== WALLETCONNECT_ID) return;
+    const chain = `eip155:${requireEvmChainId(await provider.request({ method: "eth_chainId" }))}`;
+    if (chain !== binding.chain_namespace || generation !== walletConnectGeneration
+        || !Number.isSafeInteger(binding.expires_at) || binding.expires_at <= Date.now() / 1000) {
+      throw new Error("Wallet request changed or expired. Request a new review.");
+    }
+    const ttl = binding.expires_at - Math.ceil(Date.now() / 1000);
+    if (ttl < 300) throw new Error("Wallet request expires soon. Request a fresh review.");
+    return ttl;
+  };
   const signer = requireEvmAddress(await currentEvmAccount(provider));
   ensureSameAddress(signer, handoff.signer, "Switch to the linked account before approving.");
   const path = `/api/apps/home/wallet-connector/approvals/${encodeURIComponent(handoff.request_id)}/complete`;
@@ -261,16 +351,17 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains)
       handoff.signer,
       "Switch to the linked account before approving.",
     );
+    const expiry = await checkBinding();
     const transactionHash = requireProviderResult(await provider.request({
       method: "eth_sendTransaction",
       params: [handoff.transaction],
-    }), 512, "Wallet returned an invalid transaction hash.");
-    const completed = await runtimePost(path, connectorBody(METAMASK_CONNECTOR_ID, connectorToken, {
+    }, expiry), 512, "Wallet returned an invalid transaction hash.");
+    const completed = await runtimePost(path, connectorBody(connectorId, connectorToken, {
       payload_hash: handoff.payload_hash,
       signer: currentSigner,
       transaction_hash: transactionHash,
     }));
-    requireApprovalCompletion(completed, METAMASK_CONNECTOR_ID, handoff.request_id);
+    requireApprovalCompletion(completed, connectorId, handoff.request_id);
     return Object.freeze({ status: "completed", effect: "transaction" });
   }
   const method = handoff.intent === "browser_typed_data_sign"
@@ -278,16 +369,17 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains)
     : "personal_sign";
   const params = method === "eth_signTypedData_v4"
     ? [signer, handoff.message]
-    : [handoff.message, signer];
-  const signature = requireProviderResult(await provider.request({ method, params }), 16 * 1024,
+    : [walletConnectSignData(handoff.message, connectorId), signer];
+  const expiry = await checkBinding();
+  const signature = requireProviderResult(await provider.request({ method, params }, expiry), 16 * 1024,
     "Wallet returned an invalid signature.");
-  const completed = await runtimePost(path, connectorBody(METAMASK_CONNECTOR_ID, connectorToken, {
+  const completed = await runtimePost(path, connectorBody(connectorId, connectorToken, {
     payload_hash: handoff.payload_hash,
     signature,
     signature_type: method === "eth_signTypedData_v4" ? "eip712" : "personal_sign",
     signer,
   }));
-  requireApprovalCompletion(completed, METAMASK_CONNECTOR_ID, handoff.request_id);
+  requireApprovalCompletion(completed, connectorId, handoff.request_id);
   return Object.freeze({ status: "completed", effect: "signature" });
 }
 
@@ -370,12 +462,8 @@ function requireEvmChain(chains, chainId) {
 function requireHandoffResponse(response, connectorId, requestId) {
   if (
     !hasExactKeys(response, [
-      "schema",
-      "action",
-      "connector_id",
-      "request_id",
-      "handoff",
-      "evm_chains",
+      "schema", "action", "connector_id", "request_id", "handoff", "evm_chains",
+      ...(connectorId === WALLETCONNECT_ID ? ["binding"] : []),
     ])
     || response.schema !== RUNTIME_RESULT_SCHEMA
     || response.action !== "approval_handoff"
@@ -434,7 +522,14 @@ function requireHandoffResponse(response, connectorId, requestId) {
   ) {
     throw new Error("Runtime returned an invalid EVM signature handoff.");
   }
-  return { handoff, evmChains: response.evm_chains };
+  if (connectorId === WALLETCONNECT_ID && (
+    !hasExactKeys(response.binding, ["principal_id", "requested_by_actor", "account_id", "chain_namespace", "payload_hash", "expires_at"])
+    || !boundedText(response.binding.principal_id, 256) || !boundedText(response.binding.requested_by_actor, 256)
+    || !boundedText(response.binding.account_id, 256) || !/^eip155:[1-9][0-9]*$/.test(response.binding.chain_namespace)
+    || response.binding.payload_hash !== handoff.payload_hash
+    || !Number.isSafeInteger(response.binding.expires_at) || response.binding.expires_at <= Date.now() / 1000
+  )) throw new Error("Runtime returned an invalid WalletConnect request binding.");
+  return { handoff, evmChains: response.evm_chains, binding: response.binding };
 }
 
 function validTransaction(transaction, signer) {
@@ -452,12 +547,12 @@ function validTransaction(transaction, signer) {
     && /^0x[0-9a-fA-F]+$/.test(transaction.chainId);
 }
 
-function requireEvmChallenge(response) {
+function requireEvmChallenge(response, connectorId = METAMASK_CONNECTOR_ID) {
   if (
     !hasExactKeys(response, ["schema", "action", "connector_id", "challenge"])
     || response.schema !== RUNTIME_RESULT_SCHEMA
     || response.action !== "evm_link_challenge"
-    || response.connector_id !== METAMASK_CONNECTOR_ID
+    || response.connector_id !== connectorId
   ) {
     throw new Error("Runtime returned an invalid EVM challenge envelope.");
   }
@@ -682,7 +777,7 @@ function validAction(action) {
   if (!action || typeof action !== "object" || Array.isArray(action)) {
     return false;
   }
-  if (action.kind === "link") {
+  if (action.kind === "link" || action.kind === "disconnect" || action.kind === "status") {
     return hasExactKeys(action, ["kind"]);
   }
   return action.kind === "approve"

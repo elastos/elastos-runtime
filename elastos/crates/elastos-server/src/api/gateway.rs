@@ -117,6 +117,8 @@ mod gateway_transaction_effects;
 mod gateway_wallet;
 #[path = "gateway_wallet_adapter.rs"]
 mod gateway_wallet_adapter;
+#[path = "gateway_walletconnect.rs"]
+mod gateway_walletconnect;
 #[cfg(test)]
 use gateway_browser::browser_runtime_stream_socket_path;
 use gateway_capsule_catalog::*;
@@ -454,7 +456,7 @@ pub(crate) const WALLETCONNECT_CONFIG_PATH: &str =
     "ElastOS/SystemServices/WalletConnect/config.json";
 pub(crate) const WALLETCONNECT_SDK_PATH: &str =
     "capsules/wallet-walletconnect/vendor/reown-appkit.js";
-pub(crate) const WALLETCONNECT_SDK_PACKAGE: &str = "@reown/appkit";
+pub(crate) const WALLETCONNECT_SDK_PACKAGE: &str = "@walletconnect/ethereum-provider";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -505,6 +507,7 @@ struct WalletPricePolicy {
 #[derive(Clone)]
 pub struct GatewayState {
     pub(crate) browser_internet: Arc<BrowserInternetService>,
+    pub(crate) walletconnect: Arc<gateway_walletconnect::WalletConnectService>,
     pub(crate) carrier_endpoint: Option<iroh::Endpoint>,
     pub provider_registry: Option<Arc<ProviderRegistry>>,
     pub(crate) collaboration_chat_product_port:
@@ -861,6 +864,26 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
         )
         .route("/api/apps/wallet/wallet/summary", get(wallet_app_summary))
         .route("/api/wallet/prices", get(wallet_prices))
+        .route(
+            "/api/apps/wallet-walletconnect/internet",
+            get(gateway_walletconnect::internet).post(gateway_walletconnect::internet),
+        )
+        .route(
+            "/api/apps/wallet-walletconnect/storage",
+            get(gateway_walletconnect::storage).post(gateway_walletconnect::storage),
+        )
+        .route(
+            "/api/apps/wallet-walletconnect/relay",
+            get(gateway_walletconnect::relay),
+        )
+        .route(
+            "/api/apps/wallet-walletconnect/relay-admission",
+            post(gateway_walletconnect::admission),
+        )
+        .route(
+            "/api/apps/wallet-walletconnect/host-config",
+            get(gateway_walletconnect::host_config).post(gateway_walletconnect::host_config),
+        )
         .route("/api/wallet/qr", post(wallet_receive_qr))
         .route(
             "/api/apps/wallet/wallet/managed",
@@ -1018,6 +1041,10 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
         .route(
             "/api/apps/home/wallet-connector/bitcoin/link/verify",
             post(home_wallet_connector_bitcoin_link_verify),
+        )
+        .route(
+            "/api/apps/home/wallet-connector/approvals/:request_id/review",
+            post(home_wallet_connector_approval_review),
         )
         .route(
             "/api/apps/home/wallet-connector/approvals/:request_id/handoff",

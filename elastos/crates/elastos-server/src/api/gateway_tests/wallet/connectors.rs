@@ -602,7 +602,7 @@ async fn test_metamask_connector_config_returns_runtime_evm_chain_metadata() {
     assert!(json.get("walletconnect").is_none());
 }
 
-fn seed_walletconnect_connector_config(data_dir: &std::path::Path) {
+pub(super) fn seed_walletconnect_connector_config(data_dir: &std::path::Path) {
     let sdk = b"// pinned test WalletConnect SDK asset\n";
     let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
     std::fs::create_dir_all(sdk_path.parent().unwrap()).unwrap();

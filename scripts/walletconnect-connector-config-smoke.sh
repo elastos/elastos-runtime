@@ -42,7 +42,7 @@ if (config.schema !== "elastos.walletconnect.connector/v1") {
 if (config.project_id !== "test_walletconnect_project") {
   throw new Error("wrong project id");
 }
-if (config.sdk_package !== "@reown/appkit") {
+if (config.sdk_package !== "@walletconnect/ethereum-provider") {
   throw new Error("wrong sdk package");
 }
 if (config.sdk_version !== "0.0.0-test") {

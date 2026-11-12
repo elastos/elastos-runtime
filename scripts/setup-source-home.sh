@@ -1689,6 +1689,9 @@ stamp_source_home_components_manifest
 
 echo "[setup-source-home] install app capsules and manifest entrypoints"
 install_app_capsules
+if [[ -n "${ELASTOS_WALLETCONNECT_PROJECT_FILE:-}${ELASTOS_WALLETCONNECT_PROJECT_ID:-}" ]]; then
+    node "${ROOT}/scripts/stage-walletconnect-release.mjs" "${DATA_DIR}/capsules/wallet-walletconnect"
+fi
 for retired_provider in "${RETIRED_SOURCE_HOME_PROVIDER_BINARIES[@]}"; do
     rm -f "${DATA_DIR}/bin/${retired_provider}"
 done

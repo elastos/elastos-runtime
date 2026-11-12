@@ -5,6 +5,7 @@
 //! bounded preparation path, not this archive installer.
 
 use crate::api::capsule_inventory::MAX_MODEL_CATALOG_BYTES;
+pub mod walletconnect;
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -5908,7 +5909,6 @@ pub(crate) mod tests {
         // download either); each stays installable with `setup --with`.
         let hidden = [
             "services",
-            "wallet-walletconnect",
             "content-block-graph-provider",
             "elacity-player",
             "protected-content-protect-provider",

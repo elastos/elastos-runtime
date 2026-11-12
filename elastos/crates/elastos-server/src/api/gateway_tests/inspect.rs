@@ -150,6 +150,7 @@ async fn inspect_test_state(dir: &std::path::Path) -> GatewayState {
         carrier_endpoint: None,
         collaboration_discovery_service: None,
         browser_internet: Default::default(),
+        walletconnect: Default::default(),
         identity_manager: Arc::new(std::sync::OnceLock::new()),
         cache_dir: dir.to_path_buf(),
         data_dir: dir.to_path_buf(),

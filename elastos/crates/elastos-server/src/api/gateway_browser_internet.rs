@@ -81,6 +81,11 @@ pub(crate) struct BrowserInternetService {
     generation: Mutex<Option<Generation>>,
 }
 impl BrowserInternetService {
+    pub(super) fn capability_manager(&self) -> anyhow::Result<Arc<CapabilityManager>> {
+        self.manager
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Runtime internet authority is unavailable"))
+    }
     pub(crate) fn new(manager: Option<Arc<CapabilityManager>>) -> Self {
         Self {
             manager,

@@ -1809,6 +1809,7 @@ dependencies = [
  "elastos-wallet-contract",
  "flate2",
  "futures-lite",
+ "futures-util",
  "getrandom 0.2.17",
  "hex",
  "hkdf",
@@ -1822,6 +1823,7 @@ dependencies = [
  "qrcodegen",
  "rand 0.10.2",
  "rand 0.8.7",
+ "rcgen",
  "reqwest 0.12.28",
  "rustls",
  "semver",
@@ -1834,6 +1836,8 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
  "toml",
  "tower",
  "tower-http 0.5.2",
@@ -5874,8 +5878,12 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -6139,6 +6147,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.7",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

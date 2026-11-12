@@ -922,6 +922,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             cache_dir: data_dir.join("cache"),
             data_dir: data_dir.to_path_buf(),

@@ -1197,12 +1197,24 @@ async fn setup_server_infrastructure_impl(
 
     // Retained Browser helpers from an earlier release stay stopped where
     // Browser is unavailable.
-    let browser_available =
-        elastos_server::setup::browser_available(&elastos_server::setup::detect_platform());
-    if let Some(local_exit_config) = browser_available
+    let platform = elastos_server::setup::detect_platform();
+    let browser_available = elastos_server::setup::browser_available(&platform);
+    let walletconnect_exit = elastos_server::setup::walletconnect::local_exit(&data_dir, &platform);
+    let browser_exit = browser_available
         .then(|| browser_local_exit_config_from_env(&data_dir))
-        .flatten()
-    {
+        .flatten();
+    for (name, config) in [
+        ("browser-local-exit", browser_exit),
+        (
+            "walletconnect-local-exit",
+            walletconnect_exit
+                .as_ref()
+                .map(|(helper, _)| helper.clone()),
+        ),
+    ] {
+        let Some(local_exit_config) = config else {
+            continue;
+        };
         if let Some(path) = crate::find_installed_provider_binary("browser-local-exit") {
             if let Err(e) = verify_provider_binary("browser-local-exit", &path) {
                 tracing::warn!(
@@ -1212,13 +1224,10 @@ async fn setup_server_infrastructure_impl(
             } else {
                 match spawn_browser_local_exit(&path, &local_exit_config) {
                     Ok(child) => {
-                        tracing::info!("browser-local-exit helper from {}", path.display());
-                        managed_host_processes.push(api::server::HostHelperProcess {
-                            name: "browser-local-exit",
-                            child,
-                        });
+                        tracing::info!("{name} helper from {}", path.display());
+                        managed_host_processes.push(api::server::HostHelperProcess { name, child });
                     }
-                    Err(e) => tracing::warn!("Failed to spawn browser-local-exit: {}", e),
+                    Err(e) => tracing::warn!("Failed to spawn {name}: {}", e),
                 }
             }
         } else {
@@ -1230,8 +1239,20 @@ async fn setup_server_infrastructure_impl(
 
     match binaries::resolve_verified_native_provider_binary("exit-provider") {
         Ok(Some(path)) => {
+            let existing_exit =
+                exit_provider_config_from_env(&data_dir).unwrap_or(serde_json::Value::Null);
+            let extra = match elastos_server::setup::walletconnect::merge_exit_config(
+                existing_exit.clone(),
+                walletconnect_exit.as_ref().map(|(_, provider)| provider),
+            ) {
+                Ok(config) => config,
+                Err(error) => {
+                    tracing::warn!(%error, "Exit configuration needs repair");
+                    existing_exit
+                }
+            };
             let exit_config = provider::BridgeProviderConfig {
-                extra: exit_provider_config_from_env(&data_dir).unwrap_or(serde_json::Value::Null),
+                extra,
                 ..Default::default()
             };
             match provider::ProviderBridge::spawn(&path, exit_config).await {

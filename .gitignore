@@ -153,3 +153,6 @@ scripts/dev/dkms-docker/shared
 
 # Local rehearsal and review output; never part of the repository.
 /output/
+
+# Operator WalletConnect config is staged into release archives, outside source.
+/capsules/wallet-walletconnect/vendor/connector.json

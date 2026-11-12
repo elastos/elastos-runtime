@@ -111,6 +111,7 @@ jobs:
         working-directory: source
     env:
       SOURCE_TREE: ${{ needs.admit.outputs.source_tree }}
+      ELASTOS_WALLETCONNECT_PROJECT_ID: ${{ secrets.REOWN_PROJECT_ID }}
       RELEASE_PLATFORM: aarch64-darwin
       # Cargo and its C dependencies target macOS 11.0, not the runner SDK.
       MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -388,6 +389,7 @@ jobs:
         working-directory: source
     env:
       SOURCE_TREE: ${{ needs.admit.outputs.source_tree }}
+      ELASTOS_WALLETCONNECT_PROJECT_ID: ${{ secrets.REOWN_PROJECT_ID }}
       RELEASE_PLATFORM: ${{ matrix.platform }}
       RELEASE_ARCH: ${{ matrix.arch }}
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
@@ -622,7 +624,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_TREE: ${{ needs.admit.outputs.source_tree }}
-          RELEASE_PLATFORM: ${{ matrix.platform }}
+          ELASTOS_WALLETCONNECT_PROJECT_ID: ${{ secrets.REOWN_PROJECT_ID }}
+      RELEASE_PLATFORM: ${{ matrix.platform }}
           RELEASE_PREFIX: ${{ matrix.prefix }}
         run: |
           set -euo pipefail

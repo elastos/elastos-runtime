@@ -1610,7 +1610,7 @@ sendChildMessage("http://evil.invalid", walletFrameWindow, {
 });
 sendChildMessage("null", walletFrameWindow, {
   type: "home:open-target",
-  target: "wallet-walletconnect",
+  target: "wallet-unknown",
   homeToken: "wallet-token",
 });
 sendChildMessage("null", walletFrameWindow, {

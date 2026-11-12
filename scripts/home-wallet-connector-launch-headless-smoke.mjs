@@ -14,10 +14,12 @@ const walletToken = "fixture-wallet-token";
 const connectorTokens = Object.freeze({
   "wallet-metamask": "fixture-metamask-token",
   "wallet-unisat": "fixture-unisat-token",
+  "wallet-walletconnect": "fixture-walletconnect-token",
 });
 const connectorTitles = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
+  "wallet-walletconnect": "WalletConnect",
 });
 const state = {
   launches: {
@@ -25,6 +27,7 @@ const state = {
     wallet: 0,
     "wallet-metamask": 0,
     "wallet-unisat": 0,
+    "wallet-walletconnect": 0,
   },
   connectorEffects: 0,
   homeStateWrites: [],
@@ -77,6 +80,7 @@ function staticPath(pathname) {
     ["/apps/wallet/", join(repoRoot, "capsules/wallet/browser")],
     ["/apps/wallet-metamask/", join(repoRoot, "capsules/wallet-metamask/browser")],
     ["/apps/wallet-unisat/", join(repoRoot, "capsules/wallet-unisat/browser")],
+    ["/apps/wallet-walletconnect/", join(repoRoot, "capsules/wallet-walletconnect/browser")],
   ];
   for (const [prefix, root] of roots) {
     if (!pathname.startsWith(prefix)) {
@@ -253,7 +257,7 @@ async function handleApi(req, res, url) {
     json(res, 200, {
       wallet_accounts: { accounts: [], default_accounts: [] },
       wallet_approvals: { approval_requests: [] },
-      approval_methods: {},
+      approval_methods: { walletconnect: { available: true } },
     });
     return true;
   }
@@ -500,6 +504,7 @@ try {
   const connectorLabels = Object.freeze({
     "wallet-metamask": "Connect wallet",
     "wallet-unisat": "Connect UniSat",
+    "wallet-walletconnect": "Connect wallet",
   });
   const walletWindowBeforeConnectors = await homeWindowSnapshot(
     homeGui,
@@ -640,13 +645,14 @@ try {
   assert(state.launches.wallet === 1, "Home launched Wallet more than once", state);
   assert(
     state.launches["wallet-metamask"] === 1 &&
-      state.launches["wallet-unisat"] === 1,
+      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 1,
     "one Wallet click did not produce exactly one Runtime connector launch",
     state,
   );
   assert(
     await homeGui.locator('.window[data-target="wallet-metamask"]').count() === 0 &&
-      await homeGui.locator('.window[data-target="wallet-unisat"]').count() === 0,
+      await homeGui.locator('.window[data-target="wallet-unisat"]').count() === 0 &&
+      await homeGui.locator('.window[data-target="wallet-walletconnect"]').count() === 0,
     "Home GUI did not close connector windows independently",
   );
 
@@ -654,11 +660,11 @@ try {
   await postGuiCommandFromHost(page, {
     schema: "elastos.home.authorized-target-attachment/v1",
     receipt_id: "forged-target",
-    target: "wallet-walletconnect",
-    title: "WalletConnect",
+    target: "wallet-unknown",
+    title: "Unknown connector",
     attach_kind: "iframe",
     route:
-      `/apps/wallet-walletconnect/?home_origin=${encodeURIComponent(origin)}` +
+      `/apps/wallet-unknown/?home_origin=${encodeURIComponent(origin)}` +
       "#home_token=forged",
   });
   await postGuiCommandFromHost(page, {
@@ -694,7 +700,7 @@ try {
   );
   assert(
     state.launches["wallet-metamask"] === 1 &&
-      state.launches["wallet-unisat"] === 1,
+      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 1,
     "descriptor rejection invoked the generic Runtime launch path",
     state,
   );
@@ -732,6 +738,8 @@ try {
   assert(
     !persistedState.includes("wallet-metamask") &&
       !persistedState.includes("wallet-unisat") &&
+      !persistedState.includes("wallet-walletconnect") &&
+      !persistedState.includes("fixture-walletconnect-token") &&
       !persistedState.includes("home_token") &&
       !persistedState.includes("fixture-metamask-token") &&
       !persistedState.includes("fixture-unisat-token") &&
@@ -748,6 +756,7 @@ try {
       `wallet_launches=${state.launches.wallet} ` +
       `metamask_launches=${state.launches["wallet-metamask"]} ` +
       `unisat_launches=${state.launches["wallet-unisat"]} ` +
+      `walletconnect_launches=${state.launches["wallet-walletconnect"]} ` +
       `connector_effects=${state.connectorEffects}`,
   );
 } finally {

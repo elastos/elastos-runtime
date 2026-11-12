@@ -36,7 +36,11 @@ async function screen(page, name) {
   await page.waitForTimeout(250);
   await page.screenshot({path:`${process.env.BROWSER_INTERNET_SCREENSHOTS}/${process.env.BROWSER_INTERNET_SCREEN_THEME === "dark" ? "dark-" : ""}${name}.png`});
 }
-async function fixture() {
+async function fixture(service = "browser") {
+  const walletconnect = service === "walletconnect";
+  const prefix = walletconnect ? "walletconnect-internet" : "browser-internet";
+  const kind = walletconnect ? "walletconnect_internet" : "browser_internet";
+  const internetPath = walletconnect ? "/api/apps/wallet-walletconnect/internet" : "/api/apps/browser/internet";
   const state = {consent:"off", expired:false, grantedRequestId:"fixture", requests:0, reads:0, opens:[], actions:[]};
   const server=http.createServer(async (req,res) => {
     const url=new URL(req.url,"http://localhost");
@@ -60,28 +64,28 @@ async function fixture() {
       res.setHeader("content-type","text/html");
       res.end(`<style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%}</style><script>${hostScript}</script><iframe data-app="${app}" src="/apps/${app}/?browser_restore=${url.searchParams.get("restore") || "0"}&notification_id=browser-internet:permission&url=https%3A%2F%2Fexample.com%2Frequested&home_origin=http://127.0.0.1:${server.address().port}#home_token=fixture"></iframe>`);return;
     }
-    if (url.pathname === "/api/apps/browser/internet") {
+    if (url.pathname === internetPath) {
       state.reads++;
       if(input?.action === "revoke") {assert.equal(input.step_up_token,"fixture-step-up");state.consent="revoked";}
       if (input?.action === "end") {json({status:"ended"});return;}
       if (input?.action === "request") {state.requests++;state.consent="requested";state.expired=false;await state.requestBarrier;}
-      json({status:state.consent,request_id:state.consent==="granted"?state.grantedRequestId:undefined,request:state.expired?null:{resource:"elastos://browser/internet",grant_id:"fixture-grant",request_id:"fixture",text:consentText,expires_at:Math.floor(Date.now()/1000)+3600}});return;
+      json({status:state.consent,request_id:state.consent==="granted"?state.grantedRequestId:undefined,request:state.expired?null:{resource:`elastos://${service}/internet`,grant_id:"fixture-grant",request_id:"fixture",text:consentText,expires_at:Math.floor(Date.now()/1000)+3600}});return;
     }
     if (url.pathname === "/api/apps/inbox/summary") {
       const pending=state.consent === "requested";
       const body=pending?consentText:state.consent === "granted"?"Browser can open websites. Allowed with your passkey.":state.consent === "refused"?"Browser cannot open websites. Not allowed.":"Browser cannot open websites. Turned off.";
       json({notifications:{unread_count:pending?1:0,attention_count:pending?1:0,entries:[{
-        id:"browser-internet:permission",source_app:"browser",kind:pending?"browser_internet_request":"browser_internet_decision",
+        id:`${prefix}:permission`,source_app:walletconnect?"wallet-walletconnect":"browser",kind:`${kind}_${pending?"request":"decision"}`,
         title:pending?"Allow Browser to use the internet?":"Browser internet access",body,severity:pending?"attention":"info",read:!pending,created_at:1794312000,
-        action_ref:{app:"inbox",action_id:pending?"browser-internet-allow:fixture":state.consent==="granted"?"browser-internet-turn-off:fixture-grant":"browser-internet-request"},
+        action_ref:{app:"inbox",action_id:pending?`${prefix}-allow:fixture`:state.consent==="granted"?`${prefix}-turn-off:fixture-grant`:`${prefix}-request`},
       }]}});return;
     }
     if (url.pathname === "/api/apps/inbox/actions") {
       state.actions.push(input);
-      if(input.action_id === "browser-internet-allow:fixture") {
+      if(input.action_id === `${prefix}-allow:fixture`) {
         assert.equal(input.step_up_token,"fixture-step-up");state.consent="granted";
-      } else if(input.action_id === "browser-internet-deny:fixture") state.consent="refused";
-      else if(input.action_id === "browser-internet-turn-off:fixture-grant") {assert.equal(input.step_up_token,"fixture-step-up");state.consent="revoked";}
+      } else if(input.action_id === `${prefix}-deny:fixture`) state.consent="refused";
+      else if(input.action_id === `${prefix}-turn-off:fixture-grant`) {assert.equal(input.step_up_token,"fixture-step-up");state.consent="revoked";}
       json({ok:true});return;
     }
     if (url.pathname === "/api/apps/browser/summary") {
@@ -393,3 +397,37 @@ test("internet grant refusal points to the permission request", async () => {
      assert.doesNotMatch(readFileSync(new URL(`capsules/system/browser/${name}`,root),"utf8"),/browser-internet|browserInternet|browser\.internet|\/api\/apps\/browser\/internet/);
    }
  });
+
+
+test("WalletConnect Inbox keeps requests pending, uses passkey consent and separates completed decisions", async () => {
+  const f = await fixture("walletconnect");
+  const browser = await chromium.launch({headless:true});
+  try {
+    for (const width of [1280,390]) {
+      f.state.consent="requested"; f.state.actions=[];
+      const page=await browser.newPage({viewport:{width,height:844}});
+      await page.goto(f.url+"?app=inbox");
+      const frame=page.frameLocator("iframe");
+      await frame.getByRole("button",{name:"Allow",exact:true}).waitFor();
+      assert.equal(await frame.locator("#pending-count").innerText(),"1");
+      assert.equal(f.state.actions.length,0,"dynamic requests stay unread until answered");
+      await frame.getByRole("button",{name:"Allow",exact:true}).click();
+      await frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
+      assert.equal(await frame.locator("#pending-count").innerText(),"0");
+      assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant"]);
+      await frame.getByRole("button",{name:"Turn Off",exact:true}).click();
+      await frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor({state:"hidden"});
+      assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant","walletconnect.internet.revoke"]);
+      assert.equal(f.state.consent,"revoked");
+      await page.close();
+    }
+    f.state.consent="requested";f.state.actions=[];
+    const page=await browser.newPage();await page.goto(f.url+"?app=inbox");
+    const frame=page.frameLocator("iframe");
+    await frame.getByRole("button",{name:"Don't Allow",exact:true}).click();
+    await frame.getByRole("button",{name:"Allow",exact:true}).waitFor({state:"hidden"});
+    assert.equal(f.state.consent,"refused");
+    assert.deepEqual(await page.evaluate(()=>approvals),[]);
+    await page.close();
+  } finally {await browser.close();await f.close();}
+});

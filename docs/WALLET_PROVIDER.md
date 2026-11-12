@@ -244,33 +244,49 @@ storage, and signed runtime audit scaffolding. An approval that expires before
 managed signing or external handoff completion fails closed instead of becoming
 a stale signing authority.
 
-WalletConnect is a dedicated connector capsule (`wallet-walletconnect`), not a
-wallet-provider SDK backend and not app-owned session state. `wallet-provider`
-owns proof verification, linked accounts, approval state, receipts, and audit;
-the connector owns only Reown/AppKit browser UX plus the operator-pinned local
-adapter. Mode A is the first target: ElastOS acts as the dApp and external
-wallets sign Runtime challenges or requests. Mode B, where external dApps treat
-ElastOS as a WalletConnect wallet, is a later security milestone. Internal
-capsules do not use WalletConnect or generic Wallet provider calls; their
-product routes enter the private typed Wallet Bus through verified Runtime
-authority.
+WalletConnect is a dedicated connector capsule (`wallet-walletconnect`).
+`wallet-provider` owns proof verification, linked accounts, approval state,
+receipts, and audit. The connector presents the account and approval controls;
+trusted Home hosts the reviewed Reown EVM provider and bundled QR renderer.
+Mode A connects external wallets to sign Runtime challenges and approved
+requests. Mode B, where external dApps use ElastOS as a WalletConnect wallet,
+requires its own security decision. Internal capsules enter the private typed
+Wallet Bus through verified Runtime authority.
 
-`wallet-walletconnect` remains invisible unless the runtime finds
-`elastos.walletconnect.connector/v1` config plus a local hashed Reown/AppKit SDK
-asset. A configured launch can read only the narrow
-`/api/apps/wallet-walletconnect/wallet/config` contract for its project ID and
-local SDK asset path. The dormant connector UI imports only that pinned local
-asset and expects a stable adapter export named `connectWalletConnectEvm`, which
-returns an EIP-1193 provider to the connector capsule.
-`scripts/vendor-walletconnect-adapter.sh` builds that adapter from exact package
-versions, and `scripts/configure-walletconnect-connector.mjs` pins a reviewed
-local adapter by sha256. Until a real Reown project ID and reviewed adapter are
-installed into the runtime data dir, the connector remains hidden and
-unroutable. Do not commit a bundled default Reown Project ID; official
-deployments and independent operators pin their own runtime config. Essentials
-and ELA signing should start from that connector contract because the Essentials
-DID toolkit is WalletConnect-backed;
-do not add a visible Essentials surface until the pinned connector exists.
+Runtime keeps the SDK key/value store in private files selected by the verified
+principal. Trusted Home combines its own authority with the carried connector
+launch token to use storage and obtain a short-lived, single-use relay admission.
+An opaque capsule cannot read pairing keys or publish encrypted signing requests.
+Home accepts link actions, approval IDs, and disconnect actions; Runtime and
+`wallet-provider` supply the exact proof or signing payload. Pairing carries
+connection state. Each signing request retains its principal, requesting actor,
+account, chain, payload hash, and expiry. Disconnect leaves linked accounts in
+Wallet. Account or chain changes stop a request in progress.
+
+Inbox owns internet consent through the owner's passkey. Runtime connects only
+to `relay.walletconnect.org` and `relay.walletconnect.com` on TLS port 443 through
+the existing local Exit. Runtime authenticates relay TLS, limits frame size and
+sockets per principal, sends heartbeats, and expires idle connections. Turn Off
+cancels handshakes and open sockets. Reopening the connector restores the SDK's
+principal-scoped state and reconnects while consent and Home authority remain
+valid. Hosted Carrier Exit selection remains a separate integration.
+
+The connector is installed with Home and stays hidden and unroutable until
+`elastos.walletconnect.connector/v1` configuration and the matching hashed local
+SDK asset exist. `scripts/vendor-walletconnect-adapter.sh` uses `npm ci` with the
+complete dependency lock in `scripts/walletconnect/package-lock.json`. It builds
+the `connectWalletConnectEvm` adapter inside the capsule's `vendor` directory;
+release packaging includes those bytes in the verified capsule archive.
+
+The release workflow reads the operator's `REOWN_PROJECT_ID` secret. Independent
+operators can supply `ELASTOS_WALLETCONNECT_PROJECT_FILE` or
+`ELASTOS_WALLETCONNECT_PROJECT_ID` during release preparation or source-home
+setup. Staging checks the reviewed adapter hash and includes `vendor/connector.json`
+before the capsule is hashed. An existing operator configuration in
+`ElastOS/SystemServices/WalletConnect/config.json` takes precedence. Source uses
+fixture IDs in tests and carries each operator's project ID only in that
+operator's release or installed configuration. A person using Home presses
+Connect and scans the QR code. Essentials and ELA signing build on this boundary.
 Essentials, ELA, EID, BTC BIP-322, and UniversalX should reuse the same
 proof-binding shape.
 UniSat is the first dedicated browser Bitcoin connector because its injected API

@@ -3603,14 +3603,8 @@ fn require_wallet_link_context(
     state: &GatewayState,
     headers: &HeaderMap,
 ) -> anyhow::Result<WalletLinkContext> {
-    let authority = require_runtime_wallet_authority(
-        &state.data_dir,
-        headers,
-        &[super::gateway::WALLET_WALLETCONNECT_CAPSULE_ID],
-    )?;
-    let verified = authority.verified_context();
-    let app = verified.actor().to_string();
-    verified_wallet_link_context(state, &app, authority)
+    let _ = (state, headers);
+    anyhow::bail!("Wallet linking requires the trusted Home wallet connector bridge")
 }
 
 pub(in crate::api) fn verified_wallet_link_context(
@@ -4960,6 +4954,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.to_path_buf(),
             data_dir: data_dir.to_path_buf(),
@@ -5222,6 +5217,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.to_path_buf(),
             data_dir: data_dir.to_path_buf(),

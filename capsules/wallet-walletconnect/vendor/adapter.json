@@ -1,0 +1,6 @@
+{
+  "sdk_package": "@walletconnect/ethereum-provider",
+  "sdk_version": "2.23.9",
+  "sdk_sha256": "2d49248cf55d0f7f6a37ca3836d28681384a23be32ac3e9158f98619cbd84dc7",
+  "dependency_lock_sha256": "a12af83d3f92729c8bf06ff21505973a68c01d9fe08e157d837adc6c4b08833d"
+}
