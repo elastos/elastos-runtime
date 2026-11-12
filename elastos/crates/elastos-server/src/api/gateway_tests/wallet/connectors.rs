@@ -2,6 +2,28 @@ use super::super::*;
 
 #[tokio::test]
 async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
+    struct ReplyOverride {
+        inner: MockWalletProvider,
+        field: Option<&'static str>,
+    }
+    #[async_trait::async_trait]
+    impl Provider for ReplyOverride {
+        fn name(&self) -> &'static str { "walletconnect-binding-fixture" }
+        fn schemes(&self) -> Vec<&'static str> { vec!["wallet"] }
+        async fn handle(&self, request: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+            self.inner.handle(request).await
+        }
+        async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+            let mut reply = self.inner.send_raw(request).await?;
+            let data = &mut reply["data"]["result"]["data"];
+            if let Some(field) = self.field.filter(|_| data.get("handoff").is_some()) {
+                data["approval_request"][field] = if field == "payload_hash" {
+                    json!(format!("0x{}", "ff".repeat(32)))
+                } else { json!("other-principal") };
+            }
+            Ok(reply)
+        }
+    }
     async fn call(app: &Router, home: &str, suffix: &str, input: Value) -> (StatusCode, Value) {
         let response = app.clone().oneshot(test_browser_request("localhost:61180", "http://localhost:61180")
             .method("POST").uri(format!("/api/apps/home/wallet-connector/approvals/wallet-approval%3Awc-reviewed/{suffix}"))
@@ -13,10 +35,10 @@ async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
             .unwrap();
         (
             status,
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({"text":String::from_utf8_lossy(&bytes)})),
         )
     }
-    for case in ["valid", "other-principal", "other-connector", "expired"] {
+    for case in ["valid", "other-principal", "other-connector", "expired", "response-principal_id", "response-payload_hash"] {
         let dir = tempfile::tempdir().unwrap();
         let owner = passkey_authority(dir.path());
         seed_walletconnect_connector_config(dir.path());
@@ -40,9 +62,17 @@ async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
             approvals: TokioMutex::new(vec![approval]),
             ..Default::default()
         };
-        let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
+        let provider = ReplyOverride { inner: provider, field: case.strip_prefix("response-") };
+        let app = gateway_router(wallet_test_state_with_shared_provider(dir.path(), Arc::new(provider)).await);
         let input = json!({"schema":"elastos.home.wallet-connector.effect.request/v1", "connector_id":WALLET_WALLETCONNECT_CAPSULE_ID, "connector_token":connector});
         let (status, review) = call(&app, &owner.home_token, "review", input.clone()).await;
+        if case.starts_with("response-") {
+            assert_eq!(status, StatusCode::OK, "stored request remains bound to its owner");
+            let (status, error) = call(&app, &owner.home_token, "handoff", input).await;
+            assert_ne!(status, StatusCode::OK);
+            assert_eq!(error["text"], "WalletConnect approval binding mismatch");
+            continue;
+        }
         if case != "valid" {
             assert_ne!(status, StatusCode::OK, "{case}");
             assert_ne!(
