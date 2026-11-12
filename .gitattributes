@@ -7,3 +7,5 @@ third-party/selkies/patches/*.patch -whitespace
 # Unified diff uses a single space for an unchanged blank context line.
 # Applied Rust is checked separately by formatting and target tests.
 scripts/build/crosvm-lifecycle-fds.patch whitespace=-blank-at-eol
+# Minified upstream template literals retain meaningful whitespace in the bundle.
+capsules/wallet-walletconnect/vendor/reown-appkit.js -whitespace linguist-generated=true
