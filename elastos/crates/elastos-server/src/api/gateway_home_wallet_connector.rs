@@ -413,7 +413,9 @@ pub(super) async fn home_wallet_connector_approval_handoff(
                 if binding["principal_id"].as_str() != Some(authority.context.principal_id.as_str())
                     || binding["payload_hash"] != response["handoff"]["payload_hash"]
                 {
-                    return system_error_response(anyhow::anyhow!("WalletConnect approval binding mismatch"));
+                    return system_error_response(anyhow::anyhow!(
+                        "WalletConnect approval binding mismatch"
+                    ));
                 }
                 response["binding"] = json!({
                     "principal_id":binding["principal_id"], "requested_by_actor":binding["requested_by_actor"],
