@@ -99,6 +99,7 @@ async function fixture() {
       if(req.method==="GET" && state.failedReads>0) {state.failedReads--;res.statusCode=503;json({error:"Fixture read failed"});return;}
       if(input?.action === "revoke") {assert.equal(input.step_up_token,"fixture-step-up");state.consent="revoked";}
       if (input?.action === "end") {json({status:"ended"});return;}
+      if (input?.action === "request" && state.requestError) {state.requestAttempts++;res.statusCode=403;json({error:state.requestError});return;}
       if (input?.action === "request" && state.stopPending) {state.requestAttempts++;res.statusCode=403;json({error:"Finish stopping Browser internet before requesting it again"});return;}
       if (input?.action === "request") {state.requestAttempts++;state.requests++;state.consent="requested";state.expired=false;await state.requestBarrier;}
       json({status:state.consent,stop_pending:state.stopPending,request_id:state.consent==="granted"?state.grantedRequestId:undefined,request:state.expired?null:{resource:"elastos://browser/internet",grant_id:"fixture-grant",request_id:"fixture",text:consentText,expires_at:Math.floor(Date.now()/1000)+3600}});return;
@@ -651,6 +652,55 @@ test("566r2 Return waits for Turn Off then files once and navigates only after A
     await b.locator("#browser-url").fill("https://example.com/closed");await b.locator("#browser-url").press("Enter");
     await b.locator("#browser-internet-hint").filter({hasText:"Your request will open in Inbox"}).waitFor();
     await closed.close();f.state.stopPending=false;await new Promise(r=>setTimeout(r,500));assert.equal(f.state.requests,0);
+  } finally {await browser.close();await f.close();}
+});
+
+test("566r3 a refused request without a pending stop shows its error and stops retrying", async () => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    f.state.consent="revoked";f.state.requestError="Browser request was refused by Runtime.";
+    const page=await browser.newPage();await page.goto(f.url+"?flow=1");
+    const frame=page.frameLocator('iframe[data-app="browser"]');
+    await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
+    const refused=page.waitForResponse(r=>r.url().endsWith("/api/apps/browser/internet") && r.request().method()==="POST" && r.status()===403);
+    await frame.locator("#browser-url").fill("https://example.com/refused");
+    await frame.locator("#browser-url").press("Enter");await refused;
+    await page.waitForTimeout(2200);
+    assert.equal(f.state.requestAttempts,1,"a refusal without a pending stop sends only one POST, including after two seconds");
+    const hint=frame.locator("#browser-internet-hint");
+    assert.equal(await hint.isVisible(),true);assert.equal(await hint.innerText(),f.state.requestError);
+    await page.waitForTimeout(2200);
+    assert.equal(f.state.requestAttempts,1);assert.equal(await hint.isVisible(),true);
+    assert.equal(await hint.innerText(),f.state.requestError,"consent polling preserves the error");
+    assert.equal(f.state.requests,0);assert.deepEqual(f.state.opens,[]);assert.deepEqual(f.state.navigations,[]);
+    assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==="home:open-target").length),0);
+    await page.close();
+  } finally {await browser.close();await f.close();}
+});
+
+test("566r3 a stop that stays pending times out with a stable error and needs a new Return", async () => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    f.state.consent="revoked";f.state.stopPending=true;
+    const page=await browser.newPage();await page.goto(f.url+"?flow=1");
+    const frame=page.frameLocator('iframe[data-app="browser"]');
+    await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
+    await frame.locator("#browser-url").fill("https://example.com/stop-timeout");
+    await frame.locator("#browser-url").press("Enter");
+    const hint=frame.locator("#browser-internet-hint");
+    await hint.filter({hasText:"Browser is still stopping internet access. Try again in a moment."}).waitFor({timeout:13000});
+    f.state.stopPending=false;await page.waitForTimeout(2200);
+    assert.equal(await hint.isVisible(),true);
+    assert.equal(await hint.innerText(),"Browser is still stopping internet access. Try again in a moment.");
+    assert.equal(f.state.requestAttempts,1);assert.equal(f.state.requests,0);
+    assert.deepEqual(f.state.opens,[]);assert.deepEqual(f.state.navigations,[]);
+    assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==="home:open-target").length),0);
+    await frame.locator("#browser-url").press("Enter");
+    await page.frameLocator('iframe[data-app="inbox"]').getByRole("button",{name:"Allow",exact:true}).waitFor();
+    assert.equal(f.state.requestAttempts,2);assert.equal(f.state.requests,1);
+    assert.deepEqual(f.state.opens,[]);assert.deepEqual(f.state.navigations,[]);
+    assert.equal(await hint.evaluate(e=>e.hidden),true,"a new request clears the old error");
+    await page.close();
   } finally {await browser.close();await f.close();}
 });
 
