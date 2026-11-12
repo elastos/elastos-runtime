@@ -5957,3 +5957,25 @@ fn progress_plan_writes_at_most_once_per_second() {
     let progress: DownloadProgress = read_private_json(&path).unwrap();
     assert_eq!(progress.completed_bytes, 750);
 }
+
+#[test]
+fn terminal_status_write_failure_keeps_the_last_progress_record() {
+    use crate::update::RestartOwner;
+    let fixture = PrivateFixture::new();
+    let mut controller = download_progress_controller(&fixture);
+    controller.request = Some(choice_fixture().1);
+    controller.download_plan(250, Some(1000)).unwrap();
+    controller
+        .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+        .unwrap();
+    let progress_path = fixture.directory.join(DOWNLOAD_PROGRESS);
+    let before = fs::read(&progress_path).unwrap();
+    // Refuse the terminal status write after the current progress exists.
+    let status_path = fixture.directory.join(STATUS);
+    fs::remove_file(&status_path).unwrap();
+    fs::create_dir(&status_path).unwrap();
+    assert!(controller
+        .publish("updated", "Home is up to date.")
+        .is_err());
+    assert_eq!(fs::read(&progress_path).unwrap(), before);
+}
