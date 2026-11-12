@@ -130,10 +130,23 @@ async function fixture() {
     if (url.pathname === "/api/apps/browser/pages/retained/input") {
       state.navigations.push(input.event);state.recoverableUrl=input.event.url;json({accepted:true});return;
     }
+    if (url.pathname === "/api/apps/browser/pages/retained/webrtc" && state.completeOpen) {
+      // Hold the external media handshake; these checks cover Home and permission state.
+      await new Promise(resolve=>res.on("close",resolve));return;
+    }
     if (url.pathname === "/api/apps/browser/open") {
+      if(state.completeOpen)state.recoverableUrl=input.url;
       state.opens.push(input);json({schema:"elastos.browser.open-accepted/v1",status_url:"/api/apps/browser/open/fixture"});return;
     }
-    if (url.pathname === "/api/apps/browser/open/fixture") {json({schema:"elastos.browser.open-status/v1",status:"pending"});return;}
+    if (url.pathname === "/api/apps/browser/open/fixture") {
+      if(state.completeOpen)json({schema:"elastos.browser.open-status/v1",status:"completed",result:{
+        schema:"elastos.browser.open-result/v1",runtime_cleanup:{schema:"elastos.browser.cleanup-handle/v1",id:"cleanup-retained"},
+        engine_page:{schema:"elastos.browser.engine.page/v1",page_id:"retained",actual_url:state.recoverableUrl,
+          display_session:{schema:"elastos.browser.display-session/v1",mode:"webrtc_remote_display",width:1280,height:720,
+            display_generation:"display:"+"1".repeat(32),signaling_url:"/api/apps/browser/pages/retained/webrtc",
+            offerer:"browser",media_transport:"runtime_relay",ice_servers:[],input:"runtime_route",audio:false}}
+      }});else json({schema:"elastos.browser.open-status/v1",status:"pending"});return;
+    }
     if(url.pathname === "/api/apps/system/summary") {json(makeSystemSummary(makeAppearanceRecord({theme:"light"})));return;}
     if(url.pathname.startsWith("/api/")) {
       const response=inertSystemApiResponse(url.pathname);if(response) {json(response);return;}
@@ -437,6 +450,7 @@ test("internet grant refusal points to the permission request", async () => {
    }
  });
 
+
 test("566a Return after Don't Allow or Turn Off continues once after Inbox passkey Allow", async t => {
   const f=await fixture();const browser=await chromium.launch({headless:true});
   try {
@@ -475,7 +489,6 @@ test("566a Return after Don't Allow or Turn Off continues once after Inbox passk
 });
 
 
-
 test("566b a failed permission read recovers Allow and still observes Turn Off", async t => {
   const f=await fixture();const browser=await chromium.launch({headless:true});
   try {
@@ -506,6 +519,7 @@ test("566b a failed permission read recovers Allow and still observes Turn Off",
   } finally {await browser.close();await f.close();}
 });
 
+
 test("566c Inbox Allow brings a fullscreen Browser back into view", async () => {
   const f=await fixture();const browser=await chromium.launch({headless:true});
   try {
@@ -529,5 +543,48 @@ test("566c Inbox Allow brings a fullscreen Browser back into view", async () => 
     assert.equal(await gui.locator('.window[data-target="browser"]').isVisible(),true,"Allow returns to Browser's fullscreen Space");
     assert.equal(await gui.evaluate(()=>fixtureShell.core.shellState.windows.size),2);
     await page.close();
+  } finally {await browser.close();await f.close();}
+});
+
+test("566e renewing authority preserves the current page and does not repeat the first open", async t => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    for(const consent of ["off","granted"]) await t.test(consent, async subtest => {
+      subtest.after(async()=>{for(const context of browser.contexts())await context.close();});
+      f.state.consent="granted";f.state.expired=false;f.state.completeOpen=true;
+      f.state.opens=[];f.state.requests=0;f.state.navigations=[];f.state.recoverableUrl=null;
+      const page=await browser.newPage();await page.goto(f.url+"shell");
+      const gui=await (await page.locator("#gui").elementHandle()).contentFrame();
+      await gui.waitForFunction(()=>window.fixtureShell);
+      await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/first"}}));
+      const node=await gui.locator('iframe[title="browser"]').elementHandle();
+      const browserFrame=await node.contentFrame();
+      await browserFrame.waitForFunction(()=>window.__elastosBrowserCurrentPageId==="retained" && new URL(location.href).searchParams.has("page_id"));
+      // Home ignores a repeated Browser open during its 700 ms launch guard.
+      await page.waitForTimeout(750);
+      const input=page.waitForResponse(r=>r.url().endsWith("/pages/retained/input"));
+      await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/current"}}));await input;
+      await browserFrame.waitForFunction(()=>document.querySelector("#browser-url").value==="https://example.com/current");
+      if(consent==="off") {
+        // Inbox Allow cancelled at the passkey can leave a request unanswered past its TTL.
+        f.state.consent="requested";f.state.expired=true;
+        await gui.frameLocator('iframe[title="browser"]').getByRole("button",{name:"Open Inbox",exact:true}).waitFor({timeout:5000});
+      }
+      const requests=f.state.requests, opens=f.state.opens.length;
+      await page.evaluate(()=>messages=[]);await gui.evaluate(()=>fixtureShell.windows.showDesktopHome());
+      await gui.evaluate(async()=>{const {core,windows}=fixtureShell;await windows.renewBrowserWindowAuthority([...core.shellState.windows.keys()][0]);});
+      await page.waitForTimeout(2500);
+      assert.equal(await gui.locator('.window[data-target="inbox"]').isVisible(),false,
+        "renewal leaves Desktop visible instead of opening Inbox again");
+      assert.equal(f.state.requests,requests,"renewal with access off files no request");
+      assert.equal(f.state.opens.length,opens,"renewal with access on does not navigate to the first URL");
+      const frame=gui.frameLocator('iframe[title="browser"]');
+      if(consent==="granted")assert.equal(await frame.locator("#browser-url").inputValue(),"https://example.com/current");
+      await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/explicit"}}));
+      await page.waitForTimeout(500);
+      if(consent==="off")assert.equal(f.state.requests,requests+1);
+      else assert.equal(f.state.navigations.at(-1)?.url,"https://example.com/explicit");
+      await page.close();
+    });
   } finally {await browser.close();await f.close();}
 });

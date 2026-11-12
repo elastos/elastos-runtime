@@ -1488,6 +1488,7 @@ export function renewBrowserWindowAuthority(id, options = {}) {
     return entry.browserAuthorityRenewal;
   }
   const launchQuery = normalizedLaunchQuery(entry.launchQuery);
+  launchQuery.browser_restore = "1";
   const browserInstance = launchQuery.browser_instance || "";
   const frame = entry.node.querySelector(".window-frame");
   const currentAuthority = browserLaunchAuthority(
