@@ -62,7 +62,7 @@ async function fixture(service = "browser") {
       }
       const app=url.searchParams.get("app") || "browser";
       res.setHeader("content-type","text/html");
-      res.end(`<style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%}</style><script>${hostScript}</script><iframe data-app="${app}" src="/apps/${app}/?browser_restore=${url.searchParams.get("restore") || "0"}&notification_id=browser-internet:permission&url=https%3A%2F%2Fexample.com%2Frequested&home_origin=http://127.0.0.1:${server.address().port}#home_token=fixture"></iframe>`);return;
+      res.end(`<style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%}</style><script>${hostScript}</script><iframe data-app="${app}" src="/apps/${app}/?browser_restore=${url.searchParams.get("restore") || "0"}&notification_id=${prefix}:permission&url=https%3A%2F%2Fexample.com%2Frequested&home_origin=http://127.0.0.1:${server.address().port}#home_token=fixture"></iframe>`);return;
     }
     if (url.pathname === internetPath) {
       state.reads++;

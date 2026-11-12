@@ -497,7 +497,8 @@ try {
   );
   await waitFor(() => frameFor(page, "home-gui"), 15_000, "real Home GUI frame");
   const homeGui = frameFor(page, "home-gui");
-  await homeGui.dblclick('#desktop-shortcut-wallet');
+  await homeGui.locator('#launcher-toggle').click();
+  await homeGui.locator('#launcher-grid [data-target="wallet"]').click();
   await waitFor(() => frameFor(page, "wallet"), 15_000, "real Wallet frame");
   const wallet = frameFor(page, "wallet");
   await wallet.waitForSelector("#wallet-settings-open", { timeout: 15_000 });
