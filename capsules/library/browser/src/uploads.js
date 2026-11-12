@@ -25,6 +25,7 @@ export function createLibraryUploads({ container, perf, state }) {
     if (!state.uploads.length) {
       container.classList.add("hidden");
       container.innerHTML = "";
+      announceTransferProgress(container.parentElement, null, null, "File upload");
       return;
     }
     container.classList.remove("hidden");
@@ -37,7 +38,7 @@ export function createLibraryUploads({ container, perf, state }) {
         <div class="upload-meter"></div>
       </div>
     `).join("");
-    const active = state.uploads.filter(upload => ["Queued", "Preparing", "Uploading", "Saving"].includes(upload.status));
+    const active = state.uploads.filter(upload => upload.total_bytes !== 0 && ["Queued", "Preparing", "Uploading", "Saving"].includes(upload.status));
     announceTransferProgress(container.parentElement, active.length ? active.reduce((sum, upload) => sum + (upload.completed_bytes || 0), 0) : null,
       active.every(upload => Number.isFinite(upload.total_bytes)) ? active.reduce((sum, upload) => sum + upload.total_bytes, 0) : null, "File upload");
     container.querySelectorAll(".upload-meter").forEach((meter, index) => {
