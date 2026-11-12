@@ -9866,13 +9866,16 @@ pub(crate) mod tests {
                 .unwrap_err();
             assert_eq!(error.to_string(), format!("{operation} timed out"));
             assert_eq!(start.elapsed(), Duration::from_secs(5));
-            let error =
-                carrier_gossip_send(operation, async { Err(iroh_gossip::api::ApiError::Closed) })
-                    .await
-                    .unwrap_err();
+            let error = carrier_gossip_send(operation, async {
+                Err(iroh_gossip::api::ApiError::Closed {
+                    meta: Default::default(),
+                })
+            })
+            .await
+            .unwrap_err();
             assert!(matches!(
                 error.downcast_ref::<iroh_gossip::api::ApiError>(),
-                Some(iroh_gossip::api::ApiError::Closed)
+                Some(iroh_gossip::api::ApiError::Closed { .. })
             ));
             carrier_gossip_send(operation, async { Ok(()) })
                 .await
