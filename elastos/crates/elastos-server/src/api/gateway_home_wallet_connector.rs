@@ -480,7 +480,14 @@ pub(super) fn require_home_wallet_connector_authority(
     connector_token: &str,
     expected_connector_id: &str,
 ) -> anyhow::Result<HomeWalletConnectorAuthority> {
-    let authority = revalidate_home_wallet_connector_authority(state, headers, schema, connector_id, connector_token, expected_connector_id)?;
+    let authority = revalidate_home_wallet_connector_authority(
+        state,
+        headers,
+        schema,
+        connector_id,
+        connector_token,
+        expected_connector_id,
+    )?;
     ensure_wallet_connector_configured(&state.data_dir, connector_id)?;
     Ok(authority)
 }

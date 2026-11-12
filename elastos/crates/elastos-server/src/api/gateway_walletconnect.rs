@@ -333,20 +333,41 @@ pub(super) async fn internet(
     }
 }
 
-fn ensure_consent_request(state: &GatewayState, context: &HomeLaunchTokenContext, inner: &Inner) -> anyhow::Result<()> {
+fn ensure_consent_request(
+    state: &GatewayState,
+    context: &HomeLaunchTokenContext,
+    inner: &Inner,
+) -> anyhow::Result<()> {
     let current = load(&state.data_dir)?;
-    if current.as_ref().is_none_or(|c| c.status != "granted" && (c.status != "requested" || c.at + 1800 <= now_ts())) {
+    if current.as_ref().is_none_or(|c| {
+        c.status != "granted" && (c.status != "requested" || c.at + 1800 <= now_ts())
+    }) {
         ensure_admin_context(&state.data_dir, context)?;
-        anyhow::ensure!(inner.sockets.values().all(|s| *s.done.borrow()), "Finish stopping WalletConnect first");
-        save(&state.data_dir, &Consent { status: "requested".into(), id: gateway_home_token::uuid_like_token(),
-            at: now_ts(), principal: None, proof: None, capability: None })?;
+        anyhow::ensure!(
+            inner.sockets.values().all(|s| *s.done.borrow()),
+            "Finish stopping WalletConnect first"
+        );
+        save(
+            &state.data_dir,
+            &Consent {
+                status: "requested".into(),
+                id: gateway_home_token::uuid_like_token(),
+                at: now_ts(),
+                principal: None,
+                proof: None,
+                capability: None,
+            },
+        )?;
     }
     Ok(())
 }
 
 async fn verify_sdk(state: &GatewayState) -> anyhow::Result<()> {
     let data = state.data_dir.clone();
-    tokio::task::spawn_blocking(move || ensure_wallet_connector_configured(&data, WALLET_WALLETCONNECT_CAPSULE_ID)).await??;
+    tokio::task::spawn_blocking(move || {
+        ensure_wallet_connector_configured(&data, WALLET_WALLETCONNECT_CAPSULE_ID)
+    })
+    .await??;
     Ok(())
 }
 
@@ -387,9 +408,17 @@ pub(super) async fn admission(State(state): State<GatewayState>, headers: Header
         let principal = authority.home_launch_context().principal_id;
         let mut inner = state.walletconnect.inner.lock().await;
         check_owner(&state, true).await?;
-        inner.admissions.retain(|_, (expiry, _, _)| *expiry > now_ts());
+        inner
+            .admissions
+            .retain(|_, (expiry, _, _)| *expiry > now_ts());
         anyhow::ensure!(
-            inner.admissions.len() < 128 && inner.admissions.values().filter(|(_, _, owner)| owner == &principal).count() < 8,
+            inner.admissions.len() < 128
+                && inner
+                    .admissions
+                    .values()
+                    .filter(|(_, _, owner)| owner == &principal)
+                    .count()
+                    < 8,
             "WalletConnect admission quota exceeded"
         );
         let token = gateway_home_token::uuid_like_token();
@@ -597,7 +626,9 @@ async fn relay_connection(state: &GatewayState, socket: &mut WebSocket) -> anyho
         _ = cancelled.changed() => Ok(()),
         result = transport(state, &headers, socket, url) => result,
     };
-    if result.is_err() { tracing::warn!("WalletConnect relay transport failed"); }
+    if result.is_err() {
+        tracing::warn!("WalletConnect relay transport failed");
+    }
     let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(Message::Close(None))).await;
     // Turn Off can hold the lock while it waits for done, so signal before removal.
     drop(completion);
@@ -660,7 +691,13 @@ async fn transport(
         // Exit forwards TLS bytes and never holds WalletConnect session keys.
         let config = relay_tls_config();
         #[cfg(test)]
-        let config = state.walletconnect.tls.lock().unwrap().clone().unwrap_or(config);
+        let config = state
+            .walletconnect
+            .tls
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(config);
         let connector = Some(tokio_tungstenite::Connector::Rustls(config));
         let mut request = url.as_str().into_client_request()?;
         request.headers_mut().insert(
@@ -723,10 +760,15 @@ async fn transport(
 #[cfg(unix)]
 fn relay_tls_config() -> Arc<rustls::ClientConfig> {
     let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    Arc::new(rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    )).with_safe_default_protocol_versions().expect("ring TLS versions")
-        .with_root_certificates(roots).with_no_client_auth())
+    Arc::new(
+        rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("ring TLS versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth(),
+    )
 }
 #[cfg(not(unix))]
 async fn transport(

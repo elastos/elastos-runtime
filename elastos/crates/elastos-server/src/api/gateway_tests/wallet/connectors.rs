@@ -8,14 +8,23 @@ async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
             .header("x-elastos-home-token", home).header(CONTENT_TYPE, "application/json")
             .body(Body::from(input.to_string())).unwrap()).await.unwrap();
         let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
     for case in ["valid", "other-principal", "other-connector", "expired"] {
         let dir = tempfile::tempdir().unwrap();
         let owner = passkey_authority(dir.path());
         seed_walletconnect_connector_config(dir.path());
-        let connector = projection_launch_token_for_authority_context(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &owner);
+        let connector = projection_launch_token_for_authority_context(
+            dir.path(),
+            WALLET_WALLETCONNECT_CAPSULE_ID,
+            &owner,
+        );
         let expiry = now_ts() + 600;
         let payload_hash = format!("0x{}", "ab".repeat(32));
         let account = format!("wallet:eip155:20:0x{}", "12".repeat(20));
@@ -27,27 +36,41 @@ async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
             "principal_id":if case == "other-principal" { "other-principal" } else { &owner.principal_id },
             "payload_hash":payload_hash, "created_at":now_ts(), "expires_at":if case == "expired" { 0 } else { expiry },
         });
-        let provider = MockWalletProvider { approvals: TokioMutex::new(vec![approval]), ..Default::default() };
+        let provider = MockWalletProvider {
+            approvals: TokioMutex::new(vec![approval]),
+            ..Default::default()
+        };
         let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
         let input = json!({"schema":"elastos.home.wallet-connector.effect.request/v1", "connector_id":WALLET_WALLETCONNECT_CAPSULE_ID, "connector_token":connector});
         let (status, review) = call(&app, &owner.home_token, "review", input.clone()).await;
         if case != "valid" {
             assert_ne!(status, StatusCode::OK, "{case}");
-            assert_ne!(call(&app, &owner.home_token, "handoff", input).await.0, StatusCode::OK, "{case}");
+            assert_ne!(
+                call(&app, &owner.home_token, "handoff", input).await.0,
+                StatusCode::OK,
+                "{case}"
+            );
             continue;
         }
         assert_eq!(status, StatusCode::OK, "{review}");
         assert_eq!(review["account_id"], account);
         for field in ["account_id", "requested_by_actor", "payload_hash"] {
-            let mut injected = input.clone(); injected[field] = json!("capsule-selected");
-            assert_ne!(call(&app, &owner.home_token, "handoff", injected).await.0, StatusCode::OK);
+            let mut injected = input.clone();
+            injected[field] = json!("capsule-selected");
+            assert_ne!(
+                call(&app, &owner.home_token, "handoff", injected).await.0,
+                StatusCode::OK
+            );
         }
         let (status, result) = call(&app, &owner.home_token, "handoff", input).await;
         assert_eq!(status, StatusCode::OK, "{result}");
-        assert_eq!(result["binding"], json!({
-            "principal_id":owner.principal_id, "requested_by_actor":"documents", "account_id":account,
-            "chain_namespace":"eip155:20", "payload_hash":payload_hash, "expires_at":expiry,
-        }));
+        assert_eq!(
+            result["binding"],
+            json!({
+                "principal_id":owner.principal_id, "requested_by_actor":"documents", "account_id":account,
+                "chain_namespace":"eip155:20", "payload_hash":payload_hash, "expires_at":expiry,
+            })
+        );
         assert_eq!(result["handoff"]["payload_hash"], payload_hash);
     }
 }

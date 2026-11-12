@@ -249,8 +249,10 @@ pub(in crate::api::gateway) async fn approve_external_wallet_request(
 ) -> anyhow::Result<WalletApprovalReviewOutcome> {
     let request = pending_wallet_approval_request(state, authority, request_id).await?;
     if capsule_id == WALLET_WALLETCONNECT_CAPSULE_ID {
-        anyhow::ensure!(request.status == "pending" && request.expires_at > now_ts(),
-            "WalletConnect request changed or expired");
+        anyhow::ensure!(
+            request.status == "pending" && request.expires_at > now_ts(),
+            "WalletConnect request changed or expired"
+        );
     }
     if is_managed_wallet_proof_type(&request.proof_type) {
         anyhow::bail!("Use System to approve built-in wallet requests");
