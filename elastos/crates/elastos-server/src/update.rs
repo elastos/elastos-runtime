@@ -1818,11 +1818,12 @@ async fn run_upgrade_with_restart(
     }
     let old_components = std::fs::read(data_dir.join("components.json"))?;
     let staged_support = if let Some(owner) = restart_owner.as_mut() {
+        let support_plan = support_plan.context("update support plan missing")?;
         Some(
             on_heap(|| {
                 crate::setup::stage_planned_update_support(
                     data_dir,
-                    support_plan.context("update support plan missing")?,
+                    support_plan,
                     &component_platform,
                     fetch_fn,
                     *owner,
