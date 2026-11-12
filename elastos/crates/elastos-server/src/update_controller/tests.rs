@@ -2526,6 +2526,7 @@ async fn cancelled_carrier_close_await_keeps_the_same_task_until_cleanup_complet
         child: None,
         carrier: None,
         carrier_close: Some(task),
+        download_meter: Default::default(),
         test_readiness: None,
         request: None,
         previous_binary_sha256: String::new(),
