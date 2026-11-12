@@ -1,5 +1,5 @@
-import { formatBytes } from "./byte-format.js";
-import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js";
+import { formatBytes } from "./byte-format.js?v=download-progress-20261112";
+import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 /* Shared model presentation. Runtime owns admission, execution and retention. */
 
   const CID = /^bafybei[a-z2-7]{52}$/;

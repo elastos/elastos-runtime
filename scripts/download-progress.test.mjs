@@ -128,3 +128,15 @@ test("advisory progress writer uses atomic replacement without disk sync", async
   assert.match(writer, /libc::O_NOFOLLOW/);
   assert.doesNotMatch(writer, /sync_all|sync_data|write_private\(|write_new_private\(/);
 });
+
+test("vendored model views load the current shared progress modules", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const model = await readFile(new URL("../capsules/_shared/model-management.js", import.meta.url), "utf8");
+  for (const module of ["byte-format", "transfer-progress"]) {
+    assert(model.includes(`./${module}.js?v=download-progress-20261112`));
+  }
+  for (const capsule of ["system", "marketplace"]) {
+    const html = await readFile(new URL(`../capsules/${capsule}/browser/index.html`, import.meta.url), "utf8");
+    assert.match(html, /model-management\.js\?v=download-progress-20261112/);
+  }
+});
