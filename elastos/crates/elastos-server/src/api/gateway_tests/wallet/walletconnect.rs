@@ -332,6 +332,44 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn walletconnect_home_and_connector_share_one_consent_request() {
+    let f = Fixture::new().await;
+    let (status, host) = f.route(&f.connector, "/api/apps/wallet-walletconnect/host-config", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, connector) = f.route(&f.connector, INTERNET, Some(json!({"action":"request"}))).await;
+    assert_eq!(host["internet"]["request"]["id"], connector["request"]["id"]);
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn walletconnect_admitted_frames_do_not_reread_sdk_but_new_admissions_verify_it() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    let mut socket = f.ready().await;
+    let sdk = f.data.path().join(WALLETCONNECT_SDK_PATH);
+    std::fs::rename(&sdk, sdk.with_extension("held")).unwrap();
+    socket.send(Message::Text("admitted-frame".into())).await.unwrap();
+    assert_eq!(socket.next().await.unwrap().unwrap(), Message::Text("admitted-frame".into()));
+    let (status, _) = f.route(&f.connector, "/api/apps/wallet-walletconnect/relay-admission", Some(json!({}))).await;
+    assert_ne!(status, StatusCode::OK);
+    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn walletconnect_admission_quota_preserves_other_principals() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    let path = "/api/apps/wallet-walletconnect/relay-admission";
+    for _ in 0..8 {
+        assert_eq!(f.route(&f.connector, path, Some(json!({}))).await.0, StatusCode::OK);
+    }
+    assert_ne!(f.route(&f.connector, path, Some(json!({}))).await.0, StatusCode::OK);
+    let other = passkey_authority_with_name_role_credential(f.data.path(), Some("quota-other"), crate::auth::RuntimePrincipalRole::Admin, "quota-other-credential");
+    let connector = projection_launch_token_for_authority_context(f.data.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &other);
+    assert_eq!(f.route_as(&other.home_token, &connector, path, Some(json!({}))).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn walletconnect_websocket_upgrade_requires_same_home_origin_and_first_frame_admission() {
     let f = Fixture::new().await;
     for origin in [None, Some("null"), Some("https://other.example")] {

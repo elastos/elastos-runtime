@@ -480,6 +480,21 @@ pub(super) fn require_home_wallet_connector_authority(
     connector_token: &str,
     expected_connector_id: &str,
 ) -> anyhow::Result<HomeWalletConnectorAuthority> {
+    let authority = revalidate_home_wallet_connector_authority(state, headers, schema, connector_id, connector_token, expected_connector_id)?;
+    ensure_wallet_connector_configured(&state.data_dir, connector_id)?;
+    Ok(authority)
+}
+
+// Runtime transports verify the installed SDK at admission. Recurring checks
+// still verify both live launch authorities and the configuration shape.
+pub(super) fn revalidate_home_wallet_connector_authority(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    schema: &str,
+    connector_id: &str,
+    connector_token: &str,
+    expected_connector_id: &str,
+) -> anyhow::Result<HomeWalletConnectorAuthority> {
     if schema != HOME_WALLET_CONNECTOR_REQUEST_SCHEMA {
         anyhow::bail!("unsupported Home wallet-connector request schema");
     }
@@ -487,7 +502,10 @@ pub(super) fn require_home_wallet_connector_authority(
     {
         anyhow::bail!("Home wallet-connector actor mismatch");
     }
-    ensure_wallet_connector_configured(&state.data_dir, connector_id)?;
+    if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
+        let config = load_walletconnect_connector_config(&state.data_dir)?;
+        validate_walletconnect_connector_config(&config)?;
+    }
 
     let home = require_home_runtime_wallet_authority(&state.data_dir, headers)?;
     let connector_launch =

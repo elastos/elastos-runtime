@@ -26,7 +26,7 @@ pub(crate) struct WalletConnectService {
 #[derive(Default)]
 struct Inner {
     sockets: BTreeMap<String, SocketOwner>,
-    admissions: BTreeMap<String, (u64, HeaderMap)>,
+    admissions: BTreeMap<String, (u64, HeaderMap, String)>,
 }
 struct SocketOwner {
     principal: String,
@@ -108,7 +108,7 @@ fn public(c: Option<&Consent>) -> serde_json::Value {
         None => json!({"status":"off"}),
     }
 }
-async fn check_owner(state: &GatewayState) -> anyhow::Result<()> {
+async fn check_owner(state: &GatewayState, audit_success: bool) -> anyhow::Result<()> {
     let data = &state.data_dir;
     let c = load(data)?
         .ok_or_else(|| anyhow::anyhow!("Review WalletConnect internet access in Inbox"))?;
@@ -130,12 +130,13 @@ async fn check_owner(state: &GatewayState) -> anyhow::Result<()> {
     state
         .browser_internet
         .capability_manager()?
-        .validate(
+        .validate_recurring(
             &token,
             &owner.principal_id,
             Action::Execute,
             &ResourceId::new(RESOURCE),
             None,
+            audit_success,
         )
         .await?;
     Ok(())
@@ -219,14 +220,6 @@ pub(super) async fn answer(
                 for socket in inner.sockets.values() {
                     socket.cancel.send_replace(true);
                 }
-                for socket in inner.sockets.values_mut() {
-                    tokio::time::timeout(
-                        Duration::from_secs(3),
-                        socket.done.wait_for(|done| *done),
-                    )
-                    .await??;
-                }
-                inner.sockets.clear();
                 if let Some(encoded) = &c.capability {
                     let capability =
                         CapabilityToken::from_base64(encoded).map_err(anyhow::Error::msg)?;
@@ -236,6 +229,14 @@ pub(super) async fn answer(
                         .revoke(*capability.id(), "WalletConnect internet stopped")
                         .await?;
                 }
+                for socket in inner.sockets.values_mut() {
+                    tokio::time::timeout(
+                        Duration::from_secs(3),
+                        socket.done.wait_for(|done| *done),
+                    )
+                    .await??;
+                }
+                inner.sockets.clear();
                 return Ok("WalletConnect connection turned off.".into());
             }
         }
@@ -321,26 +322,7 @@ pub(super) async fn internet(
                 "Invalid WalletConnect internet action"
             );
             ensure_admin_context(&state.data_dir, &authority.home_launch_context())?;
-            let c = load(&state.data_dir)?;
-            if c.as_ref().is_none_or(|c| {
-                c.status != "granted" && (c.status != "requested" || c.at + 1800 <= now_ts())
-            }) {
-                anyhow::ensure!(
-                    inner.sockets.values().all(|s| *s.done.borrow()),
-                    "Finish stopping WalletConnect first"
-                );
-                save(
-                    &state.data_dir,
-                    &Consent {
-                        status: "requested".into(),
-                        id: gateway_home_token::uuid_like_token(),
-                        at: now_ts(),
-                        principal: None,
-                        proof: None,
-                        capability: None,
-                    },
-                )?;
-            }
+            ensure_consent_request(&state, &authority.home_launch_context(), &inner)?;
         }
         Ok::<_, anyhow::Error>(public(load(&state.data_dir)?.as_ref()))
     }
@@ -351,13 +333,30 @@ pub(super) async fn internet(
     }
 }
 
+fn ensure_consent_request(state: &GatewayState, context: &HomeLaunchTokenContext, inner: &Inner) -> anyhow::Result<()> {
+    let current = load(&state.data_dir)?;
+    if current.as_ref().is_none_or(|c| c.status != "granted" && (c.status != "requested" || c.at + 1800 <= now_ts())) {
+        ensure_admin_context(&state.data_dir, context)?;
+        anyhow::ensure!(inner.sockets.values().all(|s| *s.done.borrow()), "Finish stopping WalletConnect first");
+        save(&state.data_dir, &Consent { status: "requested".into(), id: gateway_home_token::uuid_like_token(),
+            at: now_ts(), principal: None, proof: None, capability: None })?;
+    }
+    Ok(())
+}
+
+async fn verify_sdk(state: &GatewayState) -> anyhow::Result<()> {
+    let data = state.data_dir.clone();
+    tokio::task::spawn_blocking(move || ensure_wallet_connector_configured(&data, WALLET_WALLETCONNECT_CAPSULE_ID)).await??;
+    Ok(())
+}
+
 fn hosted(state: &GatewayState, headers: &HeaderMap) -> anyhow::Result<RuntimeWalletAuthority> {
     let connector = headers
         .get("x-elastos-walletconnect-connector")
         .and_then(|h| h.to_str().ok())
         .ok_or_else(|| anyhow::anyhow!("Home wallet connector authority is required"))?;
     Ok(
-        gateway_home_wallet_connector::require_home_wallet_connector_authority(
+        gateway_home_wallet_connector::revalidate_home_wallet_connector_authority(
             state,
             headers,
             "elastos.home.wallet-connector.effect.request/v1",
@@ -370,7 +369,7 @@ fn hosted(state: &GatewayState, headers: &HeaderMap) -> anyhow::Result<RuntimeWa
 }
 #[cfg(test)]
 pub(in crate::api::gateway) async fn expire_admissions_for_test(state: &GatewayState) {
-    for (expiry, _) in state
+    for (expiry, _, _) in state
         .walletconnect
         .inner
         .lock()
@@ -383,18 +382,20 @@ pub(in crate::api::gateway) async fn expire_admissions_for_test(state: &GatewayS
 }
 pub(super) async fn admission(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
     let result = async {
-        let _ = hosted(&state, &headers)?;
+        let authority = hosted(&state, &headers)?;
+        verify_sdk(&state).await?;
+        let principal = authority.home_launch_context().principal_id;
         let mut inner = state.walletconnect.inner.lock().await;
-        check_owner(&state).await?;
-        inner.admissions.retain(|_, (expiry, _)| *expiry > now_ts());
+        check_owner(&state, true).await?;
+        inner.admissions.retain(|_, (expiry, _, _)| *expiry > now_ts());
         anyhow::ensure!(
-            inner.admissions.len() < 128,
+            inner.admissions.len() < 128 && inner.admissions.values().filter(|(_, _, owner)| owner == &principal).count() < 8,
             "WalletConnect admission quota exceeded"
         );
         let token = gateway_home_token::uuid_like_token();
         inner
             .admissions
-            .insert(token.clone(), (now_ts() + 15, headers));
+            .insert(token.clone(), (now_ts() + 15, headers, principal));
         Ok::<_, anyhow::Error>(json!({"token":token}))
     }
     .await;
@@ -407,12 +408,10 @@ pub(super) async fn host_config(
 ) -> Response {
     let result = async {
         let authority = hosted(&state, &headers)?;
+        if method == axum::http::Method::POST { verify_sdk(&state).await?; }
         let inner = state.walletconnect.inner.lock().await;
-        let c = load(&state.data_dir)?;
-        if method == axum::http::Method::POST && c.as_ref().is_none_or(|c| c.status != "granted" && (c.status != "requested" || c.at + 1800 <= now_ts())) {
-            ensure_admin_context(&state.data_dir, &authority.home_launch_context())?;
-            anyhow::ensure!(inner.sockets.values().all(|s| *s.done.borrow()), "Finish stopping WalletConnect first");
-            save(&state.data_dir, &Consent { status:"requested".into(), id:gateway_home_token::uuid_like_token(), at:now_ts(), principal:None, proof:None, capability:None })?;
+        if method == axum::http::Method::POST {
+            ensure_consent_request(&state, &authority.home_launch_context(), &inner)?;
         }
         let config = load_walletconnect_connector_config(&state.data_dir)?;
         Ok::<_, anyhow::Error>(json!({"projectId":config.project_id, "principal_id":authority.home_launch_context().principal_id,
@@ -554,7 +553,7 @@ async fn relay_connection(state: &GatewayState, socket: &mut WebSocket) -> anyho
     let hello: RelayHello = serde_json::from_slice(&hello)?;
     let headers = {
         let mut inner = state.walletconnect.inner.lock().await;
-        let (expiry, headers) = inner
+        let (expiry, headers, _) = inner
             .admissions
             .remove(&hello.token)
             .ok_or_else(|| anyhow::anyhow!("Home transport admission required"))?;
@@ -571,7 +570,7 @@ async fn relay_connection(state: &GatewayState, socket: &mut WebSocket) -> anyho
     let completion = SocketCompletion(done);
     {
         let mut inner = state.walletconnect.inner.lock().await;
-        check_owner(state).await?;
+        check_owner(state, false).await?;
         inner.sockets.retain(|_, s| !*s.done.borrow());
         anyhow::ensure!(
             inner
@@ -598,6 +597,7 @@ async fn relay_connection(state: &GatewayState, socket: &mut WebSocket) -> anyho
         _ = cancelled.changed() => Ok(()),
         result = transport(state, &headers, socket, url) => result,
     };
+    if result.is_err() { tracing::warn!("WalletConnect relay transport failed"); }
     let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(Message::Close(None))).await;
     // Turn Off can hold the lock while it waits for done, so signal before removal.
     drop(completion);
@@ -687,7 +687,7 @@ async fn transport(
         tokio::select! {
             _ = heartbeat.tick() => {
                 hosted(state, headers)?;
-                check_owner(state).await?;
+                check_owner(state, false).await?;
                 check_liveness(pong.elapsed(), activity.elapsed())?;
                 tokio::time::timeout(Duration::from_secs(5), upstream.send(Upstream::Ping(Vec::new()))).await??;
             }
@@ -708,7 +708,7 @@ async fn transport(
             frame = socket.recv() => match frame.transpose()? {
                 Some(Message::Text(text)) => {
                     hosted(state, headers)?;
-                    check_owner(state).await?;
+                    check_owner(state, false).await?;
                     activity = Instant::now();
                     tokio::time::timeout(Duration::from_secs(5), upstream.send(Upstream::Text(text))).await??;
                 }
@@ -720,6 +720,7 @@ async fn transport(
     }
     Ok(())
 }
+#[cfg(unix)]
 fn relay_tls_config() -> Arc<rustls::ClientConfig> {
     let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     Arc::new(rustls::ClientConfig::builder_with_provider(Arc::new(
