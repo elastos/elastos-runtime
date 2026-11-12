@@ -6083,7 +6083,7 @@ fn shared_file_post_name(text: &str, uri: &str) -> Option<String> {
     let stated_size = match size.strip_suffix(" bytes") {
         Some(bytes) => !bytes.is_empty() && bytes.bytes().all(|byte| byte.is_ascii_digit()),
         None => size.split_once(' ').is_some_and(|(number, unit)| {
-            ["KB", "MB", "GB"].contains(&unit) && number.parse::<f64>().is_ok_and(f64::is_finite)
+            ["B", "KB", "MB", "GB", "TB"].contains(&unit) && number.parse::<f64>().is_ok_and(f64::is_finite)
         }),
     };
     if !stated_size {
@@ -8430,6 +8430,15 @@ mod tests {
             "sender": "Me", "from_current_session": true, "kind": "text", "body": "file", "created_at": 1,
         })).unwrap();
         assert_eq!(row.message_reference(), None);
+    }
+
+    #[test]
+    fn shared_file_posts_keep_their_name_in_every_decimal_unit() {
+        let uri = "elastos://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3w2pz3hftb5xg3mh5g4xq7y5u";
+        for bytes in [30, 1_000, 1_000_000, 1_000_000_000, 1_000_000_000_000] {
+            let post = format!("notes.txt · {} · {uri}", super::format_bytes(bytes));
+            assert_eq!(super::shared_file_post_name(&post, uri).as_deref(), Some("notes.txt"));
+        }
     }
 
     #[test]
