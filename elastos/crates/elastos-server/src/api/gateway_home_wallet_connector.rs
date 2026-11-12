@@ -410,6 +410,11 @@ pub(super) async fn home_wallet_connector_approval_handoff(
                         "WalletConnect approval binding is missing"
                     ));
                 };
+                if binding["principal_id"].as_str() != Some(authority.context.principal_id.as_str())
+                    || binding["payload_hash"] != response["handoff"]["payload_hash"]
+                {
+                    return system_error_response(anyhow::anyhow!("WalletConnect approval binding mismatch"));
+                }
                 response["binding"] = json!({
                     "principal_id":binding["principal_id"], "requested_by_actor":binding["requested_by_actor"],
                     "account_id":binding["account_id"], "chain_namespace":binding["chain_namespace"],
