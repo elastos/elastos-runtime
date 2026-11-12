@@ -70,12 +70,19 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
       try {
         await page.locator("dialog[open] canvas").waitFor({ timeout: 20000 });
       } catch (cause) {
-        const state = await page.evaluate(() => ({ failed: window.failed, methods: window.methods, nativeUrls: window.nativeUrls }));
+        const state = await page.evaluate(() => ({ failed: window.failed, methods: window.methods,
+          nativeOrigins: window.nativeUrls.map(url => new URL(url).origin) }));
         throw new Error(`SDK fixture did not reach QR: ${JSON.stringify({ pageErrors, state })}`, { cause });
       }
-      await page.waitForFunction(() => window.methods.some(method =>
-        ["irn_subscribe", "irn_batchSubscribe"].includes(method))
-        && Object.keys(window.keys).some(key => key.includes("keychain")), null, { timeout: 10000 });
+      try {
+        await page.waitForFunction(() => window.methods.some(method =>
+          ["irn_subscribe", "irn_batchSubscribe"].includes(method))
+          && Object.keys(window.keys).some(key => key.includes("keychain")), null, { timeout: 10000 });
+      } catch (cause) {
+        const state = await page.evaluate(() => ({ methods: window.methods, keyNames: Object.keys(window.keys),
+          localKeyCount: localStorage.length, nativeOrigins: window.nativeUrls.map(url => new URL(url).origin) }));
+        throw new Error(`SDK relay/storage not ready: ${JSON.stringify(state)}`, { cause });
+      }
       const state = await page.evaluate(() => ({
         homeOnly: window.nativeUrls.length > 0 && window.nativeUrls.every(url => url === location.origin.replace(/^http/, "ws") + "/relay"),
         subscribed: window.methods.some(method => ["irn_subscribe", "irn_batchSubscribe"].includes(method)),
