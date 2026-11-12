@@ -316,7 +316,9 @@ async function completeApproval(connectorId, connectorToken, approvalRequestId) 
     ensureSameAddress(await currentEvmAccount(provider), review.address, "Select the requested account in your phone wallet, then review again.");
     const chain = `eip155:${requireEvmChainId(await provider.request({ method: "eth_chainId" }))}`;
     if (chain !== review.chain_namespace) throw new Error("Select the request network in your phone wallet, then review again.");
-    if (!Number.isSafeInteger(review.expires_at) || review.expires_at - Math.ceil(Date.now() / 1000) < 300) {
+    const remaining = review.expires_at - Math.ceil(Date.now() / 1000);
+    if (!Number.isSafeInteger(review.expires_at) || remaining <= 0
+        || review.intent === "transaction_intent" && remaining < 300) {
       throw new Error("Wallet request expires soon. Request a fresh review.");
     }
   }
@@ -347,8 +349,10 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
       throw new Error("Wallet request changed or expired. Request a new review.");
     }
     const ttl = binding.expires_at - Math.ceil(Date.now() / 1000);
-    if (startingRequest && ttl < 300) throw new Error("Wallet request expires soon. Request a fresh review.");
-    return ttl;
+    if (startingRequest && handoff.intent === "transaction_intent" && ttl < 300) {
+      throw new Error("Wallet request expires soon. Request a fresh review.");
+    }
+    return Math.min(600, Math.max(ttl, 300));
   };
   const signer = requireEvmAddress(await currentEvmAccount(provider));
   ensureSameAddress(signer, handoff.signer, "Switch to the linked account before approving.");
@@ -362,12 +366,13 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
       "Switch to the linked account before approving.",
     );
     const expiry = await checkBinding();
+    const invalidHash = "Wallet returned an invalid transaction hash. The wallet may have sent it. Check your wallet before sending again.";
     const transactionHash = requireProviderResult(await provider.request({
       method: "eth_sendTransaction",
       params: [handoff.transaction],
-    }, expiry), 66, "Wallet returned an invalid transaction hash.");
+    }, expiry), 66, invalidHash);
     if (!/^0x[0-9a-fA-F]{64}$/.test(transactionHash)) {
-      throw new Error("Wallet returned an invalid transaction hash.");
+      throw new Error(invalidHash);
     }
     try {
       const completed = await runtimePost(path, connectorBody(connectorId, connectorToken, {

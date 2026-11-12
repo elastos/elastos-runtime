@@ -13,6 +13,8 @@ const origin = "http://localhost:61180";
 const connector = "wallet-walletconnect";
 
 async function fixture(scenario) {
+  const signatureIntent = scenario.startsWith("signature-");
+  const lifetime = scenario === "signature-short" ? 180 : scenario === "long-request" ? 1800 : 600;
   const clock = Date.now;
   const events = new Map();
   let changed = false;
@@ -66,7 +68,7 @@ async function fixture(scenario) {
       assert.equal(body.message, linkMessages[scenario] || linkMessage); assert.equal(body.signature, signature);
       value = { schema: "elastos.home.wallet-connector.effect.result/v1", action: "evm_link_complete", connector_id: connector, status: "linked" };
     }
-    else if (path.endsWith("/review")) value = { address, chain_namespace: "eip155:20", expires_at: Math.floor(Date.now() / 1000) + 600 };
+    else if (path.endsWith("/review")) value = { address, intent: signatureIntent ? "browser_personal_sign" : "transaction_intent", chain_namespace: "eip155:20", expires_at: Math.floor(Date.now() / 1000) + lifetime };
     else if (path.endsWith("/handoff")) {
       value = {
       schema: "elastos.home.wallet-connector.effect.result/v1", action: "approval_handoff",
@@ -76,7 +78,7 @@ async function fixture(scenario) {
         transaction: { from: address, to: `0x${"78".repeat(20)}`, value: "0x1", data: "0x", gas: "0x5208", gasPrice: "0x1", nonce: "0x1", chainId: "0x14" },
       },
       binding: { principal_id: "principal-fixture", requested_by_actor: "documents", account_id: "account-fixture", chain_namespace: "eip155:20",
-        payload_hash: payloadHash, expires_at: scenario === "expired" ? 1 : Math.floor(Date.now() / 1000) + 600 },
+        payload_hash: payloadHash, expires_at: scenario === "expired" ? 1 : Math.floor(Date.now() / 1000) + lifetime },
       };
       if (scenario.startsWith("signature-")) {
         delete value.handoff.transaction;
@@ -87,7 +89,8 @@ async function fixture(scenario) {
       const body = JSON.parse(input.body);
       assert.equal(body.payload_hash, payloadHash);
       assert.equal(body.signer, address);
-      assert.equal(body.transaction_hash, transactionHash);
+      if (signatureIntent) assert.equal(body.signature, signature);
+      else assert.equal(body.transaction_hash, transactionHash);
       if (scenario === "completion-refused") return { ok: false, status: 403, text: async () => "wallet approval request expired" };
       value = { schema: "elastos.home.wallet-connector.effect.result/v1", action: "approval_complete", connector_id: connector,
         request_id: "approval:fixture", status: "completed" };
@@ -144,8 +147,22 @@ test("a refused transaction completion retains its hash and asks for checking be
 test("wallet-chosen text cannot appear as a returned transaction hash", async () => {
   const result = await fixture("invalid-hash");
   assert.match(result.response.error, /invalid transaction hash/);
+  assert.match(result.response.error, /Check your wallet before sending again/);
   assert.doesNotMatch(result.response.error, /fake recovery website/);
   assert.equal(result.routes.filter(path => path.endsWith("/complete")).length, 0);
+});
+
+test("a 180-second Runtime signature keeps its expiry with a 300-second SDK timeout", async () => {
+  const result = await fixture("signature-short");
+  assert.equal(result.response.error, undefined, result.response.error);
+  assert.equal(result.calls.find(call => call.method === "personal_sign").expiry, 300);
+  assert.equal(result.routes.filter(path => path.endsWith("/complete")).length, 1);
+});
+
+test("a longer Runtime request caps its SDK timeout at 600 seconds", async () => {
+  const result = await fixture("long-request");
+  assert.equal(result.response.error, undefined, result.response.error);
+  assert.equal(result.calls.find(call => call.method === "eth_sendTransaction").expiry, 600);
 });
 
 for (const change of ["account-change-during-send", "chain-change-during-send", "expired-during-send"]) {

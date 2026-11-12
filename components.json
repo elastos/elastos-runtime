@@ -91,8 +91,8 @@
       ],
       "install_path": "capsules/wallet-walletconnect",
       "entrypoint": "browser/index.html",
-      "entrypoint_sha256": "sha256:b5fc187eef3396671ff204cd0ba7291f8af6739b6fd6b964689f29160e082865",
-      "entrypoint_size": 1480,
+      "entrypoint_sha256": "sha256:f7e3c08e4e6b2a49fc153d18e4e0a1ffd17965e4d904314d387200e7115d706a",
+      "entrypoint_size": 1670,
       "runtime_abi": "elastos.runtime-projection/v1",
       "execution": "web-projection",
       "bus_contract": "elastos.runtime-projection/v1",
@@ -106,8 +106,8 @@
       "browser_assets": [
         {
           "path": "browser/index.html",
-          "sha256": "sha256:b5fc187eef3396671ff204cd0ba7291f8af6739b6fd6b964689f29160e082865",
-          "size": 1480
+          "sha256": "sha256:f7e3c08e4e6b2a49fc153d18e4e0a1ffd17965e4d904314d387200e7115d706a",
+          "size": 1670
         },
         {
           "path": "browser/style.css",
@@ -116,8 +116,8 @@
         },
         {
           "path": "browser/wallet-walletconnect.js",
-          "sha256": "sha256:bb4efeaceacfcbb334123729e4108f2b06a264c004b58856801605ac980075ea",
-          "size": 17187
+          "sha256": "sha256:c2a0c0e1c49d88cf64c7094ebf7cf77ed94d4c56a729eadbdb4fe3e30d43ccf3",
+          "size": 14583
         }
       ]
     },
@@ -1285,7 +1285,7 @@
     },
     "gba-nonogram": {
       "install_path": "capsules/gba-nonogram",
-      "description": "Nonogram Advance — MIT homebrew cartridge for the browser GBA viewer",
+      "description": "Nonogram Advance \u2014 MIT homebrew cartridge for the browser GBA viewer",
       "platforms": {
         "*": {
           "cid": "",
