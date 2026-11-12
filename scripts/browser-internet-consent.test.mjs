@@ -659,6 +659,7 @@ test("566r3 a refused request without a pending stop shows its error and stops r
   const f=await fixture();const browser=await chromium.launch({headless:true});
   try {
     f.state.consent="revoked";f.state.requestError="Browser request was refused by Runtime.";
+    const errorMessage="This page was blocked by your connection settings.";
     const page=await browser.newPage();await page.goto(f.url+"?flow=1");
     const frame=page.frameLocator('iframe[data-app="browser"]');
     await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
@@ -668,10 +669,10 @@ test("566r3 a refused request without a pending stop shows its error and stops r
     await page.waitForTimeout(2200);
     assert.equal(f.state.requestAttempts,1,"a refusal without a pending stop sends only one POST, including after two seconds");
     const hint=frame.locator("#browser-internet-hint");
-    assert.equal(await hint.isVisible(),true);assert.equal(await hint.innerText(),f.state.requestError);
+    assert.equal(await hint.isVisible(),true);assert.equal(await hint.innerText(),errorMessage);
     await page.waitForTimeout(2200);
     assert.equal(f.state.requestAttempts,1);assert.equal(await hint.isVisible(),true);
-    assert.equal(await hint.innerText(),f.state.requestError,"consent polling preserves the error");
+    assert.equal(await hint.innerText(),errorMessage,"consent polling preserves the error");
     assert.equal(f.state.requests,0);assert.deepEqual(f.state.opens,[]);assert.deepEqual(f.state.navigations,[]);
     assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==="home:open-target").length),0);
     await page.close();
