@@ -14,7 +14,7 @@ const doc = { createElement: tag => new Element(tag) };
 
 test("one decimal size rule covers byte and decimal unit boundaries", () => {
   for (const [bytes, label] of [[0, "0 B"], [999, "999 B"], [1000, "1.0 KB"], [1050, "1.1 KB"],
-    [999900, "999.9 KB"], [1000000, "1.0 MB"], [1000000000, "1.0 GB"], [1000000000000, "1.0 TB"]]) {
+    [999900, "999.9 KB"], [999949, "999.9 KB"], [999950, "1.0 MB"], [999999, "1.0 MB"], [1000000, "1.0 MB"], [1000000000, "1.0 GB"], [1000000000000, "1.0 TB"]]) {
     assert.equal(formatBytes(bytes), label);
   }
 });
@@ -54,6 +54,7 @@ test("Library renders the actual shared pattern with file byte counts", t => {
   createLibraryUploads({ container, perf: { uploadRenderCount: 0 }, state: { uploads: [
     { id: "upload", name: "Notes.txt", status: "Uploading", completed_bytes: 250, total_bytes: 1000 },
   ] } }).renderUploads();
+  assert.equal(meter.children[0].children[0].attributes.get("aria-label"), "Upload progress for Notes.txt");
   assert.equal(meter.children[0].children[1].textContent, "0.3 KB of 1.0 KB · 25%");
 });
 
@@ -85,3 +86,36 @@ for (const status of ["Complete", "Upload not confirmed. Check the destination b
     assert.equal(meter.children.length, 0);
   });
 }
+
+for (const value of [undefined, null, "", NaN, Infinity, -1]) test(`unknown file size ${value} has an explicit label`, () => {
+  assert.equal(formatBytes(value), "Size unknown");
+});
+
+test("rounded total selects one unit for both sides of a transfer", () => {
+  assert.equal(formatBytesOf(500000, 999950), "0.5 MB of 1.0 MB");
+});
+
+test("Browser disk-space refusal uses the shared size rule", async () => {
+  const { friendlyOpenError } = await import("../capsules/browser/browser/browser-status.js");
+  const message = friendlyOpenError({ payload: {
+    outcome: { schema: "elastos.browser.open-outcome/v1", state: "terminal_pre_effect_failure",
+      effects: { page_acquired: false, vm_acquired: false, stream_acquired: false } },
+    refusal: { code: "insufficient_free_space", required_bytes: 2000000000, available_bytes: 999950 },
+  } });
+  assert.match(message, /2\.0 GB free.*1\.0 MB are free/);
+});
+
+test("update admission handles a missing candidate with an error", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../elastos/crates/elastos-server/src/update.rs", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /next_admission\.take\(\)\.unwrap\(\)/);
+});
+
+test("changed capsule entry points use the download progress asset version", async () => {
+  const { readFile } = await import("node:fs/promises");
+  for (const name of ["system", "library", "archive-manager", "browser"]) {
+    const html = await readFile(new URL(`../capsules/${name}/browser/index.html`, import.meta.url), "utf8");
+    assert.match(html, /(?:system|app|archive-manager|browser)\.js\?v=download-progress-20261112/);
+    if (name === "system") assert.match(html, /^<link rel="stylesheet" href="\.\/elastos-ui\.css">$/m);
+  }
+});
