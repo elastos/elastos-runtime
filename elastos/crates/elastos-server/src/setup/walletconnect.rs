@@ -3,21 +3,23 @@ use std::path::Path;
 
 pub fn local_exit(data: &Path, platform: &str) -> Option<(serde_json::Value, serde_json::Value)> {
     crate::api::gateway::ensure_wallet_connector_configured(data, "wallet-walletconnect").ok()?;
-    if !matches!(platform, "darwin-arm64" | "linux-amd64" | "linux-arm64") { return None; }
-        let socket = data.join("walletconnect-exit.sock");
-        let hosts = ["relay.walletconnect.org", "relay.walletconnect.com"];
-        let helper = serde_json::json!({
-            "schema":"elastos.browser.local-exit.config/v1", "relay_ipc_path":socket,
-            "allowed_hosts":hosts, "allowed_schemes":["tls"], "allowed_ports":[443],
-            "replace_existing_socket":true,
-        });
-        let provider = serde_json::json!({"backends":[{
-            "id":"walletconnect-local-exit", "kind":"stream_relay",
-            "allowed_hosts":hosts, "allowed_schemes":["tls"], "allowed_ports":[443],
-            "adapter_ipc":{"kind":"unix_socket","path":socket},
-            "relay_ipc":{"kind":"unix_socket","path":socket},
-        }]});
-        Some((helper, provider))
+    if !matches!(platform, "darwin-arm64" | "linux-amd64" | "linux-arm64") {
+        return None;
+    }
+    let socket = data.join("walletconnect-exit.sock");
+    let hosts = ["relay.walletconnect.org", "relay.walletconnect.com"];
+    let helper = serde_json::json!({
+        "schema":"elastos.browser.local-exit.config/v1", "relay_ipc_path":socket,
+        "allowed_hosts":hosts, "allowed_schemes":["tls"], "allowed_ports":[443],
+        "replace_existing_socket":true,
+    });
+    let provider = serde_json::json!({"backends":[{
+        "id":"walletconnect-local-exit", "kind":"stream_relay",
+        "allowed_hosts":hosts, "allowed_schemes":["tls"], "allowed_ports":[443],
+        "adapter_ipc":{"kind":"unix_socket","path":socket},
+        "relay_ipc":{"kind":"unix_socket","path":socket},
+    }]});
+    Some((helper, provider))
 }
 
 /// Keep the owner's existing Exit configuration and add only the relay-local backend.

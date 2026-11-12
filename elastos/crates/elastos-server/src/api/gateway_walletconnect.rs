@@ -1,6 +1,6 @@
 //! WalletConnect transport consent. Wallet proofs and signing authority stay in wallet-provider.
-use super::*;
 use super::gateway_browser::provider_response_data;
+use super::*;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use elastos_runtime::capability::{Action, CapabilityToken, ResourceId, TokenConstraints};
 use serde_json::json;

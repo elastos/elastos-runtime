@@ -19,7 +19,10 @@ fn relay_auth() -> String {
         .unwrap(),
     );
     let data = format!("{header}.{payload}");
-    format!("{data}.{}", URL_SAFE_NO_PAD.encode(key.sign(data.as_bytes()).to_bytes()))
+    format!(
+        "{data}.{}",
+        URL_SAFE_NO_PAD.encode(key.sign(data.as_bytes()).to_bytes())
+    )
 }
 
 #[tokio::test]
@@ -30,7 +33,9 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
     let project = std::fs::read_to_string(file).expect("read operator project file");
     let project = project.trim();
     assert!(project.len() >= 8 && project.len() <= 128);
-    assert!(project.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+    assert!(project
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
     let mut f = Fixture::new().await;
     assert!(!f.addr.ends_with(":8090"));
     let config_path = f.data.path().join(WALLETCONNECT_CONFIG_PATH);
@@ -72,14 +77,27 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
     });
     let registry = f.state.provider_registry.as_ref().unwrap();
     registry.unregister_sub_provider("exit").await.unwrap();
-    registry.register_sub_provider("exit", Arc::new(Exit { path, calls: f.calls.clone() })).await.unwrap();
+    registry
+        .register_sub_provider(
+            "exit",
+            Arc::new(Exit {
+                path,
+                calls: f.calls.clone(),
+            }),
+        )
+        .await
+        .unwrap();
     f.allow().await;
     let mut url = url::Url::parse("wss://relay.walletconnect.org/").unwrap();
-    url.query_pairs_mut().append_pair("projectId", project).append_pair("auth", &relay_auth());
+    url.query_pairs_mut()
+        .append_pair("projectId", project)
+        .append_pair("auth", &relay_auth());
     let mut socket = f.connect(&f.connector, url.as_str()).await;
     let first = tokio::time::timeout(Duration::from_secs(30), socket.next()).await;
-    assert!(matches!(first, Ok(Some(Ok(Message::Text(ref value)))) if value == "{\"ready\":true}"),
-        "Runtime did not confirm the authenticated upstream WebSocket upgrade");
+    assert!(
+        matches!(first, Ok(Some(Ok(Message::Text(ref value)))) if value == "{\"ready\":true}"),
+        "Runtime did not confirm the authenticated upstream WebSocket upgrade"
+    );
     // A successful relay RPC also excludes a post-upgrade authentication close.
     socket.send(Message::Text(json!({
         "id": 1, "jsonrpc": "2.0", "method": "irn_subscribe",
@@ -90,7 +108,10 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
         panic!("real relay did not answer the subscription through Runtime");
     };
     let response: Value = serde_json::from_str(&response).expect("relay JSON response");
-    assert!(response["id"] == 1 && response["result"].is_string(), "real relay subscription failed");
+    assert!(
+        response["id"] == 1 && response["result"].is_string(),
+        "real relay subscription failed"
+    );
     socket.close(None).await.unwrap();
     println!("PASS: Runtime -> Exit harness -> authenticated Reown WSS upgrade and subscription; project <project-id>; ephemeral localhost port; no 401/403");
 }

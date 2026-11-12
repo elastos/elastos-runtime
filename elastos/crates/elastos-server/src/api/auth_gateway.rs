@@ -6645,7 +6645,8 @@ mod tests {
 
     #[test]
     fn wallet_connector_bridge_refusal_is_typed_even_with_context() {
-        let error = anyhow::Error::new(WalletConnectorBridgeRequired).context("wallet link refused");
+        let error =
+            anyhow::Error::new(WalletConnectorBridgeRequired).context("wallet link refused");
         assert_eq!(auth_error_response(error).status(), StatusCode::FORBIDDEN);
     }
 

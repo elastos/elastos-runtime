@@ -1,7 +1,10 @@
 use super::super::*;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use tokio_tungstenite::{connect_async, tungstenite::{client::IntoClientRequest, Message}};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{client::IntoClientRequest, Message},
+};
 
 const INTERNET: &str = "/api/apps/wallet-walletconnect/internet";
 const STORAGE: &str = "/api/apps/wallet-walletconnect/storage";
@@ -14,8 +17,17 @@ mod real_relay;
 async fn persistent_internet(data: &std::path::Path) -> Arc<BrowserInternetService> {
     use elastos_runtime::capability::{CapabilityManager, CapabilityStore};
     use elastos_runtime::primitives::{audit::AuditLog, metrics::MetricsManager};
-    let store = Arc::new(CapabilityStore::with_persistence(data.join("capability_store")).await.unwrap());
-    let manager = Arc::new(CapabilityManager::load_or_generate(data, store, Arc::new(AuditLog::new()), Arc::new(MetricsManager::new())));
+    let store = Arc::new(
+        CapabilityStore::with_persistence(data.join("capability_store"))
+            .await
+            .unwrap(),
+    );
+    let manager = Arc::new(CapabilityManager::load_or_generate(
+        data,
+        store,
+        Arc::new(AuditLog::new()),
+        Arc::new(MetricsManager::new()),
+    ));
     Arc::new(BrowserInternetService::new(Some(manager)))
 }
 
@@ -287,14 +299,13 @@ impl Fixture {
         relay: &str,
     ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
     {
-        let mut request = format!(
-            "ws://{}/api/apps/wallet-walletconnect/relay",
-            self.addr
-        ).into_client_request().unwrap();
-        request.headers_mut().insert("origin", format!("http://{}", self.addr).parse().unwrap());
-        let (mut socket, _) = connect_async(request)
-        .await
-        .unwrap();
+        let mut request = format!("ws://{}/api/apps/wallet-walletconnect/relay", self.addr)
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("origin", format!("http://{}", self.addr).parse().unwrap());
+        let (mut socket, _) = connect_async(request).await.unwrap();
         socket
             .send(Message::Text(
                 json!({"token":ticket,"relay":relay}).to_string(),
@@ -325,17 +336,25 @@ async fn walletconnect_websocket_upgrade_requires_same_home_origin_and_first_fra
     let f = Fixture::new().await;
     for origin in [None, Some("null"), Some("https://other.example")] {
         let mut request = format!("ws://{}/api/apps/wallet-walletconnect/relay", f.addr)
-            .into_client_request().unwrap();
+            .into_client_request()
+            .unwrap();
         if let Some(origin) = origin {
-            request.headers_mut().insert("origin", origin.parse().unwrap());
+            request
+                .headers_mut()
+                .insert("origin", origin.parse().unwrap());
         }
         let result = connect_async(request).await;
-        assert!(matches!(result, Err(tokio_tungstenite::tungstenite::Error::Http(ref response)) if response.status() == StatusCode::FORBIDDEN));
+        assert!(
+            matches!(result, Err(tokio_tungstenite::tungstenite::Error::Http(ref response)) if response.status() == StatusCode::FORBIDDEN)
+        );
     }
     // This matches the browser API: same-Home Origin, no custom auth header,
     // and a refused first-frame ticket. Upgrading grants no Exit access.
     let mut socket = f.connect_ticket("refused", RELAY).await;
-    assert!(matches!(socket.next().await, Some(Ok(Message::Close(_))) | None));
+    assert!(matches!(
+        socket.next().await,
+        Some(Ok(Message::Close(_))) | None
+    ));
     assert_eq!(f.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -412,9 +431,21 @@ async fn walletconnect_storage_is_principal_scoped_and_survives_service_restart(
     let (status, _) = f.route(&f.inbox, STORAGE, None).await;
     assert_ne!(status, StatusCode::OK);
     let other = passkey_authority_with_name_role_credential(
-        f.data.path(), Some("other-wc"), crate::auth::RuntimePrincipalRole::Admin, "other-wc-credential",
+        f.data.path(),
+        Some("other-wc"),
+        crate::auth::RuntimePrincipalRole::Admin,
+        "other-wc-credential",
     );
-    assert_ne!(other.principal_id, runtime_wallet_authority_for_app_token(f.data.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &f.connector).home_launch_context().principal_id);
+    assert_ne!(
+        other.principal_id,
+        runtime_wallet_authority_for_app_token(
+            f.data.path(),
+            WALLET_WALLETCONNECT_CAPSULE_ID,
+            &f.connector
+        )
+        .home_launch_context()
+        .principal_id
+    );
     let token = projection_launch_token_for_authority_context(
         f.data.path(),
         WALLET_WALLETCONNECT_CAPSULE_ID,
@@ -477,7 +508,11 @@ async fn walletconnect_relay_enforces_quota_and_tls_authentication() {
         refused.next().await,
         Some(Ok(Message::Close(_))) | None
     ));
-    assert_eq!(f.calls.load(Ordering::SeqCst), 3, "TLS refusal happens after Exit admission");
+    assert_eq!(
+        f.calls.load(Ordering::SeqCst),
+        3,
+        "TLS refusal happens after Exit admission"
+    );
 }
 
 #[tokio::test]
@@ -575,7 +610,10 @@ async fn walletconnect_refuses_malformed_writes_and_cross_principal_host_authori
     let (_, stored) = f.route(&f.connector, STORAGE, None).await;
     assert_eq!(stored, json!({}));
     let other = passkey_authority_with_name_role_credential(
-        f.data.path(), Some("different-host"), crate::auth::RuntimePrincipalRole::Admin, "different-host-credential",
+        f.data.path(),
+        Some("different-host"),
+        crate::auth::RuntimePrincipalRole::Admin,
+        "different-host-credential",
     );
     for path in [
         STORAGE,
