@@ -5,10 +5,11 @@ export function startBrowser(state) {
   state.addressInput.value = initialUrl;
   state.setLoading(true);
   state.showStatus("Browser is checking its Engine. Wait, or reopen Browser from Home to retry.", { sticky: true });
-  return state.checkBrowserInternet(initialUrl).then(granted => {
-    if (state.browserInternetPollingActive) state.watchInternetPermission();
-    return granted ? state.fetchBrowserSummary({ remoteServices: false }) : null;
-  })
+  return state.checkBrowserInternet(initialUrl)
+    .finally(() => {
+      if (state.browserInternetPollingActive) state.watchInternetPermission();
+    })
+    .then(granted => granted ? state.fetchBrowserSummary({ remoteServices: false }) : null)
     .then(async (summary) => {
       if (!summary || !state.browserInternetPollingActive || state.homeWindowCloseInFlight || state.homeWindowTerminalCloseConfirmed) return;
       if (await state.restoreRuntimePageViewer(summary)) {

@@ -11,7 +11,7 @@ function deferred() {
   const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
   return { promise, resolve, reject };
 }
-function start({ expired = false, consent = "granted", params = new URLSearchParams() } = {}) {
+function start({ expired = false, consent = "granted", consentError = null, params = new URLSearchParams() } = {}) {
   const summary = deferred(), open = deferred();
   const address = { disabled: /\sdisabled(?:\s|=|\/?>)/.test(input), value: "" };
   const calls = [], messages = [];
@@ -20,7 +20,7 @@ function start({ expired = false, consent = "granted", params = new URLSearchPar
   const settled = startBrowser({
     explicitBrowserOpen: true, browserInternetPollingActive: true, internetContinuationUrl: null,
     watchInternetPermission: () => { readiness.watching = true; },
-    checkBrowserInternet: () => browserInternetGranted(async () => ({status:consent})),
+    checkBrowserInternet: () => consentError ? Promise.reject(consentError) : browserInternetGranted(async () => ({status:consent})),
     unloadCleanupStarted: false, homeWindowCloseInFlight: false, homeWindowTerminalCloseConfirmed: false,
     params, DEFAULT_URL: "https://ela.city/", addressInput: address,
     updateNavState() {}, setLoading, fetchBrowserSummary: () => { readiness.summaryReads++; return summary.promise; },
@@ -87,4 +87,14 @@ test("blocked startup watches permission but never reads ownership or opens a pa
   assert.deepEqual(state.calls, []);
   assert.equal(state.readiness.watching, true);
   assert.equal(state.readiness.summaryReads, 0);
+});
+
+
+test("566b a failed initial permission check still starts the permission watcher", async () => {
+  const state = start({consentError: new Error("Permission read failed")});
+  await state.settled;
+  assert.equal(state.readiness.watching, true);
+  assert.equal(state.readiness.summaryReads, 0);
+  assert.deepEqual(state.calls, []);
+  assert.equal(state.address.disabled, false);
 });

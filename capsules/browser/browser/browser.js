@@ -267,9 +267,17 @@ async function requestInternetNavigation(value) {
 async function checkBrowserInternet(initialUrl, { initialCheck = true } = {}) {
   let firstRead = true;
   while (browserInternetPollingActive && !homeWindowCloseInFlight && !homeWindowTerminalCloseConfirmed) {
-    const granted = await browserInternetGranted(fetchJson, (allowed, consent) => {
-      if (browserInternetPollingActive) renderInternetConsent(consent);
-    });
+    let granted = false;
+    let readSucceeded = false;
+    try {
+      granted = await browserInternetGranted(fetchJson, (_allowed, consent) => {
+        if (browserInternetPollingActive) renderInternetConsent(consent);
+      });
+      readSucceeded = true;
+    } catch (error) {
+      if (isAuthoritySessionError(error)) throw error;
+      // Keep the last Runtime state and retry this read on the next poll.
+    }
     if (!browserInternetPollingActive || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) return false;
     if (granted) {
       const pending = pendingInternetNavigation;
@@ -286,10 +294,10 @@ async function checkBrowserInternet(initialUrl, { initialCheck = true } = {}) {
       return true;
     }
     if (!initialCheck) return false;
-    if (firstRead && explicitBrowserOpen && !["refused", "revoked"].includes(currentInternetConsent?.status)) {
+    if (readSucceeded && firstRead && explicitBrowserOpen && !["refused", "revoked"].includes(currentInternetConsent?.status)) {
       await requestInternetNavigation(initialUrl);
     }
-    firstRead = false;
+    if (readSucceeded) firstRead = false;
     await new Promise(resolve => {
       finishInternetPollWait = resolve;
       browserInternetPollTimer = window.setTimeout(resolve, 2000);

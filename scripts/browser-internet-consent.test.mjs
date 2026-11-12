@@ -37,7 +37,7 @@ async function screen(page, name) {
   await page.screenshot({path:`${process.env.BROWSER_INTERNET_SCREENSHOTS}/${process.env.BROWSER_INTERNET_SCREEN_THEME === "dark" ? "dark-" : ""}${name}.png`});
 }
 async function fixture() {
-  const state = {consent:"off", expired:false, grantedRequestId:"fixture", requests:0, reads:0, opens:[], actions:[], navigations:[]};
+  const state = {consent:"off", expired:false, grantedRequestId:"fixture", requests:0, reads:0, failedReads:0, opens:[], actions:[], navigations:[]};
   const server=http.createServer(async (req,res) => {
     const url=new URL(req.url,"http://localhost");
     res.setHeader("access-control-allow-origin","*");
@@ -62,6 +62,7 @@ async function fixture() {
     }
     if (url.pathname === "/api/apps/browser/internet") {
       state.reads++;
+      if(req.method==="GET" && state.failedReads>0) {state.failedReads--;res.statusCode=503;json({error:"Fixture read failed"});return;}
       if(input?.action === "revoke") {assert.equal(input.step_up_token,"fixture-step-up");state.consent="revoked";}
       if (input?.action === "end") {json({status:"ended"});return;}
       if (input?.action === "request") {state.requests++;state.consent="requested";state.expired=false;await state.requestBarrier;}
@@ -436,6 +437,38 @@ test("566a Return after Don't Allow or Turn Off continues once after Inbox passk
       await page.waitForTimeout(4300);
       assert.deepEqual([...f.state.opens,...f.state.navigations].slice(before).map(open=>open.url),[url]);
       assert.equal(f.state.requests,1);
+      f.state.consent="revoked";
+      await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor({timeout:5000});
+      await page.close();
+    });
+  } finally {await browser.close();await f.close();}
+});
+
+
+
+test("566b a failed permission read recovers Allow and still observes Turn Off", async t => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    for (const when of ["initial", "waiting", "watching"]) await t.test(when, async subtest => {
+      subtest.after(async()=>{for(const context of browser.contexts())await context.close();});
+      f.state.consent=when==="watching" ? "granted" : "off";f.state.opens=[];f.state.requests=0;
+      f.state.failedReads=when==="initial" ? 1 : 0;
+      const page=await browser.newPage();
+      const first=when==="watching" ? page.waitForResponse(r=>r.url().endsWith("/api/apps/browser/open")) : null;
+      await page.goto(f.url);const frame=page.frameLocator("iframe");
+      if(first)await first;
+      else await frame.getByRole("button",{name:"Show Request",exact:true}).waitFor({timeout:7000});
+      if(when!=="initial") {
+        f.state.failedReads=1;
+        await page.waitForResponse(r=>r.url().endsWith("/api/apps/browser/internet") && r.status()===503,{timeout:5000});
+      }
+      const before=f.state.opens.length;
+      f.state.consent="granted";
+      await frame.locator("#browser-internet-request").waitFor({state:"hidden",timeout:5000});
+      if(when!=="watching") {
+        await page.waitForTimeout(300);
+        assert.equal(f.state.opens.length,before+1);assert.equal(f.state.opens.at(-1).url,"https://example.com/requested");
+      }
       f.state.consent="revoked";
       await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor({timeout:5000});
       await page.close();
