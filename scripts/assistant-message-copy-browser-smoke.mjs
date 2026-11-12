@@ -94,7 +94,7 @@ const server = createServer(async (req, res) => {
         </section>
         <script type="module">
           import { createHomeClipboardFrameState, createHomeClipboardHost, createHomeClipboardPrompt } from "${homeAssets}/home-clipboard-host.js";
-          const written = [];
+          const written = [], writes = [];
           const prompt = createHomeClipboardPrompt({
             root: document.querySelector("#home-clipboard-prompt"),
             title: document.querySelector("#home-clipboard-title"),
@@ -104,12 +104,19 @@ const server = createServer(async (req, res) => {
           });
           const host = createHomeClipboardHost({
             clipboard: { readText: () => navigator.clipboard.readText(),
-              async writeText(text) { written.push(text); return navigator.clipboard.writeText(text); } },
+              async writeText(text) {
+                written.push(text);
+                const write = { started: performance.now(), state: "pending" };
+                writes.push(write);
+                try { await navigator.clipboard.writeText(text); write.state = "fulfilled"; }
+                catch (error) { write.state = "rejected"; write.error = String(error); throw error; }
+                finally { write.finished = performance.now(); }
+              } },
             prompt,
           });
           const app = { targetId: "assistant", homeToken: ${JSON.stringify(homeToken)}, origin: "null",
             parentOrigin: location.origin, source: null, clipboardState: createHomeClipboardFrameState() };
-          window.__home = { written };
+          window.__home = { written, writes };
           addEventListener("message", event => {
             const data = event.data;
             if (!data || typeof data !== "object" || data.homeToken !== app.homeToken || event.origin !== app.origin) return;
@@ -214,12 +221,47 @@ try {
       const said = await status(button).textContent({ timeout: 500 }).catch(() => "");
       throw new Error(`${label}: Copy did not ask Home to write the clipboard${said ? ` (it said "${said}")` : ""}`);
     });
-    // Observe before confirming: on a busy runner, the click can return after
-    // the transient status has gone. Still require visible feedback from Copy.
-    await Promise.all([
-      status(button).filter({ hasText: "Copied" }).waitFor({ timeout: 10000 }),
-      page.locator("#home-clipboard-allow").click(),
-    ]);
+    await page.locator("#home-clipboard-allow").click();
+    try {
+      const feedback = status(button).filter({ hasText: /^Copied$/ });
+      await feedback.waitFor({ state: "visible", timeout: 10000 });
+      // The clicked button must keep visible feedback for a person to read,
+      // measured after the confirmation click returns.
+      await feedback.evaluate(node => new Promise((resolve, reject) => {
+        let frame, timer;
+        const visible = () => node.isConnected && node.textContent === "Copied" &&
+          node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+        const finish = error => {
+          clearTimeout(timer); cancelAnimationFrame(frame); observer.disconnect();
+          if (error) reject(error); else resolve();
+        };
+        const check = () => {
+          if (!visible()) { finish(new Error("Copied disappeared before 300 ms")); return; }
+          frame = requestAnimationFrame(check);
+        };
+        const observer = new MutationObserver(() => {
+          if (!visible()) finish(new Error("Copied disappeared before 300 ms"));
+        });
+        observer.observe(node.ownerDocument.documentElement, {
+          childList: true, subtree: true, attributes: true, characterData: true,
+        });
+        timer = setTimeout(() => finish(visible() ? null : new Error("Copied disappeared before 300 ms")), 300);
+        check();
+      }), undefined, { timeout: 10000 });
+    } catch (error) {
+      const buttonState = await button.evaluate(node => ({
+        statusText: node.nextElementSibling?.matches(".agent-copy-status") ? node.nextElementSibling.textContent : null,
+        "data-copy-pending": node.getAttribute("data-copy-pending"),
+        button: { connected: node.isConnected, disabled: node.disabled,
+          ariaDisabled: node.getAttribute("aria-disabled"), copied: node.getAttribute("data-copied"),
+          visible: node.getClientRects().length > 0 },
+      }), undefined, { timeout: 1000 }).catch(error => ({ buttonError: String(error) }));
+      const home = await page.evaluate(() => ({ ...window.__home,
+        prompt: { hidden: document.querySelector("#home-clipboard-prompt").hidden,
+          text: document.querySelector("#home-clipboard-copy").textContent },
+      }));
+      throw new Error(`${label}: Copy feedback failed: ${JSON.stringify({ ...buttonState, ...home })}`, { cause: error });
+    }
     assert.equal(await clipboard(), expected, `${label}: the clipboard holds the exact text`);
   }
 

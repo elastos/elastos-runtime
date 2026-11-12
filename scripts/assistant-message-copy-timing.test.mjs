@@ -5,8 +5,8 @@ import test from "node:test";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
-// Run the real smoke and product. Only control when the driver's confirmation
-// click returns, or remove the product's success report to check the smoke.
+// Run the real smoke and product. Browser DOM faults check the observation
+// contract without changing product source or its success text.
 function runSmoke(mode, signal) {
   const script = `
     import assert from "node:assert/strict";
@@ -18,15 +18,6 @@ function runSmoke(mode, signal) {
       const newContext = browser.newContext.bind(browser);
       browser.newContext = async (...args) => {
         const context = await newContext(...args);
-        if (${JSON.stringify(mode)} === "missing-status") {
-          await context.route(/\\/apps\\/assistant\\/harness-host\\.js/, async route => {
-            const response = await route.fetch();
-            const source = await response.text();
-            const body = source.replace('showCopyStatus(button, "Copied", true);', "/* success report withheld */");
-            assert.notEqual(body, source, "fixture removes the success report");
-            await route.fulfill({ response, body });
-          });
-        }
         const newPage = context.newPage.bind(context);
         context.newPage = async (...args) => {
           const page = await newPage(...args);
@@ -36,20 +27,24 @@ function runSmoke(mode, signal) {
             if (args[0] === "#home-clipboard-allow") {
               const click = found.click.bind(found);
               found.click = async (...args) => {
+                if (!exercised && ${JSON.stringify(mode)} === "pending-write") {
+                  await page.evaluate(() => {
+                    navigator.clipboard.writeText = () => new Promise(() => {});
+                  });
+                }
                 await click(...args);
                 if (exercised) return;
                 exercised = true;
-                if (${JSON.stringify(mode)} === "delayed-driver") {
-                  const status = page.frameLocator("#gui").frameLocator("iframe")
-                    .locator(".agent-msg").first().locator(".agent-copy-status");
-                  await status.filter({ hasText: "Copied" }).waitFor({ timeout: 10000 });
+                const status = page.frameLocator("#gui").frameLocator("iframe")
+                  .locator(".agent-msg").first().locator(".agent-copy-status");
+                if (${JSON.stringify(mode)} === "expired-before-return") {
+                  await status.waitFor({ state: "visible", timeout: 10000 });
                   await status.waitFor({ state: "detached", timeout: 10000 });
-                  console.log("driver resumed after visible Copied status expired");
-                } else {
-                  await page.waitForFunction(() => window.__home.written.length === 1, null, { timeout: 10000 });
-                  assert.equal(await page.evaluate(() => navigator.clipboard.readText()),
-                    await page.evaluate(() => window.__home.written[0]));
-                  console.log("clipboard written with success report withheld");
+                  console.log("fault: feedback expired before click returned");
+                } else if (${JSON.stringify(mode)} === "short-status") {
+                  await status.waitFor({ state: "visible", timeout: 10000 });
+                  await status.evaluate(node => setTimeout(() => node.remove(), 100));
+                  console.log("fault: feedback removed after 100 ms");
                 }
               };
             }
@@ -71,17 +66,18 @@ function runSmoke(mode, signal) {
   });
 }
 
-test("Copy smoke observes visible success before a delayed driver resumes", async t => {
-  const result = await runSmoke("delayed-driver", t.signal);
-  assert.match(result.stdout, /driver resumed after visible Copied status expired/);
-  assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /PASS Assistant Copy/);
-});
-
-test("Copy smoke fails when the clipboard is written but Copy never reports success", async t => {
-  const result = await runSmoke("missing-status", t.signal);
-  assert.match(result.stdout, /clipboard written with success report withheld/);
-  assert.equal(result.code, 1, result.stderr);
-  assert.match(result.stderr, /Assistant message copy smoke failed at sent message/);
-  assert.match(result.stderr, /locator\.waitFor: Timeout 10000ms exceeded/);
-});
+for (const mode of ["expired-before-return", "short-status", "pending-write"]) {
+  test(`Copy smoke rejects ${mode}`, async t => {
+    const result = await runSmoke(mode, t.signal);
+    if (mode !== "pending-write") assert.match(result.stdout, /fault: feedback/);
+    assert.equal(result.code, 1, result.stderr);
+    assert.match(result.stderr, /Assistant message copy smoke failed at sent message/);
+    assert.match(result.stderr, /Copy feedback failed/);
+    assert.match(result.stderr, /"statusText":/);
+    assert.match(result.stderr, mode === "pending-write" ? /"data-copy-pending":"1"/ : /"data-copy-pending":null/);
+    assert.match(result.stderr, /"written":\["Why is the sky blue/);
+    assert.match(result.stderr, /"button":\{/);
+    assert.match(result.stderr, mode === "pending-write" ? /"state":"pending"/ : /"state":"fulfilled"/);
+    assert.match(result.stderr, /"prompt":\{"hidden":true/);
+  });
+}
