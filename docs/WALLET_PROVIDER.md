@@ -261,7 +261,11 @@ Home accepts link actions, approval IDs, and disconnect actions; Runtime and
 `wallet-provider` supply the exact proof or signing payload. Pairing carries
 connection state. Each signing request retains its principal, requesting actor,
 account, chain, payload hash, and expiry. Disconnect leaves linked accounts in
-Wallet. Account or chain changes stop a request in progress.
+Wallet. Account or chain changes stop a request before the wallet sends it.
+Home passes each returned transaction hash to Runtime once, including after a
+connection or account change. A completion error keeps that hash visible so the
+person can check the transaction before sending again. Unused signatures and
+ownership proofs still stop when the account, chain, or request expiry changes.
 
 Inbox owns internet consent through the owner's passkey. Runtime connects only
 to `relay.walletconnect.org` and `relay.walletconnect.com` on TLS port 443 through

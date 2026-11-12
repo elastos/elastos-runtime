@@ -366,13 +366,16 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
       method: "eth_sendTransaction",
       params: [handoff.transaction],
     }, expiry), 512, "Wallet returned an invalid transaction hash.");
-    await checkBinding(false);
-    const completed = await runtimePost(path, connectorBody(connectorId, connectorToken, {
-      payload_hash: handoff.payload_hash,
-      signer: currentSigner,
-      transaction_hash: transactionHash,
-    }));
-    requireApprovalCompletion(completed, connectorId, handoff.request_id);
+    try {
+      const completed = await runtimePost(path, connectorBody(connectorId, connectorToken, {
+        payload_hash: handoff.payload_hash,
+        signer: currentSigner,
+        transaction_hash: transactionHash,
+      }));
+      requireApprovalCompletion(completed, connectorId, handoff.request_id);
+    } catch {
+      throw new Error(`Wallet returned transaction hash ${transactionHash}. Runtime could not confirm it. Keep this hash and check it before sending again.`);
+    }
     return Object.freeze({ status: "completed", effect: "transaction" });
   }
   const method = handoff.intent === "browser_typed_data_sign"

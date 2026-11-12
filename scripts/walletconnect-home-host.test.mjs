@@ -16,6 +16,13 @@ async function fixture(scenario) {
   const clock = Date.now;
   const events = new Map();
   let changed = false;
+  const changeKind = scenario.replace(/^signature-/, "");
+  const changeDuringReply = () => {
+    changed = true;
+    if (changeKind === "account-change-during-send") events.get("accountsChanged")?.([]);
+    if (changeKind === "chain-change-during-send") events.get("chainChanged")?.("0x1");
+    if (changeKind === "expired-during-send") Date.now = () => clock() + 601000;
+  };
   globalThis.document = { querySelector() { return null; } };
   globalThis.location = { origin };
   globalThis.window = { addEventListener() {}, dispatchEvent() {} };
@@ -28,14 +35,14 @@ async function fixture(scenario) {
     async request(input, expiry) {
       calls.push({ ...input, expiry });
       if (input.method === "eth_requestAccounts") return [address];
-      if (input.method === "personal_sign") return signature;
-      if (input.method === "eth_accounts") return [scenario === "wrong-account" || changed && scenario === "account-change-during-send" ? `0x${"ab".repeat(20)}` : address];
-      if (input.method === "eth_chainId") return scenario === "wrong-chain" || changed && scenario === "chain-change-during-send" ? "0x1" : "0x14";
+      if (input.method === "personal_sign") {
+        if (scenario.startsWith("signature-")) changeDuringReply();
+        return signature;
+      }
+      if (input.method === "eth_accounts") return [scenario === "wrong-account" || changed && changeKind === "account-change-during-send" ? `0x${"ab".repeat(20)}` : address];
+      if (input.method === "eth_chainId") return scenario === "wrong-chain" || changed && changeKind === "chain-change-during-send" ? "0x1" : "0x14";
       if (input.method === "eth_sendTransaction") {
-        changed = true;
-        if (scenario === "account-change-during-send") events.get("accountsChanged")?.([]);
-        if (scenario === "chain-change-during-send") events.get("chainChanged")?.("0x1");
-        if (scenario === "expired-during-send") Date.now = () => clock() + 601000;
+        changeDuringReply();
         return transactionHash;
       }
       throw new Error(`Unexpected wallet call: ${input.method}`);
@@ -60,7 +67,8 @@ async function fixture(scenario) {
       value = { schema: "elastos.home.wallet-connector.effect.result/v1", action: "evm_link_complete", connector_id: connector, status: "linked" };
     }
     else if (path.endsWith("/review")) value = { address, chain_namespace: "eip155:20", expires_at: Math.floor(Date.now() / 1000) + 600 };
-    else if (path.endsWith("/handoff")) value = {
+    else if (path.endsWith("/handoff")) {
+      value = {
       schema: "elastos.home.wallet-connector.effect.result/v1", action: "approval_handoff",
       connector_id: connector, request_id: "approval:fixture", evm_chains: [],
       handoff: { schema: "elastos.wallet.webconnect_handoff/v1", request_id: "approval:fixture", intent: "transaction_intent",
@@ -69,12 +77,18 @@ async function fixture(scenario) {
       },
       binding: { principal_id: "principal-fixture", requested_by_actor: "documents", account_id: "account-fixture", chain_namespace: "eip155:20",
         payload_hash: payloadHash, expires_at: scenario === "expired" ? 1 : Math.floor(Date.now() / 1000) + 600 },
-    };
+      };
+      if (scenario.startsWith("signature-")) {
+        delete value.handoff.transaction;
+        Object.assign(value.handoff, { intent: "browser_personal_sign", status: "awaiting_wallet_signature", message: "Runtime approval fixture", signature_type: "personal_sign" });
+      }
+    }
     else if (path.endsWith("/complete")) {
       const body = JSON.parse(input.body);
       assert.equal(body.payload_hash, payloadHash);
       assert.equal(body.signer, address);
       assert.equal(body.transaction_hash, transactionHash);
+      if (scenario === "completion-refused") return { ok: false, status: 403, text: async () => "wallet approval request expired" };
       value = { schema: "elastos.home.wallet-connector.effect.result/v1", action: "approval_complete", connector_id: connector,
         request_id: "approval:fixture", status: "completed" };
     } else throw new Error(`Unexpected Runtime route: ${path}`);
@@ -111,10 +125,27 @@ for (const scenario of ["wrong-account", "wrong-chain", "wrong-capsule", "expire
 }
 
 for (const scenario of ["account-change-during-send", "chain-change-during-send", "expired-during-send"]) {
-  test(`trusted Home refuses completion after ${scenario}`, async () => {
+  test(`trusted Home preserves a returned transaction hash after ${scenario}`, async () => {
     const result = await fixture(scenario);
-    assert.equal(typeof result.response.error, "string");
+    assert.equal(result.response.error, undefined, result.response.error);
     assert.equal(result.calls.filter(call => call.method === "eth_sendTransaction").length, 1);
+    assert.equal(result.routes.filter(path => path.endsWith("/complete")).length, 1);
+  });
+}
+
+test("a refused transaction completion retains its hash and asks for checking before another send", async () => {
+  const result = await fixture("completion-refused");
+  assert.ok(result.response.error.includes(transactionHash));
+  assert.match(result.response.error, /Keep this hash and check it before sending again/);
+  assert.doesNotMatch(result.response.error, /new review/);
+  assert.equal(result.routes.filter(path => path.endsWith("/complete")).length, 1);
+});
+
+for (const change of ["account-change-during-send", "chain-change-during-send", "expired-during-send"]) {
+  test(`trusted Home stops an unused signature after ${change}`, async () => {
+    const result = await fixture(`signature-${change}`);
+    assert.equal(typeof result.response.error, "string");
+    assert.equal(result.calls.filter(call => call.method === "personal_sign").length, 1);
     assert.equal(result.routes.filter(path => path.endsWith("/complete")).length, 0);
   });
 }
