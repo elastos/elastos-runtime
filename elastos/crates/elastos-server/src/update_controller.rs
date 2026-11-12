@@ -1290,13 +1290,6 @@ impl Controller {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             meter.paused = phase != "downloading";
-            if matches!(
-                phase,
-                "updated" | "failed" | "restored" | "recovery_required" | "idle"
-            ) {
-                *meter = DownloadMeter::default();
-                let _ = fs::remove_file(self.directory.join(DOWNLOAD_PROGRESS));
-            }
         }
         let source = installed_source(&self.receipt.data_dir)?;
         write_private(
@@ -1318,7 +1311,19 @@ impl Controller {
                 completed_bytes: 0,
                 total_bytes: None,
             },
-        )
+        )?;
+        // Readers see the terminal phase before its advisory progress is removed.
+        if matches!(
+            phase,
+            "updated" | "failed" | "restored" | "recovery_required" | "idle"
+        ) {
+            *self
+                .download_meter
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = DownloadMeter::default();
+            let _ = fs::remove_file(self.directory.join(DOWNLOAD_PROGRESS));
+        }
+        Ok(())
     }
 
     fn publish_apply_result(&self, result: &Result<()>) -> Result<()> {
