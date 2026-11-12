@@ -12,7 +12,7 @@ function compatibleGraph() {
     ["iroh-base", "1.4.1"],
     ["iroh-dns", "1.4.1"],
     ["iroh-relay", "1.4.1"],
-    ["iroh-gossip", "0.101.0"],
+    ["iroh-gossip", "0.102.0"],
     ["iroh-mdns-address-lookup", "0.4.0"],
     ["hickory-proto", "0.26.2"],
     ["n0-dns-resolver", "0.1.0"],

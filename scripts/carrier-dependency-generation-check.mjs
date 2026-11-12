@@ -118,7 +118,7 @@ export function inspectMetadata(metadata, graphName) {
     ["iroh-base", ["1.4.1"]],
     ["iroh-dns", ["1.4.1"]],
     ["iroh-relay", ["1.4.1"]],
-    ["iroh-gossip", ["0.101.0"]],
+    ["iroh-gossip", ["0.102.0"]],
     ["iroh-mdns-address-lookup", ["0.4.0"]],
     ["distributed-topic-tracker", []],
     ["hickory-proto", ["0.26.2"]],
@@ -194,7 +194,7 @@ function main() {
   }
   for (const declaration of [
     /^iroh = "=1\.4\.1"$/m,
-    /^iroh-gossip = "=0\.101\.0"$/m,
+    /^iroh-gossip = "=0\.102\.0"$/m,
     /^iroh-mdns-address-lookup = "=0\.4\.0"$/m,
   ]) {
     if (!declaration.test(serverManifest)) {

@@ -108,7 +108,7 @@ libc = "0.2"
 # Built-in Carrier transport (P2P for updates and gossip messaging).
 # Keep these exact pins compatible across the full Carrier dependency graph.
 iroh = "=1.4.1"
-iroh-gossip = "=0.101.0"
+iroh-gossip = "=0.102.0"
 iroh-mdns-address-lookup = "=0.4.0"
 futures-lite = "2.6"
 getrandom = "0.2"

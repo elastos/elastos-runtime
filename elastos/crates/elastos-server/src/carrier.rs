@@ -20192,6 +20192,7 @@ pub(crate) mod tests {
                                 .push_back((peer, InEvent::PeerDisconnected(node)));
                         }
                         OutEvent::PeerData(..) => {}
+                        event => panic!("unhandled gossip protocol event: {event:?}"),
                     }
                 }
             }
