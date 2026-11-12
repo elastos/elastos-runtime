@@ -2639,8 +2639,5 @@ export function handleShellResize() {
 }
 
 export function focusOpenBrowserWindow() {
-  const entry = topBrowserWindowEntryForTarget("browser");
-  if (!entry) return false;
-  focusWindow(entry.id);
-  return true;
+  return activateTargetGroup("browser");
 }

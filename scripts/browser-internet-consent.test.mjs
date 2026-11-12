@@ -47,6 +47,36 @@ async function fixture() {
     const json=value=>{res.setHeader("content-type","application/json");res.end(JSON.stringify(value));};
     let input;
     if (req.method === "POST") {let body="";for await (const chunk of req) body+=chunk;input=JSON.parse(body);}
+    if(url.pathname === "/shell") {
+      res.setHeader("content-type","text/html");
+      res.end(`<style>html,body,iframe{margin:0;border:0;width:100%;height:100%}</style><script>${hostScript}
+        addEventListener('message',e=>{
+          if(['home:open-target','home:focus-browser'].includes(e.data?.type))document.querySelector('#gui').contentWindow.postMessage({fixtureAction:e.data},'*');
+        });</script><iframe id="gui" sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock" src="/shell-gui"></iframe>`);return;
+    }
+    if(url.pathname === "/shell-gui") {
+      res.setHeader("content-type","text/html");
+      const template=readFileSync(new URL("capsules/home-gui/browser/home-gui-template.html",root),"utf8");
+      res.end(`<link rel="stylesheet" href="/apps/home-gui/style.css">${template}<script type="module">
+        import * as core from '/apps/home-gui/shell-core.js?v=home-20261101d';
+        import * as windows from '/apps/home-gui/shell-windows.js?v=home-20261101d';
+        import * as stages from '/apps/home-gui/shell-stages.js?v=home-20261101d';
+        for(const node of document.querySelectorAll('[data-home-gui-hidden-by-host]')) {node.hidden=false;node.inert=false;}
+        core.shellState.currentSummary={targets:[{target:'browser',title:'Browser'},{target:'inbox',title:'Inbox'}]};
+        core.shellState.browserContextId='browser:0123456789abcdef0123456789abcdef';
+        let serial=0;
+        windows.configureWindowHooks({clearIdentitySurface(){},refreshLauncherIfVisible(){},hideLauncher(){},renderDesktop(){},renderTaskbar(){},updateTaskbarState(){},syncMenubar(){},
+          launchTarget:async(target,query)=>({target,title:target,attach_kind:'iframe',launch_status:'launched',
+            route:'/apps/'+target+'/?'+new URLSearchParams({...query,home_origin:location.origin})+'#home_token=fixture-'+(++serial)})});
+        addEventListener('message',e=>{
+          if(e.source!==window.top)return;
+          const action=e.data?.fixtureAction;
+          if(action?.type==='home:open-target')windows.openTarget(action.target,{query:action.query});
+          if(action?.type==='home:focus-browser')windows.focusOpenBrowserWindow();
+        });
+        window.fixtureShell={core,windows,stages};
+      </script>`);return;
+    }
     if(url.pathname === "/gui") {
       res.setHeader("content-type","text/html");
       res.end(`<iframe src="/apps/browser/?browser_restore=1&home_origin=http://127.0.0.1:${server.address().port}#home_token=fixture"></iframe>`);return;
@@ -108,7 +138,7 @@ async function fixture() {
     if(url.pathname.startsWith("/api/")) {
       const response=inertSystemApiResponse(url.pathname);if(response) {json(response);return;}
     }
-    const match=url.pathname.match(/^\/apps\/(browser|inbox|home|system)\/(.*)$/);
+    const match=url.pathname.match(/^\/apps\/(browser|inbox|home|home-gui|system)\/(.*)$/);
     if (!match || match[2].includes("..")) {res.writeHead(404).end();return;}
     const name=match[2] || "index.html";
     try {const bytes=readFileSync(new URL(`capsules/${match[1]}/browser/${name}`,root));res.setHeader("content-type",(name.endsWith(".js") || name.endsWith(".mjs"))?"text/javascript":name.endsWith(".css")?"text/css":"text/html");res.end(bytes);} catch {res.writeHead(404).end();}
@@ -476,4 +506,28 @@ test("566b a failed permission read recovers Allow and still observes Turn Off",
   } finally {await browser.close();await f.close();}
 });
 
-
+test("566c Inbox Allow brings a fullscreen Browser back into view", async () => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    f.state.consent="refused";
+    const page=await browser.newPage();await page.goto(f.url+"shell");
+    const gui=await (await page.locator("#gui").elementHandle()).contentFrame();
+    await gui.waitForFunction(()=>window.fixtureShell);
+    await gui.evaluate(()=>fixtureShell.windows.openTarget("browser"));
+    const frame=gui.frameLocator('iframe[title="browser"]');
+    await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
+    await gui.evaluate(()=>{const {core,stages}=fixtureShell;stages.enterFullscreenStage([...core.shellState.windows.keys()][0]);});
+    assert.equal(await gui.locator('.window[data-target="browser"]').isVisible(),true);
+    await gui.evaluate(()=>fixtureShell.windows.openTarget("inbox",{query:{notification_id:"browser-internet:permission"}}));
+    const inbox=gui.frameLocator('iframe[title="inbox"]');
+    await inbox.getByRole("button",{name:"Allow",exact:true}).waitFor();
+    await gui.waitForFunction(()=>fixtureShell.stages.getActiveStageId()===fixtureShell.stages.desktopStageId() && !document.body.classList.contains("stage-sliding"));
+    assert.equal(await gui.locator('.window[data-target="browser"]').isVisible(),false,"Inbox moves to the Desktop Space");
+    await inbox.getByRole("button",{name:"Allow",exact:true}).click();
+    await page.waitForFunction(()=>messages.some(m=>m.type==="home:focus-browser"));
+    await gui.locator('.window[data-target="browser"]').waitFor({state:"visible",timeout:5000});
+    assert.equal(await gui.locator('.window[data-target="browser"]').isVisible(),true,"Allow returns to Browser's fullscreen Space");
+    assert.equal(await gui.evaluate(()=>fixtureShell.core.shellState.windows.size),2);
+    await page.close();
+  } finally {await browser.close();await f.close();}
+});
