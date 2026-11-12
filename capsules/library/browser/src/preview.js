@@ -4,7 +4,7 @@ import {
   formatBytes,
   previewKind,
   shortUri,
-} from "./model.js";
+} from "./model.js?v=download-progress-20261112";
 
 const PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
 const TEXT_PREVIEW_MAX_BYTES = 1 * 1024 * 1024;

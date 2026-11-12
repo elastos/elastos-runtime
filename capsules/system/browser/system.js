@@ -1,4 +1,4 @@
-import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js";
+import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 import {
   gatePreviewAuditView,
   inspectActionRequestValidation,

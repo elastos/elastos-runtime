@@ -1,4 +1,4 @@
-import { formatBytes } from "../byte-format.js";
+import { formatBytes } from "../byte-format.js?v=download-progress-20261112";
 export function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")

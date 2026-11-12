@@ -1,5 +1,5 @@
 import { createAssistantApp, eligibleStudioOffers } from "./assistant.js";
-import { getAgentWorkspaceSnapshot, setAssistantMode } from "./agent-harness.js";
+import { getAgentWorkspaceSnapshot, setAssistantMode } from "./agent-harness.js?v=download-progress-20261112";
 import { setAssistantWorkspaceField, getAssistantSession, ensureAssistantStudioSession, setAssistantSessionStudio, captureActiveSessionState, applyAssistantModeDraft } from "./agent-workspace.js";
 import { getHomeGuiLaunchToken, persistAgentWorkspaceNow, flushAgentWorkspace, bindWorkspaceMergeGuard } from "./harness-host.js";
 import { fetchModelOffers, unresolvedModelTurn } from "./agent-live.js";

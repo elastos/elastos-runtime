@@ -1,4 +1,4 @@
-import { formatBytes as formatSize } from "./byte-format.js";
+import { formatBytes as formatSize } from "./byte-format.js?v=download-progress-20261112";
 // Home opens an app's web link or shared file after the person sees the exact address
 // and chooses Open link (#430). App documents have no popup permission.
 //

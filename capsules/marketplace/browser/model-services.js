@@ -1,4 +1,4 @@
-import { formatBytes } from "./byte-format.js";
+import { formatBytes } from "./byte-format.js?v=download-progress-20261112";
 import { eligibleTextOffers, offerSelectionFacts } from "./model-contract.js";
 
 export const REMOTE_MODEL_ID = /^remote:[A-Za-z0-9_-]{1,128}:[A-Za-z0-9_.:-]{1,160}$/;

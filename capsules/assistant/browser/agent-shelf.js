@@ -1,4 +1,4 @@
-import { formatBytes } from "./byte-format.js";
+import { formatBytes } from "./byte-format.js?v=download-progress-20261112";
 /* Agent composer — the pill Home's Shelf hands over to.
    UI ≠ authority (Principle 16): the composer never mints grants or Carrier
    authority. Home GUI owns the Shelf morph and the place; this module owns

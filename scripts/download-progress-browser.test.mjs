@@ -132,7 +132,7 @@ test("System, model and Library transfer states stay accessible in light and dar
           state: { uploads: [{ id: "fixture", name: "Project files.zip", status: "Uploading", completed_bytes: 3750000, total_bytes: 10000000 }] } }).renderUploads();
       }, theme);
       await page.getByText("3.8 MB of 10.0 MB · 37%", { exact: true }).waitFor();
-      assert.equal(await page.getByRole("progressbar").getAttribute("aria-label"), "Upload progress");
+      assert.equal(await page.getByRole("progressbar").getAttribute("aria-label"), "Upload progress for Project files.zip");
       assert((await page.locator(".upload-meter .transfer-progress span").evaluate(transferContrast)).ratio >= 4.5);
       await screenshot(`library-upload-${theme}`);
       await page.setViewportSize({ width: 390, height: 844 });

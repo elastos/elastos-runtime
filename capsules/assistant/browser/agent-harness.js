@@ -1,4 +1,4 @@
-import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js";
+import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 /* Agent Harness — Home drops, Shelf stays as composer hinge.
    UI ≠ authority (Principle 16): never mints grants, never opens Carrier/
    capsule ambient paths. Inference is the typed model contract or nothing. */
@@ -12,7 +12,7 @@ import {
   getComposerDraft,
   applyComposerDraft,
   syncAgentSendButton,
-} from "./agent-shelf.js";
+} from "./agent-shelf.js?v=download-progress-20261112";
 import {
   shellState,
   desktopObjects,

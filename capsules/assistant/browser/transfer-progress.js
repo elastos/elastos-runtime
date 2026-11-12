@@ -1,4 +1,4 @@
-import { formatBytes, formatBytesOf } from "./byte-format.js";
+import { formatBytes, formatBytesOf } from "./byte-format.js?v=download-progress-20261112";
 
 // Native progress supplies keyboard-independent, screen-reader progress semantics.
 export function createTransferProgress(completed, total, label = "Download progress", doc = document) {

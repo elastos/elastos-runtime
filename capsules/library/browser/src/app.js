@@ -19,7 +19,7 @@ import {
   pathCrumbs,
   publishedLink,
   viewerOptions,
-} from "./model.js";
+} from "./model.js?v=download-progress-20261112";
 import { createLibraryRuntime } from "./api.js?v=library-20261028a";
 import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js";
 import { createLibraryActions } from "./actions.js?v=library-20261029b";
@@ -39,7 +39,7 @@ import {
   setLibraryObjects,
   visibleObjectsForState,
 } from "./state.js";
-import { createLibraryUploads } from "./uploads.js";
+import { createLibraryUploads } from "./uploads.js?v=download-progress-20261112";
 import {
   createHomeClipboardClient,
 } from "/apps/home/home-clipboard-client.js?v=home-20260726a";

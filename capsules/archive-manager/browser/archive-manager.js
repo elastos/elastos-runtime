@@ -1,4 +1,4 @@
-import { formatBytes } from "./byte-format.js";
+import { formatBytes } from "./byte-format.js?v=download-progress-20261112";
     import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js";
     const params = new URLSearchParams(window.location.search);
     const homeToken = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("home_token") || "";

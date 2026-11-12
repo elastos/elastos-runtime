@@ -1,4 +1,4 @@
-import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from "./model-services.js";
+import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from "./model-services.js?v=download-progress-20261112";
 
 (function () {
   const params = new URLSearchParams(window.location.search);

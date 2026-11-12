@@ -119,3 +119,12 @@ test("changed capsule entry points use the download progress asset version", asy
     if (name === "system") assert.match(html, /^<link rel="stylesheet" href="\.\/elastos-ui\.css">$/m);
   }
 });
+
+test("advisory progress writer uses atomic replacement without disk sync", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../elastos/crates/elastos-server/src/update_controller.rs", import.meta.url), "utf8");
+  const writer = source.slice(source.indexOf("fn write_advisory_progress("), source.indexOf("fn write_private(path:"));
+  assert.match(writer, /fs::rename/);
+  assert.match(writer, /libc::O_NOFOLLOW/);
+  assert.doesNotMatch(writer, /sync_all|sync_data|write_private\(|write_new_private\(/);
+});

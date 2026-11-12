@@ -20,7 +20,7 @@ import {
   publishFailureText,
   publishedLink,
   viewerOptions,
-} from "./model.js";
+} from "./model.js?v=download-progress-20261112";
 
 export function createLibraryActions({
   clearSelection,
