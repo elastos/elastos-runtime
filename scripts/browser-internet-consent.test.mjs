@@ -37,7 +37,7 @@ async function screen(page, name) {
   await page.screenshot({path:`${process.env.BROWSER_INTERNET_SCREENSHOTS}/${process.env.BROWSER_INTERNET_SCREEN_THEME === "dark" ? "dark-" : ""}${name}.png`});
 }
 async function fixture() {
-  const state = {consent:"off", expired:false, grantedRequestId:"fixture", requests:0, reads:0, opens:[], actions:[]};
+  const state = {consent:"off", expired:false, grantedRequestId:"fixture", requests:0, reads:0, opens:[], actions:[], navigations:[]};
   const server=http.createServer(async (req,res) => {
     const url=new URL(req.url,"http://localhost");
     res.setHeader("access-control-allow-origin","*");
@@ -85,7 +85,19 @@ async function fixture() {
       json({ok:true});return;
     }
     if (url.pathname === "/api/apps/browser/summary") {
-      json({net:{exit_provider:{remote_carrier_exits:[{id:"sasha-exit",display_name:"A shared Exit",contact_name:"Sasha",allowed_for_principal:true},{id:"legacy-exit",display_name:"A service label",allowed_for_principal:true}]}},engine_adapter:{adapters:[]},sessions:{schema:"elastos.browser.session-capacity/v1",status:"configured",fresh_start_allowed:true,recoverable_page:null}});return;
+      json({net:{exit_provider:{remote_carrier_exits:[{id:"sasha-exit",display_name:"A shared Exit",contact_name:"Sasha",allowed_for_principal:true},{id:"legacy-exit",display_name:"A service label",allowed_for_principal:true}]}},engine_adapter:{adapters:[],display_attach_supported:true},sessions:{schema:"elastos.browser.session-capacity/v1",status:"configured",fresh_start_allowed:true,recoverable_page:state.recoverableUrl ? {
+        schema:"elastos.browser.recoverable-page/v1",state:"active",page_id:"retained",
+        cleanup:{schema:"elastos.browser.cleanup-handle/v1",id:"cleanup-retained"},
+        service_selection:{schema:"elastos.browser.service-selection/v1",engine_id:"",exit_id:""},
+        engine_page:{schema:"elastos.browser.engine.page/v1",page_id:"retained",actual_url:state.recoverableUrl,
+          display_session:{mode:"webrtc_remote_display",display_generation:"display:"+"1".repeat(32)}}
+      } : null}});return;
+    }
+    if (url.pathname === "/api/apps/browser/pages/retained/status") {
+      json({schema:"elastos.browser.page-status/v1",page_id:"retained",direct_network:false,actual_url:state.recoverableUrl});return;
+    }
+    if (url.pathname === "/api/apps/browser/pages/retained/input") {
+      state.navigations.push(input.event);state.recoverableUrl=input.event.url;json({accepted:true});return;
     }
     if (url.pathname === "/api/apps/browser/open") {
       state.opens.push(input);json({schema:"elastos.browser.open-accepted/v1",status_url:"/api/apps/browser/open/fixture"});return;
@@ -393,3 +405,42 @@ test("internet grant refusal points to the permission request", async () => {
      assert.doesNotMatch(readFileSync(new URL(`capsules/system/browser/${name}`,root),"utf8"),/browser-internet|browserInternet|browser\.internet|\/api\/apps\/browser\/internet/);
    }
  });
+
+test("566a Return after Don't Allow or Turn Off continues once after Inbox passkey Allow", async t => {
+  const f=await fixture();const browser=await chromium.launch({headless:true});
+  try {
+    for (const initial of ["refused", "revoked", "granted", "restored"]) await t.test(initial, async subtest => {
+      subtest.after(async()=>{for(const context of browser.contexts())await context.close();});
+      f.state.consent=["granted","restored"].includes(initial) ? "granted" : initial;f.state.opens=[];f.state.navigations=[];f.state.requests=0;
+      f.state.recoverableUrl=initial==="granted" ? "https://example.com/current" : null;
+      const page=await browser.newPage();
+      const firstOpen=initial==="granted" ? page.waitForResponse(r=>r.url().includes("/pages/retained/status")) : null;
+      await page.goto(f.url+"?flow=1"+(initial==="restored" ? "&restore=1" : ""));if(firstOpen)await firstOpen;
+      const frame=page.frameLocator('iframe[data-app="browser"]');
+      if(["granted","restored"].includes(initial)) {
+        await frame.locator("#browser-internet-request").waitFor({state:"hidden"});f.state.consent="revoked";
+      }
+      await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor({timeout:5000});
+      const before=f.state.opens.length+f.state.navigations.length;
+      const url="https://example.com/after-"+initial;
+      await frame.locator("#browser-url").fill(url);await frame.locator("#browser-url").press("Enter");
+      const inbox=page.frameLocator('iframe[data-app="inbox"]');
+      await inbox.getByRole("button",{name:"Allow",exact:true}).waitFor();
+      assert.equal(f.state.requests,1,"Return files a fresh request before Inbox Allow");
+      await page.evaluate(()=>holdPasskey=true);
+      await inbox.getByRole("button",{name:"Allow",exact:true}).click();
+      await page.waitForFunction(()=>approvals.length===1);
+      await page.waitForTimeout(2200);assert.equal(f.state.opens.length+f.state.navigations.length,before,"navigation waits for the passkey");
+      const opened=page.waitForResponse(r=>r.url().endsWith(initial==="granted" ? "/pages/retained/input" : "/api/apps/browser/open"),{timeout:5000});
+      await page.evaluate(()=>completeFixturePasskey());await opened;
+      await page.waitForTimeout(4300);
+      assert.deepEqual([...f.state.opens,...f.state.navigations].slice(before).map(open=>open.url),[url]);
+      assert.equal(f.state.requests,1);
+      f.state.consent="revoked";
+      await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor({timeout:5000});
+      await page.close();
+    });
+  } finally {await browser.close();await f.close();}
+});
+
+

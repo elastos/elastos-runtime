@@ -210,6 +210,7 @@ function renderInternetConsent(consent) {
     pendingInternetNavigation = null;
   }
   browserInternetAllowed = allowed;
+  if (!allowed) internetContinuationUrl = null;
   renderPanel.hidden = !allowed;
   statusNode.hidden = !allowed;
   setLoading(allowed && document.body.dataset.loading === "true");
@@ -245,13 +246,9 @@ function showInternetRequest() {
 
 async function requestInternetNavigation(value) {
   if (!browserInternetPollingActive) return;
-  if (["refused", "revoked"].includes(currentInternetConsent?.status)) {
-    showInternetRequest();
-    return;
-  }
   // The URL belongs only to this live window; Home persists no continuation.
   internetRequestedUrl = normalizeUrl(value);
-  if (pendingInternetNavigation) pendingInternetNavigation.url = internetRequestedUrl;
+  pendingInternetNavigation = null;
   if (internetRequestPromise) return internetRequestPromise;
   internetRequestPromise = (async () => {
     const consent = await fetchJson("/api/apps/browser/internet", {method:"POST",body:{action:"request"}});
@@ -267,7 +264,7 @@ async function requestInternetNavigation(value) {
   finally { internetRequestPromise = null; }
 }
 
-async function checkBrowserInternet(initialUrl) {
+async function checkBrowserInternet(initialUrl, { initialCheck = true } = {}) {
   let firstRead = true;
   while (browserInternetPollingActive && !homeWindowCloseInFlight && !homeWindowTerminalCloseConfirmed) {
     const granted = await browserInternetGranted(fetchJson, (allowed, consent) => {
@@ -277,11 +274,18 @@ async function checkBrowserInternet(initialUrl) {
     if (granted) {
       const pending = pendingInternetNavigation;
       pendingInternetNavigation = null;
-      if (firstRead) return true;
-      if (!pending || currentInternetConsent.request_id !== pending.requestId || (pending.expiresAt && pending.expiresAt * 1000 <= Date.now())) return false;
-      internetContinuationUrl = pending.url;
+      if (firstRead && !pending) return true;
+      if (!pending?.requestId || currentInternetConsent.request_id !== pending.requestId || (pending.expiresAt && pending.expiresAt * 1000 <= Date.now())) return false;
+      if (initialCheck) {
+        internetContinuationUrl = pending.url;
+      } else {
+        // Startup retains its continuation until page ownership is restored.
+        // Later navigation runs without delaying the next permission read.
+        navigateAddress(pending.url).catch(() => {});
+      }
       return true;
     }
+    if (!initialCheck) return false;
     if (firstRead && explicitBrowserOpen && !["refused", "revoked"].includes(currentInternetConsent?.status)) {
       await requestInternetNavigation(initialUrl);
     }
@@ -3127,9 +3131,7 @@ function watchInternetPermission() {
   if (!browserInternetPollingActive) return;
   browserInternetPollTimer = window.setTimeout(async () => {
     try {
-      await browserInternetGranted(fetchJson, (_allowed, consent) => {
-        if (browserInternetPollingActive) renderInternetConsent(consent);
-      });
+      await checkBrowserInternet(null, { initialCheck: false });
     } catch (_) { /* Keep the last Runtime state until the next read succeeds. */ }
     watchInternetPermission();
   }, 2000);
