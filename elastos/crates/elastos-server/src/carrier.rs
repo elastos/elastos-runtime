@@ -18251,6 +18251,69 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn test_community_hub_bootstraps_native_chat_discovery_without_publisher() {
+        let hub_dir = tempfile::tempdir().unwrap();
+        let (sk, did) = elastos_identity::derive_did(&[93u8; 32]);
+        let hub_id = SecretKey::from_bytes(&sk.to_bytes()).public().to_string();
+        let hub = start_carrier_node_with_network(
+            &sk,
+            &did,
+            hub_dir.path().to_path_buf(),
+            None,
+            CarrierNodeNetwork::Isolated,
+            Some("127.0.0.1:0".parse().unwrap()),
+            &[hub_id],
+        )
+        .await
+        .unwrap();
+        assert!(!is_trusted_source_runtime(hub_dir.path()));
+        assert!(
+            hub.gossip_state
+                .lock()
+                .await
+                .joined_topics
+                .contains(CHAT_DISCOVERY_TOPIC_GENERAL),
+            "Community bootstrap nodes carry native chat presence without publisher state"
+        );
+        let home_dir1 = tempfile::tempdir().unwrap();
+        let home_dir2 = tempfile::tempdir().unwrap();
+        let (sk1, did1) = elastos_identity::derive_did(&[94u8; 32]);
+        let (sk2, did2) = elastos_identity::derive_did(&[95u8; 32]);
+        let home1 = start_isolated_carrier_node_with_registry(
+            &sk1,
+            &did1,
+            home_dir1.path().to_path_buf(),
+            None,
+        )
+        .await
+        .unwrap();
+        let home2 = start_isolated_carrier_node_with_registry(
+            &sk2,
+            &did2,
+            home_dir2.path().to_path_buf(),
+            None,
+        )
+        .await
+        .unwrap();
+        let hub_addr = wait_for_direct_endpoint_addr(&hub.endpoint).await;
+        for home in [&home1, &home2] {
+            home.memory_lookup.add_endpoint_info(hub_addr.clone());
+            let mut state = home.gossip_state.lock().await;
+            state.bootstrap_peers.push(hub.endpoint.id());
+            join_gossip_topic(&mut state, CHAT_DISCOVERY_TOPIC_GENERAL)
+                .await
+                .unwrap();
+        }
+        let provider1 = CarrierGossipProvider::new(home1.gossip_state.clone());
+        let provider2 = CarrierGossipProvider::new(home2.gossip_state.clone());
+        assert!(frames_flow(&provider1, &provider2, CHAT_DISCOVERY_TOPIC_GENERAL, 0).await);
+        assert!(frames_flow(&provider2, &provider1, CHAT_DISCOVERY_TOPIC_GENERAL, 0).await);
+        shutdown_test_carrier_node(home1).await;
+        shutdown_test_carrier_node(home2).await;
+        shutdown_test_carrier_node(hub).await;
+    }
+
+    #[tokio::test]
     async fn test_trusted_source_runtime_joins_discovery_topic() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(elastos_common::localhost::publisher_root_path(dir.path()))
