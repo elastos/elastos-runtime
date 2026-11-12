@@ -125,7 +125,7 @@ const GOSSIP_ACTOR_TIMEOUT: Duration = Duration::from_secs(2);
 /// than running later, right after another one.
 const GOSSIP_RECOVERY_START_TIMEOUT: Duration = Duration::from_secs(2);
 /// A consumer that joins a CID topic after the holder announced still needs a
-/// window for DHT/mDNS to form a gossip neighbor and for the signed fetch
+/// window for bootstrap peers to form a gossip neighbor and for the signed fetch
 /// ticket to arrive. One absolute deadline covers late holders. Operator peer
 /// tickets remain the fallback when this window stays empty. Installed late-join
 /// on LAN needed more than 8s (2026-09-16).
@@ -877,7 +877,7 @@ fn add_ticket_endpoints(
             );
         } else {
             debug!(
-                "carrier: remembered peer {} for DHT rendezvous",
+                "carrier: remembered peer {} for direct rendezvous",
                 &peer_id[..12]
             );
         }
@@ -888,7 +888,7 @@ fn add_ticket_endpoints(
 /// Loads every ticket from the operator peer store (written by `elastos
 /// node peer add --did ... --ticket ...`) into the endpoint's
 /// `MemoryLookup`, so a later `connect_resolved_peer` by peer DID can
-/// resolve an address without waiting on gossip/mDNS/DHT discovery.
+/// resolve an address without waiting on gossip or mDNS discovery.
 /// Returns those endpoint IDs as gossip bootstrap peers so a content-topic
 /// join can reach an operator-named holder.
 ///
@@ -9308,7 +9308,12 @@ pub(crate) mod tests {
         let node = start_carrier_node(&sk, &did, dir.path().to_path_buf())
             .await
             .unwrap();
-        node.gossip_state.lock().await.direct_only = false;
+        let bootstrap_peer = iroh::SecretKey::from_bytes(&[75u8; 32]).public();
+        {
+            let mut state = node.gossip_state.lock().await;
+            state.direct_only = false;
+            state.bootstrap_peers.push(bootstrap_peer);
+        }
         let provider = CarrierGossipProvider::new(node.gossip_state.clone());
         let topic = "__test/bootstrap-handle-teardown";
 
@@ -9319,7 +9324,7 @@ pub(crate) mod tests {
         assert_eq!(first_join["status"], "ok");
         assert_eq!(
             node.gossip_state.lock().await.last_direct_join_peers,
-            Some(Vec::new())
+            Some(vec![bootstrap_peer])
         );
         let first_task = node
             .gossip_state
