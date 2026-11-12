@@ -8,6 +8,9 @@ const STORAGE: &str = "/api/apps/wallet-walletconnect/storage";
 const RELAY: &str =
     "wss://relay.walletconnect.org/?projectId=test_walletconnect_project&auth=fixture";
 
+#[path = "walletconnect_real_relay.rs"]
+mod real_relay;
+
 async fn persistent_internet(data: &std::path::Path) -> Arc<BrowserInternetService> {
     use elastos_runtime::capability::{CapabilityManager, CapabilityStore};
     use elastos_runtime::primitives::{audit::AuditLog, metrics::MetricsManager};
