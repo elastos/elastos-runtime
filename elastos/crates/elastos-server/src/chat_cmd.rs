@@ -202,17 +202,9 @@ enum ChatBootstrap {
     TrustedSourceSeed(String),
 }
 
-impl ChatBootstrap {
-    fn gossip_join_mode(&self) -> &'static str {
-        match self {
-            // An explicit ticket is an intentional point-to-point bootstrap.
-            Self::ExplicitConnect(_) => "direct",
-            // A trusted source ticket provides automatic reachability bootstrap.
-            // The chat room itself remains an iroh-gossip mesh that is extended
-            // as peers rendezvous through Carrier.
-            Self::TrustedSourceSeed(_) => "direct",
-        }
-    }
+fn chat_gossip_join_mode(_bootstrap: Option<&ChatBootstrap>) -> &'static str {
+    // Use the running Home's bootstrap peers when there is no explicit ticket.
+    "direct"
 }
 
 fn new_chat_session_id() -> String {
@@ -333,10 +325,7 @@ async fn run_native_chat_with_runtime(
         "gossip_join",
         serde_json::json!({
             "topic": CHAT_TOPIC,
-            "mode": connect
-                .as_ref()
-                .map(|bootstrap| bootstrap.gossip_join_mode())
-                .unwrap_or("dht"),
+            "mode": chat_gossip_join_mode(connect.as_ref()),
         }),
     )
     .await
@@ -2013,9 +2002,16 @@ mod tests {
     }
 
     #[test]
+    fn chat_without_ticket_uses_home_bootstrap_peers() {
+        assert_eq!(chat_gossip_join_mode(None), "direct");
+    }
+
+    #[test]
     fn explicit_connect_uses_direct_join_mode() {
         assert_eq!(
-            ChatBootstrap::ExplicitConnect("manual-ticket".to_string()).gossip_join_mode(),
+            chat_gossip_join_mode(Some(&ChatBootstrap::ExplicitConnect(
+                "manual-ticket".to_string()
+            ))),
             "direct"
         );
     }
@@ -2023,7 +2019,9 @@ mod tests {
     #[test]
     fn source_seed_uses_direct_join_mode() {
         assert_eq!(
-            ChatBootstrap::TrustedSourceSeed("seed-ticket".to_string()).gossip_join_mode(),
+            chat_gossip_join_mode(Some(&ChatBootstrap::TrustedSourceSeed(
+                "seed-ticket".to_string()
+            ))),
             "direct"
         );
     }
