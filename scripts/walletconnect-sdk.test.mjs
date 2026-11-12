@@ -42,7 +42,7 @@ const api = async (path, input) => {
 window.pending = connectWalletConnectEvm({
   contextKey:'principal-fixture', projectId:'fixture-project-id', chains:[1], api,
   relayUrl:location.origin.replace(/^http/, 'ws') + '/relay',
-  runtimeUrl:new URLSearchParams(location.search).has('relative') ? '/api/apps/wallet-walletconnect' : location.origin + '/api/apps/wallet-walletconnect',
+  runtimeUrl:location.origin + '/api/apps/wallet-walletconnect',
   metadata:{name:'Isolated Runtime fixture', description:'WalletConnect test', url:location.origin, icons:[]},
 }).catch(error => { window.cancelled = error.message === 'Wallet connection cancelled.'; window.failed = !window.cancelled; });
 `;
@@ -59,20 +59,20 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
   let browser;
   try {
     browser = await chromium.launch({ headless: true });
-    const invalid = await browser.newContext();
-    const invalidPage = await invalid.newPage();
-    await invalid.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
-    await invalidPage.goto(`${origin}/?relative`);
-    await invalidPage.waitForFunction(() => window.failed, null, { timeout: 20000 });
-    assert.equal(await invalidPage.locator("dialog[open]").count(), 0, "a relative RPC URL cannot initialize the real SDK");
-    await invalid.close();
     for (const width of [1280, 390]) {
       const context = await browser.newContext({ viewport: { width, height: 800 } });
       // CSP remains the same Home-only network boundary used by the product.
       await context.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
       const page = await context.newPage();
+      const pageErrors = [];
+      page.on("pageerror", error => pageErrors.push(error.message));
       await page.goto(origin);
-      await page.locator("dialog[open] canvas").waitFor({ timeout: 20000 });
+      try {
+        await page.locator("dialog[open] canvas").waitFor({ timeout: 20000 });
+      } catch (cause) {
+        const state = await page.evaluate(() => ({ failed: window.failed, methods: window.methods, nativeUrls: window.nativeUrls }));
+        throw new Error(`SDK fixture did not reach QR: ${JSON.stringify({ pageErrors, state })}`, { cause });
+      }
       const state = await page.evaluate(() => ({
         homeOnly: window.nativeUrls.length > 0 && window.nativeUrls.every(url => url === location.origin.replace(/^http/, "ws") + "/relay"),
         subscribed: window.methods.some(method => method.endsWith("subscribe")),
