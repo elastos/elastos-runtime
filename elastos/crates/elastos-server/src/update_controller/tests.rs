@@ -5372,6 +5372,8 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
         } else {
             network.clone()
         };
+        let payload_completed = (binary.len() + components.len()) as u64;
+        let payload_total = payload_completed + b"new support".len() as u64;
         let items = std::collections::BTreeMap::from([
             (request.head_cid.clone(), head),
             (request.release_cid.clone(), release),
@@ -5386,11 +5388,21 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
         let fetch: crate::update::FetchFn = Box::new(move |cid| {
             let bytes = items.get(&cid).cloned();
             let network_fetch = cid == network_cid;
+            let support_fetch = cid == raw_cid(b"new support");
             let observed = observed.clone();
             let birth = birth.clone();
             let data = data.clone();
             Box::pin(async move {
                 if network_fetch {
+                    let progress = status(&data)?.unwrap();
+                    assert_eq!(
+                        progress.total_bytes, None,
+                        "unsized network metadata has its own phase"
+                    );
+                    assert_eq!(
+                        progress.message,
+                        "Checking update metadata. Home restarts when the update is ready."
+                    );
                     observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     // The network comes with the other downloads, while the
                     // current Home still runs on the current release.
@@ -5399,6 +5411,19 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
                         fs::read(data.join("bin/fixture-provider")).unwrap(),
                         b"old support"
                     );
+                }
+                if support_fetch {
+                    let progress = status(&data)?.unwrap();
+                    assert_eq!(
+                        progress.total_bytes,
+                        Some(payload_total),
+                        "the signed payload total resumes unchanged"
+                    );
+                    assert_eq!(
+                        progress.completed_bytes, payload_completed,
+                        "metadata bytes are outside the payload count"
+                    );
+                    assert_eq!(progress.message, crate::update::DOWNLOAD_MESSAGE);
                 }
                 bytes.ok_or_else(|| anyhow::anyhow!("content {cid} is not published"))
             })

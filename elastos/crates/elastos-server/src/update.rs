@@ -1496,7 +1496,7 @@ async fn run_upgrade_with_restart(
     )?;
 
     let mut next_admission = Some(next_admission);
-    let support_plan = if let Some(owner) = restart_owner.as_ref() {
+    let (support_plan, download_total) = if let Some(owner) = restart_owner.as_ref() {
         let bin_path = if source.install_path.is_empty() {
             default_install_path()
         } else {
@@ -1528,9 +1528,9 @@ async fn run_upgrade_with_restart(
                 binary.checked_add(components)?.checked_add(support)
             });
         owner.download_plan(comp_data.len() as u64, total)?;
-        Some(plan)
+        (Some(plan), total)
     } else {
-        None
+        (None, None)
     };
 
     println!(
@@ -1572,6 +1572,16 @@ async fn run_upgrade_with_restart(
         binary_sha256,
         binary_data.len() as u64,
     ))?;
+
+    // Network pins and repair of the installed catalogue have no signed byte
+    // sizes in this payload. Keep their fetches out of its signed-size count.
+    if let Some(owner) = restart_owner.as_ref() {
+        owner.download_plan(0, None)?;
+        owner.progress(
+            "downloading",
+            "Checking update metadata. Home restarts when the update is ready.",
+        )?;
+    }
 
     // 9b. Fetch and verify the release-pinned Community network while Home
     // still runs and before the binary changes.
@@ -1820,6 +1830,11 @@ async fn run_upgrade_with_restart(
     }
     let old_components = std::fs::read(data_dir.join("components.json"))?;
     let staged_support = if let Some(owner) = restart_owner.as_mut() {
+        owner.download_plan(
+            (comp_data.len() as u64).saturating_add(binary_data.len() as u64),
+            download_total,
+        )?;
+        owner.progress("downloading", DOWNLOAD_MESSAGE)?;
         let support_plan = support_plan.context("update support plan missing")?;
         Some(
             on_heap(|| {
