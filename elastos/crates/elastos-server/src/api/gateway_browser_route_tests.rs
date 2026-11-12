@@ -11741,6 +11741,105 @@ async fn browser_internet_summary_never_creates_or_renews_a_request() {
 }
 
 #[tokio::test]
+async fn browser_internet_expired_request_keeps_inbox_allow_with_fresh_passkey() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = passkey_authority(dir.path());
+    let browser = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &owner);
+    let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
+    let app = gateway_router(internet_test_state(dir.path()));
+    let (_, pending) = internet_route(
+        &app,
+        &browser,
+        "/api/apps/browser/internet",
+        Some(json!({"action":"request"})),
+    )
+    .await;
+    let old_step = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(
+        dir.path(),
+        &inbox,
+        INBOX_CAPSULE_ID,
+        "browser.internet.grant",
+        &pending["request"],
+    )
+    .unwrap();
+    let path = dir.path().join("browser-internet.json");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["expires_at"] = json!(0);
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let (_, summary) = internet_route(&app, &inbox, "/api/apps/inbox/summary", None).await;
+    let entry = summary["notifications"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "browser-internet:permission")
+        .expect("expired Browser request keeps an Allow entry in Inbox");
+    assert_eq!(entry["kind"], "browser_internet_decision");
+    assert_eq!(entry["action_ref"]["action_id"], "browser-internet-request");
+    assert!(entry["body"].as_str().unwrap().contains("expired"));
+    assert_eq!(summary["notifications"]["unread_count"], 0);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+        record,
+        "reading Inbox does not renew the request"
+    );
+    let old_action = format!(
+        "browser-internet-allow:{}",
+        pending["request"]["request_id"].as_str().unwrap()
+    );
+    let (status, _) = internet_route(
+        &app,
+        &inbox,
+        "/api/apps/inbox/actions",
+        Some(json!({"action_id":old_action,"step_up_token":old_step})),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "expiry still blocks the old Allow");
+    let (_, fresh) = internet_route(
+        &app,
+        &inbox,
+        "/api/apps/browser/internet",
+        Some(json!({"action":"request"})),
+    )
+    .await;
+    assert_ne!(
+        fresh["request"]["request_id"],
+        pending["request"]["request_id"]
+    );
+    let action = format!(
+        "browser-internet-allow:{}",
+        fresh["request"]["request_id"].as_str().unwrap()
+    );
+    let (status, _) = internet_route(
+        &app,
+        &inbox,
+        "/api/apps/inbox/actions",
+        Some(json!({"action_id":action})),
+    )
+    .await;
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "fresh Allow still requires a passkey"
+    );
+    let step = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(
+        dir.path(),
+        &inbox,
+        INBOX_CAPSULE_ID,
+        "browser.internet.grant",
+        &fresh["request"],
+    )
+    .unwrap();
+    let (status, result) = internet_route(
+        &app,
+        &inbox,
+        "/api/apps/inbox/actions",
+        Some(json!({"action_id":action,"step_up_token":step})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+}
+
+#[tokio::test]
 async fn browser_internet_grant_identifies_the_answered_request_for_continuation() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());

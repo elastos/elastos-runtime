@@ -380,6 +380,11 @@ pub(super) fn notification(
     resolve_capsule_dir(&state.data_dir, BROWSER_CAPSULE_ID)?;
     let record = load(&state.data_dir).ok()??;
     let (at, body, action_id) = match &record {
+        Consent::Requested { expires_at, at, .. } if *expires_at <= now_ts() => (
+            *at,
+            "This request has expired. Select Allow, then use your passkey.",
+            "browser-internet-request".into(),
+        ),
         Consent::Requested { request_id, at, .. } => {
             let request = grant_request(&record).ok()?;
             return Some(HomeNotificationEntrySummary {
