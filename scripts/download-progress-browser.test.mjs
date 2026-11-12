@@ -51,6 +51,9 @@ test("System, model and Library transfer states stay accessible in light and dar
     }
     if (url.pathname === "/api/provider/model/offers_list") return json({ offers: [] });
     if (url.pathname === "/api/apps/system/summary") return json({ ...makeSystemSummary(makeAppearanceRecord({ theme })),
+      runtime: { version: "2.0.1" },
+      source: { configured: true, name: "Fixture publisher", channel: "stable", installed_version: "2.0.1",
+        mode: "installed", update_policy: "manual", update_checks_allowed: true },
       runtime_update: { configured: true, available: false, can_apply: false, current_version: "2.0.1",
         controller: { id: "fixture-update", current_version: "2.0.1", new_version: "2.0.2", phase: "downloading",
           message: "Downloading the update. Home restarts when the update is ready.", completed_bytes: completed, total_bytes: total } } });
@@ -131,6 +134,14 @@ test("System, model and Library transfer states stay accessible in light and dar
       const assistant = page.frameLocator("iframe");
       await assistant.locator(".agent-model-download").getByText("0.8 GB of 2.0 GB · 37%", { exact: true }).waitFor();
       await assistant.locator("html").evaluate((node, theme) => node.setAttribute("data-el-theme", theme), theme);
+      const visibility = await assistant.locator(".agent-model-download").evaluate(async node => {
+        const finite = document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime));
+        await Promise.allSettled(finite.map(animation => animation.finished));
+        let opacity = 1;
+        for (let parent = node; parent; parent = parent.parentElement) opacity *= Number(getComputedStyle(parent).opacity);
+        return { opacity, visibility: getComputedStyle(node).visibility };
+      });
+      assert(visibility.opacity >= 0.99 && visibility.visibility === "visible", JSON.stringify(visibility));
       const assistantContrast = await assistant.locator(".agent-model-download .transfer-progress span").evaluate(transferContrast);
       assert(assistantContrast.ratio >= 4.5, `${theme} Assistant contrast: ${JSON.stringify(assistantContrast)}`);
       await screenshot(`assistant-model-download-${theme}`);
