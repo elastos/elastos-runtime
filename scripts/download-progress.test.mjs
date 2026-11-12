@@ -150,3 +150,9 @@ for (const [size, expected] of [[undefined, "Size unknown"], [null, "Size unknow
     assert.match(dialog.innerHTML, new RegExp(expected));
   });
 }
+
+test("Library loads the current properties and list renderers", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const app = await readFile(new URL("../capsules/library/browser/src/app.js", import.meta.url), "utf8");
+  for (const module of ["dialog", "render"]) assert(app.includes(`./${module}.js?v=download-progress-20261112`));
+});

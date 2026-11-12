@@ -23,14 +23,14 @@ import {
 import { createLibraryRuntime } from "./api.js?v=library-20261028a";
 import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js";
 import { createLibraryActions } from "./actions.js?v=library-20261029b";
-import { createLibraryDialog } from "./dialog.js?v=library-20261029a";
+import { createLibraryDialog } from "./dialog.js?v=download-progress-20261112";
 import { createLibraryEditor } from "./editor.js";
 import { bindLibraryEvents } from "./events.js";
 import { createLibraryMenu } from "./menu.js";
 import { createLibraryNavigation } from "./navigation.js";
 import { createLibraryPreview } from "./preview.js";
 import { createLibraryRealtime } from "./realtime.js";
-import { createLibraryRenderer, iconPlaceholder } from "./render.js?v=library-20261029a";
+import { createLibraryRenderer, iconPlaceholder } from "./render.js?v=download-progress-20261112";
 import { createLibrarySelection } from "./selection.js";
 import {
   MUTATING_PROVIDER_OPS,
