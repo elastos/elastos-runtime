@@ -6976,6 +6976,21 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn decimal_file_sizes_match_the_shared_capsule_rule() {
+        for (bytes, expected) in [
+            (999, "999 B"),
+            (1000, "1.0 KB"),
+            (1050, "1.1 KB"),
+            (999900, "999.9 KB"),
+            (1000000, "1.0 MB"),
+            (1000000000, "1.0 GB"),
+            (1000000000000, "1.0 TB"),
+        ] {
+            assert_eq!(super::format_bytes(bytes), expected);
+        }
+    }
+
     use super::direct::{
         DirectConversationView, DirectMessageList, DirectMessageView, DirectUiState,
         PendingDirectSend,
