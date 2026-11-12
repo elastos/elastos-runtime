@@ -88,7 +88,17 @@ test("System, model and Library transfer states stay accessible in light and dar
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
   const errors = [];
   page.on("pageerror", error => errors.push(String(error)));
-  const screenshot = async name => { if (screenshots) await page.screenshot({ path: `${screenshots}/${name}.png` }); };
+  const settle = async () => {
+    for (const frame of page.frames()) await frame.evaluate(async () => {
+      await new Promise(requestAnimationFrame);
+      const finite = document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime));
+      await Promise.allSettled(finite.map(animation => animation.finished));
+    });
+  };
+  const screenshot = async name => {
+    await settle();
+    if (screenshots) await page.screenshot({ path: `${screenshots}/${name}.png` });
+  };
   try {
     for (theme of ["light", "dark"]) {
       completed = 25000000; total = 100000000;
@@ -135,6 +145,11 @@ test("System, model and Library transfer states stay accessible in light and dar
       const assistant = page.frameLocator("iframe");
       await assistant.locator(".agent-model-download").getByText("0.8 GB of 2.0 GB · 37%", { exact: true }).waitFor();
       await assistant.locator("html").evaluate((node, theme) => node.setAttribute("data-el-theme", theme), theme);
+      assert.equal(await assistant.locator("html").evaluate(async () => {
+        const workspace = await import("./harness-host.js");
+        await workspace.persistAgentWorkspaceNow();
+        return workspace.workspaceSaveError();
+      }), null, "the real Assistant workspace save succeeds before capture");
       const visibility = await assistant.locator(".agent-model-download").evaluate(async node => {
         const finite = document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime));
         await Promise.allSettled(finite.map(animation => animation.finished));
@@ -155,6 +170,9 @@ test("System, model and Library transfer states stay accessible in light and dar
       await screenshot(`assistant-model-download-${theme}`);
       await page.setViewportSize({ width: 390, height: 844 });
       await assistant.locator("html").evaluate(node => node.setAttribute("data-el-form-factor", "phone"));
+      await settle();
+      assert.equal(await assistant.locator(".agent-harness-sidebar").evaluate(node => node.getBoundingClientRect().right <= 0), true,
+        "the closed phone drawer has settled outside the viewport");
       assert.equal(await assistant.locator(".agent-model-download").evaluate(node => {
         const box = node.getBoundingClientRect();
         return node.scrollWidth <= node.clientWidth && box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight;
