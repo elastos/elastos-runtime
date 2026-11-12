@@ -126,6 +126,7 @@ test("System, model and Library transfer states stay accessible in light and dar
       assert((await page.locator(".upload-meter .transfer-progress span").evaluate(transferContrast)).ratio >= 4.5);
       await screenshot(`library-upload-${theme}`);
       await page.setViewportSize({ width: 390, height: 844 });
+      await page.locator("html").evaluate(node => node.setAttribute("data-el-form-factor", "phone"));
       assert.equal(await page.locator("#upload-progress").evaluate(node => node.scrollWidth <= node.clientWidth), true);
       await screenshot(`library-upload-phone-${theme}`);
       await page.setViewportSize({ width: 1100, height: 800 });
@@ -137,9 +138,16 @@ test("System, model and Library transfer states stay accessible in light and dar
       const visibility = await assistant.locator(".agent-model-download").evaluate(async node => {
         const finite = document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime));
         await Promise.allSettled(finite.map(animation => animation.finished));
-        let opacity = 1;
-        for (let parent = node; parent; parent = parent.parentElement) opacity *= Number(getComputedStyle(parent).opacity);
-        return { opacity, visibility: getComputedStyle(node).visibility };
+        const deadline = performance.now() + 5000;
+        let state;
+        do {
+          let opacity = 1;
+          for (let parent = node; parent; parent = parent.parentElement) opacity *= Number(getComputedStyle(parent).opacity);
+          state = { opacity, visibility: getComputedStyle(node).visibility };
+          if (opacity >= 0.99 && state.visibility === "visible") return state;
+          await new Promise(requestAnimationFrame);
+        } while (performance.now() < deadline);
+        return state;
       });
       assert(visibility.opacity >= 0.99 && visibility.visibility === "visible", JSON.stringify(visibility));
       const assistantContrast = await assistant.locator(".agent-model-download .transfer-progress span").evaluate(transferContrast);
