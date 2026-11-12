@@ -1846,6 +1846,7 @@ dependencies = [
  "url",
  "wasm-encoder 0.236.1",
  "wasmparser 0.236.1",
+ "webpki-roots 1.0.10",
  "x-wing",
  "zeroize",
  "zip",
