@@ -31,6 +31,7 @@ test("System, model and Library transfer states stay accessible in light and dar
     completed_bytes: 750000000, cancel_requested: false, admitted: false, activation_pending: false, failure_class: null };
   const runtime = { admitted: false, kept: false, dispatch_ready: false, offer_id: null, preparation };
   const manifest = JSON.parse(await readFile(resolve(root, "capsules/system/capsule.json"), "utf8"));
+  let workspace = { schema: "elastos.assistant.workspace/v2", revision: 0, document: null };
   let assistantView = false;
   let theme = "light", completed = 25000000, total = 100000000;
   const fixture = await startSystemFixtureServer({ title: "Download progress fixture", async onApiRequest({ request, response, url }) {
@@ -40,7 +41,13 @@ test("System, model and Library transfer states stay accessible in light and dar
       response.end(`<!doctype html><style>html,body,iframe{margin:0;border:0;width:100%;height:100%}</style><iframe title="Assistant" sandbox="allow-scripts allow-forms" src="/apps/assistant/?home_origin=${encodeURIComponent(fixture.baseUrl)}#home_token=fixture"></iframe><script>addEventListener('message',event=>{if(event.data?.type==='home-agent:ready'){event.source.postMessage({type:'home-agent:open'},'*');event.source.postMessage({type:'home-agent:shelf-handover',on:true},'*');}});</script>`);
       return true;
     }
-    if (url.pathname === "/api/apps/assistant/workspace-v2") return json({ schema: "elastos.assistant.workspace/v2", revision: 0, document: null });
+    if (url.pathname === "/api/apps/assistant/workspace-v2") {
+      if (request.method === "PUT") {
+        let body = ""; for await (const chunk of request) body += chunk;
+        workspace = { ...workspace, revision: workspace.revision + 1, document: JSON.parse(body).document };
+      }
+      return json(workspace);
+    }
     if (url.pathname === "/api/provider/model/offers_list") return json({ offers: [] });
     if (url.pathname === "/api/apps/system/summary") return json({ ...makeSystemSummary(makeAppearanceRecord({ theme })),
       runtime_update: { configured: true, available: false, can_apply: false, current_version: "2.0.1",
@@ -60,15 +67,15 @@ test("System, model and Library transfer states stay accessible in light and dar
     }
     if (url.pathname.startsWith("/api/provider/object/")) {
       if (url.pathname.endsWith("/events/stream")) { response.writeHead(204); response.end(); return true; }
-      return json({ status: "ok", data: { roots: [{ id: "documents", label: "Documents", uri: "localhost://Users/fixture/Documents", kind: "directory" }],
-        objects: [], object: { uri: "localhost://Users/fixture/Documents", name: "Documents", kind: "directory", capabilities: ["open", "upload", "properties"] } } });
+      return json({ status: "ok", data: { roots: [{ schema: "elastos.library.root/v1", id: "documents", label: "Documents", uri: "localhost://Users/fixture/Documents", kind: "directory" }],
+        objects: [], object: { schema: "elastos.library.object/v1", metadata: { readonly: false }, uri: "localhost://Users/fixture/Documents", name: "Documents", kind: "directory", capabilities: ["open", "upload", "properties"] } } });
     }
     if (url.pathname.startsWith("/apps/")) {
       const match = url.pathname.match(/^\/apps\/([^/]+)\/(.*)$/);
       const path = resolve(root, "capsules", match[1], "browser", match[2] || "index.html");
       assert(path.startsWith(`${root}${sep}capsules${sep}`));
       const bytes = await readFile(path);
-      response.writeHead(200, { "access-control-allow-origin": "null", "content-type": ({ ".js": "text/javascript", ".css": "text/css", ".html": "text/html", ".svg": "image/svg+xml" })[extname(path)] || "application/octet-stream" });
+      response.writeHead(200, { "access-control-allow-origin": "null", "content-type": ({ ".js": "text/javascript", ".mjs": "text/javascript", ".woff2": "font/woff2", ".css": "text/css", ".html": "text/html", ".svg": "image/svg+xml" })[extname(path)] || "application/octet-stream" });
       response.end(bytes); return true;
     }
     return false;
@@ -101,6 +108,8 @@ test("System, model and Library transfer states stay accessible in light and dar
       await screenshot(`model-download-${theme}`);
       await page.goto(`${fixture.baseUrl}/apps/library/?uri=localhost%3A%2F%2FUsers%2Ffixture%2FDocuments#home_token=fixture`);
       await page.locator("#file-input").waitFor({ state: "attached" });
+      await page.waitForFunction(() => window.__libraryPerf?.contentRenderCount > 0);
+      assert.equal(await page.getByText("Library could not open", { exact: true }).count(), 0);
       await page.evaluate(async theme => {
         document.documentElement.setAttribute("data-el-theme", theme);
         const { createLibraryUploads } = await import("./src/uploads.js");
