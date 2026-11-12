@@ -1502,6 +1502,9 @@ async fn run_upgrade_with_restart(
         } else {
             PathBuf::from(&source.install_path)
         };
+        // The controller refuses requests while recovery is pending, so this
+        // read-only support plan can precede the installation writer lock.
+        let bin_path = std::fs::canonicalize(&bin_path)?;
         let previous = crate::installed_release::read_without_migration_for_update(
             data_dir,
             &bin_path,
@@ -1510,7 +1513,7 @@ async fn run_upgrade_with_restart(
         )?;
         let records = crate::capsule_record::UpdateRecords::new(
             &previous.release,
-            next_admission.take().unwrap(),
+            next_admission.take().context("update release admission missing")?,
             &source.publisher_dids,
         );
         let old_components = std::fs::read(data_dir.join("components.json"))?;
@@ -1630,7 +1633,7 @@ async fn run_upgrade_with_restart(
         let old_components = std::fs::read(data_dir.join("components.json")).ok();
         let records = crate::capsule_record::UpdateRecords::new(
             &previous.release,
-            next_admission.take().unwrap(),
+            next_admission.take().context("update release admission missing")?,
             &source.publisher_dids,
         );
         let changed_capsules =
