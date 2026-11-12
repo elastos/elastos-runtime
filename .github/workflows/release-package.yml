@@ -624,8 +624,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_TREE: ${{ needs.admit.outputs.source_tree }}
-          ELASTOS_WALLETCONNECT_PROJECT_ID: ${{ secrets.REOWN_PROJECT_ID }}
-      RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
           RELEASE_PREFIX: ${{ matrix.prefix }}
         run: |
           set -euo pipefail

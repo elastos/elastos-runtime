@@ -875,6 +875,18 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertLess(setup_source.index('"${checksum[@]}" -c'), setup_source.index("tar -xzf"))
         self.assertLess(setup_source.index("tar -xzf"), setup_source.index('echo "RUSTC_WRAPPER=sccache"'))
 
+    def test_walletconnect_project_is_scoped_to_capsule_build_jobs(self):
+        source = (WORKFLOW.parent / "release-package.yml").read_text()
+        release_jobs = jobs(source)
+        for job, block in release_jobs.items():
+            if job in {"mac", "linux"}:
+                self.assertEqual(block.count("secrets.REOWN_PROJECT_ID"), 1)
+            else:
+                self.assertNotIn("secrets.REOWN_PROJECT_ID", block, job)
+        seal = next(step for job in release_jobs for step in steps(job, release_jobs)
+                    if step.startswith("name: hash native payloads and seal original-input receipts"))
+        self.assertRegex(seal, r"\n        env:\n(?:          [^\n]+\n)+        run:")
+
     def test_release_builds_are_hermetic_with_fresh_outputs(self):
         source = (WORKFLOW.parent / "release-package.yml").read_text()
         validate_release_builds_are_hermetic(source)
