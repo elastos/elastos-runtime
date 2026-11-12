@@ -1379,7 +1379,8 @@ async fn join_gossip_topic_direct(
 }
 
 async fn join_gossip_topic(state: &mut GossipState, topic_name: &str) -> Result<()> {
-    join_gossip_topic_direct(state, topic_name, state.bootstrap_peers.clone()).await
+    let bootstrap_peers = state.bootstrap_peers.clone();
+    join_gossip_topic_direct(state, topic_name, bootstrap_peers).await
 }
 
 pub fn source_carrier_addrs(source: &TrustedSource) -> Vec<String> {
