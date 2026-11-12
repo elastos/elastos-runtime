@@ -205,6 +205,8 @@ try {
 
   async function copyThroughHome(button, expected, label, hover = null) {
     stage = label;
+    // A previous copy's feedback cannot satisfy this attempt's observation.
+    await status(button).waitFor({ state: "detached", timeout: 10000 });
     await resetClipboard("clipboard before copy");
     await hover?.hover();
     await button.click();
@@ -212,8 +214,12 @@ try {
       const said = await status(button).textContent({ timeout: 500 }).catch(() => "");
       throw new Error(`${label}: Copy did not ask Home to write the clipboard${said ? ` (it said "${said}")` : ""}`);
     });
-    await page.locator("#home-clipboard-allow").click();
-    await status(button).filter({ hasText: "Copied" }).waitFor({ timeout: 3000 });
+    // Observe before confirming: on a busy runner, the click can return after
+    // the transient status has gone. Still require visible feedback from Copy.
+    await Promise.all([
+      status(button).filter({ hasText: "Copied" }).waitFor({ timeout: 10000 }),
+      page.locator("#home-clipboard-allow").click(),
+    ]);
     assert.equal(await clipboard(), expected, `${label}: the clipboard holds the exact text`);
   }
 
