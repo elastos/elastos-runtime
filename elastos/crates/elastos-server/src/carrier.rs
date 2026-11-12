@@ -20146,7 +20146,7 @@ pub(crate) mod tests {
             topic: TopicId,
             nodes: BTreeMap<u64, (u64, State<u64, StdRng>)>,
             queue: VecDeque<(u64, InEvent<u64>)>,
-            timers: Vec<(Instant, u64, u64, proto::Timer<u64>)>,
+            timers: Vec<(Instant, u64, u64, InEvent<u64>)>,
             now: Instant,
             events: usize,
             neighbours: BTreeMap<u64, BTreeSet<u64>>,
@@ -20237,10 +20237,9 @@ pub(crate) mod tests {
                     match event {
                         OutEvent::SendMessage(to, message) => {
                             if self.reachable(node, to) && self.nodes.contains_key(&to) {
-                                self.queue
-                                    .push_back((to, InEvent::RecvMessage(node, message)));
+                                self.schedule_network(to, InEvent::RecvMessage(node, message));
                             } else {
-                                self.queue.push_back((node, InEvent::PeerDisconnected(to)));
+                                self.schedule_network(node, InEvent::PeerDisconnected(to));
                             }
                         }
                         OutEvent::EmitEvent(_, topic::Event::NeighborUp(peer)) => {
@@ -20257,15 +20256,32 @@ pub(crate) mod tests {
                             self.received.insert(node);
                         }
                         OutEvent::ScheduleTimer(after, timer) => {
-                            self.timers.push((now + after, node, generation, timer));
+                            self.timers.push((
+                                now + after,
+                                node,
+                                generation,
+                                InEvent::TimerExpired(timer),
+                            ));
                         }
                         OutEvent::DisconnectPeer(peer) => {
-                            self.queue
-                                .push_back((peer, InEvent::PeerDisconnected(node)));
+                            self.schedule_network(peer, InEvent::PeerDisconnected(node));
                         }
                         OutEvent::PeerData(..) => {}
                         event => panic!("unhandled gossip protocol event: {event:?}"),
                     }
+                }
+            }
+
+            // Like iroh-gossip's simulator, network events take time. A zero-time
+            // failed dial can trigger rejoins forever before any timer runs.
+            fn schedule_network(&mut self, node: u64, event: InEvent<u64>) {
+                if let Some((generation, _)) = self.nodes.get(&node) {
+                    self.timers.push((
+                        self.now + Duration::from_millis(10),
+                        node,
+                        *generation,
+                        event,
+                    ));
                 }
             }
 
@@ -20283,10 +20299,10 @@ pub(crate) mod tests {
                         .min_by_key(|(_, (at, ..))| *at)
                         .map(|(index, _)| index);
                     let Some(index) = next else { break };
-                    let (at, node, generation, timer) = self.timers.swap_remove(index);
+                    let (at, node, generation, event) = self.timers.remove(index);
                     self.now = self.now.max(at);
                     if self.nodes.get(&node).is_some_and(|(g, _)| *g == generation) {
-                        self.handle(node, InEvent::TimerExpired(timer));
+                        self.handle(node, event);
                     }
                 }
                 self.now = until;
