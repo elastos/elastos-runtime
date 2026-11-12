@@ -106,7 +106,7 @@ async function fixture() {
     if (url.pathname === "/api/apps/inbox/summary") {
       const expired=state.consent === "requested" && state.expired;
       const pending=state.consent === "requested" && !expired;
-      const body=expired?"This request expired.":pending?consentText:state.consent === "granted"?"Browser can open websites. Allowed with your passkey.":state.consent === "refused"?"Browser cannot open websites. Not allowed.":"Browser cannot open websites. Turned off.";
+      const body=expired?"This expired request was made.":pending?consentText:state.consent === "granted"?"Browser can open websites. Allowed with your passkey.":state.consent === "refused"?"Browser cannot open websites. Not allowed.":"Browser cannot open websites. Turned off.";
       json({notifications:{unread_count:pending?1:0,attention_count:pending?1:0,entries:[{
         id:"browser-internet:permission",source_app:"browser",kind:pending?"browser_internet_request":"browser_internet_decision",
         title:pending?"Allow Browser to use the internet?":"Browser internet access",body,severity:pending?"attention":"info",read:!pending,created_at:1794312000,
@@ -604,7 +604,7 @@ test("566r2 expired Inbox entry dates the expiry and renews through a fresh pass
     const inbox=page.frameLocator("iframe");
     await inbox.getByRole("button",{name:"Allow",exact:true}).waitFor();
     const body=await inbox.locator("#entry-detail .entry-body").innerText();
-    assert.match(body,/This request expired on .+\./);
+    assert.match(body,/This expired request was made on .+\./);
     assert.equal(await inbox.locator("#pending-count").innerText(),"0");
     await page.evaluate(()=>holdPasskey=true);
     await inbox.getByRole("button",{name:"Allow",exact:true}).click();
