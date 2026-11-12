@@ -199,6 +199,7 @@ impl Write for TestBufferWriter {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ChatBootstrap {
     ExplicitConnect(String),
+    CommunitySeeds(Vec<String>),
     TrustedSourceSeed(String),
 }
 
@@ -246,7 +247,7 @@ pub async fn run_chat(nick: Option<String>, connect: Option<String>) -> anyhow::
     // background runtime with a chat-safe policy. Requires `elastos setup`
     // to have provisioned the first-party Home core first.
     let data_dir = default_data_dir();
-    let connect = resolve_chat_bootstrap(connect, &data_dir).await;
+    let connect = resolve_chat_bootstrap(connect, &data_dir).await?;
     let _logging_guard = LoggingSuppressionGuard::enter();
 
     let coords = crate::runtime_control::ensure_runtime_for_chat(&data_dir).await?;
@@ -301,20 +302,24 @@ async fn run_native_chat_with_runtime(
     };
 
     if let Some(ref bootstrap) = connect {
-        let (op, ticket) = match bootstrap {
-            ChatBootstrap::ExplicitConnect(ticket) => ("connect", ticket.as_str()),
-            ChatBootstrap::TrustedSourceSeed(ticket) => ("connect", ticket.as_str()),
+        let tickets = match bootstrap {
+            ChatBootstrap::ExplicitConnect(ticket) | ChatBootstrap::TrustedSourceSeed(ticket) => {
+                std::slice::from_ref(ticket)
+            }
+            ChatBootstrap::CommunitySeeds(tickets) => tickets.as_slice(),
         };
-        peer_provider_request(
-            &client,
-            api,
-            client_token,
-            &peer_cap,
-            op,
-            serde_json::json!({"ticket": ticket}),
-        )
-        .await
-        .map_err(|err| anyhow::anyhow!("Chat could not connect through Carrier: {}", err))?;
+        for ticket in tickets {
+            peer_provider_request(
+                &client,
+                api,
+                client_token,
+                &peer_cap,
+                "connect",
+                serde_json::json!({"ticket": ticket}),
+            )
+            .await
+            .map_err(|err| anyhow::anyhow!("Chat could not connect through Carrier: {}", err))?;
+        }
     }
 
     match peer_provider_request(
@@ -933,17 +938,31 @@ async fn attach_topic_direct_until_joined(
 async fn resolve_chat_bootstrap(
     explicit_connect: Option<String>,
     data_dir: &std::path::Path,
-) -> Option<ChatBootstrap> {
+) -> anyhow::Result<Option<ChatBootstrap>> {
     if let Some(ticket) = explicit_connect {
-        return Some(ChatBootstrap::ExplicitConnect(ticket));
+        return Ok(Some(ChatBootstrap::ExplicitConnect(ticket)));
     }
 
-    let config = load_trusted_sources(data_dir).ok()?;
-    let source = config.default_source()?;
-    live_source_bootstrap_ticket(source)
+    let community =
+        elastos_server::collaboration_startup::load_and_accept_collaboration_startup_configuration(
+            data_dir,
+        )?;
+    let tickets = community.community_bootstrap_connect_tickets();
+    if !tickets.is_empty() {
+        return Ok(Some(ChatBootstrap::CommunitySeeds(tickets)));
+    }
+
+    // Existing operator-supplied source tickets also provide direct bootstrap.
+    let Ok(config) = load_trusted_sources(data_dir) else {
+        return Ok(None);
+    };
+    let Some(source) = config.default_source() else {
+        return Ok(None);
+    };
+    Ok(live_source_bootstrap_ticket(source)
         .await
         .or_else(|| bootstrap_ticket_from_config(&config))
-        .map(ChatBootstrap::TrustedSourceSeed)
+        .map(ChatBootstrap::TrustedSourceSeed))
 }
 
 fn presence_attach_retry_pending(
@@ -1998,6 +2017,34 @@ mod tests {
         assert_eq!(
             resolved,
             Some(ChatBootstrap::TrustedSourceSeed("seed-ticket".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_bootstrap_uses_explicit_ticket_and_rejects_invalid_community_config() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path()
+                .join(elastos_server::collaboration_startup::COLLABORATION_STARTUP_CONFIG_FILE),
+            b"invalid",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_chat_bootstrap(Some("manual-ticket".into()), temp.path())
+                .await
+                .unwrap(),
+            Some(ChatBootstrap::ExplicitConnect("manual-ticket".into()))
+        );
+        assert!(resolve_chat_bootstrap(None, temp.path()).await.is_err());
+    }
+
+    #[test]
+    fn community_seed_uses_direct_join_mode() {
+        assert_eq!(
+            chat_gossip_join_mode(Some(&ChatBootstrap::CommunitySeeds(vec![
+                "community-ticket".into()
+            ]))),
+            "direct"
         );
     }
 
