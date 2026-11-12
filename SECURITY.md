@@ -80,6 +80,8 @@ operator. Use hosted accounts only for public demos; keep wallets, private data
 and recovery material on your own device until hosted protection passes its
 acceptance gate. Independent review and installed proof remain security gates.
 
+Do not describe an unfixed issue in a public issue, pull request, commit message, or branch name.
+
 ## Open Findings
 
 The following security-relevant findings remain open in the current runtime and are documented here for transparency.
