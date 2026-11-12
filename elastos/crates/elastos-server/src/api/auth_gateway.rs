@@ -3599,12 +3599,23 @@ pub(in crate::api) struct WalletLinkContext {
     authority: RuntimeWalletAuthority,
 }
 
+#[derive(Debug)]
+struct WalletConnectorBridgeRequired;
+
+impl std::fmt::Display for WalletConnectorBridgeRequired {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Wallet linking requires the trusted Home wallet connector bridge")
+    }
+}
+
+impl std::error::Error for WalletConnectorBridgeRequired {}
+
 fn require_wallet_link_context(
     state: &GatewayState,
     headers: &HeaderMap,
 ) -> anyhow::Result<WalletLinkContext> {
     let _ = (state, headers);
-    anyhow::bail!("Wallet linking requires the trusted Home wallet connector bridge")
+    Err(WalletConnectorBridgeRequired.into())
 }
 
 pub(in crate::api) fn verified_wallet_link_context(
@@ -4786,6 +4797,7 @@ pub(in crate::api) fn auth_error_response(err: anyhow::Error) -> Response {
     let text = err.to_string();
     let status = if err.is::<PasskeyRegistrationDenied>()
         || err.is::<crate::auth::OwnerEnrollmentDenied>()
+        || err.is::<WalletConnectorBridgeRequired>()
         || text.contains("missing")
         || text.contains("invalid")
         || text.contains("expired")
@@ -6629,6 +6641,12 @@ mod tests {
             crate::auth::active_passkey_principal_count(temp.path()).unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn wallet_connector_bridge_refusal_is_typed_even_with_context() {
+        let error = anyhow::Error::new(WalletConnectorBridgeRequired).context("wallet link refused");
+        assert_eq!(auth_error_response(error).status(), StatusCode::FORBIDDEN);
     }
 
     #[test]
