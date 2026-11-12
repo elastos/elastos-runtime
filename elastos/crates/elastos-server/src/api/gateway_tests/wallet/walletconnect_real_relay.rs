@@ -103,8 +103,10 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
         "Runtime did not confirm the authenticated upstream WebSocket upgrade"
     );
     // A successful relay RPC also excludes a post-upgrade authentication close.
+    // Reown requires a fresh timestamp-based ID, as the pinned SDK supplies.
+    let request_id = now_ts() * 1_000_000;
     socket.send(Message::Text(json!({
-        "id": 1, "jsonrpc": "2.0", "method": "irn_subscribe",
+        "id": request_id, "jsonrpc": "2.0", "method": "irn_subscribe",
         "params": { "topic": format!("{:x}", Sha256::digest(gateway_home_token::uuid_like_token())) },
     }).to_string())).await.unwrap();
     let response = tokio::time::timeout(Duration::from_secs(15), socket.next()).await;
@@ -113,7 +115,7 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
     };
     let response: Value = serde_json::from_str(&response).expect("relay JSON response");
     assert!(
-        response["id"] == 1 && response["result"].is_string(),
+        response["id"] == request_id && response["result"].is_string(),
         "real relay subscription failed"
     );
     socket.close(None).await.unwrap();
