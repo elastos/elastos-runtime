@@ -796,7 +796,7 @@ function remotePreflightCommand({
     '  [ "$(/usr/bin/stat -f %Lp "$session_root")" = "700" ]',
     "fi",
     "/usr/bin/codesign --verify --strict \"$native\" >/dev/null 2>&1",
-    "/usr/bin/codesign -d --entitlements :- \"$native\" 2>&1 | /usr/bin/grep -q 'com.apple.security.virtualization'",
+    "/usr/bin/codesign -d --entitlements :- \"$native\" 2>&1 | /usr/bin/grep 'com.apple.security.virtualization' >/dev/null",
     "[ -x /bin/ps ]",
     "[ -x /usr/bin/awk ]",
     "[ -x /usr/bin/grep ]",

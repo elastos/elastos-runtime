@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 
 product_data() {
   python3 scripts/check-shell-pipe-readers.py
+  python3 scripts/check-shell-pipe-readers-test.py
   node scripts/check-product-data.mjs
 }
 
