@@ -689,16 +689,16 @@ async fn transport(
         };
         // Rustls authenticates the relay hostname using the release's root store;
         // Exit forwards TLS bytes and never holds WalletConnect session keys.
-        let config = relay_tls_config();
+        let tls_config = relay_tls_config();
         #[cfg(test)]
-        let config = state
+        let tls_config = state
             .walletconnect
             .tls
             .lock()
             .unwrap()
             .clone()
-            .unwrap_or(config);
-        let connector = Some(tokio_tungstenite::Connector::Rustls(config));
+            .unwrap_or(tls_config);
+        let connector = Some(tokio_tungstenite::Connector::Rustls(tls_config));
         let mut request = url.as_str().into_client_request()?;
         request.headers_mut().insert(
             "origin",
