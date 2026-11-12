@@ -18,7 +18,8 @@ function transferContrast(node) {
   const luminance = rgb => rgb.map(value => value / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
     .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
   const values = [luminance(fore), luminance(back)].sort((a, b) => b - a);
-  return { ratio: (values[0] + 0.05) / (values[1] + 0.05), theme: document.documentElement.dataset.elTheme };
+  return { ratio: (values[0] + 0.05) / (values[1] + 0.05), backgroundLuminance: luminance(back),
+    theme: document.documentElement.dataset.elTheme || "dark" };
 }
 
 // Real capsule documents and controllers, with fixture API data only.
@@ -94,6 +95,7 @@ test("System, model and Library transfer states stay accessible in light and dar
       await progress.getByText("25.0 MB of 100.0 MB · 25%", { exact: true }).waitFor();
       const colors = await progress.locator(".transfer-progress span").evaluate(transferContrast);
       assert.equal(colors.theme, theme);
+      assert(theme === "light" ? colors.backgroundLuminance > 0.5 : colors.backgroundLuminance < 0.1, `${theme} surface luminance: ${colors.backgroundLuminance}`);
       assert(colors.ratio >= 4.5, `System ${theme} progress contrast: ${colors.ratio}`);
       assert.equal(await progress.getByRole("progressbar").getAttribute("aria-valuetext"), "25.0 MB of 100.0 MB · 25%");
       await screenshot(`system-update-${theme}`);
