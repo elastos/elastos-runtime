@@ -73,9 +73,12 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
         const state = await page.evaluate(() => ({ failed: window.failed, methods: window.methods, nativeUrls: window.nativeUrls }));
         throw new Error(`SDK fixture did not reach QR: ${JSON.stringify({ pageErrors, state })}`, { cause });
       }
+      await page.waitForFunction(() => window.methods.some(method =>
+        ["irn_subscribe", "irn_batchSubscribe"].includes(method))
+        && Object.keys(window.keys).some(key => key.includes("keychain")), null, { timeout: 10000 });
       const state = await page.evaluate(() => ({
         homeOnly: window.nativeUrls.length > 0 && window.nativeUrls.every(url => url === location.origin.replace(/^http/, "ws") + "/relay"),
-        subscribed: window.methods.some(method => method.endsWith("subscribe")),
+        subscribed: window.methods.some(method => ["irn_subscribe", "irn_batchSubscribe"].includes(method)),
         runtimeKeys: Object.keys(window.keys).some(key => key.includes("keychain")),
         localKeys: localStorage.length,
         canvas: document.querySelector("canvas").width,
