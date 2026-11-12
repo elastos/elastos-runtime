@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 
 product_data() {
   node scripts/check-product-data.mjs
+  node --test scripts/carrier-dependency-generation-check.test.mjs
 }
 
 prepush() {

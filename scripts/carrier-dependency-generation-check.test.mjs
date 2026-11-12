@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { inspectMetadata } from "./carrier-dependency-generation-check.mjs";
 
@@ -32,6 +36,44 @@ function compatibleGraph() {
     packages,
     resolve: { nodes: packages.map(({ id }) => ({ id, deps: (edges.get(id) || []).map(pkg => ({ pkg })) })) },
   };
+}
+
+for (const linked of [false, true]) {
+  test(`CLI rejects a wrong iroh version through a ${linked ? "symlink" : "direct path"}`, (t) => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "carrier-generation-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    for (const file of [
+      "scripts/carrier-dependency-generation-check.mjs",
+      "rust-toolchain.toml",
+      "elastos/Cargo.toml",
+      ".github/workflows/ci.yml",
+      "scripts/setup-source-home.sh",
+      "README.md",
+      "docs/GETTING_STARTED.md",
+      "elastos/README.md",
+      "elastos/crates/elastos-server/Cargo.toml",
+      "elastos/crates/elastos-server/src/carrier.rs",
+    ]) {
+      const target = join(root, file);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(new URL(`../${file}`, import.meta.url), target);
+    }
+    const graph = compatibleGraph();
+    graph.packages.find(pkg => pkg.name === "iroh").version = "1.0.2";
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "cargo"), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify(graph))});\n`, { mode: 0o755 });
+    const script = join(root, "scripts/carrier-dependency-generation-check.mjs");
+    const entry = linked ? join(root, "check.mjs") : script;
+    if (linked) symlinkSync(script, entry);
+    const result = spawnSync(process.execPath, [entry], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.match(result.stderr, /resolves iroh as \[1\.0\.2\], expected \[1\.4\.1\]/);
+  });
 }
 
 test("accepts iroh 1.4.1 with the retained gossip and tracker", () => {
