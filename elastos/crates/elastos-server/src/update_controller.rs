@@ -426,6 +426,11 @@ async fn track_update_fetch(
     };
     let captured = meter.clone();
     let sink: crate::carrier::ReplyProgress = Arc::new(move |read, _declared| {
+        // Carrier reports zero at the reply header. Save the next write slot
+        // for body bytes, which can advance the displayed count.
+        if read == 0 {
+            return;
+        }
         let mut state = captured.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(progress) = &mut state.progress {
             let next = base.saturating_add(read);
