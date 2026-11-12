@@ -1254,9 +1254,8 @@ async fn register_topic_state(
 /// consumer cursors stay; its neighbours are relearned from the new join.
 async fn rejoin_topic(state: &mut GossipState, topic_name: &str, join: TopicJoin) -> Result<()> {
     state.topic_peers.lock().await.remove(topic_name);
-    match join {
-        TopicJoin::Direct(peers) => join_gossip_topic_direct(state, topic_name, peers).await,
-    }
+    let TopicJoin::Direct(peers) = join;
+    join_gossip_topic_direct(state, topic_name, peers).await
 }
 
 /// Leaves one topic and joins it again with the peers it was joined with.
@@ -2068,18 +2067,18 @@ async fn start_carrier_node_with_network(
         }
     }
 
-    if is_trusted_source_runtime(&data_dir) {
+    if community_hub || is_trusted_source_runtime(&data_dir) {
         let mut state = gossip_state.lock().await;
         match join_gossip_topic(&mut state, CHAT_DISCOVERY_TOPIC_GENERAL).await {
             Ok(()) => {
                 info!(
-                    "carrier: trusted source discovery topic '{}' ready",
+                    "carrier: bootstrap discovery topic '{}' ready",
                     CHAT_DISCOVERY_TOPIC_GENERAL
                 );
             }
             Err(err) => {
                 tracing::warn!(
-                    "carrier: failed to join trusted source discovery topic '{}': {}",
+                    "carrier: failed to join bootstrap discovery topic '{}': {}",
                     CHAT_DISCOVERY_TOPIC_GENERAL,
                     err
                 );
