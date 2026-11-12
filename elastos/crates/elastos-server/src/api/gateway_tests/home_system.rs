@@ -13408,7 +13408,7 @@ async fn home_shared_content_check_then_get_fetches_a_contacts_linked_file_once(
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "sender_offline");
     assert_eq!(body["sender_display_name"], "Bob");
-    assert_eq!(body["size_bytes"], 1024);
+    assert_eq!(body["size_bytes"], 1_000);
     let check_id = body["check_id"].as_str().unwrap().to_string();
 
     // Get is Home-shell authority only: the app's own token is refused, and
