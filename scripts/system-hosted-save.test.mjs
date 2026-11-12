@@ -1368,3 +1368,14 @@ test("Show me in Community offers three modes, sets only the caller's own and re
   assert.equal(reads, 0, "a Home without Community never reads presence");
   assert.equal(section.hidden, true, "and a presence failure cannot reveal it");
 });
+
+test("System refreshes an active update each second and slows down when hidden", () => {
+  const f = updateFixture();
+  for (const phase of ["staging", "downloading", "verifying"]) {
+    f.context.renderRuntimeUpdate({ ...f.offer, controller: { phase, completed_bytes: 250, total_bytes: 1000 } });
+    assert.equal(f.timers.get(f.context.runtimeUpdateTimer).delay, 1000, phase);
+  }
+  f.context.document.hidden = true;
+  f.context.scheduleRuntimeUpdateRefresh();
+  assert.equal(f.timers.get(f.context.runtimeUpdateTimer).delay, 30000);
+});

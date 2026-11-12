@@ -3963,9 +3963,11 @@ function showRuntimeUpdateStatus(message) {
 function scheduleRuntimeUpdateRefresh(delay) {
   window.clearTimeout(runtimeUpdateTimer);
   if (!runtimeUpdateActive || (runtimeUpdate !== undefined && runtimeUpdate?.configured !== true && !runtimeUpdatePending)) return;
+  const phase = runtimeUpdateProgressPhase();
+  const downloading = ["queued", "staging", "downloading", "verifying"].includes(phase);
   runtimeUpdateTimer = window.setTimeout(pollRuntimeUpdate,
-    document.hidden ? 30_000 : delay ?? (runtimeUpdate?.controller?.phase === "restarting"
-      || (runtimeUpdateInProgressSeen && runtimeUpdateReconnects > 0) ? 2_000 : 5_000));
+    document.hidden ? 30_000 : delay ?? (phase === "restarting"
+      || (runtimeUpdateInProgressSeen && runtimeUpdateReconnects > 0) ? 2_000 : downloading ? 1_000 : 5_000));
 }
 
 async function pollRuntimeUpdate() {
