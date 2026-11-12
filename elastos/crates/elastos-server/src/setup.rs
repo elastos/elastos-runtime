@@ -5198,10 +5198,10 @@ pub(crate) mod tests {
 
     #[test]
     fn components_summary_names_every_download_including_browser() {
-        let mb = 1024 * 1024;
+        let mb = 1_000_000;
         assert_eq!(
             components_summary(30, 30, 110 * mb, 1040 * mb),
-            "Components: 30 selected, 30 to install (1.1 GB to download: 110.0 MB for Home, 1.0 GB for Browser)"
+            "Components: 30 selected, 30 to install (1.2 GB to download: 110.0 MB for Home, 1.0 GB for Browser)"
         );
         assert_eq!(
             components_summary(30, 30, 110 * mb, 0),

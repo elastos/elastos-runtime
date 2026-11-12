@@ -438,11 +438,11 @@ mod tests {
         let size = Some(3_670_016);
         assert_eq!(
             line(OutputMode::Plain, size, 3_670_016, Status::Done),
-            "[3/41] chain-provider 3.5 MB ... ok (0.4 s)"
+            "[3/41] chain-provider 3.7 MB ... ok (0.4 s)"
         );
         assert_eq!(
             line(OutputMode::Plain, size, 10, Status::Failed),
-            "[3/41] chain-provider 3.5 MB ... failed (0.4 s)"
+            "[3/41] chain-provider 3.7 MB ... failed (0.4 s)"
         );
         assert_eq!(
             line(OutputMode::Plain, None, 0, Status::Done),
