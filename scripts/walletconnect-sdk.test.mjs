@@ -9,7 +9,7 @@ const bundle = readFileSync(new URL("../capsules/wallet-walletconnect/vendor/reo
 
 const fixture = `
 import { connectWalletConnectEvm } from '/sdk.js';
-window.methods = []; window.nativeUrls = [];
+window.methods = []; window.nativeUrls = []; window.proposalReady = false;
 window.keys = Object.create(null); window.cancelled = false; window.failed = false;
 class RelaySocket {
   constructor(url) {
@@ -23,6 +23,11 @@ class RelaySocket {
     }
     if (!message.method) return;
     window.methods.push(message.method);
+    if (message.method === 'wc_proposeSession') {
+      window.proposalReady = /^[a-f0-9]{64}$/.test(message.params?.pairingTopic)
+        && typeof message.params?.sessionProposal === 'string'
+        && message.params.sessionProposal.length > 0;
+    }
     const result = message.method.endsWith('batchSubscribe') ? message.params.topics.map((_, i) => 'sub-' + i)
       : message.method.endsWith('subscribe') ? 'fixture-subscription' : true;
     queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ jsonrpc:'2.0', id:message.id, result }) }));
@@ -75,24 +80,23 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
         throw new Error(`SDK fixture did not reach QR: ${JSON.stringify({ pageErrors, state })}`, { cause });
       }
       try {
-        await page.waitForFunction(() => window.methods.some(method =>
-          ["irn_subscribe", "irn_batchSubscribe"].includes(method))
+        await page.waitForFunction(() => window.proposalReady
           && Object.keys(window.keys).some(key => key.includes("keychain")), null, { timeout: 10000 });
       } catch (cause) {
-        const state = await page.evaluate(() => ({ methods: window.methods, keyNames: Object.keys(window.keys),
+        const state = await page.evaluate(() => ({ methods: window.methods, proposalReady: window.proposalReady, keyNames: Object.keys(window.keys),
           localKeyCount: localStorage.length, nativeOrigins: window.nativeUrls.map(url => new URL(url).origin) }));
         throw new Error(`SDK relay/storage not ready: ${JSON.stringify(state)}`, { cause });
       }
       const state = await page.evaluate(() => ({
         homeOnly: window.nativeUrls.length > 0 && window.nativeUrls.every(url => url === location.origin.replace(/^http/, "ws") + "/relay"),
-        subscribed: window.methods.some(method => ["irn_subscribe", "irn_batchSubscribe"].includes(method)),
+        proposed: window.proposalReady,
         runtimeKeys: Object.keys(window.keys).some(key => key.includes("keychain")),
         localKeys: localStorage.length,
         canvas: document.querySelector("canvas").width,
         fits: document.querySelector("dialog").getBoundingClientRect().width <= innerWidth,
       }));
       assert.equal(state.homeOnly, true, "SDK sockets terminate at Home");
-      assert.equal(state.subscribed, true);
+      assert.equal(state.proposed, true, "the pinned SDK publishes its pairing proposal through Home");
       assert.equal(state.runtimeKeys, true, "SDK keychain reaches the Runtime storage adapter");
       assert.equal(state.localKeys, 0);
       assert.ok(state.canvas > 0);
