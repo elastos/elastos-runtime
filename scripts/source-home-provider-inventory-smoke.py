@@ -288,7 +288,8 @@ def run_retained_provider_stamp_smoke(setup_text: str, components: dict) -> None
                "COMPONENTS_SRC": str(source), "COMPONENTS_DEST": str(installed),
                "DATA_DIR": str(data_dir), "SETUP_PLATFORM": "linux-amd64",
                "SOURCE_HOME_BINARY_NAMES_JSON": json.dumps(["model-provider"]),
-               "APP_CAPSULES_JSON": "[]", "SOURCE_HOME_KUBO_INSTALLED": "0"}
+               "APP_CAPSULES_JSON": "[]", "SOURCE_HOME_KUBO_INSTALLED": "0",
+               "SOURCE_HOME_LLAMA_INSTALLED": "0"}
 
         def stamp_once() -> subprocess.CompletedProcess[str]:
             return subprocess.run(
