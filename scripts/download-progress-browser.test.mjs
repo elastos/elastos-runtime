@@ -34,7 +34,9 @@ test("System, model and Library transfer states stay accessible in light and dar
   const manifest = JSON.parse(await readFile(resolve(root, "capsules/system/capsule.json"), "utf8"));
   let workspace = { schema: "elastos.assistant.workspace/v2", revision: 0, document: null };
   let assistantView = false;
-  let theme = "light", completed = 25000000, total = 100000000;
+  const downloadMessage = "Downloading the update. Home restarts when the update is ready.";
+  const metadataMessage = "Checking update metadata. Home restarts when the update is ready.";
+  let theme = "light", completed = 25000000, total = 100000000, phase = "downloading", message = downloadMessage;
   const fixture = await startSystemFixtureServer({ title: "Download progress fixture", async onApiRequest({ request, response, url }) {
     const json = value => { jsonResponse(response, value); return true; };
     if (url.pathname === "/assistant-fixture") {
@@ -55,8 +57,8 @@ test("System, model and Library transfer states stay accessible in light and dar
       source: { configured: true, name: "Fixture publisher", channel: "stable", installed_version: "2.0.1",
         mode: "installed", update_policy: "manual", update_checks_allowed: true },
       runtime_update: { configured: true, available: false, can_apply: false, current_version: "2.0.1",
-        controller: { id: "fixture-update", current_version: "2.0.1", new_version: "2.0.2", phase: "downloading",
-          message: "Downloading the update. Home restarts when the update is ready.", completed_bytes: completed, total_bytes: total } } });
+        controller: { id: "fixture-update", current_version: "2.0.1", new_version: "2.0.2", phase,
+          message, completed_bytes: completed, total_bytes: total } } });
     if (url.pathname === "/api/capsules/catalog") return json({ schema: "elastos.capsules.catalog/v1", model_catalog_state: "verified", capsules: [
       { name: "fixture-model", title: assistantView ? "A long model name for the Assistant download on a narrow screen" : "Fixture model", role: "content", source: "signed-model-catalog", installed: false, launchable: false,
         cid, publisher_did: "did:key:zFixture", content_size_bytes: preparation.total_bytes, signature_state: "catalog-signature-verified",
@@ -101,7 +103,7 @@ test("System, model and Library transfer states stay accessible in light and dar
   };
   try {
     for (theme of ["light", "dark"]) {
-      completed = 25000000; total = 100000000;
+      completed = 25000000; total = 100000000; phase = "downloading"; message = downloadMessage;
       await page.goto(`${fixture.baseUrl}/fixture?settings=about`);
       const system = page.frameLocator("#system-frame");
       const progress = system.locator("#runtime-update-progress");
@@ -114,7 +116,11 @@ test("System, model and Library transfer states stay accessible in light and dar
       await screenshot(`system-update-${theme}`);
       completed = 75000000;
       await progress.getByText("75.0 MB of 100.0 MB · 75%", { exact: true }).waitFor({ timeout: 9000 });
-      total = null;
+      phase = "verifying"; message = metadataMessage;
+      await system.getByText(metadataMessage, { exact: true }).waitFor({ timeout: 9000 });
+      assert.equal(await progress.getByRole("progressbar").getAttribute("aria-valuetext"), "75.0 MB of 100.0 MB · 75%");
+      await screenshot(`system-update-metadata-${theme}`);
+      phase = "downloading"; message = downloadMessage; total = null;
       await progress.getByText("75.0 MB received", { exact: true }).waitFor({ timeout: 9000 });
       assert.equal(await progress.locator("progress").getAttribute("value"), null);
       await system.getByRole("button", { name: "Models", exact: true }).click();
