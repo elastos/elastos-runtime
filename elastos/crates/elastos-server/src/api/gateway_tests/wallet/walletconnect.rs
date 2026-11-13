@@ -794,12 +794,17 @@ async fn walletconnect_revoked_owner_cannot_send_another_relay_frame() {
 
 // Real frontdoor and app routes, carrying only the capsule launch token.
 async fn capsule_route(f: &Fixture, token: &str, path: &str, body: Option<Value>) -> StatusCode {
+    let origin = if token == f.home {
+        format!("http://{}", f.addr)
+    } else {
+        "null".into()
+    };
     f.app
         .clone()
         .oneshot(
             Request::builder()
                 .header(HOST, &f.addr)
-                .header("origin", "null")
+                .header("origin", origin)
                 .header("x-elastos-home-token", token)
                 .header(CONTENT_TYPE, "application/json")
                 .uri(path)
