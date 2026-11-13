@@ -2,8 +2,8 @@
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signer, SigningKey};
+use elastos_runtime::provider::{BridgeProviderConfig, CapsuleProvider, ProviderBridge};
 use std::io::Read;
-use tokio::net::TcpStream;
 
 fn operator_project() -> String {
     let file = std::env::var_os("ELASTOS_WALLETCONNECT_PROJECT_FILE")
@@ -31,59 +31,102 @@ fn operator_project() -> String {
     project.to_owned()
 }
 
-async fn real_fixture(project: &str) -> Fixture {
+struct RealFixture {
+    fixture: Fixture,
+    helper: std::process::Child,
+}
+impl std::ops::Deref for RealFixture {
+    type Target = Fixture;
+    fn deref(&self) -> &Fixture {
+        &self.fixture
+    }
+}
+impl std::ops::DerefMut for RealFixture {
+    fn deref_mut(&mut self) -> &mut Fixture {
+        &mut self.fixture
+    }
+}
+impl Drop for RealFixture {
+    fn drop(&mut self) {
+        // Parent EOF lets the helper release its exact socket and owned children.
+        drop(self.helper.stdin.take());
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while self.helper.try_wait().ok().flatten().is_none() {
+            if std::time::Instant::now() >= deadline {
+                let _ = self.helper.kill();
+                let _ = self.helper.wait();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+async fn production_exit(data: &std::path::Path) -> Arc<dyn Provider> {
+    let binary = std::env::var_os("ELASTOS_WALLETCONNECT_TEST_EXIT_PROVIDER")
+        .expect("set the real exit-provider binary path");
+    let platform = crate::setup::detect_platform();
+    let (_, config) = crate::setup::walletconnect::local_exit(data, &platform).unwrap();
+    let bridge = ProviderBridge::spawn(
+        std::path::Path::new(&binary),
+        BridgeProviderConfig {
+            extra: crate::setup::walletconnect::exit_config(Value::Null, Some(&config)),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("real exit-provider accepts the generated config");
+    Arc::new(CapsuleProvider::with_scheme(Arc::new(bridge), "exit"))
+}
+
+async fn real_fixture(project: &str) -> RealFixture {
     let mut f = Fixture::new().await;
     assert!(!f.addr.ends_with(":8090"));
     let config_path = f.data.path().join(WALLETCONNECT_CONFIG_PATH);
     let mut config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
     config["project_id"] = json!(project);
     crate::auth::atomic_write(&config_path, &serde_json::to_vec(&config).unwrap()).unwrap();
-    // Use the production root store. This Exit harness forwards raw TLS bytes;
-    // Runtime retains relay authentication and the HTTP/WebSocket handshake.
     *f.state.walletconnect.tls.lock().unwrap() = None;
-    let path = f.data.path().join("real-relay.sock");
-    let listener = UnixListener::bind(&path).unwrap();
     f.relay.abort();
-    f.relay = tokio::spawn(async move {
-        let mut connections = tokio::task::JoinSet::new();
+    let _ = (&mut f.relay).await;
+    let (helper_config, _) =
+        crate::setup::walletconnect::local_exit(f.data.path(), &crate::setup::detect_platform())
+            .unwrap();
+    let helper_binary = std::env::var_os("ELASTOS_WALLETCONNECT_TEST_LOCAL_EXIT")
+        .expect("set the real browser-local-exit binary path");
+    let mut helper = std::process::Command::new(helper_binary)
+        .env(
+            "ELASTOS_BROWSER_LOCAL_EXIT_CONFIG",
+            helper_config.to_string(),
+        )
+        .env("ELASTOS_BROWSER_LOCAL_EXIT_PARENT_EOF", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let ready = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            tokio::select! {
-                accepted = listener.accept() => {
-                    let (mut stream, _) = accepted.unwrap();
-                    connections.spawn(async move {
-                        let mut line = Vec::new();
-                        loop {
-                            let Ok(byte) = stream.read_u8().await else { return; };
-                            if byte == b'\n' { break; }
-                            line.push(byte);
-                            assert!(line.len() < 16384);
-                        }
-                        let open: Value = serde_json::from_slice(&line).unwrap();
-                        assert_eq!(open["schema"], "elastos.exit.relay-open/v1");
-                        assert_eq!(open["target"], "tls://relay.walletconnect.org:443");
-                        let Ok(Ok(mut remote)) = tokio::time::timeout(
-                            Duration::from_secs(10), TcpStream::connect(("relay.walletconnect.org", 443))
-                        ).await else { return; };
-                        let _ = tokio::io::copy_bidirectional(&mut stream, &mut remote).await;
-                    });
-                }
-                result = connections.join_next(), if !connections.is_empty() => { result.unwrap().unwrap(); }
+            assert!(
+                helper.try_wait().unwrap().is_none(),
+                "local Exit exited before readiness"
+            );
+            if std::fs::symlink_metadata(helper_config["relay_ipc_path"].as_str().unwrap()).is_ok()
+            {
+                break;
             }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-    });
+    })
+    .await;
+    ready.expect("real local Exit socket readiness");
     let registry = f.state.provider_registry.as_ref().unwrap();
     registry.unregister_sub_provider("exit").await.unwrap();
     registry
-        .register_sub_provider(
-            "exit",
-            Arc::new(Exit {
-                path,
-                calls: f.calls.clone(),
-            }),
-        )
+        .register_sub_provider("exit", production_exit(f.data.path()).await)
         .await
         .unwrap();
-    f
+    RealFixture { fixture: f, helper }
 }
 
 // Matches @walletconnect/relay-auth's locked signJWT/encodeIss implementation.
@@ -140,7 +183,7 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
         "real relay subscription failed"
     );
     socket.close(None).await.unwrap();
-    println!("PASS: Runtime -> Exit harness -> authenticated Reown WSS upgrade and subscription; project file set; ephemeral localhost port; no 401/403");
+    println!("PASS: Runtime -> real exit-provider -> real browser-local-exit -> authenticated Reown WSS upgrade and subscription; project file set; ephemeral localhost port; no 401/403");
 }
 
 // A separate process makes restart discard every gateway socket and global.
@@ -170,13 +213,7 @@ async fn walletconnect_gateway_process_worker() {
     };
     let registry = Arc::new(ProviderRegistry::new());
     registry
-        .register_sub_provider(
-            "exit",
-            Arc::new(Exit {
-                path: data.join("real-relay.sock"),
-                calls: Arc::new(AtomicUsize::new(0)),
-            }),
-        )
+        .register_sub_provider("exit", production_exit(data).await)
         .await
         .unwrap();
     state.provider_registry = Some(registry);
@@ -345,6 +382,15 @@ async fn walletconnect_real_project_opaque_preflight() {
     {
         let record: Value = serde_json::from_slice(&bytes).unwrap();
         println!("{}", json!({"relay_handshake_refusal":record}));
+    }
+    if let Some(bytes) =
+        gateway_walletconnect::read_bytes(&f.data.path().join("relay-fetch-metadata.json"), 1024)
+            .unwrap()
+    {
+        println!(
+            "{}",
+            json!({"relay_fetch_metadata":serde_json::from_slice::<Value>(&bytes).unwrap()})
+        );
     }
     // The Node driver emits only bounded, value-free evidence. SDK diagnostics
     // can contain relay credentials, so stderr remains private to this process.

@@ -839,16 +839,30 @@ async fn walletconnect_refuses_malformed_writes_and_home_authority() {
     }
     let (_, stored) = f.route(&f.connector, STORAGE, None).await;
     assert_eq!(stored, json!({}));
-    for path in [
-        STORAGE,
-        "/api/apps/wallet-walletconnect/relay-admission",
-        "/api/apps/wallet-walletconnect/host-config",
+    for (method, path) in [
+        (reqwest::Method::GET, STORAGE),
+        (
+            reqwest::Method::POST,
+            "/api/apps/wallet-walletconnect/relay-admission",
+        ),
+        (
+            reqwest::Method::GET,
+            "/api/apps/wallet-walletconnect/wallet/config",
+        ),
     ] {
-        let (status, _) = f.route(&f.home, path, None).await;
-        assert_ne!(
-            status,
-            StatusCode::OK,
-            "Home owns no WalletConnect authority"
+        let response = reqwest::Client::new()
+            .request(method, format!("http://{}{path}", f.addr))
+            .header("origin", format!("http://{}", f.addr))
+            .header("x-elastos-home-token", &f.home)
+            .header("content-type", "application/json")
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "Home's valid origin reaches the connector authority guard: {path}"
         );
     }
     assert_eq!(
