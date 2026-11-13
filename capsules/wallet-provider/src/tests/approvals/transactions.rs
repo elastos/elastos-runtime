@@ -349,6 +349,24 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
     };
     assert_eq!(transaction["from"], external_address);
     assert_eq!(transaction["chainId"], "0x14");
+    let request = provider
+        .store
+        .approval_requests
+        .iter_mut()
+        .find(|r| r.request_id == request_id)
+        .unwrap();
+    request.expires_at = now_ts() - 1;
+    provider.store = prune_store(std::mem::take(&mut provider.store), now_ts());
+    assert_eq!(
+        provider
+            .store
+            .approval_requests
+            .iter()
+            .find(|r| r.request_id == request_id)
+            .unwrap()
+            .status,
+        ApprovalStatus::Approved
+    );
     let transaction_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let context = wallet_context(principal_id, "wallet-metamask");
     let invalid_completion = wallet_request(

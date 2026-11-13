@@ -89,8 +89,8 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     if (!Number.isSafeInteger(review.expires_at) || ttl <= 0 || review.intent === 'transaction_intent' && ttl < 300) throw new Error('Wallet request expires soon. Request a fresh review.');
     const supported = ['auth_challenge','browser_personal_sign','browser_typed_data_sign','capability_grant','credential','publish_envelope','protected_content_rights_signature','transaction_intent','revocation'];
     if (!supported.includes(review.intent)) throw new Error('This request type is unavailable in WalletConnect. Reject it in Wallet.');
-    if (review.intent === 'browser_typed_data_sign' && !provider.session?.namespaces?.eip155?.methods?.includes('eth_signTypedData_v4'))
-      throw new Error('Typed data signing is unavailable in this pairing. Reject this request in Wallet or use another linked account.');
+    if (review.intent === 'browser_typed_data_sign')
+      throw new Error('Typed data signing is unavailable in this connector. Reject this request in Wallet or use another linked account.');
     const {handoff,binding} = await api(`${path}/approve`,{method:'POST',body:'{}'});
     if (!handoff || !binding || handoff.request_id !== action.approvalRequestId
       || handoff.payload_hash !== binding.payload_hash || !same(handoff.signer,signer)
@@ -112,7 +112,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
       return {status:'completed',effect:'transaction'};
     }
     if (handoff.signature_type !== 'personal_sign' || typeof handoff.message !== 'string') throw new Error('Runtime returned an invalid signature request.');
-    const method = handoff.intent === 'browser_typed_data_sign' ? 'eth_signTypedData_v4' : 'personal_sign';
+    const method = 'personal_sign';
     const signature = await provider.request({method,params:method === 'eth_signTypedData_v4' ? [signer,handoff.message] : [signData(handoff.message),signer]},expiry);
     await check();
     await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:method === 'eth_signTypedData_v4' ? 'eip712' : 'personal_sign'})});

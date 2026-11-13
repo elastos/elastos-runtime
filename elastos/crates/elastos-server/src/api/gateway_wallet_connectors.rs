@@ -255,7 +255,14 @@ pub(in crate::api::gateway) fn require_wallet_connector_launch_context(
         anyhow::bail!("unknown wallet connector capsule");
     }
     ensure_wallet_connector_configured(data_dir, connector_id)?;
-    require_home_launch_token_context(data_dir, headers, connector_id)
+    if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
+        Ok(
+            gateway_walletconnect::connector_launch_authority(data_dir, headers)?
+                .home_launch_context(),
+        )
+    } else {
+        require_home_launch_token_context(data_dir, headers, connector_id)
+    }
 }
 
 pub(in crate::api::gateway) fn require_wallet_connector_launch_authority(
@@ -267,7 +274,11 @@ pub(in crate::api::gateway) fn require_wallet_connector_launch_authority(
         anyhow::bail!("unknown wallet connector capsule");
     }
     ensure_wallet_connector_configured(data_dir, connector_id)?;
-    require_runtime_wallet_authority(data_dir, headers, &[connector_id])
+    if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
+        gateway_walletconnect::connector_launch_authority(data_dir, headers)
+    } else {
+        require_runtime_wallet_authority(data_dir, headers, &[connector_id])
+    }
 }
 
 pub(in crate::api::gateway) fn require_wallet_app_launch_authority(
@@ -378,9 +389,10 @@ async fn walletconnect_request_binding(
         request["principal_id"].as_str() == Some(authority.verified_context().principal_id())
             && request["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
             && request["status"] == status
-            && request["expires_at"]
-                .as_u64()
-                .is_some_and(|expiry| expiry > now_ts())
+            && (request["expires_at"].as_u64().is_some_and(|expiry| expiry > now_ts())
+                // The phone can return a sent transaction after the approval TTL.
+                // Approved state still binds its one completion to the same payload.
+                || status == "approved" && request["intent"] == "transaction_intent")
             && request["payload_hash"]
                 .as_str()
                 .is_some_and(walletconnect_hash),

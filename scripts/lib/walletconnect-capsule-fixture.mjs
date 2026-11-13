@@ -28,7 +28,7 @@ export async function exerciseWalletConnect(scenario='valid') {
     if(path==='wallet/approvals')return {approval_requests:[{request_id:'approval:fixture',status:scenario==='approved'?'approved':'pending',address,
       intent,chain_namespace:'eip155:20',expires_at:Math.floor(clock()/1000)+lifetime}]};
     if(path.endsWith('/approve'))return {handoff:{request_id:'approval:fixture',intent,
-      payload_hash:payloadHash,signer:address,signature_type:'personal_sign',message:scenario==='protected-content'?'0x414243':'Runtime approval fixture',
+      payload_hash:payloadHash,signer:address,signature_type:scenario.startsWith('typed')?'eip712':'personal_sign',message:scenario==='protected-content'?'0x414243':'Runtime approval fixture',
       transaction:{from:address,to:`0x${'78'.repeat(20)}`,value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x1',chainId:'0x14'}},
       binding:{principal_id:'fixture',requested_by_actor:'documents',account_id:'fixture-account',chain_namespace:'eip155:20',payload_hash:payloadHash,
       expires_at:scenario==='expired'?1:Math.floor(clock()/1000)+lifetime}};

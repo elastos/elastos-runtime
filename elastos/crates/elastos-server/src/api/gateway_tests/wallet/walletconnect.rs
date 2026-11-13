@@ -47,6 +47,11 @@ impl Provider for Exit {
         Err(ProviderError::Provider("raw fixture".into()))
     }
     async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+        if request["op"] == "close_stream" {
+            assert_eq!(request["stream_id"], "stream:wc-fixture");
+            assert!(request["principal_id"].as_str().is_some());
+            return Ok(json!({"status":"ok"}));
+        }
         self.calls.fetch_add(1, Ordering::SeqCst);
         assert_eq!(request["target"], "tls://relay.walletconnect.org:443");
         assert!(request["principal_id"].as_str().is_some());
@@ -439,6 +444,54 @@ async fn walletconnect_websocket_upgrade_requires_opaque_origin_and_first_frame_
         Some(Ok(Message::Close(_))) | None
     ));
     assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn walletconnect_refused_remote_exit_closes_its_reservation() {
+    struct RemoteExit(Arc<tokio::sync::Notify>);
+    #[async_trait::async_trait]
+    impl Provider for RemoteExit {
+        fn name(&self) -> &'static str {
+            "reserved-remote-exit"
+        }
+        fn schemes(&self) -> Vec<&'static str> {
+            vec!["exit"]
+        }
+        async fn handle(&self, _: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+            Err(ProviderError::Provider("raw fixture".into()))
+        }
+        async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+            if request["op"] == "close_stream" {
+                assert_eq!(request["stream_id"], "stream:remote-reservation");
+                assert!(request["principal_id"].as_str().is_some());
+                self.0.notify_one();
+                return Ok(json!({"status":"ok"}));
+            }
+            assert_eq!(request["op"], "open_stream");
+            Ok(json!({"status":"ok","data":{
+                "schema":"elastos.exit.stream-session/v1", "target":request["target"],
+                "principal_id":request["principal_id"],"stream_id":"stream:remote-reservation",
+                "byte_transport":"carrier_stream"
+            }}))
+        }
+    }
+    let f = Fixture::new().await;
+    let closed = Arc::new(tokio::sync::Notify::new());
+    let registry = f.state.provider_registry.as_ref().unwrap();
+    registry.unregister_sub_provider("exit").await.unwrap();
+    registry
+        .register_sub_provider("exit", Arc::new(RemoteExit(closed.clone())))
+        .await
+        .unwrap();
+    f.allow().await;
+    let mut socket = f.connect(&f.connector, RELAY).await;
+    assert!(matches!(
+        socket.next().await,
+        Some(Ok(Message::Close(_))) | None
+    ));
+    tokio::time::timeout(Duration::from_secs(2), closed.notified())
+        .await
+        .expect("refused remote reservation was closed");
 }
 
 #[tokio::test]

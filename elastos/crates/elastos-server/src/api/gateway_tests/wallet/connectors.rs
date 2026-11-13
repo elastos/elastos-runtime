@@ -1357,8 +1357,8 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
             .header("x-elastos-home-token", &connector).header(CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string())).unwrap()).await.unwrap();
         let operations = provider.recorded_v2_operation_kinds().await;
-        if case == "valid" {
-            assert_eq!(response.status(), StatusCode::OK);
+        if matches!(case, "valid" | "expired") {
+            assert_eq!(response.status(), StatusCode::OK, "{case}");
             assert!(operations.contains(&WalletOperationKind::CompleteConnectorHandoff));
             let requests = provider.requests.lock().await;
             let forwarded = requests
@@ -1396,6 +1396,18 @@ async fn test_walletconnect_capsule_config_link_and_effect_authority_matrix() {
         WALLET_WALLETCONNECT_CAPSULE_ID,
         &owner,
     );
+    let wrong_selection = issue_home_projection_launch_token_with_context(
+        dir.path(),
+        WALLET_CAPSULE_ID,
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &runtime_wallet_authority_for_app_token(
+            dir.path(),
+            WALLET_WALLETCONNECT_CAPSULE_ID,
+            &token,
+        )
+        .home_launch_context(),
+    )
+    .unwrap();
     let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
     let context =
         runtime_wallet_authority_for_app_token(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &token)
@@ -1466,7 +1478,7 @@ async fn test_walletconnect_capsule_config_link_and_effect_authority_matrix() {
     let mut index = 0;
     while index < calls.len() {
         let (path, body) = calls[index].clone();
-        for invalid in [&owner.home_token, &inbox, &expired] {
+        for invalid in [&owner.home_token, &inbox, &expired, &wrong_selection] {
             assert_ne!(
                 call(&app, &owner.home_token, invalid, path, body.clone())
                     .await

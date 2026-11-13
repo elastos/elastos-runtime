@@ -19,8 +19,7 @@ test('Home capsules contain no WalletConnect SDK import or signer',()=>{
   for(const e of readdirSync('capsules',{withFileTypes:true}))if(e.isDirectory()&&e.name.startsWith('home'))scan(join('capsules',e.name));
 });
 
-test('typed data uses EIP-712 and preserves the exact Runtime message',async()=>{const r=await exerciseWalletConnect('typed');assert.equal(r.error,undefined);const call=r.calls.find(c=>c.method==='eth_signTypedData_v4');assert.equal(call.params[1],'Runtime approval fixture');assert.equal(JSON.parse(completed(r)[0].input.body).signature_type,'eip712');});
-for(const scenario of ['typed-unavailable','unsupported']) test(`${scenario} remains pending instead of consuming an approval`,async()=>{const r=await exerciseWalletConnect(scenario);assert.equal(typeof r.error,'string');assert.equal(r.routes.filter(c=>c.path.endsWith('/approve')).length,0);assert.equal(completed(r).length,0);});
+for(const scenario of ['typed','typed-unavailable','unsupported']) test(`${scenario} remains pending instead of consuming an approval`,async()=>{const r=await exerciseWalletConnect(scenario);assert.equal(typeof r.error,'string');assert.equal(r.routes.filter(c=>c.path.endsWith('/approve')).length,0);assert.equal(completed(r).length,0);assert.equal(r.calls.filter(c=>c.method==='eth_signTypedData_v4').length,0);});
 test('a reset creates a fresh SDK API while old SDK writes keep their stale revision',async()=>{
   const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
   let revision='"0"',loads=0,disconnects=0;const sessions=[];

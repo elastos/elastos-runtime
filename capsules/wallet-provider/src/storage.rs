@@ -230,11 +230,20 @@ pub(super) fn prune_store(mut store: WalletStore, now: u64) -> WalletStore {
     store
 }
 
+// A phone may finish sending after expiry. Preserve this approved receipt until
+// its single completion; pending requests and signature handoffs still expire.
+fn awaiting_external_transaction(request: &WalletApprovalRequest) -> bool {
+    request.status == ApprovalStatus::Approved
+        && request.intent == "transaction_intent"
+        && request.connector_id.is_some()
+}
+
 pub(super) fn approval_authority_is_active(request: &WalletApprovalRequest, now: u64) -> bool {
-    if matches!(
-        request.status,
-        ApprovalStatus::Pending | ApprovalStatus::Approved
-    ) && request.expires_at > now
+    if awaiting_external_transaction(request)
+        || matches!(
+            request.status,
+            ApprovalStatus::Pending | ApprovalStatus::Approved
+        ) && request.expires_at > now
     {
         return true;
     }
@@ -278,6 +287,7 @@ pub(super) fn expire_approval_if_elapsed(request: &mut WalletApprovalRequest, no
         request.status,
         ApprovalStatus::Pending | ApprovalStatus::Approved
     ) && request.expires_at <= now
+        && !awaiting_external_transaction(request)
     {
         request.status = ApprovalStatus::Expired;
         request.resolved_at = Some(now);

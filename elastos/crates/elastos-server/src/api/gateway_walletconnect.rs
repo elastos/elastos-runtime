@@ -396,33 +396,38 @@ async fn verify_sdk(state: &GatewayState) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn connector_authority(
-    state: &GatewayState,
+pub(in crate::api) fn connector_launch_authority(
+    data: &FsPath,
     headers: &HeaderMap,
 ) -> anyhow::Result<RuntimeWalletAuthority> {
-    let launch = require_home_launch_token_binding(
-        &state.data_dir,
-        headers,
-        &[WALLET_WALLETCONNECT_CAPSULE_ID],
-    )?;
+    let launch =
+        require_home_launch_token_binding(data, headers, &[WALLET_WALLETCONNECT_CAPSULE_ID])?;
     anyhow::ensure!(
         launch.launch_context.selected_resource == WALLET_WALLETCONNECT_CAPSULE_ID
             && launch.context.proof_binding_id.is_some(),
         "WalletConnect requires its own proof-bound capsule launch"
     );
+    runtime_wallet_authority(&launch)
+}
+
+fn connector_authority(
+    state: &GatewayState,
+    headers: &HeaderMap,
+) -> anyhow::Result<RuntimeWalletAuthority> {
+    let authority = connector_launch_authority(&state.data_dir, headers)?;
     // The signed launch carries principal, live session and exact launch instance.
     // Retaining these headers binds relay tickets and recurring checks to that launch.
     if headers
         .get("if-match")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("\"0\"")
-        != storage_revision(&state.data_dir, &launch.context.principal_id)?
+        != storage_revision(&state.data_dir, authority.verified_context().principal_id())?
     {
         anyhow::bail!(
             "WalletConnect session changed. Close this window and open WalletConnect again."
         );
     }
-    runtime_wallet_authority(&launch)
+    Ok(authority)
 }
 #[cfg(test)]
 pub(in crate::api::gateway) async fn expire_admissions_for_test(state: &GatewayState) {
@@ -499,11 +504,8 @@ pub(super) async fn storage(
 ) -> Response {
     let result = async {
         let authority = if method == axum::http::Method::DELETE {
-            require_runtime_wallet_authority(
-                &state.data_dir,
-                &headers,
-                &[WALLET_WALLETCONNECT_CAPSULE_ID],
-            )?
+            // Cleanup retries keep launch/proof checks but can use the old storage revision.
+            connector_launch_authority(&state.data_dir, &headers)?
         } else {
             connector_authority(&state, &headers)?
         };
@@ -699,6 +701,26 @@ async fn relay_connection(
 }
 
 #[cfg(unix)]
+struct ExitReservation {
+    registry: Arc<ProviderRegistry>,
+    stream_id: String,
+    principal: String,
+}
+#[cfg(unix)]
+impl Drop for ExitReservation {
+    fn drop(&mut self) {
+        let registry = self.registry.clone();
+        let request =
+            json!({"op":"close_stream","stream_id":self.stream_id,"principal_id":self.principal});
+        tokio::spawn(async move {
+            let _ =
+                tokio::time::timeout(Duration::from_secs(5), registry.send_raw("exit", &request))
+                    .await;
+        });
+    }
+}
+
+#[cfg(unix)]
 async fn transport(
     state: &GatewayState,
     headers: &HeaderMap,
@@ -724,6 +746,14 @@ async fn transport(
     }))).await??;
     let receipt = provider_response_data(&response)
         .ok_or_else(|| anyhow::anyhow!("Exit admission failed"))?;
+    let _reservation = ExitReservation {
+        registry: registry.clone(),
+        stream_id: receipt["stream_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Exit stream id is missing"))?
+            .to_owned(),
+        principal: principal.clone(),
+    };
     anyhow::ensure!(
         receipt["schema"] == "elastos.exit.stream-session/v1"
             && receipt["target"] == target
