@@ -158,8 +158,8 @@ async function fixture() {
             await peer.setRemoteDescription({type:"offer",sdp});
             const answer=await peer.createAnswer();await peer.setLocalDescription(answer);return answer.sdp;
           },input.sdp);
-          json({schema:"elastos.browser.webrtc-answer/v1",type:"answer",sdp});
-        } else json({schema:"elastos.browser.webrtc-signal-ack/v1",type:input.type,accepted:true});
+          json({schema:"elastos.browser.webrtc-answer/v1",type:"answer",sdp,display_generation:input.display_generation});
+        } else json({schema:"elastos.browser.webrtc-signal-ack/v1",type:input.type,accepted:true,display_generation:input.display_generation});
         return;
       }
       // Hold the external media handshake; these checks cover Home and permission state.
