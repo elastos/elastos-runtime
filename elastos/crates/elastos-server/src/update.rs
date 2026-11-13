@@ -3792,6 +3792,124 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[tokio::test]
+    async fn tampered_binary_precedes_other_downloads_on_terminal_and_system_paths() {
+        use sha2::Digest;
+
+        struct Owner;
+        impl RestartOwner for Owner {
+            fn progress(&self, _: &str, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn download_plan(&self, _: u64, _: Option<u64>) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn plan(&self, _: String, _: &str, _: &str) -> anyhow::Result<RestartPlan> {
+                panic!("a refused binary cannot plan a restart")
+            }
+            fn start<'a>(
+                &'a mut self,
+                _: &'a InstallTransaction,
+                _: RestartRecord,
+            ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
+                panic!("a refused binary cannot start Home")
+            }
+            fn stop<'a>(
+                &'a mut self,
+            ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
+                panic!("a refused binary cannot stop Home")
+            }
+        }
+
+        let components =
+            br#"{"schema":"elastos.components/v1","external":{},"profiles":{},"capsules":{}}"#;
+        let executable = b"#!/bin/sh\nprintf 'elastos 0.7.1\\n'\n";
+        let descriptor = |bytes: &[u8]| {
+            serde_json::json!({
+                "cid": raw_cid(bytes), "sha256": hex::encode(sha2::Sha256::digest(bytes)), "size": bytes.len()
+            })
+        };
+        let release = binding_envelope(
+            serde_json::json!({
+                "schema":"elastos.release/v1", "version":"0.7.1", "channel":"stable",
+                "platforms":{(detect_release_platform()):{
+                    "binary":descriptor(executable), "components":descriptor(components)
+                }}
+            }),
+            "elastos.release.v1",
+        );
+        let release_cid = raw_cid(&release);
+        let binary_cid = raw_cid(executable);
+        let components_cid = raw_cid(components);
+        let mut head = binding_head(&release);
+        head["version"] = serde_json::json!("0.7.1");
+        let head_bytes = binding_envelope(head, "elastos.release.head.v1");
+        let head: serde_json::Value = serde_json::from_slice(&head_bytes).unwrap();
+        for system in [false, true] {
+            let (_fixture, data, binary, source) = default_apply_fixture(components);
+            let before = std::fs::read(&binary).unwrap();
+            let fetched = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let calls = fetched.clone();
+            let artifacts = std::collections::HashMap::from([
+                (release_cid.clone(), release.clone()),
+                (components_cid.clone(), components.to_vec()),
+                (binary_cid.clone(), b"tampered runtime".to_vec()),
+            ]);
+            let fetch: FetchFn = Box::new(move |cid| {
+                calls.lock().unwrap().push(cid.clone());
+                let bytes = artifacts
+                    .get(&cid)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("unexpected payload fetch: {cid}"));
+                Box::pin(async move { bytes })
+            });
+            let mut owner = Owner;
+            let error = run_upgrade_with_restart(
+                &fetch,
+                &head,
+                &head_bytes,
+                None,
+                "0.7.1",
+                &release_cid,
+                None,
+                "0.7.0",
+                &source,
+                &data,
+                false,
+                true,
+                false,
+                false,
+                "fixture",
+                crate::setup::FirstPartyCarrierContext::Setup,
+                ApplyMode::FrozenOffline,
+                if system { Some(&mut owner) } else { None },
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                format!("{error:#}").contains("Binary SHA-256 mismatch"),
+                "{error:#}"
+            );
+            let expected = if system {
+                vec![
+                    release_cid.clone(),
+                    components_cid.clone(),
+                    binary_cid.clone(),
+                ]
+            } else {
+                vec![release_cid.clone(), binary_cid.clone()]
+            };
+            assert_eq!(
+                *fetched.lock().unwrap(),
+                expected,
+                "system={system}: only signed planning metadata may precede binary verification"
+            );
+            assert_eq!(std::fs::read(&binary).unwrap(), before);
+            assert!(!InstallTransaction::has_pending_recovery(&binary));
+        }
+    }
+
+    #[cfg(unix)]
     fn signed_catalogue(published_at: u64) -> (String, serde_json::Value, Vec<u8>) {
         let mut payload = crate::api::capsule_inventory::tests::model_catalog_fixture();
         payload["published_at"] = serde_json::json!(published_at);

@@ -8790,6 +8790,28 @@ mod tests {
     }
 
     #[test]
+    fn library_post_preview_keeps_the_post_message_size_format() {
+        for (bytes, size) in [
+            (4, "4 bytes"),
+            (1_000_000, "976.6 KB"),
+            (1_048_576, "1.0 MB"),
+            (1_073_741_824, "1.0 GB"),
+        ] {
+            for phase in [
+                super::LibraryPostPhase::Confirm,
+                super::LibraryPostPhase::Posted {
+                    link: "elastos://file".into(),
+                },
+            ] {
+                let mut post = library_post_fixture(phase);
+                post.size_bytes = bytes;
+                let view = super::library_post_view(&post);
+                assert_eq!(view.lines[0], format!("notes.txt · {size}"));
+            }
+        }
+    }
+
+    #[test]
     fn library_post_view_asks_once_then_offers_retry_and_library() {
         use super::LibraryPostAction::{Cancel, Close, OpenLibrary, Post, Retry};
         use super::LibraryPostPhase::{Confirm, Failed, PostFailed, Posted, Unknown, Working};
