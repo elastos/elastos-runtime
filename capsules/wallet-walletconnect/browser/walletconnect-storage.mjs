@@ -1,5 +1,7 @@
 // Capsule-local compatibility for SDK imports. Runtime owns protocol storage.
-export function installWalletConnectStorage(window, trace = () => {}) {
+export function installWalletConnectStorage(window, trace = () => {},
+  engine = /AppleWebKit/.test(window.navigator.userAgent) && !/Chrome|Chromium|Edg/.test(window.navigator.userAgent)
+    ? "webkit" : "chromium") {
   const stores = new WeakMap();
   const data = receiver => {
     const value = stores.get(receiver);
@@ -13,18 +15,22 @@ export function installWalletConnectStorage(window, trace = () => {}) {
   const requireArguments = (count, actual) => {
     if (actual < count) throw new TypeError(`${count} arguments required`);
   };
-  const prototype = Object.create(window.Storage.prototype);
+  const prototype = window.Storage.prototype;
+  const native = Object.getOwnPropertyDescriptors(prototype);
   Object.defineProperties(prototype, {
-    length: { configurable: true, enumerable: true, get() { return data(this).values.size; } },
+    length: { configurable: true, enumerable: true, get() { return stores.has(this) ? data(this).values.size : native.length.get.call(this); } },
     key: { configurable: true, enumerable: true, writable: true, value: function key(index) {
+      if (!stores.has(this)) return native.key.value.apply(this, arguments);
       const state = data(this); requireArguments(1, arguments.length);
       return [...state.values.keys()][+index >>> 0] ?? null;
     } },
     getItem: { configurable: true, enumerable: true, writable: true, value: function getItem(key) {
+      if (!stores.has(this)) return native.getItem.value.apply(this, arguments);
       const state = data(this); requireArguments(1, arguments.length); key = text(key);
       return state.values.has(key) ? state.values.get(key) : null;
     } },
     setItem: { configurable: true, enumerable: true, writable: true, value: function setItem(key, value) {
+      if (!stores.has(this)) return native.setItem.value.apply(this, arguments);
       const state = data(this); requireArguments(2, arguments.length);
       key = text(key); value = text(value);
       const refused = /wc@2:|keychain/i.test(key);
@@ -33,10 +39,12 @@ export function installWalletConnectStorage(window, trace = () => {}) {
       state.values.set(key, value);
     } },
     removeItem: { configurable: true, enumerable: true, writable: true, value: function removeItem(key) {
+      if (!stores.has(this)) return native.removeItem.value.apply(this, arguments);
       const state = data(this); requireArguments(1, arguments.length); key = text(key);
       trace({ store: state.name, operation: "removeItem", key }); state.values.delete(key);
     } },
     clear: { configurable: true, enumerable: true, writable: true, value: function clear() {
+      if (!stores.has(this)) return native.clear.value.apply(this, arguments);
       const state = data(this); trace({ store: state.name, operation: "clear" }); state.values.clear();
     } },
   });
@@ -55,13 +63,18 @@ export function installWalletConnectStorage(window, trace = () => {}) {
         if (typeof key === "symbol") return Reflect.deleteProperty(target, key);
         prototype.removeItem.call(storage, key); return true;
       },
-      ownKeys(target) { return [...Reflect.ownKeys(target), ...[...values.keys()].filter(visible)]; },
+      // Native engines enumerate stored method names even though reads use the
+      // prototype method. Chromium omits the readonly length name; WebKit
+      // includes it. The engine is explicit for native-comparison tests.
+      ownKeys(target) { return [...Reflect.ownKeys(target), ...[...values.keys()]
+        .filter(key => key !== "length" || engine === "webkit")]; },
       getOwnPropertyDescriptor(target, key) {
-        return visible(key) ? { value: values.get(key), configurable: true, enumerable: true, writable: true }
+        return values.has(key) ? { value: values.get(key), configurable: true, enumerable: true, writable: true }
           : Reflect.getOwnPropertyDescriptor(target, key);
       },
       defineProperty(target, key, descriptor) {
         if (typeof key === "symbol") return Reflect.defineProperty(target, key, descriptor);
+        if (/wc@2:|keychain/i.test(key)) prototype.setItem.call(storage, key, descriptor.value);
         if ("get" in descriptor || "set" in descriptor || descriptor.configurable === false
             || descriptor.enumerable === false || descriptor.writable === false) return false;
         prototype.setItem.call(storage, key, descriptor.value); return true;

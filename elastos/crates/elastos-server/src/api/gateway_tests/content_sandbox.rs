@@ -681,10 +681,6 @@ async fn content_sandbox_browser_walletconnect_sdk() {
     std::fs::create_dir_all(capsule.join("vendor")).unwrap();
     let sdk = repo.join("capsules/wallet-walletconnect/vendor/reown-appkit.js");
     std::fs::copy(&sdk, capsule.join("vendor/reown-appkit.js")).unwrap();
-    // The browser-local name keeps the same locked fixture import in the
-    // sandbox and unsandboxed SDK tests. The canonical vendor route is also
-    // hash-checked by the browser test.
-    std::fs::copy(sdk, capsule.join("browser/wc-sdk.js")).unwrap();
     std::fs::copy(
         repo.join("scripts/lib/walletconnect-browser-fixture.mjs"),
         capsule.join("browser/wc-fixture.js"),

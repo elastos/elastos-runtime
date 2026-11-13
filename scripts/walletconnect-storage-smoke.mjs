@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { exerciseStorage } from "./lib/walletconnect-storage-probe.mjs";
 
-const shim = readFileSync(new URL("../capsules/wallet-walletconnect/browser/walletconnect-storage.mjs", import.meta.url));
+const shim = readFileSync(process.env.WALLETCONNECT_STORAGE_MODULE || new URL("../capsules/wallet-walletconnect/browser/walletconnect-storage.mjs", import.meta.url));
 
 for (const engine of ["chromium", "webkit"]) {
   test(`capsule memory Storage matches native ${engine} Storage`, { timeout: 45000 }, async () => {
@@ -20,10 +20,11 @@ for (const engine of ["chromium", "webkit"]) {
       const page = await browser.newPage();
       await page.goto(`http://127.0.0.1:${server.address().port}`);
       const native = await page.evaluate(exerciseStorage);
-      await page.evaluate(async () => {
+      await page.evaluate(async engine => {
+        window.nativeStorage = localStorage;
         const { installWalletConnectStorage } = await import("/shim.mjs");
-        window.clearMemoryStorage = installWalletConnectStorage(window);
-      });
+        window.clearMemoryStorage = installWalletConnectStorage(window, undefined, engine);
+      }, engine);
       const memory = await page.evaluate(exerciseStorage);
       assert.deepEqual(memory, native);
       assert.deepEqual(await page.evaluate(() => {
@@ -33,6 +34,7 @@ for (const engine of ["chromium", "webkit"]) {
             s => s.setItem("wc@2:core:0.3//keychain", "fixture"),
             s => { s["wc@2:client:0.3//session"] = "fixture"; },
             s => Object.defineProperty(s, "wc@2:core:0.3//pairing", { value: "fixture" }),
+            s => Storage.prototype.setItem.call(s, "wc@2:core:0.3//keychain", "fixture"),
           ]) {
             try { write(window[name]); errors.push("accepted"); }
             catch (error) { errors.push(error.name); }
@@ -40,8 +42,21 @@ for (const engine of ["chromium", "webkit"]) {
           window[name].setItem("wallet-choice", "fixture");
         }
         window.clearMemoryStorage();
-        return { errors, lengths: [localStorage.length, sessionStorage.length] };
-      }), { errors: Array(6).fill("SecurityError"), lengths: [0, 0] });
+        nativeStorage.setItem("native-control", "works");
+        const nativeControl = nativeStorage.getItem("native-control");
+        nativeStorage.removeItem("native-control");
+        return { errors, lengths: [localStorage.length, sessionStorage.length], nativeControl };
+      }), { errors: Array(8).fill("SecurityError"), lengths: [0, 0], nativeControl: "works" });
+      await page.evaluate(() => {
+        localStorage.setItem("wallet-choice", "fixture");
+        sessionStorage.setItem("network-choice", "fixture");
+      });
+      await page.reload();
+      assert.deepEqual(await page.evaluate(async engine => {
+        const { installWalletConnectStorage } = await import("/shim.mjs");
+        installWalletConnectStorage(window, undefined, engine);
+        return [localStorage.length, sessionStorage.length];
+      }, engine), [0, 0], "preferences reset on reload");
     } finally {
       await browser?.close();
       server.closeAllConnections();

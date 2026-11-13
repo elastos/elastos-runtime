@@ -1,4 +1,4 @@
-import { connectWalletConnectEvm } from './wc-sdk.js';
+import { connectWalletConnectEvm } from './vendor/reown-appkit.js';
 window.methods = []; window.nativeUrls = []; window.proposalReady = false;
 window.runtimeTrace = [];
 window.keys = Object.create(null); window.cancelled = false; window.failed = false;

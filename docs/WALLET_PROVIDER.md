@@ -267,6 +267,17 @@ connection or account change. A completion error keeps that hash visible so the
 person can check the transaction before sending again. Unused signatures and
 ownership proofs still stop when the account, chain, or request expiry changes.
 
+The opaque-frame SDK qualification test uses capsule-local
+`walletconnect-storage.mjs` for browser Storage compatibility. Its memory holds
+only UI preferences, such as wallet and network choice, and resets on reload.
+The Runtime adapter owns sessions, pairings and cryptographic keys. The memory
+store raises `SecurityError` for WalletConnect protocol and keychain names.
+The focused native-Storage comparison runs in Chromium and WebKit with
+`node --test scripts/walletconnect-storage-smoke.mjs`; the source gateway test
+`content_sandbox_browser_walletconnect_sdk` checks the same SDK under capsule
+CSP and sandbox headers. This test uses a deterministic relay and key/value
+adapter; a paired reconnect requires the separate real-relay journey.
+
 Inbox owns internet consent through the owner's passkey. Runtime connects only
 to `relay.walletconnect.org` and `relay.walletconnect.com` on TLS port 443 through
 the existing local Exit. Runtime authenticates relay TLS, limits frame size and

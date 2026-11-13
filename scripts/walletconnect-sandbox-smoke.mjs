@@ -66,6 +66,7 @@ for (const engine of ["chromium", "webkit"]) {
         assert.equal(run.state.fits, true);
         assert.ok(run.state.runtimeTrace.some(t => t.key.includes("keychain")));
         assert.ok(run.state.storageTrace.every(t => !t.refused));
+        if (evidence) await page.screenshot({ path: `${evidence}/${engine}-${width}.png` });
         run.native = await page.evaluate(exerciseStorage);
         run.memory = await actualFrame.evaluate(exerciseStorage);
         assert.deepEqual(run.memory, run.native);
@@ -82,7 +83,6 @@ for (const engine of ["chromium", "webkit"]) {
           return results;
         });
         assert.deepEqual(run.refusals, Array(6).fill("SecurityError"));
-        if (evidence) await page.screenshot({ path: `${evidence}/${engine}-${width}.png` });
         await frame.getByRole("button", { name: "Cancel", exact: true }).click();
         await actualFrame.waitForFunction(() => window.cancelled);
         assert.equal(await frame.locator("dialog").count(), 0);

@@ -12,7 +12,7 @@ const fixture = readFileSync(new URL("./lib/walletconnect-browser-fixture.mjs", 
 test("the locked SDK reaches QR through Home, stores its keys through Runtime, and cancels", { timeout: 45000 }, async () => {
   const server = http.createServer((req, res) => {
     res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; connect-src 'self'; frame-src 'self'; style-src 'self'");
-    if (req.url === "/wc-sdk.js") { res.setHeader("content-type", "text/javascript"); res.end(bundle); }
+    if (req.url === "/vendor/reown-appkit.js") { res.setHeader("content-type", "text/javascript"); res.end(bundle); }
     else if (req.url === "/fixture.js") { res.setHeader("content-type", "text/javascript"); res.end(fixture); }
     else { res.setHeader("content-type", "text/html"); res.end('<!doctype html><meta name="viewport" content="width=device-width"><script type="module" src="/fixture.js"></script>'); }
   });
