@@ -735,6 +735,9 @@ test("Home update heading waits for passkey approval and stays an offer after ca
     }) });
     const applying = f.context.onRuntimeUpdateApply();
     assert.equal(f.fields.get("update-heading"), "Update to 1.1.0", "passkey prompt is an offer");
+    f.context.renderRuntimeUpdate({ ...f.offer, controller: { phase: "downloading", id: "another-page", new_version: "9.0.0" } });
+    assert.equal(f.fields.get("update-heading"), "Update to 1.1.0", "polling cannot approve this page's choice");
+    f.context.renderRuntimeUpdate(f.offer);
     if (approved) resolveApproval("approved");
     else rejectApproval(new Error("passkey cancelled"));
     await applying;

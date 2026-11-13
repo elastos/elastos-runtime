@@ -3877,7 +3877,8 @@ function renderRuntimeUpdate(update) {
     runtimeUpdateProgressNode.replaceChildren(...(show ? [createTransferProgress(controller?.completed_bytes, controller?.total_bytes, "Update download progress")] : []));
   }
   const choice = runtimeUpdatePending?.intent || runtimeUpdate;
-  const inProgress = Boolean(runtimeUpdatePending?.stepUpToken) || ["staging", "downloading", "verifying", "restarting"].includes(phase);
+  const inProgress = runtimeUpdatePending ? Boolean(runtimeUpdatePending.stepUpToken)
+    : ["staging", "downloading", "verifying", "restarting"].includes(phase);
   const newVersion = runtimeUpdatePending ? readText(choice?.new_version)
     : inProgress ? readText(controller?.new_version) || readText(choice?.new_version)
       : readText(choice?.new_version);
