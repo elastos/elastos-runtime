@@ -469,7 +469,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '26'
-      # The smokes default to a macOS Brave install unless BRAVE_BIN is set.
+      # Product smokes launch Playwright Chromium. BRAVE_BIN names another executable.
+      # This job installs Chromium for the engine package and points BRAVE_BIN at it.
       - name: browser layout smokes
         run: |
           BRAVE_BIN="$(cd elastos/tools/browser-playwright-engine && node -p "require('playwright').chromium.executablePath()")"
@@ -814,6 +815,15 @@ jobs:
         id: apt-prerequisites
         timeout-minutes: 13
         run: bash scripts/ci-apt-prerequisites.sh
+      - name: check native musl release crates
+        timeout-minutes: 30
+        run: |
+          case "${{ runner.arch }}" in
+            X64) target=x86_64-unknown-linux-musl ;;
+            ARM64) target=aarch64-unknown-linux-musl ;;
+            *) exit 1 ;;
+          esac
+          bash scripts/check-release-musl.sh "$target"
       - name: save Ubuntu prerequisite archives
         if: env.CI_USE_CACHE == 'true' && env.CI_SAVE_CACHE == 'true' && steps.apt-prerequisites.outputs.changed == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

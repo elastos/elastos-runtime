@@ -8349,7 +8349,7 @@ pub(crate) const CARRIER_CONTENT_TOO_LARGE: &str = "content_too_large";
 /// A peer-DID call whose stream broke in transit, after the connect.
 pub(crate) const PEER_ROUTE_IN_TRANSIT: &str = "in_transit";
 
-const CARRIER_PROVIDER_DECISION_CODES: [&str; 9] = [
+const CARRIER_PROVIDER_DECISION_CODES: [&str; 10] = [
     "denied",
     "rate_limited",
     "offer_unavailable",
@@ -8359,6 +8359,7 @@ const CARRIER_PROVIDER_DECISION_CODES: [&str; 9] = [
     CARRIER_PEER_REFUSED,
     "provider_registry_unavailable",
     CARRIER_CONTENT_TOO_LARGE,
+    crate::api::gateway::MODEL_AUTHORITY_TIMEOUT_CODE,
 ];
 
 impl CarrierProviderDecision {
@@ -8940,6 +8941,23 @@ pub(crate) mod tests {
     use std::sync::Mutex as StdMutex;
 
     const NONCANONICAL_ALIAS_DID: &str = "did:key:z2DQYePVrytqCLfdq5VSDGtksAZC9NAt75iCed5WwSKKVXt";
+
+    #[test]
+    fn authority_timeout_is_a_carrier_provider_decision() {
+        let response = serde_json::json!({
+            "ok": false,
+            "code": "authority_timeout",
+            "error": "The Home could not check model access in time. Try again.",
+        });
+        let decision = CarrierProviderDecision::from_response(&response)
+            .expect("authority_timeout is a bounded Carrier decision");
+        assert_eq!(decision.code, "authority_timeout");
+        let err = carrier_provider_invoke_result(response).unwrap_err();
+        assert_eq!(
+            carrier_provider_public_invoke_error(0, &err),
+            "ticket[0] authority_timeout"
+        );
+    }
 
     fn authenticated_test_source_endpoint() -> iroh::PublicKey {
         iroh::SecretKey::from_bytes(&[42u8; 32]).public()

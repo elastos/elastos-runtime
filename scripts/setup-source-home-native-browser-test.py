@@ -22,7 +22,7 @@ SUPPORT = (
     "browser-selkies-control-service.mjs", "browser-vm-engine-supervisor.mjs",
     "browser-vm-control-service.mjs", "browser-vm-remote-vz-launcher.mjs",
     "browser-vm-vz-transport-bootstrap.mjs", "browser-vm-linux-network.py",
-    "browser-vm-engine-preflight.sh", "browser-vm-artifact-preflight.sh",
+    "browser-vm-engine-preflight.sh", "browser-vm-artifact-preflight.sh", "browser-python.mjs",
     "browser-vm-target-preflight.sh", "setup-source-home-browser-artifacts.sh",
     "stamp-source-home-capsule-metadata.py", "components-release-integrity-check.py",
     "install-source-home-runtime.py", "release-platforms.json", "lib/owned_removal.py",

@@ -1,5 +1,8 @@
 # Browser contract
 
+A Browser internet dial requires the Home owner's current Runtime grant in addition to Exit policy.
+
+
 Runtime owns Browser compatibility, principal and operator authority, provider
 selection, transport, and session lifecycle. Engine providers own page semantics
 and rendering. Exit providers own authorized website connections. Browser UI and

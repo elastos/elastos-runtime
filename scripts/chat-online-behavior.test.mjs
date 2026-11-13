@@ -20,7 +20,7 @@ const boundedStartFailure = "Chat session bootstrap failed. Reopen Chat from Hom
 async function fixture(t, direct = false, { startFault = null } = {}) {
   checkArtifacts(); // Execute the committed WASM only when its source stamp matches.
   const state = { now: 0, tokenExpiry: 60, roomExpiry: 60, fault: null, startFault,
-    polls: [], accepted: 0, starts: 0, renewals: 0, errors: [] };
+    polls: [], faults: 0, accepted: 0, starts: 0, renewals: 0, errors: [] };
   const transport = { configured: true, available: true, community_joined: true };
   const poll = () => ({ room_slug: "chat-room", display_name: "Owner", latest_seq: 41,
     participants: [], objects: [], transport });
@@ -43,10 +43,17 @@ async function fixture(t, direct = false, { startFault = null } = {}) {
       if (url.pathname.endsWith("/poll") || url.pathname.endsWith("/messages")) {
         const request = { ...JSON.parse(body || "{}"), token: req.headers["x-elastos-home-token"], now: state.now };
         state.polls.push(request);
-        if (state.fault === "network") { req.socket.destroy(); return; }
-        if (state.fault) { json(state.fault, { error: `request failed: ${state.fault}` }); return; }
-        if (state.now >= state.tokenExpiry) { res.writeHead(403); res.end("Gateway request requires an admitted host and caller"); return; }
-        if (state.now >= state.roomExpiry) { json(401, { error: "invalid or expired session for configured Chat" }); return; }
+        if (state.fault === "network") {
+          req.socket.once("close", () => state.faults++);
+          req.socket.destroy(); return;
+        }
+        if (state.fault || state.now >= state.tokenExpiry || state.now >= state.roomExpiry) {
+          res.once("finish", () => state.faults++);
+          if (state.fault) json(state.fault, { error: `request failed: ${state.fault}` });
+          else if (state.now >= state.tokenExpiry) { res.writeHead(403); res.end("Gateway request requires an admitted host and caller"); }
+          else json(401, { error: "invalid or expired session for configured Chat" });
+          return;
+        }
         state.accepted++;
         json(200, url.pathname.endsWith("/messages") ? { conversation_id: "direct:fixture", messages: [
           { message_id: "message:kept", direction: "incoming", text: "Kept history", created_at: 1, delivery_state: "received" },
@@ -140,10 +147,15 @@ for (const direct of [false, true]) for (const failure of (direct
   test(`${direct ? "Direct" : "Community"} Chat resumes polling without a click after ${failure}`, { timeout: 30000 }, async t => {
     const { state, frame, tick } = await fixture(t, direct);
     const before = state.polls.length;
+    const faultsBefore = state.faults;
     if (failure === "frame expiry") { state.now = 61; state.roomExpiry = 1000; }
     else if (failure === "room expiry") { state.now = 61; state.tokenExpiry = 1000; }
     else state.fault = failure === "401" ? 401 : failure === "503" ? 503 : "network";
-    await tick(2);
+    // Real HTTP can still be in flight when the virtual clock finishes a tick.
+    // Keep the fault active until the server has delivered it to a poll.
+    const faultDeadline = performance.now() + 5000;
+    while (state.faults === faultsBefore && performance.now() < faultDeadline) await tick();
+    assert.ok(state.faults > faultsBefore, "the server delivered the fault to a poll");
     assert.ok(state.polls.length > before, "the poll actually reached the fault");
     const atFailure = state.polls.length;
     const acceptedAtFailure = state.accepted;

@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 import { chromium, makeSystemSummary, inertSystemApiResponse } from "./system-uiux-fixture.mjs";
 import assert from "node:assert/strict";
 
@@ -183,6 +184,7 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 let browser;
 try {
   browser = await chromium.launch({ headless: true,
+    ...productSmokeLaunchOptions(),
     ...(process.env.ELASTOS_BROWSER_EXECUTABLE ? { executablePath: process.env.ELASTOS_BROWSER_EXECUTABLE } : {}),
     args: ["--no-first-run", "--disable-extensions", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"] });
   async function open(actor) {

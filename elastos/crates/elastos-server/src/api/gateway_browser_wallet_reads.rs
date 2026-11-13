@@ -13,6 +13,14 @@ pub(super) async fn browser_wallet_read(
     authority: &RuntimeWalletAuthority,
     input: BrowserWalletReadRequest,
 ) -> Result<serde_json::Value, (StatusCode, String)> {
+    let internet = gateway_browser_internet::effect_for_authority(state, authority, false)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::FORBIDDEN,
+                "Browser internet permission is required".into(),
+            )
+        })?;
     let request_id = browser_effect_request_id("chain-read", input.method.trim());
     append_browser_effect_audit_or_500(
         &state.data_dir,
@@ -31,7 +39,9 @@ pub(super) async fn browser_wallet_read(
     )?;
     let result = tokio::time::timeout(
         BROWSER_WALLET_READ_TIMEOUT,
-        browser_wallet_read_inner(state, authority, &input),
+        internet
+            .fence
+            .scope(browser_wallet_read_inner(state, authority, &input)),
     )
     .await
     .unwrap_or_else(|_| {

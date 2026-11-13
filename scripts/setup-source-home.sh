@@ -746,7 +746,7 @@ PY
 
 ensure_rust_target_installed() {
     local target="$1"
-    if command -v rustup >/dev/null 2>&1 && ! rustup target list --installed 2>/dev/null | grep -qx "$target"; then
+    if command -v rustup >/dev/null 2>&1 && ! rustup target list --installed 2>/dev/null | grep -x "$target" >/dev/null; then
         rustup target add "$target"
     fi
 }
@@ -858,6 +858,7 @@ install_browser_runtime_helpers() {
         "${DATA_DIR}/scripts/browser-vm-linux-network.py"
     install -m 755 "${ROOT}/scripts/browser-vm-engine-preflight.sh" \
         "${DATA_DIR}/scripts/browser-vm-engine-preflight.sh"
+    install -m 755 "${ROOT}/scripts/browser-python.mjs" "${DATA_DIR}/scripts/browser-python.mjs"
     install -m 755 "${ROOT}/scripts/browser-vm-artifact-preflight.sh" \
         "${DATA_DIR}/scripts/browser-vm-artifact-preflight.sh"
     install -m 755 "${ROOT}/scripts/browser-vm-target-preflight.sh" \

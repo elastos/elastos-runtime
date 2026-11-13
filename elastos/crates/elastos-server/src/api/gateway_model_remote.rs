@@ -285,6 +285,15 @@ impl std::fmt::Display for RemoteRouteError {
                     elastos_model_contract::MODEL_REQUEST_EXPIRED_MESSAGE
                 )
             }
+            Self::InvocationRefused { reason, .. }
+                if reason == super::gateway_model_service::MODEL_AUTHORITY_TIMEOUT_CODE =>
+            {
+                write!(
+                    f,
+                    "{}",
+                    super::gateway_model_service::invocation_refusal_message(reason)
+                )
+            }
             Self::InvocationRefused { .. } => {
                 write!(f, "this invocation was refused before provider dispatch")
             }
@@ -366,8 +375,7 @@ async fn call_grant(
             }
             response["refusal"]["dispatch"] == "provider_refused"
         } else {
-            matches!(reason, "denied" | "offer_unavailable" | "rate_limited")
-                && response["refusal"]["dispatch"] == "not_started"
+            accepted_pre_dispatch_refusal(reason, &response["refusal"]["dispatch"])
         };
         if response["status"] == "error"
             && valid_phase
@@ -387,10 +395,21 @@ async fn call_grant(
     Ok(response)
 }
 
+fn accepted_pre_dispatch_refusal(reason: &str, dispatch: &Value) -> bool {
+    matches!(
+        reason,
+        "denied"
+            | "offer_unavailable"
+            | "rate_limited"
+            | super::gateway_model_service::MODEL_AUTHORITY_TIMEOUT_CODE
+    ) && dispatch == "not_started"
+}
+
 /// The Carrier client surfaces a destination denial as the bounded class text
 /// and a transport failure as anything else. Only the first is a decision.
 fn classify_carrier_error(message: &str) -> RemoteRouteError {
     for code in [
+        super::gateway_model_service::MODEL_AUTHORITY_TIMEOUT_CODE,
         "denied",
         "rate_limited",
         "offer_unavailable",
@@ -870,6 +889,26 @@ mod tests {
                 "Carrier provider invocation requires registered Carrier invoker"
             ),
             RemoteRouteError::Transport(_)
+        ));
+        assert!(matches!(
+            classify_carrier_error("ticket[0] authority_timeout"),
+            RemoteRouteError::Rejected { code } if code == "authority_timeout"
+        ));
+    }
+
+    #[test]
+    fn authority_timeout_is_a_pre_dispatch_refusal() {
+        assert!(accepted_pre_dispatch_refusal(
+            "authority_timeout",
+            &json!("not_started")
+        ));
+        assert!(!accepted_pre_dispatch_refusal(
+            "authority_timeout",
+            &json!("provider_refused")
+        ));
+        assert!(!accepted_pre_dispatch_refusal(
+            "denied",
+            &json!("provider_refused")
         ));
     }
 

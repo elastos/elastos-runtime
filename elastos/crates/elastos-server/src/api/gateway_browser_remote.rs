@@ -247,6 +247,7 @@ fn runtime_state(
         cache_dir: data_dir.join("cache"),
         provider_registry: Some(registry),
         carrier_endpoint: Some(endpoint),
+        browser_internet: Default::default(),
         identity_manager: Arc::new(OnceLock::new()),
         collaboration_chat_product_port: None,
         collaboration_presence_product_port: None,
@@ -1601,6 +1602,27 @@ pub(super) fn unresolved_preparation(
     }))
 }
 
+#[derive(Debug)]
+pub(super) enum ProfileTransferRequired {
+    OwningRuntime,
+    BeforeRemotePlacement,
+}
+
+impl std::fmt::Display for ProfileTransferRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::OwningRuntime => {
+                "This Browser profile requires an approved transfer from its owning Runtime"
+            }
+            Self::BeforeRemotePlacement => {
+                "This Browser profile requires an approved transfer before remote placement"
+            }
+        })
+    }
+}
+
+impl std::error::Error for ProfileTransferRequired {}
+
 pub(super) fn require_profile_placement(
     data_dir: &FsPath,
     principal: &str,
@@ -1618,7 +1640,7 @@ pub(super) fn require_profile_placement(
         !placements
             .iter()
             .any(|p| p.principal_id == principal && peer != Some(p.peer.as_str())),
-        "This Browser profile requires an approved transfer from its owning Runtime"
+        ProfileTransferRequired::OwningRuntime
     );
     ensure!(
         !records
@@ -1626,7 +1648,7 @@ pub(super) fn require_profile_placement(
             .any(|binding| binding.principal_id == principal
                 && binding.dispatch_started
                 && peer != binding.grant["peer_did"].as_str()),
-        "This Browser profile requires an approved transfer from its owning Runtime"
+        ProfileTransferRequired::OwningRuntime
     );
     Ok(())
 }
@@ -1661,7 +1683,10 @@ pub(super) async fn select(
         &context.principal_id,
         grant["peer_did"].as_str(),
     )?;
-    inventory.select(Some(&adapter_id), mode, guarantee)?;
+    ensure!(
+        inventory.select(Some(&adapter_id), mode, guarantee)?.engine == "chromium_microvm",
+        "Browser internet requires a VM engine"
+    );
     let readiness = tokio::time::timeout_at(
         deadline,
         crate::carrier::probe_browser_engine(registry, &grant, "readiness", Some(&adapter_id)),
@@ -1686,7 +1711,7 @@ pub(super) async fn select(
         browser_profile_launch_descriptor(&gateway.data_dir, &context.principal_id)?;
     ensure!(
         !local_profile.exists(),
-        "This Browser profile requires an approved transfer before remote placement"
+        ProfileTransferRequired::BeforeRemotePlacement
     );
     Ok(Some((grant, adapter_id, id)))
 }
@@ -2422,6 +2447,7 @@ mod tests {
             cache_dir: root.path().join("cache"),
             provider_registry: Some(registry),
             carrier_endpoint: None,
+            browser_internet: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             collaboration_chat_product_port: None,
             collaboration_presence_product_port: None,

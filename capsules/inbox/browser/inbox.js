@@ -115,6 +115,10 @@
 
     function inboxEntryText(entry, field, fallback) {
       const text = String(entry[field] || "").trim();
+      if (entry.kind === "browser_internet_decision" && field === "body") {
+        const date = new Date(entry.created_at * 1000).toLocaleString(undefined, {dateStyle: "medium", timeStyle: "short"});
+        return `${text.replace(/\.$/, "")} on ${date}.`;
+      }
       // Contact and service copy contains names chosen by people, which can
       // include words used in technical messages. Render those names as text.
       const namedRequest = entry.kind === "contact_request"
@@ -383,7 +387,7 @@
     }
 
     function pendingRequestEntries() {
-      return state.entries.filter((entry) => entry && entry.kind !== "service_access_grant" && entry.kind !== "hosted_route_history");
+      return state.entries.filter((entry) => entry && entry.kind !== "service_access_grant" && entry.kind !== "hosted_route_history" && entry.kind !== "browser_internet_decision");
     }
 
     function renderInbox() {
@@ -497,17 +501,61 @@
       return card;
     }
 
+    function confirmBrowserInternetOff() {
+      const dialog = document.querySelector("#browser-internet-confirm");
+      return new Promise(resolve => {
+        dialog.addEventListener("close", () => resolve(dialog.returnValue === "off"), {once:true});
+        dialog.showModal();dialog.querySelector('[value="cancel"]').focus();
+      });
+    }
+
+    async function allowBrowserInternet(actionId) {
+      setButtonsDisabled(true);
+      try {
+        const current = actionId ? await api("/api/apps/browser/internet")
+          : await api("/api/apps/browser/internet", {method:"POST",body:JSON.stringify({action:"request"})});
+        const expected = "browser-internet-allow:" + current.request?.request_id;
+        if (current.status !== "requested" || (actionId && actionId !== expected)) {
+          throw new Error("This request has changed. Refresh Inbox and review the current request.");
+        }
+        const stepUpToken = await requestPasskeyStepUp("browser.internet.grant", current.request);
+        await inboxAction(expected, {step_up_token:stepUpToken});
+        setStatus("Browser can open websites.");await loadInbox();notifyHome();
+        window.top.postMessage({type:"home:focus-browser",homeToken:state.homeToken},homeParentOrigin);
+      } finally {setButtonsDisabled(false);}
+    }
+
     function fillEntryActions(actions, entry) {
       const actionId = entry.action_ref && entry.action_ref.action_id;
+      if (entry.kind === "browser_internet_decision") {
+        if (actionId?.startsWith("browser-internet-turn-off:")) {
+          actions.appendChild(createButton("Turn Off", async () => {
+            if (!await confirmBrowserInternetOff()) return;
+            setButtonsDisabled(true);
+            try {
+              const current = await api("/api/apps/browser/internet");
+              const stepUpToken = current.stop_pending ? undefined : await requestPasskeyStepUp("browser.internet.revoke", current.request);
+              await inboxAction(actionId, {step_up_token:stepUpToken});
+              await loadInbox();notifyHome();
+            } finally { setButtonsDisabled(false); }
+          }, "danger"));
+        } else if (actionId === "browser-internet-request") {
+          actions.appendChild(createButton("Allow", () => allowBrowserInternet(), "primary"));
+        }
+        return;
+      }
       // A request Inbox decides itself has no other app to open.
-      if (typeof entry.source_app === "string" && entry.source_app.trim() && entry.source_app.trim() !== "inbox") {
+      if (entry.kind !== "browser_internet_request" && typeof entry.source_app === "string" && entry.source_app.trim() && entry.source_app.trim() !== "inbox") {
         // A direct-message notice opens its own conversation in Chat.
         const query = typeof actionId === "string" && actionId.startsWith("chat-open-direct:")
           ? { conversation_id: actionId.slice("chat-open-direct:".length) } : {};
         actions.appendChild(createButton("Open", () => openSource(entry.source_app, query)));
       }
 
-      if (typeof actionId === "string" && actionId.startsWith("room-approve-request:")) {
+      if (typeof actionId === "string" && actionId.startsWith("browser-internet-allow:")) {
+        actions.appendChild(createActionButton("Don't Allow", actionId.replace("browser-internet-allow:", "browser-internet-deny:")));
+        actions.appendChild(createButton("Allow", () => allowBrowserInternet(actionId), "primary"));
+      } else if (typeof actionId === "string" && actionId.startsWith("room-approve-request:")) {
         actions.appendChild(createActionButton("Approve", actionId, "primary"));
         actions.appendChild(createActionButton("Deny", "room-deny-request:" + actionId.slice("room-approve-request:".length), "danger"));
       } else if (typeof actionId === "string" && actionId.startsWith("contact-accept-request:")) {
@@ -555,7 +603,7 @@
         actions.appendChild(createActionButton("Never", "community-presence-never:" + request, "danger"));
       }
 
-      if (entry.kind !== "wallet_approval_request" && entry.kind !== "capability_request" && entry.kind !== "inspect_action_request" && entry.kind !== "external_http_request" && entry.kind !== "hosted_route_decision" && entry.kind !== "hosted_route_history" && entry.kind !== "contact_request" && entry.kind !== "service_access_request" && entry.kind !== "service_access_grant" && entry.kind !== "community_presence_request") {
+      if (entry.kind !== "browser_internet_request" && entry.kind !== "wallet_approval_request" && entry.kind !== "capability_request" && entry.kind !== "inspect_action_request" && entry.kind !== "external_http_request" && entry.kind !== "hosted_route_decision" && entry.kind !== "hosted_route_history" && entry.kind !== "contact_request" && entry.kind !== "service_access_request" && entry.kind !== "service_access_grant" && entry.kind !== "community_presence_request") {
         actions.appendChild(createActionButton("Dismiss", "notification-dismiss:" + entry.id));
       }
     }
@@ -839,6 +887,7 @@
       const unreadIds = state.entries
         .filter((entry) => entry && entry.id && !entry.read
           && entry.kind !== "wallet_approval_request"
+          && entry.kind !== "browser_internet_request"
           && entry.kind !== "contact_request" && entry.kind !== "service_access_request")
         .map((entry) => entry.id);
       if (unreadIds.length === 0) {

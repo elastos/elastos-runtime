@@ -381,6 +381,7 @@ impl CollaborationRuntimeService {
 
     pub fn gateway_context(&self) -> crate::api::gateway::GatewayCollaborationContext {
         crate::api::gateway::GatewayCollaborationContext {
+            capability_manager: None,
             carrier_endpoint: None,
             chat_product_port: Some(self.chat_product_port()),
             presence_product_port: Some(self.presence_product_port()),
@@ -1656,6 +1657,7 @@ mod tests {
             collaboration_presence_product_port: gateway_context.presence_product_port.clone(),
             collaboration_discovery_service: gateway_context.discovery_service.clone(),
             carrier_endpoint: gateway_context.carrier_endpoint.clone(),
+            browser_internet: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: temp.path().join("gateway-cache"),
             data_dir: temp.path().to_path_buf(),
@@ -1839,6 +1841,7 @@ mod tests {
             collaboration_presence_product_port: Some(presence_port.clone()),
             carrier_endpoint: None,
             collaboration_discovery_service: None,
+            browser_internet: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: temp.path().join("gateway-cache"),
             data_dir: temp.path().to_path_buf(),

@@ -418,7 +418,7 @@ pub(crate) fn list_launchable_browser_capsules(data_dir: &Path) -> Vec<Launchabl
     list_launchable_browser_capsules_for(data_dir, &crate::setup::detect_platform())
 }
 
-fn list_launchable_browser_capsules_for(
+pub(super) fn list_launchable_browser_capsules_for(
     data_dir: &Path,
     platform: &str,
 ) -> Vec<LaunchableBrowserCapsule> {

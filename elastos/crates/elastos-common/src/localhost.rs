@@ -43,6 +43,8 @@ pub fn is_system_only_backend_resource(uri: &str) -> bool {
         Some(
             "elacity"
                 | "elacity-sdk"
+                | "exit"
+                | "net"
                 | "gateway"
                 | "ipfs"
                 | "ipfs-cluster"

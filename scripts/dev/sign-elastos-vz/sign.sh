@@ -23,7 +23,7 @@ for binary in "$@"; do
   /usr/bin/codesign --force --sign - --entitlements "$ENTITLEMENTS" "$binary"
   /usr/bin/codesign --verify --strict "$binary"
   if ! /usr/bin/codesign -d --entitlements :- "$binary" 2>/dev/null |
-    grep -q "com.apple.security.virtualization"; then
+    grep "com.apple.security.virtualization" >/dev/null; then
     echo "missing com.apple.security.virtualization after signing: ${binary}" >&2
     exit 1
   fi

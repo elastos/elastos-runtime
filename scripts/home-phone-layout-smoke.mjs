@@ -19,7 +19,8 @@ import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 import { LONG_PRESS_MS } from "../capsules/home-gui/browser/shell-touch.js";
 import { EXTERNAL_LINK_OPEN_GUARD_MS } from "../capsules/home/browser/home-external-link.js";
@@ -594,16 +595,6 @@ async function listen() {
   const address = server.address();
   assert(address && typeof address === "object", "fixture server did not bind");
   return `http://127.0.0.1:${address.port}`;
-}
-
-function playwrightSpecifier() {
-  const configured = process.env.ELASTOS_PLAYWRIGHT_MODULE || "";
-  if (configured) {
-    return configured.startsWith("file:") ? configured : pathToFileURL(resolve(configured)).href;
-  }
-  return pathToFileURL(
-    join(repoRoot, "elastos/tools/browser-playwright-engine/node_modules/playwright/index.js"),
-  ).href;
 }
 
 function sleep(ms) {
@@ -3638,10 +3629,10 @@ function summarize(run) {
 
 async function launchEngine(playwright, engineId) {
   const engine = playwright[engineId];
-  const executable = engineId === "chromium" && process.env.ELASTOS_BROWSER_EXECUTABLE
-    ? process.env.ELASTOS_BROWSER_EXECUTABLE
+  const executable = engineId === "chromium"
+    ? (process.env.ELASTOS_BROWSER_EXECUTABLE || productSmokeLaunchOptions().executablePath)
     : engine.executablePath();
-  if (!existsSync(executable)) {
+  if (!executable || !existsSync(executable)) {
     return null;
   }
   const args = engineId === "chromium"
@@ -3676,8 +3667,7 @@ const report = { generatedAt: new Date().toISOString(), origin, source: sourceTr
 const failures = sourceFailures(report.source);
 const skippedEngines = [];
 try {
-  const imported = await import(playwrightSpecifier());
-  const playwright = imported.default || imported;
+  const playwright = await importProductSmokePlaywright();
   for (const engineId of requestedEngines) {
     assert(engineId === "chromium" || engineId === "webkit", `unsupported engine ${engineId}`);
     const browser = await launchEngine(playwright, engineId);
@@ -3709,11 +3699,11 @@ try {
   }
   assert(
     report.runs.length > 0,
-    `home-phone-layout-smoke ran no engine; requested ${requestedEngines.join(",")} but none is installed under elastos/tools/browser-playwright-engine`,
+    `home-phone-layout-smoke ran no engine; requested ${requestedEngines.join(",")} but Playwright Chromium is not installed`,
   );
   assert(
     !requestedEngines.includes("chromium") || report.runs.some((run) => run.engine === "chromium"),
-    "home-phone-layout-smoke needs the chromium engine from elastos/tools/browser-playwright-engine",
+    "home-phone-layout-smoke needs Playwright Chromium",
   );
   report.capsuleErrors = capsuleErrors;
   report.consoleErrors = consoleErrors;

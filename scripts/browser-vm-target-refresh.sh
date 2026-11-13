@@ -507,6 +507,7 @@ for required in \
     "$SOURCE_DIR/scripts/installed-provider-verify.sh" \
     "$SOURCE_DIR/scripts/browser-vm-engine-preflight.sh" \
     "$SOURCE_DIR/scripts/browser-vm-artifact-preflight.sh" \
+    "$SOURCE_DIR/scripts/browser-python.mjs" \
     "$SOURCE_DIR/scripts/browser-vm-target-preflight.sh" \
     "$SOURCE_DIR/scripts/browser-vm-engine-supervisor.mjs" \
     "$SOURCE_DIR/scripts/browser-vm-control-service.mjs" \
@@ -629,6 +630,9 @@ install_with_backup "$SOURCE_DIR/scripts/browser-vm-engine-preflight.sh" \
 install_with_backup "$SOURCE_DIR/scripts/browser-vm-artifact-preflight.sh" \
     "$DATA_DIR/scripts/browser-vm-artifact-preflight.sh" 755 \
     "browser-vm-artifact-preflight.sh"
+install_with_backup "$SOURCE_DIR/scripts/browser-python.mjs" \
+    "$DATA_DIR/scripts/browser-python.mjs" 755 \
+    "browser-python.mjs"
 install_with_backup "$SOURCE_DIR/scripts/browser-vm-target-preflight.sh" \
     "$DATA_DIR/scripts/browser-vm-target-preflight.sh" 755 \
     "browser-vm-target-preflight.sh"

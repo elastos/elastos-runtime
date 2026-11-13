@@ -2,7 +2,6 @@
 
 import {
   assert,
-  brave,
   chromium,
   CORS_HEADERS,
   inertSystemApiResponse,
@@ -12,6 +11,7 @@ import {
   startSystemFixtureServer,
   textResponse,
 } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 function deferred() {
   let resolvePromise;
@@ -291,7 +291,7 @@ async function main() {
   try {
     browser = await chromium.launch({
       headless: true,
-      executablePath: brave,
+      ...productSmokeLaunchOptions(),
     });
     const page = await browser.newPage({
       viewport: { width: 1280, height: 900 },

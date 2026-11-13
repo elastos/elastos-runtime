@@ -20,6 +20,7 @@ function fixture(t) {
   for (const file of ["scripts/browser-vm-artifact-preflight.sh", "kvm"]) {
     fs.writeFileSync(path.join(f.root, file), "disposable readiness identity fixture");
   }
+  fs.copyFileSync(new URL("./browser-python.mjs", import.meta.url), path.join(f.root, "scripts/browser-python.mjs"));
   const env = { ELASTOS_BROWSER_VM_PLATFORM: "darwin-arm64", ELASTOS_BROWSER_VM_DATA_DIR: f.root,
     ELASTOS_BROWSER_VM_VZ_SUPERVISOR: f.launcher, [turnKey]: f.turn };
   return { ...f, env };
@@ -171,6 +172,57 @@ for (const tool of ["debugfs", "python3"]) {
     assert.equal(c.probes.length, 2, `a new ${tool} on the same PATH must not reuse readiness`);
   });
 }
+
+for (const platform of ["darwin-arm64", "linux-arm64"]) {
+  for (const input of ["module", "bundled-node", "PATH-node"]) {
+    for (const change of ["remove", "replace"]) {
+      test(`mechanics (mock probe): ${platform} ${input} ${change} invalidates ready`, async t => {
+        const c = controller(t, { platform });
+        const tools = path.join(c.root, "tools");
+        fs.mkdirSync(tools);
+        c.env.PATH = `${tools}:${process.env.PATH}`;
+        const file = input === "module" ? path.join(c.root, "scripts/browser-python.mjs")
+          : path.join(input === "bundled-node" ? path.join(c.root, "bin") : tools, "node");
+        if (input !== "module") {
+          fs.writeFileSync(file, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`, { mode: 0o755 });
+        }
+        assert.deepEqual(await c.read(), ready);
+        assert.deepEqual(await c.read(), ready);
+        assert.equal(c.probes.length, 1);
+        if (change === "remove") fs.unlinkSync(file);
+        else {
+          fs.copyFileSync(file, `${file}.new`);
+          fs.renameSync(`${file}.new`, file);
+        }
+        const result = await c.read();
+        assert.equal(c.probes.length, 2, "a changed preflight input requires a new probe");
+        assert.deepEqual(result, input === "module" && change === "remove" ? unavailable() : ready);
+      });
+    }
+  }
+}
+
+test("mechanics (mock probe): bundled Node takes priority over PATH Node", async t => {
+  const c = controller(t);
+  const tools = path.join(c.root, "tools");
+  fs.mkdirSync(tools);
+  const bundled = path.join(c.root, "bin/node");
+  const fallback = path.join(tools, "node");
+  const wrapper = `#!/bin/sh\nexec "${process.execPath}" "$@"\n`;
+  fs.writeFileSync(bundled, wrapper, { mode: 0o755 });
+  fs.writeFileSync(fallback, wrapper, { mode: 0o755 });
+  c.env.PATH = `${tools}:${process.env.PATH}`;
+  assert.deepEqual(await c.read(), ready);
+  fs.writeFileSync(fallback, `${wrapper}# changed fallback\n`);
+  assert.deepEqual(await c.read(), ready);
+  assert.equal(c.probes.length, 1, "the shell selects the executable bundled Node");
+  fs.chmodSync(bundled, 0o644);
+  assert.deepEqual(await c.read(), ready);
+  assert.equal(c.probes.length, 2, "the shell now selects Node from PATH");
+  fs.writeFileSync(fallback, wrapper);
+  assert.deepEqual(await c.read(), ready);
+  assert.equal(c.probes.length, 3, "the selected PATH Node is now a cache input");
+});
 
 test("mechanics (mock probe): an empty PATH entry resolves debugfs in the current directory", async t => {
   const c = controller(t);

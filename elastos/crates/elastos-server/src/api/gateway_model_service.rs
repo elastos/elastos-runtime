@@ -41,6 +41,31 @@ const MODEL_RUN_INDEX_SCHEMA: &str = "elastos.services.model-runs/v1";
 const MODEL_RUN_INDEX_MAX: usize = 512;
 const MODEL_REQUEST_MAX_BYTES: usize = 256 * 1024;
 const AUTHORITY_DEADLINE: Duration = Duration::from_secs(1);
+pub(crate) const MODEL_AUTHORITY_TIMEOUT_CODE: &str = "authority_timeout";
+pub(crate) const MODEL_AUTHORITY_TIMEOUT_MESSAGE: &str =
+    "The Home could not check model access in time. Try again.";
+
+#[derive(Debug)]
+struct ModelAuthorityDeadline;
+
+impl std::fmt::Display for ModelAuthorityDeadline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("model authority deadline")
+    }
+}
+
+impl std::error::Error for ModelAuthorityDeadline {}
+
+fn authority_timed_out(err: &anyhow::Error) -> bool {
+    err.chain()
+        .any(|cause| cause.downcast_ref::<ModelAuthorityDeadline>().is_some())
+}
+
+enum AuthorityCheck {
+    Active(ModelServiceGrant),
+    Inactive,
+    TimedOut,
+}
 
 /// A Share or Disconnect decision waits for an admitted create to reach the
 /// provider. New creates then observe the completed owner decision.
@@ -545,9 +570,7 @@ fn refused_invocation(
     }
     json!({ "ok": true, "result": {
         "status": "error", "code": "remote_model_invocation_refused",
-        "reason": code, "message": if dispatch == "provider_refused" {
-            elastos_model_contract::MODEL_REQUEST_EXPIRED_MESSAGE
-        } else { "This invocation was refused before provider dispatch." },
+        "reason": code,         "message": invocation_refusal_message(code),
         "refusal": binding,
     } })
 }
@@ -955,7 +978,7 @@ async fn read_authority(
     let network = network.clone();
     let grant_id = grant_id.to_string();
     let requester_principal_id = requester_principal_id.to_string();
-    tokio::time::timeout(
+    match tokio::time::timeout(
         AUTHORITY_DEADLINE,
         tokio::task::spawn_blocking(move || {
             super::gateway_home_system::authorize_home_service_model(
@@ -969,20 +992,47 @@ async fn read_authority(
         }),
     )
     .await
-    .context("model authority deadline")??
+    {
+        Ok(Ok(result)) => result,
+        Ok(Err(err)) => Err(anyhow::anyhow!("model authority task failed: {err}")),
+        Err(_) => Err(anyhow::Error::new(ModelAuthorityDeadline)),
+    }
 }
 
-async fn grant_is_active(
+pub(crate) fn invocation_refusal_message(reason: &str) -> &'static str {
+    if reason == elastos_model_contract::MODEL_REQUEST_EXPIRED_CODE {
+        elastos_model_contract::MODEL_REQUEST_EXPIRED_MESSAGE
+    } else if reason == MODEL_AUTHORITY_TIMEOUT_CODE {
+        MODEL_AUTHORITY_TIMEOUT_MESSAGE
+    } else {
+        "This invocation was refused before provider dispatch."
+    }
+}
+
+async fn check_authority(
     data_dir: &Path,
     network: &crate::collaboration_network::VerifiedCollaborationNetworkProfile,
     source: iroh::PublicKey,
     grant_id: &str,
     requester_principal_id: &str,
-) -> bool {
-    let now = crate::auth::now_ts();
+    now: u64,
+) -> AuthorityCheck {
     match read_authority(data_dir, network, source, grant_id, requester_principal_id).await {
-        Ok(grant) => grant.validate(&source, requester_principal_id, now).is_ok(),
-        Err(_) => false,
+        Ok(grant) => match grant.validate(&source, requester_principal_id, now) {
+            Ok(()) => AuthorityCheck::Active(grant),
+            Err(err) => {
+                tracing::info!("remote model grant rejected: {err}");
+                AuthorityCheck::Inactive
+            }
+        },
+        Err(err) if authority_timed_out(&err) => {
+            tracing::info!("remote model authority check timed out");
+            AuthorityCheck::TimedOut
+        }
+        Err(err) => {
+            tracing::info!("remote model authority denied: {err}");
+            AuthorityCheck::Inactive
+        }
     }
 }
 
@@ -1291,34 +1341,38 @@ pub(crate) async fn invoke(
         may_share_hosted,
     ) = match operation {
         "offers_list" | "runs_create" => {
-            let grant =
-                match read_authority(data_dir, &network, source, grant_id, requester_principal_id)
-                    .await
-                {
-                    Ok(grant) => grant,
-                    Err(err) => {
-                        tracing::info!("remote model authority denied: {err}");
-                        return refused_before_dispatch(
-                            data_dir,
-                            &source_did,
-                            request,
-                            "denied",
-                            "model grant is not active for this requester",
-                            false,
-                        );
-                    }
-                };
-            if let Err(err) = grant.validate(&source, requester_principal_id, now) {
-                tracing::info!("remote model grant rejected: {err}");
-                return refused_before_dispatch(
-                    data_dir,
-                    &source_did,
-                    request,
-                    "denied",
-                    "model grant is not active for this requester",
-                    false,
-                );
-            }
+            let grant = match check_authority(
+                data_dir,
+                &network,
+                source,
+                grant_id,
+                requester_principal_id,
+                now,
+            )
+            .await
+            {
+                AuthorityCheck::Active(grant) => grant,
+                AuthorityCheck::TimedOut => {
+                    return refused_before_dispatch(
+                        data_dir,
+                        &source_did,
+                        request,
+                        MODEL_AUTHORITY_TIMEOUT_CODE,
+                        MODEL_AUTHORITY_TIMEOUT_MESSAGE,
+                        false,
+                    );
+                }
+                AuthorityCheck::Inactive => {
+                    return refused_before_dispatch(
+                        data_dir,
+                        &source_did,
+                        request,
+                        "denied",
+                        "model grant is not active for this requester",
+                        false,
+                    );
+                }
+            };
             let include_local = super::gateway_home_system::local_model_offer_is_shared(
                 data_dir,
                 &grant.provider_principal_id,
@@ -1501,15 +1555,28 @@ pub(crate) async fn invoke(
     if held_slot {
         #[cfg(test)]
         await_create_race_barrier(data_dir, CreateRacePoint::BeforeDispatch).await;
-        if !grant_is_active(data_dir, &network, source, grant_id, requester_principal_id).await {
-            let refusal = refused_before_dispatch(
-                data_dir,
-                &source_did,
-                request,
-                "denied",
-                "model grant is not active for this requester",
-                true,
-            );
+        let pre_dispatch = match check_authority(
+            data_dir,
+            &network,
+            source,
+            grant_id,
+            requester_principal_id,
+            crate::auth::now_ts(),
+        )
+        .await
+        {
+            AuthorityCheck::Active(_) => None,
+            AuthorityCheck::TimedOut => Some((
+                MODEL_AUTHORITY_TIMEOUT_CODE,
+                MODEL_AUTHORITY_TIMEOUT_MESSAGE,
+            )),
+            AuthorityCheck::Inactive => {
+                Some(("denied", "model grant is not active for this requester"))
+            }
+        };
+        if let Some((code, message)) = pre_dispatch {
+            let refusal =
+                refused_before_dispatch(data_dir, &source_did, request, code, message, true);
             release_run_slot(data_dir, now, &reservation_key);
             return refusal;
         }
@@ -1682,10 +1749,24 @@ pub(crate) async fn invoke(
         }
     };
     drop(share_guard);
-    if held_slot
-        && !grant_is_active(data_dir, &network, source, grant_id, requester_principal_id).await
-    {
-        let _ = cancel_grant_runs(registry, data_dir, grant_id).await;
+    if held_slot {
+        // The run already started. A late timeout cannot prove the grant is
+        // still active, so cancel it.
+        match check_authority(
+            data_dir,
+            &network,
+            source,
+            grant_id,
+            requester_principal_id,
+            crate::auth::now_ts(),
+        )
+        .await
+        {
+            AuthorityCheck::Active(_) => {}
+            AuthorityCheck::Inactive | AuthorityCheck::TimedOut => {
+                let _ = cancel_grant_runs(registry, data_dir, grant_id).await;
+            }
+        }
     }
     json!({ "ok": true, "result": result })
 }

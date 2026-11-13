@@ -3,13 +3,9 @@ import http from "node:http";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
-const playwrightModule = process.env.ELASTOS_PLAYWRIGHT_MODULE
-  ? await import(pathToFileURL(process.env.ELASTOS_PLAYWRIGHT_MODULE).href)
-  : createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url))("playwright");
-const { chromium } = playwrightModule.chromium ? playwrightModule : playwrightModule.default;
+const { chromium } = await importProductSmokePlaywright();
 const multiSelectModifier = process.platform === "darwin" ? "Meta" : "Control";
 
 function browserAssetRoot(capsuleName) {
@@ -2011,7 +2007,7 @@ async function run() {
   const server = createServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
-  const browser = await chromium.launch({ headless: true, executablePath: process.env.BRAVE_BIN || undefined });
+  const browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
   let context;
   try {
     context = await browser.newContext({ acceptDownloads: true });

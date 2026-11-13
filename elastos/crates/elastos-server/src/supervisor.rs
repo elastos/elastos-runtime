@@ -1547,6 +1547,7 @@ impl Supervisor {
         let collaboration_presence_product_port = self.collaboration_presence_product_port.clone();
         let collaboration_discovery_service = self.collaboration_discovery_service.clone();
         let carrier_endpoint = self.carrier_endpoint.clone();
+        let capability_manager = self.capability_manager.clone();
 
         let task = tokio::spawn({
             let listen_addr = listen_addr.clone();
@@ -1558,6 +1559,7 @@ impl Supervisor {
                         &listen_addr,
                         Some(registry),
                         crate::api::gateway::GatewayCollaborationContext {
+                            capability_manager,
                             chat_product_port: collaboration_chat_product_port,
                             presence_product_port: collaboration_presence_product_port,
                             discovery_service: collaboration_discovery_service,

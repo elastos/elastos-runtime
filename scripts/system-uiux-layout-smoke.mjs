@@ -2,13 +2,13 @@
 
 import {
   assert,
-  brave,
   chromium,
   jsonResponse,
   makeAppearanceRecord,
   makeSystemSummary,
   startSystemFixtureServer,
 } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 import { assertPhoneDrawer } from "./lib/phone-drawer-assert.mjs";
 
 function appearanceRecord() {
@@ -438,7 +438,7 @@ async function main() {
   try {
     browser = await chromium.launch({
       headless: true,
-      executablePath: brave,
+      ...productSmokeLaunchOptions(),
     });
     const page = await browser.newPage({
       viewport: { width: 1280, height: 900 },

@@ -39,7 +39,9 @@ engine_supervisor="${ELASTOS_BROWSER_VM_ENGINE_SUPERVISOR:-${data_dir}/bin/brows
 target_preflight="${ELASTOS_BROWSER_VM_TARGET_PREFLIGHT:-${repo_root}/scripts/browser-vm-target-preflight.sh}"
 debugfs_bin="${ELASTOS_DEBUGFS_BIN:-$(command -v debugfs 2>/dev/null || true)}"
 
-exec "${ELASTOS_BROWSER_VM_PYTHON:-python3}" - \
+node="${data_dir}/bin/node"
+if [[ ! -x "$node" ]]; then node="$(command -v node)"; fi
+exec "$node" "${repo_root}/scripts/browser-python.mjs" "$data_dir" "${ELASTOS_BROWSER_VM_PYTHON:-python3}" - \
   "$platform" \
   "$data_dir" \
   "$control_socket" \

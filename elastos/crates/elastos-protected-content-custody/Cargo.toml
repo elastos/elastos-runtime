@@ -16,8 +16,6 @@ ghash = { version = "0.5", features = ["zeroize"] }
 hkdf = "0.12"
 hpke = { version = "0.13.0", default-features = false, features = ["std", "x25519"] }
 nix = { version = "0.29", features = ["fs", "user"] }
-rand_core = { version = "0.6", features = ["getrandom"] }
-rand_chacha = "0.3"
 # hpke 0.13 and vsss-rs 6.0.1 depend on different rand_core generations.
 rand09 = { package = "rand", version = "0.9.5" }
 rand10 = { package = "rand", version = "0.10" }

@@ -30,7 +30,7 @@ function fixture(t, { system = "Darwin", arch = "arm64" } = {}) {
     "--source-dir", source, "--data-dir", data, "--node-bin", process.execPath, ...args], {
     encoding: "utf8", timeout: 10000, env: { ...env, PATH: `${commands}:${process.env.PATH}` },
   });
-  return { data, native, refresh };
+  return { data, native, refresh, env };
 }
 
 test("refresh preserves admitted native bytes and installs no retired launcher or pool", t => {
@@ -82,4 +82,31 @@ test("an explicitly configured remote Engine preserves gateway authority", t => 
   assert.equal(fs.readFileSync(configPath, "utf8"), config);
   assert.equal(fs.existsSync(path.join(f.data, "bin/browser-vm-remote-vz-launcher")), true);
   assert.equal(fs.existsSync(f.native), false);
+});
+
+test("refresh installs the Python module for the installed artifact preflight", t => {
+  const f = fixture(t);
+  assert.equal(fs.existsSync(path.join(f.data, "scripts/browser-python.mjs")), false);
+  const result = f.refresh();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const runPreflight = () => spawnSync("bash", [path.join(f.data, "scripts/browser-vm-artifact-preflight.sh"),
+    "--host-readiness"], {
+    encoding: "utf8", timeout: 10000,
+    env: { ...f.env, ELASTOS_BROWSER_VM_DATA_DIR: f.data, ELASTOS_BROWSER_VM_PLATFORM: "darwin-arm64" },
+  });
+  const preflight = runPreflight();
+  assert.equal(preflight.status, 0, preflight.stdout + preflight.stderr);
+  assert.deepEqual(JSON.parse(preflight.stdout), {
+    schema: "elastos.browser.engine-readiness/v1",
+    readiness: { state: "unavailable", reason: process.platform === "darwin" && process.arch === "arm64"
+      ? "preparation_required" : "host_unsupported" },
+  });
+  assert.deepEqual(fs.readFileSync(path.join(f.data, "scripts/browser-python.mjs")),
+    fs.readFileSync(path.join(source, "scripts/browser-python.mjs")));
+  const verify = f.refresh("--verify-only");
+  assert.equal(verify.status, 0, verify.stdout + verify.stderr);
+  fs.unlinkSync(path.join(f.data, "scripts/browser-python.mjs"));
+  const missingModule = runPreflight();
+  assert.equal(missingModule.status, 1, missingModule.stdout + missingModule.stderr);
+  assert.match(missingModule.stderr, /Cannot find module .*browser-python\.mjs/);
 });

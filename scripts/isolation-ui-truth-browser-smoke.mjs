@@ -1,17 +1,14 @@
 #!/usr/bin/env node
 // Source UI fixtures for #170. Installed journeys require the candidate receipt.
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, resolve, relative, isAbsolute, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const playwrightModule = process.env.ELASTOS_PLAYWRIGHT_MODULE
-  ? await import(pathToFileURL(process.env.ELASTOS_PLAYWRIGHT_MODULE).href)
-  : createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url))("playwright");
-const { chromium } = playwrightModule.chromium ? playwrightModule : playwrightModule.default;
+const { chromium } = await importProductSmokePlaywright();
 const cid = `bafybei${"a".repeat(52)}`;
 const requests = [];
 const misses = [];
@@ -127,7 +124,7 @@ await new Promise(done => server.listen(0, "127.0.0.1", done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 let browser;
 try {
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
   const pageErrors = []; page.on("pageerror", error => pageErrors.push(error.message));
   const frame = () => page.frames().find(f => f !== page.mainFrame());

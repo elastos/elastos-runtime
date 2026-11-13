@@ -25,7 +25,9 @@ crosvm="${ELASTOS_BROWSER_VM_CROSVM_BIN:-${data_dir}/bin/crosvm}"
 kernel="${ELASTOS_BROWSER_VM_KERNEL:-${data_dir}/bin/vmlinux}"
 vz_supervisor="${ELASTOS_BROWSER_VM_VZ_SUPERVISOR:-${data_dir}/bin/browser-vz-engine-supervisor}"
 
-python3 - "$platform" "$data_dir" "$control_socket" "$rootfs" "$crosvm" "$kernel" "$vz_supervisor" <<'PY'
+node="${data_dir}/bin/node"
+if [[ ! -x "$node" ]]; then node="$(command -v node)"; fi
+"$node" "$(dirname "${BASH_SOURCE[0]}")/browser-python.mjs" "$data_dir" "${ELASTOS_BROWSER_VM_PYTHON:-python3}" - "$platform" "$data_dir" "$control_socket" "$rootfs" "$crosvm" "$kernel" "$vz_supervisor" <<'PY'
 import json
 import os
 import pathlib

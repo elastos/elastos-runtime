@@ -7291,6 +7291,23 @@ fn home_services_peer_contacts_path(
         .ok_or_else(|| anyhow::anyhow!("invalid Services peer contacts state root"))
 }
 
+pub(super) fn browser_exit_contact_names(
+    data_dir: &std::path::Path,
+    context: &HomeLaunchTokenContext,
+    discovery_service: Option<
+        &crate::collaboration_discovery_runtime::CollaborationDiscoveryService,
+    >,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    // The existing read-only projection accepts only this principal's verified contacts.
+    Ok(
+        home_services_peer_contacts_state(data_dir, context, discovery_service)?
+            .contacts
+            .into_values()
+            .map(|contact| (contact.peer_id, contact.display_name))
+            .collect(),
+    )
+}
+
 fn home_services_peer_contacts_state(
     data_dir: &std::path::Path,
     context: &HomeLaunchTokenContext,

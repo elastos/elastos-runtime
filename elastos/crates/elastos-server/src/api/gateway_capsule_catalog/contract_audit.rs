@@ -921,6 +921,7 @@ mod tests {
             collaboration_presence_product_port: None,
             carrier_endpoint: None,
             collaboration_discovery_service: None,
+            browser_internet: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             cache_dir: data_dir.join("cache"),
             data_dir: data_dir.to_path_buf(),

@@ -16,6 +16,7 @@ import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, jsonResponse, makeAppearanceRecord, makeSystemSummary, startSystemFixtureServer }
   from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const screenshots = process.env.HOME_UPDATE_RELOAD_SCREENSHOTS || "";
@@ -215,7 +216,7 @@ try {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ headless: true, ...(process.env.BRAVE_BIN ? { executablePath: process.env.BRAVE_BIN } : {}) });
+  browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
 
   stage = "first load";
   const page = await openHome(browser, origin, { viewport: { width: 1280, height: 800 } });

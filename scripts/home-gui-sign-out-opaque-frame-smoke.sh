@@ -30,18 +30,7 @@ mkdir -p "$PROFILE_DIR/profile"
 
 chromium_bin="${ELASTOS_HOME_CHROMIUM_BIN:-}"
 if [[ -z "$chromium_bin" ]]; then
-    for candidate in \
-        "$HOME"/Library/Caches/ms-playwright/chromium-*/chrome-mac-*/"Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" \
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
-        /usr/bin/chromium \
-        /usr/bin/chromium-browser \
-        /usr/bin/google-chrome; do
-        if [[ -x "$candidate" ]]; then
-            chromium_bin="$candidate"
-            break
-        fi
-    done
+    chromium_bin="$(cd "$ROOT" && node --input-type=module -e 'import { productSmokeLaunchOptions } from "./scripts/product-smoke-browser.mjs"; process.stdout.write(productSmokeLaunchOptions().executablePath || "")')"
 fi
 if [[ -z "$chromium_bin" || ! -x "$chromium_bin" ]]; then
     echo "Chromium not found; set ELASTOS_HOME_CHROMIUM_BIN" >&2

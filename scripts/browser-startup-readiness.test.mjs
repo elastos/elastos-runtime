@@ -1,27 +1,29 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import vm from "node:vm";
+import { startBrowser } from "../capsules/browser/browser/browser-startup.js";
+import { browserInternetGranted } from "../capsules/browser/browser/browser-runtime-api.js";
 
-const source = readFileSync(new URL("../capsules/browser/browser/browser.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../capsules/browser/browser/index.html", import.meta.url), "utf8");
 const input = html.match(/<input\b[^>]*\bid="browser-url"[^>]*>/)?.[0];
-const startup = source.slice(source.lastIndexOf("const requestedStartupUrl ="));
 function deferred() {
   let resolve, reject;
   const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
   return { promise, resolve, reject };
 }
-function start({ expired = false, params = new URLSearchParams() } = {}) {
+function start({ expired = false, consent = "granted", params = new URLSearchParams() } = {}) {
   const summary = deferred(), open = deferred();
   const address = { disabled: /\sdisabled(?:\s|=|\/?>)/.test(input), value: "" };
   const calls = [], messages = [];
-  const readiness = { loading: false };
+  const readiness = { loading: false, summaryReads: 0 };
   const setLoading = loading => { readiness.loading = loading; address.disabled = loading; };
-  const settled = vm.runInNewContext(startup, {
+  const settled = startBrowser({
+    explicitBrowserOpen: true, browserInternetPollingActive: true, internetContinuationUrl: null,
+    watchInternetPermission: () => { readiness.watching = true; },
+    checkBrowserInternet: () => browserInternetGranted(async () => ({status:consent})),
     unloadCleanupStarted: false, homeWindowCloseInFlight: false, homeWindowTerminalCloseConfirmed: false,
     params, DEFAULT_URL: "https://ela.city/", addressInput: address,
-    updateNavState() {}, setLoading, fetchBrowserSummary: () => summary.promise,
+    updateNavState() {}, setLoading, fetchBrowserSummary: () => { readiness.summaryReads++; return summary.promise; },
     restoreRuntimePageViewer: async () => false,
     requestRuntimeOpen: async url => { calls.push(url); setLoading(true); try { await open.promise; } finally { setLoading(false); } },
     isAuthoritySessionError: () => expired, requestHomeRelaunch: () => { calls.push("renew-authority"); return true; },
@@ -77,4 +79,12 @@ test("expired initial authority leaves controls pending while Home renews it", a
   await state.settled;
   assert.deepEqual(state.calls, ["renew-authority"]);
   assert.equal(state.address.disabled, true);
+});
+
+test("blocked startup watches permission but never reads ownership or opens a page", async () => {
+  const state = start({consent:"refused"});
+  await state.settled;
+  assert.deepEqual(state.calls, []);
+  assert.equal(state.readiness.watching, true);
+  assert.equal(state.readiness.summaryReads, 0);
 });

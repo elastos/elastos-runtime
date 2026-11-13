@@ -2,8 +2,9 @@
 
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const homeRoot = join(repoRoot, "capsules/home/browser");
@@ -319,21 +320,6 @@ async function listen() {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function playwrightSpecifier() {
-  const configured = process.env.ELASTOS_PLAYWRIGHT_MODULE || "";
-  if (configured) {
-    return configured.startsWith("file:")
-      ? configured
-      : pathToFileURL(resolve(configured)).href;
-  }
-  return pathToFileURL(
-    join(
-      repoRoot,
-      "elastos/tools/browser-playwright-engine/node_modules/playwright/index.js",
-    ),
-  ).href;
-}
-
 async function waitForHostResult(frame, predicate) {
   await frame.waitForFunction(
     (serializedPredicate) => {
@@ -350,10 +336,10 @@ async function waitForHostResult(frame, predicate) {
 const origin = await listen();
 let browser = null;
 try {
-  const imported = await import(playwrightSpecifier());
-  const { chromium } = imported.default || imported;
+  const { chromium } = await importProductSmokePlaywright();
   browser = await chromium.launch({
     headless: true,
+    ...productSmokeLaunchOptions(),
     args: [
       "--disable-background-networking",
       "--disable-breakpad",

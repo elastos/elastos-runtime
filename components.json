@@ -1487,6 +1487,21 @@
         }
       }
     },
+    "browser-python": {
+      "install_path": "scripts/browser-python.mjs",
+      "platforms": {
+        "darwin-arm64": {
+          "strategy": "source-build",
+          "source": "scripts/browser-python.mjs",
+          "release_path": "browser-python-darwin-arm64"
+        },
+        "linux-arm64": {
+          "strategy": "source-build",
+          "source": "scripts/browser-python.mjs",
+          "release_path": "browser-python-linux-arm64"
+        }
+      }
+    },
     "browser-selkies-control-service": {
       "install_path": "scripts/browser-selkies-control-service.mjs",
       "platforms": {
@@ -1660,6 +1675,7 @@
         "browser-vm-control-service",
         "browser-vm-control-service-module",
         "browser-vm-artifact-preflight",
+        "browser-python",
         "browser-selkies-control-service",
         "browser-vm-linux-network",
         "browser-vz-engine-supervisor",
