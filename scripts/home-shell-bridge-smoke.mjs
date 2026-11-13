@@ -533,6 +533,10 @@ globalThis.fetch = async (url, init = {}) => {
       });
     }
     if (body?.target === "browser") {
+      if (body.query?.browser_instance === renewalBrowserInstance && renewalBrowserLaunchCount > 0) {
+        assert(init.headers?.["x-elastos-browser-renew-token"] === "browser-renewal-old-token",
+          "Browser renewal did not reach Runtime with the existing credential");
+      }
       if (body?.query?.browser_instance === renewalBrowserInstance) {
         renewalBrowserLaunchCount += 1;
         const renewalToken = renewalBrowserLaunchCount === 1
@@ -549,7 +553,7 @@ globalThis.fetch = async (url, init = {}) => {
       }
       return jsonResponse({
         attach_kind: "iframe",
-        route: "/apps/browser/?home_origin=http%3A%2F%2Flocalhost%3A61180#home_token=browser-token",
+        route: "/apps/browser/?browser_instance=browser:focus-owner&home_origin=http%3A%2F%2Flocalhost%3A61180#home_token=browser-token",
         target: "browser",
         title: "Browser",
       });
@@ -2445,7 +2449,9 @@ sendChildMessage("null", browserFrameWindow, {
   const source={parent:shellFrameWindow,postMessage(){}};
   sendChildMessage("null",source,{type:"home:app-ready",homeToken:"inbox-token"});
   const focus=()=>shellMessages.filter(m=>m.payload?.command==="focus-browser");
-  const intent={type:"home:focus-browser",homeToken:"inbox-token"};const before=focus().length;
+  const intent={type:"home:focus-browser",homeToken:"inbox-token",requestId:"permission-request"};const before=focus().length;
+  sendChildMessage("null",browserFrameWindow,{type:"home:open-target",homeToken:"browser-token",target:"inbox",query:{notification_id:"browser-internet:permission",browser_request_id:"permission-request"}});
+  sendChildMessage("null",browserFrameWindow,{type:"home:open-target",homeToken:"browser-token",target:"inbox",query:{notification_id:"browser-internet:permission"}});
   sendChildMessage("null",browserFrameWindow,{...intent,homeToken:"browser-token"});
   sendChildMessage("null",source,{...intent,target:"browser"});
   sendChildMessage("https://evil.invalid",source,intent);
@@ -2453,6 +2459,10 @@ sendChildMessage("null", browserFrameWindow, {
   assert(focus().length===before,"Only exact trusted Inbox focus is accepted");
   sendChildMessage("null",source,intent);
   assert(focus().length===before+1,"Inbox focus reaches GUI without opening a new window");
+  assert(!Object.hasOwn(shellMessages.filter(m=>m.payload?.command==="open-target" && m.payload.target==="inbox").at(-1).payload.query,"browser_request_id"), "Home keeps window routing out of Inbox selection");
+  assert(focus().at(-1).payload.browserInstance === "browser:focus-owner", "Home binds Allow focus to the Browser that opened its permission entry");
+  sendChildMessage("null",source,intent);
+  assert(!focus().at(-1).payload.browserInstance, "Home consumes the requester after Allow");
 }
 const connectorLaunchesBeforeBrowserRequest = requests.filter(
   (request) =>
@@ -2566,6 +2576,25 @@ assert(
   browserRenewalReplies,
 );
 
+// Home retains the registered Browser window as the renewal boundary.
+for (const [name, overrides] of [
+  ["other-app", { renewHomeToken: "people-token" }],
+  ["other-window", { query: { browser_instance: "browser:other" } }],
+  ["other-target", { target: "people" }],
+  ["extra-field", { unexpected: true }],
+]) {
+  const requestId = `denied-browser-renewal-${name}`;
+  const before = requests.filter(request => request.url === "/api/apps/home/launch").length;
+  sendChildMessage("null", shellFrameWindow, { type: "home:launch-target", requestId,
+    target: "browser", query: { browser_instance: renewalBrowserInstance },
+    homeToken: "gui-token", renewHomeToken: "browser-renewal-old-token", ...overrides });
+  const reply = await waitForReply(shellMessages, requestId);
+  assert(reply.payload?.error === "Home denied the Browser renewal",
+    "Home accepted a Browser renewal outside its registered window");
+  assert(requests.filter(request => request.url === "/api/apps/home/launch").length === before,
+    "a rejected Browser renewal reached Runtime");
+}
+
 const secondRenewalRequest = {
   ...firstRenewalRequest,
   requestId: "browser-renewal-request-2",
@@ -2574,6 +2603,7 @@ sendChildMessage("null", browserRenewalFrameWindow, secondRenewalRequest);
 sendChildMessage("null", shellFrameWindow, {
   type: "home:launch-target",
   requestId: "launch-browser-renewal-fresh",
+  renewHomeToken: "browser-renewal-old-token",
   target: "browser",
   query: { browser_instance: renewalBrowserInstance },
   homeToken: "gui-token",
@@ -2609,6 +2639,9 @@ assert(
   "Browser renewal accepted a substituted GUI source or fresh token",
   browserRenewalReplies,
 );
+sendChildMessage("null", browserRenewalFrameWindow, {
+  type: "home:app-ready", homeToken: "browser-renewal-fresh-token",
+});
 sendChildMessage("null", shellFrameWindow, renewalSuccess);
 assert(
   browserRenewalReplies.length === 2 &&
