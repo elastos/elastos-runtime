@@ -365,7 +365,9 @@ fn shell_content_security_policy(
             " 'wasm-unsafe-eval'",
             "worker-src 'none'; media-src 'none'".to_string(),
         )),
-        "elacity-player" => Some(("", format!("media-src {home_source} blob:"))),
+        // The default header allowed Home media only; intersecting it with
+        // the old Player meta policy still excluded blob media.
+        "elacity-player" => Some(("", format!("media-src {home_source}"))),
         _ => None,
     };
     if let Some((script_eval, media)) = viewer_limits {
@@ -1252,7 +1254,7 @@ mod tests {
                 " 'wasm-unsafe-eval'",
                 "worker-src 'none'; media-src 'none'",
             ),
-            ("elacity-player", "", "media-src HOME blob:"),
+            ("elacity-player", "", "media-src HOME"),
         ] {
             write_test_wasm_browser_capsule(data_dir.path(), app, "Viewer", "viewer");
             fs::write(
