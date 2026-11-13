@@ -2,37 +2,21 @@
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signer, SigningKey};
+use std::io::Read;
 use tokio::net::TcpStream;
 
-// Matches @walletconnect/relay-auth's locked signJWT/encodeIss implementation.
-fn relay_auth() -> String {
-    let key = SigningKey::generate(&mut rand::rngs::OsRng);
-    let mut public = vec![0xed, 0x01];
-    public.extend_from_slice(key.verifying_key().as_bytes());
-    let issuer = format!("did:key:z{}", bs58::encode(public).into_string());
-    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA","typ":"JWT"}"#);
-    let payload = URL_SAFE_NO_PAD.encode(
-        serde_json::to_vec(&json!({
-            "iss": issuer, "sub": gateway_home_token::uuid_like_token(),
-            "aud": "wss://relay.walletconnect.org", "iat": now_ts(), "exp": now_ts() + 300,
-        }))
-        .unwrap(),
-    );
-    let data = format!("{header}.{payload}");
-    format!(
-        "{data}.{}",
-        URL_SAFE_NO_PAD.encode(key.sign(data.as_bytes()).to_bytes())
-    )
-}
-
-#[tokio::test]
-#[ignore = "operator acceptance: needs ELASTOS_WALLETCONNECT_PROJECT_FILE and the real relay"]
-async fn walletconnect_real_project_opens_through_runtime_and_exit() {
+fn operator_project() -> String {
     let file = std::env::var_os("ELASTOS_WALLETCONNECT_PROJECT_FILE")
         .expect("set ELASTOS_WALLETCONNECT_PROJECT_FILE");
-    let bytes = gateway_walletconnect::read_bytes(std::path::Path::new(&file), 129)
-        .expect("read bounded operator project file")
-        .expect("operator project file exists");
+    // The trusted operator input may be a pipe on a rented test machine. Read
+    // at most 130 bytes; the driver owns the pipe and the test time limit.
+    let mut bytes = Vec::new();
+    std::io::Read::take(
+        std::fs::File::open(file).expect("open operator project file"),
+        130,
+    )
+    .read_to_end(&mut bytes)
+    .expect("read bounded operator project file");
     let project = std::str::from_utf8(&bytes)
         .expect("operator project file is UTF-8")
         .trim();
@@ -40,6 +24,10 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
     assert!(project
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+    project.to_owned()
+}
+
+async fn real_fixture(project: &str) -> Fixture {
     let mut f = Fixture::new().await;
     assert!(!f.addr.ends_with(":8090"));
     let config_path = f.data.path().join(WALLETCONNECT_CONFIG_PATH);
@@ -91,10 +79,39 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
         )
         .await
         .unwrap();
+    f
+}
+
+// Matches @walletconnect/relay-auth's locked signJWT/encodeIss implementation.
+fn relay_auth() -> String {
+    let key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let mut public = vec![0xed, 0x01];
+    public.extend_from_slice(key.verifying_key().as_bytes());
+    let issuer = format!("did:key:z{}", bs58::encode(public).into_string());
+    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA","typ":"JWT"}"#);
+    let payload = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "iss": issuer, "sub": gateway_home_token::uuid_like_token(),
+            "aud": "wss://relay.walletconnect.org", "iat": now_ts(), "exp": now_ts() + 300,
+        }))
+        .unwrap(),
+    );
+    let data = format!("{header}.{payload}");
+    format!(
+        "{data}.{}",
+        URL_SAFE_NO_PAD.encode(key.sign(data.as_bytes()).to_bytes())
+    )
+}
+
+#[tokio::test]
+#[ignore = "operator acceptance: needs ELASTOS_WALLETCONNECT_PROJECT_FILE and the real relay"]
+async fn walletconnect_real_project_opens_through_runtime_and_exit() {
+    let project = operator_project();
+    let f = real_fixture(&project).await;
     f.allow().await;
     let mut url = url::Url::parse("wss://relay.walletconnect.org/").unwrap();
     url.query_pairs_mut()
-        .append_pair("projectId", project)
+        .append_pair("projectId", &project)
         .append_pair("auth", &relay_auth());
     let mut socket = f.connect(&f.connector, url.as_str()).await;
     let first = tokio::time::timeout(Duration::from_secs(30), socket.next()).await;
@@ -119,5 +136,78 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
         "real relay subscription failed"
     );
     socket.close(None).await.unwrap();
-    println!("PASS: Runtime -> Exit harness -> authenticated Reown WSS upgrade and subscription; project <project-id>; ephemeral localhost port; no 401/403");
+    println!("PASS: Runtime -> Exit harness -> authenticated Reown WSS upgrade and subscription; project file set; ephemeral localhost port; no 401/403");
+}
+
+#[tokio::test]
+#[ignore = "operator acceptance: real relay, pinned SDK, Playwright Chromium and WebKit"]
+async fn walletconnect_real_project_opaque_preflight() {
+    use tokio::io::AsyncWriteExt;
+    let project = operator_project();
+    let f = real_fixture(&project).await;
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    for name in ["home", "wallet-walletconnect"] {
+        let destination = f.data.path().join("capsules").join(name);
+        activate_test_capsule(f.data.path(), name);
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::copy(
+            repo.join("capsules").join(name).join("capsule.json"),
+            destination.join("capsule.json"),
+        )
+        .unwrap();
+        copy_operator_site(
+            &repo.join("capsules").join(name).join("browser"),
+            &destination.join("browser"),
+        );
+        write_test_wasm_entrypoint(f.data.path(), name);
+    }
+    let capsule = f.data.path().join("capsules/wallet-walletconnect");
+    let sdk =
+        std::fs::read(repo.join("capsules/wallet-walletconnect/vendor/reown-appkit.js")).unwrap();
+    std::fs::write(capsule.join("vendor/reown-appkit.js"), &sdk).unwrap();
+    crate::auth::atomic_write(
+        &f.data.path().join(WALLETCONNECT_CONFIG_PATH),
+        &serde_json::to_vec(&json!({
+            "schema": WALLETCONNECT_CONFIG_SCHEMA, "project_id": project,
+            "sdk_package": WALLETCONNECT_SDK_PACKAGE, "sdk_version": "2.23.9",
+            "sdk_sha256": format!("{:x}", Sha256::digest(&sdk)),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::copy(
+        repo.join("scripts/lib/walletconnect-real-browser-fixture.mjs"),
+        capsule.join("browser/wc-real-fixture.js"),
+    )
+    .unwrap();
+    std::fs::write(
+        capsule.join("browser/wc-real.html"),
+        "<!doctype html><script type=\"module\" src=\"./wc-real-fixture.js\"></script>",
+    )
+    .unwrap();
+    f.allow().await;
+    let input = serde_json::to_vec(&json!({
+        "origin": format!("http://{}", f.addr), "connector": f.connector, "projectId": project,
+    }))
+    .unwrap();
+    let mut child = tokio::process::Command::new("node")
+        .arg(repo.join("scripts/walletconnect-real-preflight-smoke.mjs"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(&input).await.unwrap();
+    let output = tokio::time::timeout(Duration::from_secs(150), child.wait_with_output())
+        .await
+        .expect("real relay browser gate timeout")
+        .unwrap();
+    println!("{}", String::from_utf8_lossy(&output.stdout));
+    // The Node driver emits only bounded, value-free evidence. SDK diagnostics
+    // can contain relay credentials, so stderr remains private to this process.
+    assert!(
+        output.status.success(),
+        "real relay opaque preflight failed; see structured evidence (project file set)"
+    );
 }
