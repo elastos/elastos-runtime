@@ -1,109 +1,84 @@
-// Opt-in preflight before paired recovery: use real Runtime resources and relay.
-// The Rust source gateway supplies private options through stdin.
-// SDK logs stay in process memory. Evidence contains resource names and status.
+// Opt-in admission preflight before paired recovery. Private fixture options
+// enter through stdin; browser evidence contains resource names and status.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { runtimeStorage } from './walletconnect/runtime-storage.mjs';
 import { importProductSmokePlaywright } from './product-smoke-browser.mjs';
-const require = createRequire(new URL('./walletconnect/package.json', import.meta.url));
-const { SignClient } = require('@walletconnect/sign-client');
-const { privateKeyToAccount, generatePrivateKey } = require('viem/accounts');
 let input = '';
 for await (const chunk of process.stdin) { input += chunk; assert.ok(input.length < 16384); }
 const options = JSON.parse(input);
-const result = { project: 'project file set', runs: [] };
+const result = { project:'project file set', runs:[] };
 const evidence = process.env.WALLETCONNECT_SCREENSHOTS;
-let rejections = 0;
-const logger = Object.fromEntries(['trace','debug','info','warn','error','fatal'].map(level => [level, () => {}]));
-logger.child = () => logger; logger.level = 'silent';
-process.on('unhandledRejection', () => rejections++);
-// Prevent third-party diagnostic output from exposing URLs or credentials.
 const emit = console.log.bind(console);
 console.log = console.warn = console.error = () => {};
-let exitCode = 1;
+const deadline = setTimeout(() => { result.timeout = true; emit(JSON.stringify(result)); process.exit(1); }, 120000);
+const expectedCsp = `sandbox allow-scripts allow-forms allow-downloads; default-src ${options.origin}; script-src 'self' 'wasm-unsafe-eval' ${options.origin}; style-src ${options.origin} 'unsafe-inline'; img-src ${options.origin} blob: data:; connect-src ${options.origin} ${options.origin.replace(/^http/, 'ws')}; frame-src ${options.origin}; object-src 'none'; base-uri 'none'; form-action ${options.origin}`;
 try {
   const playwright = await importProductSmokePlaywright();
   for (const engine of ['chromium', 'webkit']) {
-    const run = { engine, walletReady:false, paired:false };
+    const run = { engine, paired:false, network:[] };
     result.runs.push(run);
-    let browser, wallet;
+    let browser, frame;
     try {
-      const signer = privateKeyToAccount(generatePrivateKey());
-      run.phase = 'wallet-init';
-      const values = Object.create(null);
-      const storage = runtimeStorage(async (_, input) => {
-        if (input) { const {key,value} = JSON.parse(input.body); if (value === null) delete values[key]; else values[key] = value; }
-        return structuredClone(values);
-      });
-      wallet = await SignClient.init({ projectId:options.projectId, logger, telemetryEnabled:false, storage,
-        metadata:{name:'Disposable test wallet', description:'Isolated recovery fixture', url:'http://localhost', icons:[]} });
-      await wallet.core.relayer.transportOpen();
-      run.walletReady = true;
       run.phase = 'browser';
-      wallet.on('session_proposal', async proposal => {
-        const approval = await wallet.approve({ id:proposal.id, namespaces:{eip155:{
-          chains:['eip155:1'], accounts:[`eip155:1:${signer.address}`],
-          methods:['personal_sign','eth_sendTransaction'], events:['accountsChanged','chainChanged'],
-        }} });
-        await approval.acknowledged();
-        run.paired = true;
-      });
-      wallet.on('session_request', async event => {
-        const request = event.params.request;
-        assert.equal(request.method, 'personal_sign');
-        const signature = await signer.signMessage({message:{raw:request.params[0]}});
-        await wallet.respond({ topic:event.topic, response:{id:event.id,jsonrpc:'2.0',result:signature} });
-      });
-      browser = await playwright[engine].launch({headless:true});
+      browser = await playwright[engine].launch({headless:true, timeout:15000});
       run.version = browser.version();
       const context = await browser.newContext();
-      await context.exposeBinding('walletConnectTestOptions', () => options);
+      // Fixture provisioning only; Runtime APIs still receive the capsule token.
+      await context.exposeBinding('walletConnectTestOptions', source => {
+        assert.equal(source.frame.url(), `${options.origin}/apps/wallet-walletconnect/wc-real.html`);
+        return options;
+      });
       await context.route('**/*', route => new URL(route.request().url()).origin === options.origin ? route.continue() : route.abort());
+      context.on('response', response => {
+        const path = new URL(response.url()).pathname;
+        if (path.startsWith('/api/apps/wallet-walletconnect/') && run.network.length < 128) {
+          run.network.push({resource:path.split('/').at(-1), status:response.status()});
+        }
+      });
       const page = await context.newPage();
       run.phase = 'home';
-      const home = await page.goto(`${options.origin}/apps/home/`);
-      assert.equal(home.status(), 200);
-      const response = await fetch(`${options.origin}/apps/wallet-walletconnect/wc-real.html`);
-      run.csp = response.headers.get('content-security-policy');
-      assert.ok(run.csp.startsWith('sandbox allow-scripts allow-forms allow-downloads;'));
+      assert.equal((await page.goto(`${options.origin}/apps/home/`, {timeout:10000})).status(), 200);
       run.phase = 'capsule';
+      const document = page.waitForResponse(response => response.url() === `${options.origin}/apps/wallet-walletconnect/wc-real.html`, {timeout:10000});
       await page.evaluate(origin => {
-        const frame = document.createElement('iframe');
+        const frame = window.document.createElement('iframe');
+        frame.id = 'wc-real-preflight';
         frame.sandbox = 'allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts';
         frame.src = `${origin}/apps/wallet-walletconnect/wc-real.html`;
-        document.body.append(frame);
+        window.document.body.append(frame);
       }, options.origin);
-      await page.waitForFunction(() => document.querySelector('iframe')?.contentWindow != null);
-      let frame;
-      for (let i=0; i<100 && !frame; i++) { frame=page.frames().find(f => f.url().endsWith('/wc-real.html')); if (!frame) await new Promise(resolve => setTimeout(resolve,50)); }
+      run.csp = (await (await document).allHeaders())['content-security-policy'];
+      assert.equal(run.csp, expectedCsp);
+      frame = await (await page.waitForSelector('#wc-real-preflight', {timeout:10000})).contentFrame();
       assert.ok(frame);
       run.phase = 'runtime-store';
-      // The initial Runtime-backed keychain read precedes any pairing proposal.
-      await frame.waitForFunction(() => window.failed || document.querySelector('dialog[open] canvas')?.width > 0, null, {timeout:30000});
-      run.state = await frame.evaluate(() => ({origin:self.origin,phase:window.phase,
-        refusal:window.refusal, runtimeTrace:window.runtimeTrace, storageTrace:window.storageTrace}));
-      assert.equal(run.state.origin, 'null');
-      assert.equal(run.state.refusal, undefined, 'connector launch token must admit the Runtime SDK store');
-      assert.ok(await frame.locator('dialog[open] canvas').count());
+      await frame.waitForFunction(() => window.failed || document.querySelector('dialog[open] canvas')?.width > 0, null, {timeout:20000});
+      assert.equal(await frame.evaluate(() => window.failed), undefined);
+      assert.equal(await frame.evaluate(() => self.origin), 'null');
+      assert.equal(await frame.locator('dialog[open] canvas').count(), 1);
       run.status = 'PASS';
     } catch {
       run.status = 'FAIL';
     } finally {
-      await browser?.close();
-      if (wallet) {
-        for (const session of wallet.session.getAll()) await wallet.disconnect({topic:session.topic,reason:{code:6000,message:'Test ended'}}).catch(() => {});
-        await wallet.core.relayer.transportClose().catch(() => {});
+      if (frame) {
+        try {
+          run.state = await Promise.race([
+            frame.evaluate(() => ({origin:self.origin, phase:window.phase, refusal:window.refusal,
+              errorName:window.errorName, runtimeTrace:window.runtimeTrace, storageTrace:window.storageTrace})),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('state timeout')), 3000)),
+          ]);
+        } catch { run.stateUnavailable = true; }
       }
+      await browser?.close();
     }
-    // The brief requires an immediate stop at the first Chromium blocker.
+    // Stop at the first Chromium blocker, as required by the round's brief.
     if (engine === 'chromium' && run.status !== 'PASS') break;
   }
 } catch { result.setup = 'FAIL'; }
-exitCode = result.runs.length === 2 && result.runs.every(run => run.status === 'PASS') ? 0 : 1;
 if (evidence) {
   await mkdir(evidence, {recursive:true});
   await writeFile(`${evidence}/real-preflight.json`, JSON.stringify(result,null,2));
 }
+clearTimeout(deadline);
 emit(JSON.stringify(result));
-process.exit(exitCode);
+process.exit(result.runs.length === 2 && result.runs.every(run => run.status === 'PASS') ? 0 : 1);

@@ -1,18 +1,26 @@
-// This fixture uses the production routes with this frame's own launch token.
+// Playwright provisions private options; production routes receive only this
+// capsule's launch token. This preflight stops at the first resource refusal.
 import { installWalletConnectStorage } from './walletconnect-storage.mjs';
 window.storageTrace = [];
-installWalletConnectStorage(window, entry => window.storageTrace.push(entry));
+installWalletConnectStorage(window, entry => {
+  if (window.storageTrace.length < 128) window.storageTrace.push({
+    store:entry.store, operation:entry.operation, refused:!!entry.refused,
+    protocol:/wc@2:|keychain/i.test(entry.key || ''),
+  });
+});
 window.runtimeTrace = [];
 window.phase = 'options';
 const options = await window.walletConnectTestOptions();
 const origin = new URL(import.meta.url).origin;
 const api = async (resource, input = {}) => {
+  const trace = {resource, status:'request'};
+  if (window.runtimeTrace.length < 128) window.runtimeTrace.push(trace);
   const response = await fetch(`${origin}/api/apps/wallet-walletconnect/${resource}`, {
     ...input, headers: { 'content-type':'application/json', 'x-elastos-home-token':options.connector },
   });
-  window.runtimeTrace.push({ resource, status:response.status });
+  trace.status = response.status;
   if (!response.ok) {
-    window.refusal = { resource, status:response.status };
+    window.refusal ??= { resource, status:response.status };
     throw new Error('Runtime refused the connector resource');
   }
   return response.json();
@@ -28,6 +36,7 @@ try {
     metadata:{name:'Isolated recovery test', description:'Throwaway test wallet', url:origin, icons:[]},
   });
   window.phase = 'connected';
-} catch {
+} catch (error) {
+  window.errorName = ['Error','TypeError','SecurityError'].includes(error.name) ? error.name : 'Error';
   window.failed = true;
 }
