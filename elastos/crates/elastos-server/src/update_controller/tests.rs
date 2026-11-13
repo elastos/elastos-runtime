@@ -6023,17 +6023,25 @@ async fn download_progress_startup_removes_only_stale_private_temp_files_under_l
     let mut receipt: Receipt = read_private_json(&receipt_path).unwrap();
     receipt.schema = "invalid fixture".into();
     write_private(&receipt_path, &receipt).unwrap();
-    let stale = fixture.directory.join("download-progress.0123456789abcdef0123456789abcdef.tmp");
+    let stale = fixture
+        .directory
+        .join("download-progress.0123456789abcdef0123456789abcdef.tmp");
     fixture.file(&stale, b"interrupted progress", 0o600);
-    let unrelated = fixture.directory.join("status.0123456789abcdef0123456789abcdef.tmp");
+    let unrelated = fixture
+        .directory
+        .join("status.0123456789abcdef0123456789abcdef.tmp");
     fixture.file(&unrelated, b"keep", 0o600);
     let malformed = fixture.directory.join("download-progress.other.tmp");
     fixture.file(&malformed, b"keep", 0o600);
     let target = fixture.data.join("outside-progress");
     fixture.file(&target, b"keep target", 0o600);
-    let linked = fixture.directory.join("download-progress.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tmp");
+    let linked = fixture
+        .directory
+        .join("download-progress.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tmp");
     symlink(&target, &linked).unwrap();
-    let nested = fixture.directory.join("download-progress.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.tmp");
+    let nested = fixture
+        .directory
+        .join("download-progress.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.tmp");
     fs::create_dir(&nested).unwrap();
     let current = fixture.directory.join(DOWNLOAD_PROGRESS);
     fixture.file(&current, b"keep current", 0o600);
@@ -6043,9 +6051,16 @@ async fn download_progress_startup_removes_only_stale_private_temp_files_under_l
     assert!(stale.exists(), "live controller's write stays protected");
     drop(lease);
     assert!(run(receipt_path).await.is_err());
-    assert!(!stale.exists(), "orphan progress temporary removed at startup");
+    assert!(
+        !stale.exists(),
+        "orphan progress temporary removed at startup"
+    );
     for path in [&unrelated, &malformed, &target, &linked, &nested, &current] {
-        assert!(fs::symlink_metadata(path).is_ok(), "kept {}", path.display());
+        assert!(
+            fs::symlink_metadata(path).is_ok(),
+            "kept {}",
+            path.display()
+        );
     }
     assert_eq!(fs::read(target).unwrap(), b"keep target");
 }

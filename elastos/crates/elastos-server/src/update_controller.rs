@@ -885,6 +885,8 @@ pub async fn run(receipt_path: PathBuf) -> Result<()> {
         "controller receipt path differs from its data root"
     );
     let _lease = inherited_or_new_lease(&directory)?;
+    // The lease excludes every live progress writer. Cleanup is advisory too.
+    let _ = remove_stale_download_progress(&directory);
     validate_receipt(&receipt)?;
     let mut controller = Controller {
         receipt,
@@ -2239,6 +2241,46 @@ fn write_new_private(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
         .open(path)?;
     file.write_all(bytes)?;
     file.sync_all()?;
+    Ok(())
+}
+
+fn remove_stale_download_progress(directory: &Path) -> Result<()> {
+    check_controller_directory(directory)?;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(random) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("download-progress."))
+            .and_then(|name| name.strip_suffix(".tmp"))
+        else {
+            continue;
+        };
+        if random.len() != 32 || !random.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            continue;
+        }
+        let path = entry.path();
+        let before = fs::symlink_metadata(&path)?;
+        if !before.is_file() || before.file_type().is_symlink() {
+            continue;
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)?;
+        if check_private_file(&file).is_err() {
+            continue;
+        }
+        let opened = file.metadata()?;
+        let current = fs::symlink_metadata(&path)?;
+        if before.dev() == opened.dev()
+            && before.ino() == opened.ino()
+            && current.dev() == opened.dev()
+            && current.ino() == opened.ino()
+        {
+            fs::remove_file(path)?;
+        }
+    }
     Ok(())
 }
 
