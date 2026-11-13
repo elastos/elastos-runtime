@@ -244,20 +244,30 @@ fn stated_post_size(body: &str, uri: &str) -> Option<u64> {
     }
     let (number, unit) = size.split_once(' ')?;
     let scale = match unit {
-        "B" => 1.0,
-        "KB" => 1000.0,
-        "MB" => 1000.0 * 1000.0,
-        "GB" => 1000.0 * 1000.0 * 1000.0,
-        "TB" => 1000.0 * 1000.0 * 1000.0 * 1000.0,
+        "KB" => 1024.0,
+        "MB" => 1024.0 * 1024.0,
+        "GB" => 1024.0 * 1024.0 * 1024.0,
         _ => return None,
     };
     let value: f64 = number.parse().ok()?;
     (value.is_finite() && value >= 0.0).then_some((value * scale) as u64)
 }
 
-/// The size format Chat shows (`format_bytes` in the Chat app).
+/// The stable size format carried in Chat file posts, independent of UI formatting.
 pub(super) fn format_shared_file_size(size_bytes: u64) -> String {
-    crate::update::format_bytes(usize::try_from(size_bytes).unwrap_or(usize::MAX))
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let size = size_bytes as f64;
+    if size >= GB {
+        format!("{:.1} GB", size / GB)
+    } else if size >= MB {
+        format!("{:.1} MB", size / MB)
+    } else if size >= KB {
+        format!("{:.1} KB", size / KB)
+    } else {
+        format!("{size_bytes} bytes")
+    }
 }
 
 /// An incoming message cited by Chat, as this principal's stores hold it.
@@ -557,18 +567,14 @@ mod tests {
         assert!(!body_cites(&format!("see x{uri}"), &uri));
         assert!(!body_cites(&format!("https://a.example/{uri}"), &uri));
         assert!(!body_cites(&format!("ELASTOS://{V1}"), &uri));
-        assert_eq!(stated_post_size(&body, &uri), Some(1_000_000));
+        assert_eq!(stated_post_size(&body, &uri), Some(1024 * 1024));
         assert_eq!(
             stated_post_size(&format!("a · b · 30 bytes · {uri}"), &uri),
             Some(30)
         );
         assert_eq!(stated_post_size(&format!("see {uri}"), &uri), None);
-        assert_eq!(
-            stated_post_size(&format!("notes · 30 B · {uri}"), &uri),
-            Some(30)
-        );
-        assert_eq!(format_shared_file_size(30), "30 B");
-        assert_eq!(format_shared_file_size(3_565_158), "3.6 MB");
+        assert_eq!(format_shared_file_size(30), "30 bytes");
+        assert_eq!(format_shared_file_size(3_565_158), "3.4 MB");
     }
 
     #[test]
