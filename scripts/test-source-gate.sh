@@ -19,6 +19,7 @@ product_data() {
 
 prepush() {
   python3 scripts/ci-local-prepush-test.py
+  node --test scripts/capsule-script-browser-ci.test.mjs
 }
 
 product_ui() {

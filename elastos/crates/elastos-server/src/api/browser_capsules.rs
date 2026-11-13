@@ -358,6 +358,23 @@ fn shell_content_security_policy(
     } else {
         String::new()
     };
+    // Runtime owns the viewer policy, including the limits formerly in CSP
+    // meta tags. Exact Home sources also work for WebKit's opaque origins.
+    let viewer_limits = match app {
+        "gba-emulator" => Some((
+            " 'wasm-unsafe-eval'",
+            "worker-src 'none'; media-src 'none'".to_string(),
+        )),
+        // The default header allowed Home media only; intersecting it with
+        // the old Player meta policy still excluded blob media.
+        "elacity-player" => Some(("", format!("media-src {home_source}"))),
+        _ => None,
+    };
+    if let Some((script_eval, media)) = viewer_limits {
+        return Some(format!(
+            "sandbox allow-scripts allow-forms allow-downloads; default-src {home_source}; script-src 'self'{script_eval} {home_source}; style-src {home_source}; img-src {home_source} data:; connect-src {home_source}; {media}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+        ));
+    }
     let (default_source, style_source) = if is_home_host {
         ("'self'".to_string(), "'self'".to_string())
     } else {
@@ -379,9 +396,10 @@ fn shell_content_security_policy(
         "sandbox allow-scripts allow-forms allow-downloads; "
     };
     let script_source = if is_home_host {
-        "'self'"
+        "'self'".to_string()
     } else {
-        "'self' 'wasm-unsafe-eval'"
+        // WebKit does not match 'self' after the sandbox makes the origin opaque.
+        format!("'self' 'wasm-unsafe-eval' {home_source}")
     };
     Some(format!(
         "{sandbox}default-src {default_source}; script-src {script_source}; style-src {style_source}; img-src {default_source} blob: data:; connect-src {connect_source}; frame-src {default_source}; object-src 'none'; base-uri 'none'; form-action {default_source}{frame_ancestors}"
@@ -1008,6 +1026,10 @@ mod tests {
         .await;
         assert_eq!(first.status(), StatusCode::OK);
         let policy = first.headers()["content-security-policy"].clone();
+        assert!(policy
+            .to_str()
+            .unwrap()
+            .contains("script-src 'self' 'wasm-unsafe-eval' http://localhost:61180;"));
         assert!(policy.to_str().unwrap().starts_with("sandbox "));
         assert!(!policy.to_str().unwrap().contains("allow-same-origin"));
         assert!(policy
@@ -1173,7 +1195,7 @@ mod tests {
                 .unwrap();
             assert!(csp.contains("frame-src http://localhost:61180"));
             assert!(csp.contains("frame-ancestors http://localhost:61180"));
-            assert!(csp.contains("script-src 'self'"));
+            assert!(csp.contains("script-src 'self' 'wasm-unsafe-eval' http://localhost:61180;"));
             assert!(csp.starts_with("sandbox "));
             assert!(!csp.contains("allow-same-origin"));
             assert!(csp.contains("connect-src http://localhost:61180 ws://localhost:61180"));
@@ -1196,8 +1218,69 @@ mod tests {
             .get("content-security-policy")
             .and_then(|value| value.to_str().ok())
             .unwrap();
+        assert!(csp.contains("script-src 'self' 'wasm-unsafe-eval' https://home.example.test;"));
         assert!(csp.contains("connect-src https://home.example.test wss://home.example.test"));
         assert!(!csp.contains("ws://home.example.test"));
+    }
+
+    #[test]
+    fn opaque_document_policy_changes_only_the_script_source() {
+        let expected = "sandbox allow-scripts allow-forms allow-downloads; default-src http://localhost:61180; script-src 'self' 'wasm-unsafe-eval' http://localhost:61180; style-src http://localhost:61180 'unsafe-inline'; img-src http://localhost:61180 blob: data:; connect-src http://localhost:61180 ws://localhost:61180; frame-src http://localhost:61180; object-src 'none'; base-uri 'none'; form-action http://localhost:61180";
+        for (app, entrypoint, shell, ancestors) in [
+            ("documents", true, false, ""),
+            ("home", false, false, ""),
+            (
+                "home-gui",
+                true,
+                true,
+                "; frame-ancestors http://localhost:61180",
+            ),
+        ] {
+            assert_eq!(
+                shell_content_security_policy(&test_request_headers(), app, entrypoint, shell)
+                    .unwrap(),
+                format!("{expected}{ancestors}"),
+                "{app}: all other directives stay fixed"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn viewer_documents_keep_their_stricter_policy_on_each_document_route() {
+        let data_dir = tempfile::tempdir().unwrap();
+        for (app, script_eval, media) in [
+            (
+                "gba-emulator",
+                " 'wasm-unsafe-eval'",
+                "worker-src 'none'; media-src 'none'",
+            ),
+            ("elacity-player", "", "media-src HOME"),
+        ] {
+            write_test_wasm_browser_capsule(data_dir.path(), app, "Viewer", "viewer");
+            fs::write(
+                data_dir
+                    .path()
+                    .join("capsules")
+                    .join(app)
+                    .join("browser/details.html"),
+                "<p>Details</p>",
+            )
+            .unwrap();
+            for (host, scheme) in [("localhost:61180", "http"), ("home.example.test", "https")] {
+                let origin = format!("{scheme}://{host}");
+                let mut headers = test_request_headers();
+                headers.insert("host", host.parse().unwrap());
+                headers.insert("origin", origin.parse().unwrap());
+                let media = media.replace("HOME", &origin);
+                let expected = format!("sandbox allow-scripts allow-forms allow-downloads; default-src {origin}; script-src 'self'{script_eval} {origin}; style-src {origin}; img-src {origin} data:; connect-src {origin}; {media}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'");
+                for path in [None, Some("index.html"), Some("details.html")] {
+                    let response =
+                        serve_browser_capsule_path(data_dir.path(), &headers, app, path).await;
+                    assert_eq!(response.status(), StatusCode::OK, "{app}: {path:?}");
+                    assert_eq!(response.headers()["content-security-policy"], expected);
+                }
+            }
+        }
     }
 
     #[test]
