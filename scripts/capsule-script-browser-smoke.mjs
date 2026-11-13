@@ -124,6 +124,25 @@ try {
           if (app === 'elacity-player') {
             await frame.locator('#player-status').filter({ hasText: 'Protected video is unavailable.' }).waitFor();
           }
+          // DEMO-ISSUES A: under the policy Runtime serves, the Player's own
+          // attach opens a MediaSource. Chromium takes it only as a blob: URL,
+          // which the Player's media-src must allow.
+          if (app === 'elacity-player' && engine === 'chromium') {
+            const attached = await frame.evaluate(async () => {
+              const { attachMediaSource } = await import(document.querySelector('script[type="module"]').src);
+              const video = document.createElement('video');
+              const mediaSource = new MediaSource();
+              const objectUrl = attachMediaSource(video, mediaSource, URL);
+              const opened = await new Promise(resolve => {
+                const timer = setTimeout(() => resolve(false), 5000);
+                mediaSource.addEventListener('sourceopen', () => { clearTimeout(timer); resolve(true); }, { once: true });
+              });
+              if (objectUrl) URL.revokeObjectURL(objectUrl);
+              return { opened, blob: objectUrl.startsWith('blob:'), srcObject: video.srcObject === mediaSource };
+            });
+            assert.deepEqual(attached, { opened: true, blob: true, srcObject: false }, `${app}: MediaSource opens under the served policy`);
+            console.log(`MEDIA ${engine} ${app}: MediaSource opened through blob:`);
+          }
           assert.equal(await frame.evaluate(() => self.origin), 'null');
           console.log(`PASS ${engine} ${browser.version()} ${app}: scripts run; origin null; foreign script blocked`);
         } catch (error) {

@@ -37,7 +37,7 @@ for (const [name, mutate, message] of [
   ["missing shell required capsule", (_components, lists) => lists.shellRequired = lists.shellRequired.filter((name) => name !== "wallet-provider"), /shellRequired: missing Home capsule wallet-provider/],
   ["demo capsule in default publication", (_components, lists) => lists.shellDefault.push("gba-emulator"), /shellDefault: published capsules/],
   ["Home installation without publication parity", (value) => value.profiles.home.components = value.profiles.home.components.filter((name) => name !== "assistant"), /published capsules/],
-  ["different supported capsule sets", (_components, lists) => lists.shellRequired.push("key-provider"), /supported publish capsules must match/],
+  ["different supported capsule sets", (_components, lists) => lists.shellRequired.push("gba-emulator"), /supported publish capsules must match/],
 ]) {
   test(`publication data refuse ${name}`, () => {
     const value = clone(components), lists = clone(publish);

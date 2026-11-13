@@ -1,4 +1,8 @@
-use elastos_protected_content_provider_contracts::CencFmp4MediaIdentityV1;
+use elastos_protected_content_contracts::ContentAccessIdV1;
+use elastos_protected_content_provider_contracts::{
+    CencDashMediaIdentityV2, CencDashRenditionBytesV2, CencDashRenditionKindV2,
+    CencFmp4MediaIdentityV1,
+};
 
 const MIME_TYPE_V1: &str = "video/mp4";
 const CODECS_V1: &str = "avc1.640028,mp4a.40.2";
@@ -174,4 +178,40 @@ pub(crate) fn media_identity(seed: u8) -> CencFmp4MediaIdentityV1 {
     let (init_segment, encrypted_segments, mime_type, codecs) = media_components(seed);
     CencFmp4MediaIdentityV1::new_from_bytes(&init_segment, &encrypted_segments, mime_type, codecs)
         .unwrap()
+}
+
+/// A v2 DASH head over arbitrary bytes: the identity hashes whatever init and
+/// segment bytes it is given, so no valid fMP4 is needed. `kinds` is the
+/// rendition list in head order (video first when both).
+pub(crate) fn media_dash_identity(
+    seed: u8,
+    kinds: &[CencDashRenditionKindV2],
+) -> CencDashMediaIdentityV2 {
+    let init_segments = kinds
+        .iter()
+        .map(|kind| vec![seed, kind.code(), b'i', b'n', b'i', b't'])
+        .collect::<Vec<_>>();
+    let segments = kinds
+        .iter()
+        .map(|kind| {
+            (0..2u8)
+                .map(|index| vec![seed, kind.code(), index, b's', b'e', b'g'])
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let renditions = kinds
+        .iter()
+        .enumerate()
+        .map(|(index, kind)| CencDashRenditionBytesV2 {
+            kind: *kind,
+            timescale: 90_000,
+            init_segment: &init_segments[index],
+            segments: &segments[index],
+        })
+        .collect::<Vec<_>>();
+    CencDashMediaIdentityV2::new_from_bytes(
+        ContentAccessIdV1::new([seed; 16]).unwrap(),
+        &renditions,
+    )
+    .unwrap()
 }

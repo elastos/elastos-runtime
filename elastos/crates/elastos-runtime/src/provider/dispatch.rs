@@ -74,6 +74,12 @@ impl DispatchFence {
     pub async fn scope<F: Future>(&self, future: F) -> F::Output {
         CURRENT.scope(self.clone(), future).await
     }
+
+    /// The fence the current task runs in, if any. A task spawned to own an
+    /// operation captures it first and re-enters it with [`Self::scope`].
+    pub fn current() -> Option<Self> {
+        current()
+    }
 }
 
 tokio::task_local! { static CURRENT: DispatchFence; }

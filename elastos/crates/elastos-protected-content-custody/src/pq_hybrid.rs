@@ -98,11 +98,18 @@ pub(crate) fn mint_session_from_seed(seed: [u8; 32]) -> (SessionKemSecret, Sessi
     (SessionKemSecret { secret }, SessionKemPublic { public })
 }
 
-fn derive_wrap_key(shared_secret: &[u8], aad: &[u8]) -> Result<Zeroizing<[u8; 32]>, PqHybridError> {
+/// HKDF-SHA256 info = `domain ‖ u16 suite length ‖ suite ‖ u32 aad length ‖
+/// aad`. The share seal uses [`HKDF_DOMAIN_V1`]; viewer parts use their own
+/// domain (L5), so neither opens as the other.
+fn derive_wrap_key(
+    domain: &[u8],
+    shared_secret: &[u8],
+    aad: &[u8],
+) -> Result<Zeroizing<[u8; 32]>, PqHybridError> {
     let mut info = Vec::with_capacity(
-        HKDF_DOMAIN_V1.len() + 2 + CUSTODY_X_WING_AES256GCM_SUITE_ID_V1.len() + 4 + aad.len(),
+        domain.len() + 2 + CUSTODY_X_WING_AES256GCM_SUITE_ID_V1.len() + 4 + aad.len(),
     );
-    info.extend_from_slice(HKDF_DOMAIN_V1);
+    info.extend_from_slice(domain);
     info.extend_from_slice(&(CUSTODY_X_WING_AES256GCM_SUITE_ID_V1.len() as u16).to_be_bytes());
     info.extend_from_slice(CUSTODY_X_WING_AES256GCM_SUITE_ID_V1.as_bytes());
     info.extend_from_slice(&(aad.len() as u32).to_be_bytes());
@@ -158,7 +165,7 @@ fn seal_bound_inner(
         .public
         .encapsulate_deterministic(&encapsulation_randomness.into());
     let ciphertext: [u8; X_WING_DRAFT06_CIPHERTEXT_BYTES] = ciphertext.into();
-    let wrap_key = derive_wrap_key(shared_secret.as_slice(), aad)?;
+    let wrap_key = derive_wrap_key(HKDF_DOMAIN_V1, shared_secret.as_slice(), aad)?;
     let cipher =
         Aes256Gcm::new_from_slice(wrap_key.as_slice()).map_err(|_| PqHybridError::SealFailed)?;
     let wrapped_share = cipher
@@ -188,7 +195,7 @@ pub(crate) fn seal_bound<R: CryptoRng + RngCore>(
         .public
         .encapsulate_deterministic((&*encapsulation_randomness).into());
     let ciphertext: [u8; X_WING_DRAFT06_CIPHERTEXT_BYTES] = ciphertext.into();
-    let wrap_key = derive_wrap_key(shared_secret.as_slice(), aad)?;
+    let wrap_key = derive_wrap_key(HKDF_DOMAIN_V1, shared_secret.as_slice(), aad)?;
     let cipher =
         Aes256Gcm::new_from_slice(wrap_key.as_slice()).map_err(|_| PqHybridError::SealFailed)?;
     let wrapped_share = cipher
@@ -213,7 +220,7 @@ pub(crate) fn hybrid_unwrap_bound(
         .secret
         .decapsulate_slice(&envelope.ciphertext)
         .map_err(|_| PqHybridError::DecapFailed)?;
-    let wrap_key = derive_wrap_key(shared_secret.as_slice(), aad)?;
+    let wrap_key = derive_wrap_key(HKDF_DOMAIN_V1, shared_secret.as_slice(), aad)?;
     let cipher =
         Aes256Gcm::new_from_slice(wrap_key.as_slice()).map_err(|_| PqHybridError::UnsealFailed)?;
     let share = cipher
@@ -226,6 +233,78 @@ pub(crate) fn hybrid_unwrap_bound(
         )
         .map_err(|_| PqHybridError::UnsealFailed)?;
     Ok(Zeroizing::new(share))
+}
+
+/// Seals bytes of any length with the same suite (X-Wing draft06 +
+/// HKDF-SHA256 + AES-256-GCM) under `domain`: `ciphertext ‖ nonce ‖ AEAD
+/// output`. Every seal has its own encapsulation, so there is no nonce state.
+pub(crate) fn seal_bytes_with_domain<R: CryptoRng + RngCore>(
+    public: &SessionKemPublic,
+    domain: &[u8],
+    plaintext: &[u8],
+    aad: &[u8],
+    rng: &mut R,
+) -> Result<Vec<u8>, PqHybridError> {
+    let mut nonce = [0u8; PQ_HYBRID_AEAD_NONCE_BYTES];
+    rng.fill_bytes(&mut nonce);
+    let mut encapsulation_randomness = Zeroizing::new([0u8; X_WING_ENCAPSULATION_RANDOMNESS_BYTES]);
+    rng.fill_bytes(encapsulation_randomness.as_mut_slice());
+    let (ciphertext, shared_secret) = public
+        .public
+        .encapsulate_deterministic((&*encapsulation_randomness).into());
+    let ciphertext: [u8; X_WING_DRAFT06_CIPHERTEXT_BYTES] = ciphertext.into();
+    let wrap_key = derive_wrap_key(domain, shared_secret.as_slice(), aad)?;
+    let cipher =
+        Aes256Gcm::new_from_slice(wrap_key.as_slice()).map_err(|_| PqHybridError::SealFailed)?;
+    let sealed = cipher
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
+        .map_err(|_| PqHybridError::SealFailed)?;
+    let mut bytes = Vec::with_capacity(
+        X_WING_DRAFT06_CIPHERTEXT_BYTES + PQ_HYBRID_AEAD_NONCE_BYTES + sealed.len(),
+    );
+    bytes.extend_from_slice(&ciphertext);
+    bytes.extend_from_slice(&nonce);
+    bytes.extend_from_slice(&sealed);
+    Ok(bytes)
+}
+
+/// Opens [`seal_bytes_with_domain`] output with the same `domain` and `aad`.
+pub(crate) fn open_bytes_with_domain(
+    session: &SessionKemSecret,
+    domain: &[u8],
+    sealed: &[u8],
+    aad: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, PqHybridError> {
+    const AEAD_TAG_BYTES: usize = 16;
+    if sealed.len() < X_WING_DRAFT06_CIPHERTEXT_BYTES + PQ_HYBRID_AEAD_NONCE_BYTES + AEAD_TAG_BYTES
+    {
+        return Err(PqHybridError::InvalidCiphertext);
+    }
+    let (ciphertext, rest) = sealed.split_at(X_WING_DRAFT06_CIPHERTEXT_BYTES);
+    let (nonce, aead_output) = rest.split_at(PQ_HYBRID_AEAD_NONCE_BYTES);
+    let shared_secret = session
+        .secret
+        .decapsulate_slice(ciphertext)
+        .map_err(|_| PqHybridError::DecapFailed)?;
+    let wrap_key = derive_wrap_key(domain, shared_secret.as_slice(), aad)?;
+    let cipher =
+        Aes256Gcm::new_from_slice(wrap_key.as_slice()).map_err(|_| PqHybridError::UnsealFailed)?;
+    let plaintext = cipher
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: aead_output,
+                aad,
+            },
+        )
+        .map_err(|_| PqHybridError::UnsealFailed)?;
+    Ok(Zeroizing::new(plaintext))
 }
 
 #[cfg(test)]

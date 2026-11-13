@@ -38,6 +38,7 @@ const PASSKEY_STEP_UP_MAX_TOKEN_BYTES: usize = 32 * 1024;
 const PASSKEY_STEP_UP_STAGING_PREFIX: &str = ".passkey-step-up-stage-";
 const PASSKEY_STEP_UP_STAGING_SUFFIX: &str = ".tmp";
 const PASSKEY_STEP_UP_ACTORS: &[&str] = &[
+    CUSTODY_CAPSULE_ID,
     HOME_CAPSULE_ID,
     INBOX_CAPSULE_ID,
     SYSTEM_CAPSULE_ID,
@@ -599,6 +600,16 @@ fn consume_passkey_step_up_for_effect(
         }
     })?;
     Ok(effect)
+}
+
+/// Test seam: how many step-up approvals `data_dir` has spent.
+#[cfg(test)]
+pub(crate) fn consumed_passkey_step_up_count_for_test(data_dir: &Path) -> usize {
+    consumed_root(data_dir)
+        .ok()
+        .and_then(|root| std::fs::read_dir(root).ok())
+        .map(|entries| entries.count())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -1691,6 +1702,65 @@ mod tests {
         .await
         .unwrap_err();
         assert!(replay.to_string().contains("unavailable"));
+    }
+
+    /// A4 (R3): the admin's passkey for public metadata sharing is asked from
+    /// Inbox, over the request the server built. The Creator is no longer a
+    /// step-up actor, so its launch cannot begin one. The name is kept from
+    /// the Creator flow it replaces.
+    #[tokio::test]
+    async fn public_ipfs_enable_step_up_begins_for_the_creator() {
+        let fixture = fixture();
+        let creator_token = issue_home_projection_launch_token_with_context(
+            fixture.data_dir.path(),
+            CREATOR_CAPSULE_ID,
+            CREATOR_CAPSULE_ID,
+            &fixture.context,
+        )
+        .unwrap();
+        let refused = passkey_step_up_begin_inner(
+            &fixture.state,
+            &fixture.host_headers,
+            PasskeyStepUpBeginRequest {
+                schema: PASSKEY_STEP_UP_BEGIN_REQUEST_SCHEMA.to_string(),
+                app_token: creator_token,
+                operation: crate::public_metadata_consent::ENABLE_OPERATION.to_string(),
+                request: crate::public_metadata_consent::enable_step_up_request(),
+            },
+        )
+        .await;
+        assert!(refused.is_err(), "the Creator is not a step-up actor");
+
+        let inbox_token = issue_home_projection_launch_token_with_context(
+            fixture.data_dir.path(),
+            INBOX_CAPSULE_ID,
+            INBOX_CAPSULE_ID,
+            &fixture.context,
+        )
+        .unwrap();
+        let begin = passkey_step_up_begin_inner(
+            &fixture.state,
+            &fixture.host_headers,
+            PasskeyStepUpBeginRequest {
+                schema: PASSKEY_STEP_UP_BEGIN_REQUEST_SCHEMA.to_string(),
+                app_token: inbox_token,
+                operation: crate::public_metadata_consent::ENABLE_OPERATION.to_string(),
+                request: crate::public_metadata_consent::enable_step_up_request(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(begin.schema, PASSKEY_STEP_UP_BEGIN_RESULT_SCHEMA);
+        passkey_step_up_cancel_inner(
+            &fixture.state,
+            &fixture.host_headers,
+            PasskeyStepUpCancelRequest {
+                schema: PASSKEY_STEP_UP_CANCEL_REQUEST_SCHEMA.to_string(),
+                ceremony_id: begin.ceremony_id,
+            },
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

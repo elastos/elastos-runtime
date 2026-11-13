@@ -89,19 +89,115 @@ impl CustodyProviderStatePaths {
     }
 }
 
+/// The legacy root, as the provision command and the custody host give it:
+/// `base_path` is the root itself and `extra` is null.
+/// Plan B POOL-MINT: the folder a root's node shares are kept in, for the
+/// Runtime's host storage accounting (the provider's `NodeLocalShareStoreV1`
+/// root).
+pub fn node_share_store_dir(root: &Path) -> PathBuf {
+    root.join(DATA_ROOT_DIR).join(NODE_SHARE_STORE_DIR)
+}
+
+/// The share store's folder name under a root's data folder.
+pub const NODE_SHARE_STORE_DIR: &str = "node-shares";
+
 pub fn parse_state_root_from_provider_init(
     config: &serde_json::Value,
 ) -> Result<PathBuf, CustodyProviderStateRootError> {
+    match parse_state_roots_from_provider_init(config)?.as_slice() {
+        [CustodyStateRootV1 { path: None, root }] => Ok(root.clone()),
+        _ => Err(CustodyProviderStateRootError::InvalidConfig),
+    }
+}
+
+/// The most roots one provider process holds (user decision 2026-11-12
+/// 10:26; D5's eight pools per node). The Runtime's `max_roots` cannot raise it.
+pub const MAX_CUSTODY_ROOTS_V1: usize = 8;
+
+/// The root folder of the first pool a Runtime provisions, under `base_path`.
+pub const CUSTODY_INACTIVE_ROOT_PATH: &str = "inactive";
+/// The parent of every later pool root, `pools/<hex>`, under `base_path`.
+pub const CUSTODY_POOL_ROOTS_DIR: &str = "pools";
+
+/// One root of the set a custody provider holds (Plan B T2.1). `path` is the
+/// root's name under `base_path` (`inactive` or `pools/<hex>`), or none for
+/// the legacy root that `base_path` itself names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustodyStateRootV1 {
+    pub path: Option<String>,
+    pub root: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CustodyRootSetConfigV1 {
+    roots: Vec<CustodyRootConfigV1>,
+    max_roots: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CustodyRootConfigV1 {
+    path: String,
+}
+
+/// The roots an `init` names (Plan B T2.1). `extra: null` is one legacy root
+/// at `base_path`; otherwise `extra` is `{"roots": [{"path"}], "max_roots"}`
+/// and each root is `base_path/<path>`, in the order sent. More roots than
+/// `max_roots`, a path outside the layout or a repeated path is refused.
+pub fn parse_state_roots_from_provider_init(
+    config: &serde_json::Value,
+) -> Result<Vec<CustodyStateRootV1>, CustodyProviderStateRootError> {
     let parsed: ProviderInitConfigV1 = serde_json::from_value(config.clone())
         .map_err(|_| CustodyProviderStateRootError::InvalidConfig)?;
-    if parsed.read_only
-        || !parsed.allowed_paths.is_empty()
-        || !parsed.encryption_key.is_empty()
-        || !parsed.extra.is_null()
+    if parsed.read_only || !parsed.allowed_paths.is_empty() || !parsed.encryption_key.is_empty() {
+        return Err(CustodyProviderStateRootError::InvalidConfig);
+    }
+    let base = path_from_config_value(&parsed.base_path)?;
+    if parsed.extra.is_null() {
+        return Ok(vec![CustodyStateRootV1 {
+            path: None,
+            root: base,
+        }]);
+    }
+    let set: CustodyRootSetConfigV1 = serde_json::from_value(parsed.extra)
+        .map_err(|_| CustodyProviderStateRootError::InvalidConfig)?;
+    if set.roots.is_empty()
+        || set.max_roots > MAX_CUSTODY_ROOTS_V1
+        || set.roots.len() > set.max_roots
     {
         return Err(CustodyProviderStateRootError::InvalidConfig);
     }
-    path_from_config_value(&parsed.base_path)
+    let mut roots: Vec<CustodyStateRootV1> = Vec::with_capacity(set.roots.len());
+    for root in set.roots {
+        if !is_custody_root_path(&root.path)
+            || roots
+                .iter()
+                .any(|seen| seen.path.as_deref() == Some(root.path.as_str()))
+        {
+            return Err(CustodyProviderStateRootError::InvalidConfig);
+        }
+        roots.push(CustodyStateRootV1 {
+            root: base.join(&root.path),
+            path: Some(root.path),
+        });
+    }
+    Ok(roots)
+}
+
+/// Whether `path` names a root: `inactive`, or `pools/<hex>` with `<hex>` the
+/// 64 lowercase hex digits of the pool fingerprint.
+pub fn is_custody_root_path(path: &str) -> bool {
+    path == CUSTODY_INACTIVE_ROOT_PATH
+        || path
+            .strip_prefix(CUSTODY_POOL_ROOTS_DIR)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .is_some_and(|hex| {
+                hex.len() == 64
+                    && hex
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
 }
 
 pub fn parse_runtime_issuer_hex(
@@ -144,6 +240,21 @@ pub fn load_state_from_root(
         node_custody_secret,
         data_root: paths.data_root,
     })
+}
+
+/// Reads only the node's public key from a provisioned state root: the
+/// signing seed is read into a zeroizing buffer and dropped once the public
+/// key is derived. The custody secret and data root are left untouched, so a
+/// Runtime can check which node a root holds without loading its secrets.
+pub fn load_node_public_key(root: &Path) -> Result<NodePublicKey, CustodyProviderStateRootError> {
+    let root = normalize_root_path(root)?;
+    let paths = CustodyProviderStatePaths::derive(root);
+    validate_existing_path_components(&paths.root)?;
+    validate_owner_only_directory(&paths.root)?;
+    let node_signing_seed = read_hex32_file(&paths.node_signing_key)?;
+    let node_signing_key = SigningKey::from_bytes(&node_signing_seed);
+    NodePublicKey::new(node_signing_key.verifying_key().to_bytes())
+        .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)
 }
 
 /// Reads only the trusted Runtime issuer a provisioned state root was bound
@@ -635,6 +746,159 @@ fn open_owner_only_file(path: &Path) -> std::io::Result<File> {
     options.open(path)
 }
 
+/// The file, in the data root, that holds the highest pool-descriptor
+/// sequence this node accepted for each pool.
+pub const POOL_DESCRIPTOR_SEQUENCE_FILE: &str = "pool-descriptor-sequence";
+const POOL_DESCRIPTOR_SEQUENCE_TEMP_FILE: &str = "pool-descriptor-sequence.tmp";
+/// One line per pool, `<pool authority hex> <sequence>`; the node serves at
+/// most a few pools (D5), and the cap bounds what a read accepts.
+const MAX_POOL_DESCRIPTOR_SEQUENCE_ENTRIES: usize = 64;
+const MAX_POOL_DESCRIPTOR_SEQUENCE_FILE_BYTES: usize = MAX_POOL_DESCRIPTOR_SEQUENCE_ENTRIES * 96;
+
+/// The descriptor high-water mark (Plan B T1.5): a V2 release is accepted only
+/// from a pool descriptor at or above the newest one this node accepted for
+/// that pool, and an accepted release raises the mark. One provider process
+/// handles frames one at a time, so a read and the write after it never
+/// interleave with another frame.
+#[derive(Debug, Clone)]
+pub struct PoolDescriptorHighWaterV1 {
+    data_root: PathBuf,
+    path: PathBuf,
+    temp_path: PathBuf,
+}
+
+impl PoolDescriptorHighWaterV1 {
+    pub fn new(data_root: &Path) -> Self {
+        Self {
+            data_root: data_root.to_path_buf(),
+            path: data_root.join(POOL_DESCRIPTOR_SEQUENCE_FILE),
+            temp_path: data_root.join(POOL_DESCRIPTOR_SEQUENCE_TEMP_FILE),
+        }
+    }
+
+    /// Checks the marks on disk without changing them (S2-F3): a missing file
+    /// is no mark yet; an unsafe or malformed one fails.
+    pub fn validate(&self) -> Result<(), CustodyProviderStateRootError> {
+        self.read().map(drop)
+    }
+
+    /// Whether `sequence` is at or above the mark for `pool` (no mark yet:
+    /// any sequence).
+    pub fn admits(
+        &self,
+        pool: &[u8; 32],
+        sequence: u64,
+    ) -> Result<bool, CustodyProviderStateRootError> {
+        Ok(self
+            .read()?
+            .get(pool)
+            .is_none_or(|stored| sequence >= *stored))
+    }
+
+    /// Raises the mark for `pool` to `sequence`; a lower sequence leaves it.
+    pub fn record(
+        &self,
+        pool: &[u8; 32],
+        sequence: u64,
+    ) -> Result<(), CustodyProviderStateRootError> {
+        let mut marks = self.read()?;
+        if marks.get(pool).is_some_and(|stored| *stored >= sequence) {
+            return Ok(());
+        }
+        marks.insert(*pool, sequence);
+        if marks.len() > MAX_POOL_DESCRIPTOR_SEQUENCE_ENTRIES {
+            return Err(CustodyProviderStateRootError::MissingOrUnsafe);
+        }
+        self.write(&marks)
+    }
+
+    fn read(
+        &self,
+    ) -> Result<std::collections::BTreeMap<[u8; 32], u64>, CustodyProviderStateRootError> {
+        let metadata = match fs::symlink_metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(std::collections::BTreeMap::new())
+            }
+            Err(_) => return Err(CustodyProviderStateRootError::MissingOrUnsafe),
+        };
+        validate_owner_only_file_metadata(&metadata)?;
+        let file = open_owner_only_file(&self.path)
+            .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+        let open_metadata = file
+            .metadata()
+            .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+        validate_owner_only_file_metadata(&open_metadata)?;
+        require_same_file(&metadata, &open_metadata)?;
+        let mut raw = Vec::new();
+        file.take((MAX_POOL_DESCRIPTOR_SEQUENCE_FILE_BYTES + 1) as u64)
+            .read_to_end(&mut raw)
+            .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+        if raw.len() > MAX_POOL_DESCRIPTOR_SEQUENCE_FILE_BYTES {
+            return Err(CustodyProviderStateRootError::MissingOrUnsafe);
+        }
+        let text = std::str::from_utf8(&raw)
+            .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+        let mut marks = std::collections::BTreeMap::new();
+        for line in text.lines() {
+            let (pool, sequence) = line
+                .split_once(' ')
+                .ok_or(CustodyProviderStateRootError::MissingOrUnsafe)?;
+            let pool = parse_hex32_bytes(pool.as_bytes())
+                .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+            let sequence = sequence
+                .parse::<u64>()
+                .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+            if marks.insert(*pool, sequence).is_some()
+                || marks.len() > MAX_POOL_DESCRIPTOR_SEQUENCE_ENTRIES
+            {
+                return Err(CustodyProviderStateRootError::MissingOrUnsafe);
+            }
+        }
+        Ok(marks)
+    }
+
+    fn write(
+        &self,
+        marks: &std::collections::BTreeMap<[u8; 32], u64>,
+    ) -> Result<(), CustodyProviderStateRootError> {
+        let mut text = String::new();
+        for (pool, sequence) in marks {
+            text.push_str(&hex_bytes(pool));
+            text.push(' ');
+            text.push_str(&sequence.to_string());
+            text.push('\n');
+        }
+        match fs::remove_file(&self.temp_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(CustodyProviderStateRootError::MissingOrUnsafe),
+        }
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(nix::libc::O_NOFOLLOW);
+        }
+        let mut file = options
+            .open(&self.temp_path)
+            .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+        file.write_all(text.as_bytes())
+            .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+        file.sync_all()
+            .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+        validate_owner_only_file_metadata(
+            &file
+                .metadata()
+                .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?,
+        )?;
+        fs::rename(&self.temp_path, &self.path)
+            .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?;
+        sync_directory(&self.data_root)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -805,6 +1069,28 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn load_node_public_key_reads_the_node_key_without_the_custody_secret() {
+        let temp = tempfile::tempdir().unwrap();
+        let temp_root = fs::canonicalize(temp.path()).unwrap();
+        let parent = temp_root.join("parent");
+        owner_only_dir(&parent);
+        let root = parent.join("custody");
+        let provisioned = provision_state_root(&root, runtime_issuer(0x42)).unwrap();
+        // Only the signing seed is read: the custody secret may be gone.
+        fs::remove_file(root.join(NODE_CUSTODY_SECRET_FILE)).unwrap();
+        assert_eq!(
+            load_node_public_key(&root).unwrap(),
+            provisioned.node_public_key
+        );
+        fs::remove_file(root.join(NODE_SIGNING_KEY_FILE)).unwrap();
+        assert!(matches!(
+            load_node_public_key(&root),
+            Err(CustodyProviderStateRootError::MissingOrUnsafe)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn concurrent_exact_provisioning_reuses_identity_and_leaves_no_stage_root() {
         let temp = tempfile::tempdir().unwrap();
         let temp_root = fs::canonicalize(temp.path()).unwrap();
@@ -883,6 +1169,96 @@ mod tests {
             parse_state_root_from_provider_init(&config),
             Err(CustodyProviderStateRootError::InvalidConfig)
         ));
+        assert!(matches!(
+            parse_state_roots_from_provider_init(&config),
+            Err(CustodyProviderStateRootError::InvalidConfig)
+        ));
+
+        // Plan B T2.1: `extra` now carries the root set. The single-root
+        // parser (provision command, custody host) still refuses it.
+        let roots = serde_json::json!({
+            "base_path": parent,
+            "allowed_paths": [],
+            "read_only": false,
+            "encryption_key": "",
+            "extra": {"roots": [{"path": "inactive"}], "max_roots": 8},
+        });
+        assert!(matches!(
+            parse_state_root_from_provider_init(&roots),
+            Err(CustodyProviderStateRootError::InvalidConfig)
+        ));
+        assert_eq!(
+            parse_state_roots_from_provider_init(&roots).unwrap(),
+            vec![CustodyStateRootV1 {
+                path: Some("inactive".to_string()),
+                root: parent.join("inactive"),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_state_roots_from_provider_init_reads_the_root_set() {
+        let base = std::path::PathBuf::from("/data/protected-content/custody-provider");
+        let config = |extra: serde_json::Value| {
+            serde_json::json!({
+                "base_path": base,
+                "allowed_paths": [],
+                "read_only": false,
+                "encryption_key": "",
+                "extra": extra,
+            })
+        };
+        let pool = format!("pools/{}", "ab".repeat(32));
+
+        // `extra: null` is one legacy root at `base_path`.
+        assert_eq!(
+            parse_state_roots_from_provider_init(&config(serde_json::Value::Null)).unwrap(),
+            vec![CustodyStateRootV1 {
+                path: None,
+                root: base.clone(),
+            }]
+        );
+        // The set, in the order sent.
+        assert_eq!(
+            parse_state_roots_from_provider_init(&config(serde_json::json!({
+                "roots": [{"path": pool}, {"path": "inactive"}],
+                "max_roots": 2,
+            })))
+            .unwrap(),
+            vec![
+                CustodyStateRootV1 {
+                    path: Some(pool.clone()),
+                    root: base.join(&pool),
+                },
+                CustodyStateRootV1 {
+                    path: Some("inactive".to_string()),
+                    root: base.join("inactive"),
+                },
+            ]
+        );
+        for extra in [
+            serde_json::json!({"roots": [{"path": "inactive"}], "max_roots": 0}),
+            serde_json::json!({"roots": [{"path": "inactive"}, {"path": pool}], "max_roots": 1}),
+            serde_json::json!({"roots": [], "max_roots": 8}),
+            serde_json::json!({"roots": [{"path": "inactive"}, {"path": "inactive"}], "max_roots": 8}),
+            serde_json::json!({"roots": [{"path": "active"}], "max_roots": 8}),
+            serde_json::json!({"roots": [{"path": "pools/ab"}], "max_roots": 8}),
+            serde_json::json!({"roots": [{"path": format!("pools/{}", "AB".repeat(32))}], "max_roots": 8}),
+            serde_json::json!({"roots": [{"path": format!("{pool}/x")}], "max_roots": 8}),
+            serde_json::json!({"roots": [{"path": "pools/../inactive"}], "max_roots": 8}),
+            serde_json::json!({"roots": [{"path": "inactive"}]}),
+            serde_json::json!({"roots": [{"path": "inactive"}], "max_roots": MAX_CUSTODY_ROOTS_V1 + 1}),
+            serde_json::json!({"roots": [{"path": "inactive"}], "max_roots": 8, "more": 1}),
+            serde_json::json!({"roots": [{"path": "inactive", "more": 1}], "max_roots": 8}),
+        ] {
+            assert!(
+                matches!(
+                    parse_state_roots_from_provider_init(&config(extra.clone())),
+                    Err(CustodyProviderStateRootError::InvalidConfig)
+                ),
+                "{extra}"
+            );
+        }
     }
 
     #[test]

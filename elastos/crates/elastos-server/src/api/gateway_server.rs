@@ -124,6 +124,7 @@ async fn start_gateway_server_with_shutdown(
         cache_dir,
         data_dir: data_dir.clone(),
     };
+    super::install_custody_consent(&state);
     let browser_lifecycle_reconciler =
         super::gateway_browser::start_browser_lifecycle_reconciler(state.clone())
             .map_err(anyhow::Error::msg)?;

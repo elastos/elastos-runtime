@@ -4283,6 +4283,7 @@ async fn test_browser_personal_sign_queues_wallet_inbox_approval() {
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let (state, wallet_provider) =
         wallet_test_state_with_recording_provider(dir.path(), provider).await;
@@ -4384,6 +4385,7 @@ async fn test_browser_typed_data_sign_queues_wallet_inbox_approval() {
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
     let typed_data = json!({
@@ -4628,6 +4630,7 @@ async fn verify_browser_wallet_read_timeout_boundary(delay_wallet_refresh: bool)
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     });
     let chain: Arc<dyn Provider> = Arc::new(MockChainProvider);
     let delayed = Arc::new(DelayedFirstRawProvider::new(if delay_wallet_refresh {
@@ -4737,6 +4740,7 @@ async fn test_browser_chain_reads_route_through_chain_provider_without_inbox_app
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let (state, wallet_provider) =
         wallet_chain_test_state_with_recording_wallet_provider(dir.path(), provider).await;
@@ -5065,6 +5069,7 @@ async fn test_browser_eth_send_transaction_queues_wallet_inbox_approval() {
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let (state, wallet_provider) =
         wallet_chain_test_state_with_recording_wallet_provider(dir.path(), provider).await;
@@ -5174,6 +5179,7 @@ async fn test_browser_eth_send_transaction_allows_external_connector_approval() 
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app =
         gateway_router(wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await);
@@ -5289,6 +5295,7 @@ async fn test_browser_wallet_approval_status_returns_completed_signature() {
             origin,
         )]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
     let query = url::form_urlencoded::Serializer::new(String::new())
@@ -5467,6 +5474,7 @@ async fn test_browser_completed_transaction_approval_broadcasts_through_chain_pr
             "Browser page requests eth_sendTransaction on esc-mainnet",
         )]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app =
         gateway_router(wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await);
@@ -5588,6 +5596,7 @@ async fn test_browser_transaction_broadcast_record_failure_does_not_rebroadcast_
             "Browser page requests eth_sendTransaction on esc-mainnet; record-fails",
         )]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app =
         gateway_router(wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await);
@@ -5665,6 +5674,7 @@ async fn test_browser_uncertain_broadcast_reconciles_by_wallet_hash_without_rebr
             "Browser uncertain broadcast recovery",
         )]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let state = wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await;
     let app = gateway_router(state.clone());
@@ -5740,6 +5750,7 @@ async fn test_browser_chain_provider_unavailable_recovers_after_restart_without_
         accounts: TokioMutex::default(),
         approvals: TokioMutex::new(vec![approval.clone()]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let unavailable_app =
         gateway_router(wallet_test_state_with_provider(dir.path(), unavailable_provider).await);
@@ -5769,6 +5780,7 @@ async fn test_browser_chain_provider_unavailable_recovers_after_restart_without_
         accounts: TokioMutex::default(),
         approvals: TokioMutex::new(vec![approval]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let restarted_app = gateway_router(
         wallet_chain_test_state_with_wallet_provider(dir.path(), restarted_provider).await,
@@ -5823,6 +5835,7 @@ async fn test_browser_stale_wallet_operation_binding_is_rejected_before_broadcas
         accounts: TokioMutex::default(),
         approvals: TokioMutex::new(vec![approval]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app =
         gateway_router(wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await);
@@ -5871,6 +5884,7 @@ async fn test_browser_indeterminate_broadcast_never_rebroadcasts_without_chain_e
             "Browser indeterminate broadcast",
         )]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app =
         gateway_router(wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await);
@@ -5923,6 +5937,7 @@ async fn test_browser_wallet_hash_mismatch_fails_before_chain_dispatch() {
             "Browser receipt mismatch",
         )]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app =
         gateway_router(wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await);
@@ -5970,6 +5985,7 @@ async fn test_browser_audit_failure_is_pending_and_retry_does_not_rebroadcast() 
             "Browser audit-fails once",
         )]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app =
         gateway_router(wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await);
@@ -6083,6 +6099,7 @@ async fn external_browser_transaction_app(
             }
         })]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     (
         gateway_router(wallet_chain_test_state_with_wallet_provider(data_dir, provider).await),
@@ -6114,6 +6131,7 @@ async fn test_browser_requested_audit_failure_prevents_managed_chain_dispatch() 
             "Browser requested-audit-fails",
         )]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app =
         gateway_router(wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await);
@@ -8729,6 +8747,7 @@ async fn test_browser_account_access_creates_review_only_inbox_handoff_without_d
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
     let response = app
@@ -8874,6 +8893,7 @@ async fn test_browser_account_access_creates_review_for_connector_account() {
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
     let response = app
@@ -8958,6 +8978,7 @@ async fn test_browser_account_access_uses_selected_connector_when_managed_accoun
             "account_id": connector_account_id,
             "set_at": crate::auth::now_ts()
         })]),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
     let response = app
@@ -9038,6 +9059,7 @@ async fn test_browser_account_access_status_returns_only_exact_origin_bound_gran
         accounts: TokioMutex::default(),
         approvals: TokioMutex::new(vec![exact, tampered]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
     let query = url::form_urlencoded::Serializer::new(String::new())

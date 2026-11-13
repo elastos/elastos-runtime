@@ -20,7 +20,7 @@ import {
   homeClipboardTargetSupported,
   homeClipboardValidToken,
   homeClipboardValidWriteText,
-} from "./home-clipboard-protocol.js?v=home-20260726a";
+} from "./home-clipboard-protocol.js?v=home-20261111a";
 
 export {
   HOME_CLIPBOARD_CANCEL_SCHEMA,
@@ -272,6 +272,21 @@ export function createHomeClipboardPrompt({
       "Copy conversation invite?",
       "Continue to copy this short-lived conversation invite to this device clipboard.",
       "Copy invite",
+    ],
+    "custody:custody.identifier:write": [
+      "Copy Custody identifier?",
+      "Continue to copy this bounded technical identifier to this device clipboard.",
+      "Copy identifier",
+    ],
+    "custody:custody.fingerprint:write": [
+      "Copy Custody fingerprint?",
+      "Continue to copy this fingerprint to this device clipboard.",
+      "Copy",
+    ],
+    "custody:custody.pool_address:write": [
+      "Copy pool address?",
+      "Continue to copy this pool address to this device clipboard. A Home that adds it can buy and play the items this pool keeps.",
+      "Copy address",
     ],
   };
 

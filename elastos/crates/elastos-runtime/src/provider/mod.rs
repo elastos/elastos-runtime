@@ -14,13 +14,16 @@ mod linux_model_seccomp;
 mod local_model_broker;
 mod registry;
 
-pub use bridge::{CapsuleProvider, ProviderBridge, ProviderConfig as BridgeProviderConfig};
+pub use bridge::{
+    is_bridge_transport_failure, CapsuleProvider, ProviderBridge,
+    ProviderConfig as BridgeProviderConfig,
+};
 pub use registry::{
     decode_provider_stream_payload, EntryType, LocalIpfsCapacityObservation, Provider,
     ProviderByteRange, ProviderCarrierInvoker, ProviderCarrierRoute, ProviderError,
     ProviderInvocation, ProviderInvocationTransport, ProviderProgress, ProviderRegistration,
     ProviderRegistry, ProviderStreamOptions, ProviderStreamRead, ProviderStreamSession,
-    ProviderTransfer, ResourceAction, ResourceResponse,
+    ProviderTransfer, PublicIpfsOp, ResourceAction, ResourceResponse, PUBLIC_IPFS_TARGET,
 };
 
 // Re-export for use by external provider implementations

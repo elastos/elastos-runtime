@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::fs;
 use std::io::{self, BufRead, Write};
 #[cfg(unix)]
@@ -22,19 +21,26 @@ const OPERATION_ID_HEX_LEN: usize = 64;
 const MAX_PROVIDER_FRAME_BYTES: usize = 16 * 1024;
 const MAX_TIMEOUT_MS: u64 = 3_600_000;
 const MAX_STDIO_BYTES: usize = 1024 * 1024;
-const MAX_INPUT_BYTES: u64 = 1024 * 1024 * 1024;
-const MAX_OUTPUT_PART_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_DURATION_SECS: u64 = 1_800;
-const MAX_SOURCE_WIDTH: u32 = 3_840;
-const MAX_SOURCE_HEIGHT: u32 = 2_160;
-const MAX_SOURCE_FPS: u32 = 60;
-const MAX_SEGMENT_COUNT: usize = 512;
-const MAX_TOTAL_OUTPUT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-const OUTPUT_SCHEMA_V1: &str = "elastos.media-provider.prepared-media/v1";
+/// The protocol part rule: every clear part handed to the Runtime is at most
+/// 2 MiB - 64 KiB, so the protected part stays within the 2 MiB wire part.
+/// 2 s segments under the 5 Mb/s VBV ceiling stay well below it.
+const MAX_PREPARED_PART_BYTES: u64 = 2 * 1024 * 1024 - 64 * 1024;
+const PART_TOO_LARGE_MESSAGE: &str = "a prepared media part exceeds the 2 MiB part limit";
+/// How often the stall monitor rescans the prepared output. Long media yields
+/// thousands of parts, so the scan must not run on every 10 ms wait tick.
+const OUTPUT_MONITOR_SCAN_INTERVAL: Duration = Duration::from_millis(250);
+const OUTPUT_SCHEMA_V2: &str = "elastos.media-provider.prepared-media/v2";
+/// A historical name: every mint now produces the v2 output, but installed
+/// Homes store this value in their config file.
 const OUTPUT_PROFILE_BROWSER_FMP4_H264_V1: &str = "browser_fmp4_h264_v1";
-const OUTPUT_MIME_TYPE_V1: &str = "video/mp4";
-const OUTPUT_CODECS_V1: &str = "avc1.640028";
-const OUTPUT_SEGMENT_DURATION_SECS_V1: &str = "4";
+const OUTPUT_MIME_TYPE_VIDEO_V1: &str = "video/mp4";
+const OUTPUT_CODECS_VIDEO_V1: &str = "avc1.640028";
+const OUTPUT_MIME_TYPE_AUDIO_V1: &str = "audio/mp4";
+const OUTPUT_CODECS_AUDIO_V1: &str = "mp4a.40.2";
+const OUTPUT_SEGMENT_DURATION_SECS: &str = "2";
+/// 2 s fixed GOPs at the 30 fps output rate, aligned with the segments.
+const OUTPUT_VIDEO_GOP_FRAMES: &str = "60";
+const OUTPUT_VIDEO_VBV_RATE: &str = "5000k";
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -115,13 +121,32 @@ struct MediaInitExtraConfig {
     output_profile: String,
     timeout_ms: u64,
     max_stdio_bytes: usize,
+    // The limit fields below are no longer enforced: mint has no size caps.
+    // Installed config files still carry them, so they load with any value of
+    // their type; a config that omits them loads too.
+    #[allow(dead_code)]
+    #[serde(default)]
     max_input_bytes: u64,
+    #[allow(dead_code)]
+    #[serde(default)]
     max_output_part_bytes: u64,
+    #[allow(dead_code)]
+    #[serde(default)]
     max_duration_secs: u64,
+    #[allow(dead_code)]
+    #[serde(default)]
     max_source_width: u32,
+    #[allow(dead_code)]
+    #[serde(default)]
     max_source_height: u32,
+    #[allow(dead_code)]
+    #[serde(default)]
     max_source_fps: u32,
+    #[allow(dead_code)]
+    #[serde(default)]
     max_segment_count: usize,
+    #[allow(dead_code)]
+    #[serde(default)]
     max_total_output_bytes: u64,
 }
 
@@ -129,8 +154,16 @@ struct MediaInitExtraConfig {
 #[serde(deny_unknown_fields)]
 struct PreparedMediaOutput {
     schema: &'static str,
-    mime_type: String,
-    codecs: String,
+    renditions: Vec<PreparedRendition>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedRendition {
+    rendition: &'static str,
+    mime_type: &'static str,
+    codecs: &'static str,
+    segment_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -138,16 +171,10 @@ struct ConfiguredMediaProvider {
     staging_root: PathBuf,
     ffmpeg_path: PathBuf,
     ffprobe_path: PathBuf,
+    /// For ffprobe a whole-run timeout; for ffmpeg a stall timeout, measured
+    /// on the growth of the prepared output.
     timeout: Duration,
     max_stdio_bytes: usize,
-    max_input_bytes: u64,
-    max_output_part_bytes: u64,
-    max_duration_secs: u64,
-    max_source_width: u32,
-    max_source_height: u32,
-    max_source_fps: u32,
-    max_segment_count: usize,
-    max_total_output_bytes: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,6 +192,31 @@ struct ProbeStream {
     height: Option<u32>,
     avg_frame_rate: Option<String>,
     r_frame_rate: Option<String>,
+    codec_name: Option<String>,
+    profile: Option<String>,
+    channels: Option<u32>,
+    channel_layout: Option<String>,
+    sample_rate: Option<String>,
+    disposition: Option<ProbeDisposition>,
+    #[serde(flatten)]
+    _extra: BTreeMap<String, Value>,
+}
+
+impl ProbeStream {
+    /// Cover art embedded in an audio file (ID3 APIC, MP4 `covr`) is reported as
+    /// a video stream carrying a single still frame. It is not a moving picture
+    /// and must never be chosen as the source's video track.
+    fn is_attached_picture(&self) -> bool {
+        self.disposition
+            .as_ref()
+            .and_then(|disposition| disposition.attached_pic)
+            == Some(1)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeDisposition {
+    attached_pic: Option<u8>,
     #[serde(flatten)]
     _extra: BTreeMap<String, Value>,
 }
@@ -196,16 +248,91 @@ enum CommandLifecycleEvent {
 #[derive(Debug)]
 struct PreparedOutputMonitor<'a> {
     root: &'a Path,
-    max_total_output_bytes: u64,
-    max_entry_count: usize,
 }
 
+/// The renditions a source yields: its first moving video stream and its
+/// first audio stream, whichever exist. At least one does.
 #[derive(Debug)]
 struct ValidatedProbeOutput {
-    duration_secs: f64,
+    /// Position of the video stream among the source's video streams (cover
+    /// art counts), the `n` in `-map 0:v:n`.
+    video_ordinal: Option<usize>,
+    audio: Option<AudioPlan>,
 }
 
-#[derive(Debug)]
+impl ValidatedProbeOutput {
+    /// Renditions in output stream order, video first: index `i` is ffmpeg's
+    /// `$RepresentationID$`.
+    fn renditions(&self) -> Vec<MediaTrackKind> {
+        let mut renditions = Vec::with_capacity(2);
+        if self.video_ordinal.is_some() {
+            renditions.push(MediaTrackKind::Video);
+        }
+        if self.audio.is_some() {
+            renditions.push(MediaTrackKind::Audio);
+        }
+        renditions
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaTrackKind {
+    Video,
+    Audio,
+}
+
+impl MediaTrackKind {
+    fn rendition(self) -> &'static str {
+        match self {
+            Self::Video => "video",
+            Self::Audio => "audio",
+        }
+    }
+
+    fn stream_specifier(self) -> &'static str {
+        match self {
+            Self::Video => "v",
+            Self::Audio => "a",
+        }
+    }
+
+    fn mime_type_and_codecs(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Video => (OUTPUT_MIME_TYPE_VIDEO_V1, OUTPUT_CODECS_VIDEO_V1),
+            Self::Audio => (OUTPUT_MIME_TYPE_AUDIO_V1, OUTPUT_CODECS_AUDIO_V1),
+        }
+    }
+}
+
+/// How the source's audio becomes the AAC-LC rendition. Quality first: never
+/// re-encode, downmix or resample without need.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AudioPlan {
+    /// The source is already AAC-LC that MSE plays; its bits are kept.
+    Copy,
+    Encode {
+        bitrate: &'static str,
+        sample_rate: u32,
+        /// Set only when the source's layout cannot be kept.
+        channels: Option<u32>,
+    },
+}
+
+/// Why a prepare failed. Every failure reads the same to the caller except an
+/// oversized part, which the creator can act on.
+#[derive(Debug, PartialEq, Eq)]
+enum PrepareError {
+    Failed,
+    PartTooLarge,
+}
+
+impl From<()> for PrepareError {
+    fn from((): ()) -> Self {
+        Self::Failed
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MonitoredOutputUsage {
     total_bytes: u64,
     entry_count: usize,
@@ -296,16 +423,20 @@ impl MediaProvider {
             );
         };
         let mut lifecycle = Vec::new();
-        let result = validate_operation_id(operation_id).and_then(|()| {
-            run_prepare_observed(state, operation_id, &mut |event| lifecycle.push(event))
-                .map_err(|_| ())
-        });
+        let result = validate_operation_id(operation_id)
+            .map_err(PrepareError::from)
+            .and_then(|()| {
+                run_prepare_observed(state, operation_id, &mut |event| lifecycle.push(event))
+            });
         let operation_settled = command_lifecycle_is_settled(&lifecycle);
         match result {
             Ok(output) if operation_settled => {
                 ProviderResponse::ok(serde_json::to_value(output).unwrap_or(Value::Null))
             }
-            Ok(_) | Err(()) => ProviderResponse::settled_error(
+            Err(PrepareError::PartTooLarge) if operation_settled => {
+                ProviderResponse::settled_error(INTERNAL_ERROR_CODE, PART_TOO_LARGE_MESSAGE, true)
+            }
+            Ok(_) | Err(_) => ProviderResponse::settled_error(
                 INTERNAL_ERROR_CODE,
                 if operation_settled {
                     "media preparation failed"
@@ -331,25 +462,8 @@ fn load_provider_state(config: Value) -> Result<ConfiguredMediaProvider, ()> {
     if extra.provider_id != PROVIDER_ID
         || extra.timeout_ms == 0
         || extra.max_stdio_bytes == 0
-        || extra.max_input_bytes == 0
-        || extra.max_output_part_bytes == 0
-        || extra.max_duration_secs == 0
-        || extra.max_source_width == 0
-        || extra.max_source_height == 0
-        || extra.max_source_fps == 0
-        || extra.max_segment_count == 0
-        || extra.max_total_output_bytes == 0
         || extra.timeout_ms > MAX_TIMEOUT_MS
         || extra.max_stdio_bytes > MAX_STDIO_BYTES
-        || extra.max_input_bytes > MAX_INPUT_BYTES
-        || extra.max_output_part_bytes > MAX_OUTPUT_PART_BYTES
-        || extra.max_duration_secs > MAX_DURATION_SECS
-        || extra.max_source_width > MAX_SOURCE_WIDTH
-        || extra.max_source_height > MAX_SOURCE_HEIGHT
-        || extra.max_source_fps > MAX_SOURCE_FPS
-        || extra.max_segment_count > MAX_SEGMENT_COUNT
-        || extra.max_total_output_bytes > MAX_TOTAL_OUTPUT_BYTES
-        || extra.max_total_output_bytes < extra.max_output_part_bytes
         || extra.output_profile != OUTPUT_PROFILE_BROWSER_FMP4_H264_V1
     {
         return Err(());
@@ -369,14 +483,6 @@ fn load_provider_state(config: Value) -> Result<ConfiguredMediaProvider, ()> {
         ffprobe_path,
         timeout: Duration::from_millis(extra.timeout_ms),
         max_stdio_bytes: extra.max_stdio_bytes,
-        max_input_bytes: extra.max_input_bytes,
-        max_output_part_bytes: extra.max_output_part_bytes,
-        max_duration_secs: extra.max_duration_secs,
-        max_source_width: extra.max_source_width,
-        max_source_height: extra.max_source_height,
-        max_source_fps: extra.max_source_fps,
-        max_segment_count: extra.max_segment_count,
-        max_total_output_bytes: extra.max_total_output_bytes,
     })
 }
 
@@ -384,45 +490,56 @@ fn run_prepare_observed(
     state: &ConfiguredMediaProvider,
     operation_id: &str,
     observe_lifecycle: &mut dyn FnMut(CommandLifecycleEvent),
-) -> Result<PreparedMediaOutput, ()> {
+) -> Result<PreparedMediaOutput, PrepareError> {
     let operation_root = state.staging_root.join(operation_id);
     validate_operation_root(&state.staging_root, &operation_root)?;
     let input_path = operation_root.join("input.bin");
-    validate_regular_file(&input_path, true, state.max_input_bytes)?;
+    validate_regular_file(&input_path, true, u64::MAX)?;
     let prepared_dir = operation_root.join("prepared");
     if prepared_dir.exists() {
         fs::remove_dir_all(&prepared_dir).map_err(|_| ())?;
     }
     fs::create_dir(&prepared_dir).map_err(|_| ())?;
     set_owner_only_dir_permissions(&prepared_dir).map_err(|_| ())?;
-    let segments_dir = prepared_dir.join("segments");
-    fs::create_dir(&segments_dir).map_err(|_| ())?;
-    set_owner_only_dir_permissions(&segments_dir).map_err(|_| ())?;
     let probe = run_ffprobe_observed(state, &input_path, observe_lifecycle)?;
-    let expected_segments = segment_count_for_duration(probe.duration_secs)?;
-    if expected_segments > state.max_segment_count {
-        return Err(());
+    let renditions = probe.renditions();
+    // ffmpeg writes `$RepresentationID$/...` but never creates the directories.
+    for representation_id in 0..renditions.len() {
+        let representation_dir = prepared_dir.join(representation_id.to_string());
+        for dir in [&representation_dir, &representation_dir.join("segments")] {
+            fs::create_dir(dir).map_err(|_| ())?;
+            set_owner_only_dir_permissions(dir).map_err(|_| ())?;
+        }
     }
-    run_ffmpeg_observed(state, &input_path, &prepared_dir, observe_lifecycle)?;
-    normalize_segment_indexes(&segments_dir)?;
-    normalize_segment_containers(&segments_dir, state.max_output_part_bytes)?;
-    let init_len = validate_regular_file_len(
-        &prepared_dir.join("init.mp4"),
-        false,
-        state.max_output_part_bytes,
-    )?;
-    let segments_len = validate_segments_output(
-        &segments_dir,
-        state.max_output_part_bytes,
-        state.max_segment_count,
-    )?;
-    if init_len.checked_add(segments_len).ok_or(())? > state.max_total_output_bytes {
-        return Err(());
+    run_ffmpeg_observed(state, &input_path, &prepared_dir, &probe, observe_lifecycle)?;
+    let mut prepared = Vec::with_capacity(renditions.len());
+    for (representation_id, kind) in renditions.into_iter().enumerate() {
+        let rendition_dir = prepared_dir.join(kind.rendition());
+        fs::rename(
+            prepared_dir.join(representation_id.to_string()),
+            &rendition_dir,
+        )
+        .map_err(|_| ())?;
+        let segments_dir = rendition_dir.join("segments");
+        normalize_segment_indexes(&segments_dir)?;
+        normalize_segment_containers(&segments_dir)?;
+        if validate_regular_file_len(&rendition_dir.join("init.mp4"), false, u64::MAX)?
+            > MAX_PREPARED_PART_BYTES
+        {
+            return Err(PrepareError::PartTooLarge);
+        }
+        let segment_count = validate_segments_output(&segments_dir)?;
+        let (mime_type, codecs) = kind.mime_type_and_codecs();
+        prepared.push(PreparedRendition {
+            rendition: kind.rendition(),
+            mime_type,
+            codecs,
+            segment_count,
+        });
     }
     Ok(PreparedMediaOutput {
-        schema: OUTPUT_SCHEMA_V1,
-        mime_type: OUTPUT_MIME_TYPE_V1.to_string(),
-        codecs: OUTPUT_CODECS_V1.to_string(),
+        schema: OUTPUT_SCHEMA_V2,
+        renditions: prepared,
     })
 }
 
@@ -437,7 +554,14 @@ fn run_ffprobe_observed(
         .arg("-print_format")
         .arg("json")
         .arg("-show_entries")
-        .arg("format=duration:stream=codec_type,width,height,avg_frame_rate,r_frame_rate")
+        .arg(concat!(
+            "format=duration",
+            ":stream=codec_type,width,height,avg_frame_rate,r_frame_rate",
+            // What the audio plan decides on.
+            ",codec_name,profile,channels,channel_layout,sample_rate",
+            // Distinguishes embedded cover art from a real video track.
+            ":stream_disposition=attached_pic",
+        ))
         .arg(input_path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -450,69 +574,110 @@ fn run_ffprobe_observed(
         observe_lifecycle,
     )?;
     let probe = serde_json::from_slice::<ProbeOutput>(&output.stdout).map_err(|_| ())?;
-    validate_probe_output(&probe, state)
+    validate_probe_output(&probe)
 }
 
 fn run_ffmpeg_observed(
     state: &ConfiguredMediaProvider,
     input_path: &Path,
     prepared_dir: &Path,
+    probe: &ValidatedProbeOutput,
     observe_lifecycle: &mut dyn FnMut(CommandLifecycleEvent),
 ) -> Result<(), ()> {
     let manifest_path = prepared_dir.join("manifest.mpd");
-    let media_seg_name = {
-        let mut name = OsString::from("segments/");
-        name.push("$Number%08d$.m4s");
-        name
-    };
     let mut cmd = Command::new(&state.ffmpeg_path);
     cmd.arg("-nostdin")
         .arg("-v")
         .arg("error")
         .arg("-y")
         .arg("-i")
-        .arg(input_path)
-        .arg("-map")
-        .arg("0:v:0")
-        .arg("-an")
-        .arg("-c:v")
-        .arg("libx264")
-        .arg("-profile:v")
-        .arg("high")
-        .arg("-level:v")
-        .arg("4.0")
-        .arg("-pix_fmt")
-        .arg("yuv420p")
-        .arg("-r")
-        .arg("30")
-        .arg("-vf")
-        .arg("scale=w=min(iw\\,1920):h=min(ih\\,1080):force_original_aspect_ratio=decrease:force_divisible_by=2,fps=30")
-        .arg("-g")
-        .arg("120")
-        .arg("-keyint_min")
-        .arg("120")
-        .arg("-sc_threshold")
-        .arg("0")
-        .arg("-preset")
-        .arg("veryfast")
-        .arg("-crf")
-        .arg("28")
-        .arg("-movflags")
+        .arg(input_path);
+    // One invocation, so the renditions share one timeline.
+    if let Some(ordinal) = probe.video_ordinal {
+        cmd.arg("-map").arg(format!("0:v:{ordinal}"));
+    }
+    if probe.audio.is_some() {
+        cmd.arg("-map").arg("0:a:0");
+    }
+    if probe.video_ordinal.is_some() {
+        cmd.arg("-c:v")
+            .arg("libx264")
+            .arg("-profile:v")
+            .arg("high")
+            .arg("-level:v")
+            .arg("4.0")
+            .arg("-pix_fmt")
+            .arg("yuv420p")
+            .arg("-r")
+            .arg("30")
+            .arg("-vf")
+            .arg("scale=w=min(iw\\,1920):h=min(ih\\,1080):force_original_aspect_ratio=decrease:force_divisible_by=2,fps=30")
+            .arg("-g")
+            .arg(OUTPUT_VIDEO_GOP_FRAMES)
+            .arg("-keyint_min")
+            .arg(OUTPUT_VIDEO_GOP_FRAMES)
+            .arg("-sc_threshold")
+            .arg("0")
+            .arg("-preset")
+            .arg("veryfast")
+            .arg("-crf")
+            .arg("28")
+            .arg("-maxrate")
+            .arg(OUTPUT_VIDEO_VBV_RATE)
+            .arg("-bufsize")
+            .arg(OUTPUT_VIDEO_VBV_RATE);
+    }
+    match &probe.audio {
+        Some(AudioPlan::Copy) => {
+            // MPEG-TS carries AAC under a stream tag the mp4 muxer refuses;
+            // re-tag it so a `.ts` source copies like an mp4 or mkv one.
+            cmd.arg("-c:a").arg("copy").arg("-tag:a").arg("mp4a");
+        }
+        Some(AudioPlan::Encode {
+            bitrate,
+            sample_rate,
+            channels,
+        }) => {
+            cmd.arg("-c:a")
+                .arg("aac")
+                .arg("-profile:a")
+                .arg("aac_low")
+                .arg("-b:a")
+                .arg(bitrate)
+                .arg("-ar")
+                .arg(sample_rate.to_string());
+            if let Some(channels) = channels {
+                cmd.arg("-ac").arg(channels.to_string());
+            }
+        }
+        None => {}
+    }
+    let adaptation_sets = probe
+        .renditions()
+        .iter()
+        .enumerate()
+        .map(|(id, kind)| format!("id={id},streams={}", kind.stream_specifier()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // The container and segmentation flags are the same for every rendition.
+    cmd.arg("-movflags")
         .arg("+frag_keyframe+empty_moov+default_base_moof+separate_moof")
         .arg("-f")
         .arg("dash")
         .arg("-seg_duration")
-        .arg(OUTPUT_SEGMENT_DURATION_SECS_V1)
+        .arg(OUTPUT_SEGMENT_DURATION_SECS)
         .arg("-streaming")
         .arg("0")
         .arg("-use_timeline")
-        .arg("0")
+        .arg("1")
         .arg("-use_template")
         .arg("1")
+        .arg("-adaptation_sets")
+        .arg(adaptation_sets)
         .arg("-init_seg_name")
-        .arg("init.mp4")
+        .arg("$RepresentationID$/init.mp4")
         .arg("-media_seg_name")
-        .arg(media_seg_name)
+        .arg("$RepresentationID$/segments/$Number%08d$.m4s")
         .arg(&manifest_path)
         .current_dir(prepared_dir)
         .stdin(Stdio::null())
@@ -522,11 +687,7 @@ fn run_ffmpeg_observed(
         cmd,
         state.timeout,
         state.max_stdio_bytes,
-        Some(PreparedOutputMonitor {
-            root: prepared_dir,
-            max_total_output_bytes: state.max_total_output_bytes,
-            max_entry_count: state.max_segment_count.checked_add(3).ok_or(())?,
-        }),
+        Some(PreparedOutputMonitor { root: prepared_dir }),
         observe_lifecycle,
     )
     .map(|_| ())?;
@@ -582,18 +743,12 @@ fn wait_for_child(
     monitor: Option<PreparedOutputMonitor<'_>>,
     observe_lifecycle: &mut dyn FnMut(CommandLifecycleEvent),
 ) -> Result<BoundedCommandOutput, ()> {
-    let deadline = match Instant::now().checked_add(timeout) {
-        Some(deadline) => deadline,
-        None => {
-            terminate_and_join(
-                child,
-                Some(stdout_thread),
-                Some(stderr_thread),
-                observe_lifecycle,
-            )?;
-            return Err(());
-        }
-    };
+    // Without a monitor the timeout bounds the whole run. With one it is a
+    // stall timeout: any change in the monitored output counts as progress
+    // and restarts the clock, so the media's length is never capped.
+    let mut last_progress = Instant::now();
+    let mut last_scan: Option<Instant> = None;
+    let mut last_usage: Option<MonitoredOutputUsage> = None;
     let mut stdout_thread = Some(stdout_thread);
     let mut stderr_thread = Some(stderr_thread);
     let mut stdout_output = None;
@@ -622,28 +777,27 @@ fn wait_for_child(
             }
         }
         if let Some(monitor) = &monitor {
-            match monitored_output_usage(monitor.root) {
-                Ok(usage)
-                    if usage.total_bytes > monitor.max_total_output_bytes
-                        || usage.entry_count > monitor.max_entry_count =>
-                {
-                    terminate_and_join(
-                        child,
-                        stdout_thread.take(),
-                        stderr_thread.take(),
-                        observe_lifecycle,
-                    )?;
-                    return Err(());
-                }
-                Ok(_) => {}
-                Err(()) => {
-                    terminate_and_join(
-                        child,
-                        stdout_thread.take(),
-                        stderr_thread.take(),
-                        observe_lifecycle,
-                    )?;
-                    return Err(());
+            let now = Instant::now();
+            let scan_due = last_scan
+                .is_none_or(|scanned| now.duration_since(scanned) >= OUTPUT_MONITOR_SCAN_INTERVAL);
+            if scan_due {
+                last_scan = Some(now);
+                match monitored_output_usage(monitor.root) {
+                    Ok(usage) => {
+                        if last_usage != Some(usage) {
+                            last_usage = Some(usage);
+                            last_progress = now;
+                        }
+                    }
+                    Err(()) => {
+                        terminate_and_join(
+                            child,
+                            stdout_thread.take(),
+                            stderr_thread.take(),
+                            observe_lifecycle,
+                        )?;
+                        return Err(());
+                    }
                 }
             }
         }
@@ -676,7 +830,7 @@ fn wait_for_child(
                     Err(())
                 };
             }
-            None if Instant::now() >= deadline => {
+            None if last_progress.elapsed() >= timeout => {
                 terminate_and_join(
                     child,
                     stdout_thread.take(),
@@ -824,10 +978,15 @@ fn normalize_segment_indexes(segments_dir: &Path) -> Result<(), ()> {
 /// and the `sidx` byte ranges become stale once the segment is re-packaged
 /// for protection anyway, so they are stripped here. Anything else (a
 /// multi-fragment segment, a trailing box) is rejected rather than repaired.
-fn normalize_segment_containers(segments_dir: &Path, max_output_part_bytes: u64) -> Result<(), ()> {
+///
+/// The part rule is checked on the muxer's bytes, before anything is read:
+/// the stripped prefix is a few dozen bytes, well inside the rule's margin.
+fn normalize_segment_containers(segments_dir: &Path) -> Result<(), PrepareError> {
     for entry in fs::read_dir(segments_dir).map_err(|_| ())? {
         let path = entry.map_err(|_| ())?.path();
-        validate_regular_file_len(&path, true, max_output_part_bytes)?;
+        if validate_regular_file_len(&path, true, u64::MAX)? > MAX_PREPARED_PART_BYTES {
+            return Err(PrepareError::PartTooLarge);
+        }
         let bytes = fs::read(&path).map_err(|_| ())?;
         let stripped = strip_dash_segment_prefix(&bytes)?;
         if stripped.len() != bytes.len() {
@@ -890,12 +1049,9 @@ fn read_box_header(bytes: &[u8], offset: usize) -> Result<([u8; 4], usize), ()> 
     Ok((kind, size))
 }
 
-fn validate_segments_output(
-    segments_dir: &Path,
-    max_output_part_bytes: u64,
-    max_segment_count: usize,
-) -> Result<u64, ()> {
-    let mut total_bytes = 0u64;
+/// Returns the segment count of a contiguous, 0-based run of parts that each
+/// meet the part rule.
+fn validate_segments_output(segments_dir: &Path) -> Result<u32, ()> {
     let mut indexes = Vec::new();
     for entry in fs::read_dir(segments_dir).map_err(|_| ())? {
         let entry = entry.map_err(|_| ())?;
@@ -903,24 +1059,18 @@ fn validate_segments_output(
         let name = entry.file_name();
         let name = name.to_string_lossy();
         indexes.push(parse_segment_index(&name)?);
-        total_bytes = total_bytes
-            .checked_add(validate_regular_file_len(
-                &path,
-                true,
-                max_output_part_bytes,
-            )?)
-            .ok_or(())?;
+        validate_regular_file_len(&path, true, MAX_PREPARED_PART_BYTES)?;
     }
     indexes.sort_unstable();
-    if indexes.is_empty() || indexes.len() > max_segment_count {
+    if indexes.is_empty() {
         return Err(());
     }
-    for (expected, actual) in indexes.into_iter().enumerate() {
-        if actual != expected {
+    for (expected, actual) in indexes.iter().enumerate() {
+        if *actual != expected {
             return Err(());
         }
     }
-    Ok(total_bytes)
+    u32::try_from(indexes.len()).map_err(|_| ())
 }
 
 fn validate_operation_root(staging_root: &Path, operation_root: &Path) -> Result<(), ()> {
@@ -1001,38 +1151,94 @@ fn set_owner_only_dir_permissions(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn validate_probe_output(
-    probe: &ProbeOutput,
-    state: &ConfiguredMediaProvider,
-) -> Result<ValidatedProbeOutput, ()> {
-    let stream = probe
+fn validate_probe_output(probe: &ProbeOutput) -> Result<ValidatedProbeOutput, ()> {
+    // A sanity check on the probe, not a cap: mint has no duration limit. A
+    // container may state no duration at all; one that does must state a sane one.
+    if let Some(duration) = probe.format.duration.as_deref() {
+        if parse_finite_decimal(duration)? <= 0.0 {
+            return Err(());
+        }
+    }
+    // Cover art is skipped, not treated as the video track: a tagged mp3 or m4a is
+    // an AUDIO source with a still picture attached, and routing it down the video
+    // branch would re-encode the still. The ordinal counts cover art, as ffmpeg's
+    // `v` stream specifier does.
+    let video = probe
         .streams
         .iter()
-        .find(|stream| stream.codec_type.as_deref() == Some("video"))
-        .ok_or(())?;
-    let width = stream.width.ok_or(())?;
-    let height = stream.height.ok_or(())?;
-    if width == 0
-        || height == 0
-        || width > state.max_source_width
-        || height > state.max_source_height
-    {
-        return Err(());
-    }
-    let duration = parse_finite_decimal(probe.format.duration.as_deref().ok_or(())?)?;
-    if duration <= 0.0 || duration > state.max_duration_secs as f64 {
-        return Err(());
-    }
-    let fps = parse_frame_rate(
-        stream.avg_frame_rate.as_deref(),
-        stream.r_frame_rate.as_deref(),
-    )?;
-    if fps <= 0.0 || fps > state.max_source_fps as f64 {
+        .filter(|stream| stream.codec_type.as_deref() == Some("video"))
+        .enumerate()
+        .find(|(_, stream)| !stream.is_attached_picture());
+    let video_ordinal = match video {
+        Some((ordinal, stream)) => {
+            // Any geometry and rate are accepted: the output is always scaled
+            // to at most 1080p30. These only refuse a malformed probe.
+            let width = stream.width.ok_or(())?;
+            let height = stream.height.ok_or(())?;
+            if width == 0 || height == 0 {
+                return Err(());
+            }
+            let fps = parse_frame_rate(
+                stream.avg_frame_rate.as_deref(),
+                stream.r_frame_rate.as_deref(),
+            )?;
+            if fps <= 0.0 {
+                return Err(());
+            }
+            Some(ordinal)
+        }
+        None => None,
+    };
+    let audio = probe
+        .streams
+        .iter()
+        .find(|stream| stream.codec_type.as_deref() == Some("audio"))
+        .map(audio_plan);
+    if video_ordinal.is_none() && audio.is_none() {
         return Err(());
     }
     Ok(ValidatedProbeOutput {
-        duration_secs: duration,
+        video_ordinal,
+        audio,
     })
+}
+
+/// Copy when the source is AAC-LC that MSE plays: one or two channels, or 5.1,
+/// at 44.1 or 48 kHz. Otherwise encode AAC-LC, keeping the layout up to 5.1
+/// (more channels are downmixed to 5.1) and a 44.1 or 48 kHz rate (any other
+/// rate becomes 48 kHz). Any doubt about the source means encode.
+fn audio_plan(stream: &ProbeStream) -> AudioPlan {
+    let source_rate = stream
+        .sample_rate
+        .as_deref()
+        .and_then(|rate| rate.parse::<u32>().ok())
+        .filter(|rate| matches!(rate, 44_100 | 48_000));
+    let mse_layout = match stream.channels {
+        Some(1 | 2) => true,
+        Some(6) => matches!(stream.channel_layout.as_deref(), Some("5.1" | "5.1(side)")),
+        _ => false,
+    };
+    if stream.codec_name.as_deref() == Some("aac")
+        && stream.profile.as_deref() == Some("LC")
+        && mse_layout
+        && source_rate.is_some()
+    {
+        return AudioPlan::Copy;
+    }
+    let (bitrate, channels) = match stream.channels {
+        // Mono stays mono: 192k is above the 128k per channel of 256k stereo
+        // and clear of the AAC-LC per-channel ceiling (~264k at 44.1 kHz).
+        Some(1) => ("192k", None),
+        Some(2) => ("256k", None),
+        Some(3..=6) => ("384k", None),
+        Some(7..) => ("384k", Some(6)),
+        Some(0) | None => ("256k", Some(2)),
+    };
+    AudioPlan::Encode {
+        bitrate,
+        sample_rate: source_rate.unwrap_or(48_000),
+        channels,
+    }
 }
 
 fn parse_finite_decimal(value: &str) -> Result<f64, ()> {
@@ -1076,41 +1282,49 @@ fn parse_segment_index(name: &str) -> Result<usize, ()> {
     stem.parse::<usize>().map_err(|_| ())
 }
 
-fn segment_count_for_duration(duration_secs: f64) -> Result<usize, ()> {
-    if !duration_secs.is_finite() || duration_secs <= 0.0 {
-        return Err(());
-    }
-    Ok((duration_secs / 4.0).ceil() as usize)
-}
-
+/// Sums the prepared output for the stall monitor. ffmpeg renames and
+/// replaces files while it runs (its DASH manifest goes through a temporary
+/// file after every segment), so an entry listed by one call can be gone by
+/// the next: a vanished entry or directory is skipped. Every other error, a
+/// symlink and any non-file non-directory still fail the run.
 fn monitored_output_usage(root: &Path) -> Result<MonitoredOutputUsage, ()> {
     let mut usage = MonitoredOutputUsage {
         total_bytes: 0,
         entry_count: 0,
     };
-    if !root.exists() {
-        return Ok(usage);
-    }
-    for entry in fs::read_dir(root).map_err(|_| ())? {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(usage),
+        Err(_) => return Err(()),
+    };
+    for entry in entries {
         let entry = entry.map_err(|_| ())?;
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path).map_err(|_| ())?;
-        usage.entry_count = usage.entry_count.checked_add(1).ok_or(())?;
-        if metadata.file_type().is_symlink() {
-            return Err(());
-        }
-        if metadata.is_dir() {
-            let child = monitored_output_usage(&path)?;
-            usage.total_bytes = usage.total_bytes.checked_add(child.total_bytes).ok_or(())?;
-            usage.entry_count = usage.entry_count.checked_add(child.entry_count).ok_or(())?;
-            continue;
-        }
-        if !metadata.is_file() {
-            return Err(());
-        }
-        usage.total_bytes = usage.total_bytes.checked_add(metadata.len()).ok_or(())?;
+        add_monitored_entry_usage(&entry.path(), &mut usage)?;
     }
     Ok(usage)
+}
+
+fn add_monitored_entry_usage(path: &Path, usage: &mut MonitoredOutputUsage) -> Result<(), ()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(()),
+    };
+    usage.entry_count = usage.entry_count.checked_add(1).ok_or(())?;
+    if metadata.file_type().is_symlink() {
+        return Err(());
+    }
+    if metadata.is_dir() {
+        let child = monitored_output_usage(path)?;
+        usage.total_bytes = usage.total_bytes.checked_add(child.total_bytes).ok_or(())?;
+        usage.entry_count = usage.entry_count.checked_add(child.entry_count).ok_or(())?;
+        return Ok(());
+    }
+    if !metadata.is_file() {
+        return Err(());
+    }
+    usage.total_bytes = usage.total_bytes.checked_add(metadata.len()).ok_or(())?;
+    Ok(())
 }
 
 fn validate_operation_id(value: &str) -> Result<(), ()> {
@@ -1340,28 +1554,24 @@ mod tests {
         fs::write(&input_path, b"video").unwrap();
         let prepared_dir = root.path().join("prepared");
         fs::create_dir(&prepared_dir).unwrap();
-        fs::create_dir(prepared_dir.join("segments")).unwrap();
+        fs::create_dir_all(prepared_dir.join("0/segments")).unwrap();
         let state = ConfiguredMediaProvider {
             staging_root,
             ffmpeg_path,
             ffprobe_path: root.path().join("unused-ffprobe"),
             timeout: Duration::ZERO,
             max_stdio_bytes: 1024,
-            max_input_bytes: 1024,
-            max_output_part_bytes: 1024,
-            max_duration_secs: 1,
-            max_source_width: 1,
-            max_source_height: 1,
-            max_source_fps: 1,
-            max_segment_count: 1,
-            max_total_output_bytes: 1024,
+        };
+        let probe = ValidatedProbeOutput {
+            video_ordinal: Some(0),
+            audio: None,
         };
         let mut events = Vec::new();
 
         assert!(
-            run_ffmpeg_observed(&state, &input_path, &prepared_dir, &mut |event| {
+            run_ffmpeg_observed(&state, &input_path, &prepared_dir, &probe, &mut |event| {
                 events.push(event)
-            })
+            },)
             .is_err()
         );
 
@@ -1376,6 +1586,65 @@ mod tests {
         assert_eq!(spawned, reaped);
         assert_eq!(*code, None);
         assert_eq!(*signal, Some(libc::SIGKILL));
+    }
+
+    /// ffmpeg's DASH muxer replaces its manifest through a temporary file
+    /// after every segment, so an entry the scan just listed can be gone by
+    /// the time it is stat'ed. That race is not a failure: the entry is skipped.
+    #[test]
+    fn output_monitor_skips_an_entry_that_vanished_after_listing() {
+        let root = tempfile::tempdir().unwrap();
+        let mut usage = MonitoredOutputUsage {
+            total_bytes: 7,
+            entry_count: 3,
+        };
+
+        add_monitored_entry_usage(&root.path().join("manifest.mpd.tmp"), &mut usage).unwrap();
+
+        assert_eq!(
+            usage,
+            MonitoredOutputUsage {
+                total_bytes: 7,
+                entry_count: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn output_monitor_treats_a_vanished_directory_as_empty() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(
+            monitored_output_usage(&root.path().join("0")).unwrap(),
+            MonitoredOutputUsage {
+                total_bytes: 0,
+                entry_count: 0,
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_monitor_still_fails_on_every_other_error() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("init.mp4"), b"init").unwrap();
+        assert_eq!(
+            monitored_output_usage(root.path()).unwrap(),
+            MonitoredOutputUsage {
+                total_bytes: 4,
+                entry_count: 1,
+            }
+        );
+
+        let unreadable = root.path().join("unreadable");
+        fs::create_dir(&unreadable).unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+        let result = monitored_output_usage(root.path());
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err());
+
+        fs::remove_dir(&unreadable).unwrap();
+        std::os::unix::fs::symlink(root.path().join("init.mp4"), root.path().join("link")).unwrap();
+        assert!(monitored_output_usage(root.path()).is_err());
     }
 
     #[test]

@@ -5,7 +5,9 @@
 > Current behavior has a first `content` provider seam that delegates to
 > `ipfs-provider` for local CID creation/pinning, blocks normal capsule
 > capability requests to `elastos://ipfs/*`, and records signed local
-> availability receipts with peer-selection/quota/repair-worker metadata. This
+> availability receipts with peer-selection/quota/repair-worker metadata. A
+> second, public IPFS store holds only the public metadata of minted assets
+> (see [Public Metadata Store](#public-metadata-store)). This
 > document defines where content addressing, IPLD, IPFS/Kubo, Carrier, and
 > future replication providers belong as the SmartWeb content plane matures.
 
@@ -40,9 +42,9 @@ Clean placement:
 | Carrier | endpoint-authenticated peer discovery, coordination, and object/message/stream transport |
 | Content provider | publish/fetch/status/replicate/repair policy and receipts |
 | IPLD | content-addressed object graph and manifest data model |
-| IPFS/Kubo | first block/CID backend for local add, pin, cat, and fetch |
+| IPFS/Kubo | first block/CID backend: the private store (offline) for local add, pin, cat, and fetch; the public store for minted assets' public metadata only |
 | Elacity/supernodes/volunteers | first availability and replication targets |
-| dDRM/key provider | rights verification and decryption capability release |
+| Runtime custody and decrypt services | finalized account rights, recipient-bound key release and scoped decryption |
 | Blockchain | DID, provenance anchors, payment/licensing hooks, optional storage incentives |
 
 ## Why IPLD Fits
@@ -184,11 +186,10 @@ registered. Do not derive a fake object DID from the CID by default. The CID
 already identifies one immutable graph; the object/head identity is only needed
 when a stable logical object points to multiple revisions.
 
-`sealed` objects are stricter than generic directories. They must include
-`sealed.json` using `elastos.sealed.object/v1`, approved protected-content
-algorithm metadata, and manifest links for `payload`, `rights.policy`,
-`availability.receipt`, and `provenance`. The content provider rejects
-incomplete sealed objects before they reach the IPFS backend.
+Protected packages use the canonical identities, key envelopes, policies and
+signed manifests described in [Protected content](PROTECTED_CONTENT.md) and
+[its contracts](PROTECTED_CONTENT_CONTRACTS_V1.md). The retired provisional
+`sealed.json` schema is not an alternative protected-content authority.
 
 Release publishing keeps the raw signed `release.json` and `release-head.json`
 CIDs for existing update clients. In parallel, the publish flow now emits
@@ -324,7 +325,7 @@ signed remote announcements already exist, it treats those announcements as
 candidate peers, invokes the remote peer's `content/ensure` over the Carrier
 provider plane, verifies the same CID with remote `content/status`, and records
 `network_available` only when an independent remote provider proves a live
-pinned replica. In 0.8.0 Carrier pushes no copy to a replica (#498): when the
+pinned replica. Generic Carrier replication does not push a graph to a peer: when the
 remote ensure fails or reports `repair_needed`, `local_unpinned` or `unknown`,
 the replication is refused at once. A successful remote `ensure` response may
 also carry the remote content provider's signed availability receipt; Carrier
@@ -523,10 +524,9 @@ delivery plus optional configured federated alert-exchange delivery when
 explicitly requested. Peer-attestation exchange policy posture is included in
 Carrier peer selection, provider proof summaries, and the operator dashboard so
 live peer proof is not confused with a production cross-runtime trust network.
-Carrier availability also emits `elastos.content.repair-graph/v1` metadata. In
-0.8.0 it reports `replication_import_unavailable` with no supported import
-fallbacks for every graph kind: Carrier copies no object, exact bytes or block
-graph to a replica (#498).
+Generic Carrier availability emits `elastos.content.repair-graph/v1` metadata.
+Its push/import path reports `replication_import_unavailable`; accepted pool
+member copies use the separate verified pull path described below.
 Operators can inspect the same availability/storage state with `elastos content status` for the
 provider-wide dashboard or `elastos content status --cid <cid>` for a single
 object; both commands route through Runtime provider invocation and expose the
@@ -542,11 +542,12 @@ its payload/CID binding before trusting the admission decision. When a live
 multi-peer proof is required, Carrier keeps at least one remote provider
 invocation in the candidate budget when quota permits it, even if the reported
 local replica count already satisfies `min_replicas`.
-A Home offers replicas only to peers in its operator peer store and to its
-trusted sources. The receiving node admits `admission`, `ensure`, `status` and
-imports only from peers its owner granted `content.replica`
-(`elastos node peer add --did <home-did> --allow content.replica`). In this
-release a seed refuses them from every peer; copies a node already holds stay.
+Generic replica operations use operator peer-store/trusted-source policy.
+The receiving node admits generic `admission`, `ensure`, `status` and import
+requests under `content.replica`
+(`elastos node peer add --did <home-did> --allow content.replica`). Protected
+member-copy admission instead requires an accepted share and exact
+pool/package binding; it does not grant generic import authority.
 An import adds content unpinned and pins only the expected CID, so a mismatch
 changes no pin. A granted `ensure` announces the CID and joins its topic;
 `import_exact` pins without announcing. A whole-object `import_object` push
@@ -637,13 +638,11 @@ source, target, operation, transfer class, byte range, and progress receipt
 metadata. The provider plane has explicit local and Carrier transports:
 Carrier `provider_invoke` runs over the Carrier ALPN with the same
 `elastos.provider.invocation/v1` envelope and hides raw connect tickets from
-receipts. Its current provider target allowlist includes `content`,
-`availability`, and the provisional `rights`, `key`, `decrypt`, and `drm`
-labels. It does not yet include a custody route. The target cutover will retain
-the envelope while replacing the provisional protected-content labels with
-Runtime-selected `rights`, `custody`, and `decrypt` providers rather than raw
-backends.
-`ProviderTransfer::Stream` now carries validated
+receipts. Its provider target policy admits typed content and availability work and
+Runtime-selected custody and pool-session operations. Native protect, media,
+and decrypt providers remain Runtime-only; a capsule cannot select them through
+a raw provider route. Carrier authentication is not a rights grant. The stream
+contract uses
 `elastos.provider.stream/v1` base64 chunks with range/progress receipts, and
 `content-provider` fetch opens that stream envelope as a Runtime-owned session
 for local IPFS or availability-provider reads. The session exposes read-next
@@ -659,7 +658,7 @@ loops or app-visible backend authority. The built-in availability provider
 decodes the returned stream envelope before returning the normal byte response.
 For replication, the same provider plane calls remote `content/ensure` and
 remote `content/status`; `network_available` requires that remote proof. It
-pushes no bytes, objects or block graphs to a replica in 0.8.0 (#498): a replica
+pushes no bytes, objects or block graphs through the generic replication path: a replica
 that does not already hold the CID is refused at once with "Copies to your own
 devices come in a later update."
 Verified remote content availability receipts are included in the proof
@@ -688,17 +687,13 @@ target request.
 
 Availability stores bytes. Rights decide who may use them.
 
-Protected content should be encrypted before it is published. IPFS, Elacity,
-supernodes, and volunteers can store encrypted blocks. In the intended open
-path, Runtime will own the operation. It will verify the authenticated request,
-ask `rights-provider` for typed policy evidence, select custody providers for
-recipient-encrypted contributions, and create a scoped `decrypt-provider`
-session. Carrier will transport only Runtime-selected endpoint traffic.
-
-The current Library path still uses the provisional
-`drm-provider -> rights-provider -> key-provider -> decrypt-provider` sequence.
-Those providers remain fail closed without configured backends. They do not
-implement or verify the intended custody path.
+Protected content is encrypted before it is published. IPFS, Elacity,
+supernodes, and volunteers can store encrypted blocks. Runtime owns the open: it
+verifies the authenticated request, acquires typed Chain rights evidence through
+its own `protected_content_rights_evidence` operation, selects custody providers
+for recipient-encrypted contributions, and opens a scoped session on the
+Runtime-only decrypt target. Carrier transports only Runtime-selected endpoint
+traffic. See [Protected content](PROTECTED_CONTENT.md).
 
 That keeps the core invariant simple:
 
@@ -707,6 +702,101 @@ public CID can expose encrypted bytes
 	valid rights holder gets scoped output
 	unauthorized opener gets no decrypt session
 ```
+
+### Local retention is not a remote download
+
+A local pin keeps blocks already available on this Home; offline IPFS cannot
+pull missing blocks from the public network. A pin therefore does not prove
+that a remote owned asset, including every DASH segment, was downloaded for
+offline use. Non-holder listing adoption remains manifest-only; pool members
+verify and deliver requested protected parts through authenticated sessions.
+
+Owned-capsule retention uses the internal Rust Content API
+`retain_local_via_provider` for storage-only retention. It preserves the
+existing best-effort pin without writing availability receipts or repair tasks.
+It introduces no public operation, provider or permission grant. Gateway,
+Library and custody checks remain with their current owners.
+
+This storage-only path is distinct from an explicit Content `ensure` request
+with `availability_policy = local_pin`. Ensure owns availability receipts and
+repair-task state; its local object fallback may import a complete object
+already staged here. Using it merely to retain a file could replace an existing
+CID's network availability/repair record, so it is not the gateway routing
+conversion. Local-only ensure failures retain that policy in repair state;
+retries can recover local pins without invoking availability placement or
+external repair workers.
+
+## Public Metadata Store
+
+A Home has two IPFS stores. Each store is a separate Kubo instance with its
+own repository, coordination file, lock and mode marker.
+
+- The **private store** holds the Home's own objects, including protected
+  ciphertext. It runs offline: it does not announce, route or fetch on the
+  IPFS network. Carrier and the availability provider move these objects
+  between Homes.
+- The **public store** holds only the public metadata of the assets this Home
+  mints: the listing metadata folder and its cover. It joins the IPFS network
+  as a DHT client and announces the roots it holds.
+
+**What enters the public store, and when.** Before the Runtime raises the
+wallet approval for a new mint, it publishes that mint's metadata folder and
+cover. For each root, it exports a CAR from the private store, validates it,
+and then imports and pins it. A bounded background task announces the pinned
+root; the mint does not wait for public DHT announcement. Validation accepts
+one root of the expected kind, at most 4 MiB, that reaches no block of the protected
+content. The Runtime raises the approval only after the publication succeeds.
+If a step fails, the Creator shows the "Publish metadata on IPFS" stage as
+failed, no approval exists, and the creator can try again. An approval that
+already exists settles as before. On a Home that offers sharing, the Inbox
+approval card states that the asset's metadata is public on IPFS. An approval
+made in an external wallet does not show this line.
+
+**Configuration and consent.** Metadata sharing defaults to enabled when
+protected content is enabled; `public_metadata = false` disables the offer.
+Configuration alone never starts sharing: the public store requires the Home
+admin's recorded standing consent. With sharing disabled, Runtime stops the
+public store and keeps recorded consent for a later explicit re-enable.
+
+**Consent and Stop in Inbox.** On a Home that offers sharing, the public store
+runs only while the Home admin agrees to it. Inbox shows the admin the
+consent text as a standing card, and the admin agrees with a passkey. The
+Runtime records the consent with the version and SHA-256 of that text, so a
+changed text asks again. The Creator only reads the status: without consent
+it keeps new mints locked and opens Inbox for the admin, while unfinished
+mints stay available. "Stop sharing metadata" in Inbox first writes a durable
+withdrawal record. The Runtime then disables the consent, stops the public
+Kubo and removes the record. A withdrawal continues after a restart, and Stop
+works whether or not sharing is offered. New mints wait until the admin agrees
+again. Stop ends this Home's sharing. Copies that other IPFS nodes keep stay
+public.
+
+**Boundaries.** The Runtime is the only client of the public store. The store
+is the Runtime-only provider target `public-ipfs`, which capsules and Carrier
+peers cannot address. It has no HTTP gateway, and its only write path is the
+validated import. Every publication phase checks the consent and the
+withdrawal record before it starts, and each dispatch to the target holds the
+Runtime's dispatch fence. Stop unregisters the target and stops its process
+even while publication work runs. The Runtime owns the public Kubo process:
+cleanup stops only a process whose mode marker and repository identity match,
+and the private store never opens the public paths.
+
+**Peers.** `config.toml` sets the public store's network, over compiled-in
+defaults:
+
+| Key | Default | Use |
+|---|---|---|
+| `public_ipfs_bootstrap` | Kubo's own bootstrap list | first contacts on the IPFS network |
+| `public_ipfs_peers` | Elacity's node, `/ip4/34.77.31.164/udp/4001/quic-v1/p2p/12D3KooWNieM3HRBJdVqaQucZEJdqA3oWKrKf3Gx3hp2cmtR9GNK` | preferred peers the store keeps connected |
+| `public_ipfs_swarm_port` | `4001` | the swarm port, TCP and QUIC |
+
+Each address ends in `/p2p/<peer ID>`. A list in `config.toml` replaces its
+default. The bootstrap list can be empty only when the peer list is not. When
+the swarm port is in use, the store reads as not ready and names the port.
+
+**Availability.** The public store serves the metadata only while the Home is
+on. While the Home is offline, the metadata is available only from IPFS nodes
+that kept a copy. Durable availability from other nodes is a later phase.
 
 ## Default SmartWeb Sync
 
@@ -731,6 +821,7 @@ fetch, or replication underneath.
 
 - Do not make Carrier responsible for license policy or decryption.
 - Do not expose raw Kubo, IPFS Cluster, Elacity SDK, or gateway APIs to normal capsules.
+- Keep the public IPFS store to validated mint metadata folders and covers, reached by the Runtime only.
 - Do not treat a CID as an availability guarantee.
 - Do not call a single pinning service decentralized storage.
 - Do not rely on CID secrecy for private content.
@@ -786,7 +877,7 @@ the built-in Carrier availability provider signs and announces the CID on
 Carrier, attempts remote provider-mediated replication proof from signed remote
 announcements, records `network_available` only after remote `content/ensure`
 plus `content/status` proves a live independent replica the peer already
-holds (it pushes no copy in 0.8.0, #498),
+holds through the generic replication path,
 verifies/summarizes remote content availability receipts when present, and otherwise records
 `carrier_announced` or `repair_needed`; if Carrier is unavailable, publish
 remains honestly local or `repair_needed`. Public gateway
@@ -796,16 +887,17 @@ evidence, signed recipient authorization, immutable custody epochs,
 recipient-encrypted node contributions, threshold reconstruction, node-local
 claims and exact encrypted result replay. [Protected content](PROTECTED_CONTENT.md)
 owns that contract; [GitHub issues](https://github.com/elastos/elastos-runtime/issues) own source and installed proof.
-Provisional DRM, rights, key and decrypt capsules remain a separate retirement
-surface. The content provider validates
-`sealed` object publishes against the sealed descriptor, required graph links,
-and protected-content algorithm allowlists. The
-remaining work is:
+The provisional DRM, rights, key and decrypt surfaces have been retired.
+Protected pool copies use a separate accepted-obligation path: members pull the
+exact package after share acceptance, verify its binding, reserve host-wide
+storage charges and announce active copies on Carrier. Repair revisits active
+obligations; Stop preserves other owners and removes only the stopped copy's
+ownership. This is not unrestricted generic replication admission. Pool-server
+staging ranks the item's verified pool before unrelated candidate pools while
+retaining the existing holder and request bounds.
 
-- Replace the provisional protected-content DTO/provider surface atomically with
-  Runtime-owned rights, custody, and decrypt orchestration. Do not expose raw
-  CEKs, custody shares, provider routes, network locations, or backend SDKs to
-  app capsules.
+The remaining work includes:
+
 - Move remaining release artifact uploads off explicit operator IPFS tooling when the release pipeline can use the same content-provider contract without losing install compatibility or build/release proof.
 - MicroVM materialization paths should consult availability state and repair/fetch through explicit operator/provider-plane tooling.
 - Promote the first Carrier remote proof path into production-grade storage policy: production independent provider-network quota-ledger federation beyond the configured bounded endpoint quorum, repair-fleet worker attestations/SLA/settlement beyond the configured external dispatch endpoint quorum, live market pricing/escrow/settlement beyond the configured storage-market endpoint-quorum admission gate and current storage-settlement policy-status receipt, actual federated network abuse throttles/banlists/abuse ledgers beyond the configured bounded abuse-control endpoint quorum, richer remote storage receipt policy, production peer reputation trust policy/third-party attestations/revocation beyond the configured Carrier peer-attestation endpoint quorum, and live federated dashboard/UI/peer-health subscriptions beyond the current provider-local dashboard plus configured alert-exchange endpoint.

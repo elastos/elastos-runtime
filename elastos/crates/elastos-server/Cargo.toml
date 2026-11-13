@@ -20,6 +20,20 @@ elastos-crosvm = { path = "../elastos-crosvm" }
 elastos-wallet-contract = { path = "../elastos-wallet-contract" }
 elastos-protected-content-runtime = { path = "../elastos-protected-content-runtime" }
 elastos-protected-content-rights = { path = "../elastos-protected-content-rights" }
+# Promoted from dev-dependencies for ONE item: `framed_chunk_ranges_v1`, the
+# pure header-length/plaintext-length arithmetic that says where each framed
+# chunk of a sealed `object.epc1` starts and ends. The Runtime slices one such
+# chunk out of a published object and must not re-derive the sealer's own byte
+# ranges by hand.
+#
+# The scope of the promotion is deliberately narrow and is enforced by review,
+# not by the manifest: `framed_chunk_ranges_v1` takes two integers, holds no
+# key material and performs no cryptography, and it is the ONLY item of this
+# crate that non-test `elastos-server` code may call. Sealing
+# (`PayloadSealerV1`) and decryption (`PayloadChunkDecrypterV1`) stay in the
+# protect/decrypt provider capsules -- calling either from this process would
+# put content keys in the Runtime's address space and must be refused.
+elastos-protected-content-custody = { path = "../elastos-protected-content-custody" }
 elastos-protected-content-provider-contracts = { path = "../elastos-protected-content-provider-contracts" }
 elastos-protected-content-contracts = { path = "../elastos-protected-content-contracts" }
 elastos-model-contract = { path = "../elastos-model-contract" }
@@ -102,6 +116,8 @@ flate2 = "1.0"
 tar = "0.4"
 zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2"] }
 libc = "0.2"
+# Safe process, signal and lock calls (ADV-04); exact pin at the locked version (rust-dkms rule 4).
+nix = { version = "=0.31.3", default-features = false, features = ["fs", "signal", "user"] }
 
 # Built-in Carrier transport (P2P for updates and gossip messaging).
 # Keep these exact pins compatible across the full Carrier dependency graph.
@@ -120,7 +136,7 @@ tower = { version = "0.5", features = ["util"] }
 wasm-encoder = "=0.236.1"
 elastos-auth = { path = "../elastos-auth" }
 elastos-common = { path = "../elastos-common", features = ["test-fixtures"] }
-elastos-protected-content-custody = { path = "../elastos-protected-content-custody" }
+elastos-protected-content-contracts = { path = "../elastos-protected-content-contracts", features = ["test-fixtures"] }
 x-wing = { version = "=0.1.0", features = ["hazmat", "zeroize"] }
 # The rand generation iroh-gossip's membership state machine takes; the
 # Community hub test drives that state machine directly.

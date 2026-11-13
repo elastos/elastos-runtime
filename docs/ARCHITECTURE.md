@@ -337,6 +337,34 @@ fetch, repair, backend selection, IPLD graphs, and availability receipts.
 
 ## Trusted and encrypted content
 
+Protected publishing uses two storage boundaries. Private offline IPFS stores
+hold ciphertext and the protected package; Carrier carries verified content
+between Homes. A separate public Kubo store contains only validated metadata
+folders and covers, with admin consent. A public metadata pin does not publish
+the protected file or authorize a key release.
+
+Runtime resolves the item's signed pool descriptor against its immutable
+custody epoch. Descriptor v3 binds the pool's serving members. Runtime prepares
+server-side content sessions before requesting Wallet authorization; each
+custody node then independently checks finalized chain rights and releases only
+a contribution encrypted to the authorized server recipient. The server's
+Runtime-only decrypt provider reconstructs the CEK and encrypts output to the
+buyer's session delivery key; the server verifies each served part. Apps receive
+opaque launch authority and bounded reads.
+
+Access belongs to the account's chain rights. Opening an available published
+asset from another Home does not require a contact relationship, pairing with
+the publisher, or an extra publisher approval. Runtime still needs a verified
+route to the item's pool and available content. Importing a shared listing is
+an optional acquisition path; it is not the source of access authority.
+
+Pool copy obligations are separate from key-share custody. Accepted members
+pull and verify the bound package, account for stored bytes under host-wide
+ownership, and announce active copies through Carrier. A key-only custody node
+is not evidence that ciphertext is available. These source interfaces do not
+establish installed playback acceptance; verification remains in the owning
+issue.
+
 Integrity, publisher trust, availability, rights, key release, and decryption
 are separate claims. Runtime checks authority and routes each protected-content
 operation to its owning provider. Ordinary capsules receive neither raw keys

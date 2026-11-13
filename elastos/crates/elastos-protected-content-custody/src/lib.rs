@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod cenc;
+mod delivery;
 mod node_share;
 mod node_store;
 mod payload;
@@ -16,23 +17,32 @@ mod secrets;
 mod share_wrap;
 
 #[cfg(test)]
+mod delivery_tests;
+#[cfg(test)]
+mod node_store_pool_tests;
+#[cfg(test)]
 mod test_support;
 
 use thiserror::Error;
 
+pub use delivery::{open_viewer_part_v1, seal_viewer_part_v1, DeliverySecretKeyV1};
 pub use node_share::NodeLocalStoredShareV1;
 pub use node_store::{
     NodeLocalShareReceiptV1, NodeLocalShareStoreErrorV1, NodeLocalShareStoreV1,
-    ProvisionedNodeLocalShareV1,
+    NodeShareProvisionErrorV1, PoolProvisionedNodeShareV1, ProvisionedNodeLocalShareV1,
 };
 pub use payload::{
-    decrypt_payload_to_staging_writer_from_authenticated_operation_v1,
+    decrypt_payload_to_staging_writer_from_authenticated_operation_v1, framed_chunk_ranges_v1,
+    reconstruct_content_key_for_object_session, reconstruct_content_key_for_object_session_v2,
     seal_payload_to_staging_writer_v1, AuthenticatedChunkPayloadHeaderV1,
-    AuthenticatedPayloadDecryptInputsV1, DecryptedPayloadMetadataV1, SealedPayloadMetadataV1,
+    AuthenticatedPayloadDecryptInputsV1, DecryptedPayloadMetadataV1, PayloadChunkDecrypterV1,
+    PayloadSealerV1, SealedPayloadMetadataV1, UnprovisionedSealedPayloadV1,
     MAX_PAYLOAD_CONTENT_TYPE_BYTES_V1, PAYLOAD_PLAINTEXT_CHUNK_BYTES_V1,
 };
 pub use play::{
-    decrypt_validated_cenc_fmp4_segment_to_clear_v1, rewrite_validated_cenc_fmp4_init_to_clear_v1,
+    decrypt_validated_cenc_dash_segment_to_clear_v2,
+    decrypt_validated_cenc_fmp4_segment_to_clear_v1, require_common_cenc_dash_protection_header_v2,
+    rewrite_validated_cenc_dash_init_to_clear_v2, rewrite_validated_cenc_fmp4_init_to_clear_v1,
 };
 pub use possession::{
     answer_recipient_possession_challenge, issue_recipient_possession_challenge,
@@ -44,7 +54,8 @@ pub use possession::{
 pub use pq_hybrid::{PqHybridError, SUITE_PQ_HYBRID};
 pub use protect::{
     protect_validated_clear_cenc_fmp4_media_v1, protect_validated_clear_fmp4_init_to_cenc_v1,
-    protect_validated_clear_fmp4_segment_to_cenc_v1,
+    protect_validated_clear_fmp4_init_to_cenc_v2, protect_validated_clear_fmp4_segment_to_cenc_v1,
+    protect_validated_clear_fmp4_segment_to_cenc_v2,
 };
 pub use provision::{
     provision_custody_envelope, provision_custody_envelope_for_exact_nodes,
@@ -52,7 +63,8 @@ pub use provision::{
 };
 pub(crate) use reconstruct::reconstruct_content_key_from_authenticated_operation;
 pub use reconstruct::{
-    reconstruct_content_key_into_decrypt_session, DecryptSessionReconstructionInputsV1,
+    reconstruct_content_key_into_decrypt_session, reconstruct_content_key_into_decrypt_session_v2,
+    DecryptSessionReconstructionInputsV1, DecryptSessionReconstructionInputsV2,
 };
 pub use replay_store::DurableReplayClaimStoreV1;
 pub use secrets::{

@@ -1,0 +1,40 @@
+Public metadata CAR fixtures for public_metadata_car.rs.
+
+Exported by Kubo 0.40.1 `dag export` from a throwaway repo, fully offline
+(no daemon, every command with --offline). They are independent of the
+validator's own test builder: a change to how this Runtime encodes CARs,
+dag-pb or UnixFS cannot make them agree with it by accident.
+
+folder.car       bafybeibafe7oi52uk6xjyuigvo3mel5hs6kdb4kvbb3odkepyn6o5xd4qu  (7 blocks: directory + 6 raw leaves)
+cover-small.car  QmUBeVrKj3MNuuRLnx4Pae5PA31uLoXDJMTo1ee3x3uGJm                (1 block)
+cover-multi.car  QmPyhtWWrYyPNrnB3GzECpy4JrH8pd55BPN3C1sr4KEBtJ                (3 blocks: root + 2 dag-pb leaves)
+
+Inputs
+- folder/: the five files `elacity_metadata_files(None, &tests::inputs())`
+  writes (protected_content_elacity_metadata.rs test inputs), plus
+  manifest.json:
+  {"schema":"elastos.protected-content.metadata/v1","name":"protected-runtime-proof.png","mime_type":"image/png","encrypted_content_cid":"bafycidofciphertext","content_access_id":"0x51515151515151515151515151515151"}
+- cover-small.bin (4096 bytes) and cover-multi.bin (307200 bytes): a 64-bit
+  LCG, each byte the state's top byte after one step:
+python3 - <<'EOF'
+def seq(n, s):
+    out = bytearray()
+    for _ in range(n):
+        s = (s * 6364136223846793005 + 1442695040888963407) % (1 << 64)
+        out.append(s >> 56)
+    return bytes(out)
+open("cover-multi.bin", "wb").write(seq(300 * 1024, 0x388))
+open("cover-small.bin", "wb").write(seq(4096, 0x389))
+EOF
+  sha256 cover-multi.bin 4af061940265e8ccefb0e8eda9d9bb862688e487f83a7fd539983d2e71b649d1
+  sha256 cover-small.bin f47be9712afc08161d2aae4f4c3939658bd1f7e78ad2c9bf50925d82fb15663c
+
+Commands (KUBO = Kubo 0.40.1)
+  export IPFS_PATH=$(mktemp -d)/repo
+  $KUBO init --profile=test
+  # The private store's directory flags (ipfs-provider add_directory_url).
+  $KUBO add --offline -r -Q --cid-version=1 --raw-leaves --chunker=size-262144 folder
+  # Kubo defaults, as the private store adds a cover (kubo_add_bytes).
+  $KUBO add --offline -Q cover-small.bin
+  $KUBO add --offline -Q cover-multi.bin
+  $KUBO dag export --offline <root> > <name>.car

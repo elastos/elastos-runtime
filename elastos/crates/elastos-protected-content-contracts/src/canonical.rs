@@ -17,6 +17,10 @@ pub enum ContractError {
     InvalidField(&'static str),
     #[error("field exceeds its v1 limit: {0}")]
     FieldTooLong(&'static str),
+    /// The bytes are in a layout this build no longer accepts. Named so a
+    /// caller can tell an old version from corrupt bytes (ADV-01 R5).
+    #[error("unsupported version: {0}")]
+    UnsupportedVersion(&'static str),
 }
 
 /// The only supported signed and hashed representation for v1 contracts.
@@ -64,7 +68,7 @@ pub(crate) struct Encoder {
 }
 
 impl Encoder {
-    fn new(domain: &str) -> Self {
+    pub(crate) fn new(domain: &str) -> Self {
         let mut bytes = Vec::with_capacity(domain.len() + 1);
         bytes.extend_from_slice(domain.as_bytes());
         bytes.push(0);
@@ -107,7 +111,7 @@ impl Encoder {
         self.bytes(&value.canonical_bytes()?)
     }
 
-    fn finish(self) -> Vec<u8> {
+    pub(crate) fn finish(self) -> Vec<u8> {
         self.bytes
     }
 }
@@ -118,7 +122,7 @@ pub(crate) struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
-    fn new(bytes: &'a [u8], domain: &str) -> Result<Self, ContractError> {
+    pub(crate) fn new(bytes: &'a [u8], domain: &str) -> Result<Self, ContractError> {
         let prefix = domain.as_bytes();
         if bytes.len() <= prefix.len()
             || &bytes[..prefix.len()] != prefix
@@ -196,7 +200,12 @@ impl<'a> Decoder<'a> {
         T::from_canonical_bytes(&bytes)
     }
 
-    fn finish(&self) -> Result<(), ContractError> {
+    /// Bytes not yet read.
+    pub(crate) fn remaining(&self) -> usize {
+        self.bytes.len() - self.cursor
+    }
+
+    pub(crate) fn finish(&self) -> Result<(), ContractError> {
         if self.cursor == self.bytes.len() {
             Ok(())
         } else {

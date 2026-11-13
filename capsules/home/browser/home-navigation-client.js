@@ -88,10 +88,17 @@ export function createHomeNavigationClient({ homeToken, homeOrigin, enabled = tr
     publish();
   });
   windowRef.addEventListener("pagehide", () => { publish("unloading"); unloading = true; pendingRenewal?.cancel(); });
+  // Home binds this frame on its ready message and renews only bound frames.
+  function announceReady() {
+    if (attached()) windowRef.top.postMessage({ type: "home:app-ready", homeToken }, homeOrigin);
+  }
   windowRef.addEventListener("pageshow", () => {
     unloading = false;
-    if (attached()) windowRef.top.postMessage({ type: "home:app-ready", homeToken }, homeOrigin);
+    announceReady();
   });
+  // A client loaded after the document was first shown (a late dynamic
+  // import) has missed that pageshow, so it announces the document now.
+  if (windowRef.document?.readyState === "complete") announceReady();
   return {
     setQuery(value) { query = { ...value }; publish(); },
     setHomeToken,

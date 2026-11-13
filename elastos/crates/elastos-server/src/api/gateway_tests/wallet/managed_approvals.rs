@@ -22,6 +22,7 @@ async fn test_system_can_select_default_wallet_without_exposing_connector_author
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
 
@@ -76,6 +77,7 @@ async fn test_system_approves_managed_wallet_request_and_executes_signature() {
             "expires_at": 20
         })]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let (state, wallet_provider) =
         wallet_test_state_with_recording_provider(dir.path(), provider).await;
@@ -172,6 +174,7 @@ async fn test_system_does_not_approve_external_wallet_request() {
             "expires_at": 20
         })]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
 

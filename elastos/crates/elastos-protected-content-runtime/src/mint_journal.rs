@@ -16,11 +16,12 @@ use elastos_protected_content_contracts::{
     CanonicalContract, ContentAccessIdV1, CustodyCommitteeAuthorizationIdentityV1,
     CustodyEpochIdentityV1, CustodyNodeProvisioningRecordIdentityV1, CustodyPoolFailureDomainIdV1,
     CustodyPoolIdentityV1, CustodyPoolOperatorIdV1, Digest32, EncryptedContentIdentityV1,
-    KeyEnvelopeIdentityV1, NodePublicKey, NodeSetV1, RightsPolicyIdentityV1,
+    KeyEnvelopeIdentityV1, NodePublicKey, NodeSetV1, PoolDidV1, RightsPolicyIdentityV1,
     RuntimeCustodyProvisioningIdV1, ThresholdV1,
 };
 use elastos_protected_content_provider_contracts::{
-    CencFmp4MediaIdentityV1, MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1,
+    CencDashMediaIdentityV2, CencDashRenditionKindV2, CencFmp4MediaIdentityV1,
+    ChunkedPayloadObjectIdentityV1, MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1,
 };
 use nix::fcntl::{Flock, FlockArg};
 use nix::unistd::geteuid;
@@ -28,10 +29,29 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const STORE_MAGIC: &[u8; 8] = b"epc-mj05";
-const STORE_DIGEST_DOMAIN: &[u8] = b"elastos/protected-content/runtime-mint-journal/v5";
-const INTENT_MAGIC: &[u8; 8] = b"epc-mi02";
-const INTENT_DIGEST_DOMAIN: &[u8] = b"elastos/protected-content/runtime-mint-intent/v2";
+// v5 is the pre-Task-12 record format: a positional (no discriminant)
+// `CencFmp4MediaIdentityV1` is the only content identity it can carry. It is
+// read-only from here on; the ~61 files already on disk under
+// `protected-content/runtime-mint/` were written by this codec and must stay
+// legible.
+const STORE_MAGIC_V5: &[u8; 8] = b"epc-mj05";
+const STORE_DIGEST_DOMAIN_V5: &[u8] = b"elastos/protected-content/runtime-mint-journal/v5";
+// v6 adds a `RuntimeContentIdentityV1` kind byte to the record framing so a
+// record can carry either a media or an object identity. The encoder only
+// ever writes v6; the decoder accepts both.
+const STORE_MAGIC: &[u8; 8] = b"epc-mj06";
+const STORE_DIGEST_DOMAIN: &[u8] = b"elastos/protected-content/runtime-mint-journal/v6";
+// v2 is the pre-Task-12b intent format: a positional (no discriminant) media
+// declaration (mime_type/codecs/clear_init_sha256/clear_segment_sha256) is
+// the only content an intent can carry. Read-only from here on; 22 real
+// `epc-mi02` records exist on the installed system and must stay legible.
+const INTENT_MAGIC_V2: &[u8; 8] = b"epc-mi02";
+const INTENT_DIGEST_DOMAIN_V2: &[u8] = b"elastos/protected-content/runtime-mint-intent/v2";
+// v3 adds a `RuntimeMintIntentContentV1` kind byte to the intent framing so
+// an intent can declare either a media or an object source. The encoder only
+// ever writes v3; the decoder accepts both.
+const INTENT_MAGIC: &[u8; 8] = b"epc-mi03";
+const INTENT_DIGEST_DOMAIN: &[u8] = b"elastos/protected-content/runtime-mint-intent/v3";
 const MEDIA_PREPARATION_MAGIC: &[u8; 8] = b"epc-mp02";
 const MEDIA_PREPARATION_DIGEST_DOMAIN: &[u8] =
     b"elastos/protected-content/runtime-media-preparation/v2";
@@ -41,6 +61,17 @@ const STORE_LOCK_FILE: &str = "runtime-mint-journal.lock";
 const MINT_ID_DOMAIN: &[u8] = b"elastos.protected-content.runtime-mint-id/v4";
 const MINT_INTENT_REQUEST_ID_DOMAIN: &[u8] =
     b"elastos.protected-content.runtime-mint-intent-request-id/v1";
+/// Every attempt after a source's first. Attempt zero keeps the original
+/// derivation above, so ids already on disk are unchanged.
+const MINT_INTENT_ATTEMPT_REQUEST_ID_DOMAIN: &[u8] =
+    b"elastos.protected-content.runtime-mint-intent-request-id/attempt/v1";
+const ATTEMPT_FILE_MAGIC: &[u8; 8] = b"epc-ma01";
+const ARCHIVE_NOTE_FILE: &str = "archive.json";
+/// A move into an archive that has begun and may not have finished.
+const PENDING_ARCHIVE_PREFIX: &str = "archive-pending-";
+/// Archive directories are named `runtime-mint-set-aside-<date>`, beside the
+/// store.
+const ARCHIVE_DIR_PREFIX: &str = "runtime-mint-set-aside-";
 const MINT_INTENT_SOURCE_BINDING_DOMAIN: &[u8] =
     b"elastos.protected-content.runtime-mint-intent-source-binding/v1";
 const MAX_STORE_FILE_BYTES: usize = 64 * 1024;
@@ -49,6 +80,26 @@ const MAX_STORE_FILE_BYTES: usize = 64 * 1024;
 const MAX_RECORD_SCAN_ENTRIES: usize = 65_536;
 const REQUIRED_NODES: usize = 3;
 const MAX_AVAILABILITY_TEXT_BYTES: usize = 256;
+// Media/object/dash kind discriminant, reused across every place this journal
+// needs to say "this is about the media side, the object side or the v2 DASH
+// media side": the
+// `RuntimeContentIdentityV1` record framing, the `RuntimeMintIntentContentV1`
+// intent framing, and `RuntimeVerifiedContentIdentityRootV1`. Any other
+// leading byte is `Corrupt`.
+const CONTENT_IDENTITY_KIND_MEDIA: u8 = 0x01;
+const CONTENT_IDENTITY_KIND_OBJECT: u8 = 0x02;
+// A pre-v2 Home reads this byte as an unrecognized kind (`Corrupt`), so it
+// fails closed on a v2 record.
+const CONTENT_IDENTITY_KIND_MEDIA_DASH: u8 = 0x03;
+// Domain for the object-side analogue of `CencFmp4MediaIdentityV1::media_manifest_root`:
+// a reproducible commitment to a `ChunkedPayloadObjectIdentityV1`'s own
+// structure, used so `RuntimeVerifiedContentAvailability` can independently
+// re-derive and compare an object identity the same way it already does for
+// media (`ChunkedPayloadObjectIdentityV1` has no such method of its own;
+// this crate computes it from the identity's canonical bytes instead of
+// adding one, to avoid a provider-contracts change).
+const OBJECT_IDENTITY_ROOT_DOMAIN: &[u8] =
+    b"elastos.protected-content.runtime-object-identity-root/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum RuntimeMintJournalError {
@@ -164,6 +215,49 @@ impl RuntimeContentAvailabilityRequirement {
     }
 }
 
+/// The structural identity commitment carried by verified content
+/// availability: whichever kind the draft it will be checked against turns
+/// out to be. `Media` is `CencFmp4MediaIdentityV1::media_manifest_root()`
+/// (a value that type already computes and re-verifies); `Object` is the
+/// object-side analogue this crate computes itself (`ChunkedPayloadObjectIdentityV1`
+/// has no such method of its own — see `OBJECT_IDENTITY_ROOT_DOMAIN`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RuntimeVerifiedContentIdentityRootV1 {
+    Media(Digest32),
+    Object(Digest32),
+    /// `CencDashMediaIdentityV2::media_manifest_root()`.
+    MediaDash(Digest32),
+}
+
+impl RuntimeVerifiedContentIdentityRootV1 {
+    pub const fn for_media(media: &CencFmp4MediaIdentityV1) -> Self {
+        Self::Media(media.media_manifest_root())
+    }
+
+    pub const fn for_media_dash(head: &CencDashMediaIdentityV2) -> Self {
+        Self::MediaDash(head.media_manifest_root())
+    }
+
+    pub fn for_object(
+        object: &ChunkedPayloadObjectIdentityV1,
+    ) -> Result<Self, RuntimeMintJournalError> {
+        Ok(Self::Object(compute_object_identity_root(object)?))
+    }
+}
+
+fn compute_object_identity_root(
+    object: &ChunkedPayloadObjectIdentityV1,
+) -> Result<Digest32, RuntimeMintJournalError> {
+    let mut hasher = Sha256::new();
+    hasher.update(OBJECT_IDENTITY_ROOT_DOMAIN);
+    hasher.update(
+        &object
+            .canonical_bytes()
+            .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+    );
+    Ok(Digest32::new(hasher.finalize().into()))
+}
+
 /// Identity-only result of server-side verification of an existing signed
 /// `elastos://content` availability receipt. Its fields are intentionally
 /// private and it cannot deserialize provider JSON.
@@ -179,7 +273,7 @@ pub struct RuntimeVerifiedContentAvailability {
     checked_at: u64,
     receipt_digest: Digest32,
     encrypted_content: EncryptedContentIdentityV1,
-    media_manifest_root: Digest32,
+    content_identity_root: RuntimeVerifiedContentIdentityRootV1,
 }
 
 impl fmt::Debug for RuntimeVerifiedContentAvailability {
@@ -196,7 +290,7 @@ impl fmt::Debug for RuntimeVerifiedContentAvailability {
             .field("checked_at", &self.checked_at)
             .field("receipt_digest", &self.receipt_digest)
             .field("encrypted_content", &self.encrypted_content)
-            .field("media_manifest_root", &self.media_manifest_root)
+            .field("content_identity_root", &self.content_identity_root)
             .finish()
     }
 }
@@ -215,7 +309,7 @@ impl RuntimeVerifiedContentAvailability {
         checked_at: u64,
         receipt_digest: Digest32,
         encrypted_content: EncryptedContentIdentityV1,
-        media_manifest_root: Digest32,
+        content_identity_root: RuntimeVerifiedContentIdentityRootV1,
     ) -> Result<Self, RuntimeMintJournalError> {
         requirement.validate()?;
         let value = Self {
@@ -229,7 +323,7 @@ impl RuntimeVerifiedContentAvailability {
             checked_at,
             receipt_digest,
             encrypted_content,
-            media_manifest_root,
+            content_identity_root,
         };
         value.validate()?;
         if value.object_identity != requirement.expected_object_identity
@@ -246,11 +340,15 @@ impl RuntimeVerifiedContentAvailability {
         validate_availability_text(&self.publisher_identity)?;
         validate_availability_text(&self.expected_provider_did)?;
         validate_availability_text(&self.policy)?;
+        let (RuntimeVerifiedContentIdentityRootV1::Media(root_digest)
+        | RuntimeVerifiedContentIdentityRootV1::Object(root_digest)
+        | RuntimeVerifiedContentIdentityRootV1::MediaDash(root_digest)) =
+            self.content_identity_root;
         if self.required_replicas == 0
             || self.observed_replicas < self.required_replicas
             || self.checked_at == 0
             || self.receipt_digest == Digest32::new([0; 32])
-            || self.media_manifest_root == Digest32::new([0; 32])
+            || root_digest == Digest32::new([0; 32])
         {
             return Err(RuntimeMintJournalError::InvalidSelection);
         }
@@ -269,8 +367,52 @@ impl RuntimeVerifiedContentAvailability {
     }
 
     fn matches_draft(&self, draft: &RuntimeMintDraft) -> bool {
-        self.encrypted_content == *draft.encrypted_content()
-            && self.media_manifest_root == draft.media_identity().media_manifest_root()
+        if self.encrypted_content != *draft.encrypted_content() {
+            return false;
+        }
+        match (&self.content_identity_root, draft.content_identity()) {
+            (
+                RuntimeVerifiedContentIdentityRootV1::Media(root),
+                RuntimeContentIdentityV1::Media(media),
+            ) => *root == media.media_manifest_root(),
+            (
+                RuntimeVerifiedContentIdentityRootV1::Object(root),
+                RuntimeContentIdentityV1::Object(object),
+            ) => compute_object_identity_root(object).is_ok_and(|expected| *root == expected),
+            (
+                RuntimeVerifiedContentIdentityRootV1::MediaDash(root),
+                RuntimeContentIdentityV1::MediaDash(head),
+            ) => *root == head.media_manifest_root(),
+            // An availability receipt of one kind can never describe a draft
+            // of another: these are real kind mismatches, not missing cases,
+            // so every cross-kind pair gets its own explicit arm rather than
+            // a wildcard (a further kind added later must not silently fall
+            // through here).
+            (
+                RuntimeVerifiedContentIdentityRootV1::Media(_),
+                RuntimeContentIdentityV1::Object(_),
+            )
+            | (
+                RuntimeVerifiedContentIdentityRootV1::Media(_),
+                RuntimeContentIdentityV1::MediaDash(_),
+            )
+            | (
+                RuntimeVerifiedContentIdentityRootV1::Object(_),
+                RuntimeContentIdentityV1::Media(_),
+            )
+            | (
+                RuntimeVerifiedContentIdentityRootV1::Object(_),
+                RuntimeContentIdentityV1::MediaDash(_),
+            )
+            | (
+                RuntimeVerifiedContentIdentityRootV1::MediaDash(_),
+                RuntimeContentIdentityV1::Media(_),
+            )
+            | (
+                RuntimeVerifiedContentIdentityRootV1::MediaDash(_),
+                RuntimeContentIdentityV1::Object(_),
+            ) => false,
+        }
     }
 
     pub fn content_cid(&self) -> &str {
@@ -313,9 +455,186 @@ impl RuntimeVerifiedContentAvailability {
         &self.encrypted_content
     }
 
-    pub const fn media_manifest_root(&self) -> Digest32 {
-        self.media_manifest_root
+    pub const fn content_identity_root(&self) -> RuntimeVerifiedContentIdentityRootV1 {
+        self.content_identity_root
     }
+
+    /// `Some` when this evidence describes media, `None` for an object.
+    /// Kept for existing callers that only ever handled media; see
+    /// `content_identity_root()` for the generic accessor.
+    pub const fn media_manifest_root(&self) -> Option<Digest32> {
+        match self.content_identity_root {
+            RuntimeVerifiedContentIdentityRootV1::Media(root) => Some(root),
+            RuntimeVerifiedContentIdentityRootV1::Object(_)
+            | RuntimeVerifiedContentIdentityRootV1::MediaDash(_) => None,
+        }
+    }
+}
+
+/// Plan B T4.6: what a Home that does not hold an item's ciphertext proved by
+/// a full verified fetch (S4-U2). It names the same content and identity
+/// root a receipt does, and no replicas: nothing was pinned here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeVerifiedContentFetchV1 {
+    content_cid: String,
+    object_identity: String,
+    checked_at: u64,
+    encrypted_content: EncryptedContentIdentityV1,
+    content_identity_root: RuntimeVerifiedContentIdentityRootV1,
+}
+
+impl RuntimeVerifiedContentFetchV1 {
+    pub fn new(
+        content_cid: impl Into<String>,
+        object_identity: impl Into<String>,
+        checked_at: u64,
+        encrypted_content: EncryptedContentIdentityV1,
+        content_identity_root: RuntimeVerifiedContentIdentityRootV1,
+    ) -> Result<Self, RuntimeMintJournalError> {
+        let value = Self {
+            content_cid: content_cid.into(),
+            object_identity: object_identity.into(),
+            checked_at,
+            encrypted_content,
+            content_identity_root,
+        };
+        validate_availability_text(&value.content_cid)?;
+        validate_availability_text(&value.object_identity)?;
+        let (RuntimeVerifiedContentIdentityRootV1::Media(root)
+        | RuntimeVerifiedContentIdentityRootV1::Object(root)
+        | RuntimeVerifiedContentIdentityRootV1::MediaDash(root)) = value.content_identity_root;
+        if value.checked_at == 0 || root == Digest32::new([0; 32]) {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        value
+            .encrypted_content
+            .canonical_bytes()
+            .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
+        Ok(value)
+    }
+}
+
+/// Plan B T4.6: how a Home proved an item's ciphertext is available. A
+/// holder or the owner keeps a signed availability receipt; a Home that
+/// does not hold the ciphertext fetched and verified every file instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeAvailabilityEvidenceV1 {
+    Receipt(RuntimeVerifiedContentAvailability),
+    VerifiedFetch(RuntimeVerifiedContentFetchV1),
+}
+
+impl From<RuntimeVerifiedContentAvailability> for RuntimeAvailabilityEvidenceV1 {
+    fn from(receipt: RuntimeVerifiedContentAvailability) -> Self {
+        Self::Receipt(receipt)
+    }
+}
+
+impl RuntimeAvailabilityEvidenceV1 {
+    pub const RECEIPT: &'static str = "receipt";
+    pub const VERIFIED_FETCH: &'static str = "verified_fetch";
+
+    /// The listing record's `availability.kind`.
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Receipt(_) => Self::RECEIPT,
+            Self::VerifiedFetch(_) => Self::VERIFIED_FETCH,
+        }
+    }
+
+    pub fn as_receipt(&self) -> Option<&RuntimeVerifiedContentAvailability> {
+        match self {
+            Self::Receipt(receipt) => Some(receipt),
+            Self::VerifiedFetch(_) => None,
+        }
+    }
+
+    /// `None` for a verified fetch: no receipt was made.
+    pub fn receipt_digest(&self) -> Option<Digest32> {
+        self.as_receipt()
+            .map(RuntimeVerifiedContentAvailability::receipt_digest)
+    }
+
+    pub fn content_cid(&self) -> &str {
+        match self {
+            Self::Receipt(receipt) => receipt.content_cid(),
+            Self::VerifiedFetch(fetch) => &fetch.content_cid,
+        }
+    }
+
+    pub fn object_identity(&self) -> &str {
+        match self {
+            Self::Receipt(receipt) => receipt.object_identity(),
+            Self::VerifiedFetch(fetch) => &fetch.object_identity,
+        }
+    }
+
+    pub fn checked_at(&self) -> u64 {
+        match self {
+            Self::Receipt(receipt) => receipt.checked_at(),
+            Self::VerifiedFetch(fetch) => fetch.checked_at,
+        }
+    }
+
+    /// The replicas a receipt observed; a verified fetch observed none.
+    pub fn observed_replicas(&self) -> u32 {
+        match self {
+            Self::Receipt(receipt) => receipt.observed_replicas(),
+            Self::VerifiedFetch(_) => 0,
+        }
+    }
+}
+
+/// What an open binds availability by: the encrypted content and its
+/// identity root. A receipt and a verified fetch bind the same way.
+pub trait RuntimeAvailabilityBinding {
+    fn bound_encrypted_content(&self) -> &EncryptedContentIdentityV1;
+    fn bound_content_identity_root(&self) -> RuntimeVerifiedContentIdentityRootV1;
+}
+
+impl RuntimeAvailabilityBinding for RuntimeVerifiedContentAvailability {
+    fn bound_encrypted_content(&self) -> &EncryptedContentIdentityV1 {
+        self.encrypted_content()
+    }
+
+    fn bound_content_identity_root(&self) -> RuntimeVerifiedContentIdentityRootV1 {
+        self.content_identity_root()
+    }
+}
+
+impl RuntimeAvailabilityBinding for RuntimeAvailabilityEvidenceV1 {
+    fn bound_encrypted_content(&self) -> &EncryptedContentIdentityV1 {
+        match self {
+            Self::Receipt(receipt) => receipt.encrypted_content(),
+            Self::VerifiedFetch(fetch) => &fetch.encrypted_content,
+        }
+    }
+
+    fn bound_content_identity_root(&self) -> RuntimeVerifiedContentIdentityRootV1 {
+        match self {
+            Self::Receipt(receipt) => receipt.content_identity_root(),
+            Self::VerifiedFetch(fetch) => fetch.content_identity_root,
+        }
+    }
+}
+
+const POOL_NODE_ROOT_DOMAIN_V1: &[u8] = b"elastos.protected-content.pool-node-root/v1";
+
+/// Plan B T4.6 (S4-Q15): the owner-state root of a pool-bound node binding,
+/// `sha256(domain ‖ pool ‖ epoch ‖ node)`, defined once here. A Home that
+/// does not hold the ciphertext has no node record of its own, so it binds
+/// each node of the item's epoch by this root.
+pub fn pool_node_owner_state_root(
+    pool: &PoolDidV1,
+    epoch: CustodyEpochIdentityV1,
+    node: NodePublicKey,
+) -> Digest32 {
+    let mut hasher = Sha256::new();
+    hasher.update(POOL_NODE_ROOT_DOMAIN_V1);
+    hasher.update(pool.issuer().as_bytes());
+    hasher.update(epoch.epoch_sha256().as_bytes());
+    hasher.update(epoch.epoch_bytes().to_be_bytes());
+    hasher.update(node.as_bytes());
+    Digest32::new(hasher.finalize().into())
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -373,6 +692,40 @@ impl RuntimeMintNodeBinding {
     }
 }
 
+/// The pre-effect source declaration an intent commits to: either a media
+/// source (clear init segment + clear segments) or an object source (one
+/// clear plaintext blob). Mirrors `RuntimeContentIdentityV1`'s split for the
+/// same underlying content-kind distinction, one stage earlier (before
+/// protection has produced an actual `EncryptedContentIdentityV1`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RuntimeMintIntentContentV1 {
+    Media {
+        mime_type: String,
+        codecs: String,
+        clear_init_sha256: Digest32,
+        clear_segment_sha256: Vec<Digest32>,
+    },
+    Object {
+        content_type: String,
+        clear_plaintext_sha256: Digest32,
+        clear_plaintext_bytes: u64,
+    },
+    /// A v2 DASH source. The preparation receipt already binds the kinds, the
+    /// pinned mime/codecs and every clear init and segment, so the intent
+    /// carries no per-segment list and its size does not grow with duration.
+    MediaDash {
+        preparation_receipt: Digest32,
+        renditions: Vec<RuntimeMintIntentRenditionV2>,
+    },
+}
+
+/// One v2 rendition as an intent declares it: its kind and segment count.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct RuntimeMintIntentRenditionV2 {
+    pub kind: CencDashRenditionKindV2,
+    pub segment_count: u32,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct RuntimeMintIntent {
     request_id: Digest32,
@@ -381,10 +734,7 @@ pub struct RuntimeMintIntent {
     creator_wallet_account_id: String,
     creator_wallet_address: String,
     creator_mint_source_digest: Digest32,
-    mime_type: String,
-    codecs: String,
-    clear_init_sha256: Digest32,
-    clear_segment_sha256: Vec<Digest32>,
+    content: RuntimeMintIntentContentV1,
     content_access_id: ContentAccessIdV1,
     protect_state: RuntimeMintIntentProtectState,
     custody_pool: CustodyPoolIdentityV1,
@@ -528,6 +878,35 @@ impl RuntimeMediaPreparationRecord {
         self.request_id
     }
 
+    /// The same preparation, for a later attempt at its source: the request
+    /// id and the provider operation id both move, so the provider never sees
+    /// an operation an archived attempt already settled. Only a record built
+    /// for `principal_id`'s first attempt and not yet dispatched qualifies.
+    pub fn for_attempt(
+        mut self,
+        principal_id: &str,
+        attempt: u32,
+    ) -> Result<Self, RuntimeMintJournalError> {
+        if self.state != RuntimeMediaPreparationState::Ready
+            || self.request_id
+                != compute_mint_intent_request_id(principal_id, self.source_binding_digest)
+        {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        self.request_id = compute_mint_intent_request_id_for_attempt(
+            principal_id,
+            self.source_binding_digest,
+            attempt,
+        );
+        self.operation_id = compute_media_preparation_operation_id(
+            self.request_id,
+            self.source_object_digest,
+            &self.provider_id,
+        );
+        self.validate()?;
+        Ok(self)
+    }
+
     pub const fn source_object_digest(&self) -> Digest32 {
         self.source_object_digest
     }
@@ -606,10 +985,7 @@ impl fmt::Debug for RuntimeMintIntent {
                 "creator_mint_source_digest",
                 &self.creator_mint_source_digest,
             )
-            .field("mime_type", &self.mime_type)
-            .field("codecs", &self.codecs)
-            .field("clear_init_sha256", &self.clear_init_sha256)
-            .field("clear_segment_count", &self.clear_segment_sha256.len())
+            .field("content", &self.content)
             .field("content_access_id", &"[redacted]")
             .field("protect_state", &self.protect_state_label())
             .field(
@@ -629,18 +1005,50 @@ impl fmt::Debug for RuntimeMintIntent {
 }
 
 impl RuntimeMintIntent {
+    /// The request id of a source's first attempt.
     pub fn request_id_for_source(
         principal_id: &str,
         object_uri: &str,
         source_storage: &str,
     ) -> Result<Digest32, RuntimeMintJournalError> {
+        Self::request_id_for_source_attempt(principal_id, object_uri, source_storage, 0)
+    }
+
+    /// The request id of one attempt at a source. Which attempt is current is
+    /// the journal's to say ([`RuntimeMintJournal::current_attempt`]).
+    pub fn request_id_for_source_attempt(
+        principal_id: &str,
+        object_uri: &str,
+        source_storage: &str,
+        attempt: u32,
+    ) -> Result<Digest32, RuntimeMintJournalError> {
         validate_intent_text(principal_id)?;
-        Ok(compute_mint_intent_request_id(
+        Ok(compute_mint_intent_request_id_for_attempt(
             principal_id,
             compute_source_binding_digest(object_uri, source_storage),
+            attempt,
         ))
     }
 
+    /// The same intent, for a later attempt at its source. Only a fresh intent
+    /// may move: once a protect effect was sent under a request id, that id is
+    /// what the effect answers to.
+    pub fn for_attempt(mut self, attempt: u32) -> Result<Self, RuntimeMintJournalError> {
+        if self.protect_state != RuntimeMintIntentProtectState::NotStarted {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        self.request_id = compute_mint_intent_request_id_for_attempt(
+            &self.principal_id,
+            self.source_binding_digest,
+            attempt,
+        );
+        Ok(self)
+    }
+
+    /// Convenience constructor for a media source, from raw clear fMP4/CENC
+    /// bytes. Kept at its pre-Task-12b signature so every existing caller
+    /// keeps compiling unchanged. See `new_object` for the object source
+    /// convenience constructor and `new_with_content` for the generic one.
     #[allow(
         clippy::too_many_arguments,
         reason = "the pre-effect intent must bind source digests, declaration, access id, and committee identities exactly once"
@@ -662,23 +1070,147 @@ impl RuntimeMintIntent {
         custody_committee_authorization: CustodyCommitteeAuthorizationIdentityV1,
         nodes: Vec<RuntimeMintNodeBinding>,
     ) -> Result<Self, RuntimeMintJournalError> {
-        let principal_id = principal_id.into();
-        let creator_wallet_account_id = creator_wallet_account_id.into();
-        let creator_wallet_address = creator_wallet_address.into();
-        let mime_type = mime_type.into();
-        let codecs = codecs.into();
-        validate_intent_text(&principal_id)?;
-        validate_intent_text(&creator_wallet_account_id)?;
-        validate_intent_evm_address(&creator_wallet_address)?;
-        validate_intent_text(&mime_type)?;
-        validate_intent_text(&codecs)?;
-        let source_binding_digest = compute_source_binding_digest(object_uri, source_storage);
-        let request_id = compute_mint_intent_request_id(&principal_id, source_binding_digest);
         let clear_init_sha256 = Digest32::new(Sha256::digest(clear_init_segment).into());
         let clear_segment_sha256 = clear_segments
             .iter()
             .map(|segment| Digest32::new(Sha256::digest(segment).into()))
             .collect::<Vec<_>>();
+        let content = RuntimeMintIntentContentV1::Media {
+            mime_type: mime_type.into(),
+            codecs: codecs.into(),
+            clear_init_sha256,
+            clear_segment_sha256,
+        };
+        Self::new_with_content(
+            principal_id,
+            object_uri,
+            source_storage,
+            creator_wallet_account_id,
+            creator_wallet_address,
+            creator_mint_source_digest,
+            content,
+            content_access_id,
+            custody_pool,
+            custody_epoch,
+            custody_committee_authorization,
+            nodes,
+        )
+    }
+
+    /// Convenience constructor for an object source, from a raw clear
+    /// plaintext blob (the whole object; unlike media there is no separate
+    /// init segment).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the pre-effect intent must bind source digests, declaration, access id, and committee identities exactly once"
+    )]
+    pub fn new_object(
+        principal_id: impl Into<String>,
+        object_uri: &str,
+        source_storage: &str,
+        creator_wallet_account_id: impl Into<String>,
+        creator_wallet_address: impl Into<String>,
+        creator_mint_source_digest: Digest32,
+        content_type: impl Into<String>,
+        clear_plaintext: &[u8],
+        content_access_id: ContentAccessIdV1,
+        custody_pool: CustodyPoolIdentityV1,
+        custody_epoch: CustodyEpochIdentityV1,
+        custody_committee_authorization: CustodyCommitteeAuthorizationIdentityV1,
+        nodes: Vec<RuntimeMintNodeBinding>,
+    ) -> Result<Self, RuntimeMintJournalError> {
+        let content = RuntimeMintIntentContentV1::Object {
+            content_type: content_type.into(),
+            clear_plaintext_sha256: Digest32::new(Sha256::digest(clear_plaintext).into()),
+            clear_plaintext_bytes: u64::try_from(clear_plaintext.len())
+                .map_err(|_| RuntimeMintJournalError::InvalidSelection)?,
+        };
+        Self::new_with_content(
+            principal_id,
+            object_uri,
+            source_storage,
+            creator_wallet_account_id,
+            creator_wallet_address,
+            creator_mint_source_digest,
+            content,
+            content_access_id,
+            custody_pool,
+            custody_epoch,
+            custody_committee_authorization,
+            nodes,
+        )
+    }
+
+    /// Convenience constructor for a v2 DASH source: the preparation receipt
+    /// plus each rendition's kind and segment count.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the pre-effect intent must bind source digests, declaration, access id, and committee identities exactly once"
+    )]
+    pub fn new_media_dash(
+        principal_id: impl Into<String>,
+        object_uri: &str,
+        source_storage: &str,
+        creator_wallet_account_id: impl Into<String>,
+        creator_wallet_address: impl Into<String>,
+        creator_mint_source_digest: Digest32,
+        preparation_receipt: Digest32,
+        renditions: Vec<RuntimeMintIntentRenditionV2>,
+        content_access_id: ContentAccessIdV1,
+        custody_pool: CustodyPoolIdentityV1,
+        custody_epoch: CustodyEpochIdentityV1,
+        custody_committee_authorization: CustodyCommitteeAuthorizationIdentityV1,
+        nodes: Vec<RuntimeMintNodeBinding>,
+    ) -> Result<Self, RuntimeMintJournalError> {
+        Self::new_with_content(
+            principal_id,
+            object_uri,
+            source_storage,
+            creator_wallet_account_id,
+            creator_wallet_address,
+            creator_mint_source_digest,
+            RuntimeMintIntentContentV1::MediaDash {
+                preparation_receipt,
+                renditions,
+            },
+            content_access_id,
+            custody_pool,
+            custody_epoch,
+            custody_committee_authorization,
+            nodes,
+        )
+    }
+
+    /// Generic constructor for either content kind, taking an
+    /// already-built `RuntimeMintIntentContentV1`. Used by `new` (media) and
+    /// `new_object` above, and by the journal decoder when rehydrating a
+    /// persisted intent whose content is already parsed.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the pre-effect intent must bind source digests, declaration, access id, and committee identities exactly once"
+    )]
+    pub fn new_with_content(
+        principal_id: impl Into<String>,
+        object_uri: &str,
+        source_storage: &str,
+        creator_wallet_account_id: impl Into<String>,
+        creator_wallet_address: impl Into<String>,
+        creator_mint_source_digest: Digest32,
+        content: RuntimeMintIntentContentV1,
+        content_access_id: ContentAccessIdV1,
+        custody_pool: CustodyPoolIdentityV1,
+        custody_epoch: CustodyEpochIdentityV1,
+        custody_committee_authorization: CustodyCommitteeAuthorizationIdentityV1,
+        nodes: Vec<RuntimeMintNodeBinding>,
+    ) -> Result<Self, RuntimeMintJournalError> {
+        let principal_id = principal_id.into();
+        let creator_wallet_account_id = creator_wallet_account_id.into();
+        let creator_wallet_address = creator_wallet_address.into();
+        validate_intent_text(&principal_id)?;
+        validate_intent_text(&creator_wallet_account_id)?;
+        validate_intent_evm_address(&creator_wallet_address)?;
+        let source_binding_digest = compute_source_binding_digest(object_uri, source_storage);
+        let request_id = compute_mint_intent_request_id(&principal_id, source_binding_digest);
         let value = Self {
             request_id,
             principal_id,
@@ -686,10 +1218,7 @@ impl RuntimeMintIntent {
             creator_wallet_account_id,
             creator_wallet_address,
             creator_mint_source_digest,
-            mime_type,
-            codecs,
-            clear_init_sha256,
-            clear_segment_sha256,
+            content,
             content_access_id,
             protect_state: RuntimeMintIntentProtectState::NotStarted,
             custody_pool,
@@ -705,16 +1234,46 @@ impl RuntimeMintIntent {
         validate_intent_text(&self.principal_id)?;
         validate_intent_text(&self.creator_wallet_account_id)?;
         validate_intent_evm_address(&self.creator_wallet_address)?;
-        validate_intent_text(&self.mime_type)?;
-        validate_intent_text(&self.codecs)?;
         if self.request_id == Digest32::new([0; 32])
             || self.source_binding_digest == Digest32::new([0; 32])
             || self.creator_mint_source_digest == Digest32::new([0; 32])
-            || self.clear_init_sha256 == Digest32::new([0; 32])
-            || self.clear_segment_sha256.is_empty()
             || self.nodes.len() != REQUIRED_NODES
         {
             return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        match &self.content {
+            RuntimeMintIntentContentV1::Media {
+                mime_type,
+                codecs,
+                clear_init_sha256,
+                clear_segment_sha256,
+            } => {
+                validate_intent_text(mime_type)?;
+                validate_intent_text(codecs)?;
+                if *clear_init_sha256 == Digest32::new([0; 32]) || clear_segment_sha256.is_empty() {
+                    return Err(RuntimeMintJournalError::InvalidSelection);
+                }
+                for digest in clear_segment_sha256 {
+                    if *digest == Digest32::new([0; 32]) {
+                        return Err(RuntimeMintJournalError::InvalidSelection);
+                    }
+                }
+            }
+            RuntimeMintIntentContentV1::Object {
+                content_type,
+                clear_plaintext_sha256,
+                clear_plaintext_bytes,
+            } => {
+                validate_intent_text(content_type)?;
+                if *clear_plaintext_sha256 == Digest32::new([0; 32]) || *clear_plaintext_bytes == 0
+                {
+                    return Err(RuntimeMintJournalError::InvalidSelection);
+                }
+            }
+            RuntimeMintIntentContentV1::MediaDash {
+                preparation_receipt,
+                renditions,
+            } => validate_dash_intent_renditions(*preparation_receipt, renditions)?,
         }
         match self.protect_state {
             RuntimeMintIntentProtectState::OpenHandlePendingCancel(handle)
@@ -743,11 +1302,6 @@ impl RuntimeMintIntent {
         let mut operators = std::collections::BTreeSet::new();
         let mut domains = std::collections::BTreeSet::new();
         let mut roots = std::collections::BTreeSet::new();
-        for digest in &self.clear_segment_sha256 {
-            if *digest == Digest32::new([0; 32]) {
-                return Err(RuntimeMintJournalError::InvalidSelection);
-            }
-        }
         for node in &self.nodes {
             if !node_keys.insert(node.node_public_key)
                 || !operators.insert(node.operator_id)
@@ -791,10 +1345,7 @@ impl RuntimeMintIntent {
             && self.creator_wallet_account_id == other.creator_wallet_account_id
             && self.creator_wallet_address == other.creator_wallet_address
             && self.creator_mint_source_digest == other.creator_mint_source_digest
-            && self.mime_type == other.mime_type
-            && self.codecs == other.codecs
-            && self.clear_init_sha256 == other.clear_init_sha256
-            && self.clear_segment_sha256 == other.clear_segment_sha256
+            && self.content == other.content
             && self.content_access_id == other.content_access_id
             && self.custody_pool == other.custody_pool
             && self.custody_epoch == other.custody_epoch
@@ -885,20 +1436,48 @@ impl RuntimeMintIntent {
         }
     }
 
-    pub fn mime_type(&self) -> &str {
-        &self.mime_type
+    pub const fn content(&self) -> &RuntimeMintIntentContentV1 {
+        &self.content
     }
 
-    pub fn codecs(&self) -> &str {
-        &self.codecs
+    /// `Some` for a media intent, `None` for an object intent. Kept for
+    /// existing callers that only ever handled media; see `content()` for
+    /// the generic accessor.
+    pub fn mime_type(&self) -> Option<&str> {
+        match &self.content {
+            RuntimeMintIntentContentV1::Media { mime_type, .. } => Some(mime_type),
+            RuntimeMintIntentContentV1::Object { .. }
+            | RuntimeMintIntentContentV1::MediaDash { .. } => None,
+        }
     }
 
-    pub const fn clear_init_sha256(&self) -> Digest32 {
-        self.clear_init_sha256
+    pub fn codecs(&self) -> Option<&str> {
+        match &self.content {
+            RuntimeMintIntentContentV1::Media { codecs, .. } => Some(codecs),
+            RuntimeMintIntentContentV1::Object { .. }
+            | RuntimeMintIntentContentV1::MediaDash { .. } => None,
+        }
     }
 
-    pub fn clear_segment_sha256(&self) -> &[Digest32] {
-        &self.clear_segment_sha256
+    pub const fn clear_init_sha256(&self) -> Option<Digest32> {
+        match &self.content {
+            RuntimeMintIntentContentV1::Media {
+                clear_init_sha256, ..
+            } => Some(*clear_init_sha256),
+            RuntimeMintIntentContentV1::Object { .. }
+            | RuntimeMintIntentContentV1::MediaDash { .. } => None,
+        }
+    }
+
+    pub fn clear_segment_sha256(&self) -> Option<&[Digest32]> {
+        match &self.content {
+            RuntimeMintIntentContentV1::Media {
+                clear_segment_sha256,
+                ..
+            } => Some(clear_segment_sha256),
+            RuntimeMintIntentContentV1::Object { .. }
+            | RuntimeMintIntentContentV1::MediaDash { .. } => None,
+        }
     }
 
     pub const fn content_access_id(&self) -> ContentAccessIdV1 {
@@ -977,10 +1556,95 @@ impl RuntimeMintNodeReceipt {
     }
 }
 
+/// The content a mint draft binds to: either fMP4/CENC media or a
+/// chunked-payload object (any non-media file, sealed as EPC1 framed
+/// chunks). Task 12 introduces the object side; Task 13 is expected to be
+/// the first to actually mint one.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RuntimeContentIdentityV1 {
+    Media(CencFmp4MediaIdentityV1),
+    Object(ChunkedPayloadObjectIdentityV1),
+    /// The v2 DASH head: fixed size for any duration.
+    MediaDash(CencDashMediaIdentityV2),
+}
+
+impl RuntimeContentIdentityV1 {
+    pub fn encrypted_content(&self) -> &EncryptedContentIdentityV1 {
+        match self {
+            Self::Media(media) => media.encrypted_content(),
+            Self::Object(object) => object.encrypted_content(),
+            Self::MediaDash(head) => head.encrypted_content(),
+        }
+    }
+
+    /// `mime_type` for media, `content_type` for objects: the one declared
+    /// content-type string either identity carries.
+    pub fn content_type(&self) -> &str {
+        match self {
+            Self::Media(media) => media.mime_type(),
+            Self::Object(object) => object.content_type(),
+            // A validated head has at least one rendition, video first, so
+            // this is `video/mp4` when there is video, else `audio/mp4`.
+            Self::MediaDash(head) => head.renditions()[0].mime_type(),
+        }
+    }
+
+    /// Kind byte ‖ nested canonical bytes. This is the record-framing
+    /// encoding (used by the v6 journal codec); it is deliberately NOT what
+    /// `RuntimeMintDraft::compute_mint_id` hashes for `Media` — see the
+    /// comment there.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, RuntimeMintJournalError> {
+        let (kind, nested) = match self {
+            Self::Media(media) => (
+                CONTENT_IDENTITY_KIND_MEDIA,
+                media
+                    .canonical_bytes()
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+            ),
+            Self::Object(object) => (
+                CONTENT_IDENTITY_KIND_OBJECT,
+                object
+                    .canonical_bytes()
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+            ),
+            Self::MediaDash(head) => (
+                CONTENT_IDENTITY_KIND_MEDIA_DASH,
+                head.canonical_bytes()
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+            ),
+        };
+        let mut bytes = Vec::with_capacity(1 + nested.len());
+        bytes.push(kind);
+        bytes.extend_from_slice(&nested);
+        Ok(bytes)
+    }
+
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, RuntimeMintJournalError> {
+        let (kind, nested) = bytes
+            .split_first()
+            .ok_or(RuntimeMintJournalError::Corrupt)?;
+        match *kind {
+            CONTENT_IDENTITY_KIND_MEDIA => Ok(Self::Media(
+                CencFmp4MediaIdentityV1::from_canonical_bytes(nested)
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+            )),
+            CONTENT_IDENTITY_KIND_OBJECT => Ok(Self::Object(
+                ChunkedPayloadObjectIdentityV1::from_canonical_bytes(nested)
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+            )),
+            CONTENT_IDENTITY_KIND_MEDIA_DASH => Ok(Self::MediaDash(
+                CencDashMediaIdentityV2::from_canonical_bytes(nested)
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+            )),
+            _ => Err(RuntimeMintJournalError::Corrupt),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct RuntimeMintDraft {
     mint_id: Digest32,
-    media_identity: CencFmp4MediaIdentityV1,
+    content_identity: RuntimeContentIdentityV1,
     content_access_id: ContentAccessIdV1,
     key_envelope: KeyEnvelopeIdentityV1,
     policy: RightsPolicyIdentityV1,
@@ -994,7 +1658,7 @@ impl fmt::Debug for RuntimeMintDraft {
         formatter
             .debug_struct("RuntimeMintDraft")
             .field("mint_id", &self.mint_id)
-            .field("media_identity", &self.media_identity)
+            .field("content_identity", &self.content_identity)
             .field("content_access_id", &self.content_access_id)
             .field("key_envelope", &self.key_envelope)
             .field("policy", &self.policy)
@@ -1006,6 +1670,12 @@ impl fmt::Debug for RuntimeMintDraft {
 }
 
 impl RuntimeMintDraft {
+    /// Convenience constructor for media drafts built from raw fMP4/CENC
+    /// bytes. Kept at its pre-Task-12 signature (rather than taking a
+    /// pre-built `RuntimeContentIdentityV1`) so every existing caller of this
+    /// crate and of `elastos-server` keeps compiling unchanged; only the
+    /// `media_identity()` accessor return type changed for them (see
+    /// `media_identity` below).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         init_segment: &[u8],
@@ -1026,8 +1696,8 @@ impl RuntimeMintDraft {
             codecs,
         )
         .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
-        Self::new_recorded(
-            media_identity,
+        Self::new_from_identity(
+            RuntimeContentIdentityV1::Media(media_identity),
             content_access_id,
             key_envelope,
             policy,
@@ -1037,8 +1707,14 @@ impl RuntimeMintDraft {
         )
     }
 
-    fn new_recorded(
-        media_identity: CencFmp4MediaIdentityV1,
+    /// Generic constructor for either content kind, taking an
+    /// already-validated `RuntimeContentIdentityV1`. Used by `new` above
+    /// (media, from raw bytes), by object mint construction, and by the
+    /// journal decoder when rehydrating a persisted record whose identity is
+    /// already parsed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_from_identity(
+        content_identity: RuntimeContentIdentityV1,
         content_access_id: ContentAccessIdV1,
         key_envelope: KeyEnvelopeIdentityV1,
         policy: RightsPolicyIdentityV1,
@@ -1046,17 +1722,23 @@ impl RuntimeMintDraft {
         threshold: ThresholdV1,
         nodes: Vec<RuntimeMintNodeBinding>,
     ) -> Result<Self, RuntimeMintJournalError> {
-        if threshold.required() != 2 || threshold.total() != 3 {
-            return Err(RuntimeMintJournalError::InvalidSelection);
-        }
-        if nodes.len() != REQUIRED_NODES {
+        // The threshold is the key envelope's own (checked below), whatever
+        // the pool's size: the draft binds exactly the members it counts.
+        if nodes.len() != usize::from(threshold.total()) {
             return Err(RuntimeMintJournalError::InvalidSelection);
         }
         if content_key_commitment == Digest32::new([0; 32]) {
             return Err(RuntimeMintJournalError::InvalidSelection);
         }
-        if key_envelope.encrypted_content() != media_identity.encrypted_content() {
+        if key_envelope.encrypted_content() != content_identity.encrypted_content() {
             return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        // The head's KID is the access id the player is keyed by: a mismatch
+        // would mint, then fail at playback.
+        if let RuntimeContentIdentityV1::MediaDash(head) = &content_identity {
+            if head.default_kid().as_bytes() != content_access_id.as_bytes() {
+                return Err(RuntimeMintJournalError::InvalidSelection);
+            }
         }
         if key_envelope.threshold() != threshold {
             return Err(RuntimeMintJournalError::InvalidSelection);
@@ -1088,7 +1770,7 @@ impl RuntimeMintDraft {
         }
         let mut draft = Self {
             mint_id: Digest32::new([0; 32]),
-            media_identity,
+            content_identity,
             content_access_id,
             key_envelope,
             policy,
@@ -1105,15 +1787,36 @@ impl RuntimeMintDraft {
     }
 
     pub fn encrypted_content(&self) -> &EncryptedContentIdentityV1 {
-        self.media_identity.encrypted_content()
+        self.content_identity.encrypted_content()
     }
 
     pub const fn content_access_id(&self) -> ContentAccessIdV1 {
         self.content_access_id
     }
 
-    pub const fn media_identity(&self) -> &CencFmp4MediaIdentityV1 {
-        &self.media_identity
+    pub const fn content_identity(&self) -> &RuntimeContentIdentityV1 {
+        &self.content_identity
+    }
+
+    /// `Some` for a media draft, `None` for an object draft. Kept for
+    /// existing callers that only ever handled media; a caller that gets
+    /// `None` here must not silently treat it as "no identity" — it means
+    /// this draft describes a non-media object and must be handled through
+    /// `content_identity()` instead, or fail closed.
+    pub fn media_identity(&self) -> Option<&CencFmp4MediaIdentityV1> {
+        match &self.content_identity {
+            RuntimeContentIdentityV1::Media(media) => Some(media),
+            RuntimeContentIdentityV1::Object(_) | RuntimeContentIdentityV1::MediaDash(_) => None,
+        }
+    }
+
+    /// `Some` for a v2 DASH draft. `media_identity()` stays the v1 accessor,
+    /// so every v1 caller fails closed on a v2 draft.
+    pub fn media_dash_identity(&self) -> Option<&CencDashMediaIdentityV2> {
+        match &self.content_identity {
+            RuntimeContentIdentityV1::MediaDash(head) => Some(head),
+            RuntimeContentIdentityV1::Media(_) | RuntimeContentIdentityV1::Object(_) => None,
+        }
     }
 
     pub fn key_envelope(&self) -> &KeyEnvelopeIdentityV1 {
@@ -1151,12 +1854,28 @@ impl RuntimeMintDraft {
     fn compute_mint_id(&self) -> Result<Digest32, RuntimeMintJournalError> {
         let mut hasher = Sha256::new();
         hasher.update(MINT_ID_DOMAIN);
-        hasher.update(
-            &self
-                .media_identity
-                .canonical_bytes()
-                .map_err(|_| RuntimeMintJournalError::Corrupt)?,
-        );
+        // R5 (deliberate asymmetry, do not "fix"): every mint id already on
+        // disk was computed before `RuntimeContentIdentityV1` existed, by
+        // hashing the media identity's own canonical bytes with no leading
+        // kind byte. Byte-stability of those ids is a hard requirement, so
+        // the `Media` arm keeps hashing the nested identity directly instead
+        // of `self.content_identity.canonical_bytes()` (which would prepend
+        // the 0x01 kind byte used by the record framing and change every
+        // existing id). There are no pre-existing `Object` mint ids to keep
+        // stable, so that arm hashes the kind-byte-prefixed encoding
+        // uniformly with the record framing.
+        match &self.content_identity {
+            RuntimeContentIdentityV1::Media(media) => {
+                hasher.update(
+                    &media
+                        .canonical_bytes()
+                        .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+                );
+            }
+            RuntimeContentIdentityV1::Object(_) | RuntimeContentIdentityV1::MediaDash(_) => {
+                hasher.update(&self.content_identity.canonical_bytes()?);
+            }
+        }
         hasher.update(self.content_access_id.as_bytes());
         hasher.update(
             &self
@@ -1182,12 +1901,156 @@ impl RuntimeMintDraft {
     }
 }
 
+/// What is known about one node's provisioning call.
+///
+/// This replaces a bare `effect_started: bool`, which could not tell *we do not
+/// know what happened* apart from *the node says it did nothing*. The
+/// difference decides whether a share may be stranded on that node, which is
+/// the only question an operator reading a failed mint actually has.
+///
+/// `RefusedWithoutEffect` is **node-asserted, not proven**. The capsule's error
+/// frame is unsigned and unbound to the node key, so this describes an outcome
+/// and must never authorize re-dispatching a share to that node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeMintNodeEffectV1 {
+    /// No call was dispatched. Nothing can be stored.
+    NotDispatched,
+    /// A call was dispatched and no usable answer came back. The node may hold
+    /// the share and only the node can say.
+    Uncertain,
+    /// The node answered that it refused before its durable write.
+    RefusedWithoutEffect,
+}
+
+impl RuntimeMintNodeEffectV1 {
+    /// The wire byte. `0`/`1` are exactly the old `false`/`true`, so an
+    /// `epc-mj06` record written before this existed decodes unchanged: a
+    /// legacy `effect_started == true` means precisely `Uncertain`.
+    const fn wire_byte(self) -> u8 {
+        match self {
+            Self::NotDispatched => 0,
+            Self::Uncertain => 1,
+            Self::RefusedWithoutEffect => 2,
+        }
+    }
+
+    /// Decode, treating anything unrecognised as `Uncertain` rather than
+    /// rejecting the record. A byte this Runtime does not know was written by a
+    /// newer one that could describe an outcome more precisely; the safe
+    /// reading of "some call happened" is that its effect is unknown.
+    const fn from_wire_byte(byte: u8) -> Self {
+        match byte {
+            0 => Self::NotDispatched,
+            2 => Self::RefusedWithoutEffect,
+            _ => Self::Uncertain,
+        }
+    }
+
+    /// Whether this node might be holding the share.
+    pub const fn may_hold_share(self) -> bool {
+        matches!(self, Self::Uncertain)
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct MintNodeState {
     binding: RuntimeMintNodeBinding,
-    effect_started: bool,
+    effect: RuntimeMintNodeEffectV1,
     receipt: Option<RuntimeMintNodeReceipt>,
 }
+
+/// One creator-side royalty payee, in ERC-1155 `ROYALTY_SHARE` units.
+///
+/// Units are what the chain carries, so they are what is recorded: 1000 exist
+/// per asset and one unit is 0.1% of the sale. The creator side is 950 of them
+/// and the protocol owner's 50 are minted by the contracts themselves from
+/// `CentralStorage.protocolShares()`, so a creator splits 950 and never sees
+/// the other 50. Recording units rather than a percentage means no conversion
+/// stands between what is agreed and what is encoded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeMintRoyaltyShare {
+    address: String,
+    units: u32,
+}
+
+impl RuntimeMintRoyaltyShare {
+    pub fn new(address: impl Into<String>, units: u32) -> Result<Self, RuntimeMintJournalError> {
+        let value = Self {
+            address: address.into().to_ascii_lowercase(),
+            units,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    fn validate(&self) -> Result<(), RuntimeMintJournalError> {
+        // Lowercase `0x` + 40 hex, the same spelling every other address in
+        // this journal is held to.
+        validate_intent_evm_address(&self.address)?;
+        // A payee owed nothing is a mistake, not a split.
+        if self.units == 0 {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        Ok(())
+    }
+
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    pub const fn units(&self) -> u32 {
+        self.units
+    }
+}
+
+/// The creator's whole share of a primary sale, in `ROYALTY_SHARE` units.
+pub const RUNTIME_MINT_CREATOR_ROYALTY_UNITS: u32 = 950;
+
+/// How a creator lets people reach an asset.
+///
+/// Recorded rather than derived, for the same reason the royalty split is: a
+/// retry compares desired terms and re-encodes the chain call from them, and a
+/// method held only in the request could differ between attempts and silently
+/// change what the mint creates.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMintAccessMethod {
+    /// No operative, no listing, no access token: `AssetFactory` skips that
+    /// whole branch for op type 0 and only binds the content id. Access is
+    /// then whatever the channel itself grants.
+    Free,
+    /// One sale per access token, no resale. The default, because it is the
+    /// only method this Runtime could mint before creators could choose, so
+    /// every record written before this field existed means exactly this.
+    #[default]
+    BuyOnce,
+    /// Sale plus resale. The one method whose `opRawData` carries a trailing
+    /// `uint16 resellerCut`.
+    BuyAndResell,
+}
+
+impl RuntimeMintAccessMethod {
+    /// The `opType` the channel's `mint` takes.
+    pub const fn op_type_code(self) -> u16 {
+        match self {
+            Self::Free => 0,
+            Self::BuyOnce => 1,
+            Self::BuyAndResell => 2,
+        }
+    }
+
+    /// Whether this method sells anything -- which is also whether it creates
+    /// an operative, a listing and a royalty split, since the contracts tie
+    /// all four to the same `opType > 0` branch.
+    pub const fn is_paid(self) -> bool {
+        !matches!(self, Self::Free)
+    }
+}
+
+/// A resale cut is carried in deci-percent, so 900 is 90%. The whole sale is
+/// the ceiling; anything above it is not a share.
+pub const RUNTIME_MINT_RESELLER_CUT_MAX: u16 = 1000;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1195,21 +2058,79 @@ pub struct RuntimeMintCreatorDesiredTerms {
     wallet_account_id: String,
     copies: String,
     price: String,
+    /// Who the creator's share is paid to. Empty means the chain default, a
+    /// single payee: the creator.
+    ///
+    /// Recorded rather than derived at mint time because a retry compares
+    /// desired terms and re-encodes the chain call from them. A split held
+    /// only in the request could differ between attempts and silently change
+    /// what the transaction pays out.
+    ///
+    /// Defaulted so every record written before this field existed decodes as
+    /// "chain default" — the creator state is JSON inside the record, so a
+    /// missing key needs no format change.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    royalties: Vec<RuntimeMintRoyaltyShare>,
+    /// How people reach the asset. Defaulted for the same reason as the
+    /// royalties above: a record written before creators could choose meant
+    /// buy once, and still does.
+    #[serde(default)]
+    access_method: RuntimeMintAccessMethod,
+    /// The resale cut in deci-percent, present only for buy and resell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reseller_cut: Option<u16>,
+    /// The channel this mint settles on.
+    ///
+    /// Recorded because it is the creator's choice and a retry re-encodes the
+    /// chain call from these terms: a channel held only in the request could
+    /// differ between attempts and publish the same work twice, in two places.
+    ///
+    /// Defaulted to empty for records written before a channel could be
+    /// chosen, which all settled on the one configured channel.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    ledger: String,
+    /// The token the sale is priced in, for the same reason. Empty means the
+    /// mint source's own default, which is what every earlier record meant.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pay_token: String,
 }
 
 impl RuntimeMintCreatorDesiredTerms {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one term per argument: a struct literal here would let a caller omit one silently"
+    )]
     pub fn new(
         wallet_account_id: impl Into<String>,
         copies: impl Into<String>,
         price: impl Into<String>,
+        royalties: Vec<RuntimeMintRoyaltyShare>,
+        access_method: RuntimeMintAccessMethod,
+        reseller_cut: Option<u16>,
+        ledger: impl Into<String>,
+        pay_token: impl Into<String>,
     ) -> Result<Self, RuntimeMintJournalError> {
         let wallet_account_id = wallet_account_id.into();
-        let copies = normalize_intent_hex_quantity(&copies.into())?;
-        let price = normalize_intent_hex_quantity(&price.into())?;
+        // A free mint sells nothing, so zero is the honest value for both of
+        // these rather than a term that failed to be set.
+        let normalize = if access_method.is_paid() {
+            normalize_intent_hex_quantity
+        } else {
+            normalize_intent_hex_quantity_allowing_zero
+        };
+        let copies = normalize(&copies.into())?;
+        let price = normalize(&price.into())?;
         let value = Self {
             wallet_account_id,
             copies,
             price,
+            royalties,
+            access_method,
+            reseller_cut,
+            // Lower-cased on the way in, like every other address this journal
+            // holds, so two spellings of one channel are one channel.
+            ledger: ledger.into().to_ascii_lowercase(),
+            pay_token: pay_token.into().to_ascii_lowercase(),
         };
         value.validate()?;
         Ok(value)
@@ -1217,8 +2138,57 @@ impl RuntimeMintCreatorDesiredTerms {
 
     fn validate(&self) -> Result<(), RuntimeMintJournalError> {
         validate_intent_text(&self.wallet_account_id)?;
-        validate_canonical_intent_hex_quantity(&self.copies)?;
-        validate_canonical_intent_hex_quantity(&self.price)?;
+        let validate_quantity = if self.access_method.is_paid() {
+            validate_canonical_intent_hex_quantity
+        } else {
+            validate_canonical_intent_hex_quantity_allowing_zero
+        };
+        validate_quantity(&self.copies)?;
+        validate_quantity(&self.price)?;
+        // The cut belongs to exactly one method: elsewhere it would be
+        // recorded and never encoded, and on resale its absence shifts the
+        // ABI layout the operative factory decodes positionally.
+        match (self.access_method, self.reseller_cut) {
+            (RuntimeMintAccessMethod::BuyAndResell, Some(cut)) => {
+                if cut > RUNTIME_MINT_RESELLER_CUT_MAX {
+                    return Err(RuntimeMintJournalError::InvalidSelection);
+                }
+            }
+            (RuntimeMintAccessMethod::BuyAndResell, None) | (_, Some(_)) => {
+                return Err(RuntimeMintJournalError::InvalidSelection)
+            }
+            (_, None) => {}
+        }
+        // Empty is a record from before a channel could be chosen; anything
+        // present must be a real address, since it is what the mint targets.
+        if !self.ledger.is_empty() {
+            validate_intent_evm_address(&self.ledger)?;
+        }
+        if !self.pay_token.is_empty() {
+            validate_intent_evm_address(&self.pay_token)?;
+        }
+        // A free mint sells nothing, so terms that describe a sale are terms
+        // the chain call will not carry. Recording them would describe a
+        // payout that cannot happen.
+        if !self.access_method.is_paid() && (self.price != "0x0" || !self.royalties.is_empty()) {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        // Absent is the chain default and always allowed. Present must be
+        // exactly the creator share: a split that does not total it is not one
+        // the chain can honour, so recording it would describe a payout that
+        // will not happen.
+        if !self.royalties.is_empty() {
+            let mut total: u32 = 0;
+            for royalty in &self.royalties {
+                royalty.validate()?;
+                total = total
+                    .checked_add(royalty.units)
+                    .ok_or(RuntimeMintJournalError::InvalidSelection)?;
+            }
+            if total != RUNTIME_MINT_CREATOR_ROYALTY_UNITS {
+                return Err(RuntimeMintJournalError::InvalidSelection);
+            }
+        }
         Ok(())
     }
 
@@ -1232,6 +2202,26 @@ impl RuntimeMintCreatorDesiredTerms {
 
     pub fn price(&self) -> &str {
         &self.price
+    }
+
+    pub fn royalties(&self) -> &[RuntimeMintRoyaltyShare] {
+        &self.royalties
+    }
+
+    pub const fn access_method(&self) -> RuntimeMintAccessMethod {
+        self.access_method
+    }
+
+    pub const fn reseller_cut(&self) -> Option<u16> {
+        self.reseller_cut
+    }
+
+    pub fn ledger(&self) -> &str {
+        &self.ledger
+    }
+
+    pub fn pay_token(&self) -> &str {
+        &self.pay_token
     }
 }
 
@@ -1447,6 +2437,28 @@ impl RuntimeMintCreatorTerminalEvidence {
     }
 }
 
+/// How far a recorded creator mint has actually got.
+///
+/// The three stages differ in what may still be done with the record, so they
+/// are one enum rather than a pair of `is_some()` tests repeated at every call
+/// site:
+///
+/// * [`RuntimeMintCreatorStage::Recorded`] — the terms are on record and
+///   nothing has been raised on any ledger. Dropping the record leaves no
+///   ledger entry behind and no holder, so it is safe.
+/// * [`RuntimeMintCreatorStage::EffectRaised`] — a ledger transaction was
+///   raised behind a wallet approval the creator may still complete, so it can
+///   still settle later. Dropping the record would leave that settlement with
+///   nothing recording it, so it is refused.
+/// * [`RuntimeMintCreatorStage::Settled`] — the mint settled with a seller and
+///   a token id. Nothing about it can change any more.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeMintCreatorStage {
+    Recorded,
+    EffectRaised,
+    Settled,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeMintCreatorState {
@@ -1503,6 +2515,19 @@ impl RuntimeMintCreatorState {
 
     pub fn desired_terms(&self) -> &RuntimeMintCreatorDesiredTerms {
         &self.desired_terms
+    }
+
+    /// Classify this record for callers that must decide what is still
+    /// permitted, without reaching into which optional fields happen to be
+    /// populated.
+    pub const fn stage(&self) -> RuntimeMintCreatorStage {
+        if self.terminal.is_some() {
+            RuntimeMintCreatorStage::Settled
+        } else if self.effect.is_some() || self.operator_approval.is_some() {
+            RuntimeMintCreatorStage::EffectRaised
+        } else {
+            RuntimeMintCreatorStage::Recorded
+        }
     }
 
     pub fn metadata_cid(&self) -> &str {
@@ -1624,14 +2649,20 @@ impl PersistedRuntimeMint {
             .collect()
     }
 
-    pub fn node_effect_started(&self, node_public_key: NodePublicKey) -> bool {
+    /// Nodes that were called and may be holding a share.
+    ///
+    /// This is the record-level question: a node that was never called, or that
+    /// said it refused before writing, strands nothing. Only an unknown outcome
+    /// does.
+    pub fn uncertain_node_count(&self) -> usize {
         self.node_states
             .iter()
-            .any(|state| state.binding.node_public_key == node_public_key && state.effect_started)
+            .filter(|state| state.receipt.is_none() && state.effect.may_hold_share())
+            .count()
     }
 
-    pub fn any_effect_started(&self) -> bool {
-        self.node_states.iter().any(|state| state.effect_started)
+    pub fn any_effect_uncertain(&self) -> bool {
+        self.uncertain_node_count() > 0
     }
 
     pub fn all_receipts_present(&self) -> bool {
@@ -1675,7 +2706,7 @@ impl RuntimeMintJournal {
                 .iter()
                 .map(|binding| MintNodeState {
                     binding: binding.clone(),
-                    effect_started: false,
+                    effect: RuntimeMintNodeEffectV1::NotDispatched,
                     receipt: None,
                 })
                 .collect(),
@@ -1721,13 +2752,14 @@ impl RuntimeMintJournal {
     pub fn find_mint_record_for_intent(
         &self,
         request_id: Digest32,
-    ) -> Result<Option<PersistedRuntimeMint>, RuntimeMintJournalError> {
+    ) -> Result<RuntimeMintIntentRecordScanV1, RuntimeMintJournalError> {
         let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
         self.ensure_root_dir()?;
         let intent = self.read_intent(request_id)?;
         let entries =
             fs::read_dir(&self.root_dir).map_err(|_| RuntimeMintJournalError::Unavailable)?;
-        let mut matched: Option<PersistedRuntimeMint> = None;
+        let mut open: Option<PersistedRuntimeMint> = None;
+        let mut abandoned = Vec::new();
         let mut scanned = 0usize;
         for entry in entries {
             let entry = entry.map_err(|_| RuntimeMintJournalError::Unavailable)?;
@@ -1742,12 +2774,31 @@ impl RuntimeMintJournal {
             if !record_matches_intent(&record, &intent) {
                 continue;
             }
-            if matched.is_some() {
+            // An aborted fan-out can never be continued: the envelope its
+            // shares were sealed against does not outlive the request that
+            // produced them. Such a record is history, not a candidate, and
+            // leaving it in the running is what made a second attempt collide
+            // with the first and strand the intent for good. It is carried out
+            // of here rather than dropped, because what it left on the nodes
+            // still has to be reported.
+            if record.custody_terminal == Some(RuntimeCustodyTerminalKind::AbortedPartialProvision)
+            {
+                abandoned.push(RuntimeMintAbandonedRecordV1 {
+                    mint_id,
+                    accepted_orphan_count: record.accepted_orphans().len(),
+                    uncertain_node_count: record.uncertain_node_count(),
+                });
+                continue;
+            }
+            // Two live records for one intent is still ambiguity nothing can
+            // resolve, and the guard stays exactly as strict for that case.
+            if open.is_some() {
                 return Err(RuntimeMintJournalError::Conflict);
             }
-            matched = Some(record);
+            open = Some(record);
         }
-        Ok(matched)
+        abandoned.sort_by_key(|record| record.mint_id);
+        Ok(RuntimeMintIntentRecordScanV1 { open, abandoned })
     }
 
     pub fn persist_media_preparation(
@@ -2020,7 +3071,51 @@ impl RuntimeMintJournal {
             .iter_mut()
             .find(|state| state.binding.node_public_key == node_public_key)
             .ok_or(RuntimeMintJournalError::InvalidSelection)?;
-        node.effect_started = true;
+        if node.receipt.is_some() {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        node.effect = RuntimeMintNodeEffectV1::Uncertain;
+        self.write_replace(&record)?;
+        Ok(record)
+    }
+
+    /// Record that a node answered that it refused before storing anything.
+    ///
+    /// The only transition that walks a node's effect back, and it narrows the
+    /// record rather than reopening it: the node is no longer counted as
+    /// possibly holding a share. It does **not** make the node dispatchable
+    /// again — the assertion is unsigned, and the envelope needed to re-dispatch
+    /// is gone once the publish request ends.
+    pub fn mark_node_refused_without_effect(
+        &self,
+        mint_id: Digest32,
+        node_public_key: NodePublicKey,
+    ) -> Result<PersistedRuntimeMint, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let mut record = self.read_record(mint_id)?;
+        if record.custody_terminal.is_some() {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        let node = record
+            .node_states
+            .iter_mut()
+            .find(|state| state.binding.node_public_key == node_public_key)
+            .ok_or(RuntimeMintJournalError::InvalidSelection)?;
+        // A node that returned a receipt cannot also have refused before
+        // writing. One of the two is a lie, so neither is trusted.
+        if node.receipt.is_some() {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        match node.effect {
+            RuntimeMintNodeEffectV1::RefusedWithoutEffect => return Ok(record),
+            RuntimeMintNodeEffectV1::Uncertain => {}
+            // Nothing was dispatched, so nothing can have been refused.
+            RuntimeMintNodeEffectV1::NotDispatched => {
+                return Err(RuntimeMintJournalError::Conflict)
+            }
+        }
+        node.effect = RuntimeMintNodeEffectV1::RefusedWithoutEffect;
         self.write_replace(&record)?;
         Ok(record)
     }
@@ -2041,7 +3136,10 @@ impl RuntimeMintJournal {
             .iter_mut()
             .find(|state| state.binding.node_public_key == receipt.node_public_key)
             .ok_or(RuntimeMintJournalError::InvalidSelection)?;
-        if !node.effect_started {
+        // A receipt is admissible only for a call whose outcome was open. A
+        // node that was never called cannot produce one, and a node that said
+        // it refused before writing is now contradicting itself.
+        if !matches!(node.effect, RuntimeMintNodeEffectV1::Uncertain) {
             return Err(RuntimeMintJournalError::Conflict);
         }
         if node.binding.owner_state_root != receipt.owner_state_root {
@@ -2148,17 +3246,23 @@ impl RuntimeMintJournal {
     pub fn bind_creator_effect(
         &self,
         mint_id: Digest32,
+        expected: &RuntimeMintCreatorState,
         effect: RuntimeMintCreatorEffectBinding,
     ) -> Result<PersistedRuntimeMint, RuntimeMintJournalError> {
         let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
         self.ensure_root_dir()?;
         let mut record = self.read_record(mint_id)?;
-        let creator_state = record
+        let current = record
             .creator_state
-            .take()
-            .ok_or(RuntimeMintJournalError::Conflict)?
-            .with_effect(effect)?;
-        record.creator_state = Some(creator_state);
+            .as_ref()
+            .ok_or(RuntimeMintJournalError::Conflict)?;
+        let bound = expected.clone().with_effect(effect)?;
+        // Planning happens outside the lock. Discarding or changing terms must
+        // invalidate a request planned against the previous creator state.
+        if current != expected && current != &bound {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        record.creator_state = Some(bound);
         self.write_replace(&record)?;
         Ok(record)
     }
@@ -2179,6 +3283,511 @@ impl RuntimeMintJournal {
         record.creator_state = Some(creator_state);
         self.write_replace(&record)?;
         Ok(record)
+    }
+
+    /// Drop a recorded creator mint that never reached a ledger, so the
+    /// creator can start over at different terms.
+    ///
+    /// Refused at every later stage: once a transaction has been raised behind
+    /// a wallet approval the creator may still complete it, and once the mint
+    /// has settled a holder exists. This is the only place that rule lives —
+    /// no caller may decide it. A record with nothing bound is already in the
+    /// requested state, so the call replays as a no-op.
+    pub fn discard_creator_state(
+        &self,
+        mint_id: Digest32,
+    ) -> Result<PersistedRuntimeMint, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let mut record = self.read_record(mint_id)?;
+        match record
+            .creator_state
+            .as_ref()
+            .map(RuntimeMintCreatorState::stage)
+        {
+            None => return Ok(record),
+            Some(RuntimeMintCreatorStage::Recorded) => {}
+            Some(RuntimeMintCreatorStage::EffectRaised | RuntimeMintCreatorStage::Settled) => {
+                return Err(RuntimeMintJournalError::Conflict)
+            }
+        }
+        record.creator_state = None;
+        self.write_replace(&record)?;
+        Ok(record)
+    }
+
+    /// Which attempt at one source is current. A source never archived is on
+    /// attempt zero without any file saying so.
+    pub fn current_attempt(
+        &self,
+        principal_id: &str,
+        object_uri: &str,
+        source_storage: &str,
+    ) -> Result<RuntimeMintAttemptV1, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        self.read_current_attempt(principal_id, object_uri, source_storage)
+    }
+
+    /// Move a source's current attempt aside, so a new mint of the same source
+    /// gets an identity of its own and never meets this one again.
+    ///
+    /// The attempt's intent, its media preparation and every mint record bound
+    /// to it are moved -- never deleted -- into their own directory under
+    /// `archive_dir`, beside the caller's `note`, and the source moves on to its
+    /// next attempt. What the attempt left elsewhere (shares on custody nodes,
+    /// a Wallet effect, a token on chain) is the note's to describe; it stays
+    /// where it is. Whether an attempt may be archived at all is the caller's
+    /// decision.
+    pub fn archive_current_attempt(
+        &self,
+        principal_id: &str,
+        object_uri: &str,
+        source_storage: &str,
+        archive_dir: &Path,
+        note: &[u8],
+    ) -> Result<RuntimeMintArchivedAttemptV1, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        // Whatever an earlier archive left half-moved is finished first; one
+        // that cannot be finished never stands in the way of this one.
+        let _ = self.finish_interrupted_archives_locked();
+        let current = self.read_current_attempt(principal_id, object_uri, source_storage)?;
+        let request_id = current.request_id;
+        let intent = match self.read_intent(request_id) {
+            Ok(intent) => Some(intent),
+            Err(RuntimeMintJournalError::NotFound) => None,
+            Err(error) => return Err(error),
+        };
+        let preparation_path = self.media_preparation_path(request_id);
+        let has_preparation = path_is_present(&preparation_path)?;
+        if intent.is_none() && !has_preparation {
+            return Err(RuntimeMintJournalError::NotFound);
+        }
+        let mint_ids = match &intent {
+            Some(intent) => self.record_ids_bound_to(intent)?,
+            None => Vec::new(),
+        };
+        let next = current
+            .attempt
+            .checked_add(1)
+            .ok_or(RuntimeMintJournalError::Conflict)?;
+
+        create_owner_only_directory(archive_dir)?;
+        validate_owner_only_directory(archive_dir)?;
+        let directory = archive_dir.join(hex::encode(request_id.as_bytes()));
+        create_owner_only_directory(&directory)?;
+        validate_owner_only_directory(&directory)?;
+        let note_temp = directory.join(format!("{ARCHIVE_NOTE_FILE}.tmp"));
+        let _ = fs::remove_file(&note_temp);
+        let mut note_file = open_owner_only_temp_file_for_write(&note_temp)?;
+        note_file
+            .write_all(note)
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        note_file
+            .sync_all()
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        fs::rename(&note_temp, directory.join(ARCHIVE_NOTE_FILE))
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        // The note, and the directories leading to it, are durable before the
+        // attempt advances: an advanced attempt never lacks its note.
+        sync_directory(&directory)?;
+        sync_directory(archive_dir)?;
+        if let Some(parent) = archive_dir.parent() {
+            sync_directory(parent)?;
+        }
+
+        let mut names = Vec::new();
+        if intent.is_some() {
+            names.push(format!("intent-{}", hex::encode(request_id.as_bytes())));
+        }
+        if has_preparation {
+            names.push(format!("prepare-{}", hex::encode(request_id.as_bytes())));
+        }
+        names.extend(
+            mint_ids
+                .iter()
+                .map(|mint_id| hex::encode(mint_id.as_bytes())),
+        );
+        // What is about to move, and where, so a move a crash interrupts can
+        // be finished later rather than leaving its files in the live store.
+        let base = compute_mint_intent_request_id(
+            principal_id,
+            compute_source_binding_digest(object_uri, source_storage),
+        );
+        let pending = self.pending_archive_path(request_id);
+        self.write_pending_archive(&pending, &directory, base, current.attempt, &names)?;
+
+        // Advance first. From here the source's next attempt has an identity of
+        // its own even if a move below is interrupted, and anything such an
+        // interruption leaves in the store is bound to an identity nothing asks
+        // for any more -- and is moved by the next archive or listing.
+        self.write_attempt_counter(base, next)?;
+        self.move_into_archive(&directory, &names)?;
+        fs::remove_file(&pending).map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        sync_directory(&self.root_dir)?;
+        Ok(RuntimeMintArchivedAttemptV1 {
+            attempt: current.attempt,
+            request_id,
+            mint_ids,
+            directory,
+        })
+    }
+
+    /// Finish every archive a crash left half-moved: the files it named that
+    /// are still in the store are moved where it was taking them.
+    pub fn finish_interrupted_archives(&self) -> Result<usize, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        self.finish_interrupted_archives_locked()
+    }
+
+    /// Only an archive that committed -- its source's attempt counter moved
+    /// past the archived attempt -- is finished. One that stopped before the
+    /// counter moved never happened: the attempt is still current, may have
+    /// gone on to send its transaction, and its files stay where they are. A
+    /// marker that cannot be read is skipped and never holds up the rest.
+    fn finish_interrupted_archives_locked(&self) -> Result<usize, RuntimeMintJournalError> {
+        let mut markers = fs::read_dir(&self.root_dir)
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry.file_name().to_str().is_some_and(|name| {
+                    name.starts_with(PENDING_ARCHIVE_PREFIX) && !name.ends_with(".tmp")
+                })
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        markers.sort();
+        let mut finished = 0;
+        for marker in markers {
+            let pending = match self.read_pending_archive(&marker) {
+                Ok(pending) => pending,
+                Err(error) => {
+                    tracing::debug!(
+                        error = ?error,
+                        "runtime mint journal: skipped an archive marker that cannot be read"
+                    );
+                    continue;
+                }
+            };
+            let current = match self.read_attempt_counter(pending.base_request_id) {
+                Ok(current) => current,
+                Err(error) => {
+                    tracing::debug!(
+                        error = ?error,
+                        "runtime mint journal: skipped an archive marker whose source's attempt cannot be read"
+                    );
+                    continue;
+                }
+            };
+            if current <= pending.attempt {
+                // Never committed: drop the marker, move nothing, and take
+                // back the note so nothing claims an archive that never
+                // happened. Only this attempt's own directory is touched, and
+                // it can hold nothing committed: its attempt never advanced.
+                for note in [
+                    ARCHIVE_NOTE_FILE.to_string(),
+                    format!("{ARCHIVE_NOTE_FILE}.tmp"),
+                ] {
+                    let path = pending.directory.join(note);
+                    if path_is_present(&path)? {
+                        fs::remove_file(&path).map_err(|_| RuntimeMintJournalError::Unavailable)?;
+                    }
+                }
+                // Left only if something else is in it.
+                if fs::remove_dir(&pending.directory).is_ok() {
+                    if let Some(parent) = pending.directory.parent() {
+                        sync_directory(parent)?;
+                    }
+                }
+                fs::remove_file(&marker).map_err(|_| RuntimeMintJournalError::Unavailable)?;
+                sync_directory(&self.root_dir)?;
+                continue;
+            }
+            self.move_into_archive(&pending.directory, &pending.names)?;
+            fs::remove_file(&marker).map_err(|_| RuntimeMintJournalError::Unavailable)?;
+            sync_directory(&self.root_dir)?;
+            finished += 1;
+        }
+        Ok(finished)
+    }
+
+    fn pending_archive_path(&self, request_id: Digest32) -> PathBuf {
+        self.root_dir.join(format!(
+            "{PENDING_ARCHIVE_PREFIX}{}",
+            hex::encode(request_id.as_bytes())
+        ))
+    }
+
+    /// The archive directory, the source's first-attempt id and the attempt
+    /// being archived, one per line, then one store file name per line.
+    fn write_pending_archive(
+        &self,
+        path: &Path,
+        directory: &Path,
+        base_request_id: Digest32,
+        attempt: u32,
+        names: &[String],
+    ) -> Result<(), RuntimeMintJournalError> {
+        let directory = directory
+            .to_str()
+            .ok_or(RuntimeMintJournalError::Unavailable)?;
+        let mut body = format!(
+            "{directory}\n{}\n{attempt}",
+            hex::encode(base_request_id.as_bytes())
+        );
+        for name in names {
+            body.push('\n');
+            body.push_str(name);
+        }
+        let temp_path = path.with_extension("tmp");
+        let _ = fs::remove_file(&temp_path);
+        let mut temp_file = open_owner_only_temp_file_for_write(&temp_path)?;
+        temp_file
+            .write_all(body.as_bytes())
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        temp_file
+            .sync_all()
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        fs::rename(&temp_path, path).map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        sync_directory(&self.root_dir)
+    }
+
+    /// Read a pending move back, refusing anything that would move a file out
+    /// of the store to anywhere but an archive directory beside it.
+    fn read_pending_archive(&self, path: &Path) -> Result<PendingArchive, RuntimeMintJournalError> {
+        let mut body = String::new();
+        open_owner_only_file_for_read(path)?
+            .read_to_string(&mut body)
+            .map_err(|_| RuntimeMintJournalError::Corrupt)?;
+        let mut lines = body.lines();
+        let directory = PathBuf::from(lines.next().ok_or(RuntimeMintJournalError::Corrupt)?);
+        let base_request_id = lines
+            .next()
+            .and_then(|line| hex::decode(line).ok())
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .map(Digest32::new)
+            .ok_or(RuntimeMintJournalError::Corrupt)?;
+        let attempt = lines
+            .next()
+            .and_then(|line| line.parse::<u32>().ok())
+            .ok_or(RuntimeMintJournalError::Corrupt)?;
+        let store_parent = self
+            .root_dir
+            .parent()
+            .ok_or(RuntimeMintJournalError::Corrupt)?;
+        if directory.parent().and_then(Path::parent) != Some(store_parent)
+            || !directory
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(ARCHIVE_DIR_PREFIX))
+        {
+            return Err(RuntimeMintJournalError::Corrupt);
+        }
+        validate_owner_only_directory(&directory)?;
+        let names = lines
+            .map(|name| {
+                let valid = !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+                valid
+                    .then(|| name.to_string())
+                    .ok_or(RuntimeMintJournalError::Corrupt)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PendingArchive {
+            directory,
+            base_request_id,
+            attempt,
+            names,
+        })
+    }
+
+    fn move_into_archive(
+        &self,
+        directory: &Path,
+        names: &[String],
+    ) -> Result<(), RuntimeMintJournalError> {
+        for name in names {
+            let from = self.root_dir.join(name);
+            if !path_is_present(&from)? {
+                continue;
+            }
+            fs::rename(&from, directory.join(name))
+                .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        }
+        sync_directory(&self.root_dir)?;
+        sync_directory(directory)
+    }
+
+    fn read_current_attempt(
+        &self,
+        principal_id: &str,
+        object_uri: &str,
+        source_storage: &str,
+    ) -> Result<RuntimeMintAttemptV1, RuntimeMintJournalError> {
+        validate_intent_text(principal_id)?;
+        let source_binding_digest = compute_source_binding_digest(object_uri, source_storage);
+        let base = compute_mint_intent_request_id(principal_id, source_binding_digest);
+        let attempt = self.read_attempt_counter(base)?;
+        Ok(RuntimeMintAttemptV1 {
+            attempt,
+            request_id: compute_mint_intent_request_id_for_attempt(
+                principal_id,
+                source_binding_digest,
+                attempt,
+            ),
+        })
+    }
+
+    /// Every record this intent's attempt produced: the one it completed with,
+    /// and any other bound to it by access id and custody selection. A record
+    /// that cannot be read is left where it is rather than stopping the move.
+    fn record_ids_bound_to(
+        &self,
+        intent: &RuntimeMintIntent,
+    ) -> Result<Vec<Digest32>, RuntimeMintJournalError> {
+        let mut mint_ids = Vec::new();
+        if let Some(mint_id) = intent.completed_mint_id() {
+            if path_is_present(&self.record_path(mint_id))? {
+                mint_ids.push(mint_id);
+            }
+        }
+        let entries =
+            fs::read_dir(&self.root_dir).map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        for (scanned, entry) in entries.enumerate() {
+            if scanned >= MAX_RECORD_SCAN_ENTRIES {
+                return Err(RuntimeMintJournalError::Unavailable);
+            }
+            let entry = entry.map_err(|_| RuntimeMintJournalError::Unavailable)?;
+            let Some(mint_id) = mint_id_from_record_file_name(&entry.file_name()) else {
+                continue;
+            };
+            if mint_ids.contains(&mint_id) {
+                continue;
+            }
+            if let Ok(record) = self.read_record(mint_id) {
+                if record_matches_intent(&record, intent) {
+                    mint_ids.push(mint_id);
+                }
+            }
+        }
+        mint_ids.sort();
+        Ok(mint_ids)
+    }
+
+    fn attempt_path(&self, base_request_id: Digest32) -> PathBuf {
+        self.root_dir.join(format!(
+            "attempt-{}",
+            hex::encode(base_request_id.as_bytes())
+        ))
+    }
+
+    fn read_attempt_counter(
+        &self,
+        base_request_id: Digest32,
+    ) -> Result<u32, RuntimeMintJournalError> {
+        let path = self.attempt_path(base_request_id);
+        if !path_is_present(&path)? {
+            return Ok(0);
+        }
+        let mut bytes = Vec::new();
+        open_owner_only_file_for_read(&path)?
+            .read_to_end(&mut bytes)
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        // Written only on archive, so it never says zero.
+        match bytes.split_first_chunk::<8>() {
+            Some((magic, rest)) if magic == ATTEMPT_FILE_MAGIC && rest.len() == 4 => {
+                let attempt = u32::from_be_bytes(
+                    rest.try_into()
+                        .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+                );
+                if attempt == 0 {
+                    return Err(RuntimeMintJournalError::Corrupt);
+                }
+                Ok(attempt)
+            }
+            _ => Err(RuntimeMintJournalError::Corrupt),
+        }
+    }
+
+    fn write_attempt_counter(
+        &self,
+        base_request_id: Digest32,
+        attempt: u32,
+    ) -> Result<(), RuntimeMintJournalError> {
+        let path = self.attempt_path(base_request_id);
+        let temp_path = path.with_extension("tmp");
+        let _ = fs::remove_file(&temp_path);
+        let mut temp_file = open_owner_only_temp_file_for_write(&temp_path)?;
+        let mut bytes = ATTEMPT_FILE_MAGIC.to_vec();
+        bytes.extend_from_slice(&attempt.to_be_bytes());
+        temp_file
+            .write_all(&bytes)
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        temp_file
+            .sync_all()
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        fs::rename(&temp_path, &path).map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        sync_directory(&self.root_dir)
+    }
+
+    /// Forget an intent that can never produce a mint, so the object it names
+    /// can be minted again.
+    ///
+    /// An intent whose protect session was settled before any draft was
+    /// persisted is terminal: there is no draft to roll forward and no record
+    /// to adopt, so every later attempt on that object aborts at the same
+    /// point, forever. Since the intent's identity is derived from the object
+    /// path, that path stays dead until someone edits the journal by hand.
+    ///
+    /// Removing it lets the next attempt start from nothing, which is what a
+    /// creator asking to mint that file again means. Refuses an intent that
+    /// completed a mint: that one still names the record it produced.
+    pub fn discard_unmintable_intent(
+        &self,
+        request_id: Digest32,
+    ) -> Result<(), RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let intent = self.read_intent(request_id)?;
+        if intent.completed_mint_id().is_some() {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        fs::remove_file(self.intent_path(request_id))
+            .map_err(|_| RuntimeMintJournalError::Unavailable)
+    }
+
+    /// Forget an attempt that can never finish, so the object it was minted
+    /// from can be minted again.
+    ///
+    /// An attempt whose content availability was never recorded cannot be
+    /// rolled forward: the content key material does not outlive the request
+    /// that produced it. Keeping such a record only wedges the intent -- the
+    /// scan finds it, refuses to treat it as a candidate, and every later
+    /// attempt on that object path fails the same way, permanently.
+    ///
+    /// What it left on the nodes is not taken back here. Those shares seal
+    /// against an envelope that is gone and no listing will ever name them, so
+    /// they open nothing; they are storage residue, and reclaiming them is a
+    /// housekeeping job rather than a condition for minting again.
+    ///
+    /// Refuses a record that recorded availability: that one may still be
+    /// adoptable, and discarding it would throw away a mint that worked.
+    pub fn discard_unfinishable_mint(
+        &self,
+        mint_id: Digest32,
+    ) -> Result<(), RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let record = self.read_record(mint_id)?;
+        if record.content_availability().is_some() {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        fs::remove_file(self.record_path(mint_id)).map_err(|_| RuntimeMintJournalError::Unavailable)
     }
 
     pub fn mark_creator_completed(
@@ -2424,13 +4033,12 @@ impl RuntimeMintJournal {
 fn encode_record(record: &PersistedRuntimeMint) -> Result<Vec<u8>, RuntimeMintJournalError> {
     let mut payload = Vec::new();
     push_digest(&mut payload, record.draft.mint_id);
+    // v6 record framing: kind byte ‖ nested canonical bytes, unlike the
+    // mint-id preimage above (see `compute_mint_id`'s comment). The encoder
+    // only ever writes v6.
     push_nested(
         &mut payload,
-        &record
-            .draft
-            .media_identity
-            .canonical_bytes()
-            .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+        &record.draft.content_identity.canonical_bytes()?,
     )?;
     payload.extend_from_slice(record.draft.content_access_id.as_bytes());
     push_nested(
@@ -2460,7 +4068,7 @@ fn encode_record(record: &PersistedRuntimeMint) -> Result<Vec<u8>, RuntimeMintJo
         payload.extend_from_slice(state.binding.operator_id.as_bytes());
         payload.extend_from_slice(state.binding.failure_domain_id.as_bytes());
         payload.extend_from_slice(state.binding.owner_state_root.as_bytes());
-        payload.push(u8::from(state.effect_started));
+        payload.push(state.effect.wire_byte());
         match &state.receipt {
             None => payload.push(0),
             Some(receipt) => {
@@ -2496,7 +4104,23 @@ fn encode_record(record: &PersistedRuntimeMint) -> Result<Vec<u8>, RuntimeMintJo
                     .canonical_bytes()
                     .map_err(|_| RuntimeMintJournalError::Corrupt)?,
             )?;
-            payload.extend_from_slice(evidence.media_manifest_root.as_bytes());
+            // v6 framing: kind byte ‖ root digest, mirroring the top-level
+            // content identity's own framing (the encoder only ever writes
+            // v6).
+            match evidence.content_identity_root {
+                RuntimeVerifiedContentIdentityRootV1::Media(root) => {
+                    payload.push(CONTENT_IDENTITY_KIND_MEDIA);
+                    push_digest(&mut payload, root);
+                }
+                RuntimeVerifiedContentIdentityRootV1::Object(root) => {
+                    payload.push(CONTENT_IDENTITY_KIND_OBJECT);
+                    push_digest(&mut payload, root);
+                }
+                RuntimeVerifiedContentIdentityRootV1::MediaDash(root) => {
+                    payload.push(CONTENT_IDENTITY_KIND_MEDIA_DASH);
+                    push_digest(&mut payload, root);
+                }
+            }
         }
     }
     match &record.creator_state {
@@ -2536,35 +4160,176 @@ fn mint_id_from_record_file_name(name: &std::ffi::OsStr) -> Option<Digest32> {
     Some(Digest32::new(bytes))
 }
 
+/// What a closed attempt left behind on the custody nodes.
+///
+/// Both numbers are needed and they mean different things: an accepted receipt
+/// is a share this Runtime knows is held, while an uncertain node is one that
+/// was called and never answered, which may be holding one without ever having
+/// said so. Neither can be reused -- they are sealed against an envelope that
+/// no longer exists -- so they are inert, but they occupy node storage until
+/// something retires them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuntimeMintAbandonedRecordV1 {
+    pub mint_id: Digest32,
+    pub accepted_orphan_count: usize,
+    pub uncertain_node_count: usize,
+}
+
+/// Every mint record bound to one intent, separated into the one that can still
+/// go somewhere and the ones that cannot.
+#[derive(Clone, Debug)]
+pub struct RuntimeMintIntentRecordScanV1 {
+    open: Option<PersistedRuntimeMint>,
+    abandoned: Vec<RuntimeMintAbandonedRecordV1>,
+}
+
+impl RuntimeMintIntentRecordScanV1 {
+    /// The record a caller may still act on, if there is one.
+    pub const fn open(&self) -> Option<&PersistedRuntimeMint> {
+        self.open.as_ref()
+    }
+
+    /// Closed attempts, oldest mint id first. A caller must report these rather
+    /// than skip them: they are the only trace of custody state left stranded.
+    pub fn abandoned(&self) -> &[RuntimeMintAbandonedRecordV1] {
+        &self.abandoned
+    }
+}
+
+/// A move into an archive, as its marker records it.
+struct PendingArchive {
+    directory: PathBuf,
+    base_request_id: Digest32,
+    attempt: u32,
+    names: Vec<String>,
+}
+
+/// Which attempt at one source is current, and the request id it is known by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuntimeMintAttemptV1 {
+    attempt: u32,
+    request_id: Digest32,
+}
+
+impl RuntimeMintAttemptV1 {
+    pub const fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    pub const fn request_id(&self) -> Digest32 {
+        self.request_id
+    }
+}
+
+/// One attempt moved aside: which it was, the mint records that went with it,
+/// and where they now are.
+#[derive(Clone, Debug)]
+pub struct RuntimeMintArchivedAttemptV1 {
+    attempt: u32,
+    request_id: Digest32,
+    mint_ids: Vec<Digest32>,
+    directory: PathBuf,
+}
+
+impl RuntimeMintArchivedAttemptV1 {
+    pub const fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    pub const fn request_id(&self) -> Digest32 {
+        self.request_id
+    }
+
+    pub fn mint_ids(&self) -> &[Digest32] {
+        &self.mint_ids
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
+fn path_is_present(path: &Path) -> Result<bool, RuntimeMintJournalError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err(RuntimeMintJournalError::Unavailable),
+    }
+}
+
 fn record_matches_intent(record: &PersistedRuntimeMint, intent: &RuntimeMintIntent) -> bool {
     let draft = &record.draft;
     draft.content_access_id == intent.content_access_id
+        && content_matches_intent(&draft.content_identity, &intent.content)
         && draft.nodes == intent.nodes
         && draft.pool() == intent.custody_pool
         && draft.epoch() == intent.custody_epoch
         && draft.committee() == intent.custody_committee_authorization
 }
 
+/// The draft's content must be the kind the intent declared; for a v2 DASH
+/// pair the head's rendition kinds and segment counts must be the intent's.
+fn content_matches_intent(
+    identity: &RuntimeContentIdentityV1,
+    content: &RuntimeMintIntentContentV1,
+) -> bool {
+    match (identity, content) {
+        (RuntimeContentIdentityV1::Media(_), RuntimeMintIntentContentV1::Media { .. })
+        | (RuntimeContentIdentityV1::Object(_), RuntimeMintIntentContentV1::Object { .. }) => true,
+        (
+            RuntimeContentIdentityV1::MediaDash(head),
+            RuntimeMintIntentContentV1::MediaDash { renditions, .. },
+        ) => {
+            head.renditions().len() == renditions.len()
+                && head
+                    .renditions()
+                    .iter()
+                    .zip(renditions)
+                    .all(|(head, declared)| {
+                        head.kind() == declared.kind
+                            && head.segment_count() == declared.segment_count
+                    })
+        }
+        (RuntimeContentIdentityV1::Media(_), _)
+        | (RuntimeContentIdentityV1::Object(_), _)
+        | (RuntimeContentIdentityV1::MediaDash(_), _) => false,
+    }
+}
+
 fn decode_record(bytes: &[u8]) -> Result<PersistedRuntimeMint, RuntimeMintJournalError> {
     if bytes.len() < 8 + 32 {
         return Err(RuntimeMintJournalError::Corrupt);
     }
-    if &bytes[..8] != STORE_MAGIC {
+    // v5 records (pre-Task-12) carry a positional, media-only identity with
+    // no kind byte; v6 records carry a `RuntimeContentIdentityV1` (kind byte
+    // ‖ nested canonical bytes). Everything after the identity field is
+    // identical between the two versions.
+    let is_v5 = &bytes[..8] == STORE_MAGIC_V5;
+    let digest_domain = if is_v5 {
+        STORE_DIGEST_DOMAIN_V5
+    } else if &bytes[..8] == STORE_MAGIC {
+        STORE_DIGEST_DOMAIN
+    } else {
         return Err(RuntimeMintJournalError::Corrupt);
-    }
+    };
     let expected = &bytes[8..40];
     let payload = &bytes[40..];
     let mut hasher = Sha256::new();
-    hasher.update(STORE_DIGEST_DOMAIN);
+    hasher.update(digest_domain);
     hasher.update(payload);
     if hasher.finalize().as_slice() != expected {
         return Err(RuntimeMintJournalError::Corrupt);
     }
     let mut off = 0;
     let mint_id = read_digest(payload, &mut off)?;
-    let media_identity =
-        CencFmp4MediaIdentityV1::from_canonical_bytes(&read_nested(payload, &mut off)?)
-            .map_err(|_| RuntimeMintJournalError::Corrupt)?;
+    let content_identity = if is_v5 {
+        RuntimeContentIdentityV1::Media(
+            CencFmp4MediaIdentityV1::from_canonical_bytes(&read_nested(payload, &mut off)?)
+                .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+        )
+    } else {
+        RuntimeContentIdentityV1::from_canonical_bytes(&read_nested(payload, &mut off)?)?
+    };
     let content_access_id = ContentAccessIdV1::new(read_len16(payload, &mut off)?)
         .map_err(|_| RuntimeMintJournalError::Corrupt)?;
     let key_envelope =
@@ -2592,7 +4357,7 @@ fn decode_record(bytes: &[u8]) -> Result<PersistedRuntimeMint, RuntimeMintJourna
             failure_domain_id,
             owner_state_root,
         )?;
-        let effect_started = read_u8(payload, &mut off)? != 0;
+        let effect = RuntimeMintNodeEffectV1::from_wire_byte(read_u8(payload, &mut off)?);
         let has_receipt = read_u8(payload, &mut off)? != 0;
         let receipt = if has_receipt {
             let provisioning_id =
@@ -2613,7 +4378,7 @@ fn decode_record(bytes: &[u8]) -> Result<PersistedRuntimeMint, RuntimeMintJourna
         nodes.push(binding.clone());
         node_states.push(MintNodeState {
             binding,
-            effect_started,
+            effect,
             receipt,
         });
     }
@@ -2638,7 +4403,27 @@ fn decode_record(bytes: &[u8]) -> Result<PersistedRuntimeMint, RuntimeMintJourna
             let encrypted_content =
                 EncryptedContentIdentityV1::from_canonical_bytes(&read_nested(payload, &mut off)?)
                     .map_err(|_| RuntimeMintJournalError::Corrupt)?;
-            let media_manifest_root = read_digest(payload, &mut off)?;
+            // v5 records carry a positional, media-only root (no kind
+            // byte); v6 records carry a kind byte ‖ root digest, mirroring
+            // the top-level content identity's own v5/v6 split.
+            let content_identity_root = if is_v5 {
+                RuntimeVerifiedContentIdentityRootV1::Media(read_digest(payload, &mut off)?)
+            } else {
+                match read_u8(payload, &mut off)? {
+                    CONTENT_IDENTITY_KIND_MEDIA => {
+                        RuntimeVerifiedContentIdentityRootV1::Media(read_digest(payload, &mut off)?)
+                    }
+                    CONTENT_IDENTITY_KIND_OBJECT => RuntimeVerifiedContentIdentityRootV1::Object(
+                        read_digest(payload, &mut off)?,
+                    ),
+                    CONTENT_IDENTITY_KIND_MEDIA_DASH => {
+                        RuntimeVerifiedContentIdentityRootV1::MediaDash(read_digest(
+                            payload, &mut off,
+                        )?)
+                    }
+                    _ => return Err(RuntimeMintJournalError::Corrupt),
+                }
+            };
             let evidence = RuntimeVerifiedContentAvailability {
                 content_cid,
                 object_identity,
@@ -2650,7 +4435,7 @@ fn decode_record(bytes: &[u8]) -> Result<PersistedRuntimeMint, RuntimeMintJourna
                 checked_at,
                 receipt_digest,
                 encrypted_content,
-                media_manifest_root,
+                content_identity_root,
             };
             evidence.validate()?;
             Some(evidence)
@@ -2671,8 +4456,8 @@ fn decode_record(bytes: &[u8]) -> Result<PersistedRuntimeMint, RuntimeMintJourna
     if off != payload.len() {
         return Err(RuntimeMintJournalError::Corrupt);
     }
-    let draft = RuntimeMintDraft::new_recorded(
-        media_identity,
+    let draft = RuntimeMintDraft::new_from_identity(
+        content_identity,
         content_access_id,
         key_envelope,
         policy,
@@ -2700,16 +4485,52 @@ fn encode_intent(intent: &RuntimeMintIntent) -> Result<Vec<u8>, RuntimeMintJourn
     push_availability_text(&mut payload, &intent.creator_wallet_account_id)?;
     push_availability_text(&mut payload, &intent.creator_wallet_address)?;
     push_digest(&mut payload, intent.creator_mint_source_digest);
-    push_availability_text(&mut payload, &intent.mime_type)?;
-    push_availability_text(&mut payload, &intent.codecs)?;
-    push_digest(&mut payload, intent.clear_init_sha256);
-    payload.extend_from_slice(
-        &u32::try_from(intent.clear_segment_sha256.len())
-            .map_err(|_| RuntimeMintJournalError::Corrupt)?
-            .to_be_bytes(),
-    );
-    for digest in &intent.clear_segment_sha256 {
-        push_digest(&mut payload, *digest);
+    // v3 intent framing: a kind byte ‖ the content-specific fields. The
+    // encoder only ever writes v3.
+    match &intent.content {
+        RuntimeMintIntentContentV1::Media {
+            mime_type,
+            codecs,
+            clear_init_sha256,
+            clear_segment_sha256,
+        } => {
+            payload.push(CONTENT_IDENTITY_KIND_MEDIA);
+            push_availability_text(&mut payload, mime_type)?;
+            push_availability_text(&mut payload, codecs)?;
+            push_digest(&mut payload, *clear_init_sha256);
+            payload.extend_from_slice(
+                &u32::try_from(clear_segment_sha256.len())
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?
+                    .to_be_bytes(),
+            );
+            for digest in clear_segment_sha256 {
+                push_digest(&mut payload, *digest);
+            }
+        }
+        RuntimeMintIntentContentV1::Object {
+            content_type,
+            clear_plaintext_sha256,
+            clear_plaintext_bytes,
+        } => {
+            payload.push(CONTENT_IDENTITY_KIND_OBJECT);
+            push_availability_text(&mut payload, content_type)?;
+            push_digest(&mut payload, *clear_plaintext_sha256);
+            payload.extend_from_slice(&clear_plaintext_bytes.to_be_bytes());
+        }
+        RuntimeMintIntentContentV1::MediaDash {
+            preparation_receipt,
+            renditions,
+        } => {
+            payload.push(CONTENT_IDENTITY_KIND_MEDIA_DASH);
+            push_digest(&mut payload, *preparation_receipt);
+            payload.push(
+                u8::try_from(renditions.len()).map_err(|_| RuntimeMintJournalError::Corrupt)?,
+            );
+            for rendition in renditions {
+                payload.push(rendition.kind.code());
+                payload.extend_from_slice(&rendition.segment_count.to_be_bytes());
+            }
+        }
     }
     payload.extend_from_slice(intent.content_access_id.as_bytes());
     match intent.protect_state {
@@ -2778,17 +4599,99 @@ fn encode_intent(intent: &RuntimeMintIntent) -> Result<Vec<u8>, RuntimeMintJourn
     Ok(out)
 }
 
+/// Shared by v2 (positional, always media) and v3-Media decoding: the media
+/// declaration fields are byte-identical between the two versions, only the
+/// v3 kind byte in front of them differs.
+fn read_media_intent_content(
+    payload: &[u8],
+    off: &mut usize,
+) -> Result<RuntimeMintIntentContentV1, RuntimeMintJournalError> {
+    let mime_type = read_availability_text(payload, off)?;
+    let codecs = read_availability_text(payload, off)?;
+    let clear_init_sha256 = read_digest(payload, off)?;
+    let clear_segment_count =
+        usize::try_from(read_u32(payload, off)?).map_err(|_| RuntimeMintJournalError::Corrupt)?;
+    let mut clear_segment_sha256 = Vec::with_capacity(clear_segment_count);
+    for _ in 0..clear_segment_count {
+        clear_segment_sha256.push(read_digest(payload, off)?);
+    }
+    Ok(RuntimeMintIntentContentV1::Media {
+        mime_type,
+        codecs,
+        clear_init_sha256,
+        clear_segment_sha256,
+    })
+}
+
+fn read_dash_intent_content(
+    payload: &[u8],
+    off: &mut usize,
+) -> Result<RuntimeMintIntentContentV1, RuntimeMintJournalError> {
+    let preparation_receipt = read_digest(payload, off)?;
+    let count = read_u8(payload, off)?;
+    let mut renditions = Vec::with_capacity(usize::from(count));
+    for _ in 0..count {
+        let kind = CencDashRenditionKindV2::from_code(read_u8(payload, off)?)
+            .ok_or(RuntimeMintJournalError::Corrupt)?;
+        renditions.push(RuntimeMintIntentRenditionV2 {
+            kind,
+            segment_count: read_u32(payload, off)?,
+        });
+    }
+    Ok(RuntimeMintIntentContentV1::MediaDash {
+        preparation_receipt,
+        renditions,
+    })
+}
+
+/// The refusals a v2 intent makes before any effect: a real receipt, one
+/// video and/or one audio rendition (video first), at least one segment each,
+/// and counts the head would accept (they differ by at most 1).
+fn validate_dash_intent_renditions(
+    preparation_receipt: Digest32,
+    renditions: &[RuntimeMintIntentRenditionV2],
+) -> Result<(), RuntimeMintJournalError> {
+    let shape_ok = match renditions {
+        [_] => true,
+        [first, second] => {
+            first.kind == CencDashRenditionKindV2::Video
+                && second.kind == CencDashRenditionKindV2::Audio
+                && first.segment_count.abs_diff(second.segment_count) <= 1
+        }
+        _ => false,
+    };
+    if preparation_receipt == Digest32::new([0; 32])
+        || !shape_ok
+        || renditions
+            .iter()
+            .any(|rendition| rendition.segment_count == 0)
+    {
+        return Err(RuntimeMintJournalError::InvalidSelection);
+    }
+    Ok(())
+}
+
 fn decode_intent(bytes: &[u8]) -> Result<RuntimeMintIntent, RuntimeMintJournalError> {
     if bytes.len() < 8 + 32 {
         return Err(RuntimeMintJournalError::Corrupt);
     }
-    if &bytes[..8] != INTENT_MAGIC {
+    // v2 records (pre-Task-12b) carry a positional, media-only content
+    // declaration with no kind byte; v3 records carry a
+    // `RuntimeMintIntentContentV1` (kind byte ‖ the content-specific
+    // fields). Everything after the content field is identical between the
+    // two versions.
+    let is_v2 = &bytes[..8] == INTENT_MAGIC_V2;
+    let digest_domain = if is_v2 {
+        INTENT_DIGEST_DOMAIN_V2
+    } else if &bytes[..8] == INTENT_MAGIC {
+        INTENT_DIGEST_DOMAIN
+    } else {
         return Err(RuntimeMintJournalError::Corrupt);
-    }
+    };
     let expected = &bytes[8..40];
     let payload = &bytes[40..];
     let mut hasher = Sha256::new();
-    hasher.update(INTENT_DIGEST_DOMAIN);
+    hasher.update(digest_domain);
     hasher.update(payload);
     if hasher.finalize().as_slice() != expected {
         return Err(RuntimeMintJournalError::Corrupt);
@@ -2800,15 +4703,25 @@ fn decode_intent(bytes: &[u8]) -> Result<RuntimeMintIntent, RuntimeMintJournalEr
     let creator_wallet_account_id = read_availability_text(payload, &mut off)?;
     let creator_wallet_address = read_availability_text(payload, &mut off)?;
     let creator_mint_source_digest = read_digest(payload, &mut off)?;
-    let mime_type = read_availability_text(payload, &mut off)?;
-    let codecs = read_availability_text(payload, &mut off)?;
-    let clear_init_sha256 = read_digest(payload, &mut off)?;
-    let clear_segment_count = usize::try_from(read_u32(payload, &mut off)?)
-        .map_err(|_| RuntimeMintJournalError::Corrupt)?;
-    let mut clear_segment_sha256 = Vec::with_capacity(clear_segment_count);
-    for _ in 0..clear_segment_count {
-        clear_segment_sha256.push(read_digest(payload, &mut off)?);
-    }
+    let content = if is_v2 {
+        read_media_intent_content(payload, &mut off)?
+    } else {
+        match read_u8(payload, &mut off)? {
+            CONTENT_IDENTITY_KIND_MEDIA => read_media_intent_content(payload, &mut off)?,
+            CONTENT_IDENTITY_KIND_OBJECT => {
+                let content_type = read_availability_text(payload, &mut off)?;
+                let clear_plaintext_sha256 = read_digest(payload, &mut off)?;
+                let clear_plaintext_bytes = read_u64(payload, &mut off)?;
+                RuntimeMintIntentContentV1::Object {
+                    content_type,
+                    clear_plaintext_sha256,
+                    clear_plaintext_bytes,
+                }
+            }
+            CONTENT_IDENTITY_KIND_MEDIA_DASH => read_dash_intent_content(payload, &mut off)?,
+            _ => return Err(RuntimeMintJournalError::Corrupt),
+        }
+    };
     let content_access_id = ContentAccessIdV1::new(read_len16(payload, &mut off)?)
         .map_err(|_| RuntimeMintJournalError::Corrupt)?;
     let protect_state = match read_u8(payload, &mut off)? {
@@ -2862,10 +4775,7 @@ fn decode_intent(bytes: &[u8]) -> Result<RuntimeMintIntent, RuntimeMintJournalEr
         creator_wallet_account_id,
         creator_wallet_address,
         creator_mint_source_digest,
-        mime_type,
-        codecs,
-        clear_init_sha256,
-        clear_segment_sha256,
+        content,
         content_access_id,
         protect_state,
         custody_pool,
@@ -3105,7 +5015,34 @@ fn validate_canonical_intent_hex_quantity(value: &str) -> Result<(), RuntimeMint
     Ok(())
 }
 
+/// The same canonical form, for the quantities of a mint that sells nothing.
+///
+/// Every quantity in this journal was a sale's until creators could choose a
+/// free mint, so zero was always a mistake and is still refused everywhere a
+/// sale is described. A free mint has no sale: its price is zero because
+/// there is nothing to pay, and neither it nor its supply is encoded into the
+/// chain call at all.
+fn validate_canonical_intent_hex_quantity_allowing_zero(
+    value: &str,
+) -> Result<(), RuntimeMintJournalError> {
+    if normalize_intent_hex_quantity_allowing_zero(value)? != value {
+        return Err(RuntimeMintJournalError::InvalidSelection);
+    }
+    Ok(())
+}
+
 fn normalize_intent_hex_quantity(value: &str) -> Result<String, RuntimeMintJournalError> {
+    let normalized = normalize_intent_hex_quantity_allowing_zero(value)?;
+    // A sale of nothing, or at no price, is a mistake rather than a term.
+    if normalized == "0x0" {
+        return Err(RuntimeMintJournalError::InvalidSelection);
+    }
+    Ok(normalized)
+}
+
+fn normalize_intent_hex_quantity_allowing_zero(
+    value: &str,
+) -> Result<String, RuntimeMintJournalError> {
     validate_intent_text(value)?;
     let raw = value
         .strip_prefix("0x")
@@ -3127,11 +5064,7 @@ fn normalize_intent_hex_quantity(value: &str) -> Result<String, RuntimeMintJourn
     if decoded.len() > 32 {
         return Err(RuntimeMintJournalError::InvalidSelection);
     }
-    let normalized = normalize_intent_hex_quantity_bytes(&decoded);
-    if normalized == "0x0" {
-        return Err(RuntimeMintJournalError::InvalidSelection);
-    }
-    Ok(normalized)
+    Ok(normalize_intent_hex_quantity_bytes(&decoded))
 }
 
 fn normalize_intent_hex_quantity_bytes(bytes: &[u8]) -> String {
@@ -3171,6 +5104,23 @@ fn compute_mint_intent_request_id(principal_id: &str, source_binding_digest: Dig
     hasher.update(principal_id.as_bytes());
     hasher.update([0u8]);
     hasher.update(source_binding_digest.as_bytes());
+    Digest32::new(hasher.finalize().into())
+}
+
+fn compute_mint_intent_request_id_for_attempt(
+    principal_id: &str,
+    source_binding_digest: Digest32,
+    attempt: u32,
+) -> Digest32 {
+    if attempt == 0 {
+        return compute_mint_intent_request_id(principal_id, source_binding_digest);
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(MINT_INTENT_ATTEMPT_REQUEST_ID_DOMAIN);
+    hasher.update(principal_id.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(source_binding_digest.as_bytes());
+    hasher.update(attempt.to_be_bytes());
     Digest32::new(hasher.finalize().into())
 }
 
@@ -3240,12 +5190,12 @@ fn read_nested(payload: &[u8], off: &mut usize) -> Result<Vec<u8>, RuntimeMintJo
     Ok(slice.to_vec())
 }
 
-struct ExclusiveFileLock {
+pub struct ExclusiveFileLock {
     _lock: Flock<File>,
 }
 
 impl ExclusiveFileLock {
-    fn acquire(path: &Path) -> Result<Self, RuntimeMintJournalError> {
+    pub fn acquire(path: &Path) -> Result<Self, RuntimeMintJournalError> {
         if let Some(parent) = path.parent() {
             create_owner_only_directory(parent)?;
             validate_owner_only_directory(parent)?;
@@ -3267,8 +5217,20 @@ impl ExclusiveFileLock {
     }
 }
 
+/// Recursive so that the FIRST journal operation on a data dir works: the
+/// store lives two levels down (`protected-content/runtime-mint`), and
+/// `ExclusiveFileLock::acquire` creates only its own parent, before
+/// `ensure_root_dir` — the one place that knew to create both — has run. A
+/// non-recursive create therefore failed with `Unavailable` on a data dir
+/// that had no `protected-content/` yet, which a read path then reported as
+/// "mint intent is unavailable" rather than "nothing recorded".
+///
+/// `DirBuilder`'s mode applies to every directory it creates, so each level is
+/// still owner-only, and every caller re-checks with
+/// `validate_owner_only_directory`.
 fn create_owner_only_directory(path: &Path) -> Result<(), RuntimeMintJournalError> {
     let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -3340,11 +5302,14 @@ mod tests {
         CustodyPoolIdentityV1, EncryptedContentIdentityV1, KeyEnvelopeIdentityV1, NodeSetV1,
         RightsPolicyIdentityV1, ThresholdV1,
     };
-    use elastos_protected_content_provider_contracts::CencFmp4MediaIdentityV1;
+    use elastos_protected_content_provider_contracts::{
+        CencFmp4MediaIdentityV1, ChunkedPayloadObjectIdentityV1,
+    };
     use tempfile::tempdir;
 
     use super::*;
     use crate::test_media;
+    use crate::test_object;
 
     fn digest(byte: u8) -> Digest32 {
         Digest32::new([byte; 32])
@@ -3421,6 +5386,106 @@ mod tests {
         .unwrap()
     }
 
+    /// A media draft over `nodes` under `threshold`, its key envelope naming
+    /// exactly that node set.
+    fn draft_for_threshold(
+        threshold: ThresholdV1,
+        envelope_nodes: &[RuntimeMintNodeBinding],
+        nodes: Vec<RuntimeMintNodeBinding>,
+    ) -> Result<RuntimeMintDraft, RuntimeMintJournalError> {
+        let media = media_identity();
+        let (init_segment, encrypted_segments, mime_type, codecs) = media_components();
+        let node_set = NodeSetV1::new(
+            threshold,
+            envelope_nodes
+                .iter()
+                .map(|node| node.node_public_key())
+                .collect(),
+        )
+        .unwrap();
+        let key_envelope = KeyEnvelopeIdentityV1::new(
+            media.encrypted_content().clone(),
+            digest(0x22),
+            512,
+            node_set.node_set_id().unwrap(),
+            threshold,
+            CustodyPoolIdentityV1::new(digest(0x35), 512).unwrap(),
+            CustodyEpochIdentityV1::new(digest(0x33), 512).unwrap(),
+            CustodyCommitteeAuthorizationIdentityV1::new(digest(0x36), 512).unwrap(),
+        )
+        .unwrap();
+        RuntimeMintDraft::new(
+            &init_segment,
+            &encrypted_segments,
+            mime_type,
+            codecs,
+            content_access_id(0x41),
+            key_envelope,
+            RightsPolicyIdentityV1::new(digest(0x44), 384).unwrap(),
+            digest(0x19),
+            threshold,
+            nodes,
+        )
+    }
+
+    /// The draft takes its threshold from its key envelope and binds exactly
+    /// the members that threshold counts. (Selection elsewhere on the mint
+    /// path still fixes three members.)
+    #[test]
+    fn a_draft_takes_its_threshold_from_the_key_envelope() {
+        let three_of_four = ThresholdV1::new(3, 4).unwrap();
+        let four = vec![binding(1), binding(2), binding(3), binding(4)];
+        let draft = draft_for_threshold(three_of_four, &four, four.clone())
+            .expect("a 3-of-4 pool is a pool");
+        assert_eq!(draft.threshold(), three_of_four);
+        assert_eq!(draft.key_envelope().threshold(), three_of_four);
+        assert_ne!(draft.mint_id(), Digest32::new([0; 32]));
+        // Every member the envelope names must be bound, and no other.
+        assert_eq!(
+            draft_for_threshold(three_of_four, &four, four[..3].to_vec()).err(),
+            Some(RuntimeMintJournalError::InvalidSelection)
+        );
+        // The pool every Home runs today keeps working exactly as before.
+        let two_of_three = ThresholdV1::new(2, 3).unwrap();
+        assert!(draft_for_threshold(two_of_three, &nodes(), nodes()).is_ok());
+    }
+
+    fn object_identity() -> ChunkedPayloadObjectIdentityV1 {
+        test_object::object_identity(0x51)
+    }
+
+    fn object_draft() -> RuntimeMintDraft {
+        let nodes = nodes();
+        let threshold = ThresholdV1::new(2, 3).unwrap();
+        let object = object_identity();
+        let node_set = NodeSetV1::new(
+            threshold,
+            nodes.iter().map(|node| node.node_public_key()).collect(),
+        )
+        .unwrap();
+        let key_envelope = KeyEnvelopeIdentityV1::new(
+            object.encrypted_content().clone(),
+            digest(0x22),
+            512,
+            node_set.node_set_id().unwrap(),
+            threshold,
+            CustodyPoolIdentityV1::new(digest(0x35), 512).unwrap(),
+            CustodyEpochIdentityV1::new(digest(0x33), 512).unwrap(),
+            CustodyCommitteeAuthorizationIdentityV1::new(digest(0x36), 512).unwrap(),
+        )
+        .unwrap();
+        RuntimeMintDraft::new_from_identity(
+            RuntimeContentIdentityV1::Object(object),
+            content_access_id(0x41),
+            key_envelope,
+            RightsPolicyIdentityV1::new(digest(0x44), 384).unwrap(),
+            digest(0x19),
+            threshold,
+            nodes,
+        )
+        .unwrap()
+    }
+
     fn intent() -> RuntimeMintIntent {
         let (init_segment, clear_segments, mime_type, codecs) = test_media::media_components(0x41);
         RuntimeMintIntent::new(
@@ -3434,6 +5499,25 @@ mod tests {
             codecs,
             &init_segment,
             &clear_segments,
+            content_access_id(0x52),
+            CustodyPoolIdentityV1::new(digest(0x35), 512).unwrap(),
+            CustodyEpochIdentityV1::new(digest(0x33), 512).unwrap(),
+            CustodyCommitteeAuthorizationIdentityV1::new(digest(0x36), 512).unwrap(),
+            nodes(),
+        )
+        .unwrap()
+    }
+
+    fn object_intent(seed: u8) -> RuntimeMintIntent {
+        RuntimeMintIntent::new_object(
+            "person:local:runtime-mint-intent-object-test",
+            "localhost://Users/test/Documents/protected-clear-object",
+            "plain_localhost_root",
+            "wallet-account-1",
+            "0x1111111111111111111111111111111111111111",
+            digest(0x54),
+            "application/octet-stream",
+            &vec![seed; 4096],
             content_access_id(0x52),
             CustodyPoolIdentityV1::new(digest(0x35), 512).unwrap(),
             CustodyEpochIdentityV1::new(digest(0x33), 512).unwrap(),
@@ -3485,13 +5569,47 @@ mod tests {
             2_000_000_000,
             digest(receipt_seed),
             draft.encrypted_content().clone(),
-            draft.media_identity().media_manifest_root(),
+            RuntimeVerifiedContentIdentityRootV1::for_media(draft.media_identity().unwrap()),
+        )
+        .unwrap()
+    }
+
+    fn object_availability_evidence(
+        draft: &RuntimeMintDraft,
+        receipt_seed: u8,
+    ) -> RuntimeVerifiedContentAvailability {
+        let object = match draft.content_identity() {
+            RuntimeContentIdentityV1::Object(object) => object,
+            RuntimeContentIdentityV1::Media(_) | RuntimeContentIdentityV1::MediaDash(_) => {
+                panic!("expected an object draft")
+            }
+        };
+        RuntimeVerifiedContentAvailability::new(
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "did:key:z6Mkhq7f4c4QAEgwRByrEsmGu3RJRYvpP5UGcWvqBjGW4YRe#content",
+            "did:key:z6Mkhq7f4c4QAEgwRByrEsmGu3RJRYvpP5UGcWvqBjGW4YRe#publisher",
+            &availability_requirement(),
+            3,
+            2_000_000_000,
+            digest(receipt_seed),
+            draft.encrypted_content().clone(),
+            RuntimeVerifiedContentIdentityRootV1::for_object(object).unwrap(),
         )
         .unwrap()
     }
 
     fn creator_desired_terms() -> RuntimeMintCreatorDesiredTerms {
-        RuntimeMintCreatorDesiredTerms::new("wallet-account-1", "0x3", "0x5").unwrap()
+        RuntimeMintCreatorDesiredTerms::new(
+            "wallet-account-1",
+            "0x3",
+            "0x5",
+            Vec::new(),
+            RuntimeMintAccessMethod::BuyOnce,
+            None,
+            String::new(),
+            String::new(),
+        )
+        .unwrap()
     }
 
     fn creator_effect_binding() -> RuntimeMintCreatorEffectBinding {
@@ -3706,6 +5824,123 @@ mod tests {
         );
     }
 
+    /// The three node effects, and the two contradictions that must fail closed.
+    ///
+    /// A refusal is only meaningful for a call that was actually dispatched,
+    /// and a node cannot both return a receipt and claim it stored nothing.
+    #[test]
+    fn node_effects_separate_no_receipt_from_no_effect() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let draft = draft();
+        journal.persist_bound(&draft).unwrap();
+
+        // Nothing dispatched: nobody can be holding anything.
+        assert_eq!(
+            journal
+                .load(draft.mint_id())
+                .unwrap()
+                .uncertain_node_count(),
+            0
+        );
+
+        // A refusal for a node that was never called is a contradiction.
+        assert_eq!(
+            journal.mark_node_refused_without_effect(draft.mint_id(), node_public_key(1)),
+            Err(RuntimeMintJournalError::Conflict)
+        );
+
+        journal
+            .mark_node_effect_started(draft.mint_id(), node_public_key(1))
+            .unwrap();
+        assert_eq!(
+            journal
+                .load(draft.mint_id())
+                .unwrap()
+                .uncertain_node_count(),
+            1,
+            "dispatched and unanswered is the only state that strands anything"
+        );
+
+        journal
+            .mark_node_refused_without_effect(draft.mint_id(), node_public_key(1))
+            .unwrap();
+        let narrowed = journal.load(draft.mint_id()).unwrap();
+        assert_eq!(narrowed.uncertain_node_count(), 0);
+        assert!(narrowed.accepted_orphans().is_empty());
+
+        // Idempotent, and still not a receipt.
+        journal
+            .mark_node_refused_without_effect(draft.mint_id(), node_public_key(1))
+            .unwrap();
+        assert_eq!(
+            journal.mark_node_receipt(draft.mint_id(), receipt(&binding(1), 0x81)),
+            Err(RuntimeMintJournalError::Conflict),
+            "a node that said it stored nothing cannot then produce a receipt"
+        );
+
+        // And the reverse contradiction.
+        journal
+            .mark_node_effect_started(draft.mint_id(), node_public_key(2))
+            .unwrap();
+        journal
+            .mark_node_receipt(draft.mint_id(), receipt(&binding(2), 0x82))
+            .unwrap();
+        assert_eq!(
+            journal.mark_node_refused_without_effect(draft.mint_id(), node_public_key(2)),
+            Err(RuntimeMintJournalError::Conflict)
+        );
+        assert_eq!(
+            journal.mark_node_effect_started(draft.mint_id(), node_public_key(2)),
+            Err(RuntimeMintJournalError::Conflict)
+        );
+    }
+
+    /// The widened byte needs no `STORE_MAGIC` bump, and this is why: a record
+    /// written before the third state existed still decodes, and a legacy
+    /// `effect_started == true` means exactly `Uncertain` -- the reading that
+    /// keeps a possibly-stranded share visible.
+    #[test]
+    fn a_record_written_before_the_third_node_state_still_decodes() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        let journal = RuntimeMintJournal::new(&root);
+        let draft = draft();
+        journal.persist_bound(&draft).unwrap();
+        journal
+            .mark_node_effect_started(draft.mint_id(), node_public_key(1))
+            .unwrap();
+
+        // The byte a pre-change Runtime would have written for this state is
+        // the same `1` written today, so the encoded record is byte-identical.
+        let path = root.join(hex::encode(draft.mint_id().as_bytes()));
+        let encoded = fs::read(&path).unwrap();
+        assert!(
+            encoded.windows(8).any(|window| window == STORE_MAGIC),
+            "still an epc-mj06 record; the widening did not need a new magic"
+        );
+        let reloaded = RuntimeMintJournal::new(&root)
+            .load(draft.mint_id())
+            .unwrap();
+        assert_eq!(reloaded.uncertain_node_count(), 1);
+
+        // An unrecognised byte from some future Runtime reads as uncertain
+        // rather than corrupting the record: "a call happened, effect unknown"
+        // is the safe reading of anything we cannot interpret.
+        assert_eq!(
+            RuntimeMintNodeEffectV1::from_wire_byte(7),
+            RuntimeMintNodeEffectV1::Uncertain
+        );
+        assert_eq!(
+            RuntimeMintNodeEffectV1::from_wire_byte(0),
+            RuntimeMintNodeEffectV1::NotDispatched
+        );
+        assert_eq!(
+            RuntimeMintNodeEffectV1::from_wire_byte(2),
+            RuntimeMintNodeEffectV1::RefusedWithoutEffect
+        );
+    }
+
     #[test]
     fn persist_before_effects_replays_exactly_and_never_provisions_partial_abort() {
         let temp = tempdir().unwrap();
@@ -3714,7 +5949,7 @@ mod tests {
 
         let persisted = journal.persist_bound(&draft).unwrap();
         assert!(persisted.custody_terminal().is_none());
-        assert!(!persisted.any_effect_started());
+        assert!(!persisted.any_effect_uncertain());
         assert_eq!(
             journal.persist_bound(&draft).unwrap().draft(),
             persisted.draft()
@@ -3866,6 +6101,75 @@ mod tests {
             .unwrap()
     }
 
+    /// An attempt whose custody succeeded but whose availability was never
+    /// recorded can never finish, and keeping it wedges the object it was
+    /// minted from: the scan keeps finding it, and every later attempt on that
+    /// path fails the same way forever. Discarding it is what makes the path
+    /// mintable again.
+    #[test]
+    fn an_attempt_that_can_never_finish_is_discarded_and_stops_wedging_its_intent() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let settled = settled_closed_intent(&journal);
+        let matching = draft_with(0x21, 0x52, 0x35);
+        custody_provision_all(&journal, &matching);
+
+        // Custody is provisioned; availability never was.
+        let found = journal
+            .find_mint_record_for_intent(settled.request_id())
+            .unwrap();
+        let open = found.open().expect("the attempt must start out wedging");
+        assert_eq!(
+            open.custody_terminal(),
+            Some(RuntimeCustodyTerminalKind::CustodyProvisioned)
+        );
+        assert!(open.content_availability().is_none());
+
+        journal
+            .discard_unfinishable_mint(matching.mint_id())
+            .expect("an attempt that cannot finish must be discardable");
+
+        // Nothing is left for a fresh attempt to collide with.
+        let rescanned = journal
+            .find_mint_record_for_intent(settled.request_id())
+            .unwrap();
+        assert!(
+            rescanned.open().is_none(),
+            "a discarded attempt must not keep wedging its intent"
+        );
+        assert!(
+            journal.load(matching.mint_id()).is_err(),
+            "the discarded record must be gone from the store"
+        );
+    }
+
+    /// The discard exists to clear attempts that cannot finish, and must never
+    /// reach one that did. A record with its availability recorded is a mint
+    /// that worked and may still be adopted, so discarding it is refused.
+    #[test]
+    fn an_attempt_that_recorded_its_availability_is_never_discarded() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let draft = draft();
+        custody_provision_all(&journal, &draft);
+        journal
+            .mark_content_available(
+                draft.mint_id(),
+                &availability_requirement(),
+                availability_evidence(&draft, 0x71),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            journal.discard_unfinishable_mint(draft.mint_id()),
+            Err(RuntimeMintJournalError::Conflict)
+        ));
+        assert!(
+            journal.load(draft.mint_id()).is_ok(),
+            "a mint that worked must survive"
+        );
+    }
+
     #[test]
     fn find_mint_record_for_intent_links_settled_intent_to_its_record() {
         let temp = tempdir().unwrap();
@@ -3881,7 +6185,9 @@ mod tests {
 
         let found = journal
             .find_mint_record_for_intent(settled.request_id())
-            .unwrap()
+            .unwrap();
+        let found = found
+            .open()
             .expect("record sharing access id and custody selection must be found");
         assert_eq!(found.draft().mint_id(), matching.mint_id());
         assert_eq!(
@@ -3898,12 +6204,74 @@ mod tests {
         // Same content-access id, different custody pool identity.
         custody_provision_all(&journal, &draft_with(0x21, 0x52, 0x75));
 
+        assert!(journal
+            .find_mint_record_for_intent(settled.request_id())
+            .unwrap()
+            .open()
+            .is_none());
+    }
+
+    /// A second attempt after a failed one must be possible.
+    ///
+    /// A failed fan-out can never be continued — the envelope its shares were
+    /// sealed against does not outlive the request — so re-protecting is the
+    /// only way forward, and re-protecting produces a *different* mint id
+    /// because `compute_mint_id` hashes the envelope. Both records then match
+    /// the one intent. Counting the closed one as a candidate made that
+    /// ambiguous and stranded the intent permanently; it is now history, and
+    /// what it left on the nodes is carried out for the caller to report.
+    #[test]
+    fn a_fresh_attempt_after_an_abort_is_not_ambiguous() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let settled = settled_closed_intent(&journal);
+
+        // First attempt: one node accepted, a second was called and never
+        // answered, then the fan-out closed.
+        let first = draft_with(0x21, 0x52, 0x35);
+        journal.persist_bound(&first).unwrap();
+        journal
+            .mark_node_effect_started(first.mint_id(), node_public_key(1))
+            .unwrap();
+        journal
+            .mark_node_receipt(first.mint_id(), receipt(&binding(1), 0x81))
+            .unwrap();
+        journal
+            .mark_node_effect_started(first.mint_id(), node_public_key(2))
+            .unwrap();
+        journal
+            .mark_aborted_partial_provision(first.mint_id())
+            .unwrap();
+
+        // With only the closed attempt on disk the intent has nothing open.
+        let scan = journal
+            .find_mint_record_for_intent(settled.request_id())
+            .unwrap();
+        assert!(scan.open().is_none());
         assert_eq!(
-            journal
-                .find_mint_record_for_intent(settled.request_id())
-                .unwrap(),
-            None
+            scan.abandoned(),
+            &[RuntimeMintAbandonedRecordV1 {
+                mint_id: first.mint_id(),
+                accepted_orphan_count: 1,
+                uncertain_node_count: 1,
+            }],
+            "the closed attempt is reported, never silently skipped"
         );
+
+        // Second attempt, a different envelope and so a different mint id.
+        let second = draft_with(0x27, 0x52, 0x35);
+        assert_ne!(second.mint_id(), first.mint_id());
+        custody_provision_all(&journal, &second);
+
+        let scan = journal
+            .find_mint_record_for_intent(settled.request_id())
+            .unwrap();
+        assert_eq!(
+            scan.open().map(|record| record.draft().mint_id()),
+            Some(second.mint_id()),
+            "the live attempt resolves even though a closed one shares the intent"
+        );
+        assert_eq!(scan.abandoned().len(), 1);
     }
 
     #[test]
@@ -3915,8 +6283,10 @@ mod tests {
         custody_provision_all(&journal, &draft_with(0x27, 0x52, 0x35));
 
         assert_eq!(
-            journal.find_mint_record_for_intent(settled.request_id()),
-            Err(RuntimeMintJournalError::Conflict)
+            journal
+                .find_mint_record_for_intent(settled.request_id())
+                .err(),
+            Some(RuntimeMintJournalError::Conflict)
         );
     }
 
@@ -3934,8 +6304,10 @@ mod tests {
         fs::set_permissions(&bogus, fs::Permissions::from_mode(0o600)).unwrap();
 
         assert_eq!(
-            journal.find_mint_record_for_intent(settled.request_id()),
-            Err(RuntimeMintJournalError::Corrupt)
+            journal
+                .find_mint_record_for_intent(settled.request_id())
+                .err(),
+            Some(RuntimeMintJournalError::Corrupt)
         );
     }
 
@@ -3946,8 +6318,8 @@ mod tests {
         custody_provision_all(&journal, &draft());
 
         assert_eq!(
-            journal.find_mint_record_for_intent(digest(0x5b)),
-            Err(RuntimeMintJournalError::NotFound)
+            journal.find_mint_record_for_intent(digest(0x5b)).err(),
+            Some(RuntimeMintJournalError::NotFound)
         );
     }
 
@@ -4080,7 +6452,7 @@ mod tests {
         );
 
         let with_effect = journal
-            .bind_creator_effect(draft.mint_id(), creator_effect_binding())
+            .bind_creator_effect(draft.mint_id(), &creator_state, creator_effect_binding())
             .unwrap();
         assert!(
             with_effect
@@ -4106,9 +6478,511 @@ mod tests {
     }
 
     #[test]
+    fn creator_state_discard_is_allowed_only_before_anything_is_raised() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        let journal = RuntimeMintJournal::new(&root);
+        let draft = draft();
+        custody_provision_all(&journal, &draft);
+        let requirement = availability_requirement();
+        let evidence = availability_evidence(&draft, 0x77);
+        journal
+            .mark_content_available(draft.mint_id(), &requirement, evidence)
+            .unwrap();
+
+        // Nothing recorded yet: the record is already in the requested state.
+        assert!(journal
+            .discard_creator_state(draft.mint_id())
+            .unwrap()
+            .creator_state()
+            .is_none());
+
+        let creator_state = RuntimeMintCreatorState::new(
+            creator_desired_terms(),
+            "bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y",
+            "ipfs://bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y/metadata.json",
+        )
+        .unwrap();
+        let bound = journal
+            .bind_creator_state(draft.mint_id(), creator_state.clone())
+            .unwrap();
+        assert_eq!(
+            bound.creator_state().map(RuntimeMintCreatorState::stage),
+            Some(RuntimeMintCreatorStage::Recorded)
+        );
+
+        // Terms on record, nothing raised: dropping them is safe and durable.
+        assert!(journal
+            .discard_creator_state(draft.mint_id())
+            .unwrap()
+            .creator_state()
+            .is_none());
+        assert!(RuntimeMintJournal::new(&root)
+            .load(draft.mint_id())
+            .unwrap()
+            .creator_state()
+            .is_none());
+
+        // An in-flight request planned before the discard cannot bind an effect.
+        assert_eq!(
+            journal.bind_creator_effect(draft.mint_id(), &creator_state, creator_effect_binding()),
+            Err(RuntimeMintJournalError::Conflict)
+        );
+
+        // Re-terming after a discard is what start over means.
+        let restarted = RuntimeMintCreatorState::new(
+            RuntimeMintCreatorDesiredTerms::new(
+                "wallet-account-1",
+                "0x64",
+                "0x186a0",
+                Vec::new(),
+                RuntimeMintAccessMethod::BuyOnce,
+                None,
+                String::new(),
+                String::new(),
+            )
+            .unwrap(),
+            "bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y",
+            "ipfs://bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y/metadata.json",
+        )
+        .unwrap();
+        journal
+            .bind_creator_state(draft.mint_id(), restarted.clone())
+            .unwrap();
+
+        // The old request also cannot attach its effect to newly recorded terms.
+        assert_eq!(
+            journal.bind_creator_effect(draft.mint_id(), &creator_state, creator_effect_binding()),
+            Err(RuntimeMintJournalError::Conflict)
+        );
+        assert!(journal.load(draft.mint_id()).unwrap().creator_state() == Some(&restarted));
+
+        // A raised transaction may still settle, so the record must stay.
+        let raised = journal
+            .bind_creator_effect(draft.mint_id(), &restarted, creator_effect_binding())
+            .unwrap();
+        assert_eq!(
+            raised.creator_state().map(RuntimeMintCreatorState::stage),
+            Some(RuntimeMintCreatorStage::EffectRaised)
+        );
+        assert_eq!(
+            journal.discard_creator_state(draft.mint_id()),
+            Err(RuntimeMintJournalError::Conflict)
+        );
+
+        // Replaying the same plan is idempotent.
+        assert_eq!(
+            journal
+                .bind_creator_effect(draft.mint_id(), &restarted, creator_effect_binding())
+                .unwrap(),
+            raised
+        );
+
+        // A settled mint has a holder; nothing about it can change.
+        let settled = journal
+            .mark_creator_completed(draft.mint_id(), creator_terminal_evidence())
+            .unwrap();
+        assert_eq!(
+            settled.creator_state().map(RuntimeMintCreatorState::stage),
+            Some(RuntimeMintCreatorStage::Settled)
+        );
+        assert_eq!(
+            journal.discard_creator_state(draft.mint_id()),
+            Err(RuntimeMintJournalError::Conflict)
+        );
+        assert!(RuntimeMintJournal::new(&root)
+            .load(draft.mint_id())
+            .unwrap()
+            .creator_state()
+            .is_some());
+    }
+
+    /// Attempt zero is every source's first attempt and keeps the original
+    /// derivation byte for byte, so every intent, preparation and record
+    /// already on disk is found exactly where it was.
+    #[test]
+    fn attempt_zero_keeps_the_original_request_id() {
+        let (principal, uri, storage) = (
+            "person:local:runtime-mint-intent-test",
+            "localhost://Users/test/Documents/protected-clear-media",
+            "plain_localhost_root",
+        );
+        let original = RuntimeMintIntent::request_id_for_source(principal, uri, storage).unwrap();
+        assert_eq!(intent().request_id(), original);
+        assert_eq!(
+            RuntimeMintIntent::request_id_for_source_attempt(principal, uri, storage, 0).unwrap(),
+            original
+        );
+        let first =
+            RuntimeMintIntent::request_id_for_source_attempt(principal, uri, storage, 1).unwrap();
+        let second =
+            RuntimeMintIntent::request_id_for_source_attempt(principal, uri, storage, 2).unwrap();
+        assert_ne!(first, original);
+        assert_ne!(second, first);
+
+        // An intent for a later attempt carries that attempt's identity and
+        // nothing else changes.
+        let later = intent().for_attempt(1).unwrap();
+        assert_eq!(later.request_id(), first);
+        assert_eq!(later.content_access_id(), intent().content_access_id());
+        // Only a fresh intent may be re-pointed: one with protect effects
+        // behind it is bound to the identity those effects were sent under.
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        assert!(settled_closed_intent(&journal).for_attempt(1).is_err());
+
+        let preparation = RuntimeMediaPreparationRecord::new(
+            principal,
+            uri,
+            storage,
+            digest(0x61),
+            "media-provider",
+            "wallet-account-1",
+            "0x1111111111111111111111111111111111111111",
+            digest(0x53),
+        )
+        .unwrap();
+        assert_eq!(preparation.request_id(), original);
+        let later = preparation.clone().for_attempt(principal, 1).unwrap();
+        assert_eq!(later.request_id(), first);
+        assert_ne!(later.operation_id(), preparation.operation_id());
+        assert!(preparation
+            .for_attempt("person:local:someone-else", 1)
+            .is_err());
+    }
+
+    /// Golden values. Every intent on disk is found by the attempt-zero id, so
+    /// the derivation must never move; a change here orphans them all.
+    #[test]
+    fn request_ids_are_pinned() {
+        let (principal, uri, storage) = (
+            "person:local:runtime-mint-intent-test",
+            "localhost://Users/test/Documents/protected-clear-media",
+            "plain_localhost_root",
+        );
+        assert_eq!(
+            hex::encode(
+                RuntimeMintIntent::request_id_for_source(principal, uri, storage)
+                    .unwrap()
+                    .as_bytes()
+            ),
+            "b63356e7daa0765b32cf227390ded40481bf9aa4761f1075f1c6dfefb8ffcb84"
+        );
+        assert_eq!(
+            hex::encode(
+                RuntimeMintIntent::request_id_for_source_attempt(principal, uri, storage, 1)
+                    .unwrap()
+                    .as_bytes()
+            ),
+            "e095fa55a8c7907815a771d61293cf3e0f4d76762371617232a8474ea7235696"
+        );
+    }
+
+    /// A pending move, as `archive_current_attempt` leaves it if it stops
+    /// between the marker and the end of the moves.
+    struct InterruptedArchive {
+        journal: RuntimeMintJournal,
+        root: PathBuf,
+        settled: RuntimeMintIntent,
+        matching: RuntimeMintDraft,
+        directory: PathBuf,
+        intent_name: String,
+        record_name: String,
+        base: Digest32,
+    }
+
+    fn interrupted_archive_fixture(temp: &tempfile::TempDir) -> InterruptedArchive {
+        let root = owner_only_journal_root(temp);
+        let journal = RuntimeMintJournal::new(&root);
+        let settled = settled_closed_intent(&journal);
+        let matching = draft_with(0x21, 0x52, 0x35);
+        custody_provision_all(&journal, &matching);
+        let directory = root
+            .parent()
+            .unwrap()
+            .join("runtime-mint-set-aside-20261029")
+            .join(hex::encode(settled.request_id().as_bytes()));
+        create_owner_only_directory(&directory).unwrap();
+        let intent_name = format!("intent-{}", hex::encode(settled.request_id().as_bytes()));
+        let record_name = hex::encode(matching.mint_id().as_bytes());
+        let base = settled.request_id();
+        let pending = journal.pending_archive_path(settled.request_id());
+        journal
+            .write_pending_archive(
+                &pending,
+                &directory,
+                base,
+                0,
+                &[intent_name.clone(), record_name.clone()],
+            )
+            .unwrap();
+        InterruptedArchive {
+            journal,
+            root,
+            settled,
+            matching,
+            directory,
+            intent_name,
+            record_name,
+            base,
+        }
+    }
+
+    /// A crash after the attempt advanced but before every file moved leaves
+    /// a pending move behind; the next archive or listing finishes it.
+    #[test]
+    fn an_interrupted_archive_is_finished_once_its_attempt_advanced() {
+        let temp = tempdir().unwrap();
+        let fx = interrupted_archive_fixture(&temp);
+        fx.journal.write_attempt_counter(fx.base, 1).unwrap();
+        // The intent made it across before the crash; the record did not.
+        fs::rename(
+            fx.root.join(&fx.intent_name),
+            fx.directory.join(&fx.intent_name),
+        )
+        .unwrap();
+
+        assert_eq!(fx.journal.finish_interrupted_archives().unwrap(), 1);
+        assert!(fx.directory.join(&fx.intent_name).is_file());
+        assert!(fx.directory.join(&fx.record_name).is_file());
+        assert!(!fx.root.join(&fx.record_name).exists());
+        assert!(!fx
+            .journal
+            .pending_archive_path(fx.settled.request_id())
+            .exists());
+        assert_eq!(fx.journal.finish_interrupted_archives().unwrap(), 0);
+    }
+
+    /// A crash between the marker and the attempt advancing means the archive
+    /// never committed: the attempt is still current and its files stay where
+    /// they are -- whatever it does next, including sending its transaction.
+    #[test]
+    fn an_archive_that_never_committed_moves_nothing() {
+        // (a) Nothing resumed: the files stay, the marker goes, and the
+        // source keeps the identity it had -- nothing archived shares it. Nor
+        // does a note claim an archive that never happened.
+        let temp = tempdir().unwrap();
+        let fx = interrupted_archive_fixture(&temp);
+        fs::write(fx.directory.join(ARCHIVE_NOTE_FILE), b"{}").unwrap();
+        assert_eq!(fx.journal.finish_interrupted_archives().unwrap(), 0);
+        assert!(!fx.directory.join(ARCHIVE_NOTE_FILE).exists());
+        assert!(!fx.directory.exists());
+        assert!(fx.root.join(&fx.intent_name).is_file());
+        assert!(fx.root.join(&fx.record_name).is_file());
+        assert!(!fx.directory.join(&fx.record_name).exists());
+        assert!(!fx
+            .journal
+            .pending_archive_path(fx.settled.request_id())
+            .exists());
+        let current = fx
+            .journal
+            .current_attempt(
+                "person:local:runtime-mint-intent-test",
+                "localhost://Users/test/Documents/protected-clear-media",
+                "plain_localhost_root",
+            )
+            .unwrap();
+        assert_eq!(current.attempt(), 0);
+        assert_eq!(current.request_id(), fx.settled.request_id());
+
+        // (b) The attempt was resumed and sent its transaction before the
+        // finisher ran: it is still never archived.
+        let temp = tempdir().unwrap();
+        let fx = interrupted_archive_fixture(&temp);
+        fx.journal
+            .mark_content_available(
+                fx.matching.mint_id(),
+                &availability_requirement(),
+                availability_evidence(&fx.matching, 0x77),
+            )
+            .unwrap();
+        let terms = RuntimeMintCreatorState::new(
+            creator_desired_terms(),
+            "bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y",
+            "ipfs://bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y/metadata.json",
+        )
+        .unwrap();
+        fx.journal
+            .bind_creator_state(fx.matching.mint_id(), terms.clone())
+            .unwrap();
+        fx.journal
+            .bind_creator_effect(fx.matching.mint_id(), &terms, creator_effect_binding())
+            .unwrap();
+        assert_eq!(fx.journal.finish_interrupted_archives().unwrap(), 0);
+        assert!(fx.root.join(&fx.record_name).is_file());
+        assert!(fx
+            .journal
+            .load(fx.matching.mint_id())
+            .unwrap()
+            .creator_state()
+            .unwrap()
+            .effect()
+            .is_some());
+        assert!(!fx
+            .journal
+            .pending_archive_path(fx.settled.request_id())
+            .exists());
+    }
+
+    /// A marker that cannot be read is skipped, and never keeps a later one
+    /// from being finished. One pointing anywhere but an archive directory
+    /// beside the store is never followed.
+    #[test]
+    fn an_unreadable_marker_never_blocks_the_others() {
+        let temp = tempdir().unwrap();
+        let fx = interrupted_archive_fixture(&temp);
+        fx.journal.write_attempt_counter(fx.base, 1).unwrap();
+        // Sorts before the real marker, so a stop at the first bad one would
+        // leave the real one unfinished.
+        fs::write(fx.root.join("archive-pending-0000"), b"not a marker").unwrap();
+        let foreign = fx.journal.pending_archive_path(Digest32::new([0x01; 32]));
+        fx.journal
+            .write_pending_archive(
+                &foreign,
+                temp.path(),
+                fx.base,
+                0,
+                std::slice::from_ref(&fx.record_name),
+            )
+            .unwrap();
+
+        assert_eq!(fx.journal.finish_interrupted_archives().unwrap(), 1);
+        assert!(fx.directory.join(&fx.record_name).is_file());
+        assert!(fx.root.join("archive-pending-0000").exists());
+        assert!(foreign.exists());
+    }
+
+    /// One source's attempt counter that cannot be read skips that source's
+    /// marker and never stops the pass for the others.
+    #[test]
+    fn an_unreadable_attempt_counter_never_blocks_the_others() {
+        let temp = tempdir().unwrap();
+        let fx = interrupted_archive_fixture(&temp);
+        fx.journal.write_attempt_counter(fx.base, 1).unwrap();
+        // Sorts before the real marker.
+        let other_base = Digest32::new([0x00; 32]);
+        let other = fx.journal.pending_archive_path(other_base);
+        fx.journal
+            .write_pending_archive(&other, &fx.directory, other_base, 0, &[])
+            .unwrap();
+        fs::write(fx.journal.attempt_path(other_base), b"not a counter").unwrap();
+
+        assert_eq!(fx.journal.finish_interrupted_archives().unwrap(), 1);
+        assert!(fx.directory.join(&fx.record_name).is_file());
+        assert!(
+            other.exists(),
+            "the unreadable source's marker is left as it is"
+        );
+    }
+
+    /// A source with no attempt ever archived is on attempt zero, without any
+    /// file saying so: an existing store needs no migration.
+    #[test]
+    fn a_source_never_archived_is_on_attempt_zero() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let settled = settled_closed_intent(&journal);
+        let current = journal
+            .current_attempt(
+                "person:local:runtime-mint-intent-test",
+                "localhost://Users/test/Documents/protected-clear-media",
+                "plain_localhost_root",
+            )
+            .unwrap();
+        assert_eq!(current.attempt(), 0);
+        assert_eq!(current.request_id(), settled.request_id());
+        assert!(journal.load_intent(current.request_id()).is_ok());
+    }
+
+    /// Archiving moves an attempt's intent and every record bound to it aside,
+    /// writes the caller's note beside them, and moves the source on to its
+    /// next attempt -- so a new mint of the same file gets an identity of its
+    /// own and never meets the archived one again. Nothing is deleted.
+    #[test]
+    fn archiving_an_attempt_moves_it_aside_and_gives_the_source_a_new_identity() {
+        let (principal, uri, storage) = (
+            "person:local:runtime-mint-intent-test",
+            "localhost://Users/test/Documents/protected-clear-media",
+            "plain_localhost_root",
+        );
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        let journal = RuntimeMintJournal::new(&root);
+        let settled = settled_closed_intent(&journal);
+        let matching = draft_with(0x21, 0x52, 0x35);
+        custody_provision_all(&journal, &matching);
+        // A record of some other source in the same store stays put.
+        let unrelated = draft();
+        custody_provision_all(&journal, &unrelated);
+
+        let archive_dir = root
+            .parent()
+            .unwrap()
+            .join("runtime-mint-set-aside-20261029");
+        let archived = journal
+            .archive_current_attempt(principal, uri, storage, &archive_dir, b"{\"why\":\"test\"}")
+            .unwrap();
+        assert_eq!(archived.attempt(), 0);
+        assert_eq!(archived.request_id(), settled.request_id());
+        assert_eq!(archived.mint_ids(), &[matching.mint_id()]);
+
+        let moved = archived.directory();
+        assert!(moved.starts_with(&archive_dir));
+        assert_eq!(
+            fs::read(moved.join("archive.json")).unwrap(),
+            b"{\"why\":\"test\"}"
+        );
+        assert!(moved
+            .join(format!(
+                "intent-{}",
+                hex::encode(settled.request_id().as_bytes())
+            ))
+            .is_file());
+        assert!(moved
+            .join(hex::encode(matching.mint_id().as_bytes()))
+            .is_file());
+        assert!(matches!(
+            journal.load_intent(settled.request_id()),
+            Err(RuntimeMintJournalError::NotFound)
+        ));
+        assert!(matches!(
+            journal.load(matching.mint_id()),
+            Err(RuntimeMintJournalError::NotFound)
+        ));
+        assert!(journal.load(unrelated.mint_id()).is_ok());
+
+        // The source moved on, durably.
+        let current = RuntimeMintJournal::new(&root)
+            .current_attempt(principal, uri, storage)
+            .unwrap();
+        assert_eq!(current.attempt(), 1);
+        assert_ne!(current.request_id(), settled.request_id());
+        let next = intent().for_attempt(current.attempt()).unwrap();
+        assert_eq!(next.request_id(), current.request_id());
+        journal.persist_intent(&next).unwrap();
+        assert!(journal.load_intent(current.request_id()).is_ok());
+
+        // An attempt with nothing on record has nothing to archive.
+        let empty = RuntimeMintJournal::new(owner_only_journal_root(&tempdir().unwrap()));
+        assert!(matches!(
+            empty.archive_current_attempt(principal, uri, storage, &archive_dir, b"{}"),
+            Err(RuntimeMintJournalError::NotFound)
+        ));
+    }
+
+    #[test]
     fn creator_desired_terms_normalize_hex_quantities() {
-        let terms =
-            RuntimeMintCreatorDesiredTerms::new("wallet-account-1", "0x05", "0x000A").unwrap();
+        let terms = RuntimeMintCreatorDesiredTerms::new(
+            "wallet-account-1",
+            "0x05",
+            "0x000A",
+            Vec::new(),
+            RuntimeMintAccessMethod::BuyOnce,
+            None,
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
         assert_eq!(terms.wallet_account_id(), "wallet-account-1");
         assert_eq!(terms.copies(), "0x5");
         assert_eq!(terms.price(), "0xa");
@@ -4133,10 +7007,239 @@ mod tests {
             ("0x1", oversized.as_str()),
         ] {
             assert!(matches!(
-                RuntimeMintCreatorDesiredTerms::new("wallet-account-1", copies, price),
+                RuntimeMintCreatorDesiredTerms::new(
+                    "wallet-account-1",
+                    copies,
+                    price,
+                    Vec::new(),
+                    RuntimeMintAccessMethod::BuyOnce,
+                    None,
+                    String::new(),
+                    String::new(),
+                ),
                 Err(RuntimeMintJournalError::InvalidSelection)
             ));
         }
+    }
+
+    fn payee(byte: u8, units: u32) -> RuntimeMintRoyaltyShare {
+        RuntimeMintRoyaltyShare::new(format!("0x{}", hex::encode([byte; 20])), units).unwrap()
+    }
+
+    /// Records written before royalties existed decode as "chain default".
+    ///
+    /// This is why the store magic does not move: the creator state is JSON
+    /// inside the binary record, and `deny_unknown_fields` rejects unknown
+    /// keys, never missing ones. A defaulted field is therefore backward
+    /// compatible on its own, unlike the positional content identity that
+    /// forced the `mj05` fallback.
+    #[test]
+    fn creator_terms_without_royalties_decode_as_the_chain_default() {
+        let legacy = serde_json::json!({
+            "wallet_account_id": "wallet-account-1",
+            "copies": "0x2",
+            "price": "0x5",
+        });
+        let terms: RuntimeMintCreatorDesiredTerms = serde_json::from_value(legacy).unwrap();
+        assert!(terms.royalties().is_empty());
+        assert_eq!(terms.copies(), "0x2");
+
+        // And a defaulted split is not re-serialised, so a record written by
+        // this build is byte-identical to one written before the field.
+        let encoded = serde_json::to_value(&terms).unwrap();
+        assert!(encoded.get("royalties").is_none(), "{encoded}");
+    }
+
+    #[test]
+    fn creator_terms_round_trip_explicit_payees() {
+        let terms = RuntimeMintCreatorDesiredTerms::new(
+            "wallet-account-1",
+            "0x2",
+            "0x5",
+            vec![payee(0xab, 900), payee(0x7b, 50)],
+            RuntimeMintAccessMethod::BuyOnce,
+            None,
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
+        let decoded: RuntimeMintCreatorDesiredTerms =
+            serde_json::from_slice(&serde_json::to_vec(&terms).unwrap()).unwrap();
+        assert!(decoded == terms);
+        assert_eq!(decoded.royalties().len(), 2);
+        assert_eq!(decoded.royalties()[0].units(), 900);
+    }
+
+    /// The chain applies 9500 basis points to the creator side. A split that
+    /// does not total it is not one the chain can honour, so recording it
+    /// would describe a payout that will not happen.
+    #[test]
+    fn creator_terms_reject_a_split_that_is_not_the_creator_share() {
+        for royalties in [
+            vec![payee(0xab, 949)],
+            vec![payee(0xab, 951)],
+            vec![payee(0xab, 900), payee(0x7b, 40)],
+            vec![payee(0xab, 1000)],
+        ] {
+            assert!(matches!(
+                RuntimeMintCreatorDesiredTerms::new(
+                    "wallet-account-1",
+                    "0x2",
+                    "0x5",
+                    royalties,
+                    RuntimeMintAccessMethod::BuyOnce,
+                    None,
+                    String::new(),
+                    String::new(),
+                ),
+                Err(RuntimeMintJournalError::InvalidSelection)
+            ));
+        }
+        // Exactly the creator share is accepted, split any number of ways.
+        RuntimeMintCreatorDesiredTerms::new(
+            "wallet-account-1",
+            "0x2",
+            "0x5",
+            vec![payee(0xab, 950)],
+            RuntimeMintAccessMethod::BuyOnce,
+            None,
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn creator_royalty_payees_reject_a_bad_address_or_an_unpayable_share() {
+        // Not an address.
+        for address in [
+            "0xnothex",
+            "ab5028bdbb0826ad6f1885478e421db677b0001a",
+            "0xab50",
+            "",
+        ] {
+            assert!(RuntimeMintRoyaltyShare::new(address, 950).is_err());
+        }
+        // A payee owed nothing is a mistake, not a split.
+        assert!(RuntimeMintRoyaltyShare::new(format!("0x{}", hex::encode([0xab; 20])), 0).is_err());
+    }
+
+    /// The recorded terms are what a retry re-encodes the chain call from, so
+    /// a combination the chain cannot carry must be refused when it is
+    /// recorded rather than when it is encoded.
+    #[test]
+    fn creator_terms_reject_an_access_method_the_chain_cannot_carry() {
+        let terms = |method, cut, price, royalties| {
+            RuntimeMintCreatorDesiredTerms::new(
+                "wallet-account-1",
+                "0x2",
+                price,
+                royalties,
+                method,
+                cut,
+                String::new(),
+                String::new(),
+            )
+        };
+        // The cut belongs to buy and resell, and only there: it is the
+        // trailing `uint16` of that method's `opRawData`.
+        assert!(terms(
+            RuntimeMintAccessMethod::BuyAndResell,
+            Some(900),
+            "0x5",
+            Vec::new()
+        )
+        .is_ok());
+        assert!(terms(
+            RuntimeMintAccessMethod::BuyAndResell,
+            None,
+            "0x5",
+            Vec::new()
+        )
+        .is_err());
+        assert!(terms(
+            RuntimeMintAccessMethod::BuyOnce,
+            Some(900),
+            "0x5",
+            Vec::new()
+        )
+        .is_err());
+        // A cut larger than the whole sale is not a share.
+        assert!(terms(
+            RuntimeMintAccessMethod::BuyAndResell,
+            Some(RUNTIME_MINT_RESELLER_CUT_MAX + 1),
+            "0x5",
+            Vec::new()
+        )
+        .is_err());
+        // A free mint creates no operative, so it has no sale to price and no
+        // royalty share to split. Recording either would describe a payout
+        // that cannot happen.
+        assert!(terms(RuntimeMintAccessMethod::Free, None, "0x0", Vec::new()).is_ok());
+        assert!(terms(RuntimeMintAccessMethod::Free, None, "0x5", Vec::new()).is_err());
+        assert!(terms(
+            RuntimeMintAccessMethod::Free,
+            None,
+            "0x0",
+            vec![payee(0xab, 950)]
+        )
+        .is_err());
+    }
+
+    /// A record written before creators could choose meant buy once, and must
+    /// still decode as exactly that.
+    #[test]
+    fn creator_terms_without_an_access_method_decode_as_buy_once() {
+        let recorded = serde_json::json!({
+            "wallet_account_id": "wallet-account-1",
+            "copies": "0x2",
+            "price": "0x5",
+        });
+        let terms: RuntimeMintCreatorDesiredTerms = serde_json::from_value(recorded).unwrap();
+        assert_eq!(terms.access_method(), RuntimeMintAccessMethod::BuyOnce);
+        assert_eq!(terms.access_method().op_type_code(), 1);
+        assert_eq!(terms.reseller_cut(), None);
+    }
+
+    /// A retry re-encodes the chain call from the recorded terms, so terms that
+    /// differ only in payees must not compare equal.
+    #[test]
+    fn creator_terms_equality_distinguishes_payees() {
+        let one = RuntimeMintCreatorDesiredTerms::new(
+            "wallet-account-1",
+            "0x2",
+            "0x5",
+            vec![payee(0xab, 950)],
+            RuntimeMintAccessMethod::BuyOnce,
+            None,
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
+        let other = RuntimeMintCreatorDesiredTerms::new(
+            "wallet-account-1",
+            "0x2",
+            "0x5",
+            vec![payee(0x7b, 950)],
+            RuntimeMintAccessMethod::BuyOnce,
+            None,
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
+        let default = RuntimeMintCreatorDesiredTerms::new(
+            "wallet-account-1",
+            "0x2",
+            "0x5",
+            Vec::new(),
+            RuntimeMintAccessMethod::BuyOnce,
+            None,
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
+        assert!(one != other);
+        assert!(one != default);
     }
 
     #[test]
@@ -4153,13 +7256,33 @@ mod tests {
             .unwrap();
 
         let initial_state = RuntimeMintCreatorState::new(
-            RuntimeMintCreatorDesiredTerms::new("wallet-account-1", "0x02", "0x05").unwrap(),
+            RuntimeMintCreatorDesiredTerms::new(
+                "wallet-account-1",
+                "0x02",
+                "0x05",
+                Vec::new(),
+                RuntimeMintAccessMethod::BuyOnce,
+                None,
+                String::new(),
+                String::new(),
+            )
+            .unwrap(),
             "bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y",
             "ipfs://bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y/metadata.json",
         )
         .unwrap();
         let replay_state = RuntimeMintCreatorState::new(
-            RuntimeMintCreatorDesiredTerms::new("wallet-account-1", "0x2", "0x5").unwrap(),
+            RuntimeMintCreatorDesiredTerms::new(
+                "wallet-account-1",
+                "0x2",
+                "0x5",
+                Vec::new(),
+                RuntimeMintAccessMethod::BuyOnce,
+                None,
+                String::new(),
+                String::new(),
+            )
+            .unwrap(),
             "bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y",
             "ipfs://bafybeifcreatorstatecid4m3z6kz3h6e57u4zylg66szavqixxkzh6g5zk3y/metadata.json",
         )
@@ -4228,7 +7351,8 @@ mod tests {
         let second = draft();
         custody_provision_all(&second_journal, &second);
         let mut wrong_evidence = availability_evidence(&second, 0x73);
-        wrong_evidence.media_manifest_root = digest(0x74);
+        wrong_evidence.content_identity_root =
+            RuntimeVerifiedContentIdentityRootV1::Media(digest(0x74));
         assert_eq!(
             second_journal.mark_content_available(
                 second.mint_id(),
@@ -4349,5 +7473,799 @@ mod tests {
             journal.persist_media_preparation(&changed_creator),
             Err(RuntimeMintJournalError::Conflict)
         );
+    }
+
+    // -- Task 12: content identity enum and the epc-mj06 codec ---------------
+
+    /// Captured from `draft().mint_id()` on the pre-Task-12 code (positional
+    /// `CencFmp4MediaIdentityV1`, no content-identity enum, no kind byte
+    /// anywhere in the mint-id preimage) by running a one-off test against
+    /// the unmodified code and printing the hex. See task-12-report.md for
+    /// the exact capture command and output. This is the load-bearing check
+    /// for R5: every existing on-disk mint id must stay byte-identical.
+    #[test]
+    fn media_mint_id_is_byte_stable_with_pre_task_12_output() {
+        const PRE_TASK_12_MEDIA_MINT_ID_HEX: &str =
+            "3ca73be59e326b814fa6c8ecdf130133a429e2e4b651e80ed96e20cac79b1125";
+        let expected = Digest32::new(
+            hex::decode(PRE_TASK_12_MEDIA_MINT_ID_HEX)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+        assert_eq!(draft().mint_id(), expected);
+    }
+
+    /// A full mint-journal record encoded by the pre-Task-12 (`epc-mj05`,
+    /// positional media identity) encoder, for the exact `draft()` fixture
+    /// above. Captured once from the unmodified code in the same run as the
+    /// mint-id literal above; see task-12-report.md. The v6 decoder must keep
+    /// reading this so the 61 files already on disk under
+    /// `protected-content/runtime-mint/` stay legible.
+    const PRE_TASK_12_V5_RECORD_HEX: &str = "6570632d6d6a3035c5dff19714e985091c4866b38a7513ba349892e9486c649649ace18d467cf71d3ca73be59e326b814fa6c8ecdf130133a429e2e4b651e80ed96e20cac79b1125000001c5656c6173746f732e70726f7465637465642d636f6e74656e742e63656e632d666d70342d6d656469612d6964656e746974792f763100001663656e632d666d70342d6165733132386374722f76310057656c6173746f732e70726f7465637465642d636f6e74656e742e656e637279707465642d636f6e74656e742f763100c834fa16ce59f5e364367d50d88592be7c1005086052a68083e70157d942090c0000000000000118db44c9feb64d17a4664794b6cb58753368874c2e4c8358736cba8437cc0715e1480a48f6bc6bd73ae9abbfdc66cd299a21f4751614bc83a5986e18b45790814800000000000002460009766964656f2f6d70340015617663312e3634303032382c6d7034612e34302e3200020057656c6173746f732e70726f7465637465642d636f6e74656e742e63656e632d666d70342d7365676d656e742f7631007d410bf14ccb389336b4ea8a1b03dc5d06a745f3e17bf7ff691fd66717ad23eb000000000000008c0057656c6173746f732e70726f7465637465642d636f6e74656e742e63656e632d666d70342d7365676d656e742f763100d9588ca831ea598dc35da19bb05023b74d5a4f824be2c3a163f2318d76b2afcb000000000000008c41414141414141414141414141414141000001e8656c6173746f732e70726f7465637465642d636f6e74656e742e6b65792d656e76656c6f70652f7631000057656c6173746f732e70726f7465637465642d636f6e74656e742e656e637279707465642d636f6e74656e742f763100c834fa16ce59f5e364367d50d88592be7c1005086052a68083e70157d942090c000000000000011822222222222222222222222222222222222222222222222222222222222222220000020076829d63f49117ce5a0cfa158520eb9c78b03bd24d81a49f2b2f2f43c98395f602030057656c6173746f732e70726f7465637465642d636f6e74656e742e637573746f64792d706f6f6c2e6964656e746974792f7631003535353535353535353535353535353535353535353535353535353535353535000002000058656c6173746f732e70726f7465637465642d636f6e74656e742e637573746f64792d65706f63682d6964656e746974792f763100333333333333333333333333333333333333333333333333333333333333333300000200006a656c6173746f732e70726f7465637465642d636f6e74656e742e637573746f64792d636f6d6d69747465652d617574686f72697a6174696f6e2e6964656e746974792f76310036363636363636363636363636363636363636363636363636363636363636360000020000000058656c6173746f732e70726f7465637465642d636f6e74656e742e7269676874732d706f6c6963792d6964656e746974792f76310044444444444444444444444444444444444444444444444444444444444444440000018019191919191919191919191919191919191919191919191919191919191919190203038a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c81818181818181818181818181818181818181818181818181818181818181819191919191919191919191919191919191919191919191919191919191919191a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100008139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b39482828282828282828282828282828282828282828282828282828282828282829292929292929292929292929292929292929292929292929292929292929292a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a20000ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d183838383838383838383838383838383838383838383838383838383838383839393939393939393939393939393939393939393939393939393939393939393a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a30000000000";
+
+    #[test]
+    fn v5_record_fixture_decodes_to_media() {
+        let bytes = hex::decode(PRE_TASK_12_V5_RECORD_HEX).unwrap();
+        let record = decode_record(&bytes).unwrap();
+        assert_eq!(record.draft.mint_id(), draft().mint_id());
+        match record.draft.content_identity() {
+            RuntimeContentIdentityV1::Media(media) => {
+                assert_eq!(media.mime_type(), "video/mp4");
+            }
+            RuntimeContentIdentityV1::Object(_) | RuntimeContentIdentityV1::MediaDash(_) => {
+                panic!("expected a media identity")
+            }
+        }
+        assert_eq!(
+            record.draft.media_identity().unwrap().mime_type(),
+            "video/mp4"
+        );
+    }
+
+    #[test]
+    fn object_draft_round_trips_through_the_v6_record_codec() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let draft = object_draft();
+        assert!(draft.media_identity().is_none());
+        let persisted = journal.persist_bound(&draft).unwrap();
+        assert_eq!(persisted.draft(), &draft);
+        let loaded = journal.load(draft.mint_id()).unwrap();
+        assert_eq!(loaded.draft(), &draft);
+        match loaded.draft().content_identity() {
+            RuntimeContentIdentityV1::Object(object) => {
+                assert_eq!(object.content_type(), "application/octet-stream");
+            }
+            RuntimeContentIdentityV1::Media(_) | RuntimeContentIdentityV1::MediaDash(_) => {
+                panic!("expected an object identity")
+            }
+        }
+    }
+
+    #[test]
+    fn v6_record_with_unrecognized_content_identity_kind_is_corrupt() {
+        let draft = object_draft();
+        let node_states: Vec<MintNodeState> = draft
+            .nodes()
+            .iter()
+            .map(|binding| MintNodeState {
+                binding: binding.clone(),
+                effect: RuntimeMintNodeEffectV1::NotDispatched,
+                receipt: None,
+            })
+            .collect();
+        let record = PersistedRuntimeMint {
+            draft,
+            node_states,
+            custody_terminal: None,
+            content_availability: None,
+            creator_state: None,
+        };
+        let mut encoded = encode_record(&record).unwrap();
+        // Layout: MAGIC(8) ++ record digest(32) ++ payload, where payload is
+        // mint_id digest(32) ++ [u32 length][content-identity bytes] and the
+        // content-identity bytes start with the kind discriminant (0x01
+        // media / 0x02 object). Flip it to an unrecognized kind and re-sign
+        // the record digest so decoding fails specifically on the unknown
+        // kind, not on the outer digest check.
+        let kind_offset = 8 + 32 + 32 + 4;
+        assert_eq!(encoded[kind_offset], CONTENT_IDENTITY_KIND_OBJECT);
+        encoded[kind_offset] = 0x04;
+        let payload = encoded[40..].to_vec();
+        let mut hasher = Sha256::new();
+        hasher.update(STORE_DIGEST_DOMAIN);
+        hasher.update(&payload);
+        encoded[8..40].copy_from_slice(&hasher.finalize());
+        assert_eq!(
+            decode_record(&encoded),
+            Err(RuntimeMintJournalError::Corrupt)
+        );
+    }
+
+    // -- Task 12b: object intents and object content availability -----------
+
+    #[test]
+    fn object_draft_content_availability_can_complete_the_mint() {
+        // Regression for the Task 13 blocker: `matches_draft` used to be
+        // media-only, so `mark_content_available` could never succeed for an
+        // object draft and an object mint could never complete.
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let draft = object_draft();
+        let persisted = custody_provision_all(&journal, &draft);
+        assert_eq!(
+            persisted.custody_terminal(),
+            Some(RuntimeCustodyTerminalKind::CustodyProvisioned)
+        );
+        let requirement = availability_requirement();
+        let evidence = object_availability_evidence(&draft, 0x77);
+        let updated = journal
+            .mark_content_available(draft.mint_id(), &requirement, evidence)
+            .unwrap();
+        assert!(updated.content_availability().is_some());
+    }
+
+    #[test]
+    fn content_availability_kind_mismatch_never_matches_across_media_and_object_drafts() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let object_d = object_draft();
+        custody_provision_all(&journal, &object_d);
+        let requirement = availability_requirement();
+        // A media-kind root, otherwise valid, checked against an object
+        // draft: `matches_draft`'s exhaustive kind-mismatch arms must reject
+        // this rather than a wildcard silently letting it through.
+        let media_style_evidence = RuntimeVerifiedContentAvailability::new(
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            "did:key:z6Mkhq7f4c4QAEgwRByrEsmGu3RJRYvpP5UGcWvqBjGW4YRe#content",
+            "did:key:z6Mkhq7f4c4QAEgwRByrEsmGu3RJRYvpP5UGcWvqBjGW4YRe#publisher",
+            &requirement,
+            3,
+            2_000_000_000,
+            digest(0x78),
+            object_d.encrypted_content().clone(),
+            RuntimeVerifiedContentIdentityRootV1::Media(digest(0x99)),
+        )
+        .unwrap();
+        assert_eq!(
+            journal.mark_content_available(object_d.mint_id(), &requirement, media_style_evidence),
+            Err(RuntimeMintJournalError::Conflict)
+        );
+    }
+
+    #[test]
+    fn epc_mi02_fixture_decodes_to_media_intent() {
+        // Captured once from the unmodified pre-Task-12b encoder
+        // (`encode_intent(&intent())`); see task-12b-report.md for the
+        // capture command and output. The v3 decoder must keep reading this
+        // so the 22 real `epc-mi02` intents already on disk stay legible.
+        const PRE_TASK_12B_EPC_MI02_HEX: &str = "6570632d6d693032f89c82fb57d60b8a11a00f1f0e364f2ae92e8498bde11f66d786efbf24ad8a27b63356e7daa0765b32cf227390ded40481bf9aa4761f1075f1c6dfefb8ffcb840025706572736f6e3a6c6f63616c3a72756e74696d652d6d696e742d696e74656e742d7465737469abb9196b84b6eceb02c5b7e1d47bff0d7a8bfdb5a05cc4de9dd6b9a9cb8c30001077616c6c65742d6163636f756e742d31002a30783131313131313131313131313131313131313131313131313131313131313131313131313131313153535353535353535353535353535353535353535353535353535353535353530009766964656f2f6d70340015617663312e3634303032382c6d7034612e34302e32480a48f6bc6bd73ae9abbfdc66cd299a21f4751614bc83a5986e18b4579081480000000252ac8ddc5137cb342ed8adc2a6373802ae9612a6824e01f7a50456f12082e7c839f523c5c2f73f8df0261c7e25beb0b769399ff32675be8d601b65ac36c37cc8525252525252525252525252525252520000000057656c6173746f732e70726f7465637465642d636f6e74656e742e637573746f64792d706f6f6c2e6964656e746974792f76310035353535353535353535353535353535353535353535353535353535353535350000020000000058656c6173746f732e70726f7465637465642d636f6e74656e742e637573746f64792d65706f63682d6964656e746974792f7631003333333333333333333333333333333333333333333333333333333333333333000002000000006a656c6173746f732e70726f7465637465642d636f6e74656e742e637573746f64792d636f6d6d69747465652d617574686f72697a6174696f6e2e6964656e746974792f763100363636363636363636363636363636363636363636363636363636363636363600000200038a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c81818181818181818181818181818181818181818181818181818181818181819191919191919191919191919191919191919191919191919191919191919191a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a18139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b39482828282828282828282828282828282828282828282828282828282828282829292929292929292929292929292929292929292929292929292929292929292a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d183838383838383838383838383838383838383838383838383838383838383839393939393939393939393939393939393939393939393939393939393939393a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3";
+        let bytes = hex::decode(PRE_TASK_12B_EPC_MI02_HEX).unwrap();
+        let decoded = decode_intent(&bytes).unwrap();
+        assert!(decoded.same_authority_as(&intent()));
+        match decoded.content() {
+            RuntimeMintIntentContentV1::Media { mime_type, .. } => {
+                assert_eq!(mime_type, "video/mp4");
+            }
+            RuntimeMintIntentContentV1::Object { .. }
+            | RuntimeMintIntentContentV1::MediaDash { .. } => panic!("expected media content"),
+        }
+        assert_eq!(decoded.mime_type(), Some("video/mp4"));
+    }
+
+    #[test]
+    fn object_intent_round_trips_through_the_v3_intent_codec() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let intent = object_intent(0x61);
+        assert!(intent.mime_type().is_none());
+        let persisted = journal.persist_intent(&intent).unwrap();
+        assert!(persisted.same_authority_as(&intent));
+        let loaded = journal.load_intent(intent.request_id()).unwrap();
+        assert!(loaded.same_authority_as(&intent));
+        match loaded.content() {
+            RuntimeMintIntentContentV1::Object { content_type, .. } => {
+                assert_eq!(content_type, "application/octet-stream");
+            }
+            RuntimeMintIntentContentV1::Media { .. }
+            | RuntimeMintIntentContentV1::MediaDash { .. } => panic!("expected object content"),
+        }
+    }
+
+    #[test]
+    fn v3_intent_with_unrecognized_content_kind_is_corrupt() {
+        let intent = object_intent(0x62);
+        let mut encoded = encode_intent(&intent).unwrap();
+        // Locate the content-kind byte by parsing forward with the same
+        // reader helpers `decode_intent` uses, rather than a hardcoded
+        // offset: several fields ahead of it (principal_id, wallet account
+        // id, wallet address) are variable-length text.
+        let payload_for_offset = encoded[40..].to_vec();
+        let mut off = 0usize;
+        read_digest(&payload_for_offset, &mut off).unwrap(); // request_id
+        read_availability_text(&payload_for_offset, &mut off).unwrap(); // principal_id
+        read_digest(&payload_for_offset, &mut off).unwrap(); // source_binding_digest
+        read_availability_text(&payload_for_offset, &mut off).unwrap(); // creator_wallet_account_id
+        read_availability_text(&payload_for_offset, &mut off).unwrap(); // creator_wallet_address
+        read_digest(&payload_for_offset, &mut off).unwrap(); // creator_mint_source_digest
+        let kind_offset = 40 + off;
+        assert_eq!(encoded[kind_offset], CONTENT_IDENTITY_KIND_OBJECT);
+        encoded[kind_offset] = 0x04;
+        let payload = encoded[40..].to_vec();
+        let mut hasher = Sha256::new();
+        hasher.update(INTENT_DIGEST_DOMAIN);
+        hasher.update(&payload);
+        encoded[8..40].copy_from_slice(&hasher.finalize());
+        assert_eq!(
+            decode_intent(&encoded),
+            Err(RuntimeMintJournalError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn v6_content_availability_root_with_unrecognized_kind_is_corrupt() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let draft = object_draft();
+        let requirement = availability_requirement();
+        let evidence = object_availability_evidence(&draft, 0x79);
+        custody_provision_all(&journal, &draft);
+        let updated = journal
+            .mark_content_available(draft.mint_id(), &requirement, evidence)
+            .unwrap();
+        let mut encoded = encode_record(&updated).unwrap();
+        // Locate the content-identity-root kind byte inside the
+        // content-availability block by parsing forward with the same
+        // reader helpers `decode_record` uses: several fields ahead of it
+        // (the content identity, key envelope, policy, node list, and the
+        // availability block's own text fields) are variable-length.
+        let payload_for_offset = encoded[40..].to_vec();
+        let mut off = 0usize;
+        read_digest(&payload_for_offset, &mut off).unwrap(); // mint_id
+        read_nested(&payload_for_offset, &mut off).unwrap(); // content_identity
+        read_len16(&payload_for_offset, &mut off).unwrap(); // content_access_id
+        read_nested(&payload_for_offset, &mut off).unwrap(); // key_envelope
+        read_nested(&payload_for_offset, &mut off).unwrap(); // policy
+        read_digest(&payload_for_offset, &mut off).unwrap(); // content_key_commitment
+        read_u8(&payload_for_offset, &mut off).unwrap(); // threshold.required
+        read_u8(&payload_for_offset, &mut off).unwrap(); // threshold.total
+        let node_count = usize::from(read_u8(&payload_for_offset, &mut off).unwrap());
+        for _ in 0..node_count {
+            read_fixed(&payload_for_offset, &mut off).unwrap(); // node_public_key
+            read_fixed(&payload_for_offset, &mut off).unwrap(); // operator_id
+            read_fixed(&payload_for_offset, &mut off).unwrap(); // failure_domain_id
+            read_fixed(&payload_for_offset, &mut off).unwrap(); // owner_state_root
+            read_u8(&payload_for_offset, &mut off).unwrap(); // effect_started
+            if read_u8(&payload_for_offset, &mut off).unwrap() != 0 {
+                read_fixed(&payload_for_offset, &mut off).unwrap(); // provisioning_id
+                read_fixed(&payload_for_offset, &mut off).unwrap(); // record_sha
+                read_u32(&payload_for_offset, &mut off).unwrap(); // record_bytes
+            }
+        }
+        read_u8(&payload_for_offset, &mut off).unwrap(); // custody_terminal
+        assert_eq!(
+            read_u8(&payload_for_offset, &mut off).unwrap(),
+            1,
+            "content_availability discriminant"
+        );
+        read_availability_text(&payload_for_offset, &mut off).unwrap(); // content_cid
+        read_availability_text(&payload_for_offset, &mut off).unwrap(); // object_identity
+        read_availability_text(&payload_for_offset, &mut off).unwrap(); // publisher_identity
+        read_availability_text(&payload_for_offset, &mut off).unwrap(); // expected_provider_did
+        read_availability_text(&payload_for_offset, &mut off).unwrap(); // policy
+        read_u32(&payload_for_offset, &mut off).unwrap(); // required_replicas
+        read_u32(&payload_for_offset, &mut off).unwrap(); // observed_replicas
+        read_u64(&payload_for_offset, &mut off).unwrap(); // checked_at
+        read_digest(&payload_for_offset, &mut off).unwrap(); // receipt_digest
+        read_nested(&payload_for_offset, &mut off).unwrap(); // encrypted_content
+        let kind_offset = 40 + off;
+        assert_eq!(encoded[kind_offset], CONTENT_IDENTITY_KIND_OBJECT);
+        encoded[kind_offset] = 0x04;
+        let payload = encoded[40..].to_vec();
+        let mut hasher = Sha256::new();
+        hasher.update(STORE_DIGEST_DOMAIN);
+        hasher.update(&payload);
+        encoded[8..40].copy_from_slice(&hasher.finalize());
+        assert_eq!(
+            decode_record(&encoded),
+            Err(RuntimeMintJournalError::Corrupt)
+        );
+    }
+
+    // -- DASH v2 T8a: the Runtime identity variant (kind byte 0x03) ----------
+
+    const DASH_VIDEO_AUDIO: [CencDashRenditionKindV2; 2] = [
+        CencDashRenditionKindV2::Video,
+        CencDashRenditionKindV2::Audio,
+    ];
+    const DASH_VIDEO: [CencDashRenditionKindV2; 1] = [CencDashRenditionKindV2::Video];
+    const DASH_AUDIO: [CencDashRenditionKindV2; 1] = [CencDashRenditionKindV2::Audio];
+
+    fn media_dash_draft_for(head: CencDashMediaIdentityV2) -> RuntimeMintDraft {
+        let nodes = nodes();
+        let threshold = ThresholdV1::new(2, 3).unwrap();
+        let node_set = NodeSetV1::new(
+            threshold,
+            nodes.iter().map(|node| node.node_public_key()).collect(),
+        )
+        .unwrap();
+        let key_envelope = KeyEnvelopeIdentityV1::new(
+            head.encrypted_content().clone(),
+            digest(0x22),
+            512,
+            node_set.node_set_id().unwrap(),
+            threshold,
+            CustodyPoolIdentityV1::new(digest(0x35), 512).unwrap(),
+            CustodyEpochIdentityV1::new(digest(0x33), 512).unwrap(),
+            CustodyCommitteeAuthorizationIdentityV1::new(digest(0x36), 512).unwrap(),
+        )
+        .unwrap();
+        RuntimeMintDraft::new_from_identity(
+            RuntimeContentIdentityV1::MediaDash(head.clone()),
+            head.default_kid(),
+            key_envelope,
+            RightsPolicyIdentityV1::new(digest(0x44), 384).unwrap(),
+            digest(0x19),
+            threshold,
+            nodes,
+        )
+        .unwrap()
+    }
+
+    fn media_dash_draft(seed: u8) -> RuntimeMintDraft {
+        media_dash_draft_for(test_media::media_dash_identity(seed, &DASH_VIDEO_AUDIO))
+    }
+
+    fn dash_rendition(
+        kind: CencDashRenditionKindV2,
+        segment_count: u32,
+    ) -> RuntimeMintIntentRenditionV2 {
+        RuntimeMintIntentRenditionV2 {
+            kind,
+            segment_count,
+        }
+    }
+
+    fn media_dash_intent_with(
+        receipt: Digest32,
+        renditions: Vec<RuntimeMintIntentRenditionV2>,
+    ) -> Result<RuntimeMintIntent, RuntimeMintJournalError> {
+        RuntimeMintIntent::new_media_dash(
+            "person:local:runtime-mint-intent-dash-test",
+            "localhost://Users/test/Documents/protected-clear-dash",
+            "plain_localhost_root",
+            "wallet-account-1",
+            "0x1111111111111111111111111111111111111111",
+            digest(0x55),
+            receipt,
+            renditions,
+            content_access_id(0x52),
+            CustodyPoolIdentityV1::new(digest(0x35), 512).unwrap(),
+            CustodyEpochIdentityV1::new(digest(0x33), 512).unwrap(),
+            CustodyCommitteeAuthorizationIdentityV1::new(digest(0x36), 512).unwrap(),
+            nodes(),
+        )
+    }
+
+    fn media_dash_intent() -> RuntimeMintIntent {
+        media_dash_intent_with(
+            digest(0x56),
+            vec![
+                dash_rendition(CencDashRenditionKindV2::Video, 3),
+                dash_rendition(CencDashRenditionKindV2::Audio, 3),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn media_dash_identity_round_trips_with_kind_byte_and_content_type() {
+        for (kinds, mime_type) in [
+            (&DASH_VIDEO_AUDIO[..], "video/mp4"),
+            (&DASH_VIDEO[..], "video/mp4"),
+            (&DASH_AUDIO[..], "audio/mp4"),
+        ] {
+            let head = test_media::media_dash_identity(0x31, kinds);
+            let identity = RuntimeContentIdentityV1::MediaDash(head.clone());
+            let bytes = identity.canonical_bytes().unwrap();
+            assert_eq!(bytes[0], CONTENT_IDENTITY_KIND_MEDIA_DASH);
+            assert_eq!(&bytes[1..], head.canonical_bytes().unwrap().as_slice());
+            assert_eq!(
+                RuntimeContentIdentityV1::from_canonical_bytes(&bytes).unwrap(),
+                identity
+            );
+            assert_eq!(identity.content_type(), mime_type);
+            assert_eq!(identity.encrypted_content(), head.encrypted_content());
+        }
+    }
+
+    #[test]
+    fn media_dash_mint_id_hashes_the_kind_prefixed_identity() {
+        let draft = media_dash_draft(0x32);
+        let preimage = |identity_bytes: Vec<u8>| {
+            let mut hasher = Sha256::new();
+            hasher.update(MINT_ID_DOMAIN);
+            hasher.update(&identity_bytes);
+            hasher.update(draft.content_access_id().as_bytes());
+            hasher.update(draft.key_envelope().canonical_bytes().unwrap());
+            hasher.update(draft.policy().canonical_bytes().unwrap());
+            hasher.update(draft.content_key_commitment().as_bytes());
+            hasher.update([draft.threshold().required(), draft.threshold().total()]);
+            for node in draft.nodes() {
+                hasher.update(node.node_public_key().as_bytes());
+                hasher.update(node.operator_id.as_bytes());
+                hasher.update(node.failure_domain_id.as_bytes());
+                hasher.update(node.owner_state_root.as_bytes());
+            }
+            Digest32::new(hasher.finalize().into())
+        };
+        let prefixed = draft.content_identity().canonical_bytes().unwrap();
+        assert_eq!(prefixed[0], 0x03);
+        assert_eq!(draft.mint_id(), preimage(prefixed.clone()));
+        assert_ne!(draft.mint_id(), preimage(prefixed[1..].to_vec()));
+        // Golden captured from a green run (DASH v2 T8a; recaptured when the draft access id became the head KID):
+        // `media_dash_draft(0x32)` must keep deriving this id.
+        assert_eq!(
+            hex::encode(draft.mint_id().as_bytes()),
+            "e308f2153143268ed4e4179d877293fb8656fc9f9903ec3f8ad085c958d5ae1b"
+        );
+    }
+
+    #[test]
+    fn media_dash_record_round_trips_and_fits_the_store_for_a_million_segments() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let draft = media_dash_draft(0x33);
+        let persisted = journal.persist_bound(&draft).unwrap();
+        assert_eq!(persisted.draft(), &draft);
+        assert_eq!(journal.load(draft.mint_id()).unwrap().draft(), &draft);
+        let record = PersistedRuntimeMint {
+            draft: draft.clone(),
+            node_states: Vec::new(),
+            custody_terminal: None,
+            content_availability: None,
+            creator_state: None,
+        };
+        let encoded = encode_record(&record).unwrap();
+        assert_eq!(encoded[8 + 32 + 32 + 4], CONTENT_IDENTITY_KIND_MEDIA_DASH);
+
+        // A head declaring 1,000,000 segments per rendition is the same size.
+        let mut builder = elastos_protected_content_provider_contracts::CencDashIdentityBuilderV2::new(
+            content_access_id(0x34),
+            [CencDashRenditionKindV2::Video, CencDashRenditionKindV2::Audio]
+                .into_iter()
+                .map(|kind| {
+                    elastos_protected_content_provider_contracts::CencDashRenditionDeclV2::from_init(
+                        kind, 90_000, b"init", 1_000_000,
+                    )
+                })
+                .collect(),
+        )
+        .unwrap();
+        for _ in 0..2_000_000u32 {
+            builder.push_segment(b"s").unwrap();
+        }
+        let big = media_dash_draft_for(builder.finish().unwrap());
+        let big_record = PersistedRuntimeMint {
+            draft: big,
+            node_states: Vec::new(),
+            custody_terminal: None,
+            content_availability: None,
+            creator_state: None,
+        };
+        assert!(encode_record(&big_record).unwrap().len() <= MAX_STORE_FILE_BYTES);
+    }
+
+    #[test]
+    fn media_dash_accessors_for_v1_return_none() {
+        let draft = media_dash_draft(0x35);
+        assert!(draft.media_identity().is_none());
+        assert!(draft.media_dash_identity().is_some());
+        let intent = media_dash_intent();
+        assert!(intent.mime_type().is_none());
+        assert!(intent.codecs().is_none());
+        assert!(intent.clear_init_sha256().is_none());
+        assert!(intent.clear_segment_sha256().is_none());
+    }
+
+    #[test]
+    fn unknown_content_kinds_are_corrupt_in_the_record_intent_and_root() {
+        for unknown in [0x04u8, 0xff] {
+            let draft = media_dash_draft(0x36);
+            let mut identity = draft.content_identity().canonical_bytes().unwrap();
+            identity[0] = unknown;
+            assert_eq!(
+                RuntimeContentIdentityV1::from_canonical_bytes(&identity),
+                Err(RuntimeMintJournalError::Corrupt)
+            );
+
+            let intent = media_dash_intent();
+            let mut encoded = encode_intent(&intent).unwrap();
+            let kind_offset = encoded
+                .windows(1 + 32)
+                .position(|w| w[0] == CONTENT_IDENTITY_KIND_MEDIA_DASH && w[1..] == [0x56; 32])
+                .unwrap();
+            encoded[kind_offset] = unknown;
+            let payload = encoded[40..].to_vec();
+            let mut hasher = Sha256::new();
+            hasher.update(INTENT_DIGEST_DOMAIN);
+            hasher.update(&payload);
+            encoded[8..40].copy_from_slice(&hasher.finalize());
+            assert_eq!(
+                decode_intent(&encoded),
+                Err(RuntimeMintJournalError::Corrupt)
+            );
+        }
+    }
+
+    #[test]
+    fn media_dash_availability_matches_only_its_own_head() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let draft = media_dash_draft(0x37);
+        let head = draft.media_dash_identity().unwrap().clone();
+        custody_provision_all(&journal, &draft);
+        let requirement = availability_requirement();
+        let evidence = |root| {
+            RuntimeVerifiedContentAvailability::new(
+                "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+                "did:key:z6Mkhq7f4c4QAEgwRByrEsmGu3RJRYvpP5UGcWvqBjGW4YRe#content",
+                "did:key:z6Mkhq7f4c4QAEgwRByrEsmGu3RJRYvpP5UGcWvqBjGW4YRe#publisher",
+                &requirement,
+                3,
+                2_000_000_000,
+                digest(0x7a),
+                draft.encrypted_content().clone(),
+                root,
+            )
+            .unwrap()
+        };
+        // A wrong digest, and the right digest under another kind, are refused.
+        for root in [
+            RuntimeVerifiedContentIdentityRootV1::MediaDash(digest(0x99)),
+            RuntimeVerifiedContentIdentityRootV1::Media(head.media_manifest_root()),
+            RuntimeVerifiedContentIdentityRootV1::Object(head.media_manifest_root()),
+        ] {
+            assert_eq!(
+                journal.mark_content_available(draft.mint_id(), &requirement, evidence(root)),
+                Err(RuntimeMintJournalError::Conflict)
+            );
+        }
+        let updated = journal
+            .mark_content_available(
+                draft.mint_id(),
+                &requirement,
+                evidence(RuntimeVerifiedContentIdentityRootV1::for_media_dash(&head)),
+            )
+            .unwrap();
+        // The record codec carries the root: reload and read it back.
+        let reloaded = journal.load(draft.mint_id()).unwrap();
+        assert_eq!(reloaded, updated);
+        let availability = reloaded.content_availability().unwrap();
+        assert_eq!(availability.media_manifest_root(), None);
+        assert_eq!(
+            availability.content_identity_root(),
+            RuntimeVerifiedContentIdentityRootV1::MediaDash(head.media_manifest_root())
+        );
+    }
+
+    #[test]
+    fn availability_root_kinds_match_only_the_same_kind_draft() {
+        let drafts = [draft(), object_draft(), media_dash_draft(0x38)];
+        let roots = [
+            RuntimeVerifiedContentIdentityRootV1::for_media(drafts[0].media_identity().unwrap()),
+            match drafts[1].content_identity() {
+                RuntimeContentIdentityV1::Object(object) => {
+                    RuntimeVerifiedContentIdentityRootV1::for_object(object).unwrap()
+                }
+                _ => panic!("expected an object draft"),
+            },
+            RuntimeVerifiedContentIdentityRootV1::for_media_dash(
+                drafts[2].media_dash_identity().unwrap(),
+            ),
+        ];
+        for (root_index, root) in roots.iter().enumerate() {
+            for (draft_index, draft) in drafts.iter().enumerate() {
+                let evidence = RuntimeVerifiedContentAvailability::new(
+                    "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+                    "did:key:z6Mkhq7f4c4QAEgwRByrEsmGu3RJRYvpP5UGcWvqBjGW4YRe#content",
+                    "did:key:z6Mkhq7f4c4QAEgwRByrEsmGu3RJRYvpP5UGcWvqBjGW4YRe#publisher",
+                    &availability_requirement(),
+                    3,
+                    2_000_000_000,
+                    digest(0x7b),
+                    draft.encrypted_content().clone(),
+                    *root,
+                )
+                .unwrap();
+                assert_eq!(
+                    evidence.matches_draft(draft),
+                    root_index == draft_index,
+                    "root {root_index} against draft {draft_index}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn media_dash_intent_round_trips_and_binds_receipt_and_counts() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeMintJournal::new(owner_only_journal_root(&temp));
+        let intent = media_dash_intent();
+        let persisted = journal.persist_intent(&intent).unwrap();
+        assert!(persisted.same_authority_as(&intent));
+        let loaded = journal.load_intent(intent.request_id()).unwrap();
+        assert!(loaded.same_authority_as(&intent));
+        assert_eq!(loaded.content(), intent.content());
+
+        let encoded = encode_intent(&intent).unwrap();
+        assert!(encoded
+            .windows(33)
+            .any(|w| w[0] == 0x03 && w[1..] == [0x56; 32]));
+
+        let video_audio = |receipt: Digest32, video: u32, audio: u32| {
+            media_dash_intent_with(
+                receipt,
+                vec![
+                    dash_rendition(CencDashRenditionKindV2::Video, video),
+                    dash_rendition(CencDashRenditionKindV2::Audio, audio),
+                ],
+            )
+            .unwrap()
+        };
+        let base = video_audio(digest(0x56), 3, 3);
+        assert!(base.same_authority_as(&video_audio(digest(0x56), 3, 3)));
+        assert!(!base.same_authority_as(&video_audio(digest(0x57), 3, 3)));
+        assert!(!base.same_authority_as(&video_audio(digest(0x56), 4, 3)));
+    }
+
+    #[test]
+    fn media_dash_intent_refuses_malformed_declarations() {
+        let video = |count| dash_rendition(CencDashRenditionKindV2::Video, count);
+        let audio = |count| dash_rendition(CencDashRenditionKindV2::Audio, count);
+        let refused = [
+            (Digest32::new([0; 32]), vec![video(3)]),
+            (digest(0x56), vec![]),
+            (digest(0x56), vec![video(3), audio(3), audio(3)]),
+            (digest(0x56), vec![audio(3), video(3)]),
+            (digest(0x56), vec![video(3), video(3)]),
+            (digest(0x56), vec![video(0)]),
+            (digest(0x56), vec![video(3), audio(0)]),
+            (digest(0x56), vec![video(3), audio(5)]),
+        ];
+        for (receipt, renditions) in refused {
+            assert_eq!(
+                media_dash_intent_with(receipt, renditions.clone()).err(),
+                Some(RuntimeMintJournalError::InvalidSelection),
+                "{renditions:?}"
+            );
+        }
+        for renditions in [
+            vec![video(3), audio(4)],
+            vec![video(4), audio(3)],
+            vec![video(3), audio(3)],
+            vec![video(3)],
+            vec![audio(3)],
+        ] {
+            assert!(
+                media_dash_intent_with(digest(0x56), renditions.clone()).is_ok(),
+                "{renditions:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn media_dash_intent_size_does_not_grow_with_duration() {
+        let size = |segments| {
+            encode_intent(
+                &media_dash_intent_with(
+                    digest(0x56),
+                    vec![
+                        dash_rendition(CencDashRenditionKindV2::Video, segments),
+                        dash_rendition(CencDashRenditionKindV2::Audio, segments),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .len()
+        };
+        assert_eq!(size(1), size(1_000_000));
+    }
+
+    #[test]
+    fn v1_mint_id_and_records_are_unchanged_by_the_dash_variant() {
+        // The pinned v1 tests (`media_mint_id_is_byte_stable_with_pre_task_12_output`,
+        // `v5_record_fixture_decodes_to_media`, `epc_mi02_fixture_decodes_to_media_intent`)
+        // run unedited; this one ties them together: a v5 fixture loads, its
+        // derived id is the pinned id, and a re-encode is a v6 record that
+        // decodes to the same draft.
+        let bytes = hex::decode(PRE_TASK_12_V5_RECORD_HEX).unwrap();
+        let record = decode_record(&bytes).unwrap();
+        assert_eq!(record.draft.mint_id(), draft().mint_id());
+        let reencoded = encode_record(&record).unwrap();
+        assert_eq!(&reencoded[..8], STORE_MAGIC);
+        assert_eq!(decode_record(&reencoded).unwrap().draft, record.draft);
+    }
+
+    #[test]
+    fn a_dash_draft_needs_its_kid_as_the_access_id() {
+        let head = test_media::media_dash_identity(0x39, &DASH_VIDEO_AUDIO);
+        let kid = head.default_kid();
+        let other = content_access_id(0x3a);
+        assert_ne!(kid, other);
+        let draft = media_dash_draft_for(head.clone());
+        assert_eq!(draft.content_access_id(), kid);
+        let envelope = draft.key_envelope().clone();
+        assert_eq!(
+            RuntimeMintDraft::new_from_identity(
+                RuntimeContentIdentityV1::MediaDash(head),
+                other,
+                envelope,
+                draft.policy().clone(),
+                draft.content_key_commitment(),
+                draft.threshold(),
+                draft.nodes().to_vec(),
+            )
+            .err(),
+            Some(RuntimeMintJournalError::InvalidSelection)
+        );
+    }
+
+    #[test]
+    fn a_record_matches_only_an_intent_of_its_own_content() {
+        let record = |draft: RuntimeMintDraft| PersistedRuntimeMint {
+            draft,
+            node_states: Vec::new(),
+            custody_terminal: None,
+            content_availability: None,
+            creator_state: None,
+        };
+        let intent_for = |kid: u8, renditions: Vec<RuntimeMintIntentRenditionV2>| {
+            RuntimeMintIntent::new_media_dash(
+                "person:local:runtime-mint-intent-dash-test",
+                "localhost://Users/test/Documents/protected-clear-dash",
+                "plain_localhost_root",
+                "wallet-account-1",
+                "0x1111111111111111111111111111111111111111",
+                digest(0x55),
+                digest(0x56),
+                renditions,
+                content_access_id(kid),
+                CustodyPoolIdentityV1::new(digest(0x35), 512).unwrap(),
+                CustodyEpochIdentityV1::new(digest(0x33), 512).unwrap(),
+                CustodyCommitteeAuthorizationIdentityV1::new(digest(0x36), 512).unwrap(),
+                nodes(),
+            )
+            .unwrap()
+        };
+        let va = |video, audio| {
+            vec![
+                dash_rendition(CencDashRenditionKindV2::Video, video),
+                dash_rendition(CencDashRenditionKindV2::Audio, audio),
+            ]
+        };
+        // The fixture head is video+audio with 2 segments each; its kid is its seed.
+        let dash = record(media_dash_draft(0x41));
+        assert!(record_matches_intent(&dash, &intent_for(0x41, va(2, 2))));
+        // A different count, a different kind set, and cross-kind intents are refused.
+        assert!(!record_matches_intent(&dash, &intent_for(0x41, va(3, 3))));
+        assert!(!record_matches_intent(
+            &dash,
+            &intent_for(
+                0x41,
+                vec![dash_rendition(CencDashRenditionKindV2::Video, 2)]
+            )
+        ));
+        let mut media_intent = intent();
+        media_intent.content_access_id = dash.draft.content_access_id;
+        assert!(!record_matches_intent(&dash, &media_intent));
+        let mut object = object_intent(0x63);
+        object.content_access_id = dash.draft.content_access_id;
+        assert!(!record_matches_intent(&dash, &object));
+        // And a v1 draft is refused by a dash intent.
+        let v1 = record(draft());
+        assert!(!record_matches_intent(&v1, &intent_for(0x41, va(2, 2))));
     }
 }

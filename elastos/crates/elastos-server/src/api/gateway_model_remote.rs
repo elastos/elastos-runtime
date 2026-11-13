@@ -362,6 +362,7 @@ async fn call_grant(
                 connect_ticket: grant.connect_ticket.clone(),
                 peer_did: Some(grant.peer_did.clone()),
                 timeout_ms: Some(CARRIER_TIMEOUT_MS),
+                reply_wait_ms: None,
             }),
         })
         .await

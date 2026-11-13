@@ -5377,6 +5377,7 @@ async fn test_home_summary_and_events_include_browser_wallet_approvals() {
         })]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app =
         gateway_router(wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await);
@@ -10900,6 +10901,7 @@ async fn test_services_remote_engine_signed_approval_retains_scoped_execution_gr
             connect_ticket: ticket,
             peer_did: Some(bob_did),
             timeout_ms: Some(2000),
+            reply_wait_ms: None,
         }),
     };
     assert!(consumer_registry.invoke_provider(invocation).await.is_err());
@@ -13482,10 +13484,12 @@ async fn a_published_file_is_served_only_to_the_publishers_contacts() {
         let dir = bob_dir.path().to_path_buf();
         async move {
             crate::carrier::admit_carrier_peer_content_fetch(
+                &elastos_runtime::provider::ProviderRegistry::new(),
                 &dir,
                 network,
                 &source,
                 &json!({ "cid": cid }),
+                true,
             )
             .await
             .is_ok()

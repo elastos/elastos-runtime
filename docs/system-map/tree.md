@@ -49,6 +49,9 @@ index so the two do not drift into competing topology descriptions.
 | Inbox approvals | `capsules/inbox` |
 | Product Chat | `capsules/chat-room` |
 | Library and objects | `capsules/library`, `capsules/object-provider` |
+| Protected-content publishing | `capsules/creator` |
+| Protected video viewer | `capsules/elacity-player` |
+| Protected document, book and 3D viewer | `capsules/elacity-reader` |
 | Browser App | `capsules/browser` |
 | Wallet UI and approval methods | `capsules/wallet`, `capsules/wallet-*` |
 
@@ -68,9 +71,32 @@ each effect.
 | Provider packages | `capsules/*-provider` and provider entries in `components.json` |
 
 Provider packages include typed boundaries for AI, chain, wallet, objects,
-Browser Net/Exit/Engine, content availability, rights, key release, decrypt,
-DRM, IPFS, and tunnels. `components.json` is authoritative for the selected
+Browser Net/Exit/Engine, content availability, IPFS, and tunnels; the
+Runtime-only protect, media, custody, and decrypt providers are listed under
+`components.json` profiles. `components.json` is authoritative for the selected
 install set; directory presence alone is not a support claim.
+
+## Protected content and pool storage
+
+Paths below are under `elastos/crates/elastos-server/src/` unless stated.
+
+| Responsibility | Source |
+| --- | --- |
+| Runtime mint, adoption and viewer lifecycle | `protected_content_runtime.rs` |
+| Pool prepare, Wallet rights, release and buyer reads | `protected_content_pool_open.rs` |
+| Verified signed descriptor lookup | `custody_pool_descriptor.rs`, `custody_pool_resolver.rs` |
+| Server staging, proof checks and session delivery | `custody_pool_service.rs` |
+| Accepted copy obligations, ownership and Stop | `custody_consent.rs` |
+| Private content transport and active-copy announcements | `carrier.rs` |
+| Validated metadata/cover publication and consent | `public_metadata_publisher.rs`, `public_metadata_consent.rs` |
+| Canonical authority and pool-session contracts | `elastos/crates/elastos-protected-content-contracts/` |
+| Pool-session state machine and transport types | `elastos/crates/elastos-protected-content-runtime/src/pool_session.rs` |
+| Key custody and decrypt primitives | `elastos/crates/elastos-protected-content-custody/` |
+
+Public metadata and cover pins are separate from protected ciphertext copies.
+Account rights come from finalized chain checks, not Contacts or a manual import.
+See [Protected content](../PROTECTED_CONTENT.md) for the workflow and
+[Content availability](../CONTENT_AVAILABILITY.md) for the two IPFS stores.
 
 ## Collaboration and Profile
 

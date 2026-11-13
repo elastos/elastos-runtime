@@ -587,7 +587,10 @@ async function run() {
     await frame.locator(".wallet-account").click();
     await frame.locator("#wallet-account-card").waitFor({ state: "visible", timeout: 5000 });
     assert(await frame.locator("#wallet-account-card-name").textContent() === "Family", "Hero card must reflect the selected grouped account.");
-    assert(await frame.locator("#wallet-account-card-network").textContent() === "Built-in · EVM", "Hero card must keep the grouped EVM label.");
+    assert(
+      await frame.locator("#wallet-account-card-network").textContent() === "Built-in · Elastos Smart Chain",
+      "Hero card must show the network where the EVM account is the transaction default.",
+    );
 
     await frame.locator("#wallet-send").click();
     await frame
@@ -692,6 +695,38 @@ async function run() {
     }, 5000, "wallet connector launch");
     const openTarget = (await fixtureState(page)).openTargets.at(-1);
     assert(openTarget?.target === "wallet-metamask", "Wallet connector launch must stay on the exact Home open-target path.", openTarget);
+
+    await openAccountMenu(frame);
+    const networkRequestCount = server.state.defaultBodies.length;
+    await frame
+      .locator(".wallet-flow-row")
+      .filter({ has: frame.locator("strong", { hasText: /^Network$/ }) })
+      .click();
+    const networkDialog = frame.getByRole("dialog", { name: "Network" });
+    await networkDialog.waitFor({ state: "visible", timeout: 5000 });
+    const networkChoices = await networkDialog.locator(".wallet-flow-row strong").allTextContents();
+    assert(
+      networkChoices.join("|") === "Base|Elastos Smart Chain",
+      "Network picker must list Base first, then Elastos Smart Chain.",
+      networkChoices,
+    );
+    await networkDialog
+      .locator(".wallet-flow-row")
+      .filter({ has: frame.locator("strong", { hasText: /^Base$/ }) })
+      .click();
+    await waitForCondition(() => server.state.defaultBodies.length === networkRequestCount + 1, 5000, "wallet network request");
+    assert(
+      server.state.defaultBodies.at(-1)?.account_id === "acc-base"
+        && server.state.defaultBodies.at(-1)?.chain_namespace === "eip155:8453"
+        && server.state.defaultBodies.at(-1)?.intent === "transaction_intent",
+      "Choosing Base must make the exact Base record the transaction default.",
+      server.state.defaultBodies.at(-1),
+    );
+    await frame.waitForFunction(
+      () => document.querySelector("#wallet-account-card-network")?.textContent === "Built-in · Base",
+      undefined,
+      { timeout: 5000 },
+    );
 
     await openAccountMenu(frame);
     const defaultRequestCount = server.state.defaultBodies.length;

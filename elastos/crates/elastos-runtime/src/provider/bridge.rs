@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
+use tracing::{instrument::WithSubscriber, Instrument};
 
 use super::registry::{
     EntryType, Provider, ProviderError, ResourceAction, ResourceEntry, ResourceRequest,
@@ -27,6 +28,10 @@ use super::registry::{
 
 /// Timeout for provider requests (30 seconds)
 pub(super) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Above this, a provider call is slow enough to be worth a DEBUG line even
+/// when it succeeded: it is the kind of thing someone asking "where did the
+/// time go" needs, and it is rare enough not to drown the log.
+const SLOW_PROVIDER_REQUEST_MS: u64 = 1_000;
 /// How often a still-pending raw provider request is named at warn.
 const PENDING_REQUEST_WARN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -509,7 +514,16 @@ pub enum BridgeError {
     Provider { code: String, message: String },
     /// Background provider I/O task failed
     TaskJoin(String),
+    /// The request's dispatch fence refused it before any byte was written.
+    /// The provider process is untouched, so this is no transport failure.
+    DispatchRefused(String),
 }
+
+/// The text of [`BridgeError::ProcessExited`] and the prefix of
+/// [`BridgeError::Io`], which [`CapsuleProvider`] carries as a provider
+/// error's message.
+const BRIDGE_PROCESS_EXITED: &str = "provider process exited unexpectedly";
+const BRIDGE_IO_ERROR_PREFIX: &str = "I/O error: ";
 
 impl std::fmt::Display for BridgeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -517,20 +531,34 @@ impl std::fmt::Display for BridgeError {
             BridgeError::Spawn(e) => write!(f, "failed to spawn provider: {}", e),
             BridgeError::InitFailed(msg) => write!(f, "provider init failed: {}", msg),
             BridgeError::Timeout => write!(f, "provider request timed out"),
-            BridgeError::ProcessExited => write!(f, "provider process exited unexpectedly"),
+            BridgeError::ProcessExited => f.write_str(BRIDGE_PROCESS_EXITED),
             BridgeError::Serde(e) => write!(f, "serialization error: {}", e),
-            BridgeError::Io(e) => write!(f, "I/O error: {}", e),
+            BridgeError::Io(e) => write!(f, "{BRIDGE_IO_ERROR_PREFIX}{}", e),
             BridgeError::Provider { code, message } => {
                 write!(f, "provider error [{}]: {}", code, message)
             }
             BridgeError::TaskJoin(message) => {
                 write!(f, "provider bridge task failed: {}", message)
             }
+            BridgeError::DispatchRefused(message) => {
+                write!(f, "provider dispatch refused: {message}")
+            }
         }
     }
 }
 
 impl std::error::Error for BridgeError {}
+
+/// Whether a [`CapsuleProvider`] error is its bridge's transport failure:
+/// the provider process exited, or its pipe I/O failed. Such a provider
+/// answers nothing more, so its registration is dead.
+pub fn is_bridge_transport_failure(error: &ProviderError) -> bool {
+    matches!(
+        error,
+        ProviderError::Provider(message)
+            if message == BRIDGE_PROCESS_EXITED || message.starts_with(BRIDGE_IO_ERROR_PREFIX)
+    )
+}
 
 // === ProviderBridge ===
 
@@ -540,6 +568,36 @@ struct ProviderIo {
     reader: Box<dyn AsyncBufRead + Unpin + Send>,
 }
 
+/// Lifecycle state of the child process (if any) behind a `ProviderBridge`.
+///
+/// Single source of truth for shutdown: previously the bridge tracked
+/// `child: Mutex<Option<Child>>` alongside a separate `shutdown_completed`
+/// flag, and the two could disagree (e.g. a reaped child leaving `None`
+/// while the flag was still unset). Collapsing both into one state removes
+/// that possibility.
+enum ChildState {
+    /// No child process was ever spawned (bridge built via `from_io`); the
+    /// protocol shutdown still must be delivered to stop the provider.
+    Attached,
+    /// A child process is running and owned by this bridge.
+    Spawned(Child),
+    /// Shutdown has completed: the protocol shutdown was delivered exactly
+    /// once, and any child has been reaped. Later `shutdown()` calls are
+    /// idempotent no-ops.
+    ShutDown,
+}
+
+impl ChildState {
+    /// The running child's process id, when there is a running child.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn pid(&self) -> Option<u32> {
+        match self {
+            Self::Spawned(child) => child.id(),
+            Self::Attached | Self::ShutDown => None,
+        }
+    }
+}
+
 /// Bridge to a provider capsule process.
 ///
 /// Manages serial request/response communication over stdin/stdout.
@@ -547,13 +605,9 @@ struct ProviderIo {
 /// them one at a time).
 pub struct ProviderBridge {
     io: Arc<Mutex<ProviderIo>>,
-    child: Mutex<Option<Child>>,
+    child: Mutex<ChildState>,
     #[cfg(unix)]
     helper_owner: Mutex<Option<elastos_common::process_lifetime::ParentLifetime>>,
-    /// True once a shutdown attempt has completed (child reaped, or the
-    /// protocol shutdown was delivered on a childless bridge). Later
-    /// shutdown() calls are idempotent no-ops.
-    shutdown_completed: std::sync::atomic::AtomicBool,
     /// Timeout applied to each shutdown settle stage (protocol request,
     /// child wait, force reap). Tests inject a short value.
     shutdown_timeout: std::time::Duration,
@@ -611,11 +665,13 @@ impl ProviderBridge {
     }
 
     async fn terminate_child_for_init_failure(
-        child_mutex: &Mutex<Option<Child>>,
+        child_mutex: &Mutex<ChildState>,
         shutdown_timeout: std::time::Duration,
     ) {
-        let mut child_guard = child_mutex.lock().await;
-        let Some(mut child) = child_guard.take() else {
+        let mut state_guard = child_mutex.lock().await;
+        let ChildState::Spawned(mut child) =
+            std::mem::replace(&mut *state_guard, ChildState::ShutDown)
+        else {
             return;
         };
 
@@ -787,8 +843,7 @@ impl ProviderBridge {
             .child
             .lock()
             .await
-            .as_ref()
-            .and_then(tokio::process::Child::id)
+            .pid()
             .ok_or_else(|| BridgeError::InitFailed("model provider pid unavailable".into()))?;
         let birth = match super::local_model_broker::process_birth(pid) {
             Some(birth) => birth,
@@ -893,8 +948,7 @@ impl ProviderBridge {
             .child
             .lock()
             .await
-            .as_ref()
-            .and_then(tokio::process::Child::id)
+            .pid()
             .ok_or_else(|| BridgeError::InitFailed("model provider pid unavailable".into()))?;
         let birth = match super::local_model_broker::process_birth(pid) {
             Some(birth) => birth,
@@ -1272,7 +1326,7 @@ impl ProviderBridge {
         let stdin = match child.stdin.take() {
             Some(stdin) => stdin,
             None => {
-                let child = Mutex::new(Some(child));
+                let child = Mutex::new(ChildState::Spawned(child));
                 Self::terminate_child_for_init_failure(&child, shutdown_timeout).await;
                 return Err(BridgeError::InitFailed(
                     "spawned provider missing piped stdin".to_string(),
@@ -1282,7 +1336,7 @@ impl ProviderBridge {
         let stdout = match child.stdout.take() {
             Some(stdout) => stdout,
             None => {
-                let child = Mutex::new(Some(child));
+                let child = Mutex::new(ChildState::Spawned(child));
                 Self::terminate_child_for_init_failure(&child, shutdown_timeout).await;
                 return Err(BridgeError::InitFailed(
                     "spawned provider missing piped stdout".to_string(),
@@ -1295,10 +1349,9 @@ impl ProviderBridge {
                 writer: Box::new(stdin),
                 reader: Box::new(tokio::io::BufReader::new(stdout)),
             })),
-            child: Mutex::new(Some(child)),
+            child: Mutex::new(ChildState::Spawned(child)),
             #[cfg(unix)]
             helper_owner: Mutex::new(helper_owner),
-            shutdown_completed: std::sync::atomic::AtomicBool::new(false),
             shutdown_timeout,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             _local_ipc_dir: Mutex::new(None),
@@ -1366,10 +1419,9 @@ impl ProviderBridge {
                 writer: Box::new(writer),
                 reader: Box::new(reader),
             })),
-            child: Mutex::new(None),
+            child: Mutex::new(ChildState::Attached),
             #[cfg(unix)]
             helper_owner: Mutex::new(None),
-            shutdown_completed: std::sync::atomic::AtomicBool::new(false),
             shutdown_timeout: SHUTDOWN_TIMEOUT,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             _local_ipc_dir: Mutex::new(None),
@@ -1459,6 +1511,12 @@ impl ProviderBridge {
         T: Serialize + Send + 'static,
     {
         let io = Arc::clone(&self.io);
+        // Cancellation still detaches the whole write/drain transaction. Carry
+        // only its diagnostic context across that task boundary.
+        let request_span = tracing::Span::current();
+        let action_traced = request_span
+            .metadata()
+            .is_some_and(|metadata| metadata.name() == "action_trace");
         #[cfg(target_os = "macos")]
         let bindings = Arc::clone(&self.hosted_run_bindings);
         tokio::spawn(async move {
@@ -1481,34 +1539,69 @@ impl ProviderBridge {
             // wait while it lasts instead of only after it ends.
             let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
             let pending_op = op.clone();
+            // MAX means the serial pipe is still queued. Once acquired, keep
+            // that fixed wait separately from the subsequent fence/write/read
+            // duration. This is timing only; it never controls dispatch.
+            let queue_wait = Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX));
+            let pending_queue_wait = queue_wait.clone();
+            if action_traced {
+                tracing::info!(op = %op, bridge_role = "provider", phase = "queued", "provider request queued");
+            }
             tokio::spawn(async move {
                 loop {
                     tokio::select! {
                         _ = &mut stop_rx => break,
                         _ = tokio::time::sleep(PENDING_REQUEST_WARN_INTERVAL) => {
+                            let elapsed_ms = started.elapsed().as_millis() as u64;
+                            let acquired_ms = pending_queue_wait.load(std::sync::atomic::Ordering::Acquire);
+                            let (phase, queue_wait_ms, execution_ms) = if acquired_ms == u64::MAX {
+                                ("queued", elapsed_ms, 0)
+                            } else {
+                                ("executing", acquired_ms, elapsed_ms.saturating_sub(acquired_ms))
+                            };
                             tracing::warn!(
                                 op = %pending_op,
+                                bridge_role = "provider",
+                                phase,
+                                queue_wait_ms,
+                                execution_ms,
                                 elapsed_secs = started.elapsed().as_secs(),
                                 "provider request still pending"
                             );
                         }
                     }
                 }
-            });
+            }.instrument(tracing::Span::current()).with_current_subscriber());
             let mut io = io.lock().await;
-            tracing::debug!(
-                op = %op,
-                lock_wait_ms = started.elapsed().as_millis() as u64,
-                "provider request sent"
-            );
+            let queue_wait_ms = started.elapsed().as_millis() as u64;
+            queue_wait.store(queue_wait_ms, std::sync::atomic::Ordering::Release);
+            if action_traced {
+                tracing::info!(op = %op, bridge_role = "provider", queue_wait_ms, "provider request dispatched");
+            }
+            // Give frequent polling operations their own filter without hiding
+            // mint diagnostics or the long-wait warnings above.
+            let polling = matches!(op.as_str(), "events" | "wallet_contract");
+            // TRACE: everything this line carries, the settled line below
+            // repeats with the outcome and the duration attached. Two lines per
+            // request doubles the cost of every polled wait and tells a reader
+            // nothing the second line does not.
+            if polling {
+                tracing::trace!(
+                    target: "elastos_runtime::provider::bridge::polling",
+                    op = %op,
+                    lock_wait_ms = started.elapsed().as_millis() as u64,
+                    "provider request sent"
+                );
+            } else {
+                tracing::trace!(
+                    op = %op,
+                    lock_wait_ms = started.elapsed().as_millis() as u64,
+                    "provider request sent"
+                );
+            }
             let result: Result<String, BridgeError> = async {
                 let dispatch_guard = match fence {
-                    Some(fence) => Some(fence.enter().await.map_err(|message| {
-                        BridgeError::Io(std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            message,
-                        ))
-                    })?),
+                    Some(fence) => Some(fence.enter().await.map_err(BridgeError::DispatchRefused)?),
                     None => None,
                 };
                 io.writer
@@ -1542,54 +1635,46 @@ impl ProviderBridge {
             }
             .await;
             let _ = stop_tx.send(());
-            tracing::debug!(
-                op = %op,
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                ok = result.is_ok(),
-                "provider request settled"
-            );
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            // Includes dispatch-fence wait, write/flush and response read,
+            // not a claim about the child provider's CPU execution time.
+            let execution_ms = elapsed_ms.saturating_sub(queue_wait_ms);
+            let ok = result.is_ok();
+            if action_traced {
+                tracing::info!(op = %op, bridge_role = "provider", queue_wait_ms, execution_ms, elapsed_ms, ok, "provider request completed");
+            }
+            // A request that succeeded quickly is noise. The long waits here
+            // are polled, so the same op settles every few seconds for minutes
+            // and buries the calls that happened once. Worth DEBUG is a call
+            // that failed, or one slow enough to explain where the time went --
+            // which is exactly what a reader chasing a stalled mint is looking
+            // for. The rest stays at TRACE for whoever wants the transcript.
+            let noteworthy = !ok || elapsed_ms >= SLOW_PROVIDER_REQUEST_MS;
+            match (polling, noteworthy) {
+                (true, true) => tracing::debug!(
+                    target: "elastos_runtime::provider::bridge::polling",
+                    op = %op, elapsed_ms, ok, "provider request settled"
+                ),
+                (true, false) => tracing::trace!(
+                    target: "elastos_runtime::provider::bridge::polling",
+                    op = %op, elapsed_ms, ok, "provider request settled"
+                ),
+                (false, true) => {
+                    tracing::debug!(op = %op, elapsed_ms, ok, "provider request settled");
+                }
+                (false, false) => {
+                    tracing::trace!(op = %op, elapsed_ms, ok, "provider request settled");
+                }
+            }
             result
-        })
+        }.instrument(request_span).with_current_subscriber())
         .await
         .map_err(|err| BridgeError::TaskJoin(err.to_string()))?
     }
 
-    /// Gracefully shut down the provider.
-    pub async fn shutdown(&self) -> Result<(), BridgeError> {
-        #[cfg(unix)]
-        self.helper_owner.lock().await.take();
-        let mut child_guard = self.child.lock().await;
-        let Some(child) = child_guard.as_mut() else {
-            if self
-                .shutdown_completed
-                .load(std::sync::atomic::Ordering::Acquire)
-            {
-                // The child was already reaped (or the protocol shutdown was
-                // already delivered): shutdown is idempotent.
-                return Ok(());
-            }
-            // Never had a child process: the transport is the only handle on
-            // the provider, so the protocol shutdown must still be delivered
-            // for an attached provider to stop cleanly.
-            let result = tokio::time::timeout(
-                self.shutdown_timeout,
-                self.request_raw(ProviderRequest::Shutdown),
-            )
-            .await
-            .map_err(|_| BridgeError::Timeout)
-            .and_then(|result| result)
-            .and_then(|response| match response {
-                ProviderResponse::Ok { .. } => Ok(()),
-                ProviderResponse::Error { code, message } => {
-                    Err(BridgeError::Provider { code, message })
-                }
-            });
-            self.shutdown_completed
-                .store(true, std::sync::atomic::Ordering::Release);
-            return result;
-        };
-
-        let shutdown_result = tokio::time::timeout(
+    /// Deliver the protocol `Shutdown` request and interpret the response.
+    async fn deliver_protocol_shutdown(&self) -> Result<(), BridgeError> {
+        tokio::time::timeout(
             self.shutdown_timeout,
             self.request_raw(ProviderRequest::Shutdown),
         )
@@ -1601,46 +1686,100 @@ impl ProviderBridge {
             ProviderResponse::Error { code, message } => {
                 Err(BridgeError::Provider { code, message })
             }
-        });
+        })
+    }
 
-        let protocol_error = shutdown_result.err();
-        let result = match tokio::time::timeout(self.shutdown_timeout, child.wait()).await {
-            Ok(Ok(status)) => {
-                child_guard.take();
-                self.shutdown_completed
-                    .store(true, std::sync::atomic::Ordering::Release);
-                if let Some(error) = protocol_error {
-                    Err(error)
-                } else if status.success() {
-                    Ok(())
-                } else {
-                    Err(BridgeError::ProcessExited)
-                }
+    /// Gracefully shut down the provider.
+    ///
+    /// Idempotent: the protocol shutdown is delivered exactly once, on the
+    /// call that observes `Attached` or `Spawned`. Every later call finds
+    /// `ShutDown` and returns immediately. A `Spawned` reap failure leaves
+    /// the state as `Spawned` (not `ShutDown`) so a later call retries it.
+    pub async fn shutdown(&self) -> Result<(), BridgeError> {
+        #[cfg(unix)]
+        self.helper_owner.lock().await.take();
+        let mut state_guard = self.child.lock().await;
+        let prior_state = std::mem::replace(&mut *state_guard, ChildState::ShutDown);
+        match prior_state {
+            ChildState::ShutDown => {
+                // Already shut down: state_guard already holds ShutDown
+                // (mem::replace above put it there); this is a no-op.
+                Ok(())
             }
-            Ok(Err(error)) => match Self::force_child_reap(child, self.shutdown_timeout).await {
-                Ok(()) => {
-                    child_guard.take();
-                    self.shutdown_completed
-                        .store(true, std::sync::atomic::Ordering::Release);
-                    Err(protocol_error.unwrap_or(BridgeError::Io(error)))
+            ChildState::Attached => {
+                // Never had a child process: the transport is the only
+                // handle on the provider, so the protocol shutdown must
+                // still be delivered for an attached provider to stop
+                // cleanly.
+                let result = self.deliver_protocol_shutdown().await;
+                tracing::debug!(
+                    from = "Attached",
+                    to = "ShutDown",
+                    "provider child state transition"
+                );
+                result
+            }
+            ChildState::Spawned(mut child) => {
+                let protocol_error = self.deliver_protocol_shutdown().await.err();
+                let result = match tokio::time::timeout(self.shutdown_timeout, child.wait()).await {
+                    Ok(Ok(status)) => {
+                        tracing::debug!(
+                            from = "Spawned",
+                            to = "ShutDown",
+                            "provider child state transition"
+                        );
+                        if let Some(error) = protocol_error {
+                            Err(error)
+                        } else if status.success() {
+                            Ok(())
+                        } else {
+                            Err(BridgeError::ProcessExited)
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        match Self::force_child_reap(&mut child, self.shutdown_timeout).await {
+                            Ok(()) => {
+                                tracing::debug!(
+                                    from = "Spawned",
+                                    to = "ShutDown",
+                                    "provider child state transition"
+                                );
+                                Err(protocol_error.unwrap_or(BridgeError::Io(error)))
+                            }
+                            Err(reap_error) => {
+                                // Reap failed: leave the child in place so a
+                                // later shutdown() call can retry.
+                                *state_guard = ChildState::Spawned(child);
+                                Err(reap_error)
+                            }
+                        }
+                    }
+                    Err(_) => match Self::force_child_reap(&mut child, self.shutdown_timeout).await
+                    {
+                        Ok(()) => {
+                            tracing::debug!(
+                                from = "Spawned",
+                                to = "ShutDown",
+                                "provider child state transition"
+                            );
+                            Err(protocol_error.unwrap_or(BridgeError::Timeout))
+                        }
+                        Err(reap_error) => {
+                            *state_guard = ChildState::Spawned(child);
+                            Err(reap_error)
+                        }
+                    },
+                };
+                // A reaped child has no further use for the brokers that served
+                // it. One whose reap failed is still `Spawned` and keeps them for
+                // the retry, exactly as the child itself is kept.
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                if matches!(*state_guard, ChildState::ShutDown) {
+                    self.stop_local_brokers().await;
                 }
-                Err(reap_error) => Err(reap_error),
-            },
-            Err(_) => match Self::force_child_reap(child, self.shutdown_timeout).await {
-                Ok(()) => {
-                    child_guard.take();
-                    self.shutdown_completed
-                        .store(true, std::sync::atomic::Ordering::Release);
-                    Err(protocol_error.unwrap_or(BridgeError::Timeout))
-                }
-                Err(reap_error) => Err(reap_error),
-            },
-        };
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        if child_guard.is_none() {
-            self.stop_local_brokers().await;
+                result
+            }
         }
-        result
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -2359,6 +2498,246 @@ mod tests {
         assert_eq!(call.await.unwrap().unwrap()["status"], "ok");
     }
 
+    #[derive(Clone, Default)]
+    struct BridgeTraceCapture(
+        Arc<std::sync::Mutex<Vec<std::collections::BTreeMap<String, String>>>>,
+    );
+
+    #[derive(Default)]
+    struct BridgeTraceFields(std::collections::BTreeMap<String, String>);
+
+    impl tracing::field::Visit for BridgeTraceFields {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            self.0.insert(field.name().into(), format!("{value:?}"));
+        }
+    }
+
+    impl<S> tracing_subscriber::Layer<S> for BridgeTraceCapture
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            id: &tracing::Id,
+            ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut fields = BridgeTraceFields::default();
+            attrs.record(&mut fields);
+            ctx.span(id).unwrap().extensions_mut().insert(fields);
+        }
+
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut fields = BridgeTraceFields::default();
+            if let Some(span) = ctx.event_span(event) {
+                for ancestor in span.scope().from_root() {
+                    if let Some(parent) = ancestor.extensions().get::<BridgeTraceFields>() {
+                        fields.0.extend(parent.0.clone());
+                    }
+                }
+            }
+            event.record(&mut fields);
+            fields
+                .0
+                .insert("level".into(), event.metadata().level().to_string());
+            self.0.lock().unwrap().push(fields.0);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn action_trace_bridge_detached_queue_and_execution_keep_correlation_without_payloads() {
+        use tracing::{instrument::WithSubscriber, Instrument};
+        use tracing_subscriber::prelude::*;
+        let capture = BridgeTraceCapture::default();
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()));
+        let (span, sibling) = tracing::dispatcher::with_default(&dispatch, || {
+            let root = tracing::info_span!(
+                "action_trace",
+                action_id = "fixture-action",
+                request_id = "fixture-request"
+            );
+            let chain = tracing::info_span!(parent: &root, "action_trace", stage = "chain_lookup", provider_id = "chain");
+            let object = tracing::info_span!(parent: &root, "action_trace", stage = "persist", provider_id = "object");
+            (chain, object)
+        });
+        let (read, mut provider_write) = tokio::io::duplex(4096);
+        let (provider_read, write) = tokio::io::duplex(4096);
+        let bridge = Arc::new(ProviderBridge::from_io(
+            tokio::io::BufReader::new(read),
+            write,
+        ));
+        // Hold the actual serial I/O lock, so this request has not reached the provider.
+        let queue_guard = bridge.io.lock().await;
+        let caller_bridge = bridge.clone();
+        let caller = tokio::spawn(async move {
+            caller_bridge.send_raw(&serde_json::json!({
+                "op":"resolve_market_item", "token":"NEVER_LOG_TOKEN", "path":"NEVER_LOG_PATH", "body":"NEVER_LOG_BODY"
+            })).await
+        }.instrument(span).with_subscriber(dispatch.clone()));
+        // Poll the caller, detached send, and slow-warning task before advancing.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // Production timing uses the monotonic wall clock, independently of
+        // Tokio's paused warning clock. Make the controlled queue nonzero.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::advance(PENDING_REQUEST_WARN_INTERVAL).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // An overlapping sibling stage must not relabel the queued chain
+        // operation: both inherit root IDs, each owns its provider fields.
+        async {
+            tracing::info!("sibling stage probe");
+        }
+        .instrument(sibling)
+        .with_subscriber(dispatch)
+        .await;
+        let queued = capture.0.lock().unwrap().clone();
+        assert!(
+            queued
+                .iter()
+                .any(|e| e.get("phase").is_some_and(|v| v == "\"queued\"")
+                    && e.get("request_id")
+                        .is_some_and(|v| v == "\"fixture-request\"")),
+            "queued warning must retain the HTTP action/request span: {queued:?}"
+        );
+        drop(queue_guard);
+        let mut reader = tokio::io::BufReader::new(provider_read);
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).await.unwrap();
+        assert!(
+            request_line.contains("NEVER_LOG_TOKEN"),
+            "the actual request is preserved"
+        );
+        tokio::time::advance(PENDING_REQUEST_WARN_INTERVAL).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        provider_write
+            .write_all(b"{\"status\":\"ok\"}\n")
+            .await
+            .unwrap();
+        provider_write.flush().await.unwrap();
+        assert_eq!(caller.await.unwrap().unwrap()["status"], "ok");
+        let events = capture.0.lock().unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.get("phase").is_some_and(|v| v == "\"executing\"")
+                    && e.contains_key("queue_wait_ms")
+                    && e.contains_key("execution_ms")),
+            "execution warning must separate queue and provider wait: {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| e
+                .get("message")
+                .is_some_and(|v| v == "provider request dispatched")
+                && e.get("level").is_some_and(|v| v == "INFO")
+                && e.contains_key("queue_wait_ms")),
+            "traced dispatch timing must be visible at INFO: {events:?}"
+        );
+        for event in events.iter().filter(|e| {
+            e.get("message")
+                .is_some_and(|m| m.starts_with("provider request"))
+        }) {
+            assert_eq!(
+                event.get("action_id").map(String::as_str),
+                Some("\"fixture-action\"")
+            );
+            assert_eq!(
+                event.get("request_id").map(String::as_str),
+                Some("\"fixture-request\"")
+            );
+            assert_eq!(
+                event.get("provider_id").map(String::as_str),
+                Some("\"chain\"")
+            );
+        }
+        let completed = events
+            .iter()
+            .find(|event| {
+                event
+                    .get("message")
+                    .is_some_and(|message| message == "provider request completed")
+            })
+            .expect("a traced completion has separate timings");
+        let millis = |key: &str| completed.get(key).unwrap().parse::<u64>().unwrap();
+        assert!(
+            millis("queue_wait_ms") >= 10,
+            "the controlled queue wait must be measured"
+        );
+        assert_eq!(
+            millis("elapsed_ms"),
+            millis("queue_wait_ms") + millis("execution_ms"),
+            "execution duration must exclude the separately measured queue wait"
+        );
+        let sibling = events
+            .iter()
+            .find(|event| {
+                event
+                    .get("message")
+                    .is_some_and(|message| message == "sibling stage probe")
+            })
+            .unwrap();
+        assert_eq!(
+            sibling.get("provider_id").map(String::as_str),
+            Some("\"object\"")
+        );
+        assert_eq!(
+            sibling.get("action_id").map(String::as_str),
+            Some("\"fixture-action\"")
+        );
+        assert_eq!(
+            sibling.get("request_id").map(String::as_str),
+            Some("\"fixture-request\"")
+        );
+        let rendered = format!("{events:?}");
+        for secret in ["NEVER_LOG_TOKEN", "NEVER_LOG_PATH", "NEVER_LOG_BODY"] {
+            assert!(!rendered.contains(secret), "trace leaked request data");
+        }
+    }
+
+    #[tokio::test]
+    async fn action_trace_bridge_untraced_calls_do_not_add_info_events() {
+        use tracing::instrument::WithSubscriber;
+        use tracing_subscriber::prelude::*;
+        let capture = BridgeTraceCapture::default();
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()));
+        let (read, mut provider_write) = tokio::io::duplex(4096);
+        let (provider_read, write) = tokio::io::duplex(4096);
+        let bridge = ProviderBridge::from_io(tokio::io::BufReader::new(read), write);
+        let provider = tokio::spawn(async move {
+            let mut reader = tokio::io::BufReader::new(provider_read);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            provider_write
+                .write_all(b"{\"status\":\"ok\"}\n")
+                .await
+                .unwrap();
+            provider_write.flush().await.unwrap();
+        });
+        bridge
+            .send_raw(&serde_json::json!({"op":"read_part"}))
+            .with_subscriber(dispatch)
+            .await
+            .unwrap();
+        provider.await.unwrap();
+        assert!(
+            !capture
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| { event.get("level").is_some_and(|level| level == "INFO") }),
+            "background and playback calls must not gain per-call INFO noise"
+        );
+    }
+
     #[tokio::test]
     async fn test_bridge_request_response() {
         // Simulate a provider using DuplexStream
@@ -2505,6 +2884,27 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(BridgeError::ProcessExited)));
+    }
+
+    #[tokio::test]
+    async fn attached_bridge_shutdown_delivers_protocol_shutdown_once_and_is_idempotent() {
+        let (client_reader, server_writer) = tokio::io::duplex(4096);
+        let (server_reader, client_writer) = tokio::io::duplex(4096);
+        let bridge =
+            ProviderBridge::from_io(tokio::io::BufReader::new(client_reader), client_writer);
+        let server = tokio::spawn(async move {
+            let mut lines = tokio::io::BufReader::new(server_reader).lines();
+            let first = lines.next_line().await.unwrap().unwrap();
+            let mut writer = server_writer;
+            // Matches the real wire protocol: ProviderResponse::Ok tagged by
+            // "status" (bridge.rs:88-99), not the sketch's ad hoc {"id","ok"}.
+            writer.write_all(b"{\"status\":\"ok\"}\n").await.unwrap();
+            first
+        });
+        bridge.shutdown().await.unwrap();
+        bridge.shutdown().await.unwrap(); // idempotent
+        assert!(server.await.unwrap().contains("\"shutdown\""));
+        assert!(matches!(*bridge.child.lock().await, ChildState::ShutDown));
     }
 
     #[cfg(unix)]
@@ -3345,5 +3745,48 @@ mod tests {
         };
         let result = CapsuleProvider::to_resource_response(ResourceAction::Read, resp);
         assert!(matches!(result, Err(ProviderError::NotFound(_))));
+    }
+
+    #[test]
+    fn transport_failure_is_only_an_exited_process_or_pipe_io() {
+        let carried = |error: BridgeError| ProviderError::Provider(error.to_string());
+        assert!(is_bridge_transport_failure(&carried(
+            BridgeError::ProcessExited
+        )));
+        assert!(is_bridge_transport_failure(&carried(BridgeError::Io(
+            std::io::Error::from(std::io::ErrorKind::BrokenPipe)
+        ))));
+        assert!(!is_bridge_transport_failure(&carried(BridgeError::Timeout)));
+        assert!(!is_bridge_transport_failure(&carried(
+            BridgeError::Provider {
+                code: "not_ready".into(),
+                message: "I/O error: inside the provider".into(),
+            }
+        )));
+        assert!(!is_bridge_transport_failure(&ProviderError::NoProvider(
+            "public-ipfs".into()
+        )));
+        assert!(!is_bridge_transport_failure(&carried(
+            BridgeError::DispatchRefused("Browser internet access has stopped".into())
+        )));
+    }
+
+    /// A request its dispatch fence refuses leaves the provider untouched, so
+    /// it is never a transport failure (no respawn).
+    #[tokio::test]
+    async fn a_dispatch_fence_refusal_is_not_a_transport_failure() {
+        let (client_read, _server_write) = tokio::io::duplex(4096);
+        let (_server_read, client_write) = tokio::io::duplex(4096);
+        let bridge = ProviderBridge::from_io(tokio::io::BufReader::new(client_read), client_write);
+        let fence = super::super::dispatch::DispatchFence::new(|| Ok(()));
+        fence.revoke().await;
+        let error = fence
+            .scope(bridge.send_raw(&serde_json::json!({"op": "ensure_started"})))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, BridgeError::DispatchRefused(_)), "{error}");
+        // As CapsuleProvider carries it.
+        let carried = ProviderError::Provider(error.to_string());
+        assert!(!is_bridge_transport_failure(&carried), "{carried}");
     }
 }

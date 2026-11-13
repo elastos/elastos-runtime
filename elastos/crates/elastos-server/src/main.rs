@@ -26,7 +26,7 @@ mod test_support;
 mod trust_cmd;
 mod webspace_cmd;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use security_cmd::{EmergencyCommand, TlsCommand};
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -91,6 +91,13 @@ fn should_isolate_process_group(argv: &[String]) -> bool {
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+/// `elastos setup --host-trust` (#388 A1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum HostTrustArg {
+    Everyday,
+    WciOperated,
 }
 
 #[derive(Subcommand)]
@@ -491,6 +498,18 @@ enum Commands {
         /// before the Home first starts; a Home keeps a network it joined.
         #[arg(long)]
         isolated: bool,
+
+        /// Operator: whether this host is WCI-operated (#388). Only a
+        /// WCI-operated host serves custody, pool sessions or seals for
+        /// others. Takes effect at the next clean start.
+        #[arg(long, hide = true, value_enum, conflicts_with = "browser")]
+        host_trust: Option<HostTrustArg>,
+
+        /// Operator: the most bytes of other parties' custody data this
+        /// WCI-operated host keeps, across all its pools. Required with
+        /// `--host-trust wci-operated`.
+        #[arg(long, hide = true, requires = "host_trust")]
+        max_storage_bytes: Option<u64>,
     },
 
     /// Manage trusted release sources
@@ -684,6 +703,15 @@ pub(crate) enum NodePeerCommand {
         /// Allow this DID to request a safe operator action on this runtime
         #[arg(long = "allow")]
         allow: Vec<String>,
+        /// Provider targets this peer hosts (comma-separated, repeatable), e.g. custody,chain
+        #[arg(long = "provides", value_delimiter = ',')]
+        provides: Vec<String>,
+        /// kubo libp2p PeerID of this peer's IPFS node
+        #[arg(long = "ipfs-peer-id")]
+        ipfs_peer_id: Option<String>,
+        /// Dialable kubo swarm multiaddr for this peer (repeatable)
+        #[arg(long = "ipfs-addr")]
+        ipfs_addr: Vec<String>,
         /// Emit machine-readable JSON
         #[arg(long)]
         json: bool,
@@ -1598,10 +1626,21 @@ async fn run() -> anyhow::Result<()> {
             prerequisites_only,
             media_tools_dir,
             isolated,
+            host_trust,
+            max_storage_bytes,
         } => {
             if browser {
                 setup::enable_browser().await?;
                 return Ok(());
+            }
+            if let Some(host_trust) = host_trust {
+                setup::choose_host_trust(
+                    match host_trust {
+                        HostTrustArg::Everyday => setup::HostTrustChoice::Everyday,
+                        HostTrustArg::WciOperated => setup::HostTrustChoice::WciOperated,
+                    },
+                    max_storage_bytes,
+                )?;
             }
             if isolated {
                 setup::choose_isolated_collaboration()?;

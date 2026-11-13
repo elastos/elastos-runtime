@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use elastos_protected_content_contracts::{
     CanonicalContract, ContractError, Digest32, RuntimeOperationIssuerKeyV1,
-    RuntimeReleaseAuditIdV1, SignedNodeContributionV1, SignedNodeRightsDecisionV1,
-    SignedRuntimeReleaseOperationV1,
+    RuntimeReleaseAuditIdV1, RuntimeReleaseOperationAnyV1, SignedNodeContributionV1,
+    SignedNodeRightsDecisionV1, PRE_ALIGNMENT_V2,
 };
 use nix::fcntl::{Flock, FlockArg};
 use nix::unistd::geteuid;
@@ -49,6 +49,11 @@ pub enum RuntimeReleaseJournalError {
     NotTerminal,
     #[error("runtime release operation was not found")]
     NotFound,
+    /// ADV-01 §4A: the record holds an operation whose rights request has
+    /// the pre-alignment `rights-request/v2` layout. The record stays on
+    /// disk; nothing is skipped or deleted (R5 a).
+    #[error("runtime release journal record has an unsupported operation version")]
+    Unsupported { slot_hash: Digest32 },
 }
 
 impl From<ContractError> for RuntimeReleaseJournalError {
@@ -61,7 +66,9 @@ impl From<ContractError> for RuntimeReleaseJournalError {
 pub struct RuntimeReleaseOperationDraft {
     audit_request_id: RuntimeReleaseAuditIdV1,
     runtime_operation_issuer: RuntimeOperationIssuerKeyV1,
-    signed_runtime_release_operation: SignedRuntimeReleaseOperationV1,
+    /// A V1 or V2 operation (Plan B T4.1); stored by its own canonical
+    /// bytes, so the record's encoding is the same for both.
+    signed_runtime_release_operation: RuntimeReleaseOperationAnyV1,
     wallet_request_bytes: Vec<u8>,
     wallet_response_bytes: Vec<u8>,
 }
@@ -73,11 +80,8 @@ impl fmt::Debug for RuntimeReleaseOperationDraft {
             .field("audit_request_id", &self.audit_request_id)
             .field("runtime_operation_issuer", &self.runtime_operation_issuer)
             .field(
-                "runtime_operation_hash",
-                &self
-                    .signed_runtime_release_operation
-                    .statement()
-                    .canonical_hash(),
+                "runtime_operation_journal_key",
+                &self.signed_runtime_release_operation.journal_key(),
             )
             .field("wallet_request_bytes", &"[redacted]")
             .field("wallet_response_bytes", &"[redacted]")
@@ -89,7 +93,7 @@ impl RuntimeReleaseOperationDraft {
     pub fn new(
         wallet_request_bytes: Vec<u8>,
         wallet_response_bytes: Vec<u8>,
-        signed_runtime_release_operation: SignedRuntimeReleaseOperationV1,
+        signed_runtime_release_operation: RuntimeReleaseOperationAnyV1,
     ) -> Result<Self, RuntimeReleaseJournalError> {
         if wallet_request_bytes.is_empty()
             || wallet_request_bytes.len() > MAX_WALLET_REQUEST_BYTES
@@ -98,10 +102,9 @@ impl RuntimeReleaseOperationDraft {
         {
             return Err(RuntimeReleaseJournalError::Corrupt);
         }
-        let statement = signed_runtime_release_operation.statement();
         Ok(Self {
-            audit_request_id: statement.audit_request_id(),
-            runtime_operation_issuer: statement.runtime_operation_issuer(),
+            audit_request_id: signed_runtime_release_operation.audit_request_id(),
+            runtime_operation_issuer: signed_runtime_release_operation.runtime_operation_issuer(),
             signed_runtime_release_operation,
             wallet_request_bytes,
             wallet_response_bytes,
@@ -116,7 +119,7 @@ impl RuntimeReleaseOperationDraft {
         self.runtime_operation_issuer
     }
 
-    pub fn signed_runtime_release_operation(&self) -> &SignedRuntimeReleaseOperationV1 {
+    pub fn signed_runtime_release_operation(&self) -> &RuntimeReleaseOperationAnyV1 {
         &self.signed_runtime_release_operation
     }
 
@@ -128,8 +131,10 @@ impl RuntimeReleaseOperationDraft {
         &self.wallet_response_bytes
     }
 
+    /// The journal key: the hash of the signed operation, V1 or V2
+    /// (S4-Q4). The V1 value is unchanged.
     pub fn operation_hash(&self) -> Result<Digest32, RuntimeReleaseJournalError> {
-        Ok(self.signed_runtime_release_operation.canonical_hash()?)
+        Ok(self.signed_runtime_release_operation.journal_key()?)
     }
 
     fn signed_operation_bytes(&self) -> Result<Vec<u8>, RuntimeReleaseJournalError> {
@@ -795,18 +800,26 @@ impl StoreEntry {
     fn into_persisted(
         self,
     ) -> Result<PersistedRuntimeReleaseOperation, RuntimeReleaseJournalError> {
+        // The stored operation decodes by its canonical domain (S4-Q2): no
+        // new field and no magic change. An older binary reads a V2 record
+        // as corrupt and fails closed. ADV-01 §4A: exactly the pre-alignment
+        // error value is `Unsupported`; every other decode failure, a
+        // malformed current V2 or a corrupt V1 included, is `Corrupt`.
         let signed_runtime_release_operation =
-            SignedRuntimeReleaseOperationV1::from_canonical_bytes(&self.signed_operation_bytes)?;
-        if signed_runtime_release_operation.canonical_hash()? != self.operation_hash {
+            match RuntimeReleaseOperationAnyV1::from_canonical_bytes(&self.signed_operation_bytes) {
+                Ok(operation) => operation,
+                Err(ContractError::UnsupportedVersion(PRE_ALIGNMENT_V2)) => {
+                    return Err(RuntimeReleaseJournalError::Unsupported {
+                        slot_hash: self.slot_hash,
+                    });
+                }
+                Err(_) => return Err(RuntimeReleaseJournalError::Corrupt),
+            };
+        if signed_runtime_release_operation.journal_key()? != self.operation_hash {
             return Err(RuntimeReleaseJournalError::Corrupt);
         }
-        if signed_runtime_release_operation
-            .statement()
-            .audit_request_id()
-            != self.audit_request_id
-            || signed_runtime_release_operation
-                .statement()
-                .runtime_operation_issuer()
+        if signed_runtime_release_operation.audit_request_id() != self.audit_request_id
+            || signed_runtime_release_operation.runtime_operation_issuer()
                 != self.runtime_operation_issuer
         {
             return Err(RuntimeReleaseJournalError::Corrupt);
@@ -1362,7 +1375,6 @@ mod tests {
     use super::*;
 
     use ed25519_dalek::{Signer as _, SigningKey};
-    use elastos_auth::ethereum_signed_message_hash;
     use elastos_protected_content_contracts::{
         ContentAccessIdV1, CustodyApprovedSuitesV1, CustodyCommitteeAuthorizationIdentityV1,
         CustodyEnvelopeManifestV1, CustodyEnvelopeV1, CustodyEpochIssuerKeyV1,
@@ -1375,9 +1387,10 @@ mod tests {
         RightsEvaluationEvidenceRequestV1, RightsObservationFinalityV1, RightsPolicyBodyV1,
         RightsRequestV1, RightsSubjectSourceV1, RuntimeReleaseOperationStatementV1,
         RuntimeSessionBindingV1, ShareCoordinateV1, SignedCustodyEpochV1, SignedNodeContributionV1,
-        SignedNodeRightsDecisionV1, SignedRecipientKeyAuthorizationV1, ThresholdV1, WalletAddress,
-        WalletSignedRightsRequestV1, CUSTODY_X_WING_AES256GCM_SUITE_ID_V1,
-        PQ_HYBRID_SEALED_SHARE_ENVELOPE_BYTES, X_WING_DRAFT06_CIPHERTEXT_BYTES,
+        SignedNodeRightsDecisionV1, SignedRecipientKeyAuthorizationV1,
+        SignedRuntimeReleaseOperationV1, ThresholdV1, WalletAddress, WalletSignedRightsRequestV1,
+        CUSTODY_X_WING_AES256GCM_SUITE_ID_V1, PQ_HYBRID_SEALED_SHARE_ENVELOPE_BYTES,
+        X_WING_DRAFT06_CIPHERTEXT_BYTES,
     };
     use k256::ecdsa::SigningKey as WalletSigningKey;
     use sha3::Keccak256;
@@ -1541,9 +1554,7 @@ mod tests {
             .unwrap();
             let key = WalletSigningKey::from_slice(&[7; 32]).unwrap();
             let (signature, recovery_id) = key
-                .sign_prehash_recoverable(&ethereum_signed_message_hash(
-                    &request.canonical_bytes().unwrap(),
-                ))
+                .sign_prehash_recoverable(&request.signing_hash().unwrap())
                 .unwrap();
             let mut signature_bytes = signature.to_bytes().to_vec();
             signature_bytes.push(recovery_id.to_byte());
@@ -1674,9 +1685,19 @@ mod tests {
         RuntimeReleaseOperationDraft::new(
             format!(r#"{{"wallet_request":"{seed:02x}"}}"#).into_bytes(),
             format!(r#"{{"wallet_response":"{seed:02x}"}}"#).into_bytes(),
-            signed_runtime_release_operation(seed),
+            // `.into()` is the identity before Plan B T4.1, so this helper
+            // also builds the guard's record on the unchanged tree.
+            signed_runtime_release_operation(seed).into(),
         )
         .unwrap()
+    }
+
+    /// The V1 operation inside a V1 test draft.
+    fn v1_operation(draft: &RuntimeReleaseOperationDraft) -> &SignedRuntimeReleaseOperationV1 {
+        match draft.signed_runtime_release_operation() {
+            RuntimeReleaseOperationAnyV1::V1(operation) => operation,
+            RuntimeReleaseOperationAnyV1::V2(_) => panic!("a V1 test draft"),
+        }
     }
 
     fn owner_only_journal_root(temp: &tempfile::TempDir) -> PathBuf {
@@ -1757,8 +1778,8 @@ mod tests {
 
         let terminal = RuntimeReleaseTerminalResult::ContributionsReady {
             signed_node_contributions: vec![
-                signed_node_contribution(draft.signed_runtime_release_operation(), 1),
-                signed_node_contribution(draft.signed_runtime_release_operation(), 2),
+                signed_node_contribution(v1_operation(&draft), 1),
+                signed_node_contribution(v1_operation(&draft), 2),
             ],
         };
         let completed = journal.mark_terminal(&draft, terminal.clone()).unwrap();
@@ -1773,7 +1794,7 @@ mod tests {
 
         let conflicting_terminal = RuntimeReleaseTerminalResult::RightsDenied {
             signed_node_rights_decision: Box::new(signed_node_rights_decision(
-                draft.signed_runtime_release_operation(),
+                v1_operation(&draft),
                 1,
                 RightsDecisionV1::Denied,
             )),
@@ -1872,7 +1893,7 @@ mod tests {
                 &terminal,
                 RuntimeReleaseTerminalResult::RightsDenied {
                     signed_node_rights_decision: Box::new(signed_node_rights_decision(
-                        terminal.signed_runtime_release_operation(),
+                        v1_operation(&terminal),
                         1,
                         RightsDecisionV1::Denied,
                     )),
@@ -1966,5 +1987,281 @@ mod tests {
         assert!(!rendered.contains("425c"));
         assert!(!rendered.contains("7b2277616c6c65745f72657175657374"));
         assert!(!rendered.contains("7b2277616c6c65745f726573706f6e7365"));
+    }
+
+    /// Plan B T4.1 step 0 (S4-Q2): one V1 record, written by the journal as
+    /// it was before T4.1 and committed byte for byte.
+    const V1_JOURNAL_GOLDEN: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/testdata/runtime-release-journal-v1.bin"
+    );
+    /// Set on the unchanged tree to record the golden once (TODO-GOLDEN).
+    const RECORD_V1_JOURNAL_GOLDEN: &str = "ELASTOS_RECORD_V1_JOURNAL_GOLDEN";
+
+    /// The guard's V1 record: a started release that persisted two
+    /// replayable decisions, then a terminal of two contributions. Every input is
+    /// deterministic (Ed25519 and RFC 6979 signatures, fixed times).
+    #[test]
+    fn v1_journal_file_reads_unchanged() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        let journal = RuntimeReleaseJournal::new(root.clone());
+        let operation = signed_runtime_release_operation(0x42);
+        let draft = draft(0x42);
+        let decisions = vec![
+            signed_node_rights_decision(&operation, 1, RightsDecisionV1::Allowed),
+            signed_node_rights_decision(&operation, 2, RightsDecisionV1::Allowed),
+        ];
+        let terminal = RuntimeReleaseTerminalResult::ContributionsReady {
+            signed_node_contributions: vec![
+                signed_node_contribution(&operation, 1),
+                signed_node_contribution(&operation, 2),
+            ],
+        };
+        journal.persist_before_provider_effect(&draft).unwrap();
+        journal.mark_provider_effect_started(&draft).unwrap();
+        journal
+            .persist_replayable_rights_decisions(&draft, &decisions)
+            .unwrap();
+        journal.mark_terminal(&draft, terminal.clone()).unwrap();
+        let key = draft.operation_hash().unwrap();
+        let file_name = lower_hex_digest(slot_hash_for(key));
+        let written = fs::read(root.join(&file_name)).unwrap();
+
+        let golden = match fs::read(V1_JOURNAL_GOLDEN) {
+            Ok(golden) => golden,
+            Err(_) if std::env::var_os(RECORD_V1_JOURNAL_GOLDEN).is_some() => {
+                fs::create_dir_all(Path::new(V1_JOURNAL_GOLDEN).parent().unwrap()).unwrap();
+                fs::write(V1_JOURNAL_GOLDEN, &written).unwrap();
+                written.clone()
+            }
+            Err(_) => panic!(
+                "TODO-GOLDEN: record {V1_JOURNAL_GOLDEN} on the tree before Plan B T4.1 with \
+                 {RECORD_V1_JOURNAL_GOLDEN}=1 and this test alone"
+            ),
+        };
+        assert_eq!(written, golden, "the V1 journal record encoding moved");
+
+        // The committed file reads back as the same record.
+        let replay_temp = tempdir().unwrap();
+        let replay_root = owner_only_journal_root(&replay_temp);
+        create_owner_only_directory(&replay_root).unwrap();
+        {
+            use std::io::Write as _;
+            use std::os::unix::fs::OpenOptionsExt as _;
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(replay_root.join(&file_name))
+                .unwrap();
+            file.write_all(&golden).unwrap();
+            file.sync_all().unwrap();
+        }
+        let loaded = RuntimeReleaseJournal::new(replay_root).load(key).unwrap();
+        assert_eq!(loaded.draft(), &draft);
+        assert_eq!(loaded.terminal_result(), Some(&terminal));
+        // The terminal write drops the replayable decisions, as before T4.1.
+        assert!(loaded.replayable_rights_decisions().is_empty());
+        assert!(loaded.provider_effect_started());
+        assert_eq!(loaded, journal.load(key).unwrap());
+    }
+
+    // -----------------------------------------------------------------
+    // ADV-01 §4A (Plan B T4.1): a stored operation maps to exactly one
+    // journal error. Only `UnsupportedVersion(PRE_ALIGNMENT_V2)` is
+    // `Unsupported { slot_hash }`; every other decode failure is `Corrupt`.
+    // Nothing is skipped or deleted (R5 a).
+    // -----------------------------------------------------------------
+
+    use elastos_protected_content_contracts::test_fixtures as pool_fixtures;
+    use elastos_protected_content_contracts::SignedRuntimeReleaseOperationV2;
+
+    fn v2_operation(replay_nonce: u8) -> SignedRuntimeReleaseOperationV2 {
+        let mut spec =
+            pool_fixtures::PoolReleaseSpecV1::new(xwing_public_key_bytes, policy_body(), NOW);
+        spec.replay_nonce = replay_nonce;
+        pool_fixtures::pool_release_fixture(&spec).operation
+    }
+
+    fn v2_draft(replay_nonce: u8) -> RuntimeReleaseOperationDraft {
+        RuntimeReleaseOperationDraft::new(
+            format!(r#"{{"wallet_request":"v2-{replay_nonce:02x}"}}"#).into_bytes(),
+            format!(r#"{{"wallet_response":"v2-{replay_nonce:02x}"}}"#).into_bytes(),
+            v2_operation(replay_nonce).into(),
+        )
+        .unwrap()
+    }
+
+    /// Writes an unresolved record whose stored operation is `operation_bytes`
+    /// as they are, under the journal key `key`, the way an older binary left
+    /// it. The record's own framing and digest are valid.
+    fn plant_record(
+        root: &Path,
+        key: Digest32,
+        audit_request_id: RuntimeReleaseAuditIdV1,
+        runtime_operation_issuer: RuntimeOperationIssuerKeyV1,
+        operation_bytes: Vec<u8>,
+    ) -> (Digest32, PathBuf) {
+        let slot_hash = slot_hash_for(key);
+        let entry = StoreEntry {
+            slot_hash,
+            audit_request_id,
+            runtime_operation_issuer,
+            operation_hash: key,
+            wallet_request_bytes: br#"{"wallet_request":"planted"}"#.to_vec(),
+            wallet_response_bytes: br#"{"wallet_response":"planted"}"#.to_vec(),
+            signed_operation_bytes: operation_bytes,
+            terminal_bytes: None,
+            replayable_rights_bytes: Vec::new(),
+            effect_started: true,
+        };
+        let bytes = encode_entry(&entry).unwrap();
+        let path = root.join(lower_hex_digest(slot_hash));
+        {
+            use std::io::Write as _;
+            use std::os::unix::fs::OpenOptionsExt as _;
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(&path)
+                .unwrap();
+            file.write_all(&bytes).unwrap();
+            file.sync_all().unwrap();
+        }
+        (slot_hash, path)
+    }
+
+    fn plant_v2(
+        root: &Path,
+        key: Digest32,
+        operation: &SignedRuntimeReleaseOperationV2,
+        operation_bytes: Vec<u8>,
+    ) -> (Digest32, PathBuf) {
+        plant_record(
+            root,
+            key,
+            operation.statement().audit_request_id(),
+            operation.statement().runtime_operation_issuer(),
+            operation_bytes,
+        )
+    }
+
+    #[test]
+    fn journal_maps_pre_alignment_v2_record_to_unsupported() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        create_owner_only_directory(&root).unwrap();
+        let operation = v2_operation(0x61);
+        let key = digest(0xe1);
+        let (slot_hash, _) = plant_v2(
+            &root,
+            key,
+            &operation,
+            pool_fixtures::pre_alignment_v2_operation_bytes(&operation),
+        );
+        assert_eq!(
+            RuntimeReleaseJournal::new(root).load(key),
+            Err(RuntimeReleaseJournalError::Unsupported { slot_hash })
+        );
+    }
+
+    #[test]
+    fn journal_maps_malformed_current_v2_record_to_corrupt() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        create_owner_only_directory(&root).unwrap();
+        let operation = v2_operation(0x62);
+        let key = digest(0xe2);
+        plant_v2(
+            &root,
+            key,
+            &operation,
+            pool_fixtures::malformed_current_v2_operation_bytes(&operation),
+        );
+        assert_eq!(
+            RuntimeReleaseJournal::new(root).load(key),
+            Err(RuntimeReleaseJournalError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn journal_maps_corrupt_v1_record_to_corrupt() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        create_owner_only_directory(&root).unwrap();
+        let operation = signed_runtime_release_operation(0x63);
+        let mut bytes = operation.canonical_bytes().unwrap();
+        bytes.pop();
+        let key = digest(0xe3);
+        plant_record(
+            &root,
+            key,
+            operation.statement().audit_request_id(),
+            operation.statement().runtime_operation_issuer(),
+            bytes,
+        );
+        assert_eq!(
+            RuntimeReleaseJournal::new(root).load(key),
+            Err(RuntimeReleaseJournalError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn journal_restart_with_v1_current_v2_and_pre_alignment_v2_records() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        let journal = RuntimeReleaseJournal::new(root.clone());
+        let v1 = draft(0x64);
+        let v2 = v2_draft(0x65);
+        journal.persist_before_provider_effect(&v1).unwrap();
+        journal.persist_before_provider_effect(&v2).unwrap();
+        let legacy = v2_operation(0x66);
+        let legacy_key = digest(0xe6);
+        let (legacy_slot, _) = plant_v2(
+            &root,
+            legacy_key,
+            &legacy,
+            pool_fixtures::pre_alignment_v2_operation_bytes(&legacy),
+        );
+        // §4A moves the clock past the planted record's `expires_at` plus
+        // 300 s. The journal takes no clock (`list_unresolved` has no
+        // `now`), so that step cannot change its answer; the restart below
+        // is the part that can.
+
+        let snapshot = |root: &Path| {
+            let mut files = fs::read_dir(root)
+                .unwrap()
+                .map(|entry| entry.unwrap())
+                .filter(|entry| entry.file_name() != STORE_LOCK_FILE)
+                .map(|entry| (entry.file_name(), fs::read(entry.path()).unwrap()))
+                .collect::<Vec<_>>();
+            files.sort();
+            files
+        };
+        let before = snapshot(&root);
+        assert_eq!(before.len(), 3);
+        drop(journal);
+
+        let reopened = RuntimeReleaseJournal::new(root.clone());
+        assert_eq!(
+            reopened.list_unresolved(),
+            Err(RuntimeReleaseJournalError::Unsupported {
+                slot_hash: legacy_slot
+            })
+        );
+        // Every record, the planted one included, is still on disk, byte
+        // for byte.
+        assert_eq!(snapshot(&root), before);
+        // The readable records still load on their own.
+        assert_eq!(
+            reopened.load(v1.operation_hash().unwrap()).unwrap().draft(),
+            &v1
+        );
+        assert_eq!(
+            reopened.load(v2.operation_hash().unwrap()).unwrap().draft(),
+            &v2
+        );
     }
 }

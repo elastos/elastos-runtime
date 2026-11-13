@@ -36,6 +36,17 @@ and [locked Home protection](https://github.com/elastos/elastos-runtime/issues/2
 An unlocked self-hosted Home trusts its owner and their host software. Recovery
 from a stolen device or profile key requires a new identity.
 
+Home runs a second, public IPFS node only on a Home that offers metadata
+sharing, which is off by default, and only after the Home admin agrees in
+Inbox with a passkey. That node holds only the metadata folders and covers of the assets
+this Home mints, which the Runtime validates before import. It is a
+Runtime-only target with no HTTP gateway, and capsules cannot reach it. The
+IPFS network records this Home's network address with what it shares. Stop
+sharing ends the Home's sharing and survives a restart; copies that other
+nodes keep stay public. Protected ciphertext stays in the private store, which
+runs offline
+([Public Metadata Store](docs/CONTENT_AVAILABILITY.md#public-metadata-store)).
+
 The [isolation plan](https://github.com/elastos/elastos-runtime/issues/173)
 records the remaining gates. Source checks describe this source tree. Accepted
 installed proof binds the exact Runtime, components and app assets to the
