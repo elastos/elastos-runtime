@@ -1172,3 +1172,72 @@ async fn walletconnect_cleanup_fences_old_storage_and_admission_and_removes_cras
         StatusCode::OK
     );
 }
+
+#[tokio::test]
+async fn walletconnect_turn_off_keeps_cleanup_retry_in_its_inbox_entry() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    assert_eq!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"session","value":"fixture"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (_, grant) = f.route(&f.inbox, INTERNET, None).await;
+    let sessions = f
+        .data
+        .path()
+        .join("ElastOS/SystemServices/WalletConnect/sessions");
+    let held = sessions.with_extension("held");
+    std::fs::rename(&sessions, &held).unwrap();
+    let other = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(other.path(), &sessions).unwrap();
+    let token = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(
+        f.data.path(),
+        &f.inbox,
+        INBOX_CAPSULE_ID,
+        gateway_walletconnect::REVOKE,
+        &grant["request"],
+    )
+    .unwrap();
+    let action = format!(
+        "walletconnect-internet-turn-off:{}",
+        grant["request"]["id"].as_str().unwrap()
+    );
+    assert_ne!(
+        f.route(
+            &f.inbox,
+            "/api/apps/inbox/actions",
+            Some(json!({"action_id":action,"step_up_token":token}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let context = runtime_wallet_authority_for_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.inbox)
+        .home_launch_context();
+    assert!(gateway_walletconnect::notification(&f.state, &context)
+        .unwrap()
+        .action_ref
+        .is_some());
+    std::fs::rename(&sessions, sessions.with_extension("refused-link")).unwrap();
+    std::fs::rename(&held, &sessions).unwrap();
+    assert_eq!(
+        f.route(
+            &f.inbox,
+            "/api/apps/inbox/actions",
+            Some(json!({"action_id":action}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert!(gateway_walletconnect::notification(&f.state, &context)
+        .unwrap()
+        .action_ref
+        .is_none());
+}

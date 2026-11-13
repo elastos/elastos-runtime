@@ -522,7 +522,7 @@ pub(super) async fn storage(
         if method == axum::http::Method::POST {
             check_owner(&state, false).await?;
         }
-        let _files = session_files_lock()?;
+        let _files = session_files_lock(&state.data_dir)?;
         // Removal and storage commits share this lock. Revalidate after acquiring
         // it so a write admitted before principal removal cannot recreate keys.
         connector_authority(&state, &headers)?;
@@ -871,7 +871,7 @@ mod tests {
 
 // Runtime owns these exact, principal-derived session paths; UI never selects a path.
 pub(crate) fn clear_principal_storage(data: &FsPath, principal: &str) -> anyhow::Result<()> {
-    let _files = session_files_lock()?;
+    let _files = session_files_lock(data)?;
     let path = storage_path(data, principal);
     bump_storage_revision(data, path.file_name().unwrap())?;
     match std::fs::symlink_metadata(&path) {
@@ -888,7 +888,7 @@ pub(crate) fn clear_principal_storage(data: &FsPath, principal: &str) -> anyhow:
     Ok(())
 }
 fn clear_all_storage(data: &FsPath) -> anyhow::Result<()> {
-    let _files = session_files_lock()?;
+    let _files = session_files_lock(data)?;
     let dir = root(data).join("sessions");
     if !dir.try_exists()? {
         return Ok(());
@@ -948,10 +948,42 @@ fn remove_session_file(
     }
 }
 
-fn session_files_lock() -> anyhow::Result<std::sync::MutexGuard<'static, ()>> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock()
-        .map_err(|_| anyhow::anyhow!("WalletConnect session storage is unavailable"))
+fn session_files_lock(data: &FsPath) -> anyhow::Result<crate::host_lock::FileLock> {
+    let directory = root(data);
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("session-storage.lock");
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let file = options.open(&path)?;
+    let metadata = file.metadata()?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "WalletConnect storage lock requires a regular file"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let current = std::fs::symlink_metadata(&path)?;
+        anyhow::ensure!(
+            metadata.nlink() == 1
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.permissions().mode() & 0o077 == 0
+                && current.dev() == metadata.dev()
+                && current.ino() == metadata.ino(),
+            "WalletConnect storage lock requires its owner-only file"
+        );
+    }
+    Ok(crate::host_lock::FileLock::exclusive_within(
+        file,
+        Duration::from_secs(3),
+    )?)
 }
 
 pub(super) fn storage_revision(data: &FsPath, principal: &str) -> anyhow::Result<String> {

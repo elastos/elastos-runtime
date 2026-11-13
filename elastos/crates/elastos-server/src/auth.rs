@@ -15815,6 +15815,37 @@ mod tests {
     }
 
     #[test]
+    fn walletconnect_principal_cleanup_failure_preserves_the_committed_auth_result() {
+        let data = tempfile::tempdir().unwrap();
+        let principal =
+            upsert_principal_for_binding(data.path(), passkey_binding(1, 100, 100), 100).unwrap();
+        let directory = data
+            .path()
+            .join("ElastOS/SystemServices/WalletConnect/sessions");
+        std::fs::create_dir_all(directory.parent().unwrap()).unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let name = format!(
+            "{}.json",
+            hex::encode(sha2::Sha256::digest(principal.principal_id.as_bytes()))
+        );
+        std::fs::write(other.path().join(&name), b"preserve").unwrap();
+        std::os::unix::fs::symlink(other.path(), &directory).unwrap();
+        mutate_auth_state(data.path(), |state| {
+            state
+                .principals
+                .retain(|p| p.principal_id != principal.principal_id);
+            Ok(())
+        })
+        .unwrap();
+        assert!(!load_auth_state(data.path())
+            .unwrap()
+            .principals
+            .iter()
+            .any(|p| p.principal_id == principal.principal_id));
+        assert_eq!(std::fs::read(other.path().join(name)).unwrap(), b"preserve");
+    }
+
+    #[test]
     fn passkey_revoke_marks_binding_and_sessions_revoked() {
         let data_dir = tempfile::tempdir().unwrap();
         let now = 100;
