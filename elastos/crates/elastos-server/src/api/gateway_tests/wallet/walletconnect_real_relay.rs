@@ -215,6 +215,7 @@ async fn walletconnect_real_project_opaque_preflight() {
                     let mut command = [0u8; 7];
                     tokio::time::timeout(Duration::from_secs(3), connection.read_exact(&mut command)).await.unwrap().unwrap();
                     assert_eq!(&command, b"restart");
+                    gateway_walletconnect::stop_for_restart_test(&f.state).await;
                     f.gateway.abort(); let _ = (&mut f.gateway).await;
                     let registry = f.state.provider_registry.clone();
                     f.state = test_state(f.data.path());

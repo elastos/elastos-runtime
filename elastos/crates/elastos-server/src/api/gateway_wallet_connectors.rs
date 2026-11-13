@@ -186,6 +186,8 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_complete(
                 .is_some_and(|hash| !walletconnect_hash(hash))
             || (binding["intent"] == "transaction_intent"
                 && (input.transaction_hash.is_none() || input.signature.is_some()))
+            || (binding["intent"] != "transaction_intent"
+                && (input.signature.is_none() || input.transaction_hash.is_some()))
         {
             return system_error_response(anyhow::anyhow!(
                 "WalletConnect completion binding or transaction hash is invalid"
