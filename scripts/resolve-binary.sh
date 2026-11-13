@@ -19,7 +19,7 @@ if [[ -f "${PROJECT_ROOT}/elastos/.cargo/config.toml" ]]; then
     cargo_target_dir=$(
         {
             grep -E '^\s*target-dir\s*=' "${PROJECT_ROOT}/elastos/.cargo/config.toml" || true
-        } | head -1 | sed 's/.*=\s*"\(.*\)"/\1/' | sed "s|.*=\s*'\(.*\)'|\1|" | tr -d ' '
+        } | sed -n 1p | sed 's/.*=\s*"\(.*\)"/\1/' | sed "s|.*=\s*'\(.*\)'|\1|" | tr -d ' '
     )
     if [[ -n "${cargo_target_dir:-}" ]]; then
         REPO_ELASTOS_BIN="${cargo_target_dir}/release/elastos"
@@ -40,7 +40,7 @@ _resolve_elastos_binary() {
 
 _elastos_bin_version() {
     local bin="$1"
-    "$bin" --version 2>/dev/null | head -1
+    "$bin" --version 2>/dev/null | sed -n 1p
 }
 
 resolve_elastos_binary() {

@@ -29,9 +29,6 @@ multihash = "0.19"
 # Logging
 tracing = "0.1"
 
-# Temp files (content cache)
-tempfile = "3.10"
-
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full", "test-util"] }
 tempfile = "3.10"
