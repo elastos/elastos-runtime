@@ -3833,8 +3833,8 @@ function renderRuntimeUpdate(update) {
   runtimeUpdate = update && typeof update === "object" ? update : null;
   const current = runtimeUpdate?.controller;
   // An atomic advisory-file replacement can leave one poll without counters.
-  // Keep this update's last observation; a new request or process starts fresh.
-  if (previous?.id && current?.id === previous.id && current.controller_start === previous.controller_start
+  // Keep this update's last observation; a new request starts fresh.
+  if (previous?.id && current?.id === previous.id
     && ["staging", "downloading", "verifying"].includes(previous.phase)
     && ["staging", "downloading", "verifying"].includes(current.phase)) {
     runtimeUpdate = { ...runtimeUpdate, controller: { ...current,

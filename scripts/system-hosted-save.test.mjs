@@ -745,7 +745,7 @@ test("Home update heading waits for passkey approval and stays an offer after ca
 
 test("Home update keeps the last good progress through transient and older polls", () => {
   const f = updateFixture();
-  const active = { ...f.offer, controller: { id: "one", controller_start: "process-one", phase: "downloading",
+  const active = { ...f.offer, controller: { id: "one", phase: "downloading",
     completed_bytes: 750, total_bytes: 1000 } };
   f.context.renderRuntimeUpdate(active);
   for (const counters of [{ completed_bytes: 0, total_bytes: null }, { completed_bytes: 250, total_bytes: 1000 }]) {
@@ -755,12 +755,9 @@ test("Home update keeps the last good progress through transient and older polls
   }
   f.context.renderRuntimeUpdate({ ...active, controller: { ...active.controller, completed_bytes: 800 } });
   assert.equal(f.context.runtimeUpdate.controller.completed_bytes, 800);
-  for (const identity of [{ id: "two" }, { controller_start: "process-two" }]) {
-    f.context.renderRuntimeUpdate(active);
-    f.context.renderRuntimeUpdate({ ...active, controller: { ...active.controller, ...identity, completed_bytes: 0, total_bytes: null } });
-    assert.equal(f.context.runtimeUpdate.controller.completed_bytes, 0, "a different owner starts fresh");
-    assert.equal(f.context.runtimeUpdate.controller.total_bytes, null);
-  }
+  f.context.renderRuntimeUpdate({ ...active, controller: { ...active.controller, id: "two", completed_bytes: 0, total_bytes: null } });
+  assert.equal(f.context.runtimeUpdate.controller.completed_bytes, 0, "a different request starts fresh");
+  assert.equal(f.context.runtimeUpdate.controller.total_bytes, null);
 });
 
 test("Home update freezes one exact passkey intent and retries a lost response with identical bytes", async () => {
