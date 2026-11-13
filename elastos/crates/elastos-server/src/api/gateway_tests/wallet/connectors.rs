@@ -1565,7 +1565,11 @@ async fn test_walletconnect_unfinished_transaction_is_visible_without_another_ha
 
 #[tokio::test]
 async fn test_walletconnect_account_removal_clears_its_store_through_wallet_route() {
-    for connector_id in [WALLET_WALLETCONNECT_CAPSULE_ID, WALLET_METAMASK_CAPSULE_ID] {
+    for (connector_id, keep_another) in [
+        (WALLET_WALLETCONNECT_CAPSULE_ID, false),
+        (WALLET_WALLETCONNECT_CAPSULE_ID, true),
+        (WALLET_METAMASK_CAPSULE_ID, false),
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let owner = passkey_authority(dir.path());
         let token = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &owner);
@@ -1579,12 +1583,21 @@ async fn test_walletconnect_account_removal_clears_its_store_through_wallet_rout
             hex::encode(Sha256::digest(principal.as_bytes()))
         ));
         std::fs::write(&store, b"{}").unwrap();
-        let provider = MockWalletProvider {
-            accounts: TokioMutex::new(vec![json!({
+        let mut accounts = vec![json!({
+                "account_id":"fixture-other","principal_id":principal,"proof_binding_id":"fixture-proof",
+                "chain_namespace":"eip155:20","address":format!("0x{}","12".repeat(20)),"proof_type":"siwe",
+                "connector_id":connector_id,"linked_at":now_ts(),
+        })];
+        if !keep_another {
+            accounts.clear();
+        }
+        accounts.push(json!({
                 "account_id":"fixture-account","principal_id":principal,"proof_binding_id":"fixture-proof",
                 "chain_namespace":"eip155:1","address":format!("0x{}","12".repeat(20)),"proof_type":"siwe",
                 "connector_id":connector_id,"linked_at":now_ts(),
-            })]),
+            }));
+        let provider = MockWalletProvider {
+            accounts: TokioMutex::new(accounts),
             ..Default::default()
         };
         let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
@@ -1610,7 +1623,7 @@ async fn test_walletconnect_account_removal_clears_its_store_through_wallet_rout
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             store.exists(),
-            connector_id != WALLET_WALLETCONNECT_CAPSULE_ID
+            connector_id != WALLET_WALLETCONNECT_CAPSULE_ID || keep_another
         );
     }
 }
