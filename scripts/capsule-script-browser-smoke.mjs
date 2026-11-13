@@ -109,6 +109,7 @@ try {
           assert.ok(blocked, `${app}: foreign script refused by script-src`);
           assert.equal(blocked.executed, false);
           assert.equal(foreignRequests, before, `${app}: foreign server received no script request`);
+          console.log(`BOUNDARY ${engine} ${app}: origin null; foreign script blocked`);
           await frame.waitForFunction(app => {
             if (app === 'home-gui') return document.body.dataset.homeStatus === 'ready' && !!document.querySelector('#desktop');
             if (app === 'documents') return !!document.querySelector('#documents-shell') && !document.querySelector('#documents-shell').classList.contains('hidden');
