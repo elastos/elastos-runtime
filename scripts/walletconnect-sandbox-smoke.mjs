@@ -13,7 +13,7 @@ const expectedHash = "6cff318e63fa0b8c9cc7ee95ce92d5a5470df6cd742a8ad8c2033ce829
 const sdk = await fetch(`${origin}/apps/wallet-walletconnect/vendor/reown-appkit.js`);
 assert.equal(sdk.status, 200);
 assert.equal(createHash("sha256").update(Buffer.from(await sdk.arrayBuffer())).digest("hex"), expectedHash);
-for (const path of ["capsule.json", "main.wasm", "vendor/package-lock.json", "vendor/other.js"]) {
+for (const path of ["capsule.json", "wallet-walletconnect.wasm", "vendor/package-lock.json", "vendor/other.js"]) {
   assert.equal((await fetch(`${origin}/apps/wallet-walletconnect/${path}`)).status, 404, path);
 }
 const result = { sdkSha256: expectedHash, runs: [] };

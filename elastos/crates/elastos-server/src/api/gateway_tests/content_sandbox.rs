@@ -660,6 +660,9 @@ async fn content_sandbox_browser_capsule_scripts() {
 #[tokio::test]
 #[ignore = "requires Playwright Chromium and WebKit; focused WalletConnect sandbox gate"]
 async fn content_sandbox_browser_walletconnect_sdk() {
+    use super::super::gateway::{
+        WALLETCONNECT_CONFIG_PATH, WALLETCONNECT_CONFIG_SCHEMA, WALLETCONNECT_SDK_PACKAGE,
+    };
     let dir = tempfile::tempdir().unwrap();
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     for name in ["home", "wallet-walletconnect"] {
@@ -681,6 +684,23 @@ async fn content_sandbox_browser_walletconnect_sdk() {
     std::fs::create_dir_all(capsule.join("vendor")).unwrap();
     let sdk = repo.join("capsules/wallet-walletconnect/vendor/reown-appkit.js");
     std::fs::copy(&sdk, capsule.join("vendor/reown-appkit.js")).unwrap();
+    for path in ["vendor/package-lock.json", "vendor/other.js"] {
+        std::fs::write(capsule.join(path), "private fixture").unwrap();
+    }
+    let config = dir.path().join(WALLETCONNECT_CONFIG_PATH);
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(
+        config,
+        serde_json::to_vec(&json!({
+            "schema": WALLETCONNECT_CONFIG_SCHEMA,
+            "project_id": "fixture-project",
+            "sdk_package": WALLETCONNECT_SDK_PACKAGE,
+            "sdk_version": "2.23.9",
+            "sdk_sha256": "6cff318e63fa0b8c9cc7ee95ce92d5a5470df6cd742a8ad8c2033ce829bb1895",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     std::fs::copy(
         repo.join("scripts/lib/walletconnect-browser-fixture.mjs"),
         capsule.join("browser/wc-fixture.js"),
