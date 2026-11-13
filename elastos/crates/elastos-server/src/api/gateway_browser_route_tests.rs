@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::gateway::gateway_browser::mark_browser_page_retiring;
 
 #[tokio::test]
 async fn browser_internet_first_open_requires_owner_grant() {
