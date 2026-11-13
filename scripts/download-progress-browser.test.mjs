@@ -128,10 +128,10 @@ test("System, model and Library transfer states stay accessible in light and dar
       assert.equal(await card.locator("[data-field=update-changes] li").allTextContents().then(items => items.join("\n")), changes.slice(1).join("\n"));
       assert.equal(await card.locator("dt").allTextContents().then(items => items.join(",")), "Publisher");
       const assertOrder = async () => assert.equal(await card.evaluate(node => {
-        const selectors = ["#runtime-update-status", "#runtime-update-progress", "[data-field=update-notes]", "#runtime-update-apply"];
+        const selectors = ["[data-field=update-heading]", "#runtime-update-status", "#runtime-update-progress", "[data-field=update-notes]", "[data-field=update-offer]", "#runtime-update-apply"];
         return selectors.every((selector, index) => index === 0 || Boolean(node.querySelector(selectors[index - 1])
           .compareDocumentPosition(node.querySelector(selector)) & Node.DOCUMENT_POSITION_FOLLOWING));
-      }), true, "status, progress, notes, then action in reading order");
+      }), true, "heading, status, progress, notes, Publisher, then action in reading order");
       await assertOrder();
       await screenshot(`system-update-offer-${theme}`);
       phase = "downloading"; message = downloadMessage;

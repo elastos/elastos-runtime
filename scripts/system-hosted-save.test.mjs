@@ -727,6 +727,42 @@ test("guest System summary keeps update controls and discovery polling hidden", 
   assert.equal(f.timers.size, 0);
 });
 
+test("Home update heading waits for passkey approval and stays an offer after cancellation", async () => {
+  for (const approved of [false, true]) {
+    let resolveApproval, rejectApproval;
+    const f = updateFixture({ requestPasskeyStepUp: () => new Promise((resolve, reject) => {
+      resolveApproval = resolve; rejectApproval = reject;
+    }) });
+    const applying = f.context.onRuntimeUpdateApply();
+    assert.equal(f.fields.get("update-heading"), "Update to 1.1.0", "passkey prompt is an offer");
+    if (approved) resolveApproval("approved");
+    else rejectApproval(new Error("passkey cancelled"));
+    await applying;
+    assert.equal(f.fields.get("update-heading"), approved ? "Updating to 1.1.0" : "Update to 1.1.0");
+    assert.equal(f.posts.length, approved ? 1 : 0);
+  }
+});
+
+test("Home update keeps the last good progress through transient and older polls", () => {
+  const f = updateFixture();
+  const active = { ...f.offer, controller: { id: "one", controller_start: "process-one", phase: "downloading",
+    completed_bytes: 750, total_bytes: 1000 } };
+  f.context.renderRuntimeUpdate(active);
+  for (const counters of [{ completed_bytes: 0, total_bytes: null }, { completed_bytes: 250, total_bytes: 1000 }]) {
+    f.context.renderRuntimeUpdate({ ...active, controller: { ...active.controller, ...counters } });
+    assert.equal(f.context.runtimeUpdate.controller.completed_bytes, 750);
+    assert.equal(f.context.runtimeUpdate.controller.total_bytes, 1000);
+  }
+  f.context.renderRuntimeUpdate({ ...active, controller: { ...active.controller, completed_bytes: 800 } });
+  assert.equal(f.context.runtimeUpdate.controller.completed_bytes, 800);
+  for (const identity of [{ id: "two" }, { controller_start: "process-two" }]) {
+    f.context.renderRuntimeUpdate(active);
+    f.context.renderRuntimeUpdate({ ...active, controller: { ...active.controller, ...identity, completed_bytes: 0, total_bytes: null } });
+    assert.equal(f.context.runtimeUpdate.controller.completed_bytes, 0, "a different owner starts fresh");
+    assert.equal(f.context.runtimeUpdate.controller.total_bytes, null);
+  }
+});
+
 test("Home update freezes one exact passkey intent and retries a lost response with identical bytes", async () => {
   let approve;
   let attempt = 0;

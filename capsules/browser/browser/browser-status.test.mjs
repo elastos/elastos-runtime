@@ -94,7 +94,7 @@ test("space refusal reports required and available decimal GB after safe cleanup
       code: "insufficient_free_space", required_bytes: 8589934592, available_bytes: 8589934591,
     };
     error.payload.message = "private engine error text";
-    assert.equal(friendlyOpenError(error), "Browser needs 8.6 GB free on this computer to open; 8.6 GB are free. Free some space, then open Browser again.");
+    assert.equal(friendlyOpenError(error), "Browser needs 8.6 GB free on this computer to open; 8.5 GB are free. Free some space, then open Browser again.");
   }
 });
 

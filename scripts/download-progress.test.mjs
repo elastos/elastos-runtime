@@ -156,3 +156,29 @@ test("Library loads the current properties and list renderers", async () => {
   const app = await readFile(new URL("../capsules/library/browser/src/app.js", import.meta.url), "utf8");
   for (const module of ["dialog", "render"]) assert(app.includes(`./${module}.js?v=download-progress-20261112`));
 });
+
+for (const [done, total, percent] of [[99949999, 100000000, 99], [99950000, 100000000, 100],
+  [99999999, 100000000, 100], [100000000, 100000000, 100], [999, 1000, 100], [998, 999, 99]]) {
+  test(`displayed byte equality controls completion for ${done} of ${total}`, () => {
+    const host = new Element("div");
+    const [bar, detail] = createTransferProgress(done, total, "Download", doc).children;
+    assert.equal(detail.textContent, `${formatBytesOf(done, total)} · ${percent}%`);
+    announceTransferProgress(host, done, total, "Download");
+    assert.equal(host.children[0].textContent, `Download: ${formatBytesOf(done, total)}, ${percent}%.`);
+    assert.equal(bar.value === total, percent === 100);
+  });
+}
+
+test("Browser disk refusal rounds requirements up and available bytes down", async () => {
+  const { friendlyOpenError } = await import("../capsules/browser/browser/browser-status.js");
+  for (const [required, available, labels] of [[2000000001, 2000000000, ["2.1 GB", "2.0 GB"]],
+    [2000000000, 1999999999, ["2.0 GB", "1.9 GB"]], [1000000, 999999, ["1.0 MB", "999.9 KB"]]]) {
+    const message = friendlyOpenError({ payload: {
+      outcome: { schema: "elastos.browser.open-outcome/v1", state: "terminal_pre_effect_failure",
+        effects: { page_acquired: false, vm_acquired: false, stream_acquired: false } },
+      refusal: { code: "insufficient_free_space", required_bytes: required, available_bytes: available },
+    } });
+    assert(message.includes(`${labels[0]} free`), message);
+    assert(message.includes(`${labels[1]} are free`), message);
+  }
+});
