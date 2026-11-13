@@ -579,3 +579,80 @@ async fn content_sandbox_browser() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[tokio::test]
+#[ignore = "requires Playwright Chromium and WebKit; CI runs the content_sandbox_browser filter"]
+async fn content_sandbox_browser_capsule_scripts() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let state = test_state(dir.path());
+    // Serve the source Home and real app files through the product router and
+    // its security headers. Only unused WASM entrypoints are test placeholders.
+    for name in [
+        "home",
+        "home-gui",
+        "home-cli",
+        "documents",
+        "library",
+        "gba-emulator",
+        "elacity-player",
+    ] {
+        let destination = dir.path().join("capsules").join(name);
+        activate_test_capsule(dir.path(), name);
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::copy(
+            repo.join("capsules").join(name).join("capsule.json"),
+            destination.join("capsule.json"),
+        )
+        .unwrap();
+        copy_operator_site(
+            &repo.join("capsules").join(name).join("browser"),
+            &destination.join("browser"),
+        );
+        write_test_wasm_entrypoint(dir.path(), name);
+    }
+    let authority = passkey_authority_with_name(dir.path(), Some("capsule-script-test"));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = gateway_router_with_api_url(state, format!("http://{addr}"));
+    let mut headers = HeaderMap::new();
+    headers.insert(HOST, addr.to_string().parse().unwrap());
+    let cookie_name = home_session_cookie_name(&headers).unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let mut server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+    let mut command = tokio::process::Command::new("node");
+    command
+        .arg(repo.join("scripts/capsule-script-browser-smoke.mjs"))
+        .env("ELASTOS_CAPSULE_SCRIPT_URL", format!("http://{addr}"))
+        .env("ELASTOS_CAPSULE_SCRIPT_COOKIE_NAME", cookie_name)
+        .env("ELASTOS_CAPSULE_SCRIPT_TOKEN", authority.home_token)
+        .kill_on_drop(true);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(180), command.output()).await;
+    let _ = shutdown_tx.send(());
+    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut server)
+        .await
+        .is_err()
+    {
+        server.abort();
+        let _ = server.await;
+        panic!("capsule script source Home did not stop");
+    }
+    let output = result
+        .expect("capsule script browser timeout")
+        .expect("start Node capsule script regression");
+    println!("{}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        output.status.success(),
+        "capsule script regression failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
