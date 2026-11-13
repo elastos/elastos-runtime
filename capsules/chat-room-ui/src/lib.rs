@@ -878,11 +878,11 @@ fn library_post_outcome(http_status: u16, body: &serde_json::Value) -> LibraryPo
 
 fn library_post_view(post: &LibraryPost) -> LibraryPostView {
     use LibraryPostAction::{Cancel, Close, OpenLibrary, Post, Retry};
-    let file = format!("{} · {}", post.file_name, format_bytes(post.size_bytes));
+    let file = format!("{} · {}", post.file_name, format_post_size(post.size_bytes));
     match &post.phase {
         LibraryPostPhase::Confirm => LibraryPostView {
             title: format!("Post \"{}\" in Community?", post.file_name),
-            lines: vec![POST_PUBLICLY_BODY.to_string()],
+            lines: vec![file, POST_PUBLICLY_BODY.to_string()],
             actions: &[Cancel, Post],
             retry_label: "Retry post",
         },
@@ -8819,7 +8819,10 @@ mod tests {
         assert_eq!(confirm.title, "Post \"notes.txt\" in Community?");
         assert_eq!(
             confirm.lines,
-            vec!["Your contacts can get it from the post while your Home is open.".to_string()]
+            vec![
+                "notes.txt · 30 bytes".to_string(),
+                "Your contacts can get it from the post while your Home is open.".to_string()
+            ]
         );
         assert_eq!(confirm.actions, &[Cancel, Post]);
         assert!(super::library_post_view(&library_post_fixture(Working))
@@ -8852,7 +8855,7 @@ mod tests {
         assert_eq!(
             unknown.lines,
             vec![
-                "notes.txt · 30 B".to_string(),
+                "notes.txt · 30 bytes".to_string(),
                 "Couldn't confirm the post. Check Community, or try again.".to_string(),
             ]
         );
@@ -10498,6 +10501,23 @@ fn local_date_text(timestamp_secs: u64, same_year: bool) -> String {
         .to_locale_date_string("default", &options)
         .as_string()
         .unwrap_or_default()
+}
+
+// The size carried in Community messages, matching Runtime's post builder.
+fn format_post_size(size_bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let size = size_bytes as f64;
+    if size >= GB {
+        format!("{:.1} GB", size / GB)
+    } else if size >= MB {
+        format!("{:.1} MB", size / MB)
+    } else if size >= KB {
+        format!("{:.1} KB", size / KB)
+    } else {
+        format!("{size_bytes} bytes")
+    }
 }
 
 fn format_bytes(size_bytes: u64) -> String {
