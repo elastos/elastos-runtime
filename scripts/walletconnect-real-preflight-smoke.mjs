@@ -49,7 +49,14 @@ try {
         assert.equal(source.frame.url(), `${options.origin}/apps/wallet-walletconnect/wc-real.html`);
         return options;
       });
-      await context.route('**/*', route => new URL(route.request().url()).origin === options.origin ? route.continue() : route.abort());
+      run.blocked = {runtimeWebSocket:0,external:0};
+      await context.route('**/*', route => {
+        const url = new URL(route.request().url());
+        if (url.origin === options.origin) return route.continue();
+        if (url.origin === options.origin.replace(/^http/,'ws')) run.blocked.runtimeWebSocket++;
+        else run.blocked.external++;
+        return route.abort();
+      });
       context.on('request', request => {
         const path = new URL(request.url()).pathname;
         if (path === '/api/apps/wallet-walletconnect/storage' && request.method() === 'POST') {
@@ -84,7 +91,13 @@ try {
         socket.on('framesent', ({payload}) => observe(payload, 'sent'));
         socket.on('framereceived', ({payload}) => observe(payload, 'received'));
         socket.on('close', () => run.relay.closed++);
-        socket.on('socketerror', () => run.relay.errors++);
+        socket.on('socketerror', error => {
+          run.relay.errors++;
+          run.relay.errorText ??= [];
+          if (run.relay.errorText.length < 4) run.relay.errorText.push(String(error)
+            .split(options.projectId).join('[project]').split(options.connector).join('[launch]')
+            .replace(/([?&](?:auth|symKey|token)=)[^&\s"']+/g,'$1[redacted]').slice(0,384));
+        });
       });
       run.phase = 'home';
       assert.equal((await page.goto(`${options.origin}/apps/home/`, {timeout:10000})).status(), 200);
