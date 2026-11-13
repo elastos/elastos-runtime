@@ -1290,6 +1290,12 @@ impl Controller {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             meter.paused = phase != "downloading";
+            if phase == "verifying" {
+                // Publish the exact final count before leaving the download phase,
+                // even when its last bytes arrived inside the coalescing interval.
+                meter.last_write = None;
+                meter.flush(&self.directory.join(DOWNLOAD_PROGRESS));
+            }
         }
         let source = installed_source(&self.receipt.data_dir)?;
         write_private(

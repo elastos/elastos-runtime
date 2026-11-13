@@ -5998,12 +5998,16 @@ fn verifying_flushes_final_download_progress_before_its_status() {
     let status_path = fixture.directory.join(STATUS);
     fs::remove_file(&status_path).unwrap();
     fs::create_dir(&status_path).unwrap();
-    assert!(controller.publish("verifying", "Verifying the update.").is_err());
+    assert!(controller
+        .publish("verifying", "Verifying the update.")
+        .is_err());
     let final_progress: DownloadProgress = read_private_json(&path).unwrap();
     assert_eq!(final_progress.completed_bytes, 1000);
     assert_eq!(final_progress.total_bytes, Some(1000));
     fs::remove_dir(&status_path).unwrap();
-    controller.publish("verifying", "Verifying the update.").unwrap();
+    controller
+        .publish("verifying", "Verifying the update.")
+        .unwrap();
     let current = status(&fixture.data).unwrap().unwrap();
     assert_eq!(current.phase, "verifying");
     assert_eq!(current.completed_bytes, 1000);

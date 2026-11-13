@@ -79,8 +79,8 @@ export function friendlyOpenError(error) {
     Number.isSafeInteger(refusal.required_bytes) && Number.isSafeInteger(refusal.available_bytes) &&
     refusal.available_bytes >= 0 && refusal.available_bytes < refusal.required_bytes
   ) {
-    const required = formatBytes(refusal.required_bytes);
-    const available = formatBytes(refusal.available_bytes);
+    const required = formatBytes(refusal.required_bytes, Math.ceil);
+    const available = formatBytes(refusal.available_bytes, Math.floor);
     return `Browser needs ${required} free on this computer to open; ${available} are free. Free some space, then open Browser again.`;
   }
   if (outcome?.state === "terminal_pre_effect_failure" && error?.payload?.stage === "viewer_compatibility") {

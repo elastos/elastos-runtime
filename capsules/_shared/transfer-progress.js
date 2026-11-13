@@ -1,5 +1,11 @@
 import { formatBytes, formatBytesOf } from "./byte-format.js?v=download-progress-20261112";
 
+// Match completion to the precision of the visible byte counts.
+function transferPercent(completed, total) {
+  const [done, size] = formatBytesOf(completed, total).split(" of ");
+  return done === size ? 100 : Math.min(99, Math.floor(Math.max(0, completed || 0) * 100 / total));
+}
+
 // Native progress supplies keyboard-independent, screen-reader progress semantics.
 export function createTransferProgress(completed, total, label = "Download progress", doc = document) {
   const root = doc.createElement("div");
@@ -11,8 +17,8 @@ export function createTransferProgress(completed, total, label = "Download progr
   const done = Number.isFinite(completed) ? Math.max(0, completed) : 0;
   if (known) {
     bar.max = total;
-    bar.value = Math.min(done, total);
-    const percent = Math.floor(bar.value * 100 / total);
+    const percent = transferPercent(done, total);
+    bar.value = percent === 100 ? total : Math.min(done, total);
     detail.textContent = `${formatBytesOf(done, total)} · ${percent}%`;
     bar.setAttribute("aria-valuetext", detail.textContent);
   } else {
@@ -37,7 +43,7 @@ export function announceTransferProgress(host, completed, total, label = "Downlo
     host.append(live);
   }
   const known = Number.isFinite(total) && total > 0;
-  const percent = known ? Math.floor(Math.min(Math.max(0, completed || 0), total) * 100 / total) : null;
+  const percent = known ? transferPercent(completed, total) : null;
   const key = completed == null ? "" : `${label}:${total}:${known ? Math.floor(percent / 5) : "unknown"}`;
   if (live.dataset.progressKey === key) return;
   live.dataset.progressKey = key;

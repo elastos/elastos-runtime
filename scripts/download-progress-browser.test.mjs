@@ -45,6 +45,7 @@ test("System, model and Library transfer states stay accessible in light and dar
     "Retry an interrupted download from the update card.",
     "Read update progress in light and dark themes.",
   ];
+  let updateId = "fixture-update";
   let theme = "light", completed = 25000000, total = 100000000, phase = "downloading", message = downloadMessage;
   const fixture = await startSystemFixtureServer({ title: "Download progress fixture", async onApiRequest({ request, response, url }) {
     const json = value => { jsonResponse(response, value); return true; };
@@ -68,7 +69,7 @@ test("System, model and Library transfer states stay accessible in light and dar
       runtime_update: { configured: true, available: phase === "ready", can_apply: phase === "ready", current_version: "2.0.1",
         new_version: "2.0.2", source_name: "Fixture publisher", channel: "stable", publisher: "Fixture publisher",
         publisher_did: "did:key:zFixture", head_cid: cid, release_cid: cid, changes,
-        controller: { id: "fixture-update", current_version: "2.0.1", new_version: "2.0.2", phase,
+        controller: { id: updateId, current_version: "2.0.1", new_version: "2.0.2", phase,
           message, completed_bytes: completed, total_bytes: total } } });
     if (url.pathname === "/api/capsules/catalog") return json({ schema: "elastos.capsules.catalog/v1", model_catalog_state: "verified", capsules: [
       { name: "fixture-model", title: assistantView ? "A long model name for the Assistant download on a narrow screen" : "Fixture model", role: "content", source: "signed-model-catalog", installed: false, launchable: false,
@@ -148,11 +149,17 @@ test("System, model and Library transfer states stay accessible in light and dar
       await screenshot(`system-update-${theme}`);
       completed = 75000000;
       await progress.getByText("75.0 MB of 100.0 MB · 75%", { exact: true }).waitFor({ timeout: 9000 });
+      for (const [bytes, size] of [[0, null], [25000000, 100000000]]) {
+        completed = bytes; total = size; message = `Transient progress poll ${bytes}`;
+        await system.getByText(message, { exact: true }).waitFor({ timeout: 9000 });
+        assert.equal(await progress.getByRole("progressbar").getAttribute("aria-valuetext"), "75.0 MB of 100.0 MB · 75%");
+      }
+      completed = 75000000; total = 100000000;
       phase = "verifying"; message = metadataMessage;
       await system.getByText(metadataMessage, { exact: true }).waitFor({ timeout: 9000 });
       assert.equal(await progress.getByRole("progressbar").getAttribute("aria-valuetext"), "75.0 MB of 100.0 MB · 75%");
       await screenshot(`system-update-metadata-${theme}`);
-      phase = "downloading"; message = downloadMessage; total = null;
+      phase = "downloading"; message = downloadMessage; total = null; updateId = `unknown-${theme}`;
       await progress.getByText("75.0 MB received", { exact: true }).waitFor({ timeout: 9000 });
       assert.equal(await progress.locator("progress").getAttribute("value"), null);
       await system.getByRole("button", { name: "Models", exact: true }).click();

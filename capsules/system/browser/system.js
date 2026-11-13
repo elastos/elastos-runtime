@@ -3829,7 +3829,19 @@ function runtimeUpdateControllerBusy() {
 }
 
 function renderRuntimeUpdate(update) {
+  const previous = runtimeUpdate?.controller;
   runtimeUpdate = update && typeof update === "object" ? update : null;
+  const current = runtimeUpdate?.controller;
+  // An atomic advisory-file replacement can leave one poll without counters.
+  // Keep this update's last observation; a new request or process starts fresh.
+  if (previous?.id && current?.id === previous.id && current.controller_start === previous.controller_start
+    && ["staging", "downloading", "verifying"].includes(previous.phase)
+    && ["staging", "downloading", "verifying"].includes(current.phase)) {
+    runtimeUpdate = { ...runtimeUpdate, controller: { ...current,
+      completed_bytes: Math.max(previous.completed_bytes || 0, current.completed_bytes || 0),
+      total_bytes: current.total_bytes ?? previous.total_bytes,
+    } };
+  }
   if (!runtimeUpdateNode || !runtimeUpdateButton) return;
   const configured = runtimeUpdate?.configured === true;
   runtimeUpdateNode.hidden = !configured && !runtimeUpdatePending;
@@ -3865,16 +3877,16 @@ function renderRuntimeUpdate(update) {
     runtimeUpdateProgressNode.replaceChildren(...(show ? [createTransferProgress(controller?.completed_bytes, controller?.total_bytes, "Update download progress")] : []));
   }
   const choice = runtimeUpdatePending?.intent || runtimeUpdate;
-  const inProgress = runtimeUpdatePending || ["staging", "downloading", "verifying", "restarting"].includes(phase);
+  const inProgress = Boolean(runtimeUpdatePending?.stepUpToken) || ["staging", "downloading", "verifying", "restarting"].includes(phase);
   const newVersion = runtimeUpdatePending ? readText(choice?.new_version)
     : inProgress ? readText(controller?.new_version) || readText(choice?.new_version)
       : readText(choice?.new_version);
-  setTextFields("update-heading", newVersion && (inProgress || runtimeUpdate?.available === true)
+  setTextFields("update-heading", newVersion && (inProgress || runtimeUpdatePending || runtimeUpdate?.available === true)
     ? `${inProgress ? "Updating" : "Update"} to ${newVersion}` : "Home update");
   const publisher = readText(runtimeUpdatePending?.publisher || runtimeUpdate?.publisher);
   setTextFields("update-publisher", publisher);
   setHiddenFields("update-publisher-row", !publisher);
-  const hideOffer = runtimeUpdate?.available !== true && !inProgress;
+  const hideOffer = runtimeUpdate?.available !== true && !inProgress && !runtimeUpdatePending;
   setHiddenFields("update-offer", hideOffer);
   const changes = updateNoteItems(runtimeUpdatePending?.changes || runtimeUpdate?.changes);
   const hideNotes = hideOffer || (inProgress && !changes.length && runtimeUpdate?.available !== true);
@@ -4052,6 +4064,7 @@ async function onRuntimeUpdateApply() {
   try {
     pending.stepUpToken = await requestPasskeyStepUp("system.update.apply", intent);
     if (!runtimeUpdateActive || runtimeUpdatePending !== pending) return;
+    renderRuntimeUpdate(runtimeUpdate);
     const body = JSON.stringify({ ...intent, step_up_token: pending.stepUpToken });
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {

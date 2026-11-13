@@ -102,7 +102,7 @@ test("Browser disk-space refusal uses the shared size rule", async () => {
       effects: { page_acquired: false, vm_acquired: false, stream_acquired: false } },
     refusal: { code: "insufficient_free_space", required_bytes: 2000000000, available_bytes: 999950 },
   } });
-  assert.match(message, /2\.0 GB free.*1\.0 MB are free/);
+  assert.match(message, /2\.0 GB free.*999\.9 KB are free/);
 });
 
 test("update admission handles a missing candidate with an error", async () => {
