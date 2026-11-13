@@ -128,6 +128,7 @@ use gateway_home_external_link::*;
 pub(crate) use gateway_home_runtime::is_wallet_connector_capsule_id;
 use gateway_home_runtime::*;
 use gateway_home_shared_content::*;
+pub(crate) use gateway_walletconnect::clear_principal_storage as clear_walletconnect_principal_storage;
 
 pub(crate) fn principal_root_protected_object_inventory(
     localhost_root: &str,
@@ -870,7 +871,9 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
         )
         .route(
             "/api/apps/wallet-walletconnect/storage",
-            get(gateway_walletconnect::storage).post(gateway_walletconnect::storage),
+            get(gateway_walletconnect::storage)
+                .post(gateway_walletconnect::storage)
+                .delete(gateway_walletconnect::storage),
         )
         .route(
             "/api/apps/wallet-walletconnect/relay",
@@ -879,10 +882,6 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
         .route(
             "/api/apps/wallet-walletconnect/relay-admission",
             post(gateway_walletconnect::admission),
-        )
-        .route(
-            "/api/apps/wallet-walletconnect/host-config",
-            get(gateway_walletconnect::host_config).post(gateway_walletconnect::host_config),
         )
         .route("/api/wallet/qr", post(wallet_receive_qr))
         .route(
@@ -1041,10 +1040,6 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
         .route(
             "/api/apps/home/wallet-connector/bitcoin/link/verify",
             post(home_wallet_connector_bitcoin_link_verify),
-        )
-        .route(
-            "/api/apps/home/wallet-connector/approvals/:request_id/review",
-            post(home_wallet_connector_approval_review),
         )
         .route(
             "/api/apps/home/wallet-connector/approvals/:request_id/handoff",

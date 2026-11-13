@@ -406,7 +406,11 @@ fn shell_content_security_policy(
             format!("{home_source} 'unsafe-inline'"),
         )
     };
-    let connect_source = format!("{default_source} {}", home_websocket_origin(&home_source)?);
+    let connect_source = if is_home_host {
+        default_source.clone()
+    } else {
+        format!("{default_source} {}", home_websocket_origin(&home_source)?)
+    };
     // No allow-popups: a new window escapes connect-src and frame-src. Home
     // opens web links for its apps (`home:open-external`).
     let sandbox = if is_home_host {

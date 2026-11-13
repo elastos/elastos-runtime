@@ -29,7 +29,17 @@ pub(in crate::api::gateway) async fn runtime_wallet_data(
         .await?
         .result
     {
-        elastos_wallet_contract::WalletResultV2::Ok { data } => Ok(data),
+        elastos_wallet_contract::WalletResultV2::Ok { data } => {
+            if data["account"]["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
+                && !data["account"]["revoked_at"].is_null()
+            {
+                gateway_walletconnect::clear_principal_storage(
+                    &state.data_dir,
+                    authority.verified_context().principal_id(),
+                )?;
+            }
+            Ok(data)
+        }
         elastos_wallet_contract::WalletResultV2::Error { message, .. } => anyhow::bail!(message),
     }
 }
@@ -49,7 +59,17 @@ pub(in crate::api::gateway) async fn runtime_wallet_data_with_request_id(
         .await?
         .result
     {
-        elastos_wallet_contract::WalletResultV2::Ok { data } => Ok(data),
+        elastos_wallet_contract::WalletResultV2::Ok { data } => {
+            if data["account"]["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
+                && !data["account"]["revoked_at"].is_null()
+            {
+                gateway_walletconnect::clear_principal_storage(
+                    &state.data_dir,
+                    authority.verified_context().principal_id(),
+                )?;
+            }
+            Ok(data)
+        }
         elastos_wallet_contract::WalletResultV2::Error { message, .. } => anyhow::bail!(message),
     }
 }

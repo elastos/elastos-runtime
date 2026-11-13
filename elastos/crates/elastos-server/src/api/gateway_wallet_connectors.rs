@@ -74,12 +74,23 @@ pub(in crate::api::gateway) async fn wallet_connector_approvals(
         Ok(authority) => authority,
         Err(err) => return system_error_response(err),
     };
-    let mut summary = system_wallet_approvals_summary(&state, &authority, false).await;
+    let mut summary = system_wallet_approvals_summary(
+        &state,
+        &authority,
+        wallet_connector == WALLET_WALLETCONNECT_CAPSULE_ID,
+    )
+    .await;
     summary.approval_requests.retain(|request| {
         !is_managed_wallet_proof_type(&request.proof_type)
             && request.connector_id.as_deref() == Some(wallet_connector.as_str())
+            && (request.status == "pending"
+                || (request.status == "approved" && request.intent == "transaction_intent"))
     });
-    summary.pending_count = summary.approval_requests.len();
+    summary.pending_count = summary
+        .approval_requests
+        .iter()
+        .filter(|r| r.status == "pending")
+        .count();
     Json(summary).into_response()
 }
 

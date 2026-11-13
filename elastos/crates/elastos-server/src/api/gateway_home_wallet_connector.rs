@@ -5,7 +5,7 @@ use serde_json::json;
 const HOME_WALLET_CONNECTOR_REQUEST_SCHEMA: &str =
     "elastos.home.wallet-connector.effect.request/v1";
 const HOME_WALLET_CONNECTOR_RESULT_SCHEMA: &str = "elastos.home.wallet-connector.effect.result/v1";
-const HOSTED_WALLET_CONNECTOR_IDS: &[&str] =
+const INJECTED_WALLET_CONNECTOR_IDS: &[&str] =
     &[WALLET_METAMASK_CAPSULE_ID, WALLET_UNISAT_CAPSULE_ID];
 
 #[derive(Debug, Deserialize)]
@@ -109,9 +109,9 @@ struct HomeWalletConnectorTransaction {
     chain_id: String,
 }
 
-pub(super) struct HomeWalletConnectorAuthority {
-    pub(super) context: HomeLaunchTokenContext,
-    pub(super) wallet: RuntimeWalletAuthority,
+struct HomeWalletConnectorAuthority {
+    context: HomeLaunchTokenContext,
+    wallet: RuntimeWalletAuthority,
 }
 
 pub(super) async fn home_wallet_connector_evm_link_challenge(
@@ -125,11 +125,7 @@ pub(super) async fn home_wallet_connector_evm_link_challenge(
         &input.schema,
         &input.connector_id,
         &input.connector_token,
-        if input.connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
-            WALLET_WALLETCONNECT_CAPSULE_ID
-        } else {
-            WALLET_METAMASK_CAPSULE_ID
-        },
+        WALLET_METAMASK_CAPSULE_ID,
     ) {
         Ok(authority) => authority,
         Err(err) => return home_wallet_connector_authority_error_response(err),
@@ -175,11 +171,7 @@ pub(super) async fn home_wallet_connector_evm_link_verify(
         &input.schema,
         &input.connector_id,
         &input.connector_token,
-        if input.connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
-            WALLET_WALLETCONNECT_CAPSULE_ID
-        } else {
-            WALLET_METAMASK_CAPSULE_ID
-        },
+        WALLET_METAMASK_CAPSULE_ID,
     ) {
         Ok(authority) => authority,
         Err(err) => return home_wallet_connector_authority_error_response(err),
@@ -306,39 +298,6 @@ pub(super) async fn home_wallet_connector_bitcoin_link_verify(
     }
 }
 
-pub(super) async fn home_wallet_connector_approval_review(
-    State(state): State<GatewayState>,
-    headers: HeaderMap,
-    Path(request_id): Path<String>,
-    Json(input): Json<HomeWalletConnectorAuthorityRequest>,
-) -> Response {
-    let result = async {
-        validate_home_wallet_connector_request_id(&request_id)?;
-        let authority = require_home_wallet_connector_authority(
-            &state,
-            &headers,
-            &input.schema,
-            &input.connector_id,
-            &input.connector_token,
-            WALLET_WALLETCONNECT_CAPSULE_ID,
-        )?;
-        let request =
-            pending_wallet_approval_request(&state, &authority.wallet, &request_id).await?;
-        anyhow::ensure!(
-            request.connector_id.as_deref() == Some(WALLET_WALLETCONNECT_CAPSULE_ID)
-                && request.status == "pending"
-                && request.expires_at > now_ts(),
-            "WalletConnect request changed or expired"
-        );
-        Ok::<_, anyhow::Error>(request)
-    }
-    .await;
-    match result {
-        Ok(request) => Json(request).into_response(),
-        Err(e) => system_error_response(e),
-    }
-}
-
 pub(super) async fn home_wallet_connector_approval_handoff(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -393,34 +352,15 @@ pub(super) async fn home_wallet_connector_approval_handoff(
                     ));
                 }
             };
-            let mut response = json!({
+            Json(json!({
                 "schema": HOME_WALLET_CONNECTOR_RESULT_SCHEMA,
                 "action": "approval_handoff",
                 "connector_id": input.connector_id,
                 "request_id": request_id,
                 "handoff": handoff,
                 "evm_chains": wallet_connector_evm_chains(),
-            });
-            if input.connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
-                let Some(binding) = outcome.approval_request else {
-                    return system_error_response(anyhow::anyhow!(
-                        "WalletConnect approval binding is missing"
-                    ));
-                };
-                if binding["principal_id"].as_str() != Some(authority.context.principal_id.as_str())
-                    || binding["payload_hash"] != response["handoff"]["payload_hash"]
-                {
-                    return system_error_response(anyhow::anyhow!(
-                        "WalletConnect approval binding mismatch"
-                    ));
-                }
-                response["binding"] = json!({
-                    "principal_id":binding["principal_id"], "requested_by_actor":binding["requested_by_actor"],
-                    "account_id":binding["account_id"], "chain_namespace":binding["chain_namespace"],
-                    "payload_hash":binding["payload_hash"], "expires_at":binding["expires_at"],
-                });
-            }
-            Json(response).into_response()
+            }))
+            .into_response()
         }
         Err(err) => system_error_response(err),
     }
@@ -476,29 +416,7 @@ pub(super) async fn home_wallet_connector_approval_complete(
     }
 }
 
-pub(super) fn require_home_wallet_connector_authority(
-    state: &GatewayState,
-    headers: &HeaderMap,
-    schema: &str,
-    connector_id: &str,
-    connector_token: &str,
-    expected_connector_id: &str,
-) -> anyhow::Result<HomeWalletConnectorAuthority> {
-    let authority = revalidate_home_wallet_connector_authority(
-        state,
-        headers,
-        schema,
-        connector_id,
-        connector_token,
-        expected_connector_id,
-    )?;
-    ensure_wallet_connector_configured(&state.data_dir, connector_id)?;
-    Ok(authority)
-}
-
-// Runtime transports verify the installed SDK at admission. Recurring checks
-// still verify both live launch authorities and the configuration shape.
-pub(super) fn revalidate_home_wallet_connector_authority(
+fn require_home_wallet_connector_authority(
     state: &GatewayState,
     headers: &HeaderMap,
     schema: &str,
@@ -509,14 +427,12 @@ pub(super) fn revalidate_home_wallet_connector_authority(
     if schema != HOME_WALLET_CONNECTOR_REQUEST_SCHEMA {
         anyhow::bail!("unsupported Home wallet-connector request schema");
     }
-    if connector_id != expected_connector_id || !HOSTED_WALLET_CONNECTOR_IDS.contains(&connector_id)
+    if connector_id != expected_connector_id
+        || !INJECTED_WALLET_CONNECTOR_IDS.contains(&connector_id)
     {
         anyhow::bail!("Home wallet-connector actor mismatch");
     }
-    if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
-        let config = load_walletconnect_connector_config(&state.data_dir)?;
-        validate_walletconnect_connector_config(&config)?;
-    }
+    ensure_wallet_connector_configured(&state.data_dir, connector_id)?;
 
     let home = require_home_runtime_wallet_authority(&state.data_dir, headers)?;
     let connector_launch =
@@ -584,17 +500,13 @@ fn validate_home_wallet_connector_handoff(
     }
 
     match connector_id {
-        WALLET_METAMASK_CAPSULE_ID | WALLET_WALLETCONNECT_CAPSULE_ID
-            if handoff.intent == "bitcoin_bip322_proof" =>
-        {
+        WALLET_METAMASK_CAPSULE_ID if handoff.intent == "bitcoin_bip322_proof" => {
             anyhow::bail!("MetaMask handoff cannot carry a Bitcoin approval")
         }
         WALLET_UNISAT_CAPSULE_ID if handoff.intent != "bitcoin_bip322_proof" => {
             anyhow::bail!("UniSat handoff must carry a Bitcoin approval")
         }
-        WALLET_METAMASK_CAPSULE_ID | WALLET_WALLETCONNECT_CAPSULE_ID
-            if handoff.intent == "transaction_intent" =>
-        {
+        WALLET_METAMASK_CAPSULE_ID if handoff.intent == "transaction_intent" => {
             if handoff.status != "awaiting_wallet_transaction"
                 || handoff.transaction.is_none()
                 || handoff.message.is_some()
@@ -603,7 +515,7 @@ fn validate_home_wallet_connector_handoff(
                 anyhow::bail!("Wallet connector transaction handoff is invalid");
             }
         }
-        WALLET_METAMASK_CAPSULE_ID | WALLET_WALLETCONNECT_CAPSULE_ID => {
+        WALLET_METAMASK_CAPSULE_ID => {
             if handoff.status != "awaiting_wallet_signature"
                 || handoff.transaction.is_some()
                 || handoff.message.is_none()

@@ -4536,9 +4536,19 @@ fn mutate_auth_state<T>(
     let lock = lock_auth_state_file(open_auth_state_lock(data_dir)?)?;
     let (mut state, device_key_identity) = load_auth_state_with_identity(data_dir)?;
     let baseline = AuditBaseline::new(&state, device_key_identity);
+    let previous_principals = state
+        .principals
+        .iter()
+        .map(|p| p.principal_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     ensure_audit_chain_state(data_dir, &mut state)?;
     let value = mutation(&mut state)?;
     save_auth_state(data_dir, &state, Some(&baseline))?;
+    for principal in previous_principals {
+        if !state.principals.iter().any(|p| p.principal_id == principal) {
+            crate::api::gateway::clear_walletconnect_principal_storage(data_dir, &principal)?;
+        }
+    }
     unlock_auth_state_file(lock)?;
     Ok(value)
 }
@@ -15769,6 +15779,33 @@ mod tests {
         };
         let error = validate_principal_root_migration_plan(&plan).unwrap_err();
         assert!(error.to_string().contains("1-64 objects"));
+    }
+
+    #[test]
+    fn walletconnect_removed_principal_clears_only_its_session_file() {
+        let data = tempfile::tempdir().unwrap();
+        let principal =
+            upsert_principal_for_binding(data.path(), passkey_binding(1, 100, 100), 100).unwrap();
+        let directory = data
+            .path()
+            .join("ElastOS/SystemServices/WalletConnect/sessions");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(format!(
+            "{}.json",
+            hex::encode(sha2::Sha256::digest(principal.principal_id.as_bytes()))
+        ));
+        std::fs::write(&path, b"{}").unwrap();
+        let other = directory.join(format!("{}.json", "aa".repeat(32)));
+        std::fs::write(&other, b"preserve").unwrap();
+        mutate_auth_state(data.path(), |state| {
+            state
+                .principals
+                .retain(|p| p.principal_id != principal.principal_id);
+            Ok(())
+        })
+        .unwrap();
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(other).unwrap(), b"preserve");
     }
 
     #[test]

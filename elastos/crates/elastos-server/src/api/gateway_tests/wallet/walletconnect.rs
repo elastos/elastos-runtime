@@ -326,23 +326,16 @@ impl Fixture {
 }
 
 #[tokio::test]
-async fn walletconnect_home_and_connector_share_one_consent_request() {
+async fn walletconnect_connector_reuses_one_consent_request() {
     let f = Fixture::new().await;
-    let (status, host) = f
-        .route(
-            &f.connector,
-            "/api/apps/wallet-walletconnect/host-config",
-            Some(json!({})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    let (_, connector) = f
+    let (status, first) = f
         .route(&f.connector, INTERNET, Some(json!({"action":"request"})))
         .await;
-    assert_eq!(
-        host["internet"]["request"]["id"],
-        connector["request"]["id"]
-    );
+    assert_eq!(status, StatusCode::OK);
+    let (_, second) = f
+        .route(&f.connector, INTERNET, Some(json!({"action":"request"})))
+        .await;
+    assert_eq!(first["request"]["id"], second["request"]["id"]);
     assert_eq!(f.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -499,6 +492,7 @@ async fn walletconnect_real_relay_requires_consent_allowlist_and_connector() {
 #[tokio::test]
 async fn walletconnect_storage_is_principal_scoped_and_survives_service_restart() {
     let mut f = Fixture::new().await;
+    f.allow().await;
     let (status, _) = f
         .route(
             &f.connector,
@@ -961,4 +955,92 @@ async fn walletconnect_caps_unadmitted_opaque_sockets_and_recovers() {
     let (mut recovered, _) = connect_async(request).await.unwrap();
     recovered.close(None).await.unwrap();
     assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn walletconnect_disconnect_and_turn_off_clear_sessions_and_refuse_late_writes() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    assert_eq!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"session","value":"fixture"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let response = f
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .header(HOST, &f.addr)
+                .header("origin", "null")
+                .header("x-elastos-home-token", &f.connector)
+                .method("DELETE")
+                .uri(STORAGE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(f.route(&f.connector, STORAGE, None).await.1, json!({}));
+    assert_eq!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"session","value":"fixture"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (_, grant) = f.route(&f.inbox, INTERNET, None).await;
+    f.answer(&grant, true).await;
+    assert_eq!(f.route(&f.connector, STORAGE, None).await.1, json!({}));
+    assert_ne!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"late","value":"refused"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn walletconnect_cleanup_refuses_linked_parent_and_preserves_other_files() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    assert_eq!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"session","value":"fixture"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let data = f.data.path();
+    let sessions = data.join("ElastOS/SystemServices/WalletConnect/sessions");
+    let other = tempfile::tempdir().unwrap();
+    let principal =
+        runtime_wallet_authority_for_app_token(data, WALLET_WALLETCONNECT_CAPSULE_ID, &f.connector)
+            .home_launch_context()
+            .principal_id;
+    let name = format!("{}.json", hex::encode(Sha256::digest(principal.as_bytes())));
+    std::fs::write(other.path().join(&name), "preserve").unwrap();
+    std::fs::rename(&sessions, sessions.with_extension("held")).unwrap();
+    std::os::unix::fs::symlink(other.path(), &sessions).unwrap();
+    assert!(gateway_walletconnect::clear_principal_storage(data, &principal).is_err());
+    assert_eq!(
+        std::fs::read_to_string(other.path().join(name)).unwrap(),
+        "preserve"
+    );
 }

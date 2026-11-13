@@ -249,6 +249,7 @@ pub(super) async fn answer(
                     .await??;
                 }
                 inner.sockets.clear();
+                clear_all_storage(&state.data_dir)?;
                 return Ok("WalletConnect connection turned off.".into());
             }
         }
@@ -333,7 +334,7 @@ pub(super) async fn internet(
                 input.action == "request",
                 "Invalid WalletConnect internet action"
             );
-            ensure_admin_context(&state.data_dir, &authority.home_launch_context())?;
+            ensure_admin_context(&state.data_dir, &authority.home_launch_context()).map_err(|_| anyhow::anyhow!("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox."))?;
             ensure_consent_request(&state, &authority.home_launch_context(), &inner)?;
         }
         Ok::<_, anyhow::Error>(public(load(&state.data_dir)?.as_ref()))
@@ -443,25 +444,6 @@ pub(super) async fn admission(State(state): State<GatewayState>, headers: Header
     .await;
     private_response(result)
 }
-pub(super) async fn host_config(
-    State(state): State<GatewayState>,
-    method: axum::http::Method,
-    headers: HeaderMap,
-) -> Response {
-    let result = async {
-        let authority = connector_authority(&state, &headers)?;
-        if method == axum::http::Method::POST { verify_sdk(&state).await?; }
-        let inner = state.walletconnect.inner.lock().await;
-        if method == axum::http::Method::POST {
-            ensure_consent_request(&state, &authority.home_launch_context(), &inner)?;
-        }
-        let config = load_walletconnect_connector_config(&state.data_dir)?;
-        Ok::<_, anyhow::Error>(json!({"projectId":config.project_id, "principal_id":authority.home_launch_context().principal_id,
-            "internet":public(load(&state.data_dir)?.as_ref()),
-            "sdk_asset_path":"/apps/wallet-walletconnect/vendor/reown-appkit.js"}))
-    }.await;
-    private_response(result)
-}
 fn private_response<T: Serialize>(result: anyhow::Result<T>) -> Response {
     let mut response = match result {
         Ok(value) => Json(value).into_response(),
@@ -500,6 +482,20 @@ pub(super) async fn storage(
             &state.data_dir,
             &authority.home_launch_context().principal_id,
         );
+        if method == axum::http::Method::DELETE {
+            clear_principal_storage(
+                &state.data_dir,
+                &authority.home_launch_context().principal_id,
+            )?;
+            return Ok(BTreeMap::new());
+        }
+        if method == axum::http::Method::POST {
+            check_owner(&state, false).await?;
+        }
+        let _files = session_files_lock()?;
+        // Removal and storage commits share this lock. Revalidate after acquiring
+        // it so a write admitted before principal removal cannot recreate keys.
+        connector_authority(&state, &headers)?;
         let mut values: BTreeMap<String, serde_json::Value> =
             read(&path, MAX_BYTES)?.unwrap_or_default();
         if method == axum::http::Method::POST {
@@ -841,4 +837,76 @@ mod tests {
             .to_string()
             .contains("idle"));
     }
+}
+
+// Runtime owns these exact, principal-derived session paths; UI never selects a path.
+pub(crate) fn clear_principal_storage(data: &FsPath, principal: &str) -> anyhow::Result<()> {
+    let _files = session_files_lock()?;
+    let path = storage_path(data, principal);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) => {
+            anyhow::ensure!(
+                meta.is_file() && !meta.file_type().is_symlink(),
+                "WalletConnect session requires a regular file"
+            );
+            remove_session_file(data, &path, &meta)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    Ok(())
+}
+fn clear_all_storage(data: &FsPath) -> anyhow::Result<()> {
+    let _files = session_files_lock()?;
+    let dir = root(data).join("sessions");
+    if !dir.try_exists()? {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        !std::fs::symlink_metadata(&dir)?.file_type().is_symlink(),
+        "WalletConnect sessions require their Runtime directory"
+    );
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_str().unwrap_or_default();
+        anyhow::ensure!(
+            name.strip_suffix(".json").is_some_and(|stem| stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit())),
+            "Invalid WalletConnect session file"
+        );
+        anyhow::ensure!(
+            entry.file_type()?.is_file(),
+            "WalletConnect session requires a regular file"
+        );
+        let path = entry.path();
+        remove_session_file(data, &path, &std::fs::symlink_metadata(&path)?)?;
+    }
+    Ok(())
+}
+
+fn remove_session_file(
+    data: &FsPath,
+    path: &FsPath,
+    metadata: &std::fs::Metadata,
+) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        elastos_common::owned_removal::remove_owned(
+            data,
+            path.strip_prefix(data)?,
+            Some(elastos_common::owned_removal::FileIdentity::of(metadata)),
+        )?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (data, path, metadata);
+        anyhow::bail!("WalletConnect session cleanup requires its supported host adapter")
+    }
+}
+
+fn session_files_lock() -> anyhow::Result<std::sync::MutexGuard<'static, ()>> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .map_err(|_| anyhow::anyhow!("WalletConnect session storage is unavailable"))
 }

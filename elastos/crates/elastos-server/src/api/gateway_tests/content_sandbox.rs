@@ -289,7 +289,7 @@ async fn content_sandbox_site_files_and_admitted_bundle_preserve_provenance() {
         .unwrap();
     assert_eq!(home.status(), StatusCode::OK);
     assert_eq!(home.headers().get("content-security-policy").unwrap(),
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self' ws://localhost:61180; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     let health = app
         .oneshot(
             Request::builder()
