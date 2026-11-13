@@ -11544,6 +11544,37 @@ mod tests {
         assert!(verify_audit_chain_call_count(data) > before);
     }
 
+    /// A save must REPLACE the state file via rename, not rewrite it in place.
+    ///
+    /// `append_audit_event` persists by writing a temp file and renaming it over the
+    /// target, so the file identity (`dev`, `ino` on Unix) changes on every save. A
+    /// future in-place `std::fs::write` would leave the inode unchanged and fail this
+    /// assertion. Note that a delete-then-recreate also changes the inode, so this test
+    /// alone does not distinguish rename from delete-then-recreate; it proves only that
+    /// the file is not rewritten in place.
+    #[test]
+    fn auth_state_save_replaces_the_file_instead_of_rewriting_it() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path();
+        refresh_fixture(data, 3);
+        let path = auth_state_path(data).unwrap();
+        let before = observe_optional_regular_file_identity(&path, "auth state")
+            .unwrap()
+            .unwrap_or_else(|| panic!("auth state fixture was never written"));
+
+        append_audit_event(data, test_audit_event(4)).unwrap();
+
+        let after = observe_optional_regular_file_identity(&path, "auth state")
+            .unwrap()
+            .unwrap_or_else(|| panic!("auth state disappeared after save"));
+        #[cfg(unix)]
+        assert_ne!(
+            (before.dev, before.ino),
+            (after.dev, after.ino),
+            "auth state rewrites must swap the file in via atomic rename, not truncate in place"
+        );
+    }
+
     #[test]
     fn write_race_replacement_and_in_place_write_are_not_cached() {
         for replace in [false, true] {
