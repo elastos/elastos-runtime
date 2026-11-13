@@ -161,7 +161,11 @@ test("System, model and Library transfer states stay accessible in light and dar
       await system.getByText(metadataMessage, { exact: true }).waitFor({ timeout: 9000 });
       assert.equal(await progress.getByRole("progressbar").getAttribute("aria-valuetext"), "75.0 MB of 100.0 MB · 75%");
       await screenshot(`system-update-metadata-${theme}`);
-      phase = "downloading"; message = downloadMessage; total = null; updateId = `unknown-${theme}`;
+      phase = "downloading"; message = downloadMessage; completed = 950000000; total = 1000000000; updateId = `gb-${theme}`;
+      await progress.getByText("0.95 GB of 1.00 GB · 95%", { exact: true }).waitFor({ timeout: 9000 });
+      assert.equal(await progress.getByRole("progressbar").getAttribute("value"), "950000000");
+      await screenshot(`system-update-gb95-${theme}`);
+      phase = "downloading"; message = downloadMessage; completed = 75000000; total = null; updateId = `unknown-${theme}`;
       await progress.getByText("75.0 MB received · Size unknown", { exact: true }).waitFor({ timeout: 9000 });
       assert.equal(await progress.locator("progress").getAttribute("value"), null);
       await system.getByRole("button", { name: "Models", exact: true }).click();

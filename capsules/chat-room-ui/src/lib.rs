@@ -10494,6 +10494,9 @@ fn format_bytes(size_bytes: u64) -> String {
     }
     if unit == 0 {
         format!("{size_bytes} B")
+    } else if unit == 3 {
+        let hundredths = (size_bytes as u128 * 100 + scale / 2) / scale;
+        format!("{}.{:02} GB", hundredths / 100, hundredths % 100)
     } else {
         let tenths = (size_bytes as u128 * 10 + scale / 2) / scale;
         format!("{}.{} {}", tenths / 10, tenths % 10, units[unit])

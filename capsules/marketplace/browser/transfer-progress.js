@@ -1,9 +1,8 @@
 import { formatBytes, formatBytesOf } from "./byte-format.js?v=download-progress-20261112";
 
-// Match completion to the precision of the visible byte counts.
+// Completion comes from the true byte counts, independent of display precision.
 function transferPercent(completed, total) {
-  const [done, size] = formatBytesOf(completed, total).split(" of ");
-  return done === size ? 100 : Math.min(99, Math.floor(Math.max(0, completed || 0) * 100 / total));
+  return completed === total ? 100 : Math.min(99, Math.floor(Math.max(0, completed || 0) * 100 / total));
 }
 
 // Native progress supplies keyboard-independent, screen-reader progress semantics.
@@ -22,7 +21,7 @@ export function createTransferProgress(completed, total, label = "Download progr
     detail.textContent = `${formatBytesOf(done, total)} · ${percent}%`;
     bar.setAttribute("aria-valuetext", detail.textContent);
   } else {
-    detail.textContent = done > 0 ? `${formatBytes(done)} received` : "Waiting for size…";
+    detail.textContent = done > 0 ? `${formatBytes(done)} received · Size unknown` : "Size unknown";
     bar.setAttribute("aria-valuetext", detail.textContent);
   }
   root.append(bar, detail);
