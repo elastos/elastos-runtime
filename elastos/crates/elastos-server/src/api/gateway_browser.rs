@@ -3719,18 +3719,18 @@ fn browser_page_status_response(outcome: BrowserPageStatusOutcome) -> Response {
 
 #[cfg(test)]
 mod browser_page_status_flight_tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::{
         complete_browser_page_status_flight, forget_browser_page_status,
         join_browser_page_status_flight, BROWSER_PAGE_STATUS_INACTIVE,
     };
 
     fn unique_key() -> String {
+        static NEXT_KEY: AtomicU64 = AtomicU64::new(0);
         format!(
             "test-page-status-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT_KEY.fetch_add(1, Ordering::Relaxed)
         )
     }
 
