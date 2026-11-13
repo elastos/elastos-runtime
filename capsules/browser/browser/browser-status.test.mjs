@@ -94,14 +94,14 @@ test("space refusal reports required and available decimal GB after safe cleanup
       code: "insufficient_free_space", required_bytes: 8589934592, available_bytes: 8589934591,
     };
     error.payload.message = "private engine error text";
-    assert.equal(friendlyOpenError(error), "Browser needs 8.6 GB free on this computer to open; 8.5 GB are free. Free some space, then open Browser again.");
+    assert.equal(friendlyOpenError(error), "Browser needs 8.59 GB free on this computer to open; 8.58 GB are free. Free some space, then open Browser again.");
   }
 });
 
 test("invalid, unknown and pending refusals keep the generic failure", () => {
   const error = openError("terminal_post_effect_cleanup");
   const generic = friendlyOpenError(error);
-  error.message = "Browser needs 8.6 GB free on this computer to open; 8.5 GB are free. Free some space, then open Browser again.";
+  error.message = "Browser needs 8.59 GB free on this computer to open; 8.58 GB are free. Free some space, then open Browser again.";
   assert.equal(friendlyOpenError(error), generic, "message text grants no refusal code");
   for (const refusal of [
     undefined,

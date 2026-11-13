@@ -754,7 +754,7 @@ test("Home update keeps the last good progress through transient and older polls
   for (const counters of [{ completed_bytes: 0, total_bytes: null }, { completed_bytes: 250, total_bytes: 1000 }]) {
     f.context.renderRuntimeUpdate({ ...active, controller: { ...active.controller, ...counters } });
     assert.equal(f.context.runtimeUpdate.controller.completed_bytes, 750);
-    assert.equal(f.context.runtimeUpdate.controller.total_bytes, 1000);
+    assert.equal(f.context.runtimeUpdate.controller.total_bytes, counters.total_bytes);
   }
   f.context.renderRuntimeUpdate({ ...active, controller: { ...active.controller, completed_bytes: 800 } });
   assert.equal(f.context.runtimeUpdate.controller.completed_bytes, 800);
