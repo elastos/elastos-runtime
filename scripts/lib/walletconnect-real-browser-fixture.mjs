@@ -12,11 +12,12 @@ window.runtimeTrace = [];
 window.phase = 'options';
 const options = await window.walletConnectTestOptions();
 const origin = new URL(import.meta.url).origin;
+let storageRevision;
 const api = async (resource, input = {}) => {
   const trace = {resource, status:'request'};
   if (window.runtimeTrace.length < 128) window.runtimeTrace.push(trace);
   const response = await fetch(`${origin}/api/apps/wallet-walletconnect/${resource}`, {
-    ...input, headers: { 'content-type':'application/json', 'x-elastos-home-token':options.connector },
+    ...input, headers: { 'content-type':'application/json', 'x-elastos-home-token':options.connector, ...(storageRevision ? {'if-match':storageRevision} : {}) },
   });
   trace.status = response.status;
   if (!response.ok) {
@@ -42,7 +43,16 @@ const api = async (resource, input = {}) => {
   }
   return values;
 };
+// Each engine owns a disposable pairing. Cleanup advances Runtime's revision;
+// the next engine reads it before the SDK can load or write protocol state.
+window.closeWalletConnectFixture = async () => {
+  const { disconnectWalletConnectEvm } = await import('./vendor/reown-appkit.js');
+  try { await disconnectWalletConnectEvm({api}); }
+  finally { await api('storage', {method:'DELETE'}); }
+};
 try {
+  window.phase = 'config';
+  storageRevision = (await api('wallet/config')).walletconnect.storage_revision;
   window.phase = 'import';
   const { connectWalletConnectEvm } = await import('./vendor/reown-appkit.js');
   window.phase = 'connect';

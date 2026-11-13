@@ -99,6 +99,19 @@ try {
             .replace(/([?&](?:auth|symKey|token)=)[^&\s"']+/g,'$1[redacted]').slice(0,384));
         });
       });
+      const pingReadySession = async topic => {
+        run.operation = 'session-subscription';
+        // transportOpen resolves at WebSocket connection. A restored session
+        // receives peer RPCs only after the SDK acknowledges its topic subscription.
+        await frame.waitForFunction(() => {
+          const provider = window.provider;
+          return provider?.signer?.client.core.relayer.subscriber.topics.includes(provider.session?.topic);
+        }, null, {timeout:20000, polling:100});
+        assert.ok(wallet.core.relayer.subscriber.topics.includes(topic));
+        run.operation = 'session-ping';
+        await bounded(wallet.ping({topic}));
+        run.operation = 'session-ping-complete';
+      };
       run.phase = 'home';
       assert.equal((await page.goto(`${options.origin}/apps/home/`, {timeout:10000})).status(), 200);
       run.phase = 'capsule';
@@ -139,7 +152,7 @@ try {
       await frame.waitForFunction(() => window.provider?.connected || window.failed, null, {timeout:20000, polling:100});
       assert.equal(await frame.evaluate(() => window.failed), undefined);
       assert.equal(await frame.evaluate(() => window.provider.session.topic), session.topic);
-      await bounded(wallet.ping({topic:session.topic}));
+      await pingReadySession(session.topic);
       run.paired = true;
       run.pairing = 'PASS';
       for (const phase of ['reload', 'homeRestart']) {
@@ -150,7 +163,7 @@ try {
         assert.equal(await frame.evaluate(() => window.failed), undefined);
         assert.equal(await frame.evaluate(() => window.provider.session.topic), session.topic);
         assert.equal(await frame.locator('dialog[open] canvas').count(), 0);
-        await bounded(wallet.ping({topic:session.topic}));
+        await pingReadySession(session.topic);
         assert.equal(proposals, 1);
         run[phase] = 'PASS';
       }
@@ -160,6 +173,7 @@ try {
       for (const kind of ['pairing', 'keychain', 'session']) assert.ok(run.runtimeWrites[kind] > 0, `${kind} persisted through Runtime`);
       run.status = 'PASS';
     } catch (error) {
+      run.failureDetail = /timeout|timed out/i.test(error.message) ? 'timeout' : /No matching key/i.test(error.message) ? 'session-key' : 'other';
       run.failureKind = ['TimeoutError','AssertionError','Error'].includes(error.name) ? error.name : 'Error';
       run.status = 'FAIL';
     } finally {
@@ -178,14 +192,22 @@ try {
           ]);
         } catch { run.stateUnavailable = true; }
       }
+      if (frame) {
+        try {
+          await bounded(frame.evaluate(() => window.closeWalletConnectFixture()), 10000);
+          run.fixtureCleanup = 'PASS';
+        } catch {
+          run.fixtureCleanup = 'FAIL';
+          run.status = 'FAIL';
+        }
+      }
       try {
         for (const session of wallet?.session.getAll() || []) await bounded(wallet.disconnect({topic:session.topic, reason:{code:6000, message:'Test complete'}}), 5000);
         await wallet?.core.relayer.transportClose();
       } catch { run.walletCleanup = 'transport closed at process exit'; }
       await browser?.close();
     }
-    // Stop at the first Chromium blocker, as required by the round's brief.
-    if (engine === 'chromium' && run.status !== 'PASS') break;
+    // Both engines report independently; any failed journey still fails this gate.
   }
 } catch { result.setup = 'FAIL'; }
 if (evidence) {
