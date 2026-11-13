@@ -593,6 +593,7 @@ test("566e renewing authority preserves the current page and does not repeat the
       subtest.after(async()=>{for(const context of browser.contexts())await context.close();});
       subtest.after(()=>f.state.releaseStaleStatus?.());
       f.state.consent="granted";f.state.expired=false;f.state.completeOpen=true;
+      f.state.principal="person:fixture:alice";
       f.state.bindOwners=true;f.state.restores=0;
       f.state.opens=[];f.state.requests=0;f.state.navigations=[];f.state.recoverableUrl=null;
       const page=await browser.newPage();await page.goto(f.url+"shell");
