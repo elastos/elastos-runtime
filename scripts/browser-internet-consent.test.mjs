@@ -567,6 +567,8 @@ test("566e renewing authority preserves the current page and does not repeat the
       const node=await gui.locator('iframe[title="browser"]').elementHandle();
       const browserFrame=await node.contentFrame();
       await browserFrame.waitForFunction(()=>window.__elastosBrowserCurrentPageId==="retained" && new URL(location.href).searchParams.has("page_id"));
+      await browserFrame.evaluate(()=>window.renewalDocument=crypto.randomUUID());
+      const documentId=await browserFrame.evaluate(()=>window.renewalDocument);
       // Home ignores a repeated Browser open during its 700 ms launch guard.
       await page.waitForTimeout(750);
       const input=page.waitForResponse(r=>r.url().endsWith("/pages/retained/input"));
@@ -586,6 +588,8 @@ test("566e renewing authority preserves the current page and does not repeat the
       assert.equal(f.state.requests,requests,"renewal with access off files no request");
       assert.equal(f.state.opens.length,opens,"renewal with access on does not navigate to the first URL");
       const frame=gui.frameLocator('iframe[title="browser"]');
+      assert.equal(await (await node.contentFrame()).evaluate(()=>window.renewalDocument),documentId,
+        "renewal retains the Browser document, its address and pending navigation");
       if(consent==="granted")assert.equal(await frame.locator("#browser-url").inputValue(),"https://example.com/current");
       await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/explicit"}}));
       await page.waitForTimeout(500);

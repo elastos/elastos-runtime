@@ -8011,6 +8011,54 @@ async fn test_browser_refresh_recovers_and_closes_exact_instance_bound_page() {
         cleanup_id
     );
 
+    // Summary lookup alone does not authorize the new launch's page routes.
+    for (instance, handle, expected) in [
+        (
+            "browser:fedcba9876543210fedcba9876543210",
+            cleanup_id,
+            StatusCode::NOT_FOUND,
+        ),
+        (browser_instance, "cleanup:wrong", StatusCode::NOT_FOUND),
+        (browser_instance, cleanup_id, StatusCode::OK),
+    ] {
+        let restored = app
+            .clone()
+            .oneshot(
+                test_browser_request("localhost:61180", "null")
+                    .method("POST")
+                    .uri(format!("/api/apps/browser/pages/{page_id}/restore"))
+                    .header("x-elastos-home-token", refreshed_token.clone())
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({"browser_instance":instance,"cleanup_id":handle}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            restored.status(),
+            expected,
+            "restore exact stored page ownership"
+        );
+    }
+    let status = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .uri(format!("/api/apps/browser/pages/{page_id}/status"))
+                .header("x-elastos-home-token", refreshed_token.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        status.status(),
+        StatusCode::OK,
+        "renewed launch reads its retained page"
+    );
+
     let wrong_instance_close = app
         .clone()
         .oneshot(
