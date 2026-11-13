@@ -15,7 +15,7 @@ PIPE = " | "
 
 
 class PipeReadersTest(unittest.TestCase):
-    def check_source(self, relative, source):
+    def check_source(self, relative, source, untracked=None):
         with tempfile.TemporaryDirectory(prefix="pipe-readers-test-") as scratch:
             root = Path(scratch)
             (root / "scripts").mkdir()
@@ -25,7 +25,27 @@ class PipeReadersTest(unittest.TestCase):
             fixture = root / relative
             fixture.parent.mkdir(parents=True, exist_ok=True)
             fixture.write_text(source)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, timeout=10)
+            subprocess.run(["git", "add", "scripts", ".githooks"], cwd=root, check=True, timeout=10)
+            for name, content in (untracked or {}).items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
             return subprocess.run([sys.executable, str(guard)], capture_output=True, text=True, timeout=10)
+
+    def test_only_checks_tracked_files(self):
+        forbidden = "set -euo pipefail\nproducer" + PIPE + "grep -q match\n"
+        for untracked in (
+            {"scripts/stray": b"\x7fELF\xa0"},
+            {".gitignore": b"scripts/ignored\n", "scripts/ignored": b"\x7fELF\xa0"},
+            {"scripts/untracked.sh": forbidden.encode()},
+        ):
+            with self.subTest(files=list(untracked)):
+                result = self.check_source("scripts/tracked.sh", "set -euo pipefail\n", untracked)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                result = self.check_source("scripts/tracked.sh", forbidden, untracked)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("scripts/tracked.sh:2:", result.stderr)
 
     def test_rejects_early_readers(self):
         readers = (
