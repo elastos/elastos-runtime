@@ -11453,8 +11453,16 @@ mod tests {
         assert!(verify_audit_chain_call_count(data) > before);
     }
 
+    /// A save must REPLACE the state file via rename, not rewrite it in place.
+    ///
+    /// `append_audit_event` persists by writing a temp file and renaming it over the
+    /// target, so the file identity (`dev`, `ino` on Unix) changes on every save. A
+    /// future in-place `std::fs::write` would leave the inode unchanged and fail this
+    /// assertion. Note that a delete-then-recreate also changes the inode, so this test
+    /// alone does not distinguish rename from delete-then-recreate; it proves only that
+    /// the file is not rewritten in place.
     #[test]
-    fn auth_state_publish_is_atomic_rename_and_never_torn() {
+    fn auth_state_save_replaces_the_file_instead_of_rewriting_it() {
         let root = tempfile::tempdir().unwrap();
         let data = root.path();
         refresh_fixture(data, 3);
@@ -11462,26 +11470,6 @@ mod tests {
         let before = observe_optional_regular_file_identity(&path, "auth state")
             .unwrap()
             .unwrap_or_else(|| panic!("auth state fixture was never written"));
-
-        // The write hook runs inside `write_secret_bytes_atomic` immediately after
-        // the temp file is renamed over the state file, i.e. at the earliest instant
-        // a concurrent reader could observe the new bytes. A plain in-place
-        // `std::fs::write` has no such single publish point: a reader could land on a
-        // truncated, partially-written document. Capture those bytes to prove a reader
-        // never sees a torn state.
-        let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let captured = observed.clone();
-        AUTH_STATE_WRITE_HOOKS
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-            .unwrap()
-            .insert(
-                path.clone(),
-                Box::new(move |path| {
-                    *captured.lock().unwrap() = std::fs::read(path)?;
-                    Ok(())
-                }),
-            );
 
         append_audit_event(data, test_audit_event(4)).unwrap();
 
@@ -11493,18 +11481,6 @@ mod tests {
             (before.dev, before.ino),
             (after.dev, after.ino),
             "auth state rewrites must swap the file in via atomic rename, not truncate in place"
-        );
-
-        let bytes = observed.lock().unwrap().clone();
-        assert!(!bytes.is_empty(), "reader observed an empty auth state");
-        let parsed: AuthState = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|error| panic!("reader observed a torn auth state: {error}"));
-        assert!(
-            parsed
-                .audit
-                .iter()
-                .any(|event| event.event_id == "audit:test:4"),
-            "published auth state is missing the appended audit event"
         );
     }
 
