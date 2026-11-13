@@ -29,7 +29,7 @@ try {
   for (const engine of engines) {
     assert.ok(['chromium', 'webkit'].includes(engine), `supported engine: ${engine}`);
     const browser = await playwright[engine].launch({ headless: true,
-      ...(engine === 'chromium' ? productSmokeLaunchOptions() : {}) });
+      ...(engine === 'chromium' ? { channel: 'chromium', ...productSmokeLaunchOptions() } : {}) });
     try {
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
       context.setDefaultTimeout(10_000);
@@ -66,22 +66,25 @@ try {
               if (!response.ok) throw new Error(`launch ${app}: HTTP ${response.status}`);
               return (await response.json()).route;
             }, { app, token, origin });
-            // Mount under the real host even if the GUI cannot boot. This lets
-            // a failing engine report all three apps rather than just the GUI.
-            await page.evaluate(({ app, route }) => {
+            // Preserve the product's nested opaque ancestors even if GUI
+            // scripts cannot boot, so a failure still reports every app.
+            const gui = page.frames().find(frame => frame.url().startsWith(`${origin}/apps/home-gui/`));
+            assert.ok(gui, 'Home GUI is the app frame owner');
+            await gui.evaluate(({ app, route }) => {
               const iframe = document.createElement('iframe');
               iframe.id = `script-check-${app}`;
               iframe.style = 'position:fixed;inset:0;width:100%;height:100%;z-index:2147483647';
-              iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-downloads');
+              iframe.setAttribute('sandbox', 'allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts');
               iframe.src = route;
               document.body.append(iframe);
             }, { app, route });
           }
-          await page.waitForFunction(app => [...document.querySelectorAll('iframe')]
-            .some(frame => frame.src.includes(`/apps/${app}/`)), app);
-          const frame = await page.waitForEvent('framenavigated', {
-            predicate: frame => new URL(frame.url()).pathname === `/apps/${app}/`, timeout: 1000,
-          }).catch(() => page.frames().find(frame => frame.url().includes(`/apps/${app}/`)));
+          const frameDeadline = Date.now() + 10_000;
+          let frame;
+          while (!frame && Date.now() < frameDeadline) {
+            frame = page.frames().find(frame => frame.url().startsWith(`${origin}/apps/${app}/`));
+            if (!frame) await new Promise(resolve => setTimeout(resolve, 50));
+          }
           assert.ok(frame, `${app}: product frame exists`);
           await frame.waitForLoadState('domcontentloaded');
           assert.equal(await frame.evaluate(() => self.origin), 'null', `${app}: opaque origin`);
@@ -94,7 +97,7 @@ try {
           const blocked = await frame.evaluate(url => new Promise(resolve => {
             const timer = setTimeout(() => resolve(null), 5000);
             document.addEventListener('securitypolicyviolation', event => {
-              if (event.blockedURI === url && event.effectiveDirective.startsWith('script-src')) {
+              if ([url, new URL(url).origin].includes(event.blockedURI) && event.effectiveDirective.startsWith('script-src')) {
                 clearTimeout(timer);
                 resolve({ directive: event.effectiveDirective, executed: !!globalThis.foreignScriptExecuted });
               }
