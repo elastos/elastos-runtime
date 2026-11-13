@@ -118,9 +118,9 @@ export function inspectMetadata(metadata, graphName) {
     ["iroh-base", ["1.4.1"]],
     ["iroh-dns", ["1.4.1"]],
     ["iroh-relay", ["1.4.1"]],
-    ["iroh-gossip", ["0.101.0"]],
+    ["iroh-gossip", ["0.102.0"]],
     ["iroh-mdns-address-lookup", ["0.4.0"]],
-    ["distributed-topic-tracker", ["0.3.5"]],
+    ["distributed-topic-tracker", []],
     ["hickory-proto", ["0.26.2"]],
     ["hickory-resolver", []],
     ["n0-dns-resolver", ["0.1.0"]],
@@ -141,18 +141,6 @@ export function inspectMetadata(metadata, graphName) {
   requireReachable(
     metadata,
     graphName,
-    { name: "distributed-topic-tracker", version: "0.3.5" },
-    { name: "iroh", version: "1.4.1" },
-  );
-  requireReachable(
-    metadata,
-    graphName,
-    { name: "distributed-topic-tracker", version: "0.3.5" },
-    { name: "iroh-gossip", version: "0.101.0" },
-  );
-  requireReachable(
-    metadata,
-    graphName,
     { name: "elastos-identity", version: "2.0.1" },
     { name: "ed25519-dalek", version: "2.2.0" },
   );
@@ -162,12 +150,12 @@ export function inspectMetadata(metadata, graphName) {
     { name: "iroh", version: "1.4.1" },
     { name: "ed25519-dalek", version: "3.0.0-rc.0" },
   );
-  requireReachable(
-    metadata,
-    graphName,
-    { name: "distributed-topic-tracker", version: "0.3.5" },
-    { name: "ed25519-dalek", version: "3.0.0-rc.0" },
-  );
+
+  const hpkeKeyId = packageId(metadata, "x25519-dalek", "2.0.1");
+  const hpkeKeyFeatures = metadata.resolve.nodes.find(node => node.id === hpkeKeyId)?.features || [];
+  if (!hpkeKeyFeatures.includes("zeroize")) {
+    fail(`${graphName} X25519 2.x private keys must enable zeroize`);
+  }
 
   return Object.fromEntries(expected);
 }
@@ -206,29 +194,24 @@ function main() {
   for (const path of ["README.md", "docs/GETTING_STARTED.md", "elastos/README.md"]) {
     requireText(path, /Rust 1\.91(\.0)?\+?|Rust 1\.91 or newer/, `${path} must document the Rust 1.91 floor`);
   }
-  const serverManifest = requireText(
-    "elastos/crates/elastos-server/Cargo.toml",
-    /ed25519-dalek3 = \{ package = "ed25519-dalek", version = "=3\.0\.0-rc\.0" \}/,
-    "the Ed25519 3 transport boundary must remain explicit",
-  );
+  const serverManifest = readFileSync(resolve(repoRoot, "elastos/crates/elastos-server/Cargo.toml"), "utf8");
+  if (/distributed-topic-tracker/.test(serverManifest)) {
+    fail("the server manifest must exclude distributed-topic-tracker");
+  }
   for (const declaration of [
     /^iroh = "=1\.4\.1"$/m,
-    /^iroh-gossip = "=0\.101\.0"$/m,
+    /^iroh-gossip = "=0\.102\.0"$/m,
     /^iroh-mdns-address-lookup = "=0\.4\.0"$/m,
-    /^distributed-topic-tracker = "=0\.3\.5"$/m,
   ]) {
     if (!declaration.test(serverManifest)) {
       fail(`server manifest is missing ${declaration}`);
     }
   }
-  const carrierSource = requireText(
+  requireText(
     "elastos/crates/elastos-server/src/carrier.rs",
-    /ed25519_dalek3::SigningKey::from_bytes\(&sk_bytes\)/,
-    "tracker signing must cross the Ed25519 boundary as raw key bytes",
+    /SecretKey::from_bytes\(&signing_key\.to_bytes\(\)\)/,
+    "Iroh signing must cross the Ed25519 boundary as raw key bytes",
   );
-  if (!/SecretKey::from_bytes\(&signing_key\.to_bytes\(\)\)/.test(carrierSource)) {
-    fail("Iroh signing must cross the Ed25519 boundary as raw key bytes");
-  }
 
   // quick-xml 0.41.0 is the patched release for RUSTSEC-2026-0194/0195.
   const closedAdvisories = ["RUSTSEC-2026-0118", "RUSTSEC-2026-0119", "RUSTSEC-2026-0194", "RUSTSEC-2026-0195"];

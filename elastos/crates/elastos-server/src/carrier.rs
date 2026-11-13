@@ -25,22 +25,14 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use base64::Engine as _;
+use futures_lite::StreamExt;
 use iroh::address_lookup::memory::MemoryLookup;
 use iroh::address_lookup::AddrFilter;
 use iroh::endpoint::{BeforeConnectOutcome, EndpointHooks};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, SecretKey, Watcher};
-use iroh_mdns_address_lookup::MdnsAddressLookup;
-// AutoDiscoveryGossip trait extends Gossip with DHT-based peer discovery.
-// RecordPublisher publishes topic records to DHT so peers can find each other.
-// DHT auto-discovery imports — used by native `elastos chat` path (main.rs).
-// Provider gossip_join uses deterministic subscribe_with_opts for now.
-#[allow(unused_imports)]
-use distributed_topic_tracker::{
-    AutoDiscoveryGossip, Config as TopicTrackerConfig, RecordPublisher, TimeoutConfig, TopicId,
-};
-use futures_lite::StreamExt;
 use iroh_gossip::net::Gossip;
+use iroh_mdns_address_lookup::MdnsAddressLookup;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use tokio::io::{self, AsyncBufReadExt, AsyncReadExt as _, AsyncWriteExt, BufReader};
@@ -133,7 +125,7 @@ const GOSSIP_ACTOR_TIMEOUT: Duration = Duration::from_secs(2);
 /// than running later, right after another one.
 const GOSSIP_RECOVERY_START_TIMEOUT: Duration = Duration::from_secs(2);
 /// A consumer that joins a CID topic after the holder announced still needs a
-/// window for DHT/mDNS to form a gossip neighbor and for the signed fetch
+/// window for bootstrap peers to form a gossip neighbor and for the signed fetch
 /// ticket to arrive. One absolute deadline covers late holders. Operator peer
 /// tickets remain the fallback when this window stays empty. Installed late-join
 /// on LAN needed more than 8s (2026-09-16).
@@ -387,15 +379,8 @@ const GOSSIP_PEEK_MAX_MESSAGES: usize = 256;
 // Maximum complete encoded provider response returned by one gossip_peek.
 const GOSSIP_PEEK_MAX_BATCH_BYTES: usize = GOSSIP_TOPIC_BUFFER_MAX_BYTES;
 
-/// Well-known secret for topic discovery. Any Carrier node with this secret
-/// can discover peers on the same topic via DHT.
-const TOPIC_DISCOVERY_SECRET: &[u8] = b"elastos-carrier-v1";
-
-/// Hash a topic name to the same 32-byte topic ID used by distributed-topic-tracker.
-///
-/// Direct bootstrap and DHT auto-discovery must resolve the same logical topic
-/// string to the same iroh-gossip topic, otherwise a direct fallback can never
-/// meet an auto-discovered topic mesh.
+/// Hash a topic name to its stable 32-byte gossip ID.
+/// Existing rooms retain their SHA-512 prefix when bootstrap peers change.
 pub fn topic_hash(name: &str) -> iroh_gossip::proto::TopicId {
     let hash = Sha512::digest(name.as_bytes());
     let mut id = [0u8; 32];
@@ -462,7 +447,6 @@ struct TopicBuffer {
 #[derive(Clone)]
 enum TopicJoin {
     Direct(Vec<iroh::EndpointId>),
-    Discovered,
 }
 
 /// The Router's gossip entry. A gossip rebuild swaps the actor behind it, so
@@ -651,8 +635,7 @@ fn now_secs() -> u64 {
 // ── Carrier Node ─────────────────────────────────────────────────
 
 /// A running Carrier node with file serving and gossip.
-/// Uses DHT-based peer discovery via `distributed-topic-tracker` — Carrier
-/// works like a virtual LAN. Join a topic, discover peers automatically.
+/// Topics join through configured bootstrap peers or explicit connect tickets.
 pub struct CarrierNode {
     pub endpoint: Endpoint,
     _router: Router,
@@ -726,6 +709,29 @@ impl CarrierRuntimeService {
     }
 }
 
+#[derive(Clone)]
+struct CarrierGossipSender(iroh_gossip::api::GossipSender);
+
+async fn carrier_gossip_send(
+    operation: &str,
+    send: impl std::future::Future<Output = std::result::Result<(), iroh_gossip::api::ApiError>>,
+) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(5), send)
+        .await
+        .map_err(|_| anyhow::anyhow!("{operation} timed out"))?
+        .map_err(Into::into)
+}
+
+impl CarrierGossipSender {
+    async fn broadcast(&self, data: Vec<u8>) -> Result<()> {
+        carrier_gossip_send("broadcast", self.0.broadcast(data.into())).await
+    }
+
+    async fn join_peers(&self, peers: Vec<iroh::EndpointId>) -> Result<()> {
+        carrier_gossip_send("join_peers", self.0.join_peers(peers)).await
+    }
+}
+
 pub struct GossipState {
     endpoint: Endpoint,
     gossip: Gossip,
@@ -738,7 +744,7 @@ pub struct GossipState {
     bootstrap_peers: Vec<iroh::EndpointId>,
     #[cfg(test)]
     last_direct_join_peers: Option<Vec<iroh::EndpointId>>,
-    senders: HashMap<String, distributed_topic_tracker::GossipSender>,
+    senders: HashMap<String, CarrierGossipSender>,
     receiver_tasks: HashMap<String, tokio::task::JoinHandle<()>>,
     buffers: Arc<Mutex<HashMap<String, TopicBuffer>>>,
     cursors: Arc<Mutex<HashMap<(String, String), GossipConsumerCursor>>>,
@@ -871,7 +877,7 @@ fn add_ticket_endpoints(
             );
         } else {
             debug!(
-                "carrier: remembered peer {} for DHT rendezvous",
+                "carrier: remembered peer {} for direct rendezvous",
                 &peer_id[..12]
             );
         }
@@ -882,7 +888,7 @@ fn add_ticket_endpoints(
 /// Loads every ticket from the operator peer store (written by `elastos
 /// node peer add --did ... --ticket ...`) into the endpoint's
 /// `MemoryLookup`, so a later `connect_resolved_peer` by peer DID can
-/// resolve an address without waiting on gossip/mDNS/DHT discovery.
+/// resolve an address without waiting on gossip or mDNS discovery.
 /// Returns those endpoint IDs as gossip bootstrap peers so a content-topic
 /// join can reach an operator-named holder.
 ///
@@ -1229,7 +1235,7 @@ async fn register_topic_state(
     state: &mut GossipState,
     topic_name: &str,
     join: TopicJoin,
-    sender: distributed_topic_tracker::GossipSender,
+    sender: CarrierGossipSender,
     receiver_task: tokio::task::JoinHandle<()>,
 ) {
     state.joined_topics.insert(topic_name.to_string());
@@ -1248,10 +1254,8 @@ async fn register_topic_state(
 /// consumer cursors stay; its neighbours are relearned from the new join.
 async fn rejoin_topic(state: &mut GossipState, topic_name: &str, join: TopicJoin) -> Result<()> {
     state.topic_peers.lock().await.remove(topic_name);
-    match join {
-        TopicJoin::Direct(peers) => join_gossip_topic_direct(state, topic_name, peers).await,
-        TopicJoin::Discovered => join_gossip_topic(state, topic_name, false).await,
-    }
+    let TopicJoin::Direct(peers) = join;
+    join_gossip_topic_direct(state, topic_name, peers).await
 }
 
 /// Leaves one topic and joins it again with the peers it was joined with.
@@ -1273,8 +1277,8 @@ async fn leave_and_rejoin_topic(state: &mut GossipState, topic_name: &str) -> Re
 }
 
 /// Replaces the gossip actor and joins every recorded topic on the new one.
-/// iroh-gossip 0.101 can hold a peer forever (a full per-peer send queue, or
-/// a peer left pending after a failed dial); only a new actor drops that.
+/// A new actor drops stalled connections and pending dials, then restores
+/// the recorded bootstrap peers for each topic.
 /// Returns how many topics joined again.
 async fn rebuild_carrier_gossip(state: &mut GossipState) -> Result<usize> {
     anyhow::ensure!(!state.closed, "Carrier gossip is shut down");
@@ -1337,80 +1341,7 @@ async fn join_gossip_topic_direct(
     .await
     .context("gossip subscription timed out")??;
     let (iroh_sender, iroh_receiver) = joined.split();
-    let dtt_sender =
-        distributed_topic_tracker::GossipSender::new(iroh_sender, TimeoutConfig::default());
-    state
-        .buffers
-        .lock()
-        .await
-        .entry(topic_name.to_string())
-        .or_default();
-    let buffers = state.buffers.clone();
-    let peers = state.peers.clone();
-    let topic_peers = state.topic_peers.clone();
-    let topic_key = topic_name.to_string();
-    let sender_for_recv = dtt_sender.clone();
-    let local_did = state.did.clone();
-    let receiver_task = tokio::spawn(async move {
-        recv_loop(
-            CarrierGossipReceiver::Direct(iroh_receiver),
-            buffers,
-            peers,
-            topic_peers,
-            topic_key,
-            sender_for_recv,
-            local_did,
-        )
-        .await;
-    });
-    register_topic_state(
-        state,
-        topic_name,
-        TopicJoin::Direct(bootstrap_peers),
-        dtt_sender,
-        receiver_task,
-    )
-    .await;
-    Ok(())
-}
-
-async fn join_gossip_topic(
-    state: &mut GossipState,
-    topic_name: &str,
-    force_direct: bool,
-) -> Result<()> {
-    let bootstrap_peers = state.bootstrap_peers.clone();
-    if force_direct || state.direct_only {
-        return join_gossip_topic_direct(state, topic_name, bootstrap_peers).await;
-    }
-
-    let sk_bytes = match &state.signing_key {
-        Some(k) => k.to_bytes(),
-        None => anyhow::bail!("no signing key"),
-    };
-    let dtt_sk = ed25519_dalek3::SigningKey::from_bytes(&sk_bytes);
-    let topic_id = TopicId::new(topic_name.to_string());
-    let record_publisher = RecordPublisher::new(
-        topic_id,
-        dtt_sk,
-        None,
-        TOPIC_DISCOVERY_SECRET.to_vec(),
-        TopicTrackerConfig::default(),
-    );
-    info!(
-        "carrier: gossip_join '{}' via DHT auto-discovery ({} connected bootstrap peer(s))",
-        topic_name,
-        bootstrap_peers.len()
-    );
-    let (sender, receiver) = tokio::time::timeout(GOSSIP_SUBSCRIBE_TIMEOUT, async {
-        let topic = state
-            .gossip
-            .subscribe_and_join_with_auto_discovery_no_wait(record_publisher)
-            .await?;
-        topic.split().await
-    })
-    .await
-    .context("gossip subscription timed out")??;
+    let sender = CarrierGossipSender(iroh_sender);
     state
         .buffers
         .lock()
@@ -1425,7 +1356,7 @@ async fn join_gossip_topic(
     let local_did = state.did.clone();
     let receiver_task = tokio::spawn(async move {
         recv_loop(
-            CarrierGossipReceiver::Discovered(receiver),
+            iroh_receiver,
             buffers,
             peers,
             topic_peers,
@@ -1438,12 +1369,17 @@ async fn join_gossip_topic(
     register_topic_state(
         state,
         topic_name,
-        TopicJoin::Discovered,
+        TopicJoin::Direct(bootstrap_peers),
         sender,
         receiver_task,
     )
     .await;
     Ok(())
+}
+
+async fn join_gossip_topic(state: &mut GossipState, topic_name: &str) -> Result<()> {
+    let bootstrap_peers = state.bootstrap_peers.clone();
+    join_gossip_topic_direct(state, topic_name, bootstrap_peers).await
 }
 
 pub fn source_carrier_addrs(source: &TrustedSource) -> Vec<String> {
@@ -2131,18 +2067,18 @@ async fn start_carrier_node_with_network(
         }
     }
 
-    if is_trusted_source_runtime(&data_dir) {
+    if community_hub || is_trusted_source_runtime(&data_dir) {
         let mut state = gossip_state.lock().await;
-        match join_gossip_topic(&mut state, CHAT_DISCOVERY_TOPIC_GENERAL, true).await {
+        match join_gossip_topic(&mut state, CHAT_DISCOVERY_TOPIC_GENERAL).await {
             Ok(()) => {
                 info!(
-                    "carrier: trusted source discovery topic '{}' ready",
+                    "carrier: bootstrap discovery topic '{}' ready",
                     CHAT_DISCOVERY_TOPIC_GENERAL
                 );
             }
             Err(err) => {
                 tracing::warn!(
-                    "carrier: failed to join trusted source discovery topic '{}': {}",
+                    "carrier: failed to join bootstrap discovery topic '{}': {}",
                     CHAT_DISCOVERY_TOPIC_GENERAL,
                     err
                 );
@@ -4335,7 +4271,7 @@ impl CarrierAvailabilityProvider {
                     "Carrier availability topic limit reached",
                 ));
             }
-            if let Err(err) = join_gossip_topic(&mut state, &topic_name, false).await {
+            if let Err(err) = join_gossip_topic(&mut state, &topic_name).await {
                 return Ok(carrier_availability_error(
                     "join_failed",
                     format!("Carrier availability topic join failed: {err}"),
@@ -4686,7 +4622,7 @@ impl CarrierAvailabilityProvider {
                         "Carrier availability topic limit reached",
                     ));
                 }
-                if let Err(err) = join_gossip_topic(&mut state, &topic_name, false).await {
+                if let Err(err) = join_gossip_topic(&mut state, &topic_name).await {
                     tracing::debug!(
                         "Carrier availability topic join failed; announced holders are unavailable: {err}"
                     );
@@ -6970,11 +6906,6 @@ impl Provider for CarrierGossipProvider {
 
             "gossip_join" => {
                 let topic_name = request["topic"].as_str().unwrap_or_default();
-                let force_direct = request
-                    .get("mode")
-                    .and_then(|value| value.as_str())
-                    .map(|mode| mode.eq_ignore_ascii_case("direct"))
-                    .unwrap_or(false);
                 if topic_name.is_empty() {
                     return Ok(
                         serde_json::json!({"status":"error","code":"missing_topic","message":"topic required"}),
@@ -6991,7 +6922,7 @@ impl Provider for CarrierGossipProvider {
                     );
                 }
 
-                match join_gossip_topic(&mut state, topic_name, force_direct).await {
+                match join_gossip_topic(&mut state, topic_name).await {
                     Ok(()) => Ok(serde_json::json!({"status":"ok","data":{"topic": topic_name}})),
                     Err(err) => Ok(
                         serde_json::json!({"status":"error","code":"join_failed","message": err.to_string()}),
@@ -7621,11 +7552,8 @@ impl Provider for CarrierGossipProvider {
                         serde_json::json!({"status":"error","code":"missing_peers","message":"peers required"}),
                     );
                 }
-                match tokio::time::timeout(
-                    GOSSIP_JOIN_PEERS_TIMEOUT,
-                    sender.join_peers(peer_ids, None),
-                )
-                .await
+                match tokio::time::timeout(GOSSIP_JOIN_PEERS_TIMEOUT, sender.join_peers(peer_ids))
+                    .await
                 {
                     Ok(Ok(_)) => {
                         Ok(serde_json::json!({"status":"ok","data":{"topic": topic_name}}))
@@ -7684,7 +7612,7 @@ fn local_content_availability_catchup_message(
 async fn rebroadcast_local_content_availability_catchup(
     buffers: &Arc<Mutex<HashMap<String, TopicBuffer>>>,
     topic: &str,
-    sender: &distributed_topic_tracker::GossipSender,
+    sender: &CarrierGossipSender,
     local_did: Option<&str>,
 ) {
     if !is_content_availability_topic(topic) {
@@ -7768,46 +7696,18 @@ async fn handle_gossip_event(
     }
 }
 
-enum CarrierGossipReceiver {
-    Direct(iroh_gossip::api::GossipReceiver),
-    Discovered(distributed_topic_tracker::GossipReceiver),
-}
-
-impl CarrierGossipReceiver {
-    async fn next(&mut self) -> anyhow::Result<Option<iroh_gossip::api::Event>> {
-        match self {
-            Self::Direct(receiver) => match receiver.next().await {
-                Some(Ok(event)) => Ok(Some(event)),
-                Some(Err(err)) => Err(err.into()),
-                None => Ok(None),
-            },
-            Self::Discovered(receiver) => match receiver.next().await {
-                Ok(event) => Ok(Some(event)),
-                Err(err) => {
-                    if receiver.is_joined().await.unwrap_or(false) {
-                        Err(err.into())
-                    } else {
-                        tracing::warn!("carrier discovered gossip receiver ended: {err}");
-                        Ok(None)
-                    }
-                }
-            },
-        }
-    }
-}
-
 async fn recv_loop(
-    mut receiver: CarrierGossipReceiver,
+    mut receiver: iroh_gossip::api::GossipReceiver,
     buffers: Arc<Mutex<HashMap<String, TopicBuffer>>>,
     peers: Arc<Mutex<Vec<String>>>,
     topic_peers: Arc<Mutex<HashMap<String, HashSet<String>>>>,
     topic: String,
-    sender: distributed_topic_tracker::GossipSender,
+    sender: CarrierGossipSender,
     local_did: Option<String>,
 ) {
     loop {
         match receiver.next().await {
-            Ok(Some(event)) => {
+            Some(Ok(event)) => {
                 let neighbor_up = matches!(&event, iroh_gossip::api::Event::NeighborUp(_));
                 handle_gossip_event(event, &buffers, &peers, &topic_peers, &topic).await;
                 if neighbor_up {
@@ -7820,11 +7720,11 @@ async fn recv_loop(
                     .await;
                 }
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 tracing::warn!("carrier recv_loop error on '{}': {}", topic, e);
                 // Continue — transient errors should not kill the receiver
             }
-            Ok(None) => {
+            None => {
                 tracing::info!("carrier recv_loop ended for '{}' (stream closed)", topic);
                 break;
             }
@@ -9346,7 +9246,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         let provider = CarrierGossipProvider::new(node.gossip_state.clone());
-        let topic = "__test/tracker-handle-teardown";
+        let topic = "__test/direct-handle-teardown";
 
         let first_join = provider
             .send_raw(&serde_json::json!({
@@ -9402,27 +9302,37 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn test_carrier_tracker_leave_rejoin_and_shutdown_finish_receiver_tasks() {
+    async fn test_carrier_default_join_leave_rejoin_and_shutdown_finish_receiver_tasks() {
         let dir = tempfile::tempdir().unwrap();
         let (sk, did) = elastos_identity::derive_did(&[74u8; 32]);
         let node = start_carrier_node(&sk, &did, dir.path().to_path_buf())
             .await
             .unwrap();
+        let bootstrap_peer = iroh::SecretKey::from_bytes(&[75u8; 32]).public();
+        {
+            let mut state = node.gossip_state.lock().await;
+            state.direct_only = false;
+            state.bootstrap_peers.push(bootstrap_peer);
+        }
         let provider = CarrierGossipProvider::new(node.gossip_state.clone());
-        let topic = "__test/tracker-auto-discovery-handle-teardown";
+        let topic = "__test/bootstrap-handle-teardown";
 
         let first_join = provider
             .send_raw(&serde_json::json!({"op": "gossip_join", "topic": topic}))
             .await
             .unwrap();
         assert_eq!(first_join["status"], "ok");
+        assert_eq!(
+            node.gossip_state.lock().await.last_direct_join_peers,
+            Some(vec![bootstrap_peer])
+        );
         let first_task = node
             .gossip_state
             .lock()
             .await
             .receiver_tasks
             .get(topic)
-            .expect("tracked topic has a receiver task")
+            .expect("bootstrap topic has a receiver task")
             .abort_handle();
 
         let leave = provider
@@ -9443,7 +9353,7 @@ pub(crate) mod tests {
             .await
             .receiver_tasks
             .get(topic)
-            .expect("rejoined tracked topic has a receiver task")
+            .expect("rejoined bootstrap topic has a receiver task")
             .abort_handle();
 
         shutdown_test_carrier_node(node).await;
@@ -9947,6 +9857,40 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_carrier_dependency_removal_preserves_hpke_key_erasure() {
+        assert!(
+            std::mem::needs_drop::<x25519_dalek::StaticSecret>(),
+            "HPKE's X25519 private keys keep zeroize-on-drop without the topic tracker"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_carrier_gossip_send_preserves_five_second_timeouts_and_errors() {
+        for operation in ["broadcast", "join_peers"] {
+            let start = tokio::time::Instant::now();
+            let error = carrier_gossip_send(operation, std::future::pending())
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), format!("{operation} timed out"));
+            assert_eq!(start.elapsed(), Duration::from_secs(5));
+            let error = carrier_gossip_send(operation, async {
+                Err(iroh_gossip::api::ApiError::Closed {
+                    meta: Default::default(),
+                })
+            })
+            .await
+            .unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<iroh_gossip::api::ApiError>(),
+                Some(iroh_gossip::api::ApiError::Closed { .. })
+            ));
+            carrier_gossip_send(operation, async { Ok(()) })
+                .await
+                .unwrap();
+        }
+    }
+
+    #[test]
     fn test_topic_hash_deterministic() {
         let h1 = topic_hash("#general");
         let h2 = topic_hash("#general");
@@ -9957,7 +9901,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_topic_hash_matches_distributed_topic_tracker_topic_id() {
+    fn test_topic_hash_retains_sha512_prefix() {
         let topic_name = "__elastos_internal/carrier-test-v1/topic";
         let mut expected = [0u8; 32];
         expected.copy_from_slice(&Sha512::digest(topic_name.as_bytes())[..32]);
@@ -18314,6 +18258,69 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn test_community_hub_bootstraps_native_chat_discovery_without_publisher() {
+        let hub_dir = tempfile::tempdir().unwrap();
+        let (sk, did) = elastos_identity::derive_did(&[93u8; 32]);
+        let hub_id = SecretKey::from_bytes(&sk.to_bytes()).public().to_string();
+        let hub = start_carrier_node_with_network(
+            &sk,
+            &did,
+            hub_dir.path().to_path_buf(),
+            None,
+            CarrierNodeNetwork::Isolated,
+            Some("127.0.0.1:0".parse().unwrap()),
+            &[hub_id],
+        )
+        .await
+        .unwrap();
+        assert!(!is_trusted_source_runtime(hub_dir.path()));
+        assert!(
+            hub.gossip_state
+                .lock()
+                .await
+                .joined_topics
+                .contains(CHAT_DISCOVERY_TOPIC_GENERAL),
+            "Community bootstrap nodes carry native chat presence without publisher state"
+        );
+        let home_dir1 = tempfile::tempdir().unwrap();
+        let home_dir2 = tempfile::tempdir().unwrap();
+        let (sk1, did1) = elastos_identity::derive_did(&[94u8; 32]);
+        let (sk2, did2) = elastos_identity::derive_did(&[95u8; 32]);
+        let home1 = start_isolated_carrier_node_with_registry(
+            &sk1,
+            &did1,
+            home_dir1.path().to_path_buf(),
+            None,
+        )
+        .await
+        .unwrap();
+        let home2 = start_isolated_carrier_node_with_registry(
+            &sk2,
+            &did2,
+            home_dir2.path().to_path_buf(),
+            None,
+        )
+        .await
+        .unwrap();
+        let hub_addr = wait_for_direct_endpoint_addr(&hub.endpoint).await;
+        for home in [&home1, &home2] {
+            home.memory_lookup.add_endpoint_info(hub_addr.clone());
+            let mut state = home.gossip_state.lock().await;
+            state.bootstrap_peers.push(hub.endpoint.id());
+            join_gossip_topic(&mut state, CHAT_DISCOVERY_TOPIC_GENERAL)
+                .await
+                .unwrap();
+        }
+        let provider1 = CarrierGossipProvider::new(home1.gossip_state.clone());
+        let provider2 = CarrierGossipProvider::new(home2.gossip_state.clone());
+        assert!(frames_flow(&provider1, &provider2, CHAT_DISCOVERY_TOPIC_GENERAL, 0).await);
+        assert!(frames_flow(&provider2, &provider1, CHAT_DISCOVERY_TOPIC_GENERAL, 0).await);
+        shutdown_test_carrier_node(home1).await;
+        shutdown_test_carrier_node(home2).await;
+        shutdown_test_carrier_node(hub).await;
+    }
+
+    #[tokio::test]
     async fn test_trusted_source_runtime_joins_discovery_topic() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(elastos_common::localhost::publisher_root_path(dir.path()))
@@ -20146,7 +20153,7 @@ pub(crate) mod tests {
             topic: TopicId,
             nodes: BTreeMap<u64, (u64, State<u64, StdRng>)>,
             queue: VecDeque<(u64, InEvent<u64>)>,
-            timers: Vec<(Instant, u64, u64, proto::Timer<u64>)>,
+            timers: Vec<(Instant, u64, u64, InEvent<u64>)>,
             now: Instant,
             events: usize,
             neighbours: BTreeMap<u64, BTreeSet<u64>>,
@@ -20237,10 +20244,9 @@ pub(crate) mod tests {
                     match event {
                         OutEvent::SendMessage(to, message) => {
                             if self.reachable(node, to) && self.nodes.contains_key(&to) {
-                                self.queue
-                                    .push_back((to, InEvent::RecvMessage(node, message)));
+                                self.schedule_network(to, InEvent::RecvMessage(node, message));
                             } else {
-                                self.queue.push_back((node, InEvent::PeerDisconnected(to)));
+                                self.schedule_network(node, InEvent::PeerDisconnected(to));
                             }
                         }
                         OutEvent::EmitEvent(_, topic::Event::NeighborUp(peer)) => {
@@ -20257,14 +20263,32 @@ pub(crate) mod tests {
                             self.received.insert(node);
                         }
                         OutEvent::ScheduleTimer(after, timer) => {
-                            self.timers.push((now + after, node, generation, timer));
+                            self.timers.push((
+                                now + after,
+                                node,
+                                generation,
+                                InEvent::TimerExpired(timer),
+                            ));
                         }
                         OutEvent::DisconnectPeer(peer) => {
-                            self.queue
-                                .push_back((peer, InEvent::PeerDisconnected(node)));
+                            self.schedule_network(peer, InEvent::PeerDisconnected(node));
                         }
                         OutEvent::PeerData(..) => {}
+                        event => panic!("unhandled gossip protocol event: {event:?}"),
                     }
+                }
+            }
+
+            // Like iroh-gossip's simulator, network events take time. A zero-time
+            // failed dial can trigger rejoins forever before any timer runs.
+            fn schedule_network(&mut self, node: u64, event: InEvent<u64>) {
+                if let Some((generation, _)) = self.nodes.get(&node) {
+                    self.timers.push((
+                        self.now + Duration::from_millis(10),
+                        node,
+                        *generation,
+                        event,
+                    ));
                 }
             }
 
@@ -20282,10 +20306,10 @@ pub(crate) mod tests {
                         .min_by_key(|(_, (at, ..))| *at)
                         .map(|(index, _)| index);
                     let Some(index) = next else { break };
-                    let (at, node, generation, timer) = self.timers.swap_remove(index);
+                    let (at, node, generation, event) = self.timers.remove(index);
                     self.now = self.now.max(at);
                     if self.nodes.get(&node).is_some_and(|(g, _)| *g == generation) {
-                        self.handle(node, InEvent::TimerExpired(timer));
+                        self.handle(node, event);
                     }
                 }
                 self.now = until;
