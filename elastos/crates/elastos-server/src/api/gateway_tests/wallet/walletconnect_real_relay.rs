@@ -180,7 +180,26 @@ async fn walletconnect_gateway_process_worker() {
         .await
         .unwrap();
     state.provider_registry = Some(registry);
-    let app = gateway_router_with_api_url(state, format!("http://{addr}"));
+    let expected_origin = format!("http://{addr}");
+    let expected_host = addr.to_string();
+    let refusal_path = data.join("relay-handshake-refusal.json");
+    let app = gateway_router_with_api_url(state, expected_origin.clone()).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let refusal_path = refusal_path.clone();
+            let relay = request.uri().path() == "/api/apps/wallet-walletconnect/relay";
+            let origin_count = request.headers().get_all("origin").iter().count();
+            let origin = request.headers().get("origin").and_then(|h|h.to_str().ok());
+            let kind = match origin { None=>"missing",Some("null")=>"opaque",Some(value) if value==expected_origin=>"same-home",_=>"other" };
+            let host_matches = request.headers().get("host").and_then(|h|h.to_str().ok()) == Some(expected_host.as_str());
+            async move {
+                let response = next.run(request).await;
+                if relay && response.status()==StatusCode::FORBIDDEN {
+                    crate::auth::atomic_write(&refusal_path, &serde_json::to_vec(&json!({"status":403,"origin_kind":kind,"origin_headers":origin_count,"host_matches":host_matches})).unwrap()).unwrap();
+                }
+                response
+            }
+        }
+    ));
     let listener = TcpListener::bind(addr).await.unwrap();
     println!("WC_GATEWAY_READY");
     std::io::Write::flush(&mut std::io::stdout()).unwrap();
@@ -211,7 +230,7 @@ async fn start_gateway_process(f: &Fixture) -> tokio::process::Child {
                 length > 0 && count <= 32768,
                 "gateway worker failed before readiness"
             );
-            if line.trim() == "WC_GATEWAY_READY" {
+            if line.trim().ends_with("WC_GATEWAY_READY") {
                 break;
             }
         }
@@ -312,6 +331,13 @@ async fn walletconnect_real_project_opaque_preflight() {
     gateway_process.kill().await.unwrap();
     let output = result.expect("real relay paired recovery timeout");
     println!("{}", String::from_utf8_lossy(&output.stdout));
+    if let Some(bytes) =
+        gateway_walletconnect::read_bytes(&f.data.path().join("relay-handshake-refusal.json"), 1024)
+            .unwrap()
+    {
+        let record: Value = serde_json::from_slice(&bytes).unwrap();
+        println!("{}", json!({"relay_handshake_refusal":record}));
+    }
     // The Node driver emits only bounded, value-free evidence. SDK diagnostics
     // can contain relay credentials, so stderr remains private to this process.
     assert!(
