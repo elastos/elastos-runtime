@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Read, Write};
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
