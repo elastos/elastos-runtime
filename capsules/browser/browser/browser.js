@@ -2116,6 +2116,9 @@ async function commitBrowserAuthority(event) {
     if (unloadCleanupStarted || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed || unsettledRuntimeOpen) {
       throw new Error("Browser is finishing its current action. Try again in a moment.");
     }
+    // Old-launch observations cannot retire a page after Runtime transfers it.
+    stopPageStatusPolling();
+    stopPageHeartbeat();
     const freshApi = createRuntimeApi({ launchToken: data.freshHomeToken });
     const summary = await freshApi.fetchJson(`/api/apps/browser/summary?browser_instance=${encodeURIComponent(browserInstanceId)}&remote_services=0`,
       { signal: AbortSignal.timeout(10000) });
@@ -2140,12 +2143,14 @@ async function commitBrowserAuthority(event) {
     history.replaceState(history.state, "", url);
     window.top.postMessage({ type: "home:app-ready", homeToken: launchToken }, homeParentOrigin);
     relaunchRequested = false;
-    if (currentPage && browserInternetAllowed) { startPageHeartbeat(); startPageStatusPolling(); }
     ok = true;
   } catch (error) {
     showStatus(friendlyOpenError(error), { sticky: true });
   } finally {
     browserAuthorityCommit = null;
+    if (currentPage && browserInternetAllowed && !unloadCleanupStarted && !homeWindowCloseInFlight && !homeWindowTerminalCloseConfirmed) {
+      startPageHeartbeat();startPageStatusPolling();
+    }
     event.source.postMessage({ type: "elastos.browser.authority-committed/v1", requestId: data.requestId,
       homeToken: data.homeToken, browserInstance: browserInstanceId, freshHomeToken: data.freshHomeToken, ok }, "*");
   }

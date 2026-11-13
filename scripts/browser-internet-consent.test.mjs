@@ -132,6 +132,10 @@ async function fixture() {
       } : null}});return;
     }
     if (url.pathname === "/api/apps/browser/pages/retained/status") {
+      if(state.deferStatus) {
+        const defer=state.deferStatus;state.deferStatus=null;
+        await new Promise(resolve=>defer(resolve));res.writeHead(404).end();return;
+      }
       if(state.bindOwners && req.headers["x-elastos-home-token"]!==state.ownerToken){res.writeHead(404).end();return;}
       json({schema:"elastos.browser.page-status/v1",page_id:"retained",direct_network:false,actual_url:state.recoverableUrl});return;
     }
@@ -140,6 +144,10 @@ async function fixture() {
       assert.match(input.browser_instance,/^browser:/);
       state.ownerToken=req.headers["x-elastos-home-token"];
       state.restores=(state.restores||0)+1;
+      if(state.releaseStaleStatus) {
+        state.releaseStaleStatus();state.releaseStaleStatus=null;
+        await new Promise(resolve=>setTimeout(resolve,75));
+      }
       json({ok:true});return;
     }
     if (url.pathname === "/api/apps/browser/pages/retained/input") {
@@ -583,6 +591,7 @@ test("566e renewing authority preserves the current page and does not repeat the
   try {
     for(const consent of ["off","granted","pending"]) await t.test(consent, async subtest => {
       subtest.after(async()=>{for(const context of browser.contexts())await context.close();});
+      subtest.after(()=>f.state.releaseStaleStatus?.());
       f.state.consent="granted";f.state.expired=false;f.state.completeOpen=true;
       f.state.bindOwners=true;f.state.restores=0;
       f.state.opens=[];f.state.requests=0;f.state.navigations=[];f.state.recoverableUrl=null;
@@ -601,6 +610,8 @@ test("566e renewing authority preserves the current page and does not repeat the
       const input=page.waitForResponse(r=>r.url().endsWith("/pages/retained/input"));
       await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/current"}}));await input;
       await browserFrame.waitForFunction(()=>document.querySelector("#browser-url").value==="https://example.com/current");
+      const staleStatus=new Promise(resolve=>{f.state.deferStatus=release=>{f.state.releaseStaleStatus=release;resolve();};});
+      await staleStatus;
       if(consent==="off") {
         // Inbox Allow cancelled at the passkey can leave a request unanswered past its TTL.
         f.state.consent="requested";f.state.expired=true;
@@ -624,6 +635,8 @@ test("566e renewing authority preserves the current page and does not repeat the
       const frame=gui.frameLocator('iframe[title="browser"]');
       assert.equal(await (await node.contentFrame()).evaluate(()=>window.renewalDocument),documentId,
         "renewal retains the Browser document, its address and pending navigation");
+      assert.equal(await browserFrame.evaluate(()=>window.__elastosBrowserCurrentPageId),"retained",
+        "a response from the old authority cannot retire the renewed page");
       if(consent==="granted")assert.equal(await frame.locator("#browser-url").inputValue(),"https://example.com/current");
       if(consent==="pending") {
         f.state.consent="granted";
