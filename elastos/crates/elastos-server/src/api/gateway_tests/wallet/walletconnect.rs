@@ -217,6 +217,17 @@ impl Fixture {
         body: Option<Value>,
     ) -> (StatusCode, Value) {
         let origin = "null";
+        let revision = require_carried_home_launch_token(
+            self.data.path(),
+            token,
+            &[WALLET_WALLETCONNECT_CAPSULE_ID],
+        )
+        .ok()
+        .and_then(|launch| {
+            gateway_walletconnect::storage_revision(self.data.path(), &launch.context.principal_id)
+                .ok()
+        })
+        .unwrap_or_else(|| "\"0\"".into());
         let response = self
             .app
             .clone()
@@ -227,7 +238,7 @@ impl Fixture {
                     .uri(path)
                     .method(if body.is_some() { "POST" } else { "GET" })
                     .header("x-elastos-home-token", token)
-                    .header("x-elastos-walletconnect-connector", token)
+                    .header("if-match", revision)
                     .header(CONTENT_TYPE, "application/json")
                     .body(body.map_or_else(Body::empty, |v| Body::from(v.to_string())))
                     .unwrap(),
@@ -1042,5 +1053,122 @@ async fn walletconnect_cleanup_refuses_linked_parent_and_preserves_other_files()
     assert_eq!(
         std::fs::read_to_string(other.path().join(name)).unwrap(),
         "preserve"
+    );
+}
+
+#[tokio::test]
+async fn walletconnect_guest_uses_an_existing_owner_grant_without_another_approval() {
+    let f = Fixture::new().await;
+    let guest = passkey_authority_with_name_role_credential(
+        f.data.path(),
+        Some("wc-guest"),
+        crate::auth::RuntimePrincipalRole::Guest,
+        "wc-guest-credential",
+    );
+    let token = projection_launch_token_for_authority_context(
+        f.data.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &guest,
+    );
+    assert_ne!(
+        f.route(&token, INTERNET, Some(json!({"action":"request"})))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    f.allow().await;
+    let (_, before) = f.route(&f.inbox, INTERNET, None).await;
+    let (status, after) = f
+        .route(&token, INTERNET, Some(json!({"action":"request"})))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(before["request"]["id"], after["request"]["id"]);
+    assert_eq!(
+        f.route(
+            &token,
+            STORAGE,
+            Some(json!({"key":"session","value":"guest"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn walletconnect_cleanup_fences_old_storage_and_admission_and_removes_crash_temps() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    assert_eq!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"session","value":"fixture"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let principal = runtime_wallet_authority_for_app_token(
+        f.data.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &f.connector,
+    )
+    .home_launch_context()
+    .principal_id;
+    let directory = f
+        .data
+        .path()
+        .join("ElastOS/SystemServices/WalletConnect/sessions");
+    let name = format!("{}.json", hex::encode(Sha256::digest(principal.as_bytes())));
+    std::fs::write(
+        directory.join(format!(".{name}.0123456789abcdef.tmp")),
+        "fixture-crash-keys",
+    )
+    .unwrap();
+    std::fs::write(directory.join("operator-note.txt"), "preserve").unwrap();
+    let (_, grant) = f.route(&f.inbox, INTERNET, None).await;
+    f.answer(&grant, true).await;
+    assert!(!directory.join(&name).exists());
+    assert!(!directory
+        .join(format!(".{name}.0123456789abcdef.tmp"))
+        .exists());
+    assert_eq!(
+        std::fs::read_to_string(directory.join("operator-note.txt")).unwrap(),
+        "preserve"
+    );
+    f.allow().await;
+    for (path, body) in [
+        (STORAGE, json!({"key":"late","value":"old-sdk"})),
+        ("/api/apps/wallet-walletconnect/relay-admission", json!({})),
+    ] {
+        let response = f
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .header(HOST, &f.addr)
+                    .header("origin", "null")
+                    .header("x-elastos-home-token", &f.connector)
+                    .header("if-match", "\"0\"")
+                    .header(CONTENT_TYPE, "application/json")
+                    .uri(path)
+                    .method("POST")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(response.status(), StatusCode::OK, "stale SDK {path}");
+    }
+    assert_eq!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"new","value":"fresh-sdk"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
     );
 }

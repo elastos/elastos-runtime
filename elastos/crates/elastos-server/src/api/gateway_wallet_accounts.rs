@@ -33,10 +33,14 @@ pub(in crate::api::gateway) async fn runtime_wallet_data(
             if data["account"]["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
                 && !data["account"]["revoked_at"].is_null()
             {
-                gateway_walletconnect::clear_principal_storage(
+                if gateway_walletconnect::clear_principal_storage(
                     &state.data_dir,
                     authority.verified_context().principal_id(),
-                )?;
+                )
+                .is_err()
+                {
+                    tracing::warn!("WalletConnect session cleanup requires operator retry after account removal");
+                }
             }
             Ok(data)
         }
@@ -63,10 +67,14 @@ pub(in crate::api::gateway) async fn runtime_wallet_data_with_request_id(
             if data["account"]["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
                 && !data["account"]["revoked_at"].is_null()
             {
-                gateway_walletconnect::clear_principal_storage(
+                if gateway_walletconnect::clear_principal_storage(
                     &state.data_dir,
                     authority.verified_context().principal_id(),
-                )?;
+                )
+                .is_err()
+                {
+                    tracing::warn!("WalletConnect session cleanup requires operator retry after account removal");
+                }
             }
             Ok(data)
         }

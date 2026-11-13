@@ -60,6 +60,8 @@ struct Consent {
     principal: Option<String>,
     proof: Option<String>,
     capability: Option<String>,
+    #[serde(default)]
+    cleanup_pending: bool,
 }
 
 fn root(data: &FsPath) -> PathBuf {
@@ -211,6 +213,7 @@ pub(super) async fn answer(
                     &request(&c)?,
                 )?;
                 c.status = if stopping { "revoked" } else { "granted" }.into();
+                c.cleanup_pending = stopping;
                 c.principal = Some(launch.context.principal_id.clone());
                 c.proof = launch.context.proof_binding_id.clone();
                 if !stopping {
@@ -250,6 +253,8 @@ pub(super) async fn answer(
                 }
                 inner.sockets.clear();
                 clear_all_storage(&state.data_dir)?;
+                c.cleanup_pending = false;
+                save(&state.data_dir, &c)?;
                 return Ok("WalletConnect connection turned off.".into());
             }
         }
@@ -272,7 +277,8 @@ pub(super) fn notification(
                 .inner
                 .try_lock()
                 .ok()
-                .is_some_and(|inner| !inner.sockets.is_empty()));
+                .is_some_and(|inner| !inner.sockets.is_empty())
+            || (c.status == "revoked" && c.cleanup_pending));
     Some(HomeNotificationEntrySummary {
         id: "walletconnect-internet:permission".into(),
         source_app: WALLET_WALLETCONNECT_CAPSULE_ID.into(),
@@ -287,6 +293,8 @@ pub(super) fn notification(
             CONSENT
         } else if c.status == "granted" {
             "WalletConnect can reach the wallet relay."
+        } else if c.cleanup_pending {
+            "WalletConnect is off. Select Turn Off again to finish clearing its saved session."
         } else {
             "WalletConnect relay access is off."
         }
@@ -334,7 +342,6 @@ pub(super) async fn internet(
                 input.action == "request",
                 "Invalid WalletConnect internet action"
             );
-            ensure_admin_context(&state.data_dir, &authority.home_launch_context()).map_err(|_| anyhow::anyhow!("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox."))?;
             ensure_consent_request(&state, &authority.home_launch_context(), &inner)?;
         }
         Ok::<_, anyhow::Error>(public(load(&state.data_dir)?.as_ref()))
@@ -352,10 +359,14 @@ fn ensure_consent_request(
     inner: &Inner,
 ) -> anyhow::Result<()> {
     let current = load(&state.data_dir)?;
+    anyhow::ensure!(
+        current.as_ref().is_none_or(|c| !c.cleanup_pending),
+        "Finish clearing the previous WalletConnect session in Inbox first."
+    );
     if current.as_ref().is_none_or(|c| {
         c.status != "granted" && (c.status != "requested" || c.at + 1800 <= now_ts())
     }) {
-        ensure_admin_context(&state.data_dir, context)?;
+        ensure_admin_context(&state.data_dir, context).map_err(|_| anyhow::anyhow!("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox."))?;
         anyhow::ensure!(
             inner.sockets.values().all(|s| *s.done.borrow()),
             "Finish stopping WalletConnect first"
@@ -369,6 +380,7 @@ fn ensure_consent_request(
                 principal: None,
                 proof: None,
                 capability: None,
+                cleanup_pending: false,
             },
         )?;
     }
@@ -400,6 +412,16 @@ fn connector_authority(
     );
     // The signed launch carries principal, live session and exact launch instance.
     // Retaining these headers binds relay tickets and recurring checks to that launch.
+    if headers
+        .get("if-match")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("\"0\"")
+        != storage_revision(&state.data_dir, &launch.context.principal_id)?
+    {
+        anyhow::bail!(
+            "WalletConnect session changed. Close this window and open WalletConnect again."
+        );
+    }
     runtime_wallet_authority(&launch)
 }
 #[cfg(test)]
@@ -476,7 +498,15 @@ pub(super) async fn storage(
     input: Result<Json<StorageWrite>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     let result = async {
-        let authority = connector_authority(&state, &headers)?;
+        let authority = if method == axum::http::Method::DELETE {
+            require_runtime_wallet_authority(
+                &state.data_dir,
+                &headers,
+                &[WALLET_WALLETCONNECT_CAPSULE_ID],
+            )?
+        } else {
+            connector_authority(&state, &headers)?
+        };
         let _guard = state.walletconnect.inner.lock().await;
         let path = storage_path(
             &state.data_dir,
@@ -843,6 +873,7 @@ mod tests {
 pub(crate) fn clear_principal_storage(data: &FsPath, principal: &str) -> anyhow::Result<()> {
     let _files = session_files_lock()?;
     let path = storage_path(data, principal);
+    bump_storage_revision(data, path.file_name().unwrap())?;
     match std::fs::symlink_metadata(&path) {
         Ok(meta) => {
             anyhow::ensure!(
@@ -868,16 +899,28 @@ fn clear_all_storage(data: &FsPath) -> anyhow::Result<()> {
     );
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
         let name = entry.file_name();
-        let name = name.to_str().unwrap_or_default();
-        anyhow::ensure!(
-            name.strip_suffix(".json").is_some_and(|stem| stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit())),
-            "Invalid WalletConnect session file"
-        );
-        anyhow::ensure!(
-            entry.file_type()?.is_file(),
-            "WalletConnect session requires a regular file"
-        );
+        let text = name.to_str().unwrap_or_default();
+        let stem = text.strip_suffix(".json").or_else(|| {
+            text.strip_prefix('.')
+                .and_then(|s| s.split_once(".json."))
+                .and_then(|(stem, tail)| {
+                    tail.strip_suffix(".tmp")
+                        .filter(|suffix| {
+                            suffix.len() == 16 && suffix.bytes().all(|b| b.is_ascii_hexdigit())
+                        })
+                        .map(|_| stem)
+                })
+        });
+        let Some(stem) =
+            stem.filter(|stem| stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit()))
+        else {
+            continue;
+        };
+        bump_storage_revision(data, std::ffi::OsStr::new(&format!("{stem}.json")))?;
         let path = entry.path();
         remove_session_file(data, &path, &std::fs::symlink_metadata(&path)?)?;
     }
@@ -909,4 +952,22 @@ fn session_files_lock() -> anyhow::Result<std::sync::MutexGuard<'static, ()>> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock()
         .map_err(|_| anyhow::anyhow!("WalletConnect session storage is unavailable"))
+}
+
+pub(super) fn storage_revision(data: &FsPath, principal: &str) -> anyhow::Result<String> {
+    let path = storage_path(data, principal);
+    let value: u64 = read(
+        &root(data).join("revisions").join(path.file_name().unwrap()),
+        128,
+    )?
+    .unwrap_or(0);
+    Ok(format!("\"{value}\""))
+}
+fn bump_storage_revision(data: &FsPath, name: &std::ffi::OsStr) -> anyhow::Result<()> {
+    let path = root(data).join("revisions").join(name);
+    let previous: u64 = read(&path, 128)?.unwrap_or(0);
+    let next = previous
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("WalletConnect revision overflow"))?;
+    crate::auth::atomic_write(&path, &serde_json::to_vec(&next)?)
 }

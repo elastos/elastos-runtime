@@ -5,13 +5,14 @@ pub(in crate::api::gateway) async fn wallet_connector_config(
     Path(wallet_connector): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(err) = require_wallet_connector_launch_context(
+    let context = match require_wallet_connector_launch_context(
         &state.data_dir,
         &headers,
         wallet_connector.as_str(),
     ) {
-        return system_error_response(err);
-    }
+        Ok(context) => context,
+        Err(err) => return system_error_response(err),
+    };
 
     let mut payload = serde_json::json!({
         "schema": "elastos.wallet.connector.config/v1",
@@ -25,8 +26,16 @@ pub(in crate::api::gateway) async fn wallet_connector_config(
             Ok(config)
         }) {
             Ok(config) => {
+                let revision = match gateway_walletconnect::storage_revision(
+                    &state.data_dir,
+                    &context.principal_id,
+                ) {
+                    Ok(revision) => revision,
+                    Err(err) => return system_error_response(err),
+                };
                 payload["walletconnect"] = serde_json::json!({
                     "project_id": config.project_id,
+                    "storage_revision": revision,
                     "sdk_package": config.sdk_package,
                     "sdk_version": config.sdk_version,
                     "sdk_asset_path": "/apps/wallet-walletconnect/vendor/reown-appkit.js",
