@@ -12,9 +12,9 @@ class Element {
 }
 const doc = { createElement: tag => new Element(tag) };
 
-test("one decimal size rule covers byte and decimal unit boundaries", () => {
+test("decimal size rule covers byte and decimal unit boundaries", () => {
   for (const [bytes, label] of [[0, "0 B"], [999, "999 B"], [1000, "1.0 KB"], [1050, "1.1 KB"],
-    [999900, "999.9 KB"], [999949, "999.9 KB"], [999950, "1.0 MB"], [999999, "1.0 MB"], [1000000, "1.0 MB"], [1000000000, "1.0 GB"], [1000000000000, "1.0 TB"]]) {
+    [999900, "999.9 KB"], [999949, "999.9 KB"], [999950, "1.0 MB"], [999999, "1.0 MB"], [1000000, "1.0 MB"], [1000000000, "1.00 GB"], [1000000000000, "1.0 TB"]]) {
     assert.equal(formatBytes(bytes), label);
   }
 });
@@ -24,7 +24,7 @@ test("X of Y keeps the total's unit while the byte count crosses boundaries", ()
   assert.equal(formatBytesOf(999900, 2000000), "1.0 MB of 2.0 MB");
   assert.equal(formatBytesOf(1000000, 2000000), "1.0 MB of 2.0 MB");
   assert.equal(formatBytesOf(2000000, 2000000), "2.0 MB of 2.0 MB");
-  assert.equal(formatBytesOf(999, 1000), "1.0 KB of 1.0 KB");
+  assert.equal(formatBytesOf(999, 1000), "0.9 KB of 1.0 KB");
 });
 
 test("the shared native progress pattern supplies size, percentage and accessible text", () => {
@@ -41,7 +41,7 @@ test("the shared native progress pattern supplies size, percentage and accessibl
 for (const total of [undefined, null, 0]) test(`unknown total ${total} has an indeterminate bar and no percentage`, () => {
   const [bar, detail] = createTransferProgress(1500, total, "Upload progress", doc).children;
   assert.equal(Object.hasOwn(bar, "value"), false);
-  assert.equal(detail.textContent, "1.5 KB received");
+  assert.equal(detail.textContent, "1.5 KB received · Size unknown");
   assert.doesNotMatch(detail.textContent, /%| of /);
 });
 
@@ -102,7 +102,7 @@ test("Browser disk-space refusal uses the shared size rule", async () => {
       effects: { page_acquired: false, vm_acquired: false, stream_acquired: false } },
     refusal: { code: "insufficient_free_space", required_bytes: 2000000000, available_bytes: 999950 },
   } });
-  assert.match(message, /2\.0 GB free.*999\.9 KB are free/);
+  assert.match(message, /2\.00 GB free.*999\.9 KB are free/);
 });
 
 test("update admission handles a missing candidate with an error", async () => {
@@ -157,9 +157,9 @@ test("Library loads the current properties and list renderers", async () => {
   for (const module of ["dialog", "render"]) assert(app.includes(`./${module}.js?v=download-progress-20261112`));
 });
 
-for (const [done, total, percent] of [[99949999, 100000000, 99], [99950000, 100000000, 100],
-  [99999999, 100000000, 100], [100000000, 100000000, 100], [999, 1000, 100], [998, 999, 99]]) {
-  test(`displayed byte equality controls completion for ${done} of ${total}`, () => {
+for (const [done, total, percent] of [[99949999, 100000000, 99], [99950000, 100000000, 99],
+  [99999999, 100000000, 99], [100000000, 100000000, 100], [999, 1000, 99], [998, 999, 99]]) {
+  test(`true byte equality controls completion for ${done} of ${total}`, () => {
     const host = new Element("div");
     const [bar, detail] = createTransferProgress(done, total, "Download", doc).children;
     assert.equal(detail.textContent, `${formatBytesOf(done, total)} · ${percent}%`);
@@ -171,8 +171,8 @@ for (const [done, total, percent] of [[99949999, 100000000, 99], [99950000, 1000
 
 test("Browser disk refusal rounds requirements up and available bytes down", async () => {
   const { friendlyOpenError } = await import("../capsules/browser/browser/browser-status.js");
-  for (const [required, available, labels] of [[2000000001, 2000000000, ["2.1 GB", "2.0 GB"]],
-    [2000000000, 1999999999, ["2.0 GB", "1.9 GB"]], [1000000, 999999, ["1.0 MB", "999.9 KB"]]]) {
+  for (const [required, available, labels] of [[2000000001, 2000000000, ["2.01 GB", "2.00 GB"]],
+    [2000000000, 1999999999, ["2.00 GB", "1.99 GB"]], [1000000, 999999, ["1.0 MB", "999.9 KB"]]]) {
     const message = friendlyOpenError({ payload: {
       outcome: { schema: "elastos.browser.open-outcome/v1", state: "terminal_pre_effect_failure",
         effects: { page_acquired: false, vm_acquired: false, stream_acquired: false } },
@@ -180,5 +180,25 @@ test("Browser disk refusal rounds requirements up and available bytes down", asy
     } });
     assert(message.includes(`${labels[0]} free`), message);
     assert(message.includes(`${labels[1]} are free`), message);
+  }
+});
+
+for (const [done, total, label] of [
+  [950000000, 1000000000, "0.95 GB of 1.00 GB · 95%"],
+  [999999999, 1000000000, "0.99 GB of 1.00 GB · 99%"],
+  [1000000000, 1000000000, "1.00 GB of 1.00 GB · 100%"],
+]) test(`GB progress uses true bytes at ${done}`, () => {
+  const [bar, detail] = createTransferProgress(done, total, "Download", doc).children;
+  assert.equal(detail.textContent, label);
+  assert.equal(bar.value, done);
+});
+
+test("unfinished transfers keep distinct displayed counts at each unit", () => {
+  for (const total of [999, 1000, 1050, 1000000, 1000000000, 1234567890, 1000000000000]) {
+    for (const done of [total - 1, Math.floor(total * 0.95)]) {
+      const [received, size] = formatBytesOf(done, total).split(" of ");
+      assert.notEqual(received, size);
+      assert.equal(formatBytesOf(total, total), `${size} of ${size}`);
+    }
   }
 });

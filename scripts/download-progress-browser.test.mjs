@@ -152,7 +152,9 @@ test("System, model and Library transfer states stay accessible in light and dar
       for (const [bytes, size] of [[0, null], [25000000, 100000000]]) {
         completed = bytes; total = size; message = `Transient progress poll ${bytes}`;
         await system.getByText(message, { exact: true }).waitFor({ timeout: 9000 });
-        assert.equal(await progress.getByRole("progressbar").getAttribute("aria-valuetext"), "75.0 MB of 100.0 MB · 75%");
+        assert.equal(await progress.getByRole("progressbar").getAttribute("aria-valuetext"), size === null
+          ? "75.0 MB received · Size unknown" : "75.0 MB of 100.0 MB · 75%");
+        assert.equal(await progress.getByRole("progressbar").getAttribute("value") === null, size === null);
       }
       completed = 75000000; total = 100000000;
       phase = "verifying"; message = metadataMessage;
@@ -160,10 +162,10 @@ test("System, model and Library transfer states stay accessible in light and dar
       assert.equal(await progress.getByRole("progressbar").getAttribute("aria-valuetext"), "75.0 MB of 100.0 MB · 75%");
       await screenshot(`system-update-metadata-${theme}`);
       phase = "downloading"; message = downloadMessage; total = null; updateId = `unknown-${theme}`;
-      await progress.getByText("75.0 MB received", { exact: true }).waitFor({ timeout: 9000 });
+      await progress.getByText("75.0 MB received · Size unknown", { exact: true }).waitFor({ timeout: 9000 });
       assert.equal(await progress.locator("progress").getAttribute("value"), null);
       await system.getByRole("button", { name: "Models", exact: true }).click();
-      await system.locator("[data-model-management]").getByText("0.8 GB of 2.0 GB · 37%", { exact: true }).waitFor();
+      await system.locator("[data-model-management]").getByText("0.75 GB of 2.00 GB · 37%", { exact: true }).waitFor();
       assert((await system.locator("[data-model-management] .transfer-progress span").evaluate(transferContrast)).ratio >= 4.5);
       await screenshot(`model-download-${theme}`);
       await page.goto(`${fixture.baseUrl}/apps/library/?uri=localhost%3A%2F%2FUsers%2Ffixture%2FDocuments#home_token=fixture`);
@@ -188,7 +190,7 @@ test("System, model and Library transfer states stay accessible in light and dar
       assistantView = true;
       await page.goto(`${fixture.baseUrl}/assistant-fixture`);
       const assistant = page.frameLocator("iframe");
-      await assistant.locator(".agent-model-download").getByText("0.8 GB of 2.0 GB · 37%", { exact: true }).waitFor();
+      await assistant.locator(".agent-model-download").getByText("0.75 GB of 2.00 GB · 37%", { exact: true }).waitFor();
       await assistant.locator("html").evaluate((node, theme) => node.setAttribute("data-el-theme", theme), theme);
       assert.equal(await assistant.locator("html").evaluate(async () => {
         const workspace = await import("./harness-host.js");
