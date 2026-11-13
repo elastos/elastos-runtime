@@ -322,8 +322,7 @@ the `connectWalletConnectEvm` adapter inside the capsule's `vendor` directory;
 release packaging includes those bytes in the verified capsule archive.
 
 The release workflow reads the operator's `REOWN_PROJECT_ID` secret. Independent
-operators can supply `ELASTOS_WALLETCONNECT_PROJECT_FILE` or
-`ELASTOS_WALLETCONNECT_PROJECT_ID` during release preparation or source-home
+operators can supply `ELASTOS_WALLETCONNECT_PROJECT_FILE` during release preparation or source-home
 setup. Staging checks the reviewed adapter hash and includes `vendor/connector.json`
 before the capsule is hashed. An existing operator configuration in
 `ElastOS/SystemServices/WalletConnect/config.json` takes precedence. Source uses

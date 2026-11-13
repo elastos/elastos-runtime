@@ -757,11 +757,15 @@ class PrepareWorkerTest(unittest.TestCase):
         self.assertEqual((output / "platform-input.json").read_bytes(), before)
 
     def test_walletconnect_operator_config_and_bundle_enter_the_verified_release(self):
-        output, result = self.prepare(env={**self.env, "ELASTOS_WALLETCONNECT_PROJECT_ID": "fixture-project-id"})
+        project = self.root / "operator-project"
+        project.write_text("fixture-project-id")
+        project.chmod(0o600)
+        output, result = self.prepare(env={**self.env, "ELASTOS_WALLETCONNECT_PROJECT_FILE": str(project)})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         with tarfile.open(output / "artifacts/wallet-walletconnect.tar.gz") as archive:
             sdk = archive.extractfile("wallet-walletconnect/vendor/reown-appkit.js").read()
             config = json.loads(archive.extractfile("wallet-walletconnect/vendor/connector.json").read())
+            self.assertEqual(archive.getmember("wallet-walletconnect/vendor/connector.json").mode & 0o777, 0o600)
         self.assertEqual(config["project_id"], "fixture-project-id")
         self.assertEqual(config["sdk_sha256"], hashlib.sha256(sdk).hexdigest())
         result = self.command("python3", "scripts/release-platform-input.py", "verify", str(output))

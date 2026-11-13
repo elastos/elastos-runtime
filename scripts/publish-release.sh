@@ -497,7 +497,7 @@ build_packaged_capsule_archive() {
         mkdir -p "${stage_root}/${capsule_name}/bin" || return
         install -m 755 "$native_renderer" "${stage_root}/${capsule_name}/bin/home-cli" || return
     fi
-    if [[ "$capsule_name" == wallet-walletconnect && -n "${ELASTOS_WALLETCONNECT_PROJECT_FILE:-}${ELASTOS_WALLETCONNECT_PROJECT_ID:-}" ]]; then
+    if [[ "$capsule_name" == wallet-walletconnect && -n "${ELASTOS_WALLETCONNECT_PROJECT_FILE:-}" ]]; then
         node scripts/stage-walletconnect-release.mjs "${stage_root}/${capsule_name}" || return
     fi
     create_capsule_tar "$archive" "$stage_root" "$capsule_name" || return
