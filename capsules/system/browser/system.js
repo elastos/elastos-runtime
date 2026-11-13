@@ -3833,13 +3833,12 @@ function renderRuntimeUpdate(update) {
   runtimeUpdate = update && typeof update === "object" ? update : null;
   const current = runtimeUpdate?.controller;
   // An atomic advisory-file replacement can leave one poll without counters.
-  // Keep this update's last observation; a new request starts fresh.
+  // Keep this update's received count; the latest poll owns its total.
   if (previous?.id && current?.id === previous.id
     && ["staging", "downloading", "verifying"].includes(previous.phase)
     && ["staging", "downloading", "verifying"].includes(current.phase)) {
     runtimeUpdate = { ...runtimeUpdate, controller: { ...current,
       completed_bytes: Math.max(previous.completed_bytes || 0, current.completed_bytes || 0),
-      total_bytes: current.total_bytes ?? previous.total_bytes,
     } };
   }
   if (!runtimeUpdateNode || !runtimeUpdateButton) return;
