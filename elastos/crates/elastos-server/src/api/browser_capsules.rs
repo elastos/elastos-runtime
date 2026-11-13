@@ -358,6 +358,21 @@ fn shell_content_security_policy(
     } else {
         String::new()
     };
+    // Runtime owns the viewer policy, including the limits formerly in CSP
+    // meta tags. Exact Home sources also work for WebKit's opaque origins.
+    let viewer_limits = match app {
+        "gba-emulator" => Some((
+            " 'wasm-unsafe-eval'",
+            "worker-src 'none'; media-src 'none'".to_string(),
+        )),
+        "elacity-player" => Some(("", format!("media-src {home_source} blob:"))),
+        _ => None,
+    };
+    if let Some((script_eval, media)) = viewer_limits {
+        return Some(format!(
+            "sandbox allow-scripts allow-forms allow-downloads; default-src {home_source}; script-src 'self'{script_eval} {home_source}; style-src {home_source}; img-src {home_source} data:; connect-src {home_source}; {media}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+        ));
+    }
     let (default_source, style_source) = if is_home_host {
         ("'self'".to_string(), "'self'".to_string())
     } else {
@@ -1225,6 +1240,44 @@ mod tests {
                 format!("{expected}{ancestors}"),
                 "{app}: all other directives stay fixed"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn viewer_documents_keep_their_stricter_policy_on_each_document_route() {
+        let data_dir = tempfile::tempdir().unwrap();
+        for (app, script_eval, media) in [
+            (
+                "gba-emulator",
+                " 'wasm-unsafe-eval'",
+                "worker-src 'none'; media-src 'none'",
+            ),
+            ("elacity-player", "", "media-src HOME blob:"),
+        ] {
+            write_test_wasm_browser_capsule(data_dir.path(), app, "Viewer", "viewer");
+            fs::write(
+                data_dir
+                    .path()
+                    .join("capsules")
+                    .join(app)
+                    .join("browser/details.html"),
+                "<p>Details</p>",
+            )
+            .unwrap();
+            for (host, scheme) in [("localhost:61180", "http"), ("home.example.test", "https")] {
+                let origin = format!("{scheme}://{host}");
+                let mut headers = test_request_headers();
+                headers.insert("host", host.parse().unwrap());
+                headers.insert("origin", origin.parse().unwrap());
+                let media = media.replace("HOME", &origin);
+                let expected = format!("sandbox allow-scripts allow-forms allow-downloads; default-src {origin}; script-src 'self'{script_eval} {origin}; style-src {origin}; img-src {origin} data:; connect-src {origin}; {media}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'");
+                for path in [None, Some("index.html"), Some("details.html")] {
+                    let response =
+                        serve_browser_capsule_path(data_dir.path(), &headers, app, path).await;
+                    assert_eq!(response.status(), StatusCode::OK, "{app}: {path:?}");
+                    assert_eq!(response.headers()["content-security-policy"], expected);
+                }
+            }
         }
     }
 
