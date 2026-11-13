@@ -42,7 +42,6 @@ What it proves:
 
 Modes:
   - `direct`: legacy seed-participates-in-room flow
-  - `source-dht`: experimental external DHT discovery
   - `source-rendezvous`: Carrier-only automatic peer rendezvous through the
     trusted source, then direct room joins between discovered peers
 
@@ -81,10 +80,10 @@ if [[ ! -x "${ELASTOS_BIN}" ]]; then
 fi
 
 case "${BOOTSTRAP_MODE}" in
-    source-dht|source-rendezvous|direct) ;;
+    source-rendezvous|direct) ;;
     *)
         echo "Unsupported ELASTOS_CHAT_BOOTSTRAP_MODE: ${BOOTSTRAP_MODE}" >&2
-        echo "Use 'direct', 'source-dht', or 'source-rendezvous'." >&2
+        echo "Use 'direct' or 'source-rendezvous'." >&2
         exit 1
         ;;
 esac
@@ -538,12 +537,7 @@ if [[ ! -d "${HOST_DATA_DIR}/bin" ]]; then
     exit 1
 fi
 
-JOIN_MODE="${BOOTSTRAP_MODE}"
-if [[ "${JOIN_MODE}" == "source-dht" ]]; then
-    JOIN_MODE="dht"
-elif [[ "${JOIN_MODE}" == "source-rendezvous" ]]; then
-    JOIN_MODE="direct"
-fi
+JOIN_MODE="direct"
 
 RUNTIMES=(alice bob)
 if [[ -z "${SOURCE_TICKET_OVERRIDE}" ]]; then
