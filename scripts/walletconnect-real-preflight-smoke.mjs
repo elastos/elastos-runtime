@@ -2,6 +2,8 @@
 // enter through stdin; browser evidence contains resource names and status.
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { connect } from 'node:net';
 import { importProductSmokePlaywright } from './product-smoke-browser.mjs';
 let input = '';
 for await (const chunk of process.stdin) { input += chunk; assert.ok(input.length < 16384); }
@@ -10,15 +12,34 @@ const result = { project:'project file set', runs:[] };
 const evidence = process.env.WALLETCONNECT_SCREENSHOTS;
 const emit = console.log.bind(console);
 console.log = console.warn = console.error = () => {};
-const deadline = setTimeout(() => { result.timeout = true; emit(JSON.stringify(result)); process.exit(1); }, 120000);
+const deadline = setTimeout(() => { result.timeout = true; emit(JSON.stringify(result)); process.exit(1); }, 240000);
+const bounded = (promise, ms = 20000) => Promise.race([promise, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('step timeout')), ms); timer.unref(); })]);
+const restart = () => bounded(new Promise((resolve, reject) => { const socket = connect(options.restart); socket.setTimeout(10000, () => socket.destroy(new Error('restart timeout'))); socket.on('error', reject); socket.on('connect', () => socket.end('restart')); socket.on('data', data => data.toString() === 'ready' ? resolve() : reject(new Error('restart refused'))); }));
 const expectedCsp = `sandbox allow-scripts allow-forms allow-downloads; default-src ${options.origin}; script-src 'self' 'wasm-unsafe-eval' ${options.origin}; style-src ${options.origin} 'unsafe-inline'; img-src ${options.origin} blob: data:; connect-src ${options.origin} ${options.origin.replace(/^http/, 'ws')}; frame-src ${options.origin}; object-src 'none'; base-uri 'none'; form-action ${options.origin}`;
 try {
   const playwright = await importProductSmokePlaywright();
+  const { SignClient } = createRequire(new URL('./walletconnect/package.json', import.meta.url))('@walletconnect/sign-client');
   for (const engine of ['chromium', 'webkit']) {
     const run = { engine, paired:false, network:[] };
     result.runs.push(run);
-    let browser, frame;
+    let browser, frame, wallet;
     try {
+      run.phase = 'test-wallet';
+      wallet = await bounded(SignClient.init({projectId:options.projectId, logger:'silent',
+        customStoragePrefix:`wc-recovery-${engine}-${Date.now()}`, storageOptions:{database:':memory:'},
+        metadata:{name:'Disposable scripted wallet', description:'Pairing recovery only', url:'https://localhost', icons:[]}}));
+      let proposals = 0;
+      let approve;
+      const approved = new Promise((resolve, reject) => { approve = {resolve, reject}; });
+      wallet.on('session_proposal', async proposal => {
+        proposals++;
+        try {
+          const session = await wallet.approve({id:proposal.id, namespaces:{eip155:{
+            accounts:[`eip155:1:0x${'12'.repeat(20)}`], methods:['personal_sign','eth_sendTransaction'],
+            events:['accountsChanged','chainChanged']}}});
+          approve.resolve(await session.acknowledged());
+        } catch { approve.reject(new Error('scripted wallet approval failed')); }
+      });
       run.phase = 'browser';
       browser = await playwright[engine].launch({headless:true, timeout:15000});
       run.version = browser.version();
@@ -56,6 +77,33 @@ try {
       assert.equal(await frame.evaluate(() => window.failed), undefined);
       assert.equal(await frame.evaluate(() => self.origin), 'null');
       assert.equal(await frame.locator('dialog[open] canvas').count(), 1);
+      run.qr = 'PASS';
+      run.phase = 'pairing';
+      await frame.waitForFunction(() => typeof window.pairingUri === 'string', null, {timeout:10000});
+      const uri = await frame.evaluate(() => window.pairingUri);
+      await bounded(wallet.core.pairing.pair({uri}));
+      const session = await bounded(approved, 30000);
+      await frame.waitForFunction(() => window.provider?.connected || window.failed, null, {timeout:20000});
+      assert.equal(await frame.evaluate(() => window.failed), undefined);
+      assert.equal(await frame.evaluate(() => window.provider.session.topic), session.topic);
+      await bounded(wallet.ping({topic:session.topic}));
+      run.paired = true;
+      run.pairing = 'PASS';
+      for (const phase of ['reload', 'homeRestart']) {
+        run.phase = phase;
+        if (phase === 'homeRestart') await restart();
+        await frame.evaluate(() => location.reload());
+        await frame.waitForFunction(() => window.provider?.connected || window.failed, null, {timeout:30000});
+        assert.equal(await frame.evaluate(() => window.failed), undefined);
+        assert.equal(await frame.evaluate(() => window.provider.session.topic), session.topic);
+        assert.equal(await frame.locator('dialog[open] canvas').count(), 0);
+        await bounded(wallet.ping({topic:session.topic}));
+        assert.equal(proposals, 1);
+        run[phase] = 'PASS';
+      }
+      const trace = await frame.evaluate(() => window.storageTrace);
+      assert.ok(trace.every(entry => !entry.protocol));
+      run.protocolInShim = false;
       run.status = 'PASS';
     } catch {
       run.status = 'FAIL';
@@ -69,6 +117,10 @@ try {
           ]);
         } catch { run.stateUnavailable = true; }
       }
+      try {
+        for (const session of wallet?.session.getAll() || []) await bounded(wallet.disconnect({topic:session.topic, reason:{code:6000, message:'Test complete'}}), 5000);
+        await wallet?.core.relayer.transportClose();
+      } catch { run.walletCleanup = 'transport closed at process exit'; }
       await browser?.close();
     }
     // Stop at the first Chromium blocker, as required by the round's brief.

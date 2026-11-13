@@ -148,7 +148,7 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
 async fn walletconnect_real_project_opaque_preflight() {
     use tokio::io::AsyncWriteExt;
     let project = operator_project();
-    let f = real_fixture(&project).await;
+    let mut f = real_fixture(&project).await;
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     for name in ["home", "wallet-walletconnect"] {
         let destination = f.data.path().join("capsules").join(name);
@@ -190,8 +190,10 @@ async fn walletconnect_real_project_opaque_preflight() {
     )
     .unwrap();
     f.allow().await;
+    let restart_path = f.data.path().join("restart.sock");
+    let restart = UnixListener::bind(&restart_path).unwrap();
     let input = serde_json::to_vec(&json!({
-        "origin": format!("http://{}", f.addr), "connector": f.connector, "projectId": project,
+        "origin": format!("http://{}", f.addr), "connector": f.connector, "projectId": project, "restart":restart_path,
     }))
     .unwrap();
     let mut child = tokio::process::Command::new("node")
@@ -203,10 +205,34 @@ async fn walletconnect_real_project_opaque_preflight() {
         .spawn()
         .unwrap();
     child.stdin.take().unwrap().write_all(&input).await.unwrap();
-    let output = tokio::time::timeout(Duration::from_secs(150), child.wait_with_output())
-        .await
-        .expect("real relay browser gate timeout")
-        .unwrap();
+    let mut waiting = tokio::spawn(async move { child.wait_with_output().await });
+    let result = tokio::time::timeout(Duration::from_secs(270), async {
+        loop {
+            tokio::select! {
+                output = &mut waiting => break output.unwrap().unwrap(),
+                connection = restart.accept() => {
+                    let (mut connection, _) = connection.unwrap();
+                    let mut command = [0u8; 7];
+                    tokio::time::timeout(Duration::from_secs(3), connection.read_exact(&mut command)).await.unwrap().unwrap();
+                    assert_eq!(&command, b"restart");
+                    f.gateway.abort(); let _ = (&mut f.gateway).await;
+                    let registry = f.state.provider_registry.clone();
+                    f.state = test_state(f.data.path());
+                    f.state.provider_registry = registry;
+                    f.state.browser_internet = persistent_internet(f.data.path()).await;
+                    let listener = TcpListener::bind(&f.addr).await.unwrap();
+                    f.app = gateway_router_with_api_url(f.state.clone(), format!("http://{}", f.addr));
+                    let app = f.app.clone();
+                    f.gateway = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+                    connection.write_all(b"ready").await.unwrap();
+                }
+            }
+        }
+    }).await;
+    if result.is_err() {
+        waiting.abort();
+    }
+    let output = result.expect("real relay paired recovery timeout");
     println!("{}", String::from_utf8_lossy(&output.stdout));
     // The Node driver emits only bounded, value-free evidence. SDK diagnostics
     // can contain relay credentials, so stderr remains private to this process.

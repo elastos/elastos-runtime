@@ -23,7 +23,22 @@ const api = async (resource, input = {}) => {
     window.refusal ??= { resource, status:response.status };
     throw new Error('Runtime refused the connector resource');
   }
-  return response.json();
+  const values = await response.json();
+  if (resource === 'storage') {
+    // Private test-wallet handoff: the URI is reconstructed from the exact
+    // Runtime-persisted pairing and keychain, and stays in process memory.
+    const pairings = Object.entries(values).find(([key]) => key.endsWith('//pairing'))?.[1];
+    const keys = Object.entries(values).find(([key]) => key.endsWith('//keychain'))?.[1];
+    const pairing = Array.isArray(pairings) ? pairings.find(value => !value.active) : undefined;
+    const keychain = typeof keys === 'string' ? JSON.parse(keys) : keys;
+    const symKey = pairing && (Array.isArray(keychain) ? new Map(keychain).get(pairing.topic) : keychain?.[pairing.topic]);
+    if (pairing && typeof symKey === 'string') {
+      const params = new URLSearchParams({symKey, 'relay-protocol':pairing.relay.protocol,
+        expiryTimestamp:String(pairing.expiry), methods:'[wc_sessionPropose]'});
+      window.pairingUri = `wc:${pairing.topic}@2?${params}`;
+    }
+  }
+  return values;
 };
 try {
   window.phase = 'import';
