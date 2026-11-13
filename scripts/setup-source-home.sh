@@ -746,7 +746,7 @@ PY
 
 ensure_rust_target_installed() {
     local target="$1"
-    if command -v rustup >/dev/null 2>&1 && ! rustup target list --installed 2>/dev/null | grep -qx "$target"; then
+    if command -v rustup >/dev/null 2>&1 && ! rustup target list --installed 2>/dev/null | grep -x "$target" >/dev/null; then
         rustup target add "$target"
     fi
 }
