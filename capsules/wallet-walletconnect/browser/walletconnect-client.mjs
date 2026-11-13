@@ -113,9 +113,9 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     }
     if (handoff.signature_type !== 'personal_sign' || typeof handoff.message !== 'string') throw new Error('Runtime returned an invalid signature request.');
     const method = 'personal_sign';
-    const signature = await provider.request({method,params:method === 'eth_signTypedData_v4' ? [signer,handoff.message] : [signData(handoff.message),signer]},expiry);
+    const signature = await provider.request({method,params:[signData(handoff.message),signer]},expiry);
     await check();
-    await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:method === 'eth_signTypedData_v4' ? 'eip712' : 'personal_sign'})});
+    await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:'personal_sign'})});
     return {status:'completed',effect:'signature'};
   }};
 }

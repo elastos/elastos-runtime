@@ -250,9 +250,10 @@ sandboxed frame. `wallet-provider` owns proof verification, linked accounts,
 approval state and receipts. Runtime accepts the connector's own live launch
 capability, bound to its principal, session and launch instance, for storage,
 relay admission, linking and signing handoffs. Each route checks the selected
-connector resource and proof binding. Config reads and storage deletion retain
-these launch checks while accepting an older storage revision, so a connector can
-load the current revision or retry cleanup. Relay use and storage writes require
+connector resource and proof binding. Config reads, linking, approval, completion
+and storage deletion accept an older storage revision with these launch checks.
+A connector can load the current revision, retain a returned result or retry
+cleanup. Relay use and storage writes require
 the current revision. Home owns window orchestration.
 
 Mode A connects a phone wallet to sign Runtime challenges and approved requests.
@@ -269,7 +270,10 @@ approved request and hash before completion. A closed connector window leaves an
 approved, unfinished transaction visible with "Check your phone wallet". Opening
 it again supplies recovery instructions and keeps the send control disabled.
 A returned transaction hash is passed to Runtime once even if the account,
-network or expiry changed during the phone prompt. Runtime checks the returned
+network or expiry changed during the phone prompt. An approved WalletConnect
+transaction can complete once within 24 hours after expiry. An unfinished prompt
+then expires and releases its approval slot; other connectors keep their normal TTL.
+Runtime checks the returned
 transaction hash's format only. The phone wallet confirms the transaction;
 the hash alone does not prove that it matches the approved payload. A completion error keeps the
 hash visible for checking before another send. Unused signatures and ownership

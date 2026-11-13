@@ -233,6 +233,12 @@ fn validated_chain_outcome_projection_is_exact_and_idempotent() {
 
 #[test]
 fn transaction_intent_validates_payload_and_allows_external_handoff() {
+    for connector in ["wallet-metamask", "wallet-walletconnect"] {
+        external_transaction_handoff_with_expiry(connector);
+    }
+}
+
+fn external_transaction_handoff_with_expiry(connector: &str) {
     let dir = tempfile::tempdir().unwrap();
     let mut provider = init_provider(dir.path());
     let principal_id = "person:local:alice";
@@ -283,7 +289,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
         invoke_wallet(
             &mut provider,
             principal_id,
-            "wallet-metamask",
+            connector,
             WalletProviderOperationV2::LinkVerifiedAccount {
                 proof_binding_id: format!("proof:eip155:20:{external_address}"),
                 chain_namespace: "eip155:20".into(),
@@ -314,7 +320,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
     ) {
         Response::Ok { data: Some(data) } => {
             assert_eq!(data["approval_request"]["intent"], "transaction_intent");
-            assert_eq!(data["approval_request"]["connector_id"], "wallet-metamask");
+            assert_eq!(data["approval_request"]["connector_id"], connector);
             assert_eq!(
                 data["approval_request"]["payload"]["schema"],
                 "elastos.chain.unsigned_transaction_intent/v1"
@@ -335,7 +341,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
     let transaction = match invoke_wallet(
         &mut provider,
         principal_id,
-        "wallet-metamask",
+        connector,
         WalletProviderOperationV2::ApproveConnectorHandoff {
             request_id: request_id.clone(),
             reason: "Approved transaction".into(),
@@ -349,26 +355,57 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
     };
     assert_eq!(transaction["from"], external_address);
     assert_eq!(transaction["chainId"], "0x14");
-    let request = provider
+    let approved = provider
         .store
         .approval_requests
-        .iter_mut()
+        .iter()
         .find(|r| r.request_id == request_id)
-        .unwrap();
-    request.expires_at = now_ts() - 1;
-    provider.store = prune_store(std::mem::take(&mut provider.store), now_ts());
-    assert_eq!(
+        .unwrap()
+        .clone();
+    let now = now_ts();
+    let grace = elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS;
+    for (elapsed, expected) in [
+        (1, connector == "wallet-walletconnect"),
+        (grace - 1, connector == "wallet-walletconnect"),
+        (grace, false),
+        (grace + 1, false),
+    ] {
+        let mut declined = approved.clone();
+        declined.expires_at = now - elapsed;
+        expire_approval_if_elapsed(&mut declined, now);
+        assert_eq!(
+            declined.status == ApprovalStatus::Approved,
+            expected,
+            "{connector} after {elapsed}"
+        );
+        assert_eq!(
+            approval_authority_is_active(&declined, now),
+            expected,
+            "declined prompt releases its active quota after grace"
+        );
+    }
+    if connector == "wallet-walletconnect" {
         provider
             .store
             .approval_requests
-            .iter()
+            .iter_mut()
             .find(|r| r.request_id == request_id)
             .unwrap()
-            .status,
-        ApprovalStatus::Approved
-    );
+            .expires_at = now - 1;
+        provider.store = prune_store(std::mem::take(&mut provider.store), now);
+        assert_eq!(
+            provider
+                .store
+                .approval_requests
+                .iter()
+                .find(|r| r.request_id == request_id)
+                .unwrap()
+                .status,
+            ApprovalStatus::Approved
+        );
+    }
     let transaction_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let context = wallet_context(principal_id, "wallet-metamask");
+    let context = wallet_context(principal_id, connector);
     let invalid_completion = wallet_request(
         &context,
         WalletProviderOperationV2::CompleteConnectorHandoff {
@@ -402,7 +439,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
     match invoke_wallet(
         &mut provider,
         principal_id,
-        "wallet-metamask",
+        connector,
         WalletProviderOperationV2::CompleteConnectorHandoff {
             request_id: request_id.clone(),
             payload_hash: payload_hash.clone(),
@@ -442,7 +479,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
         chain_namespace: "eip155:20".into(),
         network: elastos_wallet_contract::PublicNetwork::new("esc-mainnet").unwrap(),
         binding: ValidatedChainOutcomeBindingV1::ExternalConnector {
-            connector_id: "wallet-metamask".into(),
+            connector_id: connector.into(),
             originating_address: external_address.into(),
         },
         transaction_hash: transaction_hash.into(),

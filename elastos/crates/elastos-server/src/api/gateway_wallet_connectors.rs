@@ -392,7 +392,8 @@ async fn walletconnect_request_binding(
             && (request["expires_at"].as_u64().is_some_and(|expiry| expiry > now_ts())
                 // The phone can return a sent transaction after the approval TTL.
                 // Approved state still binds its one completion to the same payload.
-                || status == "approved" && request["intent"] == "transaction_intent")
+                || status == "approved" && request["intent"] == "transaction_intent"
+                    && request["expires_at"].as_u64().is_some_and(|expiry| expiry.saturating_add(elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS) > now_ts()))
             && request["payload_hash"]
                 .as_str()
                 .is_some_and(walletconnect_hash),

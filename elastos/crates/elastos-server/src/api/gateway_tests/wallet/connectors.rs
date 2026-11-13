@@ -1320,6 +1320,7 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
         "signer",
         "pending",
         "expired",
+        "outside-grace",
         "principal",
         "connector",
     ] {
@@ -1340,7 +1341,7 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
                 "account_id":"fixture-account", "address":address, "proof_type":"siwe", "chain_namespace":"eip155:20",
                 "connector_id":if case == "connector" { WALLET_METAMASK_CAPSULE_ID } else { WALLET_WALLETCONNECT_CAPSULE_ID },
                 "principal_id":if case == "principal" { "other-principal" } else { &owner.principal_id },
-                "payload_hash":payload, "created_at":now_ts(), "expires_at":if case == "expired" { 0 } else { now_ts() + 600 },
+                "payload_hash":payload, "created_at":now_ts(), "expires_at":if case == "expired" { now_ts()-1 } else if case == "outside-grace" { now_ts()-elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS } else { now_ts()+600 },
             })]),
             ..Default::default()
         }));
