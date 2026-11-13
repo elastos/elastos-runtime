@@ -1,3 +1,4 @@
+import { navigateBrowserAddress } from "./browser-address-navigation.js?v=browser-20261113a";
 import { startBrowser } from "./browser-startup.js?v=browser-20261110c";
 import { observeBrowserStage, createBrowserFrameFence } from "./browser-resize.js?v=browser-20261031d";
 import { createBrowserLocationController } from "./browser-location.js?v=browser-20260523b";
@@ -2777,54 +2778,15 @@ async function requestRuntimeOpen(value, { history = "push" } = {}) {
 }
 
 async function navigateAddress(value) {
-  if (!browserInternetAllowed) return requestInternetNavigation(value);
-  const nextUrl = normalizeUrl(value);
-  const currentUrl = currentBrowserUrl();
-  const crossStreamTarget = !sameBrowserStreamTarget(currentUrl, nextUrl);
-  clearAddressDraft();
-  if (!currentPage?.page_id) {
-    return requestRuntimeOpen(nextUrl);
-  }
-  if (browserInternetInterrupted) return requestRuntimeOpen(nextUrl);
-  if (selectedBrowserEngineId !== currentBrowserEngineId) {
-    return requestRuntimeOpen(nextUrl);
-  }
-  if (selectedRemoteExitId !== currentRemoteExitId) {
-    return requestRuntimeOpen(nextUrl);
-  }
-  if (isBrowserErrorUrl(currentUrl)) {
-    showStatus(`Recovering ${visibleAddressForUrl(nextUrl)} in a fresh Browser session...`, {
-      sticky: true,
-    });
-    return requestRuntimeOpen(nextUrl);
-  }
-  addressInput.value = nextUrl;
-  addressInput.blur();
-  setLoading(true);
-  showStatus(`Opening ${visibleAddressForUrl(nextUrl)}...`, { sticky: true });
-  const openingStatus = statusNode.firstChild;
-  try {
-    const response = await sendBrowserInput(
-      { type: "browser_command", command: "navigate", url: nextUrl },
-      { history: "push" },
-    );
-    if (response?.accepted === true && statusNode.firstChild === openingStatus) {
-      window.clearTimeout(statusTimer);
-      statusNode.dataset.visible = "false";
-    }
-    startPageStatusPolling();
-  } catch (error) {
-    if (crossStreamTarget) {
-      showStatus(`Reopening ${visibleAddressForUrl(nextUrl)} in a fresh Browser session...`, {
-        sticky: true,
-      });
-      return requestRuntimeOpen(nextUrl);
-    }
-    showStatus(friendlyOpenError(error), { sticky: true });
-    throw error;
-  } finally {
-    setLoading(false);
-  }
+  return navigateBrowserAddress({
+    browserInternetAllowed, requestInternetNavigation, normalizeUrl, currentBrowserUrl,
+    sameBrowserStreamTarget, clearAddressDraft, currentPage, browserInternetInterrupted,
+    requestRuntimeOpen, selectedBrowserEngineId, currentBrowserEngineId, selectedRemoteExitId,
+    currentRemoteExitId, isBrowserErrorUrl, showStatus, visibleAddressForUrl,
+    addressInput, setLoading, statusNode, sendBrowserInput,
+    window, startPageStatusPolling, friendlyOpenError,
+    get statusTimer() { return statusTimer; },
+  }, value);
 }
 
 async function navigateBrowser(command) {
