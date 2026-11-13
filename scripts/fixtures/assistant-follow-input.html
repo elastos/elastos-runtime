@@ -185,18 +185,22 @@
       // Allow the key animation and its 150 ms quiet period to finish.
       await delay(extra.waitMs ?? 650);
       const received = events.slice(firstEvent);
-      if (phase === "key") {
+      if (["key", "key-down", "key-up"].includes(phase)) {
         const keyName = extra.key === "Shift+Space" ? " " : extra.key;
-        expect(received.some(e => e.type === "keydown" && e.trusted && e.key === keyName
-          && e.shift === (extra.key === "Shift+Space") && !e.ctrl && !e.meta && !e.alt),
-          `trusted ${extra.key} with requested modifiers received`);
+        const type = phase === "key-up" ? "keyup" : "keydown";
+        const phaseLabel = phase === "key" ? "" : ` ${phase}`;
+        expect(received.some(e => e.type === type && e.trusted && e.key === keyName
+          && e.shift === (extra.key === "Shift+Space" && type === "keydown") && !e.ctrl && !e.meta && !e.alt),
+          `trusted ${extra.key}${phaseLabel} with requested modifiers received`);
+        if (phase === "key-down") expect(received.some(e => e.type === type && e.trusted
+          && e.code === extra.key && e.repeat === Boolean(extra.repeat)), `trusted ${extra.key} held-key identity and repeat received`);
       }
       (result.inputEvidence ||= []).push({ phase, extra, before, after: snap(), events: received });
     };
     const events = [];
     for (const name of ["keydown", "keyup", "pointerdown", "pointerup", "wheel", "scroll", "scrollend"]) {
       document.addEventListener(name, event => events.push({ type: name, key: event.key,
-        time: performance.now(), shift: event.shiftKey, ctrl: event.ctrlKey, meta: event.metaKey, alt: event.altKey, deltaY: event.deltaY, trusted: event.isTrusted, target: event.target.id, x: event.clientX, y: event.clientY, top: s.scrollTop, pageTop: scrollY, follow: snap().follow }), true);
+        time: performance.now(), code: event.code, repeat: event.repeat, shift: event.shiftKey, ctrl: event.ctrlKey, meta: event.metaKey, alt: event.altKey, deltaY: event.deltaY, trusted: event.isTrusted, target: event.target.id, x: event.clientX, y: event.clientY, top: s.scrollTop, pageTop: scrollY, follow: snap().follow }), true);
     }
     const focusMessage = () => document.querySelector("#message").focus({ preventScroll: true });
     await native("drag-away");
@@ -470,6 +474,93 @@
       } finally { spacer.remove(); page.style.cssText = pageStyle; scrollTo(0, 0); }
     }
     textarea.value = shortText;
+    // Real split-key input spans rendering frames, repeats and overlapping keys.
+    // Native movement stays contained; scrolling returns between key events.
+    const input = c.querySelector("input");
+    await reset(); input.focus({ preventScroll: true }); input.setSelectionRange(0, 0);
+    const heldBefore = { transcript: snap(), pageTop: scrollY, field: fieldState(input), styles: scrollStyles() };
+    const heldFirstEvent = events.length;
+    for (const [phase, name, repeat, label] of [
+      ["key-down", "PageUp", false, "held editable key across frames"],
+      ["key-down", "PageUp", true, "held editable repeated key"],
+      ["key-down", "ArrowUp", false, "held editable overlapping key"],
+      ["key-up", "PageUp", false, "held editable partial release"],
+    ]) {
+      await native(phase, { key: name, repeat });
+      const after = { transcript: snap(), pageTop: scrollY, field: fieldState(input), styles: scrollStyles() };
+      result.cases[label] = { before: heldBefore, after };
+      expect(after.transcript.top === heldBefore.transcript.top && after.pageTop === heldBefore.pageTop
+        && events.slice(heldFirstEvent).every(event => event.top === heldBefore.transcript.top && event.pageTop === heldBefore.pageTop),
+        `${label}: transcript stays still`);
+      expect(JSON.stringify(after.field) === JSON.stringify(heldBefore.field) && after.transcript.follow,
+        `${label}: field state and follow are preserved`);
+      expect(JSON.stringify(after.styles) === JSON.stringify(heldBefore.styles), `${label}: styles restore between events`);
+    }
+    await native("key-up", { key: "ArrowUp" });
+    expect(JSON.stringify(scrollStyles()) === JSON.stringify(heldBefore.styles), "held editable final release restores styles");
+    await followingGrowth("held editable final release then growth");
+
+    await reset(); input.focus({ preventScroll: true }); input.setSelectionRange(0, 0);
+    const wheelStyles = scrollStyles();
+    await native("key-down", { key: "PageUp", waitMs: 50 });
+    await native("wheel", { deltas: [-300] });
+    expect(JSON.stringify(scrollStyles()) === JSON.stringify(wheelStyles), "editable wheel interruption restores styles");
+    expect(snap().fromEnd > 8 && !snap().follow, "editable wheel interruption scrolls the reader");
+    await native("key-up", { key: "PageUp", waitMs: 0 });
+    await heldGrowth("editable wheel interruption then growth");
+
+    // Synthetic lifecycle events isolate cancellation order from the OS driver.
+    // The trusted hold/repeat and wheel cases above prove the corresponding input.
+    const dispatchFieldKey = type => input.dispatchEvent(new KeyboardEvent(type, {
+      key: "PageUp", code: "PageUp", bubbles: true,
+    }));
+    await reset(); input.focus({ preventScroll: true });
+    const pendingStyles = scrollStyles();
+    dispatchFieldKey("keydown"); dispatchFieldKey("keyup");
+    await new Promise(resolve => requestAnimationFrame(() => { dispatchFieldKey("keydown"); resolve(); }));
+    // At the next frame the previous window would have expired. The replacement
+    // key still owns one more frame, then returns the original styles.
+    await new Promise(requestAnimationFrame);
+    expect(s.style.getPropertyValue("overflow-y") === "hidden", "editable pending release is cancelled by a new key");
+    await new Promise(requestAnimationFrame);
+    expect(JSON.stringify(scrollStyles()) === JSON.stringify(pendingStyles), "editable replacement key restores between events");
+    dispatchFieldKey("keyup"); await frames();
+    expect(JSON.stringify(scrollStyles()) === JSON.stringify(pendingStyles), "editable replacement key release restores styles");
+    for (const action of ["focusout", "blur", "hidden", "pointerdown", "touchstart"]) {
+      await reset(); input.focus({ preventScroll: true });
+      const styles = scrollStyles();
+      dispatchFieldKey("keydown");
+      if (action === "focusout") input.blur();
+      else if (action === "blur") window.dispatchEvent(new Event("blur"));
+      else if (action === "hidden") {
+        const descriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+        try {
+          Object.defineProperty(document, "hidden", { configurable: true, value: true });
+          document.dispatchEvent(new Event("visibilitychange"));
+        } finally {
+          if (descriptor) Object.defineProperty(document, "hidden", descriptor);
+          else delete document.hidden;
+        }
+      } else {
+        const event = new Event(action, { bubbles: true });
+        document.dispatchEvent(event);
+      }
+      const restoredImmediately = JSON.stringify(scrollStyles()) === JSON.stringify(styles);
+      dispatchFieldKey("keyup"); await frames();
+      expect(restoredImmediately && JSON.stringify(scrollStyles()) === JSON.stringify(styles),
+        `editable ${action} interruption restores styles`);
+    }
+    // Revisit the two timing-sensitive fields after different rendering phases.
+    for (const selector of ["input", "#inline-editor"]) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        await reset(); const target = c.querySelector(selector);
+        target.focus({ preventScroll: true });
+        if (target.isContentEditable) getSelection().collapse(target.firstChild, 0);
+        else target.setSelectionRange(0, 0);
+        await frames();
+        await fieldKey(target, "PageUp", `native PageUp repeated short ${selector} ${attempt}`);
+      }
+    }
     // Native Home/End and selection behavior differ by platform. Compare with an
     // ordinary textarea outside the transcript instead of replacing that behavior.
     const reference = textarea.cloneNode();

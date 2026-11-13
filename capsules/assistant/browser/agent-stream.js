@@ -78,12 +78,16 @@ function observeTranscript(scroller, content) {
   const heldKeys = new Set();
   let editableScrollLock = null;
   let editableScrollFrame = 0;
-  const restoreEditableScroll = () => {
-    if (!editableScrollLock) return;
+  let editableScrollTarget = null;
+  const editableHeldKeys = new Set();
+  const restoreEditableScroll = (clearKeys = true) => {
     window.cancelAnimationFrame(editableScrollFrame);
+    editableScrollFrame = 0;
+    if (clearKeys !== false) editableHeldKeys.clear();
+    if (!editableHeldKeys.size) editableScrollTarget = null;
+    if (!editableScrollLock) return;
     const locked = editableScrollLock;
     editableScrollLock = null;
-    editableScrollFrame = 0;
     for (const { element, properties } of locked) {
       for (const { name, value, priority } of properties) {
         if (value) element.style.setProperty(name, value, priority);
@@ -95,6 +99,43 @@ function observeTranscript(scroller, content) {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) restoreEditableScroll();
   });
+  document.addEventListener("focusout", event => {
+    if (event.target === editableScrollTarget) restoreEditableScroll();
+  });
+  // A different reader gesture owns scrolling before its default action runs.
+  for (const type of ["wheel", "pointerdown", "touchstart"]) {
+    document.addEventListener(type, restoreEditableScroll, { capture: true, passive: true });
+  }
+  const lockEditableScroll = target => {
+    if (editableScrollLock) return;
+    // Keep native editing and field scrolling. Exclude the transcript and
+    // its scrollable ancestors during each key event's rendering window.
+    // Keep existing scrollbar space while hidden.
+    editableScrollTarget = target;
+    editableScrollLock = [];
+    for (let element = scroller; element; element = element.parentElement) {
+      const style = getComputedStyle(element);
+      if (element !== scroller && !(element.scrollHeight > element.clientHeight
+          && (element === document.scrollingElement || /^(auto|scroll)$/.test(style.overflowY)))) continue;
+      const names = ["overflow-y"];
+      if (style.scrollbarGutter === "auto") names.push("scrollbar-gutter");
+      const properties = names.map(name => ({ name,
+        value: element.style.getPropertyValue(name),
+        priority: element.style.getPropertyPriority(name),
+      }));
+      editableScrollLock.push({ element, properties });
+      if (names.length > 1) element.style.setProperty("scrollbar-gutter", "stable", "important");
+      element.style.setProperty("overflow-y", "hidden", "important");
+    }
+  };
+  const deferEditableRestore = () => {
+    // WebKit can resolve a key's scroll after the first animation frame.
+    // Restore between events so holding a key does not disable the reader.
+    window.cancelAnimationFrame(editableScrollFrame);
+    editableScrollFrame = window.requestAnimationFrame(() => {
+      editableScrollFrame = window.requestAnimationFrame(() => restoreEditableScroll(false));
+    });
+  };
   let settleTimer = 0;
   let touchY = 0;
   const showFollow = () => {
@@ -182,27 +223,12 @@ function observeTranscript(scroller, content) {
     const editable = event.target.closest?.("input, textarea, select") || event.target.isContentEditable;
     if (editable) {
       if (scroller.contains(event.target)
-          && ["PageUp", "Home", "ArrowUp", "PageDown", "End", "ArrowDown", " "].includes(event.key)
-          && !editableScrollLock) {
-        // Keep native editing and field scrolling. Exclude the transcript and
-        // its scrollable ancestors from this key's default scroll chain, then
-        // restore before painting. Keep existing scrollbar space while hidden.
-        editableScrollLock = [];
-        for (let element = scroller; element; element = element.parentElement) {
-          const style = getComputedStyle(element);
-          if (element !== scroller && !(element.scrollHeight > element.clientHeight
-              && (element === document.scrollingElement || /^(auto|scroll)$/.test(style.overflowY)))) continue;
-          const names = ["overflow-y"];
-          if (style.scrollbarGutter === "auto") names.push("scrollbar-gutter");
-          const properties = names.map(name => ({ name,
-            value: element.style.getPropertyValue(name),
-            priority: element.style.getPropertyPriority(name),
-          }));
-          editableScrollLock.push({ element, properties });
-          if (names.length > 1) element.style.setProperty("scrollbar-gutter", "stable", "important");
-          element.style.setProperty("overflow-y", "hidden", "important");
-        }
-        editableScrollFrame = window.requestAnimationFrame(restoreEditableScroll);
+          && ["PageUp", "Home", "ArrowUp", "PageDown", "End", "ArrowDown", " "].includes(event.key)) {
+        window.cancelAnimationFrame(editableScrollFrame);
+        editableScrollFrame = 0;
+        editableHeldKeys.add(event.code || event.key);
+        lockEditableScroll(event.target);
+        deferEditableRestore();
       }
       return;
     }
@@ -213,6 +239,10 @@ function observeTranscript(scroller, content) {
     }
   });
   document.addEventListener("keyup", event => {
+    if (editableHeldKeys.delete(event.code || event.key)) {
+      if (editableScrollTarget) lockEditableScroll(editableScrollTarget);
+      deferEditableRestore();
+    }
     if (heldKeys.delete(event.key)) waitForReader();
   });
   document.addEventListener("keydown", event => {
