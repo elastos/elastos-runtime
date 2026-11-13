@@ -226,12 +226,12 @@ function wasm_bindgen__convert__closures_____invoke__h18c0de2c7bbc5bdc(arg0, arg
     wasm.wasm_bindgen__convert__closures_____invoke__h18c0de2c7bbc5bdc(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h1883c7aa0bd880d9(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h1883c7aa0bd880d9(arg0, arg1);
-}
-
 function wasm_bindgen__convert__closures_____invoke__ha8a79aaa94574e82(arg0, arg1, arg2) {
     wasm.wasm_bindgen__convert__closures_____invoke__ha8a79aaa94574e82(arg0, arg1, arg2);
+}
+
+function wasm_bindgen__convert__closures_____invoke__h1883c7aa0bd880d9(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h1883c7aa0bd880d9(arg0, arg1);
 }
 
 const __wbindgen_enum_RequestCredentials = ["omit", "same-origin", "include"];
