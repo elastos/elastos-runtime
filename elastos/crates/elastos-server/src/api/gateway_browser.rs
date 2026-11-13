@@ -4335,21 +4335,20 @@ pub(super) async fn browser_app_page_close(
     {
         return (StatusCode::NOT_FOUND, "browser session is not active").into_response();
     }
-    if page_cleanup.active_session {
-        if !mark_browser_page_retiring(
+    if page_cleanup.active_session
+        && !mark_browser_page_retiring(
             &state.data_dir,
             &page_id,
             &principal_id,
             &cleanup_owner_launch_id,
         )
         .await
-        {
-            return (
-                StatusCode::CONFLICT,
-                "Browser page ownership changed. Close Browser again to retry.",
-            )
-                .into_response();
-        }
+    {
+        return (
+            StatusCode::CONFLICT,
+            "Browser page ownership changed. Close Browser again to retry.",
+        )
+            .into_response();
     }
     let engine_cleanup = page_cleanup.engine_cleanup.clone();
     if let Err(message) = record_browser_engine_cleanup_obligation(
