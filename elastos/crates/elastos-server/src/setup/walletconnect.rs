@@ -6,9 +6,8 @@ pub fn local_exit(data: &Path, platform: &str) -> Option<(serde_json::Value, ser
     if !matches!(platform, "darwin-arm64" | "linux-amd64" | "linux-arm64") {
         return None;
     }
-    let sockets = super::browser_config::walletconnect_socket_paths(data, platform).ok()?;
-    let adapter = sockets["adapter"].as_str()?;
-    let socket = sockets["relay"].as_str()?;
+    let adapter = super::browser_config::runtime_socket_path(data, platform, "wc-adapter");
+    let socket = super::browser_config::runtime_socket_path(data, platform, "wc-relay");
     let hosts = ["relay.walletconnect.org", "relay.walletconnect.com"];
     let helper = serde_json::json!({
         "schema":"elastos.browser.local-exit.config/v1", "relay_ipc_path":socket,

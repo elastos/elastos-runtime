@@ -98,6 +98,14 @@ function parseArgs(argv) {
       case "--vm-supervisor":
         args.vmSupervisor = next();
         break;
+      case "--exit-adapter-socket":
+        args.exitAdapterSocket = next();
+        validateAbsolute(arg, args.exitAdapterSocket);
+        break;
+      case "--exit-relay-socket":
+        args.exitRelaySocket = next();
+        validateAbsolute(arg, args.exitRelaySocket);
+        break;
       case "--vm-control-socket":
         args.vmControlSocket = next();
         break;
@@ -734,8 +742,8 @@ function main() {
         files: ["browser-engine-adapter.json", "browser-viewer-ingress.json"] }));
       return;
     }
-    const adapterSocket = runtimeSocketPath(args, "exit-adapter");
-    const relaySocket = runtimeSocketPath(args, "exit-relay");
+    const adapterSocket = args.exitAdapterSocket || runtimeSocketPath(args, "exit-adapter");
+    const relaySocket = args.exitRelaySocket || runtimeSocketPath(args, "exit-relay");
     const sourceEnv = runtimeTurnEnv(args);
     const selectedControlLauncher =
       args.vmControlLauncher ||
