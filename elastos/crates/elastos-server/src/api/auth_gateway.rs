@@ -3614,8 +3614,13 @@ fn require_wallet_link_context(
     state: &GatewayState,
     headers: &HeaderMap,
 ) -> anyhow::Result<WalletLinkContext> {
-    let _ = (state, headers);
-    Err(WalletConnectorBridgeRequired.into())
+    let authority = super::gateway::require_runtime_wallet_authority(
+        &state.data_dir,
+        headers,
+        &[WALLET_WALLETCONNECT_CAPSULE_ID],
+    )
+    .map_err(|_| anyhow::Error::new(WalletConnectorBridgeRequired))?;
+    verified_wallet_link_context(state, WALLET_WALLETCONNECT_CAPSULE_ID, authority)
 }
 
 pub(in crate::api) fn verified_wallet_link_context(

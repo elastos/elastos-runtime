@@ -5,11 +5,8 @@ use serde_json::json;
 const HOME_WALLET_CONNECTOR_REQUEST_SCHEMA: &str =
     "elastos.home.wallet-connector.effect.request/v1";
 const HOME_WALLET_CONNECTOR_RESULT_SCHEMA: &str = "elastos.home.wallet-connector.effect.result/v1";
-const HOSTED_WALLET_CONNECTOR_IDS: &[&str] = &[
-    WALLET_METAMASK_CAPSULE_ID,
-    WALLET_UNISAT_CAPSULE_ID,
-    WALLET_WALLETCONNECT_CAPSULE_ID,
-];
+const HOSTED_WALLET_CONNECTOR_IDS: &[&str] =
+    &[WALLET_METAMASK_CAPSULE_ID, WALLET_UNISAT_CAPSULE_ID];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

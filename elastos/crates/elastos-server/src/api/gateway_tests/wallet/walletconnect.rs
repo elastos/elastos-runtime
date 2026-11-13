@@ -211,28 +211,22 @@ impl Fixture {
     }
     async fn route_as(
         &self,
-        home: &str,
+        _home: &str,
         token: &str,
         path: &str,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
-        let hosted =
-            path == STORAGE || path.ends_with("relay-admission") || path.ends_with("host-config");
-        let origin = if hosted {
-            format!("http://{}", self.addr)
-        } else {
-            "null".into()
-        };
+        let origin = "null";
         let response = self
             .app
             .clone()
             .oneshot(
                 Request::builder()
                     .header(HOST, self.addr.as_str())
-                    .header("origin", origin.as_str())
+                    .header("origin", origin)
                     .uri(path)
                     .method(if body.is_some() { "POST" } else { "GET" })
-                    .header("x-elastos-home-token", if hosted { home } else { token })
+                    .header("x-elastos-home-token", token)
                     .header("x-elastos-walletconnect-connector", token)
                     .header(CONTENT_TYPE, "application/json")
                     .body(body.map_or_else(Body::empty, |v| Body::from(v.to_string())))
@@ -304,7 +298,7 @@ impl Fixture {
             .unwrap();
         request
             .headers_mut()
-            .insert("origin", format!("http://{}", self.addr).parse().unwrap());
+            .insert("origin", "null".parse().unwrap());
         let (mut socket, _) = connect_async(request).await.unwrap();
         socket
             .send(Message::Text(
@@ -413,9 +407,13 @@ async fn walletconnect_admission_quota_preserves_other_principals() {
 }
 
 #[tokio::test]
-async fn walletconnect_websocket_upgrade_requires_same_home_origin_and_first_frame_admission() {
+async fn walletconnect_websocket_upgrade_requires_opaque_origin_and_first_frame_admission() {
     let f = Fixture::new().await;
-    for origin in [None, Some("null"), Some("https://other.example")] {
+    for origin in [
+        None,
+        Some("http://localhost"),
+        Some("https://other.example"),
+    ] {
         let mut request = format!("ws://{}/api/apps/wallet-walletconnect/relay", f.addr)
             .into_client_request()
             .unwrap();
@@ -429,7 +427,7 @@ async fn walletconnect_websocket_upgrade_requires_same_home_origin_and_first_fra
             matches!(result, Err(tokio_tungstenite::tungstenite::Error::Http(ref response)) if response.status() == StatusCode::FORBIDDEN)
         );
     }
-    // This matches the browser API: same-Home Origin, no custom auth header,
+    // This matches the opaque browser API: null Origin, no custom auth header,
     // and a refused first-frame ticket. Upgrading grants no Exit access.
     let mut socket = f.connect_ticket("refused", RELAY).await;
     assert!(matches!(
@@ -679,7 +677,7 @@ async fn walletconnect_reconnects_after_runtime_service_restart_with_saved_princ
 }
 
 #[tokio::test]
-async fn walletconnect_refuses_malformed_writes_and_cross_principal_host_authority() {
+async fn walletconnect_refuses_malformed_writes_and_home_authority() {
     let f = Fixture::new().await;
     for body in [
         json!({"key":"session","value":"x","unknown":true}),
@@ -690,40 +688,21 @@ async fn walletconnect_refuses_malformed_writes_and_cross_principal_host_authori
     }
     let (_, stored) = f.route(&f.connector, STORAGE, None).await;
     assert_eq!(stored, json!({}));
-    let other = passkey_authority_with_name_role_credential(
-        f.data.path(),
-        Some("different-host"),
-        crate::auth::RuntimePrincipalRole::Admin,
-        "different-host-credential",
-    );
     for path in [
         STORAGE,
         "/api/apps/wallet-walletconnect/relay-admission",
         "/api/apps/wallet-walletconnect/host-config",
     ] {
-        let (status, _) = f
-            .route_as(&other.home_token, &f.connector, path, Some(json!({})))
-            .await;
-        assert_ne!(status, StatusCode::OK);
+        let (status, _) = f.route(&f.home, path, None).await;
+        assert_ne!(
+            status,
+            StatusCode::OK,
+            "Home owns no WalletConnect authority"
+        );
     }
-    let response = f
-        .app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .header(HOST, f.addr.as_str())
-                .header("origin", "null")
-                .uri(STORAGE)
-                .header("x-elastos-home-token", &f.connector)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_ne!(
-        response.status(),
-        StatusCode::OK,
-        "capsule authority cannot read SDK keys"
+    assert_eq!(
+        capsule_route(&f, &f.connector, STORAGE, None).await,
+        StatusCode::OK
     );
     assert_eq!(f.calls.load(Ordering::SeqCst), 0);
 }
@@ -946,4 +925,35 @@ async fn walletconnect_opaque_relay_redeems_once_and_rechecks_launch() {
         Some(Ok(Message::Close(_))) | None
     ));
     assert_eq!(f.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn walletconnect_caps_unadmitted_opaque_sockets_and_recovers() {
+    let f = Fixture::new().await;
+    let mut sockets = Vec::new();
+    for _ in 0..16 {
+        let mut request = format!("ws://{}/api/apps/wallet-walletconnect/relay", f.addr)
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("origin", "null".parse().unwrap());
+        sockets.push(connect_async(request).await.unwrap().0);
+    }
+    let mut request = format!("ws://{}/api/apps/wallet-walletconnect/relay", f.addr)
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", "null".parse().unwrap());
+    assert!(
+        matches!(connect_async(request.clone()).await, Err(tokio_tungstenite::tungstenite::Error::Http(ref r)) if r.status() == StatusCode::TOO_MANY_REQUESTS)
+    );
+    for socket in &mut sockets {
+        socket.close(None).await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (mut recovered, _) = connect_async(request).await.unwrap();
+    recovered.close(None).await.unwrap();
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
 }

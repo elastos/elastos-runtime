@@ -1,7 +1,7 @@
 use super::super::*;
 
 #[tokio::test]
-async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
+async fn test_walletconnect_capsule_handoff_keeps_runtime_binding() {
     struct ReplyOverride {
         inner: MockWalletProvider,
         field: Option<&'static str>,
@@ -33,10 +33,10 @@ async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
             Ok(reply)
         }
     }
-    async fn call(app: &Router, home: &str, suffix: &str, input: Value) -> (StatusCode, Value) {
-        let response = app.clone().oneshot(test_browser_request("localhost:61180", "http://localhost:61180")
-            .method("POST").uri(format!("/api/apps/home/wallet-connector/approvals/wallet-approval%3Awc-reviewed/{suffix}"))
-            .header("x-elastos-home-token", home).header(CONTENT_TYPE, "application/json")
+    async fn call(app: &Router, token: &str, suffix: &str, input: Value) -> (StatusCode, Value) {
+        let response = app.clone().oneshot(test_browser_request("localhost:61180", "null")
+            .method("POST").uri(format!("/api/apps/wallet-walletconnect/wallet/approvals/wallet-approval%3Awc-reviewed/{suffix}"))
+            .header("x-elastos-home-token", token).header(CONTENT_TYPE, "application/json")
             .body(Body::from(input.to_string())).unwrap()).await.unwrap();
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
@@ -53,6 +53,7 @@ async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
         "other-principal",
         "other-connector",
         "expired",
+        "already-approved",
         "response-principal_id",
         "response-payload_hash",
     ] {
@@ -68,7 +69,7 @@ async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
         let payload_hash = format!("0x{}", "ab".repeat(32));
         let account = format!("wallet:eip155:20:0x{}", "12".repeat(20));
         let approval = json!({
-            "request_id":"wallet-approval:wc-reviewed", "status":"pending", "intent":"publish_envelope",
+            "request_id":"wallet-approval:wc-reviewed", "status":if case == "already-approved" { "approved" } else { "pending" }, "intent":"publish_envelope",
             "requested_by_actor":"documents", "resource":"elastos://content/publish", "reason":"Controlled proof",
             "account_id":account, "address":format!("0x{}", "12".repeat(20)), "proof_type":"siwe", "chain_namespace":"eip155:20",
             "connector_id":if case == "other-connector" { WALLET_METAMASK_CAPSULE_ID } else { WALLET_WALLETCONNECT_CAPSULE_ID },
@@ -86,47 +87,27 @@ async fn test_walletconnect_home_review_and_handoff_keep_runtime_binding() {
         let app = gateway_router(
             wallet_test_state_with_shared_provider(dir.path(), Arc::new(provider)).await,
         );
-        let input = json!({"schema":"elastos.home.wallet-connector.effect.request/v1", "connector_id":WALLET_WALLETCONNECT_CAPSULE_ID, "connector_token":connector});
-        let (status, review) = call(&app, &owner.home_token, "review", input.clone()).await;
-        if case.starts_with("response-") {
-            assert_eq!(
-                status,
-                StatusCode::OK,
-                "stored request remains bound to its owner"
-            );
-            let (status, error) = call(&app, &owner.home_token, "handoff", input).await;
-            assert_ne!(status, StatusCode::OK);
-            assert_eq!(error["text"], "WalletConnect approval binding mismatch");
-            continue;
-        }
+        let input = json!({});
         if case != "valid" {
-            assert_ne!(status, StatusCode::OK, "{case}");
             assert_ne!(
-                call(&app, &owner.home_token, "handoff", input).await.0,
+                call(&app, &connector, "approve", input).await.0,
                 StatusCode::OK,
                 "{case}"
             );
             continue;
         }
-        assert_eq!(status, StatusCode::OK, "{review}");
-        assert_eq!(review["account_id"], account);
         for field in ["account_id", "requested_by_actor", "payload_hash"] {
             let mut injected = input.clone();
             injected[field] = json!("capsule-selected");
             assert_ne!(
-                call(&app, &owner.home_token, "handoff", injected).await.0,
+                call(&app, &connector, "approve", injected).await.0,
                 StatusCode::OK
             );
         }
-        let (status, result) = call(&app, &owner.home_token, "handoff", input).await;
+        let (status, result) = call(&app, &connector, "approve", input).await;
         assert_eq!(status, StatusCode::OK, "{result}");
-        assert_eq!(
-            result["binding"],
-            json!({
-                "principal_id":owner.principal_id, "requested_by_actor":"documents", "account_id":account,
-                "chain_namespace":"eip155:20", "payload_hash":payload_hash, "expires_at":expiry,
-            })
-        );
+        assert_eq!(result["binding"]["principal_id"], owner.principal_id);
+        assert_eq!(result["binding"]["payload_hash"], payload_hash);
         assert_eq!(result["handoff"]["payload_hash"], payload_hash);
     }
 }
@@ -1321,4 +1302,70 @@ async fn test_metamask_connector_completes_external_wallet_handoff() {
         .as_deref()
         .unwrap_or_default()
         .starts_with("did:key:"));
+}
+
+#[tokio::test]
+async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding() {
+    for case in [
+        "valid",
+        "hash-text",
+        "hash-short",
+        "hash-nonhex",
+        "hash-uppercase-prefix",
+        "payload",
+        "signer",
+        "pending",
+        "expired",
+        "principal",
+        "connector",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = passkey_authority(dir.path());
+        seed_walletconnect_connector_config(dir.path());
+        let connector = projection_launch_token_for_authority_context(
+            dir.path(),
+            WALLET_WALLETCONNECT_CAPSULE_ID,
+            &owner,
+        );
+        let address = format!("0x{}", "12".repeat(20));
+        let payload = format!("0x{}", "ab".repeat(32));
+        let provider = Arc::new(RecordingWalletProvider::new(MockWalletProvider {
+            approvals: TokioMutex::new(vec![json!({
+                "request_id":"wallet-approval:wc-complete", "status":if case == "pending" { "pending" } else { "approved" },
+                "intent":"transaction_intent", "requested_by_actor":"documents", "resource":"elastos://transaction", "reason":"Fixture",
+                "account_id":"fixture-account", "address":address, "proof_type":"siwe", "chain_namespace":"eip155:20",
+                "connector_id":if case == "connector" { WALLET_METAMASK_CAPSULE_ID } else { WALLET_WALLETCONNECT_CAPSULE_ID },
+                "principal_id":if case == "principal" { "other-principal" } else { &owner.principal_id },
+                "payload_hash":payload, "created_at":now_ts(), "expires_at":if case == "expired" { 0 } else { now_ts() + 600 },
+            })]),
+            ..Default::default()
+        }));
+        let app = gateway_router(
+            wallet_test_state_with_shared_provider(dir.path(), provider.clone()).await,
+        );
+        let hash = match case {
+            "hash-text" => "Check a fake recovery site".into(),
+            "hash-short" => "0x12".into(),
+            "hash-nonhex" => format!("0x{}", "zz".repeat(32)),
+            "hash-uppercase-prefix" => format!("0X{}", "ab".repeat(32)),
+            _ => format!("0x{}", "34".repeat(32)),
+        };
+        let body = json!({"payload_hash":if case == "payload" { format!("0x{}", "cd".repeat(32)) } else { payload },
+            "signer":if case == "signer" { "another-account" } else { &address }, "transaction_hash":hash});
+        let response = app.oneshot(test_browser_request("localhost:61180", "null")
+            .method("POST").uri("/api/apps/wallet-walletconnect/wallet/approvals/wallet-approval%3Awc-complete/complete")
+            .header("x-elastos-home-token", &connector).header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string())).unwrap()).await.unwrap();
+        let operations = provider.recorded_v2_operation_kinds().await;
+        if case == "valid" {
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(operations.contains(&WalletOperationKind::CompleteConnectorHandoff));
+        } else {
+            assert_ne!(response.status(), StatusCode::OK, "{case}");
+            assert!(
+                !operations.contains(&WalletOperationKind::CompleteConnectorHandoff),
+                "{case}: refused before provider effect"
+            );
+        }
+    }
 }

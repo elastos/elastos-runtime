@@ -15,13 +15,25 @@ const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SOCKETS: usize = 2;
 const RESOURCE: &str = "elastos://walletconnect/internet";
 
-#[derive(Default)]
 pub(crate) struct WalletConnectService {
+    unadmitted: Arc<tokio::sync::Semaphore>,
     inner: Mutex<Inner>,
     #[cfg(test)]
     pub(in crate::api::gateway) pongs: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     pub(in crate::api::gateway) tls: std::sync::Mutex<Option<Arc<rustls::ClientConfig>>>,
+}
+impl Default for WalletConnectService {
+    fn default() -> Self {
+        Self {
+            unadmitted: Arc::new(tokio::sync::Semaphore::new(16)),
+            inner: Mutex::default(),
+            #[cfg(test)]
+            pongs: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            tls: std::sync::Mutex::new(None),
+        }
+    }
 }
 #[derive(Default)]
 struct Inner {
@@ -371,22 +383,23 @@ async fn verify_sdk(state: &GatewayState) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn hosted(state: &GatewayState, headers: &HeaderMap) -> anyhow::Result<RuntimeWalletAuthority> {
-    let connector = headers
-        .get("x-elastos-walletconnect-connector")
-        .and_then(|h| h.to_str().ok())
-        .ok_or_else(|| anyhow::anyhow!("Home wallet connector authority is required"))?;
-    Ok(
-        gateway_home_wallet_connector::revalidate_home_wallet_connector_authority(
-            state,
-            headers,
-            "elastos.home.wallet-connector.effect.request/v1",
-            WALLET_WALLETCONNECT_CAPSULE_ID,
-            connector,
-            WALLET_WALLETCONNECT_CAPSULE_ID,
-        )?
-        .wallet,
-    )
+fn connector_authority(
+    state: &GatewayState,
+    headers: &HeaderMap,
+) -> anyhow::Result<RuntimeWalletAuthority> {
+    let launch = require_home_launch_token_binding(
+        &state.data_dir,
+        headers,
+        &[WALLET_WALLETCONNECT_CAPSULE_ID],
+    )?;
+    anyhow::ensure!(
+        launch.launch_context.selected_resource == WALLET_WALLETCONNECT_CAPSULE_ID
+            && launch.context.proof_binding_id.is_some(),
+        "WalletConnect requires its own proof-bound capsule launch"
+    );
+    // The signed launch carries principal, live session and exact launch instance.
+    // Retaining these headers binds relay tickets and recurring checks to that launch.
+    runtime_wallet_authority(&launch)
 }
 #[cfg(test)]
 pub(in crate::api::gateway) async fn expire_admissions_for_test(state: &GatewayState) {
@@ -403,7 +416,7 @@ pub(in crate::api::gateway) async fn expire_admissions_for_test(state: &GatewayS
 }
 pub(super) async fn admission(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
     let result = async {
-        let authority = hosted(&state, &headers)?;
+        let authority = connector_authority(&state, &headers)?;
         verify_sdk(&state).await?;
         let principal = authority.home_launch_context().principal_id;
         let mut inner = state.walletconnect.inner.lock().await;
@@ -436,7 +449,7 @@ pub(super) async fn host_config(
     headers: HeaderMap,
 ) -> Response {
     let result = async {
-        let authority = hosted(&state, &headers)?;
+        let authority = connector_authority(&state, &headers)?;
         if method == axum::http::Method::POST { verify_sdk(&state).await?; }
         let inner = state.walletconnect.inner.lock().await;
         if method == axum::http::Method::POST {
@@ -481,7 +494,7 @@ pub(super) async fn storage(
     input: Result<Json<StorageWrite>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     let result = async {
-        let authority = hosted(&state, &headers)?;
+        let authority = connector_authority(&state, &headers)?;
         let _guard = state.walletconnect.inner.lock().await;
         let path = storage_path(
             &state.data_dir,
@@ -560,17 +573,39 @@ struct RelayHello {
     token: String,
     relay: String,
 }
-pub(super) async fn relay(State(state): State<GatewayState>, ws: WebSocketUpgrade) -> Response {
+pub(super) async fn relay(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if headers.get("origin").and_then(|v| v.to_str().ok()) != Some("null") {
+        return (
+            StatusCode::FORBIDDEN,
+            "WalletConnect requires its opaque capsule origin",
+        )
+            .into_response();
+    }
+    let Ok(permit) = state.walletconnect.unadmitted.clone().try_acquire_owned() else {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "WalletConnect admission connections are busy",
+        )
+            .into_response();
+    };
     // Authority travels in the first bounded frame, never in a URL or log.
     ws.max_message_size(64 * 1024)
         .max_frame_size(64 * 1024)
         .on_upgrade(move |mut socket| async move {
-            let _ = relay_connection(&state, &mut socket).await;
+            let _ = relay_connection(&state, &mut socket, permit).await;
             // Error messages can contain upstream auth URLs. Keep them private.
             let _ = socket.close().await;
         })
 }
-async fn relay_connection(state: &GatewayState, socket: &mut WebSocket) -> anyhow::Result<()> {
+async fn relay_connection(
+    state: &GatewayState,
+    socket: &mut WebSocket,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> anyhow::Result<()> {
     let hello = tokio::time::timeout(Duration::from_secs(5), socket.recv())
         .await?
         .ok_or_else(|| anyhow::anyhow!("WalletConnect transport closed"))??;
@@ -585,11 +620,12 @@ async fn relay_connection(state: &GatewayState, socket: &mut WebSocket) -> anyho
         let (expiry, headers, _) = inner
             .admissions
             .remove(&hello.token)
-            .ok_or_else(|| anyhow::anyhow!("Home transport admission required"))?;
+            .ok_or_else(|| anyhow::anyhow!("Live WalletConnect capsule admission required"))?;
         anyhow::ensure!(expiry > now_ts(), "WalletConnect admission expired");
         headers
     };
-    let authority = hosted(state, &headers)?;
+    let authority = connector_authority(state, &headers)?;
+    drop(permit);
     let config = load_walletconnect_connector_config(&state.data_dir)?;
     let url = relay_url(&hello.relay, &config.project_id)?;
     let principal = authority.home_launch_context().principal_id.clone();
@@ -649,7 +685,7 @@ async fn transport(
         client::IntoClientRequest, protocol::WebSocketConfig, Message as Upstream,
     };
     let host = url.host_str().unwrap();
-    let authority = hosted(state, headers)?;
+    let authority = connector_authority(state, headers)?;
     let principal = authority.home_launch_context().principal_id;
     let registry = state
         .provider_registry
@@ -700,10 +736,9 @@ async fn transport(
             .unwrap_or(tls_config);
         let connector = Some(tokio_tungstenite::Connector::Rustls(tls_config));
         let mut request = url.as_str().into_client_request()?;
-        request.headers_mut().insert(
-            "origin",
-            gateway_home_token::home_browser_origin(headers)?.parse()?,
-        );
+        request
+            .headers_mut()
+            .insert("origin", HeaderValue::from_static("null"));
         let (upstream, _) = tokio_tungstenite::client_async_tls_with_config(
             request,
             stream,
@@ -723,7 +758,7 @@ async fn transport(
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                hosted(state, headers)?;
+                connector_authority(state, headers)?;
                 check_owner(state, false).await?;
                 check_liveness(pong.elapsed(), activity.elapsed())?;
                 tokio::time::timeout(Duration::from_secs(5), upstream.send(Upstream::Ping(Vec::new()))).await??;
@@ -744,7 +779,7 @@ async fn transport(
             },
             frame = socket.recv() => match frame.transpose()? {
                 Some(Message::Text(text)) => {
-                    hosted(state, headers)?;
+                    connector_authority(state, headers)?;
                     check_owner(state, false).await?;
                     activity = Instant::now();
                     tokio::time::timeout(Duration::from_secs(5), upstream.send(Upstream::Text(text))).await??;
