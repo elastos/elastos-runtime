@@ -14,6 +14,8 @@ export async function exerciseWalletConnect(scenario='valid') {
   const provider={connected:true,session:{expiry:clock()/1000+3600,namespaces:{eip155:{methods:scenario==='typed-unavailable'?['personal_sign']:['personal_sign','eth_sendTransaction','eth_signTypedData_v4']}}},signer:{client:{core:{relayer:{connected:true}}}},
     on:(name,fn)=>events.set(name,fn),async request(input,expiry){calls.push({...input,expiry});
       if(input.method==='eth_accounts')return [scenario==='wrong-account'||changed&&kind==='account-change-during-send'?`0x${'ab'.repeat(20)}`:address];
+      if(input.method==='eth_chainId'&&scenario.startsWith('numeric-chain'))return 20;
+      if(input.method==='eth_chainId'&&scenario.startsWith('invalid-chain:'))return JSON.parse(scenario.slice('invalid-chain:'.length));
       if(input.method==='eth_chainId')return scenario==='wrong-chain'||changed&&kind==='chain-change-during-send'?'0x1':'0x14';
       if(['personal_sign','eth_signTypedData_v4'].includes(input.method)){if(signatureIntent)change();return signature;}
       if(input.method==='eth_sendTransaction'){change();return scenario==='invalid-hash'?'Open a fake recovery website':transactionHash;}
@@ -38,7 +40,7 @@ export async function exerciseWalletConnect(scenario='valid') {
   };
   const client=createWalletConnectClient({api,origin:'http://localhost:61180',clearMemory:()=>{memoryCleared=true;},
     loadAdapter:async()=>({connectWalletConnectEvm:async options=>{assert.equal(options.contextKey,'wallet-walletconnect');return provider;},disconnectWalletConnectEvm:async()=>{}})});
-  try {return {result:await client.effect({kind:scenario.startsWith('link')?'link':scenario==='disconnect'?'disconnect':'approve',approvalRequestId:'approval:fixture'}),calls,routes,memoryCleared};}
+  try {return {result:await client.effect({kind:(scenario.startsWith('link')||scenario==='numeric-chain-link')?'link':scenario==='disconnect'?'disconnect':'approve',approvalRequestId:'approval:fixture'}),calls,routes,memoryCleared};}
   catch(error){return {error:error.message,calls,routes,memoryCleared};}
   finally{Date.now=clock;}
 }

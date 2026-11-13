@@ -9,8 +9,11 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
   };
   const chain = async () => {
     const value = await provider.request({method:'eth_chainId'});
-    if (!/^0x[0-9a-fA-F]+$/.test(value || '')) throw new Error('Wallet returned an invalid chain.');
-    return `eip155:${Number.parseInt(value,16)}`;
+    // The pinned WalletConnect provider returns a number; EIP-1193 wallets use hex.
+    const id = typeof value === 'number' ? value
+      : typeof value === 'string' && /^0x[0-9a-fA-F]+$/.test(value) ? Number(value) : NaN;
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Wallet returned an invalid chain.');
+    return `eip155:${id}`;
   };
   const same = (a,b) => String(a).toLowerCase() === String(b).toLowerCase();
   const signData = message => /^0[xX](?:[0-9a-fA-F]{2})*$/.test(message) ? '0x'+message.slice(2)
