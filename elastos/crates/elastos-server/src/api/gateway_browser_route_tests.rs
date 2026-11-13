@@ -8151,6 +8151,47 @@ async fn test_browser_refresh_recovers_and_closes_exact_instance_bound_page() {
     assert_eq!(wrong_instance_close.status(), StatusCode::NOT_FOUND);
     assert_eq!(browser_page_session_count(dir.path()).await, 1);
 
+    assert!(
+        !mark_browser_page_retiring(
+            dir.path(),
+            page_id,
+            &authority.principal_id,
+            &owner_launch_id
+        )
+        .await,
+        "a Close snapshot from before renewal cannot claim the new owner"
+    );
+    assert!(
+        mark_browser_page_retiring(
+            dir.path(),
+            page_id,
+            &authority.principal_id,
+            &refreshed_launch_id
+        )
+        .await
+    );
+    let retiring_restore = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .method("POST")
+                .uri(format!("/api/apps/browser/pages/{page_id}/restore"))
+                .header("x-elastos-home-token", refreshed_token.clone())
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"cleanup_id":cleanup_id,"browser_instance":browser_instance})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        retiring_restore.status(),
+        StatusCode::NOT_FOUND,
+        "Close fences a concurrent handover"
+    );
+
     let close = app
         .oneshot(
             test_browser_request("localhost:61180", "null")
