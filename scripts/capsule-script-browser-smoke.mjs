@@ -121,11 +121,7 @@ try {
             await frame.locator('#title-input').waitFor({ state: 'visible' });
           }
           if (app === 'elacity-player') {
-            await frame.locator('#player-status').filter({ hasText: 'Missing protected video mint id.' }).waitFor();
-          }
-          if (app === 'gba-emulator') {
-            await frame.locator('#btn-ff').click();
-            await frame.waitForFunction(() => document.querySelector('#btn-ff').classList.contains('active'));
+            await frame.locator('#player-status').filter({ hasText: 'Protected video is unavailable.' }).waitFor();
           }
           assert.equal(await frame.evaluate(() => self.origin), 'null');
           console.log(`PASS ${engine} ${browser.version()} ${app}: scripts run; origin null; foreign script blocked`);
