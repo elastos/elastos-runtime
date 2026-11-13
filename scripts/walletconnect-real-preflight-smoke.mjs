@@ -50,6 +50,16 @@ try {
         return options;
       });
       await context.route('**/*', route => new URL(route.request().url()).origin === options.origin ? route.continue() : route.abort());
+      context.on('request', request => {
+        const path = new URL(request.url()).pathname;
+        if (path === '/api/apps/wallet-walletconnect/storage' && request.method() === 'POST') {
+          const key = request.postDataJSON().key;
+          run.runtimeWrites ??= {pairing:0, keychain:0, session:0, other:0};
+          const kind = key.endsWith('//pairing') ? 'pairing' : key.endsWith('//keychain') ? 'keychain'
+            : /session|ethereum_provider/.test(key) ? 'session' : 'other';
+          run.runtimeWrites[kind]++;
+        }
+      });
       context.on('response', response => {
         const path = new URL(response.url()).pathname;
         if (path.startsWith('/api/apps/wallet-walletconnect/') && run.network.length < 128) {
@@ -73,7 +83,7 @@ try {
       frame = await (await page.waitForSelector('#wc-real-preflight', {timeout:10000})).contentFrame();
       assert.ok(frame);
       run.phase = 'runtime-store';
-      await frame.waitForFunction(() => window.failed || document.querySelector('dialog[open] canvas')?.width > 0, null, {timeout:20000});
+      await frame.waitForFunction(() => window.failed || document.querySelector('dialog[open] canvas')?.width === 280, null, {timeout:20000});
       assert.equal(await frame.evaluate(() => window.failed), undefined);
       assert.equal(await frame.evaluate(() => self.origin), 'null');
       assert.equal(await frame.locator('dialog[open] canvas').count(), 1);
@@ -104,6 +114,7 @@ try {
       const trace = await frame.evaluate(() => window.storageTrace);
       assert.ok(trace.every(entry => !entry.protocol));
       run.protocolInShim = false;
+      for (const kind of ['pairing', 'keychain', 'session']) assert.ok(run.runtimeWrites[kind] > 0, `${kind} persisted through Runtime`);
       run.status = 'PASS';
     } catch {
       run.status = 'FAIL';
