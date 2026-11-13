@@ -508,7 +508,7 @@ test("566a Return after Don't Allow or Turn Off continues once after Inbox passk
       await inbox.getByRole("button",{name:"Allow",exact:true}).click();
       await page.waitForFunction(()=>approvals.length===1);
       await page.waitForTimeout(2200);assert.equal(f.state.opens.length+f.state.navigations.length,before,"navigation waits for the passkey");
-      const opened=page.waitForResponse(r=>r.url().endsWith(initial==="granted" ? "/pages/retained/input" : "/api/apps/browser/open"),{timeout:5000});
+      const opened=page.waitForResponse(r=>r.url().endsWith("/api/apps/browser/open"),{timeout:5000});
       await page.evaluate(()=>completeFixturePasskey());await opened;
       await page.waitForTimeout(4300);
       assert.deepEqual([...f.state.opens,...f.state.navigations].slice(before).map(open=>open.url),[url]);
