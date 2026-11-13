@@ -418,7 +418,7 @@ pub(crate) fn list_launchable_browser_capsules(data_dir: &Path) -> Vec<Launchabl
     list_launchable_browser_capsules_for(data_dir, &crate::setup::detect_platform())
 }
 
-fn list_launchable_browser_capsules_for(
+pub(super) fn list_launchable_browser_capsules_for(
     data_dir: &Path,
     platform: &str,
 ) -> Vec<LaunchableBrowserCapsule> {
@@ -1494,12 +1494,12 @@ mod tests {
     }
 
     #[test]
-    fn browser_is_launchable_only_on_hosts_with_a_local_engine() {
+    fn browser_is_launchable_on_supported_hosts_before_setup() {
         let data_dir = tempfile::tempdir().unwrap();
         write_test_browser_capsule(data_dir.path(), "browser", "Browser", "app");
         for (platform, listed) in [
             ("linux-amd64", false),
-            ("linux-arm64", false),
+            ("linux-arm64", true),
             ("darwin-arm64", true),
         ] {
             let names: Vec<_> = list_launchable_browser_capsules_for(data_dir.path(), platform)

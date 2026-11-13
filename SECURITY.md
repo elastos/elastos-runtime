@@ -41,6 +41,36 @@ records the remaining gates. Source checks describe this source tree. Accepted
 installed proof binds the exact Runtime, components and app assets to the
 journeys tested on that device.
 
+## Browser internet consent
+
+A new or updated Home starts with Browser internet access off. The Home owner
+allows this computer's internet connection for Browser from the current Inbox
+request with a passkey. Runtime binds that approval to its request ID and expiry.
+Browser Settings offers Manage in Inbox. Inbox confirms Turn Off and requires
+a passkey. Runtime
+stores the consent decision separately from the capability token; the decision,
+Inbox and Browser responses contain no token bytes.
+
+Runtime admits internet access only through VM Browser engines. This includes
+remote VM engines. Hosted, native and test-only Playwright engines are refused
+on the Runtime Browser path. The Browser frame uses the VM Open route; legacy
+Net HTTP, connect, resolve and stream routes return 410. Runtime owns Exit and
+Net resources. App capability requests and existing app tokens cannot access
+them. Direct owner shell network writes require an explicit capability token.
+Each Browser launch receives its own Runtime
+instance binding. Runtime checks the current grant at provider dispatch and at
+each Exit relay open. Stop writes the revoked decision before it invalidates the
+grant generation, cancels Runtime-owned byte copies and acknowledges completion.
+A provider fetch or Chain call accepted before Stop can still finish. A remote
+engine can take longer to close, while Runtime has already stopped its copies.
+An accepted Carrier invocation can keep Stop pending until its reply arrives.
+Inbox keeps Turn Off available to retry until Runtime confirms cleanup.
+
+The approval display still has the [trusted-display gap (#178)](https://github.com/elastos/elastos-runtime/issues/178).
+Home renders the request and starts the passkey ceremony; WebAuthn does not prove
+that the person saw that exact text on an independent trusted display. The target
+is a trusted display that binds what the person sees to the approved effect.
+
 ## Stored keys and recovery
 
 Keys are stored next to the data they protect. Full data-home backups include

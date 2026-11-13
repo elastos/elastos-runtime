@@ -2,13 +2,13 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
 import path from "node:path";
+import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 
-const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 
 const capsuleRoot = path.resolve("capsules/library/browser");
+const homeNavigationClientPath = path.resolve("capsules/home/browser/home-navigation-client.js");
 const homeClipboardClientPath = path.resolve(
   "capsules/home/browser/home-clipboard-client.js",
 );
@@ -132,6 +132,11 @@ function createAppServer() {
       return;
     }
 
+    if (url.pathname === "/apps/home/home-navigation-client.js") {
+      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+      createReadStream(homeNavigationClientPath).pipe(res);
+      return;
+    }
     if (url.pathname === "/apps/home/home-clipboard-client.js") {
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
       createReadStream(homeClipboardClientPath).pipe(res);
@@ -166,7 +171,7 @@ async function run() {
   const server = createAppServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
   try {
     const page = await browser.newPage();
     const pageErrors = [];

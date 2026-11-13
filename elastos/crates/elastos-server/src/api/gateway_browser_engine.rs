@@ -13,22 +13,47 @@ pub(in crate::api::gateway) async fn resolve_browser_engine_adapter(
     requested_adapter: Option<&str>,
     display_mode: BrowserDisplayMode,
     guarantee_level: BrowserGuaranteeLevel,
-) -> Result<String, BrowserCompatibilityError> {
-    resolve_browser_engine_adapter_with_preparation(
+) -> Result<
+    (
+        String,
+        Option<elastos_common::browser_vm_seed::BrowserVmSeedIdentity>,
+    ),
+    BrowserCompatibilityError,
+> {
+    let platform = crate::setup::detect_platform();
+    let adapter_id = resolve_browser_engine_adapter_with_preparation(
         registry,
         data_dir,
+        &platform,
         principal_id,
         requested_adapter,
         display_mode,
         guarantee_level,
         || crate::setup::ensure_browser_vm_image_for_local_engine(data_dir),
     )
-    .await
+    .await?;
+    let seed =
+        match browser_engine_runtime_image_path(registry, data_dir, &adapter_id, &platform).await {
+            Some(path) => Some(
+                tokio::task::spawn_blocking(move || {
+                    crate::setup::verified_browser_vm_seed_identity(&path, &platform)
+                })
+                .await
+                .map_err(|_| BrowserCompatibilityError::EngineUnavailable)?
+                .map_err(|_| BrowserCompatibilityError::EngineNotReady {
+                    reason: BrowserEngineReadinessReason::PreparationRequired,
+                })?,
+            ),
+            None => None,
+        };
+    Ok((adapter_id, seed))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn resolve_browser_engine_adapter_with_preparation<F, Fut>(
     registry: &ProviderRegistry,
     data_dir: &FsPath,
+    platform: &str,
     principal_id: &str,
     requested_adapter: Option<&str>,
     display_mode: BrowserDisplayMode,
@@ -60,6 +85,7 @@ where
     let mut candidates = inventory
         .adapters
         .iter()
+        .filter(|adapter| adapter.engine == "chromium_microvm")
         .filter(|adapter| adapter.supports(display_mode, guarantee_level))
         .filter(|adapter| requested_adapter.is_none_or(|id| adapter.id == id))
         .filter(|adapter| {
@@ -70,7 +96,12 @@ where
     let mut readiness_budget = std::time::Duration::from_secs(12);
     let mut unavailable_reason = BrowserEngineReadinessReason::ReadinessUnsupported;
     for adapter in candidates {
-        if browser_engine_requires_runtime_image(registry, data_dir, adapter).await {
+        if adapter.engine == "chromium_microvm"
+            && adapter.backing_substrate == "local_microvm"
+            && browser_engine_runtime_image_path(registry, data_dir, &adapter.id, platform)
+                .await
+                .is_some()
+        {
             if let Err(error) = prepare_image().await {
                 tracing::warn!(adapter_id = %adapter.id, error = %error,
                     "Browser local Engine image preparation failed");
@@ -81,7 +112,8 @@ where
         let request = serde_json::json!({
             "op": "readiness", "principal_id": principal_id, "adapter_id": adapter.id,
         });
-        // Acquisition can exceed the host probe budget. Start this probe after
+        // Runtime admission waits for startup verification or acquisition before
+        // the host probe budget starts. Start this probe after
         // preparation, preserving the total twelve seconds across candidates.
         let probe_started = tokio::time::Instant::now();
         let deadline = probe_started + readiness_budget;
@@ -121,14 +153,12 @@ where
     })
 }
 
-async fn browser_engine_requires_runtime_image(
+async fn browser_engine_runtime_image_path(
     registry: &ProviderRegistry,
     data_dir: &FsPath,
-    adapter: &elastos_common::browser_protocol::BrowserEngineAdapterCapabilities,
-) -> bool {
-    if adapter.engine != "chromium_microvm" || adapter.backing_substrate != "local_microvm" {
-        return false;
-    }
+    adapter_id: &str,
+    platform: &str,
+) -> Option<std::path::PathBuf> {
     // Inventory capability strings alone do not bind a provider to Runtime's
     // image layout. Match the configured first-party host launcher as well.
     if registry
@@ -136,7 +166,7 @@ async fn browser_engine_requires_runtime_image(
         .await
         .is_none_or(|registration| registration.provider != "capsule-provider")
     {
-        return false;
+        return None;
     }
     let raw = match std::env::var("ELASTOS_BROWSER_ENGINE_ADAPTER_CONFIG") {
         Ok(raw) => raw,
@@ -145,12 +175,12 @@ async fn browser_engine_requires_runtime_image(
                 .await
             {
                 Ok(raw) => raw,
-                Err(_) => return false,
+                Err(_) => return None,
             }
         }
     };
     let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return false;
+        return None;
     };
     // Supervisor commands inherit Runtime's environment. Explicit configuration
     // wins, just as it does when the provider starts the launcher.
@@ -173,11 +203,18 @@ async fn browser_engine_requires_runtime_image(
             }
         }
     }
-    browser_engine_config_uses_runtime_image(
-        &config,
-        data_dir,
-        &adapter.id,
-        &crate::setup::detect_platform(),
+    if !browser_engine_config_uses_runtime_image(&config, data_dir, adapter_id, platform) {
+        return None;
+    }
+    let adapter = config["adapters"]
+        .as_array()?
+        .iter()
+        .find(|entry| entry["id"] == adapter_id)?;
+    Some(
+        adapter["supervisor"]["env"]["ELASTOS_BROWSER_VM_ROOTFS"]
+            .as_str()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| data_dir.join("browser-vm/rootfs.ext4")),
     )
 }
 
@@ -187,13 +224,9 @@ fn browser_engine_config_uses_runtime_image(
     adapter_id: &str,
     platform: &str,
 ) -> bool {
-    let launcher = if platform.starts_with("darwin-") {
-        "browser-vz-engine-supervisor"
-    } else if platform.starts_with("linux-") {
-        "browser-vm-local-crosvm-launcher"
-    } else {
+    if !matches!(platform, "darwin-arm64" | "linux-arm64") {
         return false;
-    };
+    }
     let Some(adapter) = config["adapters"].as_array().and_then(|adapters| {
         adapters
             .iter()
@@ -212,7 +245,7 @@ fn browser_engine_config_uses_runtime_image(
         && path_matches(&supervisor["program"], "bin/browser-vm-engine-supervisor")
         && path_matches(
             &env["ELASTOS_BROWSER_VM_CONTROL_LAUNCHER"],
-            &format!("bin/{launcher}"),
+            "bin/browser-vz-engine-supervisor",
         )
         && path_matches(&env["ELASTOS_BROWSER_VM_DATA_DIR"], "")
         && ([
@@ -222,32 +255,26 @@ fn browser_engine_config_uses_runtime_image(
                 "browser-vm/browser-vm-rootfs-manifest.json",
             ),
             ("ELASTOS_BROWSER_VM_KERNEL", "bin/vmlinux"),
-            if platform.starts_with("darwin-") {
-                ("ELASTOS_BROWSER_VM_INITRAMFS", "bin/initrd")
-            } else {
-                ("ELASTOS_BROWSER_VM_INITRD", "browser-vm/initrd")
-            },
+            ("ELASTOS_BROWSER_VM_INITRAMFS", "bin/initrd"),
         ]
         .iter()
-        .all(|(key, path)| env[*key].is_null() || path_matches(&env[*key], path))
-            || [
-                ("ELASTOS_BROWSER_VM_ROOTFS", "rootfs.ext4"),
-                (
-                    "ELASTOS_BROWSER_VM_ROOTFS_MANIFEST",
-                    "browser-vm-rootfs-manifest.json",
-                ),
-                ("ELASTOS_BROWSER_VM_KERNEL", "vmlinux"),
-                (
-                    if platform.starts_with("darwin-") {
-                        "ELASTOS_BROWSER_VM_INITRAMFS"
-                    } else {
-                        "ELASTOS_BROWSER_VM_INITRD"
-                    },
-                    "initrd",
-                ),
-            ]
-            .iter()
-            .all(|(key, file)| path_matches(&env[*key], &format!("browser-vm/image-set/{file}"))))
+        .all(|(key, path)| {
+            env[*key].is_null()
+                || path_matches(&env[*key], path)
+                || (platform == "linux-arm64"
+                    && *key == "ELASTOS_BROWSER_VM_INITRAMFS"
+                    && path_matches(&env[*key], "browser-vm/initrd"))
+        }) || [
+            ("ELASTOS_BROWSER_VM_ROOTFS", "rootfs.ext4"),
+            (
+                "ELASTOS_BROWSER_VM_ROOTFS_MANIFEST",
+                "browser-vm-rootfs-manifest.json",
+            ),
+            ("ELASTOS_BROWSER_VM_KERNEL", "vmlinux"),
+            ("ELASTOS_BROWSER_VM_INITRAMFS", "initrd"),
+        ]
+        .iter()
+        .all(|(key, file)| path_matches(&env[*key], &format!("browser-vm/image-set/{file}"))))
 }
 
 pub(in crate::api::gateway) async fn browser_engine_summary(
@@ -385,10 +412,18 @@ fn visible_string_array(value: Option<&serde_json::Value>) -> serde_json::Value 
 }
 
 pub(in crate::api::gateway) async fn browser_net_summary(
-    registry: Option<&Arc<ProviderRegistry>>,
-    principal_id: &str,
+    state: &GatewayState,
+    context: &HomeLaunchTokenContext,
 ) -> serde_json::Value {
-    let exit_provider = browser_exit_summary(registry, principal_id).await;
+    let registry = state.provider_registry.as_ref();
+    let principal_id = context.principal_id.as_str();
+    let contact_names = super::super::gateway_home_system::browser_exit_contact_names(
+        &state.data_dir,
+        context,
+        state.collaboration_discovery_service.as_ref(),
+    )
+    .unwrap_or_default();
+    let exit_provider = browser_exit_summary(registry, principal_id, &contact_names).await;
     let Some(registry) = registry else {
         return serde_json::json!({
             "status": "fail_closed",
@@ -453,6 +488,7 @@ pub(in crate::api::gateway) async fn browser_net_summary(
 async fn browser_exit_summary(
     registry: Option<&Arc<ProviderRegistry>>,
     principal_id: &str,
+    contact_names: &BTreeMap<String, String>,
 ) -> serde_json::Value {
     let Some(registry) = registry else {
         return serde_json::Value::Null;
@@ -486,14 +522,17 @@ async fn browser_exit_summary(
                 "direct_network": false,
                 "backend_count": data.get("backend_count").cloned().unwrap_or_else(|| serde_json::json!(0)),
                 "remote_carrier_exit_count": data.get("remote_carrier_exit_count").cloned().unwrap_or_else(|| serde_json::json!(0)),
-                "remote_carrier_exits": browser_visible_remote_carrier_exits(&data),
+                "remote_carrier_exits": browser_visible_remote_carrier_exits(&data, contact_names),
             })
         }
         _ => serde_json::Value::Null,
     }
 }
 
-fn browser_visible_remote_carrier_exits(data: &serde_json::Value) -> serde_json::Value {
+fn browser_visible_remote_carrier_exits(
+    data: &serde_json::Value,
+    contact_names: &BTreeMap<String, String>,
+) -> serde_json::Value {
     let Some(exits) = data
         .get("remote_carrier_exits")
         .and_then(|value| value.as_array())
@@ -505,6 +544,16 @@ fn browser_visible_remote_carrier_exits(data: &serde_json::Value) -> serde_json:
             .iter()
             .map(|exit| {
                 let mut visible = exit.clone();
+                if let Some(fields) = visible.as_object_mut() {
+                    fields.remove("contact_name");
+                    if let Some(name) = exit
+                        .get("peer_did")
+                        .and_then(|value| value.as_str())
+                        .and_then(|peer| contact_names.get(peer))
+                    {
+                        fields.insert("contact_name".into(), serde_json::json!(name));
+                    }
+                }
                 scrub_exit_authority_fields(&mut visible);
                 visible
             })
@@ -613,15 +662,10 @@ mod tests {
             "direct_network":false, "wallet_injection":false})
     }
 
-    fn image_config(data: &FsPath, platform: &str) -> serde_json::Value {
-        let launcher = if platform.starts_with("darwin-") {
-            "browser-vz-engine-supervisor"
-        } else {
-            "browser-vm-local-crosvm-launcher"
-        };
+    fn image_config(data: &FsPath) -> serde_json::Value {
         json!({"adapters":[{"id":"local", "kind":"chromium_microvm", "supervisor":{
             "program":data.join("bin/browser-vm-engine-supervisor"), "env":{
-                "ELASTOS_BROWSER_VM_CONTROL_LAUNCHER":data.join("bin").join(launcher),
+                "ELASTOS_BROWSER_VM_CONTROL_LAUNCHER":data.join("bin/browser-vz-engine-supervisor"),
                 "ELASTOS_BROWSER_VM_DATA_DIR":data}}}]})
     }
 
@@ -629,7 +673,7 @@ mod tests {
         std::fs::create_dir_all(data.join("config")).unwrap();
         std::fs::write(
             data.join("config/browser-engine-adapter.json"),
-            serde_json::to_vec(&image_config(data, &crate::setup::detect_platform())).unwrap(),
+            serde_json::to_vec(&image_config(data)).unwrap(),
         )
         .unwrap();
     }
@@ -656,11 +700,43 @@ mod tests {
         (registry, calls)
     }
 
+    #[tokio::test]
+    async fn browser_internet_refuses_every_non_vm_engine() {
+        for engine in [
+            "hosted_remote_browser",
+            "playwright",
+            "native_browser",
+            "diagnostic_playwright",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut adapter = image_adapter("candidate", "configured_provider", true);
+            adapter["engine"] = json!(engine);
+            let (registry, calls) =
+                image_registry("capsule-provider", vec![adapter], Duration::ZERO).await;
+            let result = resolve_browser_engine_adapter_with_preparation(
+                &registry,
+                dir.path(),
+                "darwin-arm64",
+                "person:test",
+                Some("candidate"),
+                BrowserDisplayMode::WebrtcRemoteDisplay,
+                BrowserGuaranteeLevel::MechanismMicrovm,
+                || async { panic!("non-VM adapter acquired an image") },
+            )
+            .await;
+            assert!(
+                result.is_err(),
+                "non-VM adapter {engine} reached Runtime admission"
+            );
+            assert_eq!(*calls.lock().unwrap(), ["status"]);
+        }
+    }
+
     #[test]
     fn image_acquisition_requires_standard_local_host_paths() {
         let data = FsPath::new("/runtime-test");
-        for platform in ["darwin-arm64", "linux-arm64", "linux-amd64"] {
-            let config = image_config(data, platform);
+        for platform in ["darwin-arm64", "linux-arm64"] {
+            let config = image_config(data);
             assert!(browser_engine_config_uses_runtime_image(
                 &config, data, "local", platform
             ));
@@ -670,6 +746,10 @@ mod tests {
                 (
                     "/adapters/0/supervisor/env/ELASTOS_BROWSER_VM_CONTROL_LAUNCHER",
                     "/runtime-test/bin/browser-vm-remote-vz-launcher",
+                ),
+                (
+                    "/adapters/0/supervisor/env/ELASTOS_BROWSER_VM_CONTROL_LAUNCHER",
+                    "/runtime-test/bin/browser-vm-local-crosvm-launcher",
                 ),
                 (
                     "/adapters/0/supervisor/env/ELASTOS_BROWSER_VM_DATA_DIR",
@@ -683,30 +763,35 @@ mod tests {
                     "{pointer}"
                 );
             }
-            let mut manual = config.clone();
-            manual["adapters"][0]["supervisor"]["env"]["ELASTOS_BROWSER_VM_ROOTFS"] =
-                json!("/manual/verified.ext4");
-            assert!(!browser_engine_config_uses_runtime_image(
-                &manual, data, "local", platform
-            ));
-            manual["adapters"][0]["supervisor"]["env"]["ELASTOS_BROWSER_VM_ROOTFS"] =
-                json!(data.join("browser-vm/rootfs.ext4"));
-            assert!(browser_engine_config_uses_runtime_image(
-                &manual, data, "local", platform
-            ));
-            let (key, path) = if platform.starts_with("darwin-") {
-                ("ELASTOS_BROWSER_VM_INITRAMFS", "bin/initrd")
-            } else {
-                ("ELASTOS_BROWSER_VM_INITRD", "browser-vm/initrd")
-            };
-            manual["adapters"][0]["supervisor"]["env"][key] = json!(data.join(path));
-            assert!(browser_engine_config_uses_runtime_image(
-                &manual, data, "local", platform
-            ));
-            manual["adapters"][0]["supervisor"]["env"][key] = json!(data.join("bin/initrd.img"));
-            assert!(!browser_engine_config_uses_runtime_image(
-                &manual, data, "local", platform
-            ));
+            for (key, path) in [
+                ("ELASTOS_BROWSER_VM_ROOTFS", "browser-vm/rootfs.ext4"),
+                (
+                    "ELASTOS_BROWSER_VM_ROOTFS_MANIFEST",
+                    "browser-vm/browser-vm-rootfs-manifest.json",
+                ),
+                ("ELASTOS_BROWSER_VM_KERNEL", "bin/vmlinux"),
+                ("ELASTOS_BROWSER_VM_INITRAMFS", "bin/initrd"),
+            ] {
+                let mut manual = config.clone();
+                manual["adapters"][0]["supervisor"]["env"][key] = json!("/manual/custom");
+                assert!(
+                    !browser_engine_config_uses_runtime_image(&manual, data, "local", platform),
+                    "{platform}: custom {key}"
+                );
+                manual["adapters"][0]["supervisor"]["env"][key] = json!(data.join(path));
+                assert!(
+                    browser_engine_config_uses_runtime_image(&manual, data, "local", platform),
+                    "{platform}: default {key}"
+                );
+            }
+            let mut projected = config.clone();
+            projected["adapters"][0]["supervisor"]["env"]["ELASTOS_BROWSER_VM_INITRAMFS"] =
+                json!(data.join("browser-vm/initrd"));
+            assert_eq!(
+                browser_engine_config_uses_runtime_image(&projected, data, "local", platform),
+                platform == "linux-arm64",
+                "{platform}: Linux projected initrd"
+            );
             assert!(!browser_engine_config_uses_runtime_image(
                 &config, data, "absent", platform
             ));
@@ -714,10 +799,36 @@ mod tests {
     }
 
     #[test]
+    fn image_acquisition_keeps_unsupported_hosts_and_disabled_adapters_inactive() {
+        let data = FsPath::new("/runtime-test");
+        for platform in [
+            "linux-amd64",
+            "darwin-amd64",
+            "windows-arm64",
+            "linux-other",
+        ] {
+            assert!(!browser_engine_config_uses_runtime_image(
+                &image_config(data),
+                data,
+                "local",
+                platform
+            ));
+        }
+        for platform in ["darwin-arm64", "linux-arm64"] {
+            assert!(!browser_engine_config_uses_runtime_image(
+                &json!({"adapters": []}),
+                data,
+                "local",
+                platform
+            ));
+        }
+    }
+
+    #[test]
     fn image_acquisition_admits_the_complete_release_image_set() {
         let data = FsPath::new("/runtime-test");
-        for platform in ["darwin-arm64", "linux-arm64", "linux-amd64"] {
-            let mut config = image_config(data, platform);
+        for platform in ["darwin-arm64", "linux-arm64"] {
+            let mut config = image_config(data);
             let env = &mut config["adapters"][0]["supervisor"]["env"];
             for (key, file) in [
                 ("ELASTOS_BROWSER_VM_ROOTFS", "rootfs.ext4"),
@@ -726,61 +837,222 @@ mod tests {
                     "browser-vm-rootfs-manifest.json",
                 ),
                 ("ELASTOS_BROWSER_VM_KERNEL", "vmlinux"),
-                (
-                    if platform.starts_with("darwin-") {
-                        "ELASTOS_BROWSER_VM_INITRAMFS"
-                    } else {
-                        "ELASTOS_BROWSER_VM_INITRD"
-                    },
-                    "initrd",
-                ),
+                ("ELASTOS_BROWSER_VM_INITRAMFS", "initrd"),
             ] {
                 env[key] = json!(data.join("browser-vm/image-set").join(file));
             }
             assert!(browser_engine_config_uses_runtime_image(
                 &config, data, "local", platform
             ));
-            config["adapters"][0]["supervisor"]["env"]["ELASTOS_BROWSER_VM_KERNEL"] =
-                json!("/manual/kernel");
-            assert!(!browser_engine_config_uses_runtime_image(
-                &config, data, "local", platform
-            ));
+            for key in [
+                "ELASTOS_BROWSER_VM_ROOTFS",
+                "ELASTOS_BROWSER_VM_ROOTFS_MANIFEST",
+                "ELASTOS_BROWSER_VM_KERNEL",
+                "ELASTOS_BROWSER_VM_INITRAMFS",
+            ] {
+                let mut incomplete = config.clone();
+                incomplete["adapters"][0]["supervisor"]["env"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(key);
+                assert!(
+                    !browser_engine_config_uses_runtime_image(&incomplete, data, "local", platform),
+                    "{platform}: missing {key}"
+                );
+                incomplete["adapters"][0]["supervisor"]["env"][key] = json!("/manual/custom");
+                assert!(
+                    !browser_engine_config_uses_runtime_image(&incomplete, data, "local", platform),
+                    "{platform}: custom {key}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn image_acquisition_matches_the_complete_source_home_generator() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let node = Command::new("node")
+            .args(["-p", "process.execPath"])
+            .output()
+            .unwrap();
+        assert!(node.status.success());
+        let node = String::from_utf8(node.stdout).unwrap();
+        for (platform, options, expected) in [
+            ("darwin-arm64", vec![], true),
+            ("linux-arm64", vec![], true),
+            ("darwin-arm64", vec!["--release-image"], true),
+            ("linux-arm64", vec!["--release-image"], true),
+            (
+                "darwin-arm64",
+                vec!["--vm-rootfs", "/manual/custom.ext4"],
+                false,
+            ),
+            (
+                "linux-arm64",
+                vec!["--vm-rootfs", "/manual/custom.ext4"],
+                false,
+            ),
+            (
+                "darwin-arm64",
+                vec![
+                    "--vm-control-launcher",
+                    "/manual/browser-vm-remote-vz-launcher",
+                ],
+                false,
+            ),
+            (
+                "linux-arm64",
+                vec![
+                    "--vm-control-launcher",
+                    "/manual/browser-vm-remote-vz-launcher",
+                ],
+                false,
+            ),
+            ("linux-amd64", vec![], false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut child = Command::new(node.trim())
+                .env_clear()
+                .env(
+                    "ELASTOS_BROWSER_VM_TURN_PROGRAM",
+                    dir.path().join("bin/turnserver"),
+                )
+                .env("ELASTOS_BROWSER_VZ_TURN_ADVERTISED_HOST", "192.0.2.10")
+                .args(["--input-type=module", "-", "--data-dir"])
+                .arg(dir.path())
+                .args(["--platform", platform])
+                .args(&options)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(
+                    include_str!("../../../../../scripts/browser-source-home-config.mjs")
+                        .as_bytes(),
+                )
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "{platform} {options:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let config: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(dir.path().join("config/browser-engine-adapter.json")).unwrap(),
+            )
+            .unwrap();
+            if platform == "linux-arm64" && options.is_empty() {
+                assert_eq!(
+                    config["adapters"][0]["supervisor"]["env"]["ELASTOS_BROWSER_VM_INITRAMFS"],
+                    json!(dir.path().join("browser-vm/initrd"))
+                );
+            }
+            assert_eq!(
+                browser_engine_config_uses_runtime_image(
+                    &config,
+                    dir.path(),
+                    "browser-vm-product",
+                    platform
+                ),
+                expected,
+                "{platform} {options:?}"
+            );
         }
     }
 
     #[tokio::test(start_paused = true)]
     async fn image_acquisition_finishes_before_local_readiness_budget_starts() {
-        let dir = tempfile::tempdir().unwrap();
-        write_image_config(dir.path());
-        let (registry, calls) = image_registry(
-            "capsule-provider",
-            vec![image_adapter("local", "local_microvm", true)],
-            std::time::Duration::from_secs(11),
-        )
-        .await;
-        let started = tokio::time::Instant::now();
-        let resolved = resolve_browser_engine_adapter_with_preparation(
-            &registry,
-            dir.path(),
-            "person:test",
-            None,
-            BrowserDisplayMode::WebrtcRemoteDisplay,
-            BrowserGuaranteeLevel::MechanismMicrovm,
-            || async {
-                calls.lock().unwrap().push("prepare".into());
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                calls.lock().unwrap().push("verified".into());
-                Ok(())
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(resolved, "local");
-        assert!(started.elapsed() >= std::time::Duration::from_secs(41));
-        assert_eq!(
-            *calls.lock().unwrap(),
-            ["status", "prepare", "verified", "readiness"]
-        );
+        for platform in ["darwin-arm64", "linux-arm64"] {
+            let dir = tempfile::tempdir().unwrap();
+            write_image_config(dir.path());
+            let (registry, calls) = image_registry(
+                "capsule-provider",
+                vec![image_adapter("local", "local_microvm", true)],
+                std::time::Duration::from_secs(11),
+            )
+            .await;
+            let started = tokio::time::Instant::now();
+            let resolved = resolve_browser_engine_adapter_with_preparation(
+                &registry,
+                dir.path(),
+                platform,
+                "person:test",
+                None,
+                BrowserDisplayMode::WebrtcRemoteDisplay,
+                BrowserGuaranteeLevel::MechanismMicrovm,
+                || async {
+                    calls.lock().unwrap().push("prepare".into());
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    calls.lock().unwrap().push("verified".into());
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(resolved, "local");
+            assert!(started.elapsed() >= std::time::Duration::from_secs(41));
+            assert_eq!(
+                *calls.lock().unwrap(),
+                ["status", "prepare", "verified", "readiness"]
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn open_during_startup_verification_waits_outside_readiness_budget() {
+        for platform in ["darwin-arm64", "linux-arm64"] {
+            let dir = tempfile::tempdir().unwrap();
+            write_image_config(dir.path());
+            let (registry, calls) = image_registry(
+                "capsule-provider",
+                vec![image_adapter("local", "local_microvm", true)],
+                std::time::Duration::from_secs(11),
+            )
+            .await;
+            let (finished, verification) = tokio::sync::watch::channel(false);
+            let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let background_count = count.clone();
+            let worker = tokio::spawn(async move {
+                background_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+                finished.send(true).unwrap();
+            });
+            tokio::task::yield_now().await;
+            assert!(!*verification.borrow(), "open starts during verification");
+            let started = tokio::time::Instant::now();
+            let resolved = resolve_browser_engine_adapter_with_preparation(
+                &registry,
+                dir.path(),
+                platform,
+                "person:test",
+                None,
+                BrowserDisplayMode::WebrtcRemoteDisplay,
+                BrowserGuaranteeLevel::MechanismMicrovm,
+                || {
+                    let mut verification = verification.clone();
+                    async move {
+                        while !*verification.borrow_and_update() {
+                            verification.changed().await?;
+                        }
+                        Ok(())
+                    }
+                },
+            )
+            .await
+            .unwrap();
+            worker.await.unwrap();
+            assert_eq!(resolved, "local");
+            assert!(started.elapsed() >= std::time::Duration::from_secs(101));
+            assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(*calls.lock().unwrap(), ["status", "readiness"]);
+        }
     }
 
     #[tokio::test]
@@ -817,6 +1089,7 @@ mod tests {
             let resolved = resolve_browser_engine_adapter_with_preparation(
                 &registry,
                 dir.path(),
+                "darwin-arm64",
                 "person:test",
                 requested,
                 BrowserDisplayMode::WebrtcRemoteDisplay,
@@ -841,13 +1114,15 @@ mod tests {
             std::time::Duration::ZERO,
         )
         .await;
-        let error = resolve_browser_engine_adapter(
+        let error = resolve_browser_engine_adapter_with_preparation(
             &registry,
             dir.path(),
+            "linux-arm64",
             "person:test",
             Some("local"),
             BrowserDisplayMode::WebrtcRemoteDisplay,
             BrowserGuaranteeLevel::MechanismMicrovm,
+            || crate::setup::ensure_browser_vm_image_for_local_engine(dir.path()),
         )
         .await
         .unwrap_err();
@@ -891,6 +1166,7 @@ mod tests {
             let result = resolve_browser_engine_adapter_with_preparation(
                 &registry,
                 dir.path(),
+                "linux-arm64",
                 "person:test",
                 requested,
                 BrowserDisplayMode::WebrtcRemoteDisplay,
@@ -918,6 +1194,7 @@ mod tests {
         let result = resolve_browser_engine_adapter_with_preparation(
             &registry,
             dir.path(),
+            "darwin-arm64",
             "person:test",
             None,
             BrowserDisplayMode::WebrtcRemoteDisplay,
@@ -931,23 +1208,27 @@ mod tests {
 
     #[test]
     fn browser_visible_remote_carrier_exits_redacts_transport_identity_and_authority() {
-        let visible = browser_visible_remote_carrier_exits(&json!({
-            "remote_carrier_exits": [{
-                "id": "shared-exit",
-                "grant_id": "grant:test",
-                "peer_did": "did:key:z6Mktest",
-                "connect_ticket": "ticket:secret",
-                "allowed_principals": ["person:local:test"],
-                "carrier": {
-                    "peer_did": "did:key:z6Mknested",
-                    "connect_ticket": "ticket:nested"
-                }
-            }]
-        }));
+        let visible = browser_visible_remote_carrier_exits(
+            &json!({
+                "remote_carrier_exits": [{
+                    "id": "shared-exit",
+                    "grant_id": "grant:test",
+                    "peer_did": "did:key:z6Mktest",
+                    "connect_ticket": "ticket:secret",
+                    "allowed_principals": ["person:local:test"],
+                    "carrier": {
+                        "peer_did": "did:key:z6Mknested",
+                        "connect_ticket": "ticket:nested"
+                    }
+                }]
+            }),
+            &BTreeMap::from([("did:key:z6Mktest".into(), "Sasha".into())]),
+        );
         let exits = visible
             .as_array()
             .expect("remote exits should stay an array");
         assert_eq!(exits.len(), 1);
+        assert_eq!(exits[0]["contact_name"], "Sasha");
         let exit = exits[0].as_object().expect("exit should stay an object");
         assert!(!exit.contains_key("peer_did"));
         assert!(!exit.contains_key("connect_ticket"));
@@ -958,6 +1239,14 @@ mod tests {
             .is_some_and(|carrier| {
                 !carrier.contains_key("peer_did") && !carrier.contains_key("connect_ticket")
             }));
+        let unrecognized = browser_visible_remote_carrier_exits(
+            &json!({
+                "remote_carrier_exits": [{"id":"unknown", "peer_did":"unknown-peer", "contact_name":"Unverified name"}]
+            }),
+            &BTreeMap::new(),
+        );
+        assert!(unrecognized[0].get("contact_name").is_none());
+        assert!(unrecognized[0].get("peer_did").is_none());
     }
 }
 

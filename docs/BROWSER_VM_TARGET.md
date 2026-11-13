@@ -19,6 +19,8 @@ uses crosvm/KVM and macOS uses Apple Virtualization.framework, but both
 substrates must boot the same Browser VM target contract and expose the same
 Runtime-facing control, media, and Exit relay surfaces.
 
+With `ELASTOS_BROWSER_VM_VCPUS` unset, Linux uses `min(N, max(2, min(4, N - 2)))` vCPUs, where `N` is the host's online CPUs available to the process, while macOS keeps 2 and memory stays at 2048 MiB; on a six-core Jetson Orin Nano, three-run median scrolling rose from 4.92 to 9.16 fps at 4 vCPUs, with little further gain at 5 (9.50 fps).
+
 The source-home Browser display path is WebRTC-only. It runs inside the
 per-launch Browser VM and uses Runtime-owned Exit/control/wallet boundaries; it
 is not a host-browser fallback. Runtime-frame display is not a source-home
@@ -105,6 +107,19 @@ SHA-256, plus successful evidence for each guest and audio dependency. When
 Staged directories use the build-time target check; installed ext4 images need
 the image receipt. Publisher authorization, host eligibility, control-service
 readiness and product media remain separate admission and qualification gates.
+Runtime hashes the installed image set in a background thread at Home start
+on local Browser hosts. Linux uses idle I/O priority and nice 19; macOS uses a
+plain background thread. Browser open shares that verification and waits for
+its remaining work. Runtime keeps the computed digests in process memory,
+bound to device, inode, size, mode, nanosecond modification and change times,
+plus the receipt and selected release. A changed identity requires a new hash.
+The artifact and `--verify-image-set` shell checks hash their inputs.
+`--host-readiness` checks presence, shape, permissions and host capability;
+it leaves image verification to Runtime and makes no verification claim.
+Runtime carries the verified seed identity in the launch request. The
+supervisor checks link and target identity again immediately before the Mac
+copy or Linux overlay creation. Adjacent cache files provide no authority.
+
 An image refresh must retain its source provenance and produce a matching
 receipt for the changed bytes before the image passes this check.
 
@@ -407,16 +422,23 @@ install -D -o root -g root -m 755 <reviewed-checkout>/scripts/browser-vm-linux-n
 python3 /usr/local/lib/elastos/browser-vm-linux-network.py setup --user <home-user>
 ```
 
-The script lists the devices, addresses and policy, then asks for `y` before
-it changes the host. It needs Python 3.8+, iproute2, iptables/ip6tables, ACL
+Setup selects `kernel-vsock` when `/dev/vhost-vsock` is available, loading its
+module if needed. Otherwise it selects `userspace-vsock` when the root-owned
+`/usr/bin/bwrap` and admitted `bin/vhost-device-vsock` are present. Use
+`--data-dir <home-data-dir>` for a custom Home data directory. `--transport`
+provides an explicit override. Repair retains the saved transport.
+
+The script lists the selected transport, devices, addresses and policy, then
+asks for `y` before it creates network state. It needs Python 3.8+, iproute2, iptables/ip6tables, ACL
 tools (`setfacl`, `getfacl`), systemd and udev, plus `/dev/kvm` and `/dev/net/tun`.
 It creates TAPs owned by the numeric UID, adds their host addresses and
 confinement rules, grants that user read/write KVM access through a named ACL,
 and installs a KVM udev rule. An existing named KVM ACL is saved for removal.
 This gives `elastos-agent` KVM access without changing its groups.
 
-Root stores ACL state in `/var/lib/elastos-browser/<uid>.json`, copies the
-setup helper to `/usr/local/lib/elastos/browser-vm-linux-network.py`, and
+Root stores the ACL state and data directory in
+`/var/lib/elastos-browser/<uid>.json`, copies the setup helper to
+`/usr/local/lib/elastos/browser-vm-linux-network.py`, and
 enables `elastos-browser-network-<uid>.service`. This oneshot service restores
 the devices and rules after each boot, following host firewall services. The
 unit shares stop/restart and reload events with `nftables`, `firewalld`, `ufw`
@@ -461,22 +483,32 @@ guest and viewer allocations meet; loopback, private ranges and every other
 peer are denied, and TCP relays are off. coturn checks peer IPs only, so the
 relay output rule above confines relayed UDP to the TURN ports; host services
 on the slot IP stay unreachable. `check` refuses a receipt without that rule.
-`elastos setup` writes the Home's TURN credential to the
+`elastos setup --browser` writes the Linux Home's TURN credential to the
 owner-only `$DATA_DIR/runtime-turn/turn-credentials.env` and keeps an
 existing one.
 
-For removal, use the same root shell and helper:
+The Linux installer leaves Browser host access and its image to the Home owner.
+On a supported Linux ARM64 host with KVM, run `elastos setup --browser` from a
+terminal. This command admits the signed helpers, runs the one-time administrator
+setup above, checks host access, then downloads and verifies the image with
+progress. The administrator helper shows its changes and asks for confirmation.
+Ordinary `elastos setup` leaves the Linux Browser image untouched. Close Home
+and start it again after enabling Browser. Browser open explains this command
+on an unprepared host; after setup it prepares a missing image on demand.
+Apple Silicon setup keeps its existing Browser preparation behavior.
+
+For removal, close Browser and run this as the Home user before uninstalling:
 
 ```sh
-python3 /usr/local/lib/elastos/browser-vm-linux-network.py remove --user <home-user>
+sudo /usr/bin/python3 -I /usr/local/lib/elastos/browser-vm-linux-network.py remove --user "$(id -un)"
 ```
 
 After confirmation, removal deletes this account's TAPs, filter hooks/chains,
 boot service, udev rule, locks and receipts. It restores the prior named KVM
 ACL, or removes the grant created by setup. The shared root helper is removed
 when the last account's setup is removed. Other host firewall rules stay with
-their owner. `install.sh` integration is a separate change; the installer can
-call the exact setup command above as its approved root step.
+their owner. Runtime and the installer leave these administrator operations
+to the explicit Browser setup and removal commands.
 
 ### Linux operator proof
 
@@ -535,11 +567,14 @@ generator/stager for:
 
 - `bin/browser-vm-engine-supervisor`
 - `bin/browser-vm-control-service`
-- `bin/browser-vm-local-crosvm-launcher`
 - `bin/browser-vm-remote-vz-launcher`
-- `bin/browser-vm-prepare-rootfs-pool`
-- `bin/browser-vz-engine-supervisor` on macOS after the VZ helper is built
+- `bin/browser-vz-engine-supervisor` for Linux ARM64 and macOS
 - verified links to an existing rootfs, kernel, initrd and matching build manifest
+
+Linux uses the native supervisor and a disposable qcow2 overlay for each
+launch. Linux Browser preparation belongs to `elastos setup --browser`.
+That command removes retired `browser-vm/rootfs-pool` image copies as their
+ordinary owner before preparing Browser.
 
 For already-provisioned targets, `scripts/browser-vm-target-refresh.sh` is the
 host-helper maintenance path. Guest drift requires a rebuilt image set. Runtime

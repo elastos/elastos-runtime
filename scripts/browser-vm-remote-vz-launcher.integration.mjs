@@ -251,6 +251,7 @@ try {
     expectedFailedAbsence
       ? "cleanup_pending"
       : "terminal_post_effect_cleanup",
+    result.stderr,
   );
   assert.equal(terminal.binding_hash, authority.binding_hash);
   assert.equal(terminal.generation, launch.lifecycle_generation);

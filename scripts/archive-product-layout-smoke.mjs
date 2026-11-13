@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,9 +9,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const browserRoot = join(repoRoot, "capsules/archive-manager/browser");
 const homeNavigationClientPath = join(repoRoot, "capsules/home/browser/home-navigation-client.js");
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 
 const token = "archive-layout-test-token";
 const archiveUri = "localhost://Users/archive/Documents/Portable.zip";
@@ -324,7 +322,7 @@ async function waitForSemanticWidth(frame, expectedWidth) {
 async function run() {
   const { extractBodies, notFoundPaths, requestLog, server } = startServer();
   const browser = await chromium.launch({
-    executablePath: brave,
+    ...productSmokeLaunchOptions(),
     headless: true,
   });
   const page = await browser.newPage();

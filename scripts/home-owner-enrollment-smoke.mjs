@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import vm from "node:vm";
 import { ownerRecoveryCommand } from "../capsules/home/browser/owner-recovery-command.js";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const source = readFileSync(new URL("../capsules/home/browser/shell-auth.js", import.meta.url), "utf8")
   .replace(/^import\s*\{[\s\S]*?\}\s*from\s*"[^"]+";\n/gm, "")
@@ -592,15 +592,11 @@ const section = (text, start, end) => {
 console.log("PASS Home owner/guest Create/Recover, exact reload retry, storage, host navigation and account boundaries");
 
 if (process.argv.includes("--browser")) {
-  const configured = process.env.ELASTOS_PLAYWRIGHT_MODULE;
-  const moduleUrl = configured
-    ? (configured.startsWith("file:") ? configured : pathToFileURL(resolve(configured)).href)
-    : new URL("../elastos/tools/browser-playwright-engine/node_modules/playwright/index.js", import.meta.url).href;
-  const imported = await import(moduleUrl);
-  const { chromium } = imported.default || imported;
+  const { chromium } = await importProductSmokePlaywright();
+  const executablePath = process.env.ELASTOS_BROWSER_EXECUTABLE || productSmokeLaunchOptions().executablePath;
   const browser = await chromium.launch({
     headless: true,
-    executablePath: process.env.ELASTOS_BROWSER_EXECUTABLE || undefined,
+    ...(executablePath ? { executablePath } : {}),
     args: ["--disable-background-networking", "--disable-component-update", "--no-first-run"],
   });
   try {

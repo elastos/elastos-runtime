@@ -355,8 +355,20 @@ select {
   display: none;
 }
 
-.browser-render-empty {
+.browser-render-panel[hidden],
+.browser-render-empty[hidden] {
   display: none;
+}
+
+.browser-render-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  background: var(--bg);
 }
 
 .browser-render-empty strong {
@@ -524,3 +536,19 @@ body[data-loading="true"] .browser-address {
   color: var(--accent);
   font-size: 13px;
 }
+
+/* The first-open decision belongs to the page, separate from Settings. */
+#browser-internet-request {
+  z-index: 10;
+  top: 24px;
+  right: 50%;
+  transform: translateX(50%);
+  width: min(380px, calc(100% - 32px));
+  padding: 20px;
+  max-height: calc(100% - 96px);
+  overflow: auto;
+}
+#browser-internet-request h2 { margin-top: 0; }
+#browser-internet-request .browser-settings-action { min-height: 44px; }
+
+.browser-status[hidden] { display: none; }

@@ -15,7 +15,9 @@ test("Browser paints a status before scripts, through preparation and actionable
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
     response.setHeader("cache-control", "no-store");
-    if (url.pathname === "/api/apps/browser/summary") {
+    if (url.pathname === "/api/apps/browser/internet") {
+      response.setHeader("content-type", "application/json"); response.end(JSON.stringify({status:request.method === "GET" ? "granted" : "ended"}));
+    } else if (url.pathname === "/api/apps/browser/summary") {
       await summaryReady;
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({ engine_adapter: { adapters: [] },

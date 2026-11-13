@@ -1547,6 +1547,7 @@ impl Supervisor {
         let collaboration_presence_product_port = self.collaboration_presence_product_port.clone();
         let collaboration_discovery_service = self.collaboration_discovery_service.clone();
         let carrier_endpoint = self.carrier_endpoint.clone();
+        let capability_manager = self.capability_manager.clone();
 
         let task = tokio::spawn({
             let listen_addr = listen_addr.clone();
@@ -1558,6 +1559,7 @@ impl Supervisor {
                         &listen_addr,
                         Some(registry),
                         crate::api::gateway::GatewayCollaborationContext {
+                            capability_manager,
                             chat_product_port: collaboration_chat_product_port,
                             presence_product_port: collaboration_presence_product_port,
                             discovery_service: collaboration_discovery_service,
@@ -1692,6 +1694,7 @@ mod tests {
         capsules.insert(
             "provider-test".to_string(),
             CapsuleEntry {
+                extra: Default::default(),
                 cid: "bafy-provider-test".to_string(),
                 sha256: String::new(),
                 size: 0,
@@ -1703,6 +1706,7 @@ mod tests {
         let supervisor = Supervisor::new(
             data_dir.to_path_buf(),
             ComponentsManifest {
+                extra: Default::default(),
                 model_catalog: None,
                 collaboration_network: None,
                 external: std::collections::HashMap::new(),
@@ -1998,6 +2002,7 @@ mod tests {
         Supervisor::new(
             tempfile::tempdir().unwrap().keep(),
             ComponentsManifest {
+                extra: Default::default(),
                 model_catalog: None,
                 collaboration_network: None,
                 external: std::collections::HashMap::new(),
@@ -2011,6 +2016,7 @@ mod tests {
         let mut platforms = std::collections::HashMap::new();
         platforms.insert(crate::setup::detect_platform(), platform_info);
         Component {
+            extra: Default::default(),
             version: None,
             install_path: Some(install_path.to_string()),
             repository: None,
@@ -2128,6 +2134,7 @@ mod tests {
             "vmlinux".to_string(),
             make_external_component(
                 PlatformInfo {
+                    extra: Default::default(),
                     url: None,
                     cid: None,
                     release_path: None,
@@ -2147,6 +2154,7 @@ mod tests {
         let supervisor = Supervisor::new(
             data_dir.to_path_buf(),
             ComponentsManifest {
+                extra: Default::default(),
                 model_catalog: None,
                 collaboration_network: None,
                 external,
@@ -2185,6 +2193,7 @@ mod tests {
             "vmlinux".to_string(),
             make_external_component(
                 PlatformInfo {
+                    extra: Default::default(),
                     url: None,
                     cid: None,
                     release_path: None,
@@ -2204,6 +2213,7 @@ mod tests {
         let supervisor = Supervisor::new(
             data_dir.to_path_buf(),
             ComponentsManifest {
+                extra: Default::default(),
                 model_catalog: None,
                 collaboration_network: None,
                 external,
@@ -2230,6 +2240,7 @@ mod tests {
             "crosvm".to_string(),
             make_external_component(
                 PlatformInfo {
+                    extra: Default::default(),
                     url: None,
                     cid: None,
                     release_path: None,
@@ -2249,6 +2260,7 @@ mod tests {
         let supervisor = Supervisor::new(
             data_dir.to_path_buf(),
             ComponentsManifest {
+                extra: Default::default(),
                 model_catalog: None,
                 collaboration_network: None,
                 external,
@@ -2317,6 +2329,7 @@ mod tests {
         capsules.insert(
             "carrier-service".to_string(),
             CapsuleEntry {
+                extra: Default::default(),
                 cid: "bafy-test-cid".to_string(),
                 sha256: "test-artifact".to_string(),
                 size: 0,
@@ -2328,6 +2341,7 @@ mod tests {
         let supervisor = Supervisor::new(
             data_dir.to_path_buf(),
             ComponentsManifest {
+                extra: Default::default(),
                 model_catalog: None,
                 collaboration_network: None,
                 external: std::collections::HashMap::new(),
@@ -2363,6 +2377,7 @@ mod tests {
         capsules.insert(
             "carrier-service".to_string(),
             CapsuleEntry {
+                extra: Default::default(),
                 cid: "bafy-test-cid".to_string(),
                 sha256: "test-artifact".to_string(),
                 size: 0,
@@ -2374,6 +2389,7 @@ mod tests {
         let supervisor = Supervisor::new(
             data_dir.to_path_buf(),
             ComponentsManifest {
+                extra: Default::default(),
                 model_catalog: None,
                 collaboration_network: None,
                 external: std::collections::HashMap::new(),
@@ -2490,6 +2506,7 @@ mod tests {
         .unwrap();
         let data = tempfile::tempdir().unwrap().keep();
         let registry = ComponentsManifest {
+            extra: Default::default(),
             model_catalog: None,
             collaboration_network: None,
             external: std::collections::HashMap::new(),

@@ -10,6 +10,7 @@ use super::{gateway_router_with_api_url, GatewayState, GATEWAY_VERSION};
 
 #[derive(Clone, Default)]
 pub struct GatewayCollaborationContext {
+    pub capability_manager: Option<Arc<elastos_runtime::capability::CapabilityManager>>,
     pub carrier_endpoint: Option<iroh::Endpoint>,
     pub chat_product_port: Option<crate::collaboration_product::CollaborationChatProductPort>,
     pub presence_product_port:
@@ -18,8 +19,17 @@ pub struct GatewayCollaborationContext {
         Option<crate::collaboration_discovery_runtime::CollaborationDiscoveryService>,
 }
 
+pub(in crate::api::gateway) fn browser_internet_service(
+    collaboration: &GatewayCollaborationContext,
+) -> Arc<super::BrowserInternetService> {
+    Arc::new(super::BrowserInternetService::new(
+        collaboration.capability_manager.clone(),
+    ))
+}
+
 pub async fn start_gateway_server(
     addr: &str,
+    capability_manager: Option<Arc<elastos_runtime::capability::CapabilityManager>>,
     provider_registry: Option<Arc<ProviderRegistry>>,
     collaboration_chat_product_port: Option<
         crate::collaboration_product::CollaborationChatProductPort,
@@ -34,6 +44,7 @@ pub async fn start_gateway_server(
         addr,
         provider_registry,
         GatewayCollaborationContext {
+            capability_manager,
             chat_product_port: collaboration_chat_product_port,
             presence_product_port: collaboration_presence_product_port,
             discovery_service: None,
@@ -101,12 +112,14 @@ async fn start_gateway_server_with_shutdown(
         trusted_gateway_api_url(addr)?
     };
     super::gateway_frontdoor::GatewayFrontDoor::load(&data_dir, &gateway_api_url)?;
+    let browser_internet = browser_internet_service(&collaboration);
     let state = GatewayState {
         carrier_endpoint: collaboration.carrier_endpoint,
         provider_registry,
         collaboration_chat_product_port: collaboration.chat_product_port,
         collaboration_presence_product_port: collaboration.presence_product_port,
         collaboration_discovery_service: collaboration.discovery_service,
+        browser_internet,
         identity_manager: Arc::new(OnceLock::new()),
         cache_dir,
         data_dir: data_dir.clone(),
@@ -144,6 +157,8 @@ async fn start_gateway_server_with_shutdown(
             crate::update_controller::finalize_principal_root_backups_after_start(data_dir.clone()),
         )
     });
+    let image_verification =
+        crate::setup::start_browser_image_verification(&data_dir, &crate::setup::detect_platform());
     let managed_owner = crate::runtime_control::gateway_children::Owner::read(&data_dir).ok();
     let advertised = advertised_gateway_urls(addr);
     println!("ElastOS Gateway v{}", GATEWAY_VERSION);
@@ -181,6 +196,9 @@ async fn start_gateway_server_with_shutdown(
     };
     if let Some(task) = backup_cleanup {
         task.abort();
+    }
+    if let Some(verification) = image_verification {
+        verification.shutdown().await;
     }
     connections.shutdown();
     // The server's deadline signals connection tasks. Wait for their request

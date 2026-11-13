@@ -99,6 +99,7 @@ Canonical workflow: [.claude/skills/branching-strategy/SKILL.md](.claude/skills/
 
 ## Releases
 
+- The first test release for `2.0.1` is `2.0.1-rc.1`.
 - Test releases (`X.Y.Z-alpha.N`, or `X.Y.Z-rc.N` for a candidate; canary channel) are built from a
   `develop` merge commit through `.github/workflows/release-package.yml`
   (dispatched from `develop`) and published with `scripts/release-publish.sh`
@@ -271,6 +272,23 @@ capsules, provider config, and `components.json`.
 
 ## Review And Commit Discipline
 
+- Before every non-trivial code change, put a short **Deepen notes** block at
+  the top of the PR description (`.github/pull_request_template.md` starts
+  every new PR with it). Answer these four questions before changing the code,
+  then adjust the plan to match:
+  1. **Expert view:** What would a top engineer in this area do here that the
+     task does not ask for?
+  2. **Raw material:** What is the rawest source to start from: code at a pinned
+     commit, the original issue, logs or primary data? Start there rather than
+     with summaries or another agent's notes, and cite `file:line`.
+  3. **Methods:** Which specific methods and tools would that expert use?
+  4. **Independent check:** What besides the author or requester proves the
+     result is right: a test that fails before and passes after, a measurement,
+     or an independent reviewer? Run the check or obtain the review before
+     calling the work done, and paste the evidence in the block.
+- When corrected, fix the cause as high up as possible: first in code, then
+  with an automatic check, then with a written rule. Rely on a human to catch
+  the same mistake again only as a last resort.
 - Keep review requests off draft PRs. When a PR leaves draft, request the
   required reviewers on GitHub yourself and name them in the report. Keep an
   existing request instead of sending a duplicate.

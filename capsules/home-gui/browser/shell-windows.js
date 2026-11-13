@@ -1912,7 +1912,7 @@ async function launchBrowserTargetWindow(targetId, options = {}) {
 
 async function createBrowserTargetWindow(targetId, options = {}) {
   const launchQuery = targetId === "browser"
-    ? withBrowserInstanceQuery({ query: options.query }).query
+    ? withBrowserInstanceQuery({ query: { ...options.query, browser_restore: options.restoredPlacement ? "1" : "0" } }).query
     : normalizedLaunchQuery(options.query);
   const launched = options.authorizedLaunch
     ? { ...options.authorizedLaunch }
@@ -2636,4 +2636,11 @@ export function handleShellResize() {
   }
   rerenderShellSurfaces({ desktop: true, taskbar: true });
   persistBrowserSession();
+}
+
+export function focusOpenBrowserWindow() {
+  const entry = topBrowserWindowEntryForTarget("browser");
+  if (!entry) return false;
+  focusWindow(entry.id);
+  return true;
 }

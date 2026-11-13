@@ -6,7 +6,8 @@ import { readFile, mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { resolve, extname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { chromium, brave } from "./system-uiux-fixture.mjs";
+import { chromium } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const errors = [];
@@ -44,7 +45,7 @@ server.listen(0, "127.0.0.1");
 await once(server, "listening");
 let browser, page;
 try {
-  browser = await chromium.launch({ executablePath: brave, headless: true });
+  browser = await chromium.launch({ ...productSmokeLaunchOptions(), headless: true });
   page = await browser.newPage({ viewport: { width: 900, height: 700 } });
   page.on("pageerror", error => errors.push(String(error)));
   await page.goto(`http://127.0.0.1:${server.address().port}/`);

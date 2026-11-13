@@ -68,6 +68,8 @@ enum Request {
         transport_authority: Option<Value>,
     },
     Launch {
+        #[serde(default)]
+        verified_rootfs: Option<Value>,
         url: String,
         stream_session: Box<StreamSessionReceipt>,
         lifecycle_generation: String,
@@ -153,6 +155,8 @@ enum Response {
         adapter: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         launch_settlement_result: Option<Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        refusal: Option<elastos_common::browser_protocol::BrowserLaunchRefusal>,
     },
 }
 
@@ -171,6 +175,7 @@ impl Response {
             message: message.into(),
             adapter: None,
             launch_settlement_result: None,
+            refusal: None,
         }
     }
 
@@ -180,6 +185,7 @@ impl Response {
             message: error.message,
             adapter: Some(adapter.id.clone()),
             launch_settlement_result: error.launch_settlement_result,
+            refusal: error.refusal,
         }
     }
 }
@@ -690,6 +696,7 @@ fn engine_terminal_cleanup_result(
 }
 
 struct LaunchContext<'a> {
+    verified_rootfs: Option<Value>,
     url: &'a str,
     stream_session: &'a StreamSessionReceipt,
     profile: BrowserProfileDescriptor,
@@ -762,6 +769,7 @@ impl BrowserEngineAdapter {
                 transport_authority,
             ),
             Request::Launch {
+                verified_rootfs,
                 url,
                 stream_session,
                 lifecycle_generation,
@@ -789,6 +797,7 @@ impl BrowserEngineAdapter {
                 };
                 self.launch_with_generation(
                     LaunchContext {
+                        verified_rootfs,
                         url: &url,
                         stream_session: &stream_session,
                         profile,
@@ -1467,6 +1476,7 @@ impl BrowserEngineAdapter {
         wallet: Value,
     ) -> Response {
         self.launch_with_viewport(LaunchContext {
+            verified_rootfs: None,
             url,
             stream_session,
             profile: BrowserProfileDescriptor {

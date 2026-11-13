@@ -901,6 +901,16 @@ assert(
       walletDetail: elementForSelector("#control-centre-quick-wallet-detail").textContent,
     },
   );
+  for (const kind of ["browser_internet_decision", "hosted_route_history", "service_access_grant", "generic"]) {
+    const summary = {...identitySummary, notifications:{unread_count:0,attention_count:0,entries:[{kind,read:true,severity:"info"}]}};
+    shellSurface.renderInboxBadge(summary);shellControlCentre.syncControlCentre(summary);
+    assert(elementForSelector("#toolbar-inbox-count").hidden && elementForSelector("#control-centre-inbox-detail").textContent === "Open", "read history must not count as pending: " + kind);
+  }
+  for (const kind of ["browser_internet_request", "wallet_approval_request", "contact_request", "hosted_route_decision", "capability_request"]) {
+    const summary = {...identitySummary, notifications:{unread_count:1,attention_count:1,entries:[{kind,read:false,severity:"attention"}]}};
+    shellSurface.renderInboxBadge(summary);shellControlCentre.syncControlCentre(summary);
+    assert(elementForSelector("#toolbar-inbox-count").textContent === "1" && elementForSelector("#control-centre-inbox-detail").textContent === "1 pending", "actionable request must count: " + kind);
+  }
   shellCore.shellState.currentSummary = signedHandleFallbackSummary;
   shellControlCentre.syncControlCentre(signedHandleFallbackSummary);
   assert(
@@ -1496,6 +1506,7 @@ const browserEntry = [...shellCore.shellState.windows.values()].find((entry) => 
     { left: [leftBefore, browserEntry.node.style.left], top: [topBefore, browserEntry.node.style.top] },
   );
 }
+assert(browserEntry.launchQuery.browser_restore === "0", "explicit Browser open carries user intent");
 const browserClose = browserEntry.node.querySelector("[data-action='close']");
 browserClose.focus();
 shellWindows.minimizeWindow(browserEntry.id);
@@ -1564,6 +1575,7 @@ assert(
   "Home refresh changed the persisted Browser window identity",
   restoredBrowserLaunches,
 );
+assert(restoredBrowserLaunches[0].query.browser_restore === "1", "restored Browser carries no open intent");
 const restoredBrowserEntry = [...shellCore.shellState.windows.values()][0];
 const restoredBrowserFrame = restoredBrowserEntry.node.querySelector(".window-frame");
 const browserCloseMessages = [];
@@ -3132,3 +3144,16 @@ assert(await lockWithLateWindow === false && lockRequests === 1,
 assert(shellCore.shellState.windows.has(lateWindow.entry.id), "the late window keeps its edits");
 console.log("[home-shell-regression] Documents preference reaches every window, survives reload, and Lock and sign-out ask first: PASS");
 console.log("[home-shell-regression] PASS");
+
+{
+ const before = shellCore.shellState.windows.size;
+ shellCore.shellState.windows.clear();
+ assert(shellWindows.focusOpenBrowserWindow() === false, "Inbox focus must not create a closed Browser");
+ assert(shellCore.shellState.windows.size === 0, "Inbox focus created a window");
+ await openHybrid("browser", {});
+ const existing=[...shellCore.shellState.windows.values()][0];
+ const launches=restoredBrowserLaunches.length;
+ shellCore.shellState.activeWindowId=null;
+ assert(shellWindows.focusOpenBrowserWindow() === true, "Inbox could not focus live Browser");
+ assert(shellCore.shellState.activeWindowId===existing.id && restoredBrowserLaunches.length===launches, "Inbox focus relaunched Browser");
+}

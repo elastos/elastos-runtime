@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
@@ -11,9 +11,7 @@ import { PHONE_VIEWPORT, setPhoneFormFactor } from "./lib/phone-drawer-assert.mj
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const browserRoot = join(repoRoot, "capsules/people/browser");
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 const PHONE_SCREENSHOT = "/tmp/people-phone-390x844.png";
 const SHOTS_DIR = process.env.PEOPLE_SHOTS_DIR || "/tmp/people-pages-shots";
 
@@ -265,7 +263,7 @@ function startServer() {
         return;
       }
 
-      if (["/apps/home/home-clipboard-client.js", "/apps/home/home-clipboard-protocol.js"].includes(url.pathname)) {
+      if (["/apps/home/home-navigation-client.js", "/apps/home/home-clipboard-client.js", "/apps/home/home-clipboard-protocol.js"].includes(url.pathname)) {
         const body = await readFile(join(repoRoot, "capsules/home/browser", url.pathname.split("/").at(-1)));
         response.writeHead(200, { "access-control-allow-origin": "null", "content-type": "text/javascript" });
         response.end(body);
@@ -896,7 +894,7 @@ async function main() {
   const port = server.address().port;
   const profile = await mkdtemp(join(tmpdir(), "elastos-people-layout-"));
   const context = await chromium.launchPersistentContext(profile, {
-    executablePath: brave,
+    ...productSmokeLaunchOptions(),
     headless: true,
     viewport: { width: 1280, height: 900 },
   });

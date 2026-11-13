@@ -1393,7 +1393,9 @@ impl ProviderBridge {
 
     /// Send a request and receive a response (no timeout).
     async fn request_raw(&self, req: ProviderRequest) -> Result<ProviderResponse, BridgeError> {
-        let line = self.send_json_line(req, None).await?;
+        let line = self
+            .send_json_line(req, None, super::dispatch::current())
+            .await?;
         serde_json::from_str(line.trim()).map_err(BridgeError::Serde)
     }
 
@@ -1409,7 +1411,10 @@ impl ProviderBridge {
         let dispatch_run = recorded_run.clone();
         #[cfg(not(target_os = "macos"))]
         let dispatch_run = None;
-        let line = match self.send_json_line(request.clone(), dispatch_run).await {
+        let line = match self
+            .send_json_line(request.clone(), dispatch_run, super::dispatch::current())
+            .await
+        {
             Ok(line) => line,
             Err(error) => {
                 #[cfg(target_os = "macos")]
@@ -1448,6 +1453,7 @@ impl ProviderBridge {
         &self,
         request: T,
         dispatch_run: Option<String>,
+        fence: Option<super::dispatch::DispatchFence>,
     ) -> Result<String, BridgeError>
     where
         T: Serialize + Send + 'static,
@@ -1496,12 +1502,22 @@ impl ProviderBridge {
                 "provider request sent"
             );
             let result: Result<String, BridgeError> = async {
+                let dispatch_guard = match fence {
+                    Some(fence) => Some(fence.enter().await.map_err(|message| {
+                        BridgeError::Io(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            message,
+                        ))
+                    })?),
+                    None => None,
+                };
                 io.writer
                     .write_all(json.as_bytes())
                     .await
                     .map_err(BridgeError::Io)?;
                 io.writer.write_all(b"\n").await.map_err(BridgeError::Io)?;
                 io.writer.flush().await.map_err(BridgeError::Io)?;
+                drop(dispatch_guard);
                 #[cfg(target_os = "macos")]
                 if let Some(run_id) = &dispatch_run {
                     if let Ok(mut runs) = bindings.lock() {
@@ -1843,6 +1859,17 @@ impl Provider for CapsuleProvider {
             .send_raw(request)
             .await
             .map_err(|e| ProviderError::Provider(e.to_string()))
+    }
+
+    async fn send_raw_fenced(
+        &self,
+        request: &serde_json::Value,
+        fence: Option<super::dispatch::DispatchFence>,
+    ) -> Result<serde_json::Value, ProviderError> {
+        match fence {
+            Some(fence) => fence.scope(self.send_raw(request)).await,
+            None => self.send_raw(request).await,
+        }
     }
 
     async fn shutdown(&self) -> Result<(), ProviderError> {
@@ -2259,6 +2286,77 @@ mod tests {
         let json = r#"{"status":"error","code":"read_failed","message":"No such file"}"#;
         let resp: ProviderResponse = serde_json::from_str(json).unwrap();
         assert!(matches!(resp, ProviderResponse::Error { .. }));
+    }
+
+    #[tokio::test]
+    async fn browser_internet_queued_bridge_write_cannot_dispatch_after_stop() {
+        let (client_read, _server_write) = tokio::io::duplex(4096);
+        let (mut server_read, client_write) = tokio::io::duplex(4096);
+        let bridge = ProviderBridge::from_io(tokio::io::BufReader::new(client_read), client_write);
+        let fence = super::super::dispatch::DispatchFence::new(|| Ok(()));
+        let io = bridge.io.lock().await;
+        let request = serde_json::json!({"op":"connect"});
+        let pending = fence.scope(bridge.send_raw(&request));
+        tokio::pin!(pending);
+        // Poll until the real bridge has spawned its detached write, held behind
+        // its I/O lock. Revocation completes while that write is queued.
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(
+                pending.as_mut(),
+                cx
+            )))
+            .await
+            .is_pending()
+        );
+        fence.revoke().await;
+        drop(io);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), pending)
+            .await
+            .expect("revoked write must finish without waiting for a provider response");
+        assert!(result.is_err());
+        use tokio::io::AsyncReadExt;
+        let mut bytes = [0u8; 1];
+        let read = server_read.read(&mut bytes);
+        tokio::pin!(read);
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(
+                read.as_mut(),
+                cx
+            )))
+            .await
+            .is_pending(),
+            "revoked dispatch wrote provider bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_internet_accepted_bridge_call_can_finish_after_stop() {
+        let (client_read, mut server_write) = tokio::io::duplex(4096);
+        let (server_read, client_write) = tokio::io::duplex(4096);
+        let bridge = ProviderBridge::from_io(tokio::io::BufReader::new(client_read), client_write);
+        let fence = super::super::dispatch::DispatchFence::new(|| Ok(()));
+        let call_fence = fence.clone();
+        let call = tokio::spawn(async move {
+            call_fence
+                .scope(bridge.send_raw(&serde_json::json!({"op":"connect"})))
+                .await
+        });
+        let mut reader = tokio::io::BufReader::new(server_read);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()["op"],
+            "connect"
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(1), fence.revoke())
+            .await
+            .unwrap();
+        assert!(!call.is_finished());
+        server_write
+            .write_all(b"{\"status\":\"ok\"}\n")
+            .await
+            .unwrap();
+        assert_eq!(call.await.unwrap().unwrap()["status"], "ok");
     }
 
     #[tokio::test]

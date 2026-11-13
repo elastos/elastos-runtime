@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, relative, resolve, sep } from "node:path";
@@ -10,9 +10,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const walletRoot = join(repoRoot, "capsules/wallet/browser");
 const homeRoot = join(repoRoot, "capsules/home/browser");
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 
 const groupAddress = "0x1111111111111111111111111111111111111111";
 const sendAddress = "0x2222222222222222222222222222222222222222";
@@ -539,7 +537,7 @@ async function run() {
   const desktopShot = join(tempDir, "wallet-desktop-1280x900.png");
   const narrowShot = join(tempDir, "wallet-narrow-640x900.png");
   const browser = await chromium.launch({
-    executablePath: brave,
+    ...productSmokeLaunchOptions(),
     headless: true,
   });
 

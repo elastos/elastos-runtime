@@ -3,9 +3,8 @@ import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { assertPhoneDrawer, DRAWER_SETTLE_MS, PHONE_VIEWPORT, setPhoneFormFactor } from "./lib/phone-drawer-assert.mjs";
 
 const PHONE_SCREENSHOT = "/tmp/documents-phone-390x844.png";
@@ -13,11 +12,7 @@ const PHONE_DRAWER_SCREENSHOT = "/tmp/documents-phone-drawer-390x844.png";
 const PHONE_MORE_SCREENSHOT = "/tmp/documents-phone-more-390x844.png";
 const PHONE_TOUCH_TARGET_PX = 44;
 
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const playwrightModule = process.env.ELASTOS_PLAYWRIGHT_MODULE
-  ? await import(pathToFileURL(process.env.ELASTOS_PLAYWRIGHT_MODULE).href)
-  : createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url))("playwright");
-const { chromium } = playwrightModule.chromium ? playwrightModule : playwrightModule.default;
+const { chromium } = await importProductSmokePlaywright();
 
 const capsuleRoot = path.resolve("capsules/documents/browser");
 const homeClipboardClientPath = path.resolve("capsules/home/browser/home-clipboard-client.js");
@@ -464,6 +459,7 @@ async function assertPhoneMoreMenu(page) {
   );
 
   await page.locator("#more-button").click();
+  await page.waitForFunction(() => document.getElementById("more-button")?.getAttribute("aria-expanded") === "true", null, { timeout: 5000 });
   const open = await readMenu();
   await page.screenshot({ path: PHONE_MORE_SCREENSHOT });
   const ids = open.items.map((item) => item.id);
@@ -479,12 +475,14 @@ async function assertPhoneMoreMenu(page) {
   );
 
   await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.getElementById("more-button")?.getAttribute("aria-expanded") === "false" && document.activeElement?.id === "more-button", null, { timeout: 5000 });
   const escaped = await readMenu();
   const focused = await page.evaluate(() => document.activeElement?.id || "");
   assert(!escaped.menuOpen && escaped.expanded === "false" && focused === "more-button", `Documents phone: Escape must close More and return focus. Got ${JSON.stringify({ escaped, focused })}`);
 
   await page.locator("#more-button").click();
   await page.locator("#editor").click();
+  await page.waitForFunction(() => document.getElementById("more-button")?.getAttribute("aria-expanded") === "false", null, { timeout: 5000 });
   const dismissed = await readMenu();
   assert(!dismissed.menuOpen && dismissed.expanded === "false", `Documents phone: tapping outside must close More. Got ${JSON.stringify(dismissed)}`);
 }
@@ -559,7 +557,7 @@ async function run() {
   const { port } = server.address();
   let browser;
   try {
-    browser = await chromium.launch({ headless: true, executablePath: brave });
+    browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
     const consoleErrors = [];
     const pageErrors = [];
     const failedRequests = [];
@@ -714,6 +712,9 @@ async function run() {
     await page.waitForFunction(() => (document.getElementById("editor")?.value || "").includes("- [ ] Shared notes here."));
 
     await page.locator("#mode-read").click();
+    await page.waitForFunction(() => document.getElementById("mode-read")?.getAttribute("aria-pressed") === "true" &&
+      document.getElementById("mode-write")?.getAttribute("aria-pressed") === "false" &&
+      document.querySelectorAll("mark.find-highlight").length >= 2, null, { timeout: 5000 });
     const readMode = await page.evaluate(() => ({
       readPressed: document.getElementById("mode-read")?.getAttribute("aria-pressed") || "",
       writePressed: document.getElementById("mode-write")?.getAttribute("aria-pressed") || "",
@@ -747,10 +748,12 @@ async function run() {
     });
     assert(searchFits, "Documents desktop: the list's search placeholder must fit beside New and Hide list.");
     await page.locator("#sidebar-toggle").click();
+    await page.locator("#documents-sidebar").waitFor({ state: "hidden", timeout: 5000 });
     const collapsed = await desktopLayout();
     assert(!collapsed.sidebar && collapsed.showList && collapsed.mainLeft === 0,
       `Documents desktop: Hide list must give the page the list's room and offer Show list. Got ${JSON.stringify(collapsed)}`);
     await page.locator("#sidebar-show").click();
+    await page.locator("#documents-sidebar").waitFor({ state: "visible", timeout: 5000 });
     const reopened = await desktopLayout();
     assert(reopened.sidebar && !reopened.showList && reopened.mainLeft >= 200,
       `Documents desktop: Show list must bring the list back. Got ${JSON.stringify(reopened)}`);
@@ -878,6 +881,7 @@ async function run() {
       const incrementalBody = "# Typed heading\n\nBody after incremental edit.";
       // "Save automatically" on brings back the 900 ms autosave.
       await parserPage.locator("#autosave-toggle").click();
+      await parserPage.waitForFunction(() => document.getElementById("autosave-toggle")?.getAttribute("aria-checked") === "true", null, { timeout: 5000 });
       assert(await parserPage.locator("#autosave-toggle").getAttribute("aria-checked") === "true",
         "Save automatically must show it is on after it is turned on.");
       // Autosave stays quiet: the line under the title shows errors only.
@@ -970,6 +974,8 @@ async function run() {
       // New keeps an edited document too, and a new one is listed until saved.
       await manualPage.locator("#editor").fill("# Alpha\n\nAlso kept.");
       await manualPage.locator("#new-document").click();
+      await manualPage.waitForFunction(() => document.getElementById("title-input")?.value === "" &&
+        document.getElementById("editor")?.value === "", null, { timeout: 5000 });
       assert(!(await manualPage.locator("#confirm-modal.open").count()), "New must not ask.");
       await manualPage.locator("#title-input").fill("Fresh");
       await manualPage.locator("#editor").fill("A new idea.");
@@ -980,6 +986,11 @@ async function run() {
       assert((await saveMark()).unsaved, "Beta's Save shows its unsaved changes again.");
       assert(await unsavedMark('.document-list-item[data-doc-did="doc-alpha"]'), "The list must mark Alpha unsaved.");
       const freshItem = manualPage.locator(".document-list-item[data-draft-key]");
+      await manualPage.waitForFunction(() => {
+        const drafts = document.querySelectorAll(".document-list-item[data-draft-key]");
+        return drafts.length === 1 && drafts[0].querySelector(".document-list-title")?.textContent === "Fresh" &&
+          drafts[0].querySelector(".document-list-unsaved")?.getAttribute("aria-label") === "Unsaved changes";
+      }, null, { timeout: 5000 });
       assert(await freshItem.count() === 1 && (await freshItem.locator(".document-list-title").textContent()) === "Fresh" &&
         await unsavedMark(".document-list-item[data-draft-key]"),
         "An unsaved new document must be listed with its unsaved mark.");
@@ -996,6 +1007,8 @@ async function run() {
       await waitForCondition(() => saveCalls.length === 1 && saveCalls[0].docDid === "doc-beta" &&
         saveCalls[0].body === "# Beta\n\nFirst manual edit.", 4000, `Save must save Beta. Got ${JSON.stringify(saveCalls)}`);
       await manualPage.waitForFunction(() => !document.getElementById("save-button").classList.contains("has-unsaved"));
+      await manualPage.waitForFunction(() => !document.querySelector('.document-list-item[data-doc-did="doc-beta"] .document-list-unsaved') &&
+        document.querySelector('.document-list-item[data-doc-did="doc-alpha"] .document-list-unsaved')?.getAttribute("aria-label") === "Unsaved changes", null, { timeout: 5000 });
       assert(!(await unsavedMark('.document-list-item[data-doc-did="doc-beta"]')) &&
         await unsavedMark('.document-list-item[data-doc-did="doc-alpha"]'),
         "Saving Beta clears only Beta's unsaved mark.");
@@ -1040,6 +1053,10 @@ async function run() {
         rows[2].tooltip === folderFile.path,
         `A file in a subfolder shows the folder before the time. Got ${JSON.stringify(rows[2])}`);
       await filesPage.locator("#sidebar-search").fill("notes/plain");
+      await filesPage.waitForFunction((uri) => {
+        const rows = document.querySelectorAll(".document-list-item");
+        return rows.length === 1 && rows[0].dataset.objectUri === uri;
+      }, folderFile.uri, { timeout: 5000 });
       const searched = await filesPage.evaluate(() => [...document.querySelectorAll(".document-list-item")]
         .map((item) => item.dataset.objectUri || item.dataset.docDid));
       assert(JSON.stringify(searched) === JSON.stringify([folderFile.uri]),
@@ -1081,7 +1098,10 @@ async function run() {
 
       // Naming a new draft names only the draft, never a listed plain file.
       await filesPage.locator("#new-document").click();
+      await filesPage.waitForFunction(() => document.getElementById("title-input")?.value === "" &&
+        document.getElementById("editor")?.value === "", null, { timeout: 5000 });
       await filesPage.locator("#title-input").fill("Draft name");
+      await filesPage.waitForFunction(() => document.getElementById("title-input")?.value === "Draft name" && document.getElementById("save-button")?.classList.contains("has-unsaved"), null, { timeout: 5000 });
       const fileTitle = await fileItem.locator(".document-list-title").textContent();
       assert(fileTitle === "Plain", `Naming a new draft must not rename a listed file. Got ${fileTitle}`);
     } finally {
@@ -1139,6 +1159,7 @@ async function run() {
           + textLinks.map((href, index) => `[Text ${index}](${href})`).join(" ") + filler + "\n\n# Notes\n\nEnd.";
         await frame.locator("#mode-split").click();
         await frame.locator("#editor").fill(markdown);
+        await frame.waitForFunction(() => document.querySelectorAll("#preview a[data-open-external]").length === 2, null, { timeout: 5000 });
         await assertHomeFrameInvariant(frame, launch, "render");
         const controls = frame.locator("#preview a[data-open-external]");
         assert(JSON.stringify(await controls.evaluateAll((nodes) => nodes.map((node) => node.dataset.openExternal)))
@@ -1166,12 +1187,14 @@ async function run() {
         await scrollsTo(frame, "notes-1", () => frame.locator('#preview [data-scroll-to="notes-1"]').click());
         await assertHomeFrameInvariant(frame, launch, "follow fragment");
         await frame.locator("#editor").fill(markdown + "\n\nEdited.");
+        await frame.waitForFunction(() => document.getElementById("preview")?.textContent.includes("Edited."), null, { timeout: 5000 });
         await assertHomeFrameInvariant(frame, launch, "edit");
         // Switching keeps the edit in this window; it does not ask.
         await frame.locator('.document-list-item[data-doc-did="doc-alpha"]').click();
         await frame.waitForFunction(() => document.getElementById("title-input")?.value === "Alpha");
         await assertHomeFrameInvariant(frame, launch, "switch document");
         await frame.locator("#editor").fill(markdown);
+        await frame.waitForFunction(() => document.querySelectorAll("#preview a[data-open-external]").length === 2, null, { timeout: 5000 });
         await assertHomeFrameInvariant(frame, launch, "re-render");
         await frame.getByText("Same", { exact: true }).click();
         await linkPage.waitForTimeout(300);
@@ -1274,9 +1297,11 @@ async function run() {
         !document.getElementById("editor").readOnly && !document.getElementById("title-input").readOnly &&
         document.getElementById("save-button").disabled);
       await frame.locator("#mode-write").click();
+      await frame.waitForFunction(() => document.getElementById("documents-shell")?.dataset.workspaceView === "write", null, { timeout: 5000 });
       assert(await frame.evaluate(() => document.getElementById("documents-shell").dataset.workspaceView) === "write",
         "After Save to Library the copy must offer Write again.");
       const copy = [...documents.values()].at(-1);
+      await frame.locator(`.document-list-item[data-doc-did="${copy.doc_did}"].active`).waitFor({ timeout: 5000 });
       assert(copy.title === "Shared file.txt" && copy.body.startsWith("# Shared note"),
         `Save to Library must keep the shared text. Got ${JSON.stringify(copy)}`);
       assert(await frame.locator(`.document-list-item[data-doc-did="${copy.doc_did}"].active`).count() === 1,
@@ -1315,11 +1340,13 @@ async function run() {
       await conflictPage.locator("#confirm-modal.open").waitFor();
       assert(await conflictPage.locator("#confirm-action").textContent() === "Load saved version", "The row offers Load saved version.");
       await conflictPage.locator("#confirm-cancel").click();
+      await conflictPage.locator("#confirm-modal.open").waitFor({ state: "hidden", timeout: 5000 });
       assert(await conflictPage.locator("#editor").inputValue() === "My edit", "Cancel keeps the edits.");
       await conflictPage.locator("#status-action").click();
       await conflictPage.locator("#confirm-modal.open").waitFor();
       await conflictPage.locator("#confirm-action").click();
       await conflictPage.waitForFunction((body) => document.getElementById("editor")?.value === body, plainFile.body);
+      await plainRow.locator(".document-list-unsaved").waitFor({ state: "detached", timeout: 5000 });
       assert(!(await plainRow.locator(".document-list-unsaved").count()) &&
         await conflictPage.locator('.document-list-item[data-doc-did="doc-beta"] .document-list-unsaved').count() === 1,
         "Loading the saved version drops only this file's edits.");
@@ -1328,6 +1355,7 @@ async function run() {
       await conflict("Edit to keep as a copy");
       assert(await conflictPage.locator("#save-as-button").isEnabled(), "Save as must stay possible for a Library file.");
       await conflictPage.locator("#save-as-button").click();
+      await conflictPage.waitForFunction(() => document.getElementById("save-as-file-input")?.value === "Plain copy.txt", null, { timeout: 5000 });
       assert(await conflictPage.locator("#save-as-file-input").inputValue() === "Plain copy.txt", "Save as suggests a copy name.");
       await conflictPage.locator('#save-as-form button[type="submit"]').click();
       await waitForCondition(() => importCalls.length === 1, 5000, "Save as did not save a copy.");
@@ -1335,6 +1363,7 @@ async function run() {
         importCalls[0].mime === "text/plain" && importCalls[0].attachment_id.startsWith("copy-"),
         `Save as must save the edits as a new file. Got ${JSON.stringify(importCalls)}`);
       await conflictPage.waitForFunction(() => document.getElementById("title-input")?.value === "Plain copy.txt");
+      await plainRow.locator(".document-list-unsaved").waitFor({ state: "detached", timeout: 5000 });
       assert(plainFile.body === "Changed elsewhere: Edit to keep as a copy", "Save as never overwrites the changed file.");
       assert(!(await plainRow.locator(".document-list-unsaved").count()), "After Save as the file keeps what is stored.");
 
@@ -1417,7 +1446,9 @@ async function run() {
       await frame.locator(".document-list-item").first().waitFor();
       await chromePage.waitForFunction(() => window.homeMessages.some((message) => message?.type === "home:menu-manifest"));
       await frame.locator('.document-list-item[data-doc-did="doc-beta"]').click();
+      await frame.waitForFunction(() => document.getElementById("title-input")?.value === "Beta", null, { timeout: 5000 });
       await frame.locator("#editor").fill("# Beta\n\nTyped inside Home.");
+      await frame.waitForFunction(() => document.getElementById("preview")?.textContent.includes("Typed inside Home."), null, { timeout: 5000 });
       const chrome = await chromePage.evaluate(() => window.homeMessages
         .filter((message) => ["home:app-ready", "home:menu-manifest"].includes(message?.type)));
       const manifests = chrome.filter((message) => message.type === "home:menu-manifest");

@@ -390,6 +390,7 @@ function createHarness({
       statuses.push({ message, options });
     },
     async fetchJson(path, options) {
+      if (path === "/api/apps/browser/internet") { assert.equal(options.body.action,"end"); return {status:"ended"}; }
       fetchCalls.push({ path, options });
       const response = fetchResponses.shift();
       if (response instanceof Error) throw response;
@@ -496,6 +497,7 @@ test("policy 403 leaves renewal idle and preserves an in-flight exact window clo
     assert.equal(harness.posted[0].message.state, "pending");
     assert.equal(harness.refreshAuthority(denied), false);
     assert.deepEqual(harness.renewalRequests, []);
+    await Promise.resolve();
     assert.equal(harness.closeCalls.length, 1);
     assert.equal(harness.closeCalls[0].candidate, harness.owner);
   } finally {
@@ -1068,7 +1070,7 @@ test("pending cleanup returns a retryable nonterminal receipt", async () => {
     },
   ]) {
     assert.equal(
-      harness.deliver(substitutedOwner, {
+      await harness.deliver(substitutedOwner, {
         state: "terminal",
         page_id: substitutedOwner.page_id,
         generation: substitutedOwner.generation,
@@ -1079,7 +1081,7 @@ test("pending cleanup returns a retryable nonterminal receipt", async () => {
     assert.equal(harness.posted.length, 2);
   }
   assert.equal(
-    harness.deliver(harness.owner, {
+    await harness.deliver(harness.owner, {
       state: "terminal",
       page_id: "page-exact",
       generation: 7,
@@ -1104,7 +1106,7 @@ test("pending cleanup returns a retryable nonterminal receipt", async () => {
     },
   );
   assert.equal(
-    harness.deliver(harness.owner, {
+    await harness.deliver(harness.owner, {
       state: "terminal",
       page_id: "page-exact",
       generation: 7,
@@ -1134,7 +1136,7 @@ test("delayed terminal delivery supports an exact restored owner", async () => {
   assert.equal(harness.posted[0].message.reason, "cleanup_in_flight");
   assert.equal(harness.posted[1].message.state, "pending");
   assert.equal(
-    harness.deliver(harness.owner, {
+    await harness.deliver(harness.owner, {
       state: "terminal",
       page_id: "page-exact",
       generation: 0,
@@ -1173,7 +1175,7 @@ test("a retry replaces the sole pending Home delivery for the same owner", async
     ["request-exact", "request-exact", "request-retry", "request-retry"],
   );
   assert.equal(
-    harness.deliver(harness.owner, {
+    await harness.deliver(harness.owner, {
       state: "terminal",
       page_id: "page-exact",
       generation: 7,

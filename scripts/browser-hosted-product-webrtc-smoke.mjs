@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import process from "node:process";
 import playwright from "../elastos/tools/browser-playwright-engine/node_modules/playwright/index.js";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 function usage() {
   console.error(`Usage:
@@ -664,6 +665,7 @@ async function main() {
     const { chromium } = playwright;
     browser = await chromium.launch({
       headless: true,
+      ...productSmokeLaunchOptions(),
       args: ["--autoplay-policy=no-user-gesture-required"],
     });
     page = await browser.newPage();

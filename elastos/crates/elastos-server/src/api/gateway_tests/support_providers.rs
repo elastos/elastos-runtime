@@ -3595,7 +3595,8 @@ impl Provider for MockBrowserEngineProvider {
                     "protocol_version": "2.1",
                     "page_id": page_id,
                     "adapter": adapter,
-                    "engine": "selkies_gstreamer",
+                    "engine": "chromium_microvm",
+                    "isolation": {"schema":"elastos.browser.engine.isolation/v1","kind":"per_launch_vm_target"},
                     "url": request.get("url").cloned().unwrap_or_else(|| json!("")),
                     "stream_id": stream_id,
                     "runtime_cleanup": {
@@ -3604,7 +3605,7 @@ impl Provider for MockBrowserEngineProvider {
                         "generation": generation,
                         "stream_id": stream_id,
                         "adapter": adapter,
-                        "engine": "selkies_gstreamer"
+                        "engine": "chromium_microvm"
                     },
                     "network_mode": "runtime_net_only",
                     "direct_network": false,
@@ -3624,12 +3625,8 @@ impl Provider for MockBrowserEngineProvider {
                         "media_transport": "runtime_relay",
                         "audio": true,
                         "video": true,
-                        "ice_servers": [{
-                            "urls": ["turn:127.0.0.1:3478"],
-                            "username_present": true,
-                            "credential_present": true,
-                            "credential_length": 16
-                        }]
+                        "offerer": "engine",
+                        "ice_connection_policy": "engine_relay_only"
                     },
                     "view": {
                         "schema": "elastos.browser.view/v1",
@@ -3663,12 +3660,8 @@ impl Provider for MockBrowserEngineProvider {
                         "media_transport": "runtime_relay",
                         "audio": true,
                         "video": true,
-                        "ice_servers": [{
-                            "urls": ["turn:127.0.0.1:3478"],
-                            "username_present": true,
-                            "credential_present": true,
-                            "credential_length": 16
-                        }]
+                        "offerer": "engine",
+                        "ice_connection_policy": "engine_relay_only"
                     },
                     "actual_url": "https://glidefinance.io/",
                     "webrtc_connection_state": "connected",
@@ -3799,22 +3792,22 @@ impl Provider for MockBrowserEngineProvider {
                 "adapters": [
                     {
                         "id": "mock-browser-engine",
-                        "engine": "selkies_gstreamer",
+                        "engine": "chromium_microvm",
                         "default": true,
-                        "backing_substrate": "operator_rbi",
+                        "backing_substrate": "local_microvm",
                         "supported_display_modes": ["webrtc_remote_display"],
-                        "supported_guarantee_levels": ["operator_rbi"],
+                        "supported_guarantee_levels": ["mechanism_microvm"],
                         "network_mode": "runtime_net_only",
                         "direct_network": false,
                         "wallet_injection": false
                     },
                     {
                         "id": "mock-jetson-engine",
-                        "engine": "selkies_gstreamer",
+                        "engine": "chromium_microvm",
                         "default": false,
-                        "backing_substrate": "operator_rbi",
+                        "backing_substrate": "local_microvm",
                         "supported_display_modes": ["webrtc_remote_display"],
-                        "supported_guarantee_levels": ["operator_rbi"],
+                        "supported_guarantee_levels": ["mechanism_microvm"],
                         "network_mode": "runtime_net_only",
                         "direct_network": false,
                         "wallet_injection": false
@@ -3826,7 +3819,7 @@ impl Provider for MockBrowserEngineProvider {
                 "required_byte_transport": "adapter_ipc",
                 "display_session_schema": "elastos.browser.display-session/v1",
                 "supported_display_modes": ["webrtc_remote_display"],
-                "supported_guarantee_levels": ["operator_rbi"],
+                "supported_guarantee_levels": ["mechanism_microvm"],
                 "operations": ["status", "launch", "attach_stream", "page_status", "diagnostics", "input", "webrtc_signal", "close_page"]
             }
         }))
@@ -3943,6 +3936,22 @@ impl Provider for MockReconciliatingBrowserEngineProvider {
                         "launch_settlement_result": settlement,
                     }));
                 }
+                if request["url"]
+                    .as_str()
+                    .is_some_and(|url| url.contains("space-refusal.invalid"))
+                {
+                    let mut refusal = json!({"code": "insufficient_free_space", "required_bytes": 8589934592_u64, "available_bytes": 8589934591_u64});
+                    if request["url"].as_str().unwrap().contains("unknown") {
+                        refusal["code"] = json!("unknown");
+                    }
+                    if request["url"].as_str().unwrap().contains("counts") {
+                        refusal["available_bytes"] = json!(-1);
+                    }
+                    return Ok(json!({
+                        "status": "error", "code": "launch_refused",
+                        "message": "private engine diagnostic", "refusal": refusal,
+                    }));
+                }
                 if matches!(
                     self.failure,
                     MockDispatchedBrowserLaunchFailure::TerminalVzSettlement
@@ -3991,6 +4000,12 @@ impl Provider for MockReconciliatingBrowserEngineProvider {
                             "provider": "browser-engine-adapter",
                             "protocol_version": "2.1",
                             "page_id": "unsafe page id",
+                            "direct_network": false,
+                            "wallet_injection": false,
+                            "display_session": {
+                                "schema": "elastos.browser.display-session/v1",
+                                "mode": "/private/engine/rootfs.img",
+                            },
                         }
                     })),
                     MockDispatchedBrowserLaunchFailure::PendingThenTerminal
@@ -4212,7 +4227,7 @@ impl Provider for MockReconciliatingBrowserEngineProvider {
                                 "protocol_version": "2.1",
                                 "page_id": page_id,
                                 "adapter": "mock-browser-engine",
-                                "engine": "selkies_gstreamer",
+                                "engine": "chromium_microvm",
                                 "stream_id": stream_id,
                                 "runtime_cleanup": {
                                     "schema": "elastos.browser.engine-cleanup-binding/v2",
@@ -4220,7 +4235,7 @@ impl Provider for MockReconciliatingBrowserEngineProvider {
                                     "generation": generation,
                                     "stream_id": stream_id,
                                     "adapter": "mock-browser-engine",
-                                    "engine": "selkies_gstreamer",
+                                    "engine": "chromium_microvm",
                                     "control_socket_path": "/tmp/mock-browser-late-effect.sock"
                                 }
                             }
@@ -4459,11 +4474,11 @@ impl Provider for MockRejectingBrowserEngineProvider {
                     "adapter_count": 1,
                     "adapters": [{
                         "id": "mock-browser-engine",
-                        "engine": "selkies_gstreamer",
+                        "engine": "chromium_microvm",
                         "default": true,
-                        "backing_substrate": "operator_rbi",
+                        "backing_substrate": "local_microvm",
                         "supported_display_modes": ["webrtc_remote_display"],
-                        "supported_guarantee_levels": ["operator_rbi"],
+                        "supported_guarantee_levels": ["mechanism_microvm"],
                         "network_mode": "runtime_net_only",
                         "direct_network": false,
                         "wallet_injection": false
@@ -4474,7 +4489,7 @@ impl Provider for MockRejectingBrowserEngineProvider {
                     "required_byte_transport": "adapter_ipc",
                     "display_session_schema": "elastos.browser.display-session/v1",
                     "supported_display_modes": ["webrtc_remote_display"],
-                    "supported_guarantee_levels": ["operator_rbi"],
+                    "supported_guarantee_levels": ["mechanism_microvm"],
                     "operations": ["status", "launch"]
                 }
             })),
@@ -4553,9 +4568,7 @@ struct MockBitcoinChallenge {
 /// capsules/wallet-provider), so a caller holding a newer launch of the same
 /// session is refused exactly as it is live; the session binding alone would
 /// let that case through.
-fn mock_wallet_authority_binding(
-    authority: &elastos_wallet_contract::WalletAuthorityV2,
-) -> String {
+fn mock_wallet_authority_binding(authority: &elastos_wallet_contract::WalletAuthorityV2) -> String {
     let bytes = serde_json::to_vec(&json!({
         "principal_id": authority.principal_id,
         "session_id": authority.session_id,
@@ -6514,8 +6527,12 @@ impl MockWalletProvider {
                 }
                 // The real wallet binds the outcome to the approval's ORIGINAL authority
                 // (validate_chain_outcome_target): a later launch must not attach it.
-                if approval.get("authority_binding").and_then(|value| value.as_str())
-                    != request.get("authority_binding").and_then(|value| value.as_str())
+                if approval
+                    .get("authority_binding")
+                    .and_then(|value| value.as_str())
+                    != request
+                        .get("authority_binding")
+                        .and_then(|value| value.as_str())
                 {
                     return Ok(json!({
                         "status": "error",

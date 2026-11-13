@@ -643,7 +643,7 @@ pub(in crate::api::gateway) async fn ensure_exact_runtime_transaction_approval(
         }
         true
     } else {
-        let mut intent = prepare_chain_transaction(state, &request).await?;
+        let mut intent = prepare_chain_transaction(state, &request, authority).await?;
         bind_transaction_intent_runtime_context(&mut intent, &request, authority, true)
             .map_err(internal_error)?;
         let mut effect = RuntimeTransactionEffect {
@@ -805,7 +805,7 @@ pub(in crate::api::gateway) async fn ensure_runtime_transaction_approval(
         }
         index
     } else {
-        let mut intent = prepare_chain_transaction(state, &request).await?;
+        let mut intent = prepare_chain_transaction(state, &request, authority).await?;
         bind_transaction_intent_runtime_context(&mut intent, &request, authority, true)
             .map_err(internal_error)?;
         let approval_request_id = wallet_request_id(&request.effect_id, "approval");
@@ -1178,8 +1178,9 @@ pub(in crate::api::gateway) async fn complete_runtime_transaction_effect(
             store.effects[effect_index].state = TransactionEffectState::BroadcastInFlight;
             store.effects[effect_index].updated_at = now_ts();
             save_transaction_effect_store(state, &store)?;
-            let receipt = wallet_chain_provider_data(
+            let receipt = transaction_chain_data(
                 state,
+                &store.effects[effect_index].authority,
                 json!({
                     "op": "broadcast_transaction",
                     "network": network,
@@ -1364,8 +1365,9 @@ async fn reconcile_transaction_effect(
     };
     let mut lookup_errors = Vec::new();
     for op in lookup_operations {
-        match wallet_chain_provider_data(
+        match transaction_chain_data(
             state,
+            &store.effects[effect_index].authority,
             json!({
                 "op": op,
                 "network": network,
@@ -1570,9 +1572,46 @@ async fn wallet_approval(
         })
 }
 
+// Completion can be driven by Inbox or Wallet. Keep network authority bound to
+// the Browser launch which requested this effect, including after a restart.
+async fn transaction_chain_data(
+    state: &GatewayState,
+    authority: &TransactionAuthorityBinding,
+    request: Value,
+) -> Result<Value, (StatusCode, String)> {
+    if authority.actor != BROWSER_CAPSULE_ID {
+        return wallet_chain_provider_data(state, request).await;
+    }
+    let context = HomeLaunchTokenContext {
+        principal_id: authority.principal_id.clone(),
+        session_id: authority.session_id.clone(),
+        proof_binding_id: authority.proof_binding_id.clone(),
+        grant_id: authority.grant_id.clone(),
+    };
+    let internet = gateway_browser_internet::effect(
+        state,
+        &context,
+        &authority.actor,
+        &authority.launch_id,
+        false,
+    )
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::FORBIDDEN,
+            "Browser internet permission is required".into(),
+        )
+    })?;
+    internet
+        .fence
+        .scope(wallet_chain_provider_data(state, request))
+        .await
+}
+
 async fn prepare_chain_transaction(
     state: &GatewayState,
     request: &RuntimeTransactionRequest,
+    authority: &RuntimeWalletAuthority,
 ) -> Result<Value, (StatusCode, String)> {
     let expected_chain_id = request
         .chain_namespace
@@ -1584,8 +1623,9 @@ async fn prepare_chain_transaction(
                 "transaction request has an invalid EVM namespace".to_string(),
             )
         })?;
-    let intent = wallet_chain_provider_data(
+    let intent = transaction_chain_data(
         state,
+        &transaction_authority(authority),
         json!({
             "op": "prepare_transaction",
             "network": request.network,
@@ -3420,6 +3460,7 @@ mod approved_request_resume_tests {
             collaboration_presence_product_port: None,
             carrier_endpoint: None,
             collaboration_discovery_service: None,
+            browser_internet: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             cache_dir: root.join("cache"),
             data_dir: root.join("data"),

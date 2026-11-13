@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,9 +10,7 @@ import { PHONE_VIEWPORT, setPhoneFormFactor } from "./lib/phone-drawer-assert.mj
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const browserRoot = join(repoRoot, "capsules/inbox/browser");
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 
 function assert(condition, message, details = undefined) {
   if (!condition) {
@@ -157,8 +155,7 @@ async function run() {
   const port = server.address().port;
   const baseUrl = `http://127.0.0.1:${port}`;
   const browser = await chromium.launch({
-    channel: "chromium",
-    executablePath: brave,
+    ...productSmokeLaunchOptions(),
     headless: true,
   });
 

@@ -416,9 +416,13 @@ impl RequestHandler {
             }
         };
 
-        self.capability_manager
+        if let Err(error) = self
+            .capability_manager
             .revoke(token_bytes, "Revoked by shell")
-            .await;
+            .await
+        {
+            return RuntimeResponse::error("revocation_persistence_failed", error.to_string());
+        }
 
         RuntimeResponse::ok()
     }

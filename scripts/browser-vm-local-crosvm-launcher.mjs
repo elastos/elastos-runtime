@@ -8,6 +8,10 @@ import process from "node:process";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+const { browserPythonCommand } = await import(new URL(
+  path.basename(path.dirname(fileURLToPath(import.meta.url))) === "bin"
+    ? "../scripts/browser-python.mjs" : "./browser-python.mjs", import.meta.url));
+
 const OPEN_REQUEST_ENV = "ELASTOS_BROWSER_VM_OPEN_REQUEST";
 const DATA_DIR_ENV = "ELASTOS_BROWSER_VM_DATA_DIR";
 const ROOT_ENV = "ELASTOS_BROWSER_VM_ROOT";
@@ -127,8 +131,16 @@ function defaultRootfsPoolDir(dataDir) {
   return path.join(dataDir, "browser-vm/rootfs-pool");
 }
 
-function defaultVmVcpus() {
-  return os.arch() === "arm64" ? "4" : "2";
+export function browserVmVcpus(platform, hostCpus, value) {
+  if (value !== undefined) {
+    if (!/^\+?\d+$/.test(value) || Number(value) < 1 || Number(value) > 255) {
+      throw new Error("ELASTOS_BROWSER_VM_VCPUS must be an integer in 1..255");
+    }
+    return String(Number(value));
+  }
+  return platform === "linux"
+    ? String(Math.min(hostCpus, Math.max(2, Math.min(4, hostCpus - 2))))
+    : "2";
 }
 
 function isIpv4(value) {
@@ -313,7 +325,7 @@ function profileFailure(code, message) {
   return new Error(JSON.stringify({ schema: "elastos.browser.engine.launch-error/v1", code, message }));
 }
 
-function prepareProfileDisk(profile, dataDir) {
+export function prepareProfileDisk(profile, dataDir, env = process.env) {
   if (profile?.schema !== "elastos.browser.profile/v1" || profile.scope !== "active_principal" ||
       profile.storage !== "principal_owned_profile_disk" || !/^profile-[0-9a-f]{64}$/i.test(profile.profile_key || "")) {
     throw new Error("Browser requires the Runtime principal profile disk descriptor");
@@ -334,7 +346,8 @@ function prepareProfileDisk(profile, dataDir) {
     requireFile(python, "admitted Browser Python");
     // flock belongs to the shared open-file description. This process retains
     // it after Python exits, and passes the same descriptor to the VM writer.
-    const locked = spawnSync(python, ["-I", "-c", "import fcntl; fcntl.flock(3, fcntl.LOCK_EX | fcntl.LOCK_NB)"],
+    const invocation = browserPythonCommand(dataDir, python, ["-c", "import fcntl; fcntl.flock(3, fcntl.LOCK_EX | fcntl.LOCK_NB)"]);
+    const locked = spawnSync(invocation.command, invocation.args,
       { stdio: ["ignore", "pipe", "pipe", lockFd], encoding: "utf8", timeout: 5000 });
     if (locked.error || locked.status !== 0) {
       if (/BlockingIOError|Resource temporarily unavailable/.test(locked.stderr || "")) {
@@ -342,7 +355,7 @@ function prepareProfileDisk(profile, dataDir) {
       }
       throw new Error(`Browser profile lock failed: ${locked.error?.message || locked.stderr || locked.status}`);
     }
-    const sizeMiB = Number(process.env.ELASTOS_BROWSER_VM_PROFILE_DISK_MIB || "2048");
+    const sizeMiB = Number(env.ELASTOS_BROWSER_VM_PROFILE_DISK_MIB || "2048");
     if (!Number.isInteger(sizeMiB) || sizeMiB < 128 || sizeMiB > 65536) throw new Error("ELASTOS_BROWSER_VM_PROFILE_DISK_MIB must be 128..65536");
     const marker = Buffer.from(`ELASTOS_BROWSER_PROFILE_NEW_V1:${profile.profile_key}`);
     let initialize = false;
@@ -393,17 +406,17 @@ function runSync(command, args, { ignoreFailure = false, timeout = 30000 } = {})
   return result;
 }
 
-function linuxNetworkCommand(scriptPath, action) {
+export function linuxNetworkCommand(scriptPath, action) {
   const scriptsDir = path.basename(path.dirname(scriptPath)) === "bin"
     ? path.join(path.dirname(scriptPath), "../scripts") : path.dirname(scriptPath);
-  return { command: process.env.ELASTOS_BROWSER_VM_PYTHON || "python3", args: [path.join(scriptsDir, "browser-vm-linux-network.py"), action] };
+  return browserPythonCommand(defaultDataDir(scriptPath), process.env.ELASTOS_BROWSER_VM_PYTHON || "python3", [path.join(scriptsDir, "browser-vm-linux-network.py"), action]);
 }
 
-function requireLinuxNetwork(scriptPath) {
+export function requireLinuxNetwork(scriptPath, run = runSync) {
   const { command, args } = linuxNetworkCommand(scriptPath, "check");
-  const result = runSync(command, args, { ignoreFailure: true });
+  const result = run(command, args, { ignoreFailure: true });
   if (result.error || result.status !== 0) {
-    throw new Error(result.stderr?.trim() || `Browser network setup is required. Install the reviewed root-owned helper first. As root, run: python3 /usr/local/lib/elastos/browser-vm-linux-network.py setup --user ${os.userInfo().username}`);
+    throw new Error(result.stderr?.trim() || `Browser network setup is required. Install the reviewed root-owned helper first.\nAs root, run:\n/usr/bin/python3 -I /usr/local/lib/elastos/browser-vm-linux-network.py setup --user ${os.userInfo().username}`);
   }
 }
 
@@ -869,7 +882,7 @@ function prepareLaunchRootfs({ rootfs, launchRootfs, dataDir, sessionDir, script
   };
 }
 
-function startCrosvm({ crosvm, kernel, initrd, rootfs, sessionDir, network, launch, profile, iceConfig }) {
+function startCrosvm({ crosvm, kernel, initrd, rootfs, sessionDir, network, launch, profile, iceConfig, vcpus }) {
   const serialLog = path.join(sessionDir, "serial.log");
   const crosvmLog = path.join(sessionDir, "crosvm.log");
   const crosvmFd = fs.openSync(crosvmLog, "a");
@@ -904,7 +917,7 @@ function startCrosvm({ crosvm, kernel, initrd, rootfs, sessionDir, network, laun
     "--mem",
     process.env.ELASTOS_BROWSER_VM_MEMORY_MIB || (os.arch() === "arm64" ? "2048" : "3072"),
     "--cpus",
-    process.env.ELASTOS_BROWSER_VM_VCPUS || defaultVmVcpus(),
+    vcpus,
     "--serial",
     `type=file,path=${serialLog},hardware=serial,num=1`,
     "--block",
@@ -1284,10 +1297,11 @@ async function main() {
   }
 
   const memoryMiB = process.env.ELASTOS_BROWSER_VM_MEMORY_MIB || (os.arch() === "arm64" ? "2048" : "3072");
-  const vcpus = process.env.ELASTOS_BROWSER_VM_VCPUS || defaultVmVcpus();
+  const vcpus = browserVmVcpus(process.platform, os.availableParallelism(), process.env.ELASTOS_BROWSER_VM_VCPUS);
   logPhase(`starting crosvm with ${memoryMiB}MiB and ${vcpus} vCPUs`);
   const vm = startCrosvm({
     crosvm,
+    vcpus,
     kernel,
     initrd,
     rootfs: launchRootfs,
@@ -1343,13 +1357,15 @@ async function main() {
   }
 }
 
-process.on("SIGTERM", () => cleanupAndExit("SIGTERM"));
-process.on("SIGINT", () => cleanupAndExit("SIGINT"));
-process.on("SIGHUP", () => cleanupAndExit("SIGHUP"));
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.on("SIGTERM", () => cleanupAndExit("SIGTERM"));
+  process.on("SIGINT", () => cleanupAndExit("SIGINT"));
+  process.on("SIGHUP", () => cleanupAndExit("SIGHUP"));
 
-main()
-  .then(() => cleanupAndExit(null))
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    cleanupAndExit(null);
-  });
+  main()
+    .then(() => cleanupAndExit(null))
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      cleanupAndExit(null);
+    });
+}

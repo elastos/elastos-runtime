@@ -50,15 +50,18 @@ async fn test_inbox_approves_wallet_requests_through_runtime_wallet_signing() {
     let summary_json: serde_json::Value = serde_json::from_slice(&summary_body).unwrap();
     assert_eq!(summary_json["notifications"]["attention_count"], 1);
     assert_eq!(
-        summary_json["notifications"]["entries"][0]["action_ref"]["action_id"],
+        home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0]
+            ["action_ref"]["action_id"],
         "wallet-approve-request:wallet-approval:test"
     );
     assert_eq!(
-        summary_json["notifications"]["entries"][0]["action_ref"]["app"],
+        home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0]
+            ["action_ref"]["app"],
         WALLET_CAPSULE_ID
     );
     assert_eq!(
-        summary_json["notifications"]["entries"][0]["source_app"],
+        home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0]
+            ["source_app"],
         "documents"
     );
 
@@ -541,7 +544,8 @@ async fn test_wallet_approval_journey_creates_request_reviews_in_inbox_and_signs
     let home_json: serde_json::Value = serde_json::from_slice(&home_body).unwrap();
     assert_eq!(home_json["notifications"]["attention_count"], 1);
     assert_eq!(
-        home_json["notifications"]["entries"][0]["action_ref"]["action_id"],
+        home_entries_of_kind(&home_json["notifications"], "wallet_approval_request")[0]
+            ["action_ref"]["action_id"],
         format!("wallet-approve-request:{request_id}")
     );
 
@@ -563,11 +567,13 @@ async fn test_wallet_approval_journey_creates_request_reviews_in_inbox_and_signs
     let inbox_json: serde_json::Value = serde_json::from_slice(&inbox_body).unwrap();
     assert_eq!(inbox_json["notifications"]["attention_count"], 1);
     assert_eq!(
-        inbox_json["notifications"]["entries"][0]["action_ref"]["action_id"],
+        home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]
+            ["action_ref"]["action_id"],
         format!("wallet-approve-request:{request_id}")
     );
     assert_eq!(
-        inbox_json["notifications"]["entries"][0]["source_app"],
+        home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]
+            ["source_app"],
         "documents"
     );
 
@@ -776,11 +782,12 @@ async fn test_btc_wallet_approval_journey_reviews_in_inbox_and_signs() {
     let home_json: serde_json::Value = serde_json::from_slice(&home_body).unwrap();
     assert_eq!(home_json["notifications"]["attention_count"], 1);
     assert_eq!(
-        home_json["notifications"]["entries"][0]["title"],
+        home_entries_of_kind(&home_json["notifications"], "wallet_approval_request")[0]["title"],
         "Bitcoin proof request"
     );
     assert_eq!(
-        home_json["notifications"]["entries"][0]["action_ref"]["action_id"],
+        home_entries_of_kind(&home_json["notifications"], "wallet_approval_request")[0]
+            ["action_ref"]["action_id"],
         format!("wallet-approve-request:{request_id}")
     );
 
@@ -801,7 +808,7 @@ async fn test_btc_wallet_approval_journey_reviews_in_inbox_and_signs() {
         .unwrap();
     let inbox_json: serde_json::Value = serde_json::from_slice(&inbox_body).unwrap();
     assert_eq!(
-        inbox_json["notifications"]["entries"][0]["title"],
+        home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]["title"],
         "Bitcoin proof request"
     );
 

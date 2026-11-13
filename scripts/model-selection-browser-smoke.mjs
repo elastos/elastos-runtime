@@ -4,7 +4,8 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { once } from "node:events";
-import { chromium, brave } from "./system-uiux-fixture.mjs";
+import { chromium } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const root = resolve(new URL("../", import.meta.url).pathname);
 const cid = `bafybei${"a".repeat(52)}`;
@@ -51,7 +52,7 @@ const server = createServer(async (req, res) => {
   } catch (error) { errors.push(String(error)); json({ error: "fixture failure" }, 500); }
 });
 server.listen(0, "127.0.0.1"); await once(server, "listening");
-const browser = await chromium.launch({ executablePath: brave, headless: true });
+const browser = await chromium.launch({ ...productSmokeLaunchOptions(), headless: true });
 try {
   // The retired standalone renderer's disabled-select/CID/controller behavior
   // remains covered in assistant-shell-smoke.mjs. Render the canonical UI here.

@@ -290,7 +290,7 @@ class PrepareWorkerTest(unittest.TestCase):
         # platform headers and local licence pins instead of upstream downloads.
         inventory_path = scripts / "release-upstream-recipes.json"
         inventory = json.loads(inventory_path.read_text())
-        for name in ("node", "turnserver", "python3", "debugfs", "crosvm"):
+        for name in ("node", "turnserver", "python3", "debugfs", "crosvm", "vhost-device-vsock"):
             for platform, info in external[name]["platforms"].items():
                 binary = scripts / (name + "-" + platform + ".fixture")
                 native_header = bytearray(64)
@@ -384,6 +384,14 @@ class PrepareWorkerTest(unittest.TestCase):
                     self.assertNotIn("strategy", info)
                 if host == "Darwin":
                     self.assertIn("browser-vz-engine-supervisor-darwin-arm64", (self.root / "sign.log").read_text())
+                if setup == "linux-arm64":
+                    self.assertIn("browser-vz-engine-supervisor", manifest["external"])
+                    supervisor = manifest["external"]["browser-vz-engine-supervisor"]["platforms"][setup]
+                    self.assertGreater(supervisor["size"], 0)
+                    calls = [json.loads(line) for line in (self.root / "cargo.log").read_text().splitlines()]
+                    self.assertTrue(any("browser-vz-engine-supervisor" in call["args"] and
+                                        "aarch64-unknown-linux-musl" in call["args"] for call in calls))
+                    self.assertNotIn("browser-vz-engine-supervisor-linux-arm64", (self.root / "sign.log").read_text())
 
     def test_browser_vz_signing_failure_preserves_absent_output(self):
         output, result = self.prepare(env={**self.env, "FAIL_SIGN": "1"})
@@ -687,6 +695,16 @@ class PrepareWorkerTest(unittest.TestCase):
         self.assertIn("checksum differs", result.stderr)
         self.assertFalse(output.exists())
         self.assertFalse((self.root / "cargo.log").exists())
+
+    def test_installed_target_check_reads_delayed_output(self):
+        (self.root / "mock/rustup").write_text(
+            '#!/bin/sh\n'
+            'printf "aarch64-apple-darwin\\n"\n'
+            'sleep 0.2\n'
+            'printf "x86_64-unknown-linux-musl\\naarch64-unknown-linux-musl\\n"\n')
+        output, result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((output / "platform-input.json").is_file())
 
     def test_success_uses_real_packaging_and_receipt(self):
         output, result = self.prepare()
