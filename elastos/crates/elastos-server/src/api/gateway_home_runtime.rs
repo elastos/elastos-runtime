@@ -1,10 +1,7 @@
 use super::*;
 
 fn home_projection_token_error(err: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
-    if err
-        .downcast_ref::<gateway_home_token::HomeLaunchSessionInactive>()
-        .is_some()
-    {
+    if gateway_home_token::home_launch_token_needs_reopen(&err) {
         (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "invalid or expired session" })),
@@ -1970,7 +1967,7 @@ mod tests {
     fn home_token_projection_error_mapping_is_type_based() {
         // The mapping must key off the marker type, not the message string.
         let (status, Json(body)) = home_projection_token_error(
-            anyhow::Error::new(gateway_home_token::HomeLaunchSessionInactive)
+            anyhow::Error::new(gateway_home_token::HomeLaunchTokenError::SessionInactive)
                 .context("some different wording"),
         );
         assert_eq!(status, StatusCode::UNAUTHORIZED);

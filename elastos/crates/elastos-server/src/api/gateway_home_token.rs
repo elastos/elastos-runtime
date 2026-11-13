@@ -340,19 +340,6 @@ fn issue_home_launch_token_at(
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&envelope)?))
 }
 
-/// Marker for the fail-closed path where a launch token's bound auth session
-/// is no longer active. Callers match on the type, not the message string.
-#[derive(Debug)]
-pub(super) struct HomeLaunchSessionInactive;
-
-impl std::fmt::Display for HomeLaunchSessionInactive {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("home launch token auth session is not active")
-    }
-}
-
-impl std::error::Error for HomeLaunchSessionInactive {}
-
 pub(super) fn grant_bound_token_expiry(
     data_dir: &std::path::Path,
     context: &HomeLaunchTokenContext,
@@ -370,8 +357,7 @@ pub(super) fn grant_bound_token_expiry(
     )
     .map_err(|err| {
         tracing::warn!(error = %err, "home launch token auth session is not active");
-        anyhow::Error::new(HomeLaunchSessionInactive)
-            .context("home launch token auth session is not active")
+        anyhow::Error::from(HomeLaunchTokenError::SessionInactive)
     })?;
     if grant.principal_id != context.principal_id
         || grant.proof_binding_id != proof_binding_id
