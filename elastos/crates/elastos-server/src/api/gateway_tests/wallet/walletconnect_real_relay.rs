@@ -191,7 +191,15 @@ async fn walletconnect_gateway_process_worker() {
             let origin = request.headers().get("origin").and_then(|h|h.to_str().ok());
             let kind = match origin { None=>"missing",Some("null")=>"opaque",Some(value) if value==expected_origin=>"same-home",_=>"other" };
             let host_matches = request.headers().get("host").and_then(|h|h.to_str().ok()) == Some(expected_host.as_str());
+            let fetch_metadata = json!({
+                "site":request.headers().get("sec-fetch-site").and_then(|v|v.to_str().ok()),
+                "mode":request.headers().get("sec-fetch-mode").and_then(|v|v.to_str().ok()),
+                "dest":request.headers().get("sec-fetch-dest").and_then(|v|v.to_str().ok()),
+            });
             async move {
+                if relay {
+                    crate::auth::atomic_write(&refusal_path.with_file_name("relay-fetch-metadata.json"), &serde_json::to_vec(&fetch_metadata).unwrap()).unwrap();
+                }
                 let response = next.run(request).await;
                 if relay && response.status()==StatusCode::FORBIDDEN {
                     crate::auth::atomic_write(&refusal_path, &serde_json::to_vec(&json!({"status":403,"origin_kind":kind,"origin_headers":origin_count,"host_matches":host_matches})).unwrap()).unwrap();

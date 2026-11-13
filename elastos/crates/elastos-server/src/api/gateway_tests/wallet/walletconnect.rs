@@ -442,6 +442,99 @@ async fn walletconnect_websocket_upgrade_requires_opaque_origin_and_first_frame_
 }
 
 #[tokio::test]
+async fn walletconnect_webkit_fetch_metadata_upgrades_only_the_exact_ticketed_socket() {
+    let f = Fixture::new().await;
+    for dest in ["websocket", "empty", "document", "iframe", "script"] {
+        for origin in ["null", "https://other.example"] {
+            let mut request = format!("ws://{}/api/apps/wallet-walletconnect/relay", f.addr)
+                .into_client_request()
+                .unwrap();
+            for (name, value) in [
+                ("origin", origin),
+                ("sec-fetch-site", "cross-site"),
+                ("sec-fetch-mode", "websocket"),
+                ("sec-fetch-dest", dest),
+            ] {
+                request.headers_mut().insert(name, value.parse().unwrap());
+            }
+            let result = connect_async(request).await;
+            if origin == "null" && matches!(dest, "websocket" | "empty") {
+                let (mut socket, response) = result.expect("WebKit connection upgrades");
+                assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+                socket
+                    .send(Message::Text(
+                        json!({"token":"refused","url":RELAY}).to_string(),
+                    ))
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    socket.next().await,
+                    Some(Ok(Message::Close(_))) | None
+                ));
+            } else {
+                assert!(
+                    matches!(result, Err(tokio_tungstenite::tungstenite::Error::Http(ref response)) if response.status() == StatusCode::FORBIDDEN),
+                    "resource/origin boundary: {dest} {origin}"
+                );
+            }
+        }
+    }
+    let client = reqwest::Client::new();
+    for (method, path, mode, upgrade) in [
+        (
+            "GET",
+            "/api/apps/wallet-walletconnect/relay",
+            "navigate",
+            "websocket",
+        ),
+        (
+            "POST",
+            "/api/apps/wallet-walletconnect/relay",
+            "websocket",
+            "websocket",
+        ),
+        (
+            "GET",
+            "/api/apps/wallet-walletconnect/relay",
+            "websocket",
+            "h2c",
+        ),
+        (
+            "GET",
+            "/api/apps/wallet-walletconnect/storage",
+            "websocket",
+            "websocket",
+        ),
+        (
+            "GET",
+            "/api/apps/wallet-walletconnect/relay/extra",
+            "websocket",
+            "websocket",
+        ),
+    ] {
+        let response = client
+            .request(
+                method.parse::<reqwest::Method>().unwrap(),
+                format!("http://{}{path}", f.addr),
+            )
+            .header("origin", "null")
+            .header("sec-fetch-site", "cross-site")
+            .header("sec-fetch-mode", mode)
+            .header("sec-fetch-dest", "websocket")
+            .header("upgrade", upgrade)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {path} {mode} {upgrade}"
+        );
+    }
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn walletconnect_real_relay_requires_consent_allowlist_and_connector() {
     let f = Fixture::new().await;
     let mut denied = f.connect(&f.connector, RELAY).await;

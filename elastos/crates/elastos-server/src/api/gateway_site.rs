@@ -326,12 +326,27 @@ pub(super) async fn refuse_content_api_resources(
         || headers
             .get("sec-fetch-mode")
             .is_some_and(|value| value == "navigate");
+    // This connection redeems a single-use ticket after upgrade. WebKit marks
+    // opaque WebSockets as a cross-site websocket destination, rather than empty.
+    let walletconnect_websocket = request.uri().path() == "/api/apps/wallet-walletconnect/relay"
+        && request.method() == axum::http::Method::GET
+        && headers.get("origin").is_some_and(|value| value == "null")
+        && headers
+            .get("upgrade")
+            .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"))
+        && headers
+            .get("sec-fetch-mode")
+            .is_none_or(|value| value == "websocket")
+        && headers
+            .get("sec-fetch-dest")
+            .is_some_and(|value| value == "websocket" || value == "empty");
     // Content can use forms and links, but API documents and resource loads
     // cross the opaque boundary. App fetches and ticketed streams retain their
     // own capability checks; untrusted content's CSP blocks those connections.
     if request.uri().path().starts_with("/api/apps/")
         && opaque_or_cross_site
         && resource_or_navigation
+        && !walletconnect_websocket
     {
         return (
             StatusCode::FORBIDDEN,
