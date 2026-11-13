@@ -830,12 +830,50 @@ async fn walletconnect_reconnects_after_runtime_service_restart_with_saved_princ
 #[tokio::test]
 async fn walletconnect_refuses_malformed_writes_and_home_authority() {
     let f = Fixture::new().await;
-    for body in [
-        json!({"key":"session","value":"x","unknown":true}),
-        json!({"key":"session","value":"x".repeat(2 * 1024 * 1024)}),
+    f.allow().await;
+    let (status, _) = f
+        .route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"control","value":"valid"})),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "consent and launch reach the storage write path"
+    );
+    assert_eq!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"control","value":null}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    for (body, reason) in [
+        (
+            json!({"key":"session","value":"x","unknown":true}),
+            "request body is invalid",
+        ),
+        (
+            json!({"key":"session","value":"x".repeat(2 * 1024 * 1024)}),
+            "request body is invalid",
+        ),
+        (
+            json!({"key":"","value":"x"}),
+            "Invalid WalletConnect storage key",
+        ),
+        (
+            json!({"key":"session","value":"x".repeat(1024 * 1024)}),
+            "session storage quota exceeded",
+        ),
     ] {
-        let (status, _) = f.route(&f.connector, STORAGE, Some(body)).await;
-        assert_ne!(status, StatusCode::OK);
+        let (status, error) = f.route(&f.connector, STORAGE, Some(body)).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(error["text"].as_str().unwrap().contains(reason), "{error}");
     }
     let (_, stored) = f.route(&f.connector, STORAGE, None).await;
     assert_eq!(stored, json!({}));
