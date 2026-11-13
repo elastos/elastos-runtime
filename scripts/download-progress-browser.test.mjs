@@ -25,6 +25,9 @@ function transferContrast(node) {
 // Real capsule documents and controllers, with fixture API data only.
 test("System, model and Library transfer states stay accessible in light and dark", { timeout: 55000 }, async () => {
   const root = resolve(new URL("../", import.meta.url).pathname);
+  const journey = await readFile(resolve(root, "scripts/ci-installed-home-journey.mjs"), "utf8");
+  const journeyProgressSelectors = [...journey.matchAll(/document\.querySelector\('(progress\[aria-label="[^"]+"\])'\)/g)].map(match => match[1]);
+  assert.equal(journeyProgressSelectors.length, 2, "check both interrupted and resumed model download waits");
   const screenshots = process.env.DOWNLOAD_PROGRESS_SCREENSHOTS;
   if (screenshots) await mkdir(screenshots, { recursive: true });
   const cid = `bafybei${"a".repeat(52)}`;
@@ -170,6 +173,9 @@ test("System, model and Library transfer states stay accessible in light and dar
       assert.equal(await progress.locator("progress").getAttribute("value"), null);
       await system.getByRole("button", { name: "Models", exact: true }).click();
       await system.locator("[data-model-management]").getByText("0.75 GB of 2.00 GB · 37%", { exact: true }).waitFor();
+      for (const selector of journeyProgressSelectors) {
+        assert.equal(await system.locator(selector).isVisible(), true, `installed journey selector matches the rendered model progress: ${selector}`);
+      }
       assert((await system.locator("[data-model-management] .transfer-progress span").evaluate(transferContrast)).ratio >= 4.5);
       await screenshot(`model-download-${theme}`);
       await page.goto(`${fixture.baseUrl}/apps/library/?uri=localhost%3A%2F%2FUsers%2Ffixture%2FDocuments#home_token=fixture`);
