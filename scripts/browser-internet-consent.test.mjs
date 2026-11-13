@@ -146,7 +146,22 @@ async function fixture() {
       if(state.bindOwners && req.headers["x-elastos-home-token"]!==state.ownerToken){res.writeHead(404).end();return;}
       state.navigations.push(input.event);state.recoverableUrl=input.event.url;json({accepted:true});return;
     }
+    if (url.pathname === "/api/apps/browser/pages/retained/close") {
+      state.recoverableUrl=null;
+      json({schema:"elastos.browser.close-result/v1",page_id:"retained",cleanup_id:input.cleanup_id,closed:true});return;
+    }
     if (url.pathname === "/api/apps/browser/pages/retained/webrtc" && state.completeOpen) {
+      if(state.peerPage) {
+        if(input.type==="offer") {
+          const sdp=await state.peerPage.evaluate(async sdp=>{
+            const peer=new RTCPeerConnection();(window.fixturePeers||=[]).push(peer);
+            await peer.setRemoteDescription({type:"offer",sdp});
+            const answer=await peer.createAnswer();await peer.setLocalDescription(answer);return answer.sdp;
+          },input.sdp);
+          json({schema:"elastos.browser.webrtc-answer/v1",type:"answer",sdp});
+        } else json({schema:"elastos.browser.webrtc-signal-ack/v1",type:input.type,accepted:true});
+        return;
+      }
       // Hold the external media handshake; these checks cover Home and permission state.
       await new Promise(resolve=>res.on("close",resolve));return;
     }
@@ -572,6 +587,7 @@ test("566e renewing authority preserves the current page and does not repeat the
       f.state.bindOwners=true;f.state.restores=0;
       f.state.opens=[];f.state.requests=0;f.state.navigations=[];f.state.recoverableUrl=null;
       const page=await browser.newPage();await page.goto(f.url+"shell");
+      f.state.peerPage=page;
       const gui=await (await page.locator("#gui").elementHandle()).contentFrame();
       await gui.waitForFunction(()=>window.fixtureShell);
       await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/first"}}));
@@ -613,7 +629,7 @@ test("566e renewing authority preserves the current page and does not repeat the
         f.state.consent="granted";
         await browserFrame.waitForFunction(()=>document.querySelector("#browser-url").value==="https://example.com/pending" && document.body.dataset.loading==="false");
         await page.waitForTimeout(2200);
-        assert.equal(f.state.navigations.filter(n=>n.url==="https://example.com/pending").length,1,"Allow consumes the pre-renewal pending address once");
+        assert.equal(f.state.opens.filter(n=>n.url==="https://example.com/pending").length,1,"Allow opens the pre-renewal pending address once with a fresh internet connection");
       }
       await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/explicit"}}));
       await page.waitForTimeout(500);

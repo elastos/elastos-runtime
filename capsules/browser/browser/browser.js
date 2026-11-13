@@ -184,6 +184,7 @@ let browserInternetPollingActive = true;
 let browserInternetPollTimer = 0;
 let finishInternetPollWait = null;
 let currentInternetConsent = null;
+let browserInternetInterrupted = false;
 let pendingInternetNavigation = null;
 let internetContinuationUrl = null;
 let internetRequestPromise = null;
@@ -205,6 +206,7 @@ function renderInternetConsent(consent) {
   const previousConsent = currentInternetConsent;
   currentInternetConsent = consent;
   const allowed = consent?.status === "granted";
+  if (!allowed) browserInternetInterrupted = true;
   const expired = consent?.status === "requested" && !consent.request;
   const off = expired || ["refused", "revoked"].includes(consent?.status);
   if (off || (pendingInternetNavigation && consent?.status === "requested"
@@ -2683,6 +2685,7 @@ async function requestRuntimeOpen(value, { history = "push" } = {}) {
       throw new Error("Browser could not use the selected connection.");
     }
     currentPage = openedPage;
+    browserInternetInterrupted = false;
     resetPageInputDelivery();
     currentPageGeneration = nextPageGeneration++;
     openedOwner = currentRuntimePageOwner();
@@ -2773,6 +2776,7 @@ async function navigateAddress(value) {
   if (!currentPage?.page_id) {
     return requestRuntimeOpen(nextUrl);
   }
+  if (browserInternetInterrupted) return requestRuntimeOpen(nextUrl);
   if (selectedBrowserEngineId !== currentBrowserEngineId) {
     return requestRuntimeOpen(nextUrl);
   }
