@@ -2582,6 +2582,29 @@ mod tests {
     }
 
     #[test]
+    fn review559_app_roles_reject_network_capabilities_and_storage() {
+        for role in ["app", "viewer", "content"] {
+            for scheme in ["exit", "net"] {
+                for permission in [
+                    serde_json::json!({"capabilities":[format!("elastos://{scheme}/*")]}),
+                    serde_json::json!({"permissions":{"storage":[format!("elastos://{scheme}/*")]}}),
+                ] {
+                    let mut value = serde_json::json!({"schema":"elastos.capsule/v1", "name":"network-fixture", "version":"0.1.0", "role":role, "type":"data", "entrypoint":"index.html"});
+                    value
+                        .as_object_mut()
+                        .unwrap()
+                        .extend(permission.as_object().unwrap().clone());
+                    let manifest: CapsuleManifest = serde_json::from_value(value).unwrap();
+                    assert!(manifest
+                        .validate()
+                        .unwrap_err()
+                        .contains("system-only backend"));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_app_capsule_rejects_system_backend_capability() {
         let json = r#"{
             "schema": "elastos.capsule/v1",

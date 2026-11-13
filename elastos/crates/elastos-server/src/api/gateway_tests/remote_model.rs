@@ -2309,6 +2309,215 @@ async fn shared_hosted_offer_denies_fresh_creates_and_recovers_without_losing_ol
 }
 
 #[tokio::test]
+async fn an_active_grant_stays_active_while_another_home_holds_the_audit_lock() {
+    let fx = TwoRuntimes::start().await;
+    let other = tempfile::tempdir().unwrap();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let other_path = other.path().to_path_buf();
+    let holder = std::thread::spawn(move || {
+        crate::auth::hold_audit_activation_lock_for_test(&other_path, ready_tx, release_rx);
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("other home acquired the audit lock");
+    let created = fx
+        .create_run("during-other-home-audit-lock", "qwen-local")
+        .await;
+    let _ = release_tx.send(());
+    holder.join().expect("audit lock holder");
+    assert_eq!(created["ok"], true, "{created}");
+    fx.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_active_grant_stays_active_while_another_home_holds_the_principal_root_lock() {
+    let fx = TwoRuntimes::start().await;
+    let other = tempfile::tempdir().unwrap();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let other_path = other.path().to_path_buf();
+    let holder = std::thread::spawn(move || {
+        crate::auth::hold_principal_root_lock_for_test(&other_path, ready_tx, release_rx);
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("other home acquired the principal-root lock");
+    let created = fx
+        .create_run("during-other-home-principal-root-lock", "qwen-local")
+        .await;
+    let _ = release_tx.send(());
+    holder.join().expect("principal-root lock holder");
+    assert_eq!(created["ok"], true, "{created}");
+    fx.shutdown().await;
+}
+
+const AUTHORITY_TIMEOUT_MESSAGE: &str = "The Home could not check model access in time. Try again.";
+
+fn scoped_create_request(fx: &TwoRuntimes, request_id: &str) -> Value {
+    let mut remote = fx.remote(SEED_PRINCIPAL, "assistant");
+    remote["refusal_scope"] = json!("invocation");
+    json!({
+        "op": "runs_create",
+        "offer_id": "qwen-local",
+        "operation": "text.generate",
+        "input": {"prompt": "hello"},
+        "request_id": request_id,
+        "remote_model": remote,
+    })
+}
+
+fn hold_home_audit_lock(
+    path: &std::path::Path,
+) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+    let path = path.to_path_buf();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        crate::auth::hold_audit_activation_lock_for_test(&path, ready_tx, release_rx);
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("same Home acquired the audit lock");
+    (release_tx, holder)
+}
+
+fn assert_authority_timeout_refusal(response: &Value, request: &Value) {
+    assert_eq!(response["ok"], true, "{response}");
+    assert_eq!(
+        response["result"]["code"], "remote_model_invocation_refused",
+        "{response}"
+    );
+    assert_eq!(
+        response["result"]["reason"], "authority_timeout",
+        "{response}"
+    );
+    assert_eq!(
+        response["result"]["message"], AUTHORITY_TIMEOUT_MESSAGE,
+        "{response}"
+    );
+    assert_eq!(response["result"]["refusal"]["dispatch"], "not_started");
+    let mut expected =
+        crate::api::gateway::gateway_model_service::invocation_refusal_binding(request).unwrap();
+    expected["dispatch"] = json!("not_started");
+    assert_eq!(response["result"]["refusal"], expected);
+}
+
+#[tokio::test]
+async fn a_same_home_authority_timeout_is_not_an_inactive_grant() {
+    let fx = TwoRuntimes::start().await;
+    let (release_tx, holder) = hold_home_audit_lock(fx.owner.path());
+    let listed = fx
+        .call(
+            "offers_list",
+            json!({
+                "op": "offers_list",
+                "remote_model": fx.remote(SEED_PRINCIPAL, "assistant"),
+            }),
+        )
+        .await;
+    assert_eq!(listed["ok"], false, "{listed}");
+    assert_eq!(listed["code"], "authority_timeout", "{listed}");
+    assert_eq!(listed["error"], AUTHORITY_TIMEOUT_MESSAGE, "{listed}");
+    let request = scoped_create_request(&fx, "during-same-home-audit-lock");
+    let created = fx.call("runs_create", request.clone()).await;
+    assert_authority_timeout_refusal(&created, &request);
+    assert_eq!(fx.create_count().await, 0, "timeout dispatched a create");
+    assert!(
+        fx.provider_ops().await.is_empty(),
+        "timeout called the provider"
+    );
+    release_tx
+        .send(())
+        .expect("release the same-home audit lock");
+    holder.join().expect("audit lock holder");
+    let resumed = fx
+        .create_run("after-same-home-audit-lock", "qwen-local")
+        .await;
+    assert_eq!(resumed["ok"], true, "{resumed}");
+    assert_eq!(fx.create_count().await, 1);
+    fx.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_same_home_authority_timeout_before_dispatch_releases_the_reservation() {
+    let fx = TwoRuntimes::start().await;
+    let owner = fx.owner.path().to_path_buf();
+    let barrier = install_create_race_barrier(&owner, CreateRacePoint::BeforeDispatch);
+    let request = scoped_create_request(&fx, "before-dispatch-same-home-timeout");
+    let (created, _) = tokio::join!(fx.call("runs_create", request.clone()), async {
+        barrier.wait_prepared().await;
+        let (release_tx, holder) = hold_home_audit_lock(&owner);
+        barrier.release();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        release_tx
+            .send(())
+            .expect("release the same-home audit lock");
+        holder.join().expect("audit lock holder");
+    });
+    // The next create uses this Home. The barrier would wait for a partner that is gone.
+    drop(barrier);
+    assert_authority_timeout_refusal(&created, &request);
+    assert_eq!(
+        fx.provider_ops()
+            .await
+            .iter()
+            .filter(|op| *op == "runs_create")
+            .count(),
+        0,
+        "pre-dispatch timeout dispatched a create"
+    );
+    assert!(fx
+        .run_record(&run_id_for(
+            &fx.remote_principal(),
+            "before-dispatch-same-home-timeout"
+        ))
+        .is_null());
+    let index_path = fx.owner.path().join("services-model-runs.json");
+    let index: Value = serde_json::from_slice(&std::fs::read(&index_path).unwrap()).unwrap();
+    assert!(
+        index["pending"].as_object().unwrap().is_empty(),
+        "reservation remained: {index}"
+    );
+    let resumed = fx
+        .create_run("after-pre-dispatch-timeout", "qwen-local")
+        .await;
+    assert_eq!(resumed["ok"], true, "{resumed}");
+    fx.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_same_home_authority_timeout_after_dispatch_cancels_the_run() {
+    let fx = TwoRuntimes::start().await;
+    let owner = fx.owner.path().to_path_buf();
+    let barrier = install_create_race_barrier(&owner, CreateRacePoint::BeforeCommit);
+    let (created, _) = tokio::join!(
+        fx.create_run("after-dispatch-same-home-timeout", "qwen-local"),
+        async {
+            barrier.wait_prepared().await;
+            let (release_tx, holder) = hold_home_audit_lock(&owner);
+            barrier.release();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            release_tx
+                .send(())
+                .expect("release the same-home audit lock");
+            holder.join().expect("audit lock holder");
+        }
+    );
+    assert_eq!(created["ok"], true, "{created}");
+    let run_id = run_id_for(&fx.remote_principal(), "after-dispatch-same-home-timeout");
+    assert_eq!(fx.run_record(&run_id)["terminal_status"], "cancelled");
+    let ops = fx.provider_ops().await;
+    assert_eq!(
+        ops.iter().filter(|op| *op == "runs_create").count(),
+        1,
+        "{ops:?}"
+    );
+    assert!(ops.iter().any(|op| *op == "runs_cancel"), "{ops:?}");
+    fx.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_hosted_grant_serves_only_while_its_provider_is_an_admin() {
     use crate::api::model_provider_config::{HostedAiProvider, HostedOfferSave};
     let fx = TwoRuntimes::start().await;

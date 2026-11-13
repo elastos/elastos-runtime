@@ -148,13 +148,12 @@ impl CapabilityStore {
     }
 
     /// Revoke a specific token
-    pub async fn revoke_token(&self, token_id: TokenId) {
-        {
-            let mut revoked = self.revoked_tokens.write().await;
-            revoked.insert(token_id);
-        }
-        // Persist if configured (lock is released before this call)
-        self.persist_revoked_tokens().await;
+    pub async fn revoke_token(&self, token_id: TokenId) -> std::io::Result<()> {
+        let mut revoked = self.revoked_tokens.write().await;
+        revoked.insert(token_id);
+        // Serialize the snapshot and its replacement under the same lock.
+        // An I/O error still leaves the token revoked in this process.
+        self.persist_revoked_tokens(&revoked)
     }
 
     /// Check if a specific token is revoked
@@ -185,7 +184,7 @@ impl CapabilityStore {
             fs::write(epoch_path, self.current_epoch().to_string())?;
 
             // Persist revoked tokens
-            self.persist_revoked_tokens().await;
+            self.persist_revoked_tokens(&*self.revoked_tokens.write().await)?;
         }
         Ok(())
     }
@@ -224,26 +223,27 @@ impl CapabilityStore {
     }
 
     /// Persist revoked tokens to disk (atomic write via temp + rename)
-    async fn persist_revoked_tokens(&self) {
+    fn persist_revoked_tokens(&self, revoked: &HashSet<TokenId>) -> std::io::Result<()> {
+        use std::io::Write;
         if let Some(path) = &self.storage_path {
             let revoked_path = path.join("revoked_tokens");
             let tmp_path = path.join("revoked_tokens.tmp");
-            let revoked = self.revoked_tokens.read().await;
-            let content: String = revoked
-                .iter()
-                .map(|id| hex::encode(id.0))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if let Err(e) =
-                fs::write(&tmp_path, &content).and_then(|_| fs::rename(&tmp_path, &revoked_path))
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
             {
-                tracing::error!(
-                    "CRITICAL: Failed to persist revoked tokens to {}: {}",
-                    revoked_path.display(),
-                    e
-                );
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
             }
+            let mut file = options.open(&tmp_path)?;
+            for id in revoked {
+                writeln!(file, "{}", hex::encode(id.0))?;
+            }
+            file.sync_all()?;
+            fs::rename(&tmp_path, &revoked_path)?;
+            fs::File::open(path)?.sync_all()?;
         }
+        Ok(())
     }
 }
 
@@ -256,6 +256,17 @@ impl Default for CapabilityStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn persistence_reports_a_failed_revocation_list_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = CapabilityStore::with_persistence(dir.path()).await.unwrap();
+        std::fs::create_dir(dir.path().join("revoked_tokens")).unwrap();
+        assert!(
+            store.persist().await.is_err(),
+            "a failed revoke-list write must reach the caller"
+        );
+    }
 
     #[test]
     fn test_epoch() {
@@ -295,7 +306,7 @@ mod tests {
 
         assert!(!store.is_token_revoked(&token_id).await);
 
-        store.revoke_token(token_id).await;
+        store.revoke_token(token_id).await.unwrap();
         assert!(store.is_token_revoked(&token_id).await);
     }
 
@@ -312,7 +323,7 @@ mod tests {
             store.advance_epoch();
 
             let token_id = TokenId::from_bytes([1u8; 16]);
-            store.revoke_token(token_id).await;
+            store.revoke_token(token_id).await.unwrap();
             store.persist().await.unwrap();
         }
 

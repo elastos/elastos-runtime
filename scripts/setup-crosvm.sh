@@ -43,9 +43,9 @@ validate_kernel() {
             ;;
     esac
 
-    strings -a "$kernel" | grep -q "ext4" || die "Kernel missing ext4 support marker: $kernel"
-    strings -a "$kernel" | grep -q "virtio_blk" || die "Kernel missing virtio_blk support marker: $kernel"
-    strings -a "$kernel" | grep -q "virtio_pci" || die "Kernel missing virtio_pci support marker: $kernel"
+    strings -a "$kernel" | grep "ext4" >/dev/null || die "Kernel missing ext4 support marker: $kernel"
+    strings -a "$kernel" | grep "virtio_blk" >/dev/null || die "Kernel missing virtio_blk support marker: $kernel"
+    strings -a "$kernel" | grep "virtio_pci" >/dev/null || die "Kernel missing virtio_pci support marker: $kernel"
 }
 
 kernel_arch() {

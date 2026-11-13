@@ -24,6 +24,7 @@ import { recoveredInputClickRect } from "./lib/browser-journey-recovered-input.m
 import { censusBrowserViewerReload, diagnoseBrowserViewerReload, readBrowserViewerReloadDocument, browserViewerSignalMetadata } from "./lib/browser-journey-viewer-reload.mjs";
 import { runBrowserOperatorJourney } from "./lib/browser-journey-operator.mjs";
 import { qualificationOptions, createQualificationHarness, createQualificationCancellation, qualificationInteraction } from "./lib/browser-qualification-observer.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
 const { chromium } = require("playwright");
@@ -5635,9 +5636,10 @@ async function main() {
   }
 
   if (CHECK_BROWSER_CONTROLLED_JOURNEY) markStage("home:viewer-launch");
+  const executablePath = process.env.ELASTOS_BROWSER_EXECUTABLE || productSmokeLaunchOptions().executablePath;
   const contextPromise = chromium.launchPersistentContext(PROFILE_DIR, {
     headless: HEADLESS,
-    executablePath: process.env.ELASTOS_BROWSER_EXECUTABLE || undefined,
+    ...(executablePath ? { executablePath } : {}),
     ignoreHTTPSErrors: true,
     viewport: HEADLESS ? { width: 1280, height: 900 } : null,
   });

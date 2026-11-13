@@ -344,6 +344,7 @@ if debugfs and mke2fs:
         scripts = data / "scripts"
         scripts.mkdir()
         shutil.copy2(repo / "scripts/browser-vm-artifact-preflight.sh", scripts)
+        shutil.copy2(repo / "scripts/browser-python.mjs", scripts)
         import shlex
         probe_count = scratch / "readiness-probe-count"
         installed_probe = scripts / "browser-vm-artifact-preflight.sh"

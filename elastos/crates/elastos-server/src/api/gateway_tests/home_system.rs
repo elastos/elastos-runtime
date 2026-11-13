@@ -1688,7 +1688,7 @@ async fn test_home_summary_reports_identity_and_launch_targets() {
     assert_eq!(wallet["attach_kind"], "iframe");
     assert_eq!(wallet["target_kind"], "app");
     let browser = targets.iter().find(|target| target["target"] == "browser");
-    if crate::setup::home_browser_available(dir.path(), &crate::setup::detect_platform()) {
+    if crate::setup::browser_available(&crate::setup::detect_platform()) {
         let browser = browser.expect("browser target");
         assert_eq!(browser["role"], "app");
         assert_eq!(browser["title"], "Browser");
@@ -1699,7 +1699,7 @@ async fn test_home_summary_reports_identity_and_launch_targets() {
     } else {
         assert!(
             browser.is_none(),
-            "Browser is hidden on hosts without a local Engine"
+            "Browser is hidden on unsupported platforms"
         );
     }
     assert!(targets
@@ -3206,6 +3206,7 @@ async fn test_services_carrier_exit_admission_requires_current_issued_contact_gr
         anonymous_dir.path(),
         receipt.clone(),
         anonymous.endpoint().as_ref(),
+        gateway_browser_internet::transport_fixture(),
     )
     .await
     .unwrap();
@@ -3249,9 +3250,14 @@ async fn test_services_carrier_exit_admission_requires_current_issued_contact_gr
         socket.read_to_end(&mut rest).await.unwrap();
         assert!(rest.is_empty());
     });
-    let attached = browser_attach_runtime_stream_path(left.path(), receipt, Some(&endpoint))
-        .await
-        .unwrap();
+    let attached = browser_attach_runtime_stream_path(
+        left.path(),
+        receipt,
+        Some(&endpoint),
+        gateway_browser_internet::transport_fixture(),
+    )
+    .await
+    .unwrap();
     let runtime_path = std::path::PathBuf::from(
         attached["adapter_ipc"]["runtime_stream_path"]
             .as_str()
@@ -5436,7 +5442,7 @@ async fn test_home_summary_and_events_include_browser_wallet_approvals() {
     let summary_json: serde_json::Value = serde_json::from_slice(&summary_body).unwrap();
     assert_eq!(summary_json["notifications"]["attention_count"], 1);
     assert_eq!(
-        summary_json["notifications"]["entries"][0]["title"],
+        home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0]["title"],
         "Transaction approval request"
     );
 
@@ -10831,6 +10837,7 @@ async fn test_services_remote_engine_signed_approval_retains_scoped_execution_gr
     .is_err());
     // Exercise the actual Browser summary caller with a consumer that has no local Engine.
     let mut consumer_state = test_state(left.path());
+    consumer_state.browser_internet = granted_browser_internet(left.path());
     consumer_state.provider_registry = Some(consumer_registry.clone());
     consumer_state.carrier_endpoint = Some(endpoint.clone());
     consumer_state.collaboration_discovery_service = Some(

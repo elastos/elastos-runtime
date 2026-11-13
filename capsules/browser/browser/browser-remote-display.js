@@ -368,10 +368,10 @@ export function createBrowserRemoteDisplay({
         ? "The Browser Engine is running, but this device has no secure display relay candidate for it."
         : "The Browser Engine is running, but the secure display connection is not ready.",
       mediaRouteUnavailable
-        ? "Choose a Browser Engine and Exit Node that provide a shared secure display route."
+        ? "Choose a page display and connection that work together."
         : debugMetrics
         ? `Diagnostics: engine candidates=${engineCandidates}, browser candidates=${browserCandidates}, last browser candidate=${browserCandidateSummary}.`
-        : "Runtime must close this session before another Browser Engine or Exit Node can open.",
+        : "Close this page before choosing a different display or connection.",
     ].join(" ");
   }
 

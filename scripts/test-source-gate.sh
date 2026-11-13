@@ -8,7 +8,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 product_data() {
+  python3 scripts/check-shell-pipe-readers.py
+  python3 scripts/check-shell-pipe-readers-test.py
   node scripts/check-product-data.mjs
+  node --test scripts/carrier-dependency-generation-check.test.mjs
 }
 
 prepush() {
@@ -17,6 +20,9 @@ prepush() {
 
 product_ui() {
   node --version
+  node scripts/check-system-esp-projections.mjs
+  node scripts/marketplace-product-behavior-smoke.mjs
+  bash scripts/browser-source-home-config-smoke.sh
   node scripts/check-chat-ui-artifacts.mjs check
   node scripts/home-shell-regression-smoke.mjs
   node scripts/home-shell-bridge-smoke.mjs
@@ -38,6 +44,7 @@ release() {
   python3 scripts/release-platform-input-test.py
   python3 scripts/prepare-release-platform-test.py
   python3 scripts/browser-vm-linux-network.test.py
+  python3 scripts/browser-root-helper.test.py
   python3 scripts/owned-removal-test.py
   python3 scripts/setup-source-home-native-browser-test.py
   bash scripts/setup-source-home-browser-artifacts-smoke.sh

@@ -3,7 +3,8 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const browserContextId = "browser:00112233445566778899aabbccddeeff";
@@ -21,6 +22,10 @@ let releaseBrowserWindowCloseTerminal;
 const browserWindowCloseTerminalGate = new Promise((resolveGate) => {
   releaseBrowserWindowCloseTerminal = resolveGate;
 });
+let releaseBrowserInternetEnd;
+const browserInternetEndGate = new Promise((resolveGate) => {
+  releaseBrowserInternetEnd = resolveGate;
+});
 
 const state = {
   phase: "placeholder",
@@ -33,6 +38,8 @@ const state = {
   browserOpenIntent: null,
   browserOpenCompleted: false,
   browserStatusPolls: 0,
+  browserDisplayAttaches: 0,
+  internetEnds: 0,
   browserPageCount: 0,
   browserVmCount: 0,
   browserCleanupEffects: 0,
@@ -237,15 +244,17 @@ function browserSummary() {
               schema: "elastos.browser.cleanup-handle/v1",
               id: state.activeCleanupId,
             },
-            engine_page: {
-              schema: "elastos.browser.engine.page/v1",
-              page_id: pageId,
-              url: "https://ela.city/",
+            engine_page: browserOpenResult().engine_page,
+            service_selection: {
+              schema: "elastos.browser.service-selection/v1",
+              engine_id: "fixture-engine",
+              exit_id: "",
             },
           }
         : null,
     },
     engine_adapter: {
+      display_attach_supported: true,
       supported_display_modes: ["webrtc_remote_display"],
       supported_guarantee_levels: ["mechanism_microvm"],
       adapters: [
@@ -280,6 +289,7 @@ function browserOpenResult() {
       title: "ela.city",
       view: { width: 1280, height: 720 },
       display_session: {
+        display_generation: `display:${"1".repeat(32)}`,
         schema: "elastos.browser.display-session/v1",
         mode: "webrtc_remote_display",
         signaling_url: `/api/apps/browser/pages/${pageId}/webrtc`,
@@ -426,6 +436,17 @@ async function handleApi(req, res, url) {
     json(res, 200, { saved: true });
     return true;
   }
+  if (url.pathname === "/api/apps/browser/internet") {
+    if (!requireToken(req, browserRefreshedToken, res)) {
+      return true;
+    }
+    if (req.method === "POST") {
+      assert((await readBody(req))?.action === "end", "Browser close sends an action object");
+      state.internetEnds += 1;
+      await browserInternetEndGate;
+    }
+    json(res,200,{status:req.method === "GET" ? "granted" : "ended"}); return true;
+  }
   if (url.pathname === "/api/apps/browser/summary" && req.method === "GET") {
     if (!requireToken(req, browserRefreshedToken, res)) {
       return true;
@@ -486,9 +507,20 @@ async function handleApi(req, res, url) {
       return true;
     }
     const signal = await readBody(req);
+    if (signal?.type === "display_attach") {
+      state.browserDisplayAttaches += 1;
+      const offer = {schema:"elastos.browser.webrtc-offer/v1",type:"offer",sdp:"v=0\r\n"};
+      json(res,200,{
+        schema:"elastos.browser.display-attach-result/v1", page_id:pageId,
+        request_id:signal.request_id, previous_display_generation:signal.display_generation,
+        display_generation:`display:${"2".repeat(32)}`, initial_offer:offer, audio_offer:offer,
+      });
+      return true;
+    }
     if (signal?.type === "offer") {
       json(res, 200, {
         schema: "elastos.browser.webrtc-answer/v1",
+        display_generation: signal.display_generation,
         type: "answer",
         sdp: [
           "v=0",
@@ -506,6 +538,7 @@ async function handleApi(req, res, url) {
     } else {
       json(res, 200, {
         schema: "elastos.browser.webrtc-signal-ack/v1",
+        display_generation: signal.display_generation,
         type: signal?.type || "end_of_candidates",
         accepted: true,
         candidates: [],
@@ -524,6 +557,7 @@ async function handleApi(req, res, url) {
     json(res, 200, {
       schema: "elastos.browser.page-status/v1",
       page_id: pageId,
+      direct_network: false,
       actual_url: "https://ela.city/",
       title: "ela.city",
       can_go_back: false,
@@ -563,7 +597,7 @@ async function handleApi(req, res, url) {
       json(res, 400, { error: "fixture received a mismatched Browser cleanup identifier" });
       return true;
     }
-    if (closeRequest.cleanup_id === openedCleanupId) {
+    if (closeRequest.cleanup_id === recoveredCleanupId) {
       state.browserWindowCloseRequests += 1;
       if (state.browserWindowCloseRequests === 1) {
         json(res, 200, {
@@ -653,21 +687,6 @@ async function listen() {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function playwrightSpecifier() {
-  const configured = process.env.ELASTOS_PLAYWRIGHT_MODULE || "";
-  if (configured) {
-    return configured.startsWith("file:")
-      ? configured
-      : pathToFileURL(resolve(configured)).href;
-  }
-  return pathToFileURL(
-    join(
-      repoRoot,
-      "elastos/tools/browser-playwright-engine/node_modules/playwright/index.js",
-    ),
-  ).href;
-}
-
 async function waitFor(check, timeoutMs, label) {
   const startedAt = Date.now();
   while (Date.now() - startedAt <= timeoutMs) {
@@ -691,9 +710,9 @@ function browserFrame(page) {
 const origin = await listen();
 let browser = null;
 try {
-  const imported = await import(playwrightSpecifier());
-  const { chromium } = imported.default || imported;
+  const { chromium } = await importProductSmokePlaywright();
   browser = await chromium.launch({
+    ...productSmokeLaunchOptions(),
     ...(process.env.ELASTOS_BROWSER_EXECUTABLE ? { executablePath: process.env.ELASTOS_BROWSER_EXECUTABLE } : {}),
     headless: true,
     args: [
@@ -850,17 +869,17 @@ try {
   const restoredBrowser = browserFrame(page);
   await waitFor(() => restoredBrowser.locator("#browser-form").isVisible(), 15_000, "restored Browser bootstrap");
   await waitFor(
-    () => state.browserStatusPolls > 0 && state.browserOpenCompleted,
+    () => state.browserDisplayAttaches > 0,
     15_000,
-    "completed coalesced Browser open",
+    "reattached retained Browser display",
   );
   await restoredBrowser.waitForFunction(
-    () =>
-      document.querySelector("#browser-status .browser-status-message")?.textContent ===
-      "Remote display negotiated. Waiting for video...",
-    null,
+    expectedPage => window.__elastosBrowserCurrentPageId === expectedPage && document.body.dataset.loading === "false",
+    pageId,
     { timeout: 15_000 },
-  );
+  ).catch(async error => { throw new Error(`Restored display did not connect: ${JSON.stringify({
+    status: await restoredBrowser.locator("#browser-status").innerText(), state, pageErrors,
+  })}`, {cause:error}); });
 
   const restoredWindowCount = await restoredGui
     .locator('.window[data-target="browser"]')
@@ -882,15 +901,15 @@ try {
   assert(state.homeGuiLaunches.restored === 1, "refresh loaded multiple GUI roots", state);
   assert(state.browserLaunches.placeholder === 1, "first Home replaced the Browser window", state);
   assert(state.browserLaunches.restored === 1, "refresh replaced the Browser window", state);
-  assert(state.browserOpenRequests === 2, "completed-open race did not issue two matching requests", state);
+  assert(state.browserOpenRequests === 0, "Home refresh opened a replacement Browser page", state);
   assert(state.browserSummaryBindings > 0, "refreshed Browser summary was not instance-bound", state);
-  assert(state.browserOpenBindings === 2, "refreshed Browser opens were not instance-bound", state);
-  assert(state.browserOpenEffects === 1, "matching completed-open race duplicated provider work", state);
-  assert(state.browserCleanupEffects === 1, "opaque Home reload did not reap exactly one recovered page", state);
+  assert(state.browserOpenBindings === 0, "Home refresh dispatched an open", state);
+  assert(state.browserOpenEffects === 0, "Home refresh duplicated provider work", state);
+  assert(state.browserCleanupEffects === 0 && state.internetEnds === 0, "Home refresh ended the retained owner", state);
   assert(state.browserPageCount === 1, "restored Browser owns the wrong active page count", state);
   assert(state.browserVmCount === 1, "restored Browser owns the wrong active VM count", state);
-  assert(state.activeCleanupId === openedCleanupId, "restored Browser cleanup ownership is not recoverable", state);
-  assert(state.browserStatusPolls === 1, "restored Browser polled a replacement open job", state);
+  assert(state.activeCleanupId === recoveredCleanupId, "restored Browser cleanup ownership changed", state);
+  assert(state.browserStatusPolls === 0, "restored Browser polled a replacement open job", state);
   assert(
     !/failed|could not open|did not start|error/i.test(restoredStatus || ""),
     "restored Browser rendered a false startup failure",
@@ -911,7 +930,7 @@ try {
   state.browserPageCount = 0;
   state.browserVmCount = 0;
   state.activeCleanupId = null;
-  state.browserReapedCleanupId = openedCleanupId;
+  state.browserReapedCleanupId = recoveredCleanupId;
   await restoredGui
     .locator('.window[data-target="browser"] [data-action="close"]')
     .click();
@@ -926,6 +945,13 @@ try {
     "nonterminal Browser close removed the shell or taskbar entry",
   );
   releaseBrowserWindowCloseTerminal();
+  await waitFor(() => state.internetEnds === 1, 5_000, "Browser launch internet End");
+  assert(
+    await restoredGui.locator('.window[data-target="browser"]').count() === 1 &&
+      await restoredTaskbarButton.getAttribute("data-open-windows") === "1",
+    "Home keeps the Browser window until its launch internet End succeeds",
+  );
+  releaseBrowserInternetEnd();
   await waitFor(
     async () =>
       await restoredGui.locator('.window[data-target="browser"]').count() === 0,
@@ -944,13 +970,13 @@ try {
   assert(
       state.browserWindowCloseRequests === 2 &&
       state.browserWindowCloseTerminalReceipts === 1 &&
-      state.browserCleanupEffects === 1 &&
+      state.browserCleanupEffects === 0 && state.internetEnds === 1 &&
       state.browserPageCount === 0 &&
       state.browserVmCount === 0 &&
       state.activeCleanupId === null &&
-      state.browserReapedCleanupId === openedCleanupId &&
-      state.browserOpenRequests === 2 &&
-      state.browserOpenEffects === 1,
+      state.browserReapedCleanupId === recoveredCleanupId &&
+      state.browserOpenRequests === 0 &&
+      state.browserOpenEffects === 0,
     "terminal Browser close duplicated work or retained Runtime residue",
     state,
   );

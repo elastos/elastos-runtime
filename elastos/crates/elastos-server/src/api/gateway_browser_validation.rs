@@ -80,19 +80,8 @@ pub(in crate::api::gateway) fn validate_browser_launch_contract(
                 anyhow::bail!("mechanism_microvm Browser launches require webrtc_remote_display")
             }
         }
-        BrowserGuaranteeLevel::OperatorRbi => {
-            if display_mode == BrowserDisplayMode::WebrtcRemoteDisplay {
-                Ok(())
-            } else {
-                anyhow::bail!("operator_rbi Browser launches require webrtc_remote_display")
-            }
-        }
-        BrowserGuaranteeLevel::PolicyWebview => {
-            if display_mode == BrowserDisplayMode::NativeSurface {
-                Ok(())
-            } else {
-                anyhow::bail!("policy_webview Browser launches require native_surface")
-            }
+        BrowserGuaranteeLevel::OperatorRbi | BrowserGuaranteeLevel::PolicyWebview => {
+            anyhow::bail!("Browser internet requires a VM Engine")
         }
         BrowserGuaranteeLevel::Diagnostic => {
             anyhow::bail!("diagnostic Browser frame launches are not supported")
@@ -725,6 +714,30 @@ mod tests {
             "session_dir": "/tmp/elastos-browser-vm-sessions/test"
         });
         page
+    }
+
+    #[test]
+    fn browser_internet_requires_vm_contract_for_local_and_remote_prepare() {
+        for (display, guarantee) in [
+            (
+                BrowserDisplayMode::WebrtcRemoteDisplay,
+                BrowserGuaranteeLevel::OperatorRbi,
+            ),
+            (
+                BrowserDisplayMode::NativeSurface,
+                BrowserGuaranteeLevel::PolicyWebview,
+            ),
+        ] {
+            assert!(
+                validate_browser_launch_contract(display, guarantee).is_err(),
+                "the shared local/remote preparation gate must require a VM contract"
+            );
+        }
+        assert!(validate_browser_launch_contract(
+            BrowserDisplayMode::WebrtcRemoteDisplay,
+            BrowserGuaranteeLevel::MechanismMicrovm
+        )
+        .is_ok());
     }
 
     #[test]

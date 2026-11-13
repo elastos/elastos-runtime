@@ -67,7 +67,7 @@ needs_build() {
     local bin="$1"
     local src_dir="$2"
     if [ ! -f "$bin" ]; then return 0; fi
-    if [ "$(find "$src_dir" -name '*.rs' -newer "$bin" 2>/dev/null | head -1)" ]; then return 0; fi
+    if [ "$(find "$src_dir" -name '*.rs' -newer "$bin" 2>/dev/null | sed -n 1p)" ]; then return 0; fi
     return 1
 }
 

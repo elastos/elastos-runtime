@@ -582,9 +582,10 @@ impl CapabilityManager {
     }
 
     /// Revoke a specific token
-    pub async fn revoke(&self, token_id: TokenId, reason: &str) {
-        self.store.revoke_token(token_id).await;
+    pub async fn revoke(&self, token_id: TokenId, reason: &str) -> std::io::Result<()> {
+        let result = self.store.revoke_token(token_id).await;
         self.audit_log.capability_revoke(&token_id, reason);
+        result
     }
 
     /// Revoke all tokens by advancing the epoch
@@ -789,7 +790,7 @@ mod tests {
         );
 
         // Revoke this specific token
-        manager.revoke(token.id, "test revocation").await;
+        manager.revoke(token.id, "test revocation").await.unwrap();
 
         // Token should now be invalid
         let result = manager
@@ -845,7 +846,7 @@ mod tests {
         ));
         assert_eq!(capability_use_count(&manager, false), 1);
 
-        manager.revoke(token.id, "hidden").await;
+        manager.revoke(token.id, "hidden").await.unwrap();
         assert!(matches!(
             tick(false).await,
             Err(ValidationError::TokenRevoked)
@@ -1204,7 +1205,7 @@ mod tests {
         );
 
         // Revoke the parent
-        manager.revoke(parent.id, "compromised").await;
+        manager.revoke(parent.id, "compromised").await.unwrap();
 
         // Delegation should fail because parent is revoked
         let result = manager
@@ -1350,7 +1351,7 @@ mod tests {
         // Revoke the token mid-flight
         let mgr = Arc::clone(&manager);
         set.spawn(async move {
-            mgr.revoke(token_id, "concurrent test").await;
+            mgr.revoke(token_id, "concurrent test").await.unwrap();
             Ok(()) // Return Ok so we can join uniformly
         });
 
@@ -1442,7 +1443,7 @@ mod tests {
         for _ in 0..50 {
             let mgr = Arc::clone(&manager);
             set.spawn(async move {
-                mgr.revoke(token_id, "concurrent revoke").await;
+                mgr.revoke(token_id, "concurrent revoke").await.unwrap();
             });
         }
 

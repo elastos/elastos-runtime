@@ -199,10 +199,17 @@ pub(in crate::api::gateway) async fn detach_operator(
         // Close the disclosure gate before awaiting token or native release.
         record.phase = "revoked";
         if let Some(token) = &record.inspection_token {
-            service
+            if service
                 .capabilities
                 .revoke(*token.id(), "Browser operator detached")
-                .await;
+                .await
+                .is_err()
+            {
+                return failure(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "revocation_persistence_failed",
+                );
+            }
         }
         if record.owner.is_none() {
             record.phase = "revoked";

@@ -18,6 +18,7 @@ pub(super) async fn home_launch(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Json(req): Json<HomeLaunchRequest>,
+    platform: &str,
 ) -> Result<Json<HomeLaunchResponse>, (StatusCode, Json<serde_json::Value>)> {
     let context = require_home_launch_token_context(&state.data_dir, &headers, HOME_CAPSULE_ID)
         .map_err(|err| {
@@ -40,7 +41,7 @@ pub(super) async fn home_launch(
         ));
     }
 
-    let mut target_summary = home_launch_target(&state.data_dir, target);
+    let mut target_summary = home_launch_target_for_platform(&state.data_dir, target, platform);
     if target_summary.is_none() || state.data_dir.join("capsules").join(target).exists() {
         ensure_home_target_package(&state.data_dir, target, target_summary.is_none())
             .await
@@ -50,7 +51,7 @@ pub(super) async fn home_launch(
                     Json(serde_json::json!({ "error": err })),
                 )
             })?;
-        target_summary = home_launch_target(&state.data_dir, target);
+        target_summary = home_launch_target_for_platform(&state.data_dir, target, platform);
     }
 
     let Some(target_summary) = target_summary else {
@@ -298,7 +299,14 @@ pub(super) fn home_targets_from_catalog(
 }
 
 pub(super) fn home_launch_targets(data_dir: &std::path::Path) -> Vec<HomeTargetSummary> {
-    let mut targets = home_browser_targets(data_dir, false);
+    home_launch_targets_for_platform(data_dir, &crate::setup::detect_platform())
+}
+
+fn home_launch_targets_for_platform(
+    data_dir: &std::path::Path,
+    platform: &str,
+) -> Vec<HomeTargetSummary> {
+    let mut targets = home_browser_targets(data_dir, false, platform);
     targets.extend(home_viewer_targets(data_dir));
     targets.sort_by(|left, right| left.title.cmp(&right.title));
     targets
@@ -308,14 +316,26 @@ pub(super) fn home_launch_target(
     data_dir: &std::path::Path,
     target: &str,
 ) -> Option<HomeTargetSummary> {
-    home_launch_targets(data_dir)
+    home_launch_target_for_platform(data_dir, target, &crate::setup::detect_platform())
+}
+
+fn home_launch_target_for_platform(
+    data_dir: &std::path::Path,
+    target: &str,
+    platform: &str,
+) -> Option<HomeTargetSummary> {
+    home_launch_targets_for_platform(data_dir, platform)
         .into_iter()
         .find(|candidate| candidate.target == target)
 }
 
-fn home_browser_targets(data_dir: &std::path::Path, visible_only: bool) -> Vec<HomeTargetSummary> {
+fn home_browser_targets(
+    data_dir: &std::path::Path,
+    visible_only: bool,
+    platform: &str,
+) -> Vec<HomeTargetSummary> {
     let mut targets: Vec<_> =
-        crate::api::browser_capsules::list_launchable_browser_capsules(data_dir)
+        crate::api::browser_capsules::list_launchable_browser_capsules_for(data_dir, platform)
             .into_iter()
             .filter(|app| app.name != HOME_CAPSULE_ID && app.name != "home-agent")
             .filter(|app| {

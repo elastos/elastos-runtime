@@ -6,10 +6,101 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-09
+
+### Added
+
+- Browser runs on a Jetson and other Linux ARM computers with KVM. Turn it on once with elastos setup --browser, which asks before its one-time administrator step, then restart Home.
+- System, About lets you choose Stable or Test versions for updates. Your passkey confirms the change, and switching never installs an older version.
+
+### Changed
+
+- On a Jetson, Browser uses more of the processor, so scrolling is about twice as smooth.
+- On Linux, the install command no longer sets up Browser or downloads it. Browser is turned on when you choose it.
+- Known issue: on a Jetson, Browser scrolls much more slowly than a browser running directly on the computer (#90).
+
 ### Fixed
 
 - Open apps, including Chat, stay connected while Home runs, and reconnect by themselves after a network drop or a restart.
-- Closing Browser no longer fails after a minute when another program happens to use a port Browser's media relay may need.
+- Assistant keeps a finished answer in view, also while you type a longer question.
+- Assistant follows a growing answer only while you are at the end, and Jump to latest no longer flashes while an answer streams.
+- A busy Home no longer tells people that their shared model access is inactive.
+- When a Browser session has expired, Browser says so instead of showing a connection message.
+- The install command repairs file permissions in an older Linux or Jetson Home that you own, and shows one command for files owned by the administrator.
+- The install command works whatever language the computer is set to.
+- Closing Browser no longer fails when another program uses a port Browser's media relay may need.
+- When an update check gets no answer, Home tries once more on a new connection.
+- When a Linux computer is short of free space, Browser says how much it needs to open.
+- Updating, or using Undo, on a computer where Browser is set up no longer stops with "installed release support changed". Browser's Python no longer changes ElastOS's own files.
+
+### Security
+
+- Browser opens websites only after you allow internet access with your passkey in Inbox, where you can also turn it off.
+- Known issue: Home itself shows the approval, not a separate ElastOS screen, so read the request before you confirm with your passkey (#178).
+- Known issue: after Undo to 2.0.0, Browser goes online again without asking (#559).
+- Community room access ends when your sign-in ends.
+
+## [2.0.1-rc.2] - 2026-11-09
+
+### Added
+
+- Browser runs on a Jetson and other Linux ARM computers with KVM. Turn it on once with elastos setup --browser, which asks before its one-time administrator step, then restart Home.
+- System, About lets you choose Stable or Test versions for updates. Your passkey confirms the change, and switching never installs an older version.
+
+### Changed
+
+- On a Jetson, Browser uses more of the processor, so scrolling is about twice as smooth.
+- On Linux, the install command no longer sets up Browser or downloads it. Browser is turned on when you choose it.
+- Known issue: on a Jetson, Browser scrolls much more slowly than a browser running directly on the computer (#90).
+- Known issue: a Home that stopped with "installed release support changed" after updating to 2.0.1-rc.1 needs a manual repair before it can update. Ask in #535.
+
+### Fixed
+
+- Since 2.0.1-rc.1: Browser asks before it goes online, updating and Undo no longer stop when Browser is set up, Assistant no longer flashes Jump to latest, a busy Home no longer reports shared model access as inactive, and Browser says when its session has expired.
+- Open apps, including Chat, stay connected while Home runs, and reconnect by themselves after a network drop or a restart.
+- Assistant keeps a finished answer in view, also while you type a longer question.
+- Assistant follows a growing answer only while you are at the end, and Jump to latest no longer flashes while an answer streams.
+- A busy Home no longer tells people that their shared model access is inactive.
+- When a Browser session has expired, Browser says so instead of showing a connection message.
+- The install command repairs file permissions in an older Linux or Jetson Home that you own, and shows one command for files owned by the administrator.
+- The install command works whatever language the computer is set to.
+- Closing Browser no longer fails when another program uses a port Browser's media relay may need.
+- When an update check gets no answer, Home tries once more on a new connection.
+- When a Linux computer is short of free space, Browser says how much it needs to open.
+- Updating, or using Undo, on a computer where Browser is set up no longer stops with "installed release support changed". Browser's Python no longer changes ElastOS's own files.
+
+### Security
+
+- Browser opens websites only after you allow internet access with your passkey in Inbox, where you can also turn it off.
+- Known issue: Home itself shows the approval, not a separate ElastOS screen, so read the request before you confirm with your passkey (#178).
+- Known issue: after Undo to 2.0.0, Browser goes online again without asking (#559).
+- Community room access ends when your sign-in ends.
+
+## [2.0.1-rc.1] - 2026-11-06
+
+### Added
+
+- Browser runs on a Jetson and other Linux ARM computers with KVM. Turn it on once with elastos setup --browser, which asks before its one-time administrator step, then restart Home.
+- System, About lets you choose Stable or Test versions for updates. Your passkey confirms the change, and switching never installs an older version.
+
+### Changed
+
+- On a Jetson, Browser uses more of the processor, so scrolling is about twice as smooth.
+- On Linux, the install command no longer sets up Browser or downloads it. Browser is turned on when you choose it.
+
+### Fixed
+
+- Open apps, including Chat, stay connected while Home runs, and reconnect by themselves after a network drop or a restart.
+- Assistant keeps a finished answer in view, also while you type a longer question.
+- The install command repairs file permissions in an older Linux or Jetson Home that you own, and shows one command for files owned by the administrator.
+- The install command works whatever language the computer is set to.
+- Closing Browser no longer fails when another program uses a port Browser's media relay may need.
+- When an update check gets no answer, Home tries once more on a new connection.
+- When a Linux computer is short of free space, Browser says how much it needs to open.
+
+### Security
+
+- Community room access ends when your sign-in ends.
 
 ## [2.0.0] - 2026-11-02
 

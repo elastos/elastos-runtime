@@ -507,6 +507,72 @@ pub(crate) fn require_home_token_context(
     .map(|required| required.context)
 }
 
+/// A launch token the Browser page can renew. Other failures stay opaque.
+#[derive(Debug)]
+pub(in crate::api) enum HomeLaunchTokenError {
+    Expired,
+    SessionInactive,
+}
+
+impl std::fmt::Display for HomeLaunchTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Expired => "home launch token expired",
+            Self::SessionInactive => "home launch token auth session is not active",
+        })
+    }
+}
+
+impl std::error::Error for HomeLaunchTokenError {}
+
+pub(in crate::api) fn home_launch_token_needs_reopen(err: &anyhow::Error) -> bool {
+    matches!(
+        err.chain()
+            .find_map(|source| source.downcast_ref::<HomeLaunchTokenError>()),
+        Some(HomeLaunchTokenError::Expired | HomeLaunchTokenError::SessionInactive)
+    )
+}
+
+/// Home can renew only a signature-checked Browser launch token.
+/// The actor allow-list runs before expiry, so another app's token cannot
+/// surface `HomeLaunchTokenError` through this check.
+pub(in crate::api) fn browser_launch_reopen_error(
+    data_dir: &std::path::Path,
+    headers: &HeaderMap,
+) -> Option<anyhow::Error> {
+    let err = require_signed_browser_launch(data_dir, headers).err()?;
+    if home_launch_token_needs_reopen(&err) {
+        Some(err)
+    } else {
+        None
+    }
+}
+
+fn require_signed_browser_launch(
+    data_dir: &std::path::Path,
+    headers: &HeaderMap,
+) -> anyhow::Result<()> {
+    require_home_launch_token_for_any_from_with_origin(
+        data_dir,
+        headers,
+        &[BROWSER_CAPSULE_ID],
+        None,
+        presented_launch_origin_policy(headers),
+    )
+    .map(|_| ())
+}
+
+fn presented_launch_origin_policy(headers: &HeaderMap) -> HomeLaunchOriginPolicy {
+    if headers.contains_key("origin")
+        || headers.contains_key("referer")
+        || headers.contains_key("sec-fetch-site")
+    {
+        HomeLaunchOriginPolicy::Browser
+    } else {
+        HomeLaunchOriginPolicy::InternalShell
+    }
+}
+
 /// Verify a launch before body extraction. The handler retains its actor gate.
 pub(super) fn require_gateway_launch(
     data_dir: &std::path::Path,
@@ -523,19 +589,12 @@ pub(super) fn require_gateway_launch(
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&token)?;
     let envelope: HomeLaunchTokenEnvelope = serde_json::from_slice(&bytes)?;
     let actor = &envelope.payload.launch_context.executable_actor;
-    let browser = headers.contains_key("origin")
-        || headers.contains_key("referer")
-        || headers.contains_key("sec-fetch-site");
     require_home_launch_token_for_any_from_with_origin(
         data_dir,
         headers,
         &[actor],
         None,
-        if browser {
-            HomeLaunchOriginPolicy::Browser
-        } else {
-            HomeLaunchOriginPolicy::InternalShell
-        },
+        presented_launch_origin_policy(headers),
     )
     .map(|_| ())
 }
@@ -769,7 +828,7 @@ fn require_home_launch_token_value_from_expected_did(
     }
     let now = now_ts();
     if envelope.payload.exp <= now {
-        anyhow::bail!("home launch token expired");
+        return Err(anyhow::Error::from(HomeLaunchTokenError::Expired));
     }
     if envelope.payload.iat > now.saturating_add(60)
         || envelope.payload.exp <= envelope.payload.iat
@@ -796,7 +855,7 @@ fn require_home_launch_token_value_from_expected_did(
                 &envelope.payload.session_id,
                 now,
             )
-            .map_err(|_| anyhow::anyhow!("home launch token auth session is not active"))?;
+            .map_err(|_| anyhow::Error::from(HomeLaunchTokenError::SessionInactive))?;
             if grant.principal_id != envelope.payload.principal_id
                 || grant.proof_binding_id != proof_binding_id
                 || grant.grant_id != envelope.payload.grant_id

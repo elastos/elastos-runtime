@@ -92,7 +92,7 @@ class BrowserHostReleaseTest(unittest.TestCase):
         self.assertTrue(retired.isdisjoint(template["external"]))
         shared = {"browser-vm-engine-supervisor", "browser-vm-engine-supervisor-module",
                   "browser-vm-control-service", "browser-vm-control-service-module",
-                  "browser-vm-artifact-preflight"}
+                  "browser-vm-artifact-preflight", "browser-python"}
         for platform, expected in [
             ("darwin-arm64", shared | {"browser-selkies-control-service"}),
             ("linux-arm64", shared | {"browser-vm-linux-network"}),

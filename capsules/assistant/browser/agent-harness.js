@@ -75,6 +75,8 @@ import {
   regenerateLastAgentTurn,
   updateJumpToLatestVisibility,
   ensureJumpToLatest,
+  followTranscriptToEnd,
+  jumpTranscriptToEnd,
   setStreamStatus,
   openCodeArtifact,
   refreshEmptyModelHint,
@@ -380,7 +382,7 @@ function trackComposerGeometry(durationMs) {
   cancelAnimationFrame(composerGeometryTrackRaf);
   const until = performance.now() + durationMs;
   const tick = () => {
-    syncComposerGeometry({ tracking: true });
+    syncComposerGeometry();
     composerGeometryTrackRaf = performance.now() < until ? requestAnimationFrame(tick) : 0;
   };
   composerGeometryTrackRaf = requestAnimationFrame(tick);
@@ -398,22 +400,16 @@ function toggleSidebarCollapsed() {
   setSidebarCollapsed(!collapsed);
 }
 
-/* A reader this close to the transcript's end counts as at the end. */
-const READER_AT_END_PX = 8;
 let lastComposerColumnKey = "";
 let lastComposerClearance = -1;
 /* During a turn the column stays put while the stream grows. */
 let composerColumnFrozen = false;
 let composerGeometryRoRaf = 0;
 let composerGeometrySyncing = false;
-let composerGeometryBurstAt = 0;
-let composerGeometryBurst = 0;
 
-/* `tracking`: a bounded per-frame follow of a CSS ease (the rail collapse);
-   it is not a ResizeObserver feedback loop, so the burst guard stands aside.
-   `clearanceOnly`: during a turn only the stream's bottom clearance follows
+/* `clearanceOnly`: during a turn only the stream's bottom clearance follows
    the composer (a follow-up being typed grows it). */
-function syncComposerGeometry({ tracking = false, clearanceOnly = false } = {}) {
+function syncComposerGeometry({ clearanceOnly = false } = {}) {
   const taskbar = document.querySelector(".taskbar");
   const main = document.querySelector(".agent-harness-main");
   if (!taskbar || !main || !document.body.classList.contains("agent-harness-active")) {
@@ -435,18 +431,6 @@ function syncComposerGeometry({ tracking = false, clearanceOnly = false } = {}) 
   if (composerGeometrySyncing) {
     return;
   }
-  if (!tracking) {
-    const now = performance.now();
-    if (now - composerGeometryBurstAt > 250) {
-      composerGeometryBurstAt = now;
-      composerGeometryBurst = 0;
-    }
-    composerGeometryBurst += 1;
-    if (composerGeometryBurst > 8) {
-      stopDockGeometryObserver();
-      return;
-    }
-  }
   const dock = taskbar.getBoundingClientRect();
   const clearance = Math.max(96, Math.round(window.innerHeight - dock.top));
   let width = 0;
@@ -461,15 +445,10 @@ function syncComposerGeometry({ tracking = false, clearanceOnly = false } = {}) 
     left = snap(dock.left - band.left);
     columnKey = `${width}|${left}`;
   }
+  // Unchanged notifications are harmless. Keep observing future composer growth.
   if (columnKey === lastComposerColumnKey && clearance === lastComposerClearance) {
     return;
   }
-  /* Measured before the writes: a reader at the end stays at the end, so the
-     newest message and the turn's status line stay above the composer as it
-     grows. */
-  const scroller = streamScrollEl();
-  const atEnd = Boolean(scroller) &&
-    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= READER_AT_END_PX;
   composerGeometrySyncing = true;
   const root = document.documentElement;
   if (clearance !== lastComposerClearance) {
@@ -481,9 +460,7 @@ function syncComposerGeometry({ tracking = false, clearanceOnly = false } = {}) 
     root.style.setProperty("--agent-column-left", `${left}px`);
     lastComposerColumnKey = columnKey;
   }
-  if (atEnd) {
-    scroller.scrollTop = scroller.scrollHeight;
-  }
+  scrollStreamToEnd();
   requestAnimationFrame(() => {
     composerGeometrySyncing = false;
   });
@@ -589,21 +566,9 @@ function clearEmptyState() {
   document.querySelector(".agent-harness-empty")?.remove();
 }
 
-/** Pin the transcript to the end after layout settles (markdown/code can grow). */
+/** Appends preserve the reader's follow choice. */
 function scrollStreamToEnd() {
-  const scroller = streamScrollEl();
-  if (!scroller) {
-    return;
-  }
-  scroller.scrollTop = scroller.scrollHeight;
-  /* One follow-up frame is enough for layout settle. The old double-rAF
-     pin-every-call pattern stacked dozens of scroll writes per second during
-     live tokens and helped peg the Brave renderer at ~100% CPU. */
-  if (!turnBusy) {
-    requestAnimationFrame(() => {
-      scroller.scrollTop = scroller.scrollHeight;
-    });
-  }
+  followTranscriptToEnd(streamScrollEl());
 }
 
 function titleEl() {
@@ -1622,7 +1587,7 @@ export function bindAgentHarness() {
     }
     if (event.target.closest?.("[data-agent-jump-latest]")) {
       event.preventDefault();
-      scrollStreamToEnd();
+      jumpTranscriptToEnd(streamScrollEl());
       updateJumpToLatestVisibility();
       return;
     }

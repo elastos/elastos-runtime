@@ -60,17 +60,37 @@ export function runtimeOpenOutcome(error) {
 }
 
 export function friendlyOpenError(error) {
+  if (error?.payload?.code === "browser_internet_grant_required") {
+    return "Internet access is off for Browser. Open Inbox to change it.";
+  }
   const text = sanitizedErrorText(error);
   if (isAuthoritySessionError(error)) {
     return "Browser session expired. Reopening from Home...";
   }
   const outcome = runtimeOpenOutcome(error);
+  const refusal = error?.payload?.refusal;
+  if (
+    ["terminal_pre_effect_failure", "terminal_post_effect_cleanup"].includes(outcome?.state) &&
+    outcome.effects.page_acquired === false && outcome.effects.vm_acquired === false &&
+    outcome.effects.stream_acquired === false &&
+    refusal && Object.keys(refusal).length === 3 &&
+    refusal.code === "insufficient_free_space" &&
+    Number.isSafeInteger(refusal.required_bytes) && Number.isSafeInteger(refusal.available_bytes) &&
+    refusal.available_bytes >= 0 && refusal.available_bytes < refusal.required_bytes
+  ) {
+    const required = (Math.ceil(refusal.required_bytes / 100_000_000) / 10).toFixed(1);
+    const available = (Math.floor(refusal.available_bytes / 100_000_000) / 10).toFixed(1);
+    return `Browser needs ${required} GB free on this computer to open; ${available} GB are free. Free some space, then open Browser again.`;
+  }
   if (outcome?.state === "terminal_pre_effect_failure" && error?.payload?.stage === "viewer_compatibility") {
     return error.payload.code === "unsupported_viewer_display_mode"
       ? "This Browser view needs a streamed display. Open Browser from Home with its default display."
       : "This browser cannot show the Browser session. Use a supported browser or enable WebRTC.";
   }
   if (outcome?.state === "terminal_pre_effect_failure" && error?.payload?.stage === "engine_readiness") {
+    if (error?.payload?.code === "browser_host_setup_required") {
+      return sanitizedErrorText({ message: error.payload.message || text });
+    }
     switch (error?.payload?.reason) {
       case "artifact_invalid":
         return "Browser Engine files need repair. Prepare this Engine or choose another approved Engine.";
@@ -115,7 +135,7 @@ export function friendlyOpenError(error) {
   }
   if (outcome?.state === "terminal_pre_effect_failure") {
     if (error.status === 403) {
-      return "This page was blocked by your Exit Node settings.";
+      return "This page was blocked by your connection settings.";
     }
     if (/This Browser profile requires an approved transfer/i.test(text)) {
       return text;
@@ -141,7 +161,7 @@ export function friendlyOpenError(error) {
     return "Browser Engine failed to start cleanly. Runtime is finishing cleanup; no Browser page or VM remains acquired.";
   }
   if (error.status === 403) {
-    return "This page was blocked by your Exit Node settings.";
+    return "This page was blocked by your connection settings.";
   }
   if (error.status === 503) {
     return "Browser is temporarily unavailable. Refresh Browser or choose another Browser Engine.";

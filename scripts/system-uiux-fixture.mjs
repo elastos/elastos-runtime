@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,15 +9,7 @@ const systemRoot = join(repoRoot, "capsules/system/browser");
 const homeRoot = join(repoRoot, "capsules/home/browser");
 const homeGuiRoot = join(repoRoot, "capsules/home-gui/browser");
 
-export const brave =
-  process.env.BRAVE_BIN ||
-  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-
-const require = createRequire(
-  new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url),
-);
-
-export const { chromium } = require(process.env.ELASTOS_PLAYWRIGHT_MODULE || "playwright");
+export const { chromium } = requireProductSmokePlaywright();
 
 export const CORS_HEADERS = Object.freeze({
   "access-control-allow-origin": "null",
@@ -112,6 +104,7 @@ export function makeSystemSummary(
 }
 
 export function inertSystemApiResponse(pathname) {
+  if (pathname === "/api/apps/browser/internet") return { status: "off" };
   if (pathname === "/api/apps/home/active-shell") {
     return {
       active: "home-gui",

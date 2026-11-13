@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const homeRoot = join(repoRoot, "capsules/home/browser");
@@ -14,11 +14,7 @@ const connectorRoots = Object.freeze({
   "wallet-unisat": join(repoRoot, "capsules/wallet-unisat/browser"),
   "wallet-walletconnect": join(repoRoot, "capsules/wallet-walletconnect/browser"),
 });
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const playwrightModule = process.env.ELASTOS_PLAYWRIGHT_MODULE
-  ? await import(pathToFileURL(process.env.ELASTOS_PLAYWRIGHT_MODULE).href)
-  : createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url))("playwright");
-const { chromium } = playwrightModule.chromium ? playwrightModule : playwrightModule.default;
+const { chromium } = await importProductSmokePlaywright();
 
 const BITCOIN_CHAIN_NAMESPACE = "bip122:000000000019d6689c085ae165831e93";
 const screenshotRoot = await mkdtemp(join(tmpdir(), "wallet-connectors-uiux-"));
@@ -468,7 +464,7 @@ async function run() {
   const fixture = startServer();
   const server = await fixture.listen();
   const browser = await chromium.launch({
-    executablePath: brave,
+    ...productSmokeLaunchOptions(),
     headless: true,
   });
   const screenshots = [];

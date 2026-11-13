@@ -459,7 +459,7 @@ if (/credential|auth_secret|transport_secret/.test(process.env.OUTPUT)) {
 }
 NODE
 
-if [[ -d "$tmp_dir/vm-root" ]] && find "$tmp_dir/vm-root" -mindepth 1 -print -quit | grep -q .; then
+if [[ -d "$tmp_dir/vm-root" ]] && find "$tmp_dir/vm-root" -mindepth 1 -print -quit | grep . >/dev/null; then
   echo "Browser VM wrapper left an unowned session directory" >&2
   find "$tmp_dir/vm-root" -mindepth 1 -maxdepth 2 -print >&2
   exit 1

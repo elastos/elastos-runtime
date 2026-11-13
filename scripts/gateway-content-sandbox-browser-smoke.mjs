@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
+import { productSmokeLaunchOptions } from './product-smoke-browser.mjs';
 
 const { chromium } = await import(process.env.ELASTOS_PLAYWRIGHT_MODULE
   ? pathToFileURL(process.env.ELASTOS_PLAYWRIGHT_MODULE).href : 'playwright');
@@ -17,6 +18,7 @@ const deadline = setTimeout(() => {
 try {
   browser = await chromium.launch({
     headless: true,
+    ...productSmokeLaunchOptions(),
     ...(process.env.ELASTOS_CHROMIUM_EXECUTABLE
       ? { executablePath: process.env.ELASTOS_CHROMIUM_EXECUTABLE } : {}),
   });

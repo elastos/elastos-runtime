@@ -841,6 +841,25 @@ impl InstallTransaction {
         support::require_installed(self, &journal.support, previous)
     }
 
+    /// Call only after the restart owner proves the recorded Home generation gone.
+    pub(crate) fn repair_restart_support(&self, previous: bool) -> anyhow::Result<()> {
+        let journal = self.read_journal()?.context("release journal missing")?;
+        let restart = journal.restart.as_ref().context("restart record missing")?;
+        anyhow::ensure!(
+            if previous {
+                matches!(
+                    restart.phase,
+                    RestartPhase::PreviousReady | RestartPhase::PreviousRunning
+                )
+            } else {
+                restart.phase == RestartPhase::CandidateReady
+            },
+            "support repair requires the stopped restart generation"
+        );
+        self.validate_scratch(&journal)?;
+        support::repair_installed(self, &journal.support, previous)
+    }
+
     pub(crate) fn abort_pre_activation_restart(&self) -> anyhow::Result<()> {
         let mut journal = self.read_journal()?.context("release journal missing")?;
         anyhow::ensure!(

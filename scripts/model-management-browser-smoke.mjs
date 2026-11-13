@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { once } from "node:events";
 import { chromium, inertSystemApiResponse, makeSystemSummary, makeAppearanceRecord } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const root = resolve(new URL("../", import.meta.url).pathname);
 const cid = `bafybei${"a".repeat(52)}`;
@@ -141,7 +142,7 @@ const server = createServer(async (req, res) => {
 });
 server.listen(0, "127.0.0.1"); await once(server, "listening");
 const browser = await chromium.launch({ headless: true,
-  ...(process.env.BRAVE_BIN ? { executablePath: process.env.BRAVE_BIN } : {}) });
+  ...productSmokeLaunchOptions() });
 let activePage;
 try {
   for (const app of ["marketplace", "system"]) {

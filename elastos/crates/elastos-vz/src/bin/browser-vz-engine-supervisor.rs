@@ -2406,7 +2406,11 @@ impl LaunchPaths {
                 DEFAULT_CONTROL_PORT,
             )?,
             memory_mib: env_u32("ELASTOS_BROWSER_VM_MEMORY_MIB", 2048)?,
-            vcpu_count: env_u32("ELASTOS_BROWSER_VM_VCPUS", 2)? as u8,
+            vcpu_count: browser_vm_vcpu_count(
+                std::env::var("ELASTOS_BROWSER_VM_VCPUS").ok().as_deref(),
+                std::env::consts::OS,
+                thread::available_parallelism().map_or(1, |cpus| cpus.get()),
+            )?,
         })
     }
 }
@@ -2594,14 +2598,12 @@ fn validate_private_stdin_descriptor(fd: RawFd) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn is_linux_pipefs_descriptor(fd: RawFd) -> bool {
-    const PIPEFS_MAGIC: libc::c_long = 0x5049_5045;
-
     let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
     if unsafe { libc::fstatfs(fd, stat.as_mut_ptr()) } != 0 {
         return false;
     }
     let stat = unsafe { stat.assume_init() };
-    stat.f_type == PIPEFS_MAGIC
+    stat.f_type == 0x5049_5045 // PIPEFS_MAGIC; f_type's signedness depends on libc.
 }
 
 fn is_anonymous_unix_stream_socket(fd: RawFd) -> bool {
@@ -3111,6 +3113,24 @@ fn data_dir_from(selected: Option<PathBuf>) -> PathBuf {
     selected.unwrap_or_else(default_data_dir)
 }
 
+fn browser_vm_vcpu_count(
+    value: Option<&str>,
+    platform: &str,
+    host_cpus: usize,
+) -> Result<u8, String> {
+    match value {
+        Some(value) => value
+            .parse::<u8>()
+            .ok()
+            .filter(|count| *count > 0)
+            .ok_or_else(|| "ELASTOS_BROWSER_VM_VCPUS must be an integer in 1..255".to_string()),
+        None if platform == "linux" => {
+            Ok(host_cpus.min(host_cpus.saturating_sub(2).clamp(2, 4)) as u8)
+        }
+        None => Ok(2),
+    }
+}
+
 fn env_u32(name: &str, default: u32) -> Result<u32, String> {
     match std::env::var(name) {
         Ok(value) => value
@@ -3258,22 +3278,24 @@ const ROOTFS_OVERLAY_NAME: &str = "rootfs.qcow2";
 
 /// Free space a launch keeps beyond its overlay's worst case (every block of
 /// the seed rewritten): the room the Home keeps for update staging.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 const ROOTFS_OVERLAY_FREE_FLOOR: u64 = 4 * 1024 * 1024 * 1024;
 
 /// The refusal when this computer cannot hold a launch overlay's worst case
 /// plus the floor.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn rootfs_overlay_space_refusal(seed_bytes: u64, available: u64) -> Option<String> {
     let required = seed_bytes.saturating_add(ROOTFS_OVERLAY_FREE_FLOOR);
-    // Tenths of a GB: the need rounded up, the free space rounded down.
-    let tenths = |tenths: u64| format!("{}.{}", tenths / 10, tenths % 10);
     (available < required).then(|| {
-        format!(
-            "Browser needs {} GB free on this computer to open; {} GB are free. Free some space, then open Browser again.",
-            tenths(required.div_ceil(100_000_000)),
-            tenths(available / 100_000_000)
-        )
+        json!({
+            "schema": "elastos.browser.engine.launch-error/v1",
+            "code": "launch_refused",
+            "message": "Browser cannot open.",
+            "refusal": elastos_common::browser_protocol::BrowserLaunchRefusal::InsufficientFreeSpace {
+                required_bytes: required,
+                available_bytes: available,
+            },
+        }).to_string()
     })
 }
 
@@ -5045,8 +5067,8 @@ fn set_file_socket_timeout(
     timeout: Duration,
 ) -> Result<(), String> {
     let timeval = libc::timeval {
-        tv_sec: timeout.as_secs().min(i64::MAX as u64) as libc::time_t,
-        tv_usec: timeout.subsec_micros() as libc::suseconds_t,
+        tv_sec: timeout.as_secs().min(i64::MAX as u64) as _,
+        tv_usec: timeout.subsec_micros() as _,
     };
     let result = unsafe {
         libc::setsockopt(
@@ -5481,6 +5503,46 @@ mod tests {
     }
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn browser_vm_vcpus_linux_reserves_host_capacity() {
+        let actual =
+            [1, 2, 4, 6, 8, 16].map(|cpus| browser_vm_vcpu_count(None, "linux", cpus).unwrap());
+        assert_eq!(actual, [1, 2, 2, 4, 4, 4]);
+        for (host_cpus, expected) in [(1, 1), (2, 2), (4, 2), (6, 4), (8, 4), (16, 4)] {
+            let count = browser_vm_vcpu_count(None, "linux", host_cpus).unwrap();
+            assert_eq!(count, expected, "host CPUs: {host_cpus}");
+            let manifest = browser_vm_manifest(2048, count);
+            assert_eq!(manifest.microvm.unwrap().vcpu_count, Some(expected));
+            assert_eq!(manifest.resources.memory_mb, 2048);
+        }
+    }
+
+    #[test]
+    fn browser_vm_vcpus_macos_keeps_two() {
+        for host_cpus in [1, 2, 4, 6, 8, 16] {
+            assert_eq!(browser_vm_vcpu_count(None, "macos", host_cpus), Ok(2));
+        }
+    }
+
+    #[test]
+    fn browser_vm_vcpus_explicit_value_wins() {
+        for platform in ["linux", "macos"] {
+            for host_cpus in [1, 2, 4, 6, 8, 16] {
+                assert_eq!(browser_vm_vcpu_count(Some("5"), platform, host_cpus), Ok(5));
+            }
+        }
+    }
+
+    #[test]
+    fn browser_vm_vcpus_rejects_invalid_explicit_values() {
+        for value in ["", "0", "-1", "1.5", "two", "256", "258", "4294967295"] {
+            assert!(
+                browser_vm_vcpu_count(Some(value), "linux", 6).is_err(),
+                "{value}"
+            );
+        }
+    }
 
     #[test]
     fn stage_trace_format_preserves_monotonic_microseconds_and_details() {
@@ -6010,6 +6072,42 @@ mod tests {
             vcpu_count: 2,
         };
         VzLaunchOwner::new(VzLaunchIdentity::from_launch(&launch), paths, transport)
+    }
+
+    #[tokio::test]
+    async fn space_refusal_before_vm_start_keeps_first_open_profile_usable() {
+        let root = tempfile::tempdir().unwrap();
+        let mut owner = cleanup_owner_fixture(root.path());
+        let disk = root.path().join("BrowserProfiles/default/profile.ext4");
+        fs::create_dir_all(disk.parent().unwrap()).unwrap();
+        fs::set_permissions(disk.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
+        let request = json!({"profile": {
+            "schema": "elastos.browser.profile/v1", "scope": "active_principal",
+            "profile_key": format!("profile-{}", "a".repeat(64)), "disk_path": disk,
+            "storage": "principal_owned_profile_disk",
+            "storage_posture": "principal_owned_reset_scoped_unprotected",
+            "protected_storage": false, "encrypted": false, "recoverable": false,
+            "recovery": "not_recovery_kit_packaged", "reset": "whole_profile",
+            "uri": "localhost://Users/0123456789ab/BrowserProfiles/default/profile.ext4",
+            "public_uri": "localhost://Users/self/BrowserProfiles/default/profile.ext4",
+        }});
+        owner.session_directory = true;
+        create_owned_launch_paths(&owner.paths, &owner.transport, &mut owner.acquired_paths)
+            .unwrap();
+        owner.profile_disk = Some(prepare_browser_profile_disk(&request).unwrap());
+        assert!(owner.profile_disk.as_ref().unwrap().initialize);
+        let before = fs::metadata(&disk).unwrap();
+        let refusal = rootfs_overlay_space_refusal(4 * 1024 * 1024 * 1024, 0).unwrap();
+        let settlement: Value =
+            serde_json::from_str(&owner.finish_cleanup(&refusal, None).await).unwrap();
+        assert_eq!(settlement["state"], "terminal_post_effect_cleanup");
+        assert_eq!(settlement["effects"]["vm"], false);
+        let reason: Value = serde_json::from_str(settlement["message"].as_str().unwrap()).unwrap();
+        assert_eq!(reason["refusal"]["code"], "insufficient_free_space");
+        let reopened = prepare_browser_profile_disk(&request).unwrap();
+        assert!(reopened.initialize);
+        assert_eq!(fs::metadata(&disk).unwrap().ino(), before.ino());
+        assert_eq!(fs::metadata(&disk).unwrap().len(), before.len());
     }
 
     #[test]
@@ -8222,17 +8320,18 @@ mod tests {
         assert!(other.exists());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn a_launch_refuses_an_overlay_the_disk_could_not_hold() {
         // The worst case is every seed block rewritten, plus the update floor.
         let seed = 4 * 1024 * 1024 * 1024;
         let required = seed + ROOTFS_OVERLAY_FREE_FLOOR;
         assert_eq!(rootfs_overlay_space_refusal(seed, required), None);
-        assert_eq!(
-            rootfs_overlay_space_refusal(seed, required - 1).as_deref(),
-            Some("Browser needs 8.6 GB free on this computer to open; 8.5 GB are free. Free some space, then open Browser again.")
-        );
+        let error = rootfs_overlay_space_refusal(seed, required - 1).unwrap();
+        let typed: Value = serde_json::from_str(&error).unwrap();
+        assert_eq!(typed["schema"], "elastos.browser.engine.launch-error/v1");
+        assert_eq!(typed["refusal"]["code"], "insufficient_free_space");
+        assert_eq!(typed["refusal"]["required_bytes"], required);
+        assert_eq!(typed["refusal"]["available_bytes"], required - 1);
     }
 
     #[cfg(not(target_os = "linux"))]

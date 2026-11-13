@@ -645,6 +645,19 @@ pub trait Provider: Send + Sync {
         ))
     }
 
+    /// Runtime's fence must reach the actual dispatch, including detached bridge tasks.
+    async fn send_raw_fenced(
+        &self,
+        request: &serde_json::Value,
+        fence: Option<super::dispatch::DispatchFence>,
+    ) -> Result<serde_json::Value, ProviderError> {
+        let _guard = match fence {
+            Some(fence) => Some(fence.enter().await.map_err(ProviderError::Provider)?),
+            None => None,
+        };
+        self.send_raw(request).await
+    }
+
     /// Shut down the provider and settle any owned lifecycle resources.
     async fn shutdown(&self) -> Result<(), ProviderError> {
         Ok(())
@@ -1664,7 +1677,9 @@ impl ProviderRegistry {
             let providers = self.providers.read().await;
             if let Some(provider) = providers.get("webspace").cloned() {
                 drop(providers);
-                return provider.send_raw(request).await;
+                return provider
+                    .send_raw_fenced(request, super::dispatch::current())
+                    .await;
             }
         }
 
@@ -1673,7 +1688,9 @@ impl ProviderRegistry {
             let providers = self.providers.read().await;
             if let Some(provider) = providers.get(scheme).cloned() {
                 drop(providers);
-                return provider.send_raw(request).await;
+                return provider
+                    .send_raw_fenced(request, super::dispatch::current())
+                    .await;
             }
         }
         // Try sub-providers (case-insensitive)
@@ -1688,7 +1705,9 @@ impl ProviderRegistry {
                 }
             }) {
                 drop(sub);
-                return provider.send_raw(request).await;
+                return provider
+                    .send_raw_fenced(request, super::dispatch::current())
+                    .await;
             }
         }
         Err(ProviderError::NoProvider(scheme.to_string()))
@@ -1761,6 +1780,12 @@ impl ProviderRegistry {
                         provider_transfer_receipt(&invocation, "failed_closed")
                     ))
                 })?;
+                // Carrier dispatch bypasses send_raw. Keep the generation here
+                // through the awaited invocation, including connect and retries.
+                let _dispatch = match super::dispatch::current() {
+                    Some(fence) => Some(fence.enter().await.map_err(ProviderError::Provider)?),
+                    None => None,
+                };
                 invoker
                     .invoke_carrier_provider(route, &invocation, request)
                     .await?
@@ -3553,6 +3578,48 @@ mod tests {
             .await
             .is_err());
         assert!(provider.requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn browser_internet_carrier_dispatch_rechecks_after_registry_wait() {
+        let registry = ProviderRegistry::new();
+        let carrier = Arc::new(MockCarrierInvoker::default());
+        registry.set_carrier_invoker(carrier.clone()).await;
+        let fence = super::super::dispatch::DispatchFence::new(|| Ok(()));
+        drop(fence.enter().await.unwrap());
+        let registry_wait = registry.carrier_invoker.write().await;
+        let invocation = ProviderInvocation {
+            source: "browser".into(),
+            target: "browser-engine".into(),
+            op: "launch".into(),
+            request: serde_json::json!({"op":"launch"}),
+            transfer: ProviderTransfer::Json,
+            range: None,
+            progress: None,
+            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::PeerDid {
+                peer_did: "did:key:fixture".into(),
+                timeout_ms: Some(1000),
+                reply_wait_ms: None,
+            }),
+        };
+        let pending = fence.scope(registry.invoke_provider(invocation));
+        tokio::pin!(pending);
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(
+                pending.as_mut(),
+                cx
+            )))
+            .await
+            .is_pending()
+        );
+        fence.revoke().await;
+        drop(registry_wait);
+        let result = pending.await;
+        assert!(
+            carrier.requests.lock().await.is_empty(),
+            "completed Stop must prevent remote provider dispatch"
+        );
+        assert!(result.is_err());
     }
 
     #[async_trait::async_trait]

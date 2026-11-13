@@ -91,7 +91,7 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   assistant: new Set(["marketplace", "system", "inbox"]),
   "home-agent": new Set(["marketplace", "system", "inbox"]),
   "archive-manager": new Set(["library"]),
-  browser: new Set(["library"]),
+  browser: new Set(["library", "inbox"]),
   "chat-room": new Set(["library", "people", "inbox"]),
   "gba-emulator": new Set(["library"]),
   "home-cli": "visible-target",
@@ -2146,6 +2146,13 @@ window.addEventListener("message", (event) => {
     });
     return;
   }
+  if (data.type === "home:focus-browser") {
+    if (context.kind === "app-frame" && context.targetId === "inbox"
+      && hasExactMessageKeys(data, ["type", "homeToken"])) {
+      postToActiveShell({type:"home:gui-command", command:"focus-browser"});
+    }
+    return;
+  }
   if (data.type !== "home:open-target") {
     return;
   }
@@ -2165,6 +2172,12 @@ window.addEventListener("message", (event) => {
   )) {
     console.warn("home ignored an app's Browser open with a query", context.targetId);
     return;
+  }
+  if (context.targetId === "browser" && target === "inbox") {
+    if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      || !data.query || typeof data.query !== "object" || Array.isArray(data.query)
+      || Object.keys(data.query).length !== 1
+      || data.query.notification_id !== "browser-internet:permission") return;
   }
   if (context.targetId === "chat-room" && ["people", "inbox"].includes(target)) {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])

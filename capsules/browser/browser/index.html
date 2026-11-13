@@ -6,15 +6,15 @@
     <title>ElastOS Browser</title>
     <script src="./elastos-theme.js"></script>
     <link rel="stylesheet" href="./elastos-ui.css">
-    <link rel="stylesheet" href="./style.css?v=browser-20261015a" />
-    <link rel="modulepreload" href="./browser.js?v=browser-20261101d" />
+    <link rel="stylesheet" href="./style.css?v=browser-20261110b" />
+    <link rel="modulepreload" href="./browser.js?v=browser-20261110b" />
     <link rel="modulepreload" href="./browser-location.js?v=browser-20260523b" />
-    <link rel="modulepreload" href="./browser-runtime-api.js?v=browser-20261101d" />
+    <link rel="modulepreload" href="./browser-runtime-api.js?v=browser-20261110b" />
     <link rel="modulepreload" href="./browser-clipboard.js?v=browser-20261022d" />
     <link rel="modulepreload" href="./browser-page-cleanup.js?v=browser-20260727a" />
     <link rel="modulepreload" href="./browser-input.js?v=browser-20261022b" />
     <link rel="modulepreload" href="./browser-input-surface.js?v=browser-20261031d" />
-    <link rel="modulepreload" href="./browser-status.js?v=browser-20261101d" />
+    <link rel="modulepreload" href="./browser-status.js?v=browser-20261110b" />
     <link rel="modulepreload" href="./browser-remote-display.js?v=browser-20261101d" />
     <link rel="modulepreload" href="./browser-service-selection.js?v=browser-20261015a" />
     <link rel="modulepreload" href="./browser-history.js?v=browser-20260520e" />
@@ -64,16 +64,18 @@
             &times;
           </button>
         </div>
-        <label class="browser-settings-label" for="browser-engine">Browser engine</label>
-        <select id="browser-engine" class="browser-select" aria-label="Browser engine" title="Browser engine">
+        <p id="browser-internet-value" class="browser-settings-label">Internet access: Off</p>
+        <button id="browser-internet-settings" class="browser-settings-action" type="button">Manage in Inbox</button>
+        <label class="browser-settings-label" for="browser-engine">Page display</label>
+        <select id="browser-engine" class="browser-select" aria-label="Page display" title="Page display">
           <option value="">Automatic</option>
         </select>
-        <p id="browser-engine-summary" class="browser-settings-hint">Select this device’s VM Engine or an approved remote Engine.</p>
-        <label class="browser-settings-label browser-settings-label-spaced" for="browser-exit">Exit node</label>
-        <select id="browser-exit" class="browser-exit-select" aria-label="Browser exit node" title="Browser exit node">
+        <p id="browser-engine-summary" class="browser-settings-hint">Browser chooses where to display pages.</p>
+        <label class="browser-settings-label browser-settings-label-spaced" for="browser-exit">Pages go out through</label>
+        <select id="browser-exit" class="browser-exit-select" aria-label="Pages go out through" title="Pages go out through">
           <option value="">This device</option>
         </select>
-        <p id="browser-exit-summary" class="browser-settings-hint">Use this device's Exit Node for Browser traffic.</p>
+        <p id="browser-exit-summary" class="browser-settings-hint">Websites can see this computer's internet address.</p>
         <button id="browser-profile-reset" class="browser-settings-action browser-settings-danger" type="button" aria-label="Reset Browser profile" title="Reset Browser profile">
           Reset profile
         </button>
@@ -87,8 +89,13 @@
       </section>
 
       <section class="browser-stage" aria-label="Web page">
+        <section id="browser-internet-request" class="browser-settings-panel browser-internet-request" role="status" hidden>
+          <h2 id="browser-internet-heading">Browser can't open websites yet</h2>
+          <p id="browser-internet-hint">Type a website address to open it.</p>
+          <button id="browser-internet-review" class="browser-settings-action" type="button" hidden>Show Request</button>
+        </section>
         <div id="browser-render-panel" class="browser-render-panel" tabindex="0">
-          <div id="browser-render-empty" class="browser-render-empty" hidden></div>
+          <div id="browser-render-empty" class="browser-render-empty" hidden>Type a website address to open it.</div>
           <textarea
             id="browser-keyboard-capture"
             class="browser-keyboard-capture"
@@ -111,6 +118,6 @@
       </section>
     </main>
 
-    <script type="module" src="./browser.js?v=browser-20261101d"></script>
+    <script type="module" src="./browser.js?v=browser-20261110b"></script>
   </body>
 </html>

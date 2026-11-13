@@ -1161,6 +1161,7 @@ mod tests {
             collaboration_presence_product_port: None,
             carrier_endpoint: None,
             collaboration_discovery_service: None,
+            browser_internet: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.path().to_path_buf(),
             data_dir: data_dir.path().to_path_buf(),
@@ -1428,13 +1429,16 @@ mod tests {
             "expected the first-party development capsule set to be visible"
         );
 
-        for platform in ["linux-arm64", "linux-amd64"] {
-            // Where Browser is unavailable it is absent, not merely unlaunchable.
-            assert!(
-                !read_model::capsule_catalog_summary_for(data_dir.path(), platform)
+        for (platform, browser_listed) in [("linux-arm64", true), ("linux-amd64", false)] {
+            // Linux ARM64 lists Browser so opening it shows the setup command.
+            // Linux AMD64 has no supported Browser Engine and keeps it absent.
+            assert_eq!(
+                read_model::capsule_catalog_summary_for(data_dir.path(), platform)
                     .capsules
                     .iter()
-                    .any(|capsule| capsule.name == "browser")
+                    .any(|capsule| capsule.name == "browser"),
+                browser_listed,
+                "Browser catalog visibility on {platform}"
             );
         }
         let catalog = read_model::capsule_catalog_summary_for(data_dir.path(), "darwin-arm64");
@@ -1987,6 +1991,7 @@ mod tests {
             collaboration_presence_product_port: None,
             carrier_endpoint: None,
             collaboration_discovery_service: None,
+            browser_internet: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.path().to_path_buf(),
             data_dir: data_dir.path().to_path_buf(),

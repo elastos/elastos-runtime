@@ -642,6 +642,61 @@ def validate_release_builds_are_hermetic(source):
 
 
 class ReleasePolicyTests(unittest.TestCase):
+    def test_musl_gate_covers_both_native_linux_release_sets(self):
+        root = WORKFLOW.parents[2]
+        for job in ("source-home-linux", "source-home-linux-arm64"):
+            gate, = [step for step in steps(job) if "name: check native musl release crates" in step]
+            self.assertIn("X64) target=x86_64-unknown-linux-musl", gate)
+            self.assertIn("ARM64) target=aarch64-unknown-linux-musl", gate)
+            self.assertIn('bash scripts/check-release-musl.sh "$target"', gate)
+            self.assertIn("timeout-minutes: 30", gate)
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)
+            log = fixture / "commands.jsonl"
+            for tool in ("cargo", "rustup"):
+                shim = fixture / tool
+                shim.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, os, pathlib, sys\n"
+                    "with open(os.environ['MUSL_FIXTURE_LOG'], 'a') as out:\n"
+                    " out.write(json.dumps([pathlib.Path(sys.argv[0]).name, str(pathlib.Path.cwd()), sys.argv[1:]]) + '\\n')\n"
+                )
+                shim.chmod(0o755)
+            for target, platform in (("x86_64-unknown-linux-musl", "linux-amd64"),
+                                     ("aarch64-unknown-linux-musl", "linux-arm64")):
+                for mode in ("check", "build"):
+                    with self.subTest(target=target, mode=mode):
+                        log.write_text("")
+                        result = subprocess.run(
+                            ["bash", "scripts/check-release-musl.sh", target, mode], cwd=root,
+                            env={**os.environ, "PATH": f"{fixture}:{os.environ['PATH']}",
+                                 "MUSL_FIXTURE_LOG": str(log)}, capture_output=True, text=True,
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn(f"musl {mode} PASS: {target}", result.stdout)
+                        commands = [json.loads(line) for line in log.read_text().splitlines()]
+                        self.assertEqual(commands[0][2], ["target", "add", target])
+                        builds = [command for command in commands if command[0] == "cargo"]
+                        self.assertEqual(builds[0][2], [mode, "--locked", "--release", "--target",
+                                                           target, "-p", "elastos-server", "--bin", "elastos"])
+                        external = json.loads((root / "components.json").read_text())["external"]
+                        if platform in external["browser-vz-engine-supervisor"]["platforms"]:
+                            supervisor = builds.pop()
+                            self.assertEqual(Path(supervisor[1]), root / "elastos")
+                            self.assertEqual(supervisor[2], [mode, "--locked", "--release", "-p",
+                                                            "elastos-vz", "--bin", "browser-vz-engine-supervisor",
+                                                            "--target", target])
+                        # Compare to the producer's actual lock-prerequisite selection.
+                        producer = (root / "scripts/publish-release.sh").read_text()
+                        names = re.search(r"SUPPORT_BINARY_ASSETS=\((.*?)\)", producer, re.S)[1].split()
+                        integrity = runpy.run_path(str(root / "scripts/components-release-integrity-check.py"))
+                        expected = {name for name in names + ["home-cli"]
+                                    if integrity["resolve_platform_info"](external[name], platform)[1] is not None}
+                        self.assertEqual({Path(command[1]).name for command in builds[1:]}, expected)
+                        self.assertEqual(len(builds), len(expected) + 1)
+                        for command in builds[1:]:
+                            self.assertEqual(command[2], [mode, "--locked", "--release", "--target", target])
+
     def test_source_home_missing_linux_engine_bundle_refuses_before_tools_or_writes(self):
         for arch, platform, variable in (("x86_64", "linux-amd64", "ELASTOS_LLAMA_AMD64_BUNDLE"),
                                           ("aarch64", "linux-arm64", "ELASTOS_LLAMA_ARM64_BUNDLE")):
@@ -2926,6 +2981,67 @@ class FiniteInstalledJourneyTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         owner.observe_once()
 
+    def test_finite_census_omitted_child_accepts_only_same_birth_zombie(self):
+        for state, ticks in (("Z", 803), ("S", 803), ("Z", 804)):
+            with self.subTest(state=state, ticks=ticks), tempfile.TemporaryDirectory() as temp:
+                owner, values = self.finite_owner(Path(temp))
+                rows = self.process_rows(owner)
+                for row in rows.values():
+                    row["uid"] = os.getuid()
+                proc = Path(temp) / "proc"
+                child = self.proc_process(proc, pid=103, ticks=ticks, state=state, parent=102)
+                (child / "cmdline").write_text("" if state == "Z" else "llama-server\0")
+                (child / "cgroup").write_text("0::" + (owner.binding["ControlGroup"] if state == "Z" else "/outside") + "\n")
+                read = self.journey["bounded_text"]
+                with self.observations(owner, rows), \
+                        mock.patch.object(os, "pidfd_open", side_effect=lambda pid, flags: pid + 1000, create=True):
+                    owner.observe_once()
+                    retained = owner.known[103]
+                    fd = owner.fds[103]
+                    rows.pop(103)
+                    observe = self.globals["bounded_text"]
+                    stat_reads = []
+
+                    def observation(path, limit):
+                        path = Path(path)
+                        if path.parent == Path("/proc/103"):
+                            if path.name == "stat":
+                                stat_reads.append(path)
+                                # A later read sees a reused PID. State and birth
+                                # must come from the same bounded stat sample.
+                                if len(stat_reads) > 1:
+                                    self.proc_process(proc, pid=103, ticks=804, state="Z", parent=102)
+                            return read(child / path.name, limit)
+                        return observe(path, limit)
+
+                    self.globals["bounded_text"] = observation
+                    if state != "Z" or ticks != 803:
+                        with self.assertRaisesRegex(RuntimeError, "live child left its unit census"):
+                            owner.observe_once()
+                        self.assertIsNotNone(owner.census_gap)
+                        continue
+                    self.assertNotIn(103, owner.observe_once())
+                    self.assertIsNone(owner.census_gap)
+                    self.assertEqual(len(stat_reads), 1)
+                    self.assertIs(owner.known[103], retained)
+                    self.assertEqual(owner.fds[103], fd)
+
+                    # The census exception does not waive whole-unit exit.
+                    self.globals["bounded_text"] = lambda path, limit: (
+                        read(child / Path(path).name, limit) if Path(path).parent == Path("/proc/103")
+                        else observe(path, limit))
+                    rows.clear()
+                    rows[99] = owner.known[99]
+                    owner.metric_fds = {name: index + 2000 for index, name in enumerate(values)}
+                    self.journey["private_json"](owner.control / "runtime-stopped.json", {"reaped": True})
+                    self.globals["pidfd_exited"] = lambda descriptor: descriptor not in (1099, fd)
+                    with mock.patch.object(os, "close"):
+                        receipt = owner.finish()
+                    self.assertEqual(receipt["status"], "failed")
+                    self.assertEqual(receipt["failure_phase"], "native_cleanup")
+                    self.assertIsNone(owner.census_gap)
+                    owner.command.assert_called_once_with("systemctl", "stop", owner.unit)
+
     def test_finite_census_accepts_same_birth_exec_and_never_rebinds_an_exited_pidfd(self):
         with tempfile.TemporaryDirectory() as temp:
             owner, _ = self.finite_owner(Path(temp))
@@ -2958,7 +3074,7 @@ class FiniteInstalledJourneyTests(unittest.TestCase):
                         if observation in ("gone", "denied"):
                             raise (FileNotFoundError if observation == "gone" else PermissionError)("private detail")
                         if Path(path).name == "stat":
-                            fields = ["Z", "102", "103"] + ["0"] * 17
+                            fields = ["Z" if observation == "reused" else "S", "102", "103"] + ["0"] * 17
                             fields[19] = "999" if observation == "reused" else "803"
                             return "103 (private name) " + " ".join(fields)
                         if Path(path).name == "cmdline":
@@ -2977,7 +3093,7 @@ class FiniteInstalledJourneyTests(unittest.TestCase):
                     self.assertEqual(detail["expected_cgroup"], owner.binding["ControlGroup"])
                     if observation in ("present", "reused"):
                         self.assertEqual(detail["observed"]["ppid"], 102)
-                        self.assertEqual(detail["observed"]["state"], "Z")
+                        self.assertEqual(detail["observed"]["state"], "Z" if observation == "reused" else "S")
                         self.assertEqual(detail["same_start_ticks"], observation == "present")
                         self.assertEqual(detail["observed"]["cmdline"],
                                          ["llama-server", "<redacted>", "<redacted>", "init"])

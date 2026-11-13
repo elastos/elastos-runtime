@@ -1418,6 +1418,7 @@ impl Controller {
             record.phase,
             RestartPhase::CandidateReady | RestartPhase::PreviousReady
         ) {
+            transaction.repair_restart_support(record.phase == RestartPhase::PreviousReady)?;
             crate::update::verify_restart_support(&transaction)?;
             transaction.finish_restart()?;
             self.finish_request()?;
@@ -1431,6 +1432,7 @@ impl Controller {
         if record.phase == RestartPhase::PreviousRunning {
             // The failed previous generation is gone (proved above); the restored
             // release is started again.
+            transaction.repair_restart_support(true)?;
             transaction.retire_previous_start()?;
         } else {
             transaction.restore_for_restart()?;
@@ -1651,7 +1653,7 @@ fn admit_release_digest(signed: &[u8], source: &TrustedSource) -> Result<String>
             && payload["version"].as_str() == Some(source.installed_version.as_str()),
         "Installed signed release version is incompatible."
     );
-    crate::update::verify_source_channel(source, payload["channel"].as_str().unwrap_or(""))?;
+    crate::update::verify_installed_channel(source, payload["channel"].as_str().unwrap_or(""))?;
     let expected = payload["platforms"][crate::update::detect_release_platform()]["binary"]
         ["sha256"]
         .as_str()
@@ -2439,4 +2441,4 @@ fn valid_hash(value: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -124,8 +124,18 @@ async fn enforce_capability(
         .get("X-Capability-Token")
         .and_then(|v| v.to_str().ok());
 
+    // Existing app tokens cannot turn Runtime-owned networking into app authority.
+    if (resource.starts_with("elastos://exit/") || resource.starts_with("elastos://net/"))
+        && (!session.is_shell() || headers.contains_key("X-Elastos-Capsule-Id"))
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Runtime owns Exit and Net access".to_string(),
+        ));
+    }
+
     // Shell sessions keep orchestrator privilege for direct Read calls.
-    // Content and availability Write still require a capability token.
+    // Content, availability and network writes require an explicit capability token.
     if session.is_shell() && bridge_capsule_id.is_none() && token_b64.is_none() {
         if shell_write_requires_token(resource, required_action) {
             return Err((
@@ -180,7 +190,9 @@ async fn enforce_capability(
 fn shell_write_requires_token(resource: &str, required_action: Action) -> bool {
     required_action == Action::Write
         && (resource.starts_with("elastos://content/")
-            || resource.starts_with("elastos://availability/"))
+            || resource.starts_with("elastos://availability/")
+            || resource.starts_with("elastos://exit/")
+            || resource.starts_with("elastos://net/"))
 }
 
 #[cfg(test)]
@@ -301,6 +313,102 @@ mod tests {
         )
         .await;
         (provider, result)
+    }
+
+    #[tokio::test]
+    async fn review559_network_writes_require_owner_tokens_and_reject_app_tokens() {
+        for (scheme, op) in [
+            ("exit", "http_fetch"),
+            ("exit", "open_stream"),
+            ("net", "http"),
+            ("net", "connect"),
+            ("net", "stream"),
+        ] {
+            let (provider, result) = proxy_as_shell(scheme, op, HeaderMap::new(), "{}").await;
+            assert_eq!(
+                result
+                    .expect_err("shell network writes need explicit authority")
+                    .0,
+                StatusCode::FORBIDDEN
+            );
+            assert!(provider.requests.lock().await.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn review559_existing_network_tokens_are_owner_only() {
+        for (scheme, operation) in [
+            ("exit", "http_fetch"),
+            ("exit", "open_stream"),
+            ("net", "http"),
+            ("net", "connect"),
+            ("net", "resolve"),
+            ("net", "stream"),
+        ] {
+            for (kind, bridge, allowed) in [
+                (SessionType::Capsule, None, false),
+                (SessionType::Shell, Some("app"), false),
+                (SessionType::Shell, Some(""), false),
+                (SessionType::Shell, None, true),
+            ] {
+                let manager = Arc::new(CapabilityManager::new(
+                    Arc::new(CapabilityStore::new()),
+                    Arc::new(AuditLog::new()),
+                    Arc::new(MetricsManager::new()),
+                ));
+                let registry = Arc::new(ProviderRegistry::new());
+                let provider = Arc::new(CapturingSchemeProvider::new(scheme));
+                registry
+                    .register_sub_provider(scheme, provider.clone())
+                    .await
+                    .unwrap();
+                let state = ProviderProxyState {
+                    registry,
+                    capability_manager: Some(manager.clone()),
+                };
+                let session = Session::new(kind, None);
+                let resource = ResourceId::new(
+                    build_capability_resource(scheme, operation, &serde_json::json!({})).unwrap(),
+                );
+                let action = provider_operation_action(scheme, operation).unwrap();
+                let token = manager.grant(
+                    session.id.as_str(),
+                    resource.clone(),
+                    action,
+                    TokenConstraints::default(),
+                    None,
+                );
+                manager
+                    .validate(&token, session.id.as_str(), action, &resource, None)
+                    .await
+                    .unwrap();
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    "X-Capability-Token",
+                    HeaderValue::from_str(&token.to_base64().unwrap()).unwrap(),
+                );
+                if let Some(id) = bridge {
+                    headers.insert("X-Elastos-Capsule-Id", HeaderValue::from_str(id).unwrap());
+                }
+                let result = provider_proxy(
+                    State(state),
+                    Extension(session),
+                    Path((scheme.into(), operation.into())),
+                    headers,
+                    "{}".into(),
+                )
+                .await;
+                assert_eq!(
+                    result.is_ok(),
+                    allowed,
+                    "{scheme}/{operation} bridge={bridge:?}"
+                );
+                if !allowed {
+                    assert_eq!(result.unwrap_err().0, StatusCode::FORBIDDEN);
+                }
+                assert_eq!(provider.requests.lock().await.len(), usize::from(allowed));
+            }
+        }
     }
 
     #[test]

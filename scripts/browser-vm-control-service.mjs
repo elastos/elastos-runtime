@@ -127,6 +127,7 @@ function readinessInputStamps(dataDir, launcher) {
     artifact("ELASTOS_BROWSER_VM_KERNEL", "bin/vmlinux"),
     artifact("ELASTOS_BROWSER_VM_INITRAMFS", "bin/initrd"),
     path.join(dataDir, "scripts/browser-vm-artifact-preflight.sh"),
+    path.join(dataDir, "scripts/browser-python.mjs"),
   ];
   if (linux) {
     files.push(artifact("ELASTOS_BROWSER_VM_CROSVM_BIN", "bin/crosvm"), "/dev/kvm");
@@ -145,12 +146,16 @@ function readinessInputStamps(dataDir, launcher) {
     return [file, info.dev, info.ino, info.mode, info.uid, info.gid, info.rdev].map(String);
   };
   try {
+    // The shell prefers the bundled Node when executable, then searches PATH.
+    let node = path.join(dataDir, "bin/node");
+    try { fs.accessSync(node, fs.constants.X_OK); } catch { node = "node"; }
     return JSON.stringify({
       host: [process.platform, process.arch, os.release()],
       env: READINESS_INPUT_ENV.map((key) => [key, process.env[key] ?? null]),
       files: files.map((file) => (file === "/dev/kvm" ? deviceStamp : stamp)(file)),
-      // The preflight runs these through the same PATH; debugfs is optional.
+      // Stamp the tools selected by the preflight; debugfs is optional.
       tools: [
+        ["node", node],
         ["python", process.env.ELASTOS_BROWSER_VM_PYTHON || "python3"],
         ["debugfs", process.env.ELASTOS_DEBUGFS_BIN || "debugfs"],
       ].map(([name, command]) => {
@@ -2714,6 +2719,7 @@ function typedLauncherError(parsed) {
     !exactObjectKeys(parsed, [
       "schema", "code", "message",
       ...(hasSettlement ? ["launch_settlement_result"] : []),
+      ...(Object.hasOwn(parsed, "refusal") ? ["refusal"] : []),
     ]) ||
     parsed.schema !== "elastos.browser.engine.launch-error/v1" ||
     typeof parsed.code !== "string" ||
@@ -2722,6 +2728,7 @@ function typedLauncherError(parsed) {
     throw new Error("Browser launcher returned an invalid typed launch error");
   }
   const error = codedError(parsed.code, parsed.message);
+  Object.assign(error, launchRefusalFields(parsed));
   if (hasSettlement) {
     error.vz_launch_settlement = validateVzLaunchSettlement(
       parsed.launch_settlement_result,
@@ -2731,7 +2738,17 @@ function typedLauncherError(parsed) {
   return error;
 }
 
-function launcherError(message, stderr) {
+export function launchRefusalFields(payload) {
+  const refusal = payload?.refusal;
+  if (!exactObjectKeys(refusal, ["code", "required_bytes", "available_bytes"]) ||
+      refusal.code !== "insufficient_free_space" ||
+      !Number.isSafeInteger(refusal.required_bytes) ||
+      !Number.isSafeInteger(refusal.available_bytes) ||
+      refusal.available_bytes < 0 || refusal.available_bytes >= refusal.required_bytes) return {};
+  return { refusal: { code: refusal.code, required_bytes: refusal.required_bytes, available_bytes: refusal.available_bytes } };
+}
+
+export function launcherError(message, stderr) {
   const detail = String(stderr || "").trim();
   if (!detail) return new Error(message);
   const bounded = detail.length > 8192 ? detail.slice(-8192) : detail;
@@ -2747,9 +2764,7 @@ function launcherError(message, stderr) {
         let error = new Error(settlement.message || message);
         try {
           const typed = JSON.parse(settlement.message);
-          if (exactObjectKeys(typed, ["schema", "code", "message"])) {
-            error = typedLauncherError(typed);
-          }
+          error = typedLauncherError(typed);
         } catch {}
         error.vz_launch_settlement = settlement;
         error.launch_settlement = settlement.state;
@@ -4972,6 +4987,7 @@ function main() {
           ...(typeof error?.code === "string"
             ? { code: error.code, message }
             : { error: message }),
+          ...launchRefusalFields(error),
           ...(error?.vz_launch_settlement
             ? {
                 launch_settlement_result:

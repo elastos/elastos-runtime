@@ -26,6 +26,7 @@ import { execSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 import {
   assertRecoverySetupEvidence,
@@ -155,6 +156,7 @@ async function openSide(side) {
   const context = await chromium.launchPersistentContext(side.profile, {
     acceptDownloads: true,
     headless: true,
+    ...productSmokeLaunchOptions(),
     ignoreHTTPSErrors: true,
     viewport: { width: 1440, height: 900 },
   });

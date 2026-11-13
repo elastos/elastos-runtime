@@ -40,7 +40,7 @@ function sha256Label(value) {
   return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
 }
 
-function transportRequest(egressPath, mediaPath) {
+function transportRequest(egressPath, mediaPath, turnPort = 49160) {
   const generation = sha256Label(Buffer.from("remote-wrapper-generation"));
   const expiresAtUnixMs = (Math.floor(Date.now() / 1000) + 300) * 1000;
   const username = `${expiresAtUnixMs / 1000}:remote-wrapper`;
@@ -65,7 +65,7 @@ function transportRequest(egressPath, mediaPath) {
     media: {
       schema: "elastos.browser.vz-transport-stream/v1",
       stream_id: "stream:remote-wrapper-media",
-      target: "tcp://127.0.0.1:49160",
+      target: `tcp://127.0.0.1:${turnPort}`,
       runtime_socket_path: mediaPath,
       vsock_port: 19094,
     },
@@ -75,7 +75,7 @@ function transportRequest(egressPath, mediaPath) {
       guest_host: "127.0.0.1",
       guest_port: 3478,
       listen_host: "127.0.0.1",
-      listen_port: 49160,
+      listen_port: turnPort,
       advertised_host: "127.0.0.1",
       relay_host: "127.0.0.1",
       relay_port_min: 55000,
@@ -593,11 +593,21 @@ test("remote VZ typed settlement parser preserves the exact request binding", ()
   );
 });
 
-test("one failed absence proof does not contaminate independent cleanup fields", () => {
+test("one failed absence proof does not contaminate independent cleanup fields", async () => {
+  // This fixture reaches TURN preflight, so it needs an available local port.
+  // A shared fixed port can reject the launch before the injected cleanup failure.
+  const reservation = net.createServer();
+  await new Promise((resolve, reject) => {
+    reservation.once("error", reject);
+    reservation.listen(0, "127.0.0.1", resolve);
+  });
+  const turnPort = reservation.address().port;
+  await new Promise((resolve) => reservation.close(resolve));
   const suffix = `${process.pid}-${Date.now().toString(36)}`;
   const request = transportRequest(
     `/tmp/evzfi-${suffix}-egress.sock`,
     `/tmp/evzfi-${suffix}-media.sock`,
+    turnPort,
   );
   request.profile = {
     schema: "elastos.browser.profile/v1",
