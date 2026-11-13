@@ -6,6 +6,10 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ## [Unreleased]
 
+### Fixed
+
+- Apps no longer open blank in Safari and other WebKit browsers.
+
 ## [2.0.1] - 2026-11-09
 
 ### Added
