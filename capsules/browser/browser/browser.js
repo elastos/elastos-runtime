@@ -2122,6 +2122,10 @@ async function commitBrowserAuthority(event) {
     const freshApi = createRuntimeApi({ launchToken: data.freshHomeToken });
     const summary = await freshApi.fetchJson(`/api/apps/browser/summary?browser_instance=${encodeURIComponent(browserInstanceId)}&remote_services=0`,
       { signal: AbortSignal.timeout(10000) });
+    const previousSummary = browserSummary || await window.__elastosBrowserRestoreBoot?.summaryPromise;
+    if (!previousSummary?.principal_id || summary?.principal_id !== previousSummary.principal_id) {
+      throw new Error("Browser account changed. Open Browser from Home to continue.");
+    }
     const retained = recoverableRuntimePage(summary);
     if (retained?.recovery_state === "active") {
       if (!sameRuntimePageOwner(runtimePageOwner(retained, currentPageGeneration), currentRuntimePageOwner())) {

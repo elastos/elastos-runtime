@@ -123,7 +123,7 @@ async function fixture() {
       json({ok:true});return;
     }
     if (url.pathname === "/api/apps/browser/summary") {
-      json({net:{exit_provider:{remote_carrier_exits:[{id:"sasha-exit",display_name:"A shared Exit",contact_name:"Sasha",allowed_for_principal:true},{id:"legacy-exit",display_name:"A service label",allowed_for_principal:true}]}},engine_adapter:{adapters:[],display_attach_supported:true},sessions:{schema:"elastos.browser.session-capacity/v1",status:"configured",fresh_start_allowed:true,recoverable_page:state.recoverableUrl ? {
+      json({principal_id:state.principal||"person:fixture:alice",net:{exit_provider:{remote_carrier_exits:[{id:"sasha-exit",display_name:"A shared Exit",contact_name:"Sasha",allowed_for_principal:true},{id:"legacy-exit",display_name:"A service label",allowed_for_principal:true}]}},engine_adapter:{adapters:[],display_attach_supported:true},sessions:{schema:"elastos.browser.session-capacity/v1",status:"configured",fresh_start_allowed:true,recoverable_page:state.recoverableUrl && state.principal!=="person:fixture:bob" ? {
         schema:"elastos.browser.recoverable-page/v1",state:"active",page_id:"retained",
         cleanup:{schema:"elastos.browser.cleanup-handle/v1",id:"cleanup-retained"},
         service_selection:{schema:"elastos.browser.service-selection/v1",engine_id:"",exit_id:""},
@@ -625,6 +625,11 @@ test("566e renewing authority preserves the current page and does not repeat the
       }
       const requests=f.state.requests, opens=f.state.opens.length;
       await page.evaluate(()=>messages=[]);await gui.evaluate(()=>fixtureShell.windows.showDesktopHome());
+      f.state.principal="person:fixture:bob";
+      await assert.rejects(gui.evaluate(async()=>{const {core,windows}=fixtureShell;
+        await windows.renewBrowserWindowAuthority([...core.shellState.windows.keys()][0]);}),/could not renew/);
+      assert.equal(f.state.restores,0,"an account change transfers no retained page");
+      f.state.principal="person:fixture:alice";
       await gui.evaluate(async()=>{const {core,windows}=fixtureShell;await windows.renewBrowserWindowAuthority([...core.shellState.windows.keys()][0]);});
       await page.waitForTimeout(2500);
       assert.equal(await gui.locator('.window[data-target="inbox"]').isVisible(),false,
