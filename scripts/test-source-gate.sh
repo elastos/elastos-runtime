@@ -35,7 +35,7 @@ product_ui() {
 }
 
 release() {
-  node --test scripts/ci-model-package.test.mjs scripts/ci-installed-home-failure.test.mjs
+  node --test scripts/ci-model-package.test.mjs scripts/ci-installed-home-failure.test.mjs scripts/capsule-script-browser-ci.test.mjs
   python3 scripts/ci-release-policy-test.py
   python3 scripts/ci-download-cache-test.py
   python3 scripts/components-release-integrity-check.py --self-test

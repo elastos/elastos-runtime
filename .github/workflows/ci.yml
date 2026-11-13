@@ -388,7 +388,8 @@ jobs:
         working-directory: elastos
         env:
           ELASTOS_PLAYWRIGHT_MODULE: ${{ runner.temp }}/content-sandbox-browser/node_modules/playwright/index.mjs
-        run: cargo test -p elastos-server content_sandbox_browser -- --ignored --nocapture
+        # Match the unit suite's workspace feature graph and reuse its test binaries.
+        run: cargo test --workspace content_sandbox_browser -- --ignored --nocapture
       - name: Rust compile cache statistics
         if: always() && env.RUSTC_WRAPPER == 'sccache'
         run: sccache --show-stats
