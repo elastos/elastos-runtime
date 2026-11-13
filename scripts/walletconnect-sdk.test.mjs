@@ -7,55 +7,12 @@ const require = createRequire(new URL("../elastos/tools/browser-playwright-engin
 const { chromium } = require("playwright");
 const bundle = readFileSync(new URL("../capsules/wallet-walletconnect/vendor/reown-appkit.js", import.meta.url));
 
-const fixture = `
-import { connectWalletConnectEvm } from '/sdk.js';
-window.methods = []; window.nativeUrls = []; window.proposalReady = false;
-window.keys = Object.create(null); window.cancelled = false; window.failed = false;
-class RelaySocket {
-  constructor(url) {
-    window.nativeUrls.push(url); this.readyState = 0;
-    queueMicrotask(() => { this.readyState = 1; this.onopen?.(); });
-  }
-  send(raw) {
-    const message = JSON.parse(raw);
-    if (message.token) {
-      queueMicrotask(() => this.onmessage?.({ data: '{"ready":true}' })); return;
-    }
-    if (!message.method) return;
-    window.methods.push(message.method);
-    if (message.method === 'wc_proposeSession') {
-      window.proposalReady = /^[a-f0-9]{64}$/.test(message.params?.pairingTopic)
-        && typeof message.params?.sessionProposal === 'string'
-        && message.params.sessionProposal.length > 0;
-    }
-    const result = message.method.endsWith('batchSubscribe') ? message.params.topics.map((_, i) => 'sub-' + i)
-      : message.method.endsWith('subscribe') ? 'fixture-subscription' : true;
-    queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ jsonrpc:'2.0', id:message.id, result }) }));
-  }
-  close() { this.readyState = 3; this.onclose?.(); }
-}
-globalThis.WebSocket = RelaySocket;
-const api = async (path, input) => {
-  if (path === 'relay-admission') return { token:'fixture-admission' };
-  if (path !== 'storage') throw new Error('unexpected Runtime resource');
-  if (input) {
-    const { key, value } = JSON.parse(input.body);
-    if (value === null) delete window.keys[key]; else window.keys[key] = value;
-  }
-  return structuredClone(window.keys);
-};
-window.pending = connectWalletConnectEvm({
-  contextKey:'principal-fixture', projectId:'fixture-project-id', chains:[1], api,
-  relayUrl:location.origin.replace(/^http/, 'ws') + '/relay',
-  runtimeUrl:location.origin + '/api/apps/wallet-walletconnect',
-  metadata:{name:'Isolated Runtime fixture', description:'WalletConnect test', url:location.origin, icons:[]},
-}).catch(error => { window.cancelled = error.message === 'Wallet connection cancelled.'; window.failed = !window.cancelled; });
-`;
+const fixture = readFileSync(new URL("./lib/walletconnect-browser-fixture.mjs", import.meta.url));
 
 test("the locked SDK reaches QR through Home, stores its keys through Runtime, and cancels", { timeout: 45000 }, async () => {
   const server = http.createServer((req, res) => {
     res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; connect-src 'self'; frame-src 'self'; style-src 'self'");
-    if (req.url === "/sdk.js") { res.setHeader("content-type", "text/javascript"); res.end(bundle); }
+    if (req.url === "/wc-sdk.js") { res.setHeader("content-type", "text/javascript"); res.end(bundle); }
     else if (req.url === "/fixture.js") { res.setHeader("content-type", "text/javascript"); res.end(fixture); }
     else { res.setHeader("content-type", "text/html"); res.end('<!doctype html><meta name="viewport" content="width=device-width"><script type="module" src="/fixture.js"></script>'); }
   });

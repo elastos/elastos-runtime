@@ -656,3 +656,88 @@ async fn content_sandbox_browser_capsule_scripts() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[tokio::test]
+#[ignore = "requires Playwright Chromium and WebKit; focused WalletConnect sandbox gate"]
+async fn content_sandbox_browser_walletconnect_sdk() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    for name in ["home", "wallet-walletconnect"] {
+        let destination = dir.path().join("capsules").join(name);
+        activate_test_capsule(dir.path(), name);
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::copy(
+            repo.join("capsules").join(name).join("capsule.json"),
+            destination.join("capsule.json"),
+        )
+        .unwrap();
+        copy_operator_site(
+            &repo.join("capsules").join(name).join("browser"),
+            &destination.join("browser"),
+        );
+        write_test_wasm_entrypoint(dir.path(), name);
+    }
+    let capsule = dir.path().join("capsules/wallet-walletconnect");
+    std::fs::create_dir_all(capsule.join("vendor")).unwrap();
+    let sdk = repo.join("capsules/wallet-walletconnect/vendor/reown-appkit.js");
+    std::fs::copy(&sdk, capsule.join("vendor/reown-appkit.js")).unwrap();
+    // The browser-local name keeps the same locked fixture import in the
+    // sandbox and unsandboxed SDK tests. The canonical vendor route is also
+    // hash-checked by the browser test.
+    std::fs::copy(sdk, capsule.join("browser/wc-sdk.js")).unwrap();
+    std::fs::copy(
+        repo.join("scripts/lib/walletconnect-browser-fixture.mjs"),
+        capsule.join("browser/wc-fixture.js"),
+    )
+    .unwrap();
+    std::fs::write(capsule.join("browser/wc-bootstrap.js"),
+        "import { installWalletConnectStorage } from './walletconnect-storage.mjs';\nwindow.storageTrace = [];\ninstallWalletConnectStorage(window, entry => window.storageTrace.push(entry));\nawait import('./wc-fixture.js');",
+    ).unwrap();
+    std::fs::write(
+        capsule.join("browser/wc-frame.html"),
+        "<!doctype html><script type=\"module\" src=\"./wc-bootstrap.js\"></script>",
+    )
+    .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = gateway_router_with_api_url(test_state(dir.path()), format!("http://{addr}"));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let mut server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+    let mut command = tokio::process::Command::new("node");
+    command
+        .arg(repo.join("scripts/walletconnect-sandbox-smoke.mjs"))
+        .env(
+            "ELASTOS_WALLETCONNECT_SANDBOX_URL",
+            format!("http://{addr}"),
+        )
+        .kill_on_drop(true);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(180), command.output()).await;
+    let _ = shutdown_tx.send(());
+    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut server)
+        .await
+        .is_err()
+    {
+        server.abort();
+        let _ = server.await;
+        panic!("WalletConnect source Home did not stop");
+    }
+    let output = result
+        .expect("WalletConnect browser timeout")
+        .expect("start WalletConnect browser gate");
+    println!("{}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        output.status.success(),
+        "WalletConnect sandbox failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

@@ -1664,6 +1664,7 @@ dependencies = [
  "axum",
  "axum-server",
  "base64",
+ "bs58",
  "cid",
  "clap",
  "custody-provider",
