@@ -1537,9 +1537,9 @@ function startDraftDocument(options) {
   renderCurrentDocument();
   clearStatus();
   if (options && options.focusTitle) {
-    window.setTimeout(() => elements.titleInput.focus(), 10);
+    elements.titleInput.focus();
   } else if (options && options.focusEditor) {
-    window.setTimeout(() => elements.editor.focus(), 10);
+    elements.editor.focus();
   }
 }
 

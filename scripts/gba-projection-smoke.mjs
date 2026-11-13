@@ -239,8 +239,8 @@ assert(
   "uCity lacks its principal-scoped save storage",
 );
 assert(
-  projection.includes("connect-src 'self'") && projection.includes("worker-src 'none'"),
-  "the GBA capsule does not constrain engine networking and workers",
+  !/http-equiv=["']Content-Security-Policy["']/i.test(projection),
+  "Runtime response headers own the GBA capsule security policy",
 );
 assert(
   projection.includes('id="btn-ff"') &&
