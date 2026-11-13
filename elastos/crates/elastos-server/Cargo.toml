@@ -114,6 +114,9 @@ data-encoding = "2.6"
 custody-provider = { path = "../../../capsules/custody-provider" }
 
 [dev-dependencies]
+iroh = { version = "=1.4.1", features = ["test-utils", "unstable-net-report"] }
+iroh-relay = { version = "=1.4.1", features = ["server", "test-utils"] }
+noq = { version = "=1.4.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1.0", features = ["full", "test-util"] }
 tempfile = "3.10"
 tower = { version = "0.5", features = ["util"] }

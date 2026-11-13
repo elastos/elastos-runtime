@@ -22,6 +22,7 @@ members = [
     "capsules/shell",
     "capsules/localhost-provider",
 ]
+exclude = ["vendor"]
 resolver = "2"
 
 [workspace.package]
@@ -41,3 +42,8 @@ opt-level = 1                 # Optimize deps (compiled once, run many times)
 [profile.test]
 opt-level = 0
 debug = "line-tables-only"
+
+[patch.crates-io]
+# Address-discovery connections use no QUIC datagrams.
+# See vendor/iroh-relay/ELASTOS-PATCH.md.
+iroh-relay = { path = "vendor/iroh-relay" }

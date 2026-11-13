@@ -11335,6 +11335,189 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn relay_address_discovery_offers_no_quic_datagrams() {
+        let (_, mut server_tls) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+        server_tls.alpn_protocols = vec![iroh_relay::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
+        let server_config = noq::ServerConfig::with_crypto(Arc::new(
+            noq::crypto::rustls::QuicServerConfig::try_from(server_tls).unwrap(),
+        ));
+        let relay = noq::Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let relay_addr = relay.local_addr().unwrap();
+        let client_endpoint = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client = iroh_relay::quic::QuicClient::new(
+            client_endpoint.clone(),
+            iroh_relay::tls::make_dangerous_client_config(),
+        );
+
+        let accepting = relay.clone();
+        let accepted =
+            tokio::spawn(async move { accepting.accept().await.unwrap().await.unwrap() });
+        let connection = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.create_conn(relay_addr, "localhost"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let relay_side = tokio::time::timeout(Duration::from_secs(5), accepted)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // The relay runs noq's defaults and offers datagrams; the address-discovery
+        // client offers none, so the relay cannot send even an empty one.
+        assert!(connection.max_datagram_size().is_some());
+        assert_eq!(relay_side.max_datagram_size(), None);
+        assert!(relay_side.send_datagram(Vec::new().into()).is_err());
+
+        connection.close(0u32.into(), b"done");
+        client_endpoint.close(0u32.into(), b"done");
+        relay.close(0u32.into(), b"done");
+    }
+
+    #[tokio::test]
+    async fn carrier_relay_paths_and_address_discovery_still_work() {
+        use iroh::Watcher as _;
+
+        let (relay_map, relay_url, _relay) =
+            iroh::test_utils::run_relay_server_with(true).await.unwrap();
+        // The production builder's approved-relay map assumes the relay's default
+        // QUIC port; the test relay listens on a random one, so these endpoints use
+        // the test relay map with Carrier's transport config.
+        let bind = |secret: u8| {
+            Endpoint::builder(iroh::endpoint::presets::Minimal)
+                .secret_key(SecretKey::from_bytes(&[secret; 32]))
+                .relay_mode(iroh::RelayMode::Custom(relay_map.clone()))
+                .ca_tls_config(iroh_relay::tls::CaTlsConfig::insecure_skip_verify())
+                .transport_config(carrier_transport_config())
+                .alpns(vec![CARRIER_ALPN.to_vec()])
+                .bind()
+        };
+        let carrier = bind(152).await.unwrap();
+        let peer = bind(153).await.unwrap();
+
+        // Address discovery still reports the address the relay observed.
+        let mut reports = carrier.net_report();
+        let observed = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Some(address) = reports.get().and_then(|report| report.global_v4) {
+                    break address;
+                }
+                reports.updated().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(observed.ip(), &std::net::Ipv4Addr::LOCALHOST);
+
+        tokio::time::timeout(Duration::from_secs(10), carrier.online())
+            .await
+            .unwrap();
+        let relay_only = iroh::EndpointAddr::new(carrier.id()).with_relay_url(relay_url.clone());
+        let carrier_endpoint = carrier.clone();
+        let echoed = tokio::spawn(async move {
+            let connection = carrier_endpoint.accept().await.unwrap().await.unwrap();
+            let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+            let data = recv.read_to_end(64).await.unwrap();
+            send.write_all(&data).await.unwrap();
+            send.finish().unwrap();
+            connection.closed().await;
+        });
+        let connection = tokio::time::timeout(
+            Duration::from_secs(10),
+            peer.connect(relay_only, CARRIER_ALPN),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (mut send, mut recv) = connection.open_bi().await.unwrap();
+        send.write_all(b"through the relay").await.unwrap();
+        send.finish().unwrap();
+        let data = tokio::time::timeout(Duration::from_secs(10), recv.read_to_end(64))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(data, b"through the relay");
+
+        // The relay-dialed connection moves to a direct path.
+        tokio::time::timeout(Duration::from_secs(15), async {
+            while !connection
+                .paths()
+                .iter()
+                .any(|path| path.is_selected() && path.is_ip())
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        connection.close(0u32.into(), b"done");
+        tokio::time::timeout(Duration::from_secs(5), echoed)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // A peer whose only transport is the relay: the echo can only cross the
+        // relay, and the selected path is checked while the connection is open.
+        let relay_peer = Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .secret_key(SecretKey::from_bytes(&[154; 32]))
+            .relay_mode(iroh::RelayMode::Custom(relay_map.clone()))
+            .ca_tls_config(iroh_relay::tls::CaTlsConfig::insecure_skip_verify())
+            .transport_config(carrier_transport_config())
+            .alpns(vec![CARRIER_ALPN.to_vec()])
+            .clear_ip_transports()
+            .bind()
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), relay_peer.online())
+            .await
+            .unwrap();
+        let carrier_endpoint = carrier.clone();
+        let relay_echoed = tokio::spawn(async move {
+            let connection = carrier_endpoint.accept().await.unwrap().await.unwrap();
+            let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+            let data = recv.read_to_end(64).await.unwrap();
+            send.write_all(&data).await.unwrap();
+            send.finish().unwrap();
+            connection.closed().await;
+        });
+        let relay_connection = tokio::time::timeout(
+            Duration::from_secs(10),
+            relay_peer.connect(
+                iroh::EndpointAddr::new(carrier.id()).with_relay_url(relay_url),
+                CARRIER_ALPN,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (mut send, mut recv) = relay_connection.open_bi().await.unwrap();
+        send.write_all(b"only through the relay").await.unwrap();
+        send.finish().unwrap();
+        let data = tokio::time::timeout(Duration::from_secs(10), recv.read_to_end(64))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(data, b"only through the relay");
+        let paths = relay_connection.paths();
+        assert!(paths
+            .iter()
+            .find(|path| path.is_selected())
+            .is_some_and(|path| path.is_relay()));
+        assert!(!paths.iter().any(|path| path.is_selected() && path.is_ip()));
+
+        relay_connection.close(0u32.into(), b"done");
+        tokio::time::timeout(Duration::from_secs(5), relay_echoed)
+            .await
+            .unwrap()
+            .unwrap();
+        relay_peer.close().await;
+        peer.close().await;
+        carrier.close().await;
+    }
+
+    #[tokio::test]
     async fn carrier_client_close_keeps_borrowed_runtime_endpoint_usable() {
         let server = Endpoint::builder(iroh::endpoint::presets::Minimal)
             .alpns(vec![CARRIER_ALPN.to_vec()])
