@@ -533,6 +533,10 @@ globalThis.fetch = async (url, init = {}) => {
       });
     }
     if (body?.target === "browser") {
+      if (body.query?.browser_instance === renewalBrowserInstance && init.headers?.["x-elastos-browser-renew-token"] !== undefined) {
+        assert(init.headers?.["x-elastos-browser-renew-token"] === "browser-renewal-old-token",
+          "Browser renewal did not reach Runtime with the existing credential");
+      }
       if (body?.query?.browser_instance === renewalBrowserInstance) {
         renewalBrowserLaunchCount += 1;
         const renewalToken = renewalBrowserLaunchCount === 1
@@ -2580,6 +2584,7 @@ sendChildMessage("null", browserRenewalFrameWindow, secondRenewalRequest);
 sendChildMessage("null", shellFrameWindow, {
   type: "home:launch-target",
   requestId: "launch-browser-renewal-fresh",
+  renewHomeToken: "browser-renewal-old-token",
   target: "browser",
   query: { browser_instance: renewalBrowserInstance },
   homeToken: "gui-token",

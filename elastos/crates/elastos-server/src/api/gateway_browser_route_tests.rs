@@ -11975,7 +11975,7 @@ async fn browser_internet_inbox_manages_exact_grant_and_optional_app() {
 async fn browser_home_renewal_keeps_launch_page_and_close_binding() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    write_test_browser_capsule(dir.path(), BROWSER_CAPSULE_ID, "app", "Browser", None);
+    let state = browser_engine_attached_test_state(dir.path()).await;
     let manifest_path = dir.path().join("capsules/browser/capsule.json");
     let mut manifest: Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
@@ -11987,7 +11987,7 @@ async fn browser_home_renewal_keeps_launch_page_and_close_binding() {
     std::fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     let home = app_token_for_authority(dir.path(), HOME_CAPSULE_ID, &authority);
     let browser_instance = "browser:0123456789abcdef0123456789abcdef";
-    let app = gateway_router(browser_engine_attached_test_state(dir.path()).await);
+    let app = gateway_router(state);
     async fn launch(app: &Router, home: &str, previous: Option<&str>) -> String {
         let mut request = test_browser_request("localhost:61180", "http://localhost:61180")
             .method("POST")
