@@ -5200,7 +5200,7 @@ pub(crate) mod tests {
         let mb = 1_000_000;
         assert_eq!(
             components_summary(30, 30, 110 * mb, 1040 * mb),
-            "Components: 30 selected, 30 to install (1.2 GB to download: 110.0 MB for Home, 1.0 GB for Browser)"
+            "Components: 30 selected, 30 to install (1.15 GB to download: 110.0 MB for Home, 1.04 GB for Browser)"
         );
         assert_eq!(
             components_summary(30, 30, 110 * mb, 0),
@@ -5445,6 +5445,26 @@ pub(crate) mod tests {
     #[cfg(unix)]
     #[tokio::test(flavor = "current_thread")]
     async fn test_missing_managed_media_tools_fail_before_first_component_install_effect() {
+        const CHILD: &str = "ELASTOS_TEST_MISSING_MEDIA_TOOLS_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // This fixture needs an empty PATH. Keep that environment in its
+            // own process so parallel tests can still launch their tools.
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "setup::tests::test_missing_managed_media_tools_fail_before_first_component_install_effect",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("PATH", "")
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "isolated media-tools fixture failed: {status}"
+            );
+            return;
+        }
         let _guard = ENV_LOCK.lock().await;
         let temp = tempfile::tempdir().unwrap();
         let xdg_data_home = temp.path().join("xdg-data");
@@ -5485,9 +5505,7 @@ pub(crate) mod tests {
         // poisons concurrently running tests through process-global env.
         let data_dir = xdg_data_home.join("elastos");
         let original_manifest = std::env::var_os(COMPONENTS_MANIFEST_ENV);
-        let original_path = std::env::var_os("PATH");
         std::env::set_var(COMPONENTS_MANIFEST_ENV, &manifest_path);
-        std::env::set_var("PATH", "");
 
         let result = run_with_data_dir(
             data_dir.clone(),
@@ -5503,10 +5521,6 @@ pub(crate) mod tests {
         match original_manifest {
             Some(value) => std::env::set_var(COMPONENTS_MANIFEST_ENV, value),
             None => std::env::remove_var(COMPONENTS_MANIFEST_ENV),
-        }
-        match original_path {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
         }
 
         assert!(result.unwrap_err().to_string().contains("media-tools"));
