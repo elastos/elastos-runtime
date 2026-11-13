@@ -93,6 +93,7 @@ try {
       await page.evaluate(origin => {
         const frame = window.document.createElement('iframe');
         frame.id = 'wc-real-preflight';
+        frame.style = 'position:fixed;inset:0;width:100%;height:100%;z-index:2147483647';
         frame.sandbox = 'allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts';
         frame.src = `${origin}/apps/wallet-walletconnect/wc-real.html`;
         window.document.body.append(frame);
@@ -101,7 +102,7 @@ try {
       assert.equal(run.csp, expectedCsp);
       frame = await (await page.waitForSelector('#wc-real-preflight', {timeout:10000})).contentFrame();
       assert.ok(frame);
-      run.phase = 'runtime-store';
+      run.phase = 'qr-render';
       await frame.waitForFunction(() => {
         if (window.failed) return true;
         const canvas = document.querySelector('dialog[open] canvas');
@@ -112,17 +113,17 @@ try {
           if (pixels[i+3] === 255) { black ||= pixels[i] < 10; white ||= pixels[i] > 240; }
         }
         return black && white;
-      }, null, {timeout:20000});
+      }, null, {timeout:20000, polling:100});
       assert.equal(await frame.evaluate(() => window.failed), undefined);
       assert.equal(await frame.evaluate(() => self.origin), 'null');
       assert.equal(await frame.locator('dialog[open] canvas').count(), 1);
       run.qr = 'PASS';
       run.phase = 'pairing';
-      await frame.waitForFunction(() => typeof window.pairingUri === 'string', null, {timeout:10000});
+      await frame.waitForFunction(() => typeof window.pairingUri === 'string', null, {timeout:10000, polling:100});
       const uri = await frame.evaluate(() => window.pairingUri);
       await bounded(wallet.core.pairing.pair({uri}));
       const session = await bounded(approved, 30000);
-      await frame.waitForFunction(() => window.provider?.connected || window.failed, null, {timeout:20000});
+      await frame.waitForFunction(() => window.provider?.connected || window.failed, null, {timeout:20000, polling:100});
       assert.equal(await frame.evaluate(() => window.failed), undefined);
       assert.equal(await frame.evaluate(() => window.provider.session.topic), session.topic);
       await bounded(wallet.ping({topic:session.topic}));
@@ -132,7 +133,7 @@ try {
         run.phase = phase;
         if (phase === 'homeRestart') await restart();
         await frame.evaluate(() => location.reload());
-        await frame.waitForFunction(() => window.provider?.connected || window.failed, null, {timeout:30000});
+        await frame.waitForFunction(() => window.provider?.connected || window.failed, null, {timeout:30000, polling:100});
         assert.equal(await frame.evaluate(() => window.failed), undefined);
         assert.equal(await frame.evaluate(() => window.provider.session.topic), session.topic);
         assert.equal(await frame.locator('dialog[open] canvas').count(), 0);
@@ -145,7 +146,8 @@ try {
       run.protocolInShim = false;
       for (const kind of ['pairing', 'keychain', 'session']) assert.ok(run.runtimeWrites[kind] > 0, `${kind} persisted through Runtime`);
       run.status = 'PASS';
-    } catch {
+    } catch (error) {
+      run.failureKind = ['TimeoutError','AssertionError','Error'].includes(error.name) ? error.name : 'Error';
       run.status = 'FAIL';
     } finally {
       if (frame) {
