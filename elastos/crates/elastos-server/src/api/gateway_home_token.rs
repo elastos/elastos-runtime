@@ -66,6 +66,8 @@ impl HomeLaunchContext {
 struct HomeLaunchTokenPayload {
     schema: String,
     launch_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    renewal_nonce: Option<String>,
     launch_context: HomeLaunchContext,
     iat: u64,
     exp: u64,
@@ -296,6 +298,24 @@ fn issue_home_launch_token_at(
     issued_at: u64,
     grant_expires_at: Option<u64>,
 ) -> anyhow::Result<String> {
+    issue_home_launch_token_at_with_identity(
+        data_dir,
+        launch_context,
+        context,
+        issued_at,
+        grant_expires_at,
+        None,
+    )
+}
+
+fn issue_home_launch_token_at_with_identity(
+    data_dir: &std::path::Path,
+    launch_context: &HomeLaunchContext,
+    context: &HomeLaunchTokenContext,
+    issued_at: u64,
+    grant_expires_at: Option<u64>,
+    previous_launch_id: Option<&str>,
+) -> anyhow::Result<String> {
     launch_context.validate()?;
     if context.principal_id.trim().is_empty()
         || context.session_id.trim().is_empty()
@@ -313,7 +333,10 @@ fn issue_home_launch_token_at(
     let envelope = HomeLaunchTokenEnvelope {
         payload: HomeLaunchTokenPayload {
             schema: HOME_LAUNCH_TOKEN_SCHEMA.to_string(),
-            launch_id: format!("launch:{}", uuid_like_token()),
+            launch_id: previous_launch_id
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("launch:{}", uuid_like_token())),
+            renewal_nonce: previous_launch_id.map(|_| uuid_like_token()),
             launch_context: launch_context.clone(),
             iat: issued_at,
             exp: expires_at,
@@ -782,6 +805,16 @@ fn require_home_launch_token_value_from_expected_did(
     expected_did: String,
     auth_data_dir: &std::path::Path,
 ) -> anyhow::Result<RequiredHomeLaunchToken> {
+    validate_home_launch_token_value(token, allowed_apps, expected_did, auth_data_dir, false)
+}
+
+fn validate_home_launch_token_value(
+    token: &str,
+    allowed_apps: &[&str],
+    expected_did: String,
+    auth_data_dir: &std::path::Path,
+    allow_expired: bool,
+) -> anyhow::Result<RequiredHomeLaunchToken> {
     let token = token.trim();
     if token.is_empty() || token.len() > 16 * 1024 {
         anyhow::bail!("invalid home launch token encoding");
@@ -803,6 +836,14 @@ fn require_home_launch_token_value_from_expected_did(
     if !valid_home_launch_id(&envelope.payload.launch_id) {
         anyhow::bail!("home launch token has an invalid launch id");
     }
+    if envelope
+        .payload
+        .renewal_nonce
+        .as_ref()
+        .is_some_and(|nonce| nonce.len() != 32 || !nonce.chars().all(|ch| ch.is_ascii_hexdigit()))
+    {
+        anyhow::bail!("home launch token has an invalid renewal nonce");
+    }
     if !allowed_apps
         .iter()
         .any(|app| envelope.payload.launch_context.executable_actor == *app)
@@ -810,7 +851,7 @@ fn require_home_launch_token_value_from_expected_did(
         anyhow::bail!("home launch token is not authorized for this provider");
     }
     let now = now_ts();
-    if envelope.payload.exp <= now {
+    if envelope.payload.exp <= now && !allow_expired {
         return Err(anyhow::Error::from(HomeLaunchTokenError::Expired));
     }
     if envelope.payload.iat > now.saturating_add(60)
@@ -874,6 +915,49 @@ fn require_home_launch_token_value_from_expected_did(
             grant_id: envelope.payload.grant_id,
         },
     })
+}
+
+/// Home renews the credential for its existing Browser window. The page,
+/// Internet-use scope and cleanup continue to share their original launch ID.
+pub(in crate::api) fn renew_browser_launch_for_home(
+    data_dir: &std::path::Path,
+    headers: &HeaderMap,
+    target: &str,
+    context: &HomeLaunchTokenContext,
+) -> anyhow::Result<Option<String>> {
+    let Some(previous) = single_browser_header(headers, "x-elastos-browser-renew-token")? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        target == BROWSER_CAPSULE_ID,
+        "Browser renewal requires the Browser target"
+    );
+    let expected_did = load_existing_gateway_runtime_did(data_dir)
+        .ok_or_else(|| anyhow::anyhow!("gateway identity is unavailable"))?;
+    // Only this Home-authorized path accepts an expired credential. Its signed
+    // scope still needs the same active grant as the current Home authority.
+    let old = validate_home_launch_token_value(
+        previous,
+        &[BROWSER_CAPSULE_ID],
+        expected_did,
+        &home_launch_auth_data_dir(data_dir),
+        true,
+    )?;
+    anyhow::ensure!(
+        old.context == *context
+            && old.launch_context
+                == HomeLaunchContext::projection(BROWSER_CAPSULE_ID, BROWSER_CAPSULE_ID),
+        "Browser renewal authority changed"
+    );
+    issue_home_launch_token_at_with_identity(
+        data_dir,
+        &old.launch_context,
+        context,
+        now_ts(),
+        None,
+        Some(&old.launch_id),
+    )
+    .map(Some)
 }
 
 fn require_launch_token_schema(bytes: &[u8]) -> anyhow::Result<()> {
@@ -1142,6 +1226,65 @@ mod tests {
         envelope.payload.proof_binding_id = context.proof_binding_id.clone();
         envelope.payload.grant_id = context.grant_id.clone();
         sign_launch_token_for_test(data_dir, envelope, HOME_LAUNCH_TOKEN_DOMAIN)
+    }
+
+    #[test]
+    fn browser_renewal_preserves_identity_and_validates_stored_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let context = local_home_launch_token_context(dir.path()).unwrap();
+        let old = issue_home_projection_launch_token_with_context(
+            dir.path(),
+            BROWSER_CAPSULE_ID,
+            BROWSER_CAPSULE_ID,
+            &context,
+        )
+        .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-elastos-browser-renew-token", old.parse().unwrap());
+        let fresh =
+            renew_browser_launch_for_home(dir.path(), &headers, BROWSER_CAPSULE_ID, &context)
+                .unwrap()
+                .unwrap();
+        assert_ne!(old, fresh);
+        assert_eq!(
+            decode_launch_token(&old).payload.launch_id,
+            decode_launch_token(&fresh).payload.launch_id
+        );
+        require_carried_home_launch_token(dir.path(), &fresh, &[BROWSER_CAPSULE_ID]).unwrap();
+        assert!(
+            renew_browser_launch_for_home(dir.path(), &headers, INBOX_CAPSULE_ID, &context)
+                .is_err()
+        );
+        let other = HomeLaunchTokenContext {
+            principal_id: "person:other".into(),
+            ..context.clone()
+        };
+        assert!(
+            renew_browser_launch_for_home(dir.path(), &headers, BROWSER_CAPSULE_ID, &other)
+                .is_err()
+        );
+        let mut expired = decode_launch_token(&old);
+        expired.payload.iat = now_ts() - HOME_LAUNCH_TOKEN_TTL_SECS - 1;
+        expired.payload.exp = now_ts() - 1;
+        let expired = sign_launch_token_for_test(dir.path(), expired, HOME_LAUNCH_TOKEN_DOMAIN);
+        assert!(
+            require_carried_home_launch_token(dir.path(), &expired, &[BROWSER_CAPSULE_ID]).is_err()
+        );
+        headers.insert("x-elastos-browser-renew-token", expired.parse().unwrap());
+        let fresh =
+            renew_browser_launch_for_home(dir.path(), &headers, BROWSER_CAPSULE_ID, &context)
+                .unwrap()
+                .unwrap();
+        require_carried_home_launch_token(dir.path(), &fresh, &[BROWSER_CAPSULE_ID]).unwrap();
+        let mut tampered = decode_launch_token(&old);
+        tampered.payload.launch_id = format!("launch:{}", "f".repeat(32));
+        let tampered = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&tampered).unwrap());
+        headers.insert("x-elastos-browser-renew-token", tampered.parse().unwrap());
+        assert!(
+            renew_browser_launch_for_home(dir.path(), &headers, BROWSER_CAPSULE_ID, &context)
+                .is_err()
+        );
     }
 
     #[test]

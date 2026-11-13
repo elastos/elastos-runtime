@@ -1500,7 +1500,7 @@ export function renewBrowserWindowAuthority(id, options = {}) {
   let renewal;
   renewal = Promise.resolve()
     .then(() =>
-      requireWindowHooks().launchTarget("browser", launchQuery, options),
+      requireWindowHooks().launchTarget("browser", launchQuery, { ...options, renewHomeToken: currentAuthority.homeToken }),
     )
     .then(async (launched) => {
       if (shellState.windows.get(id) !== entry) {

@@ -2116,7 +2116,7 @@ async function commitBrowserAuthority(event) {
     if (unloadCleanupStarted || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed || unsettledRuntimeOpen) {
       throw new Error("Browser is finishing its current action. Try again in a moment.");
     }
-    // Old-launch observations cannot retire a page after Runtime transfers it.
+    // Old-launch observations cannot retire a page during credential renewal.
     stopPageStatusPolling();
     stopPageHeartbeat();
     const freshApi = createRuntimeApi({ launchToken: data.freshHomeToken });
@@ -2126,15 +2126,15 @@ async function commitBrowserAuthority(event) {
     if (!previousSummary?.principal_id || summary?.principal_id !== previousSummary.principal_id) {
       throw new Error("Browser account changed. Open Browser from Home to continue.");
     }
-    const retained = recoverableRuntimePage(summary);
-    if (retained?.recovery_state === "active") {
-      if (!sameRuntimePageOwner(runtimePageOwner(retained, currentPageGeneration), currentRuntimePageOwner())) {
-        throw new Error("Browser page ownership changed during renewal.");
-      }
-      await freshApi.fetchJson(`/api/apps/browser/pages/${encodeURIComponent(retained.page_id)}/restore`, {
-        method: "POST", body: { cleanup_id: retained.runtime_cleanup.id, browser_instance: browserInstanceId },
-        signal: AbortSignal.timeout(10000),
-      });
+    const launchIdentity = token => {
+      try {
+        const payload = JSON.parse(atob(token.replace(/-/g, "+").replace(/_/g, "/"))).payload;
+        return /^launch:[a-f0-9]{32}$/.test(payload?.launch_id) ? payload.launch_id : "";
+      } catch { return ""; }
+    };
+    const previousIdentity = launchIdentity(launchToken);
+    if (!previousIdentity || previousIdentity !== launchIdentity(data.freshHomeToken)) {
+      throw new Error("Home could not refresh this Browser session. Update Home, then try again.");
     }
     if (unloadCleanupStarted || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) {
       throw new Error("Browser closed during renewal.");

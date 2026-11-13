@@ -556,7 +556,7 @@ async function showHostAuthGate(options = {}) {
   await unlockReady;
 }
 
-async function launchHomeTarget(target, query = {}) {
+async function launchHomeTarget(target, query = {}, { renewHomeToken = "" } = {}) {
   const pickerOwner = target === "library" && query.pickerRequestId
     ? [...launchedAppContexts.values()].map((context) => context.pickerRequest)
       .find((record) => record?.id === query.pickerRequestId && currentLibraryPicker(record))
@@ -575,6 +575,7 @@ async function launchHomeTarget(target, query = {}) {
     ? createHomeBackgroundImageReader() : null;
   const launched = await fetchJson("/api/apps/home/launch", {
     method: "POST",
+    ...(renewHomeToken ? { headers: { "x-elastos-browser-renew-token": renewHomeToken } } : {}),
     body: JSON.stringify(body),
   });
   if (launched?.attach_kind === "iframe") {
@@ -1915,7 +1916,19 @@ window.addEventListener("message", (event) => {
       return;
     }
     const query = data.query && typeof data.query === "object" ? data.query : {};
-    launchHomeTarget(target, query)
+    let renewHomeToken = "";
+    if (Object.hasOwn(data, "renewHomeToken")) {
+      const old = launchedAppContexts.get(data.renewHomeToken);
+      if (context.targetId !== HOME_GUI_SHELL_ID || target !== "browser" ||
+          !hasExactMessageKeys(data, ["type", "requestId", "target", "query", "homeToken", "renewHomeToken"]) ||
+          typeof data.renewHomeToken !== "string" || !data.renewHomeToken || data.renewHomeToken.length > 4096 ||
+          old?.targetId !== "browser" || !old.source || old.browserInstance !== query.browser_instance) {
+        replyToShellRequest(event, requestId, null, new Error("Home denied the Browser renewal"));
+        return;
+      }
+      renewHomeToken = data.renewHomeToken;
+    }
+    launchHomeTarget(target, query, { renewHomeToken })
       .then((launched) => replyToShellRequest(event, requestId, launched))
       .catch((error) => replyToShellRequest(event, requestId, null, error));
     return;

@@ -36,6 +36,11 @@ async function screen(page, name) {
   await page.waitForTimeout(250);
   await page.screenshot({path:`${process.env.BROWSER_INTERNET_SCREENSHOTS}/${process.env.BROWSER_INTERNET_SCREEN_THEME === "dark" ? "dark-" : ""}${name}.png`});
 }
+function launchScope(token) {
+  try { return JSON.parse(Buffer.from(token,"base64url").toString()).payload.launch_id; }
+  catch { return token; }
+}
+
 async function fixture() {
   const state = {consent:"off", expired:false, grantedRequestId:"fixture", requests:0, requestAttempts:0, stopPending:false, reads:0, failedReads:0, opens:[], actions:[], navigations:[]};
   const server=http.createServer(async (req,res) => {
@@ -66,8 +71,8 @@ async function fixture() {
         core.shellState.browserContextId='browser:0123456789abcdef0123456789abcdef';
         let serial=0;
         windows.configureWindowHooks({clearIdentitySurface(){},refreshLauncherIfVisible(){},hideLauncher(){},renderDesktop(){},renderTaskbar(){},updateTaskbarState(){},syncMenubar(){},
-          launchTarget:async(target,query)=>({target,title:target,attach_kind:'iframe',launch_status:'launched',
-            route:'/apps/'+target+'/?'+new URLSearchParams({...query,home_origin:location.origin})+'#home_token=fixture-'+(++serial)})});
+          launchTarget:async(target,query,options)=>({target,title:target,attach_kind:'iframe',launch_status:'launched',
+            route:'/apps/'+target+'/?'+new URLSearchParams({...query,home_origin:location.origin})+'#home_token='+btoa(JSON.stringify({payload:{launch_id:options?.renewHomeToken ? JSON.parse(atob(options.renewHomeToken)).payload.launch_id : 'launch:'+String(++serial).padStart(32,'0'),renewal_nonce:++serial}})).replace(/=+$/,'')})});
         addEventListener('message',e=>{
           if(e.source!==window.top)return;
           const action=e.data?.fixtureAction;
@@ -123,6 +128,10 @@ async function fixture() {
       json({ok:true});return;
     }
     if (url.pathname === "/api/apps/browser/summary") {
+      if(state.releaseStaleStatus && req.headers["x-elastos-home-token"]!==state.ownerToken) {
+        state.releaseStaleStatus();state.releaseStaleStatus=null;
+        await new Promise(resolve=>setTimeout(resolve,75));
+      }
       json({principal_id:state.principal||"person:fixture:alice",net:{exit_provider:{remote_carrier_exits:[{id:"sasha-exit",display_name:"A shared Exit",contact_name:"Sasha",allowed_for_principal:true},{id:"legacy-exit",display_name:"A service label",allowed_for_principal:true}]}},engine_adapter:{adapters:[],display_attach_supported:true},sessions:{schema:"elastos.browser.session-capacity/v1",status:"configured",fresh_start_allowed:true,recoverable_page:state.recoverableUrl && state.principal!=="person:fixture:bob" ? {
         schema:"elastos.browser.recoverable-page/v1",state:"active",page_id:"retained",
         cleanup:{schema:"elastos.browser.cleanup-handle/v1",id:"cleanup-retained"},
@@ -136,22 +145,11 @@ async function fixture() {
         const defer=state.deferStatus;state.deferStatus=null;
         await new Promise(resolve=>defer(resolve));res.writeHead(404).end();return;
       }
-      if(state.bindOwners && req.headers["x-elastos-home-token"]!==state.ownerToken){res.writeHead(404).end();return;}
+      if(state.bindOwners && launchScope(req.headers["x-elastos-home-token"])!==launchScope(state.ownerToken)){res.writeHead(404).end();return;}
       json({schema:"elastos.browser.page-status/v1",page_id:"retained",direct_network:false,actual_url:state.recoverableUrl});return;
     }
-    if (url.pathname === "/api/apps/browser/pages/retained/restore") {
-      assert.equal(input.cleanup_id,"cleanup-retained");
-      assert.match(input.browser_instance,/^browser:/);
-      state.ownerToken=req.headers["x-elastos-home-token"];
-      state.restores=(state.restores||0)+1;
-      if(state.releaseStaleStatus) {
-        state.releaseStaleStatus();state.releaseStaleStatus=null;
-        await new Promise(resolve=>setTimeout(resolve,75));
-      }
-      json({ok:true});return;
-    }
     if (url.pathname === "/api/apps/browser/pages/retained/input") {
-      if(state.bindOwners && req.headers["x-elastos-home-token"]!==state.ownerToken){res.writeHead(404).end();return;}
+      if(state.bindOwners && launchScope(req.headers["x-elastos-home-token"])!==launchScope(state.ownerToken)){res.writeHead(404).end();return;}
       state.navigations.push(input.event);state.recoverableUrl=input.event.url;json({accepted:true});return;
     }
     if (url.pathname === "/api/apps/browser/pages/retained/close") {
@@ -630,7 +628,7 @@ test("566e renewing authority preserves the current page and does not repeat the
         f.state.principal="person:fixture:bob";
         await assert.rejects(gui.evaluate(async()=>{const {core,windows}=fixtureShell;
           await windows.renewBrowserWindowAuthority([...core.shellState.windows.keys()][0]);}),/could not renew/);
-        assert.equal(f.state.restores,0,"an account change transfers no retained page");
+        assert.equal(f.state.opens.length,opens,"an account change opens no page");
         f.state.principal="person:fixture:alice";
       }
       await gui.evaluate(async()=>{const {core,windows}=fixtureShell;await windows.renewBrowserWindowAuthority([...core.shellState.windows.keys()][0]);});
@@ -639,7 +637,7 @@ test("566e renewing authority preserves the current page and does not repeat the
         "renewal leaves Desktop visible instead of opening Inbox again");
       assert.equal(f.state.requests,requests,"renewal with access off files no request");
       assert.equal(f.state.opens.length,opens,"renewal with access on does not navigate to the first URL");
-      assert.equal(f.state.restores,1,"Runtime binds the retained page to the new launch once");
+      assert.equal(launchScope(new URL(await node.getAttribute("data-route"),"http://fixture.local").hash.slice("#home_token=".length)),launchScope(f.state.ownerToken),"renewal keeps the page and Internet-use launch identity");
       const frame=gui.frameLocator('iframe[title="browser"]');
       assert.equal(await (await node.contentFrame()).evaluate(()=>window.renewalDocument),documentId,
         "renewal retains the Browser document, its address and pending navigation");

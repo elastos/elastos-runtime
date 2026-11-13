@@ -466,7 +466,7 @@ bindHomeGuiInteractions({
     postToHome({ type: "home:refresh-summary" });
   },
   launchTarget: (target, query, options) =>
-    requestHome("home:launch-target", { target, query }, options),
+    requestHome("home:launch-target", { target, query, ...(options?.renewHomeToken ? { renewHomeToken: options.renewHomeToken } : {}) }, options),
   signOut: () => requestHome("home:sign-out"),
 });
 setHomeGuiMounted(true);

@@ -1984,61 +1984,6 @@ pub(in crate::api::gateway) async fn browser_pending_stream_cleanup_for_engine(
         .map(|obligation| obligation.cleanup.clone())
 }
 
-/// Runtime transfers an existing page only against its stored cleanup and window
-/// binding. The VM, transport generation and provider cleanup remain unchanged.
-pub(in crate::api::gateway) async fn restore_browser_page_owner(
-    data_dir: &Path,
-    page_id: &str,
-    principal_id: &str,
-    owner_launch_id: &str,
-    cleanup_id: &str,
-    browser_instance: &str,
-) -> Result<bool, String> {
-    let scope = browser_session_scope(data_dir);
-    let mut registry = BROWSER_SESSION_REGISTRY
-        .get_or_init(Default::default)
-        .lock()
-        .await;
-    let Some(session) = registry.sessions.values_mut().find(|session| {
-        session.scope == scope
-            && session.principal_id == principal_id
-            && session.page_id.as_deref() == Some(page_id)
-            && session.cleanup_id == cleanup_id
-            && session.browser_instance.as_deref() == Some(browser_instance)
-            && session.state == BrowserSessionState::Active
-            && session.phase != BrowserLifecyclePhase::Retiring
-    }) else {
-        return Ok(false);
-    };
-    let mut jobs = BROWSER_OPEN_JOB_REGISTRY
-        .get_or_init(Default::default)
-        .lock()
-        .await;
-    let matching_job = |job: &BrowserOpenJobRecord| {
-        job.scope == scope
-            && job.principal_id == principal_id
-            && job.owner_launch_id == session.owner_launch_id
-            && job.browser_instance.as_deref() == Some(browser_instance)
-    };
-    if jobs
-        .jobs
-        .values()
-        .any(|job| matching_job(job) && matches!(job.state, BrowserOpenJobState::Pending))
-    {
-        return Err("Browser is still opening its page. Try again in a moment.".into());
-    }
-    let mut ownership =
-        browser_durable_ownership(session).ok_or("Browser cleanup authority is incomplete")?;
-    ownership.engine_cleanup.owner_launch_id = owner_launch_id.to_string();
-    write_browser_durable_ownership(data_dir, &ownership)?;
-    for job in jobs.jobs.values_mut().filter(|job| matching_job(job)) {
-        job.owner_launch_id = owner_launch_id.to_string();
-    }
-    session.owner_launch_id = owner_launch_id.to_string();
-    session.last_seen_at = Instant::now();
-    Ok(true)
-}
-
 pub(in crate::api::gateway) async fn touch_browser_page(
     data_dir: &Path,
     page_id: &str,
