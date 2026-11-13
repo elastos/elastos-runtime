@@ -12107,12 +12107,13 @@ async fn browser_home_renewal_keeps_launch_page_and_close_binding() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK, "renewed {suffix}");
     }
+    let foreign_token = launch(&launch_app, &home, None).await;
     let foreign = app
         .clone()
         .oneshot(
             test_browser_request("localhost:61180", "null")
                 .uri("/api/apps/browser/summary?browser_instance=browser%3Afedcba9876543210fedcba9876543210")
-                .header("x-elastos-home-token", refreshed_token.clone())
+                .header("x-elastos-home-token", foreign_token)
                 .body(Body::empty())
                 .unwrap(),
         )
