@@ -554,10 +554,12 @@ fn test_marketplace_lists_walletconnect_only_once_its_config_is_pinned() {
 async fn test_walletconnect_connector_accepts_pinned_config() {
     let dir = tempfile::tempdir().unwrap();
     seed_walletconnect_connector_config(dir.path());
-    let context = local_home_launch_token_context(dir.path()).unwrap();
-    let token =
-        issue_home_launch_token_with_context(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &context)
-            .unwrap();
+    let authority = passkey_authority(dir.path());
+    let token = projection_launch_token_for_authority_context(
+        dir.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &authority,
+    );
     let provider = MockWalletProvider::default();
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
 
@@ -584,10 +586,12 @@ async fn test_walletconnect_connector_accepts_pinned_config() {
 async fn test_walletconnect_connector_config_returns_pinned_sdk_contract() {
     let dir = tempfile::tempdir().unwrap();
     seed_walletconnect_connector_config(dir.path());
-    let context = local_home_launch_token_context(dir.path()).unwrap();
-    let token =
-        issue_home_launch_token_with_context(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &context)
-            .unwrap();
+    let authority = passkey_authority(dir.path());
+    let token = projection_launch_token_for_authority_context(
+        dir.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &authority,
+    );
     let provider = MockWalletProvider::default();
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
 
