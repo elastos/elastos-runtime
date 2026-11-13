@@ -12,7 +12,7 @@ function assertWorkspaceSelection(source) {
   assert.ok(commands.length > 0, 'Cargo test commands exist');
   for (const command of commands) {
     assert.match(command, /^--workspace(?: |$)/, 'reuse the workspace feature graph');
-    assert.doesNotMatch(command, /(?:^| )(?:-p|--package|--exclude|--features|--no-default-features|--all-features|--profile|--release)(?: |$)/,
+    assert.doesNotMatch(command, /(?:^| )(?:-p\S*|-F\S*|--(?:package|exclude|features|no-default-features|all-features|profile|release)(?:=\S*)?)(?: |$)/,
       'keep the same package, feature and profile selection');
   }
 }
@@ -29,4 +29,11 @@ test('capsule browser CI and recipe reuse the workspace test build', () => {
 test('a package-only browser invocation changes the feature graph', () => {
   assert.throws(() => assertWorkspaceSelection('cargo test -p elastos-server content_sandbox_browser -- --ignored'),
     /reuse the workspace feature graph/);
+});
+
+test('feature and profile flag variants also change the build selection', () => {
+  for (const flag of ['--features=x', '-F x', '--profile=release', '-pelastos-server']) {
+    assert.throws(() => assertWorkspaceSelection(`cargo test --workspace ${flag} content_sandbox_browser -- --ignored`),
+      /keep the same package, feature and profile selection/);
+  }
 });
