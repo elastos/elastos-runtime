@@ -589,7 +589,7 @@ test("566c Inbox Allow brings a fullscreen Browser back into view", async () => 
 test("566e renewing authority preserves the current page and does not repeat the first open", async t => {
   const f=await fixture();const browser=await chromium.launch({headless:true});
   try {
-    for(const consent of ["off","granted","pending"]) await t.test(consent, async subtest => {
+    for(const consent of ["off","granted","pending","late response"]) await t.test(consent, async subtest => {
       subtest.after(async()=>{for(const context of browser.contexts())await context.close();});
       subtest.after(()=>f.state.releaseStaleStatus?.());
       f.state.consent="granted";f.state.expired=false;f.state.completeOpen=true;
@@ -626,11 +626,13 @@ test("566e renewing authority preserves the current page and does not repeat the
       }
       const requests=f.state.requests, opens=f.state.opens.length;
       await page.evaluate(()=>messages=[]);await gui.evaluate(()=>fixtureShell.windows.showDesktopHome());
-      f.state.principal="person:fixture:bob";
-      await assert.rejects(gui.evaluate(async()=>{const {core,windows}=fixtureShell;
-        await windows.renewBrowserWindowAuthority([...core.shellState.windows.keys()][0]);}),/could not renew/);
-      assert.equal(f.state.restores,0,"an account change transfers no retained page");
-      f.state.principal="person:fixture:alice";
+      if(consent!=="late response") {
+        f.state.principal="person:fixture:bob";
+        await assert.rejects(gui.evaluate(async()=>{const {core,windows}=fixtureShell;
+          await windows.renewBrowserWindowAuthority([...core.shellState.windows.keys()][0]);}),/could not renew/);
+        assert.equal(f.state.restores,0,"an account change transfers no retained page");
+        f.state.principal="person:fixture:alice";
+      }
       await gui.evaluate(async()=>{const {core,windows}=fixtureShell;await windows.renewBrowserWindowAuthority([...core.shellState.windows.keys()][0]);});
       await page.waitForTimeout(2500);
       assert.equal(await gui.locator('.window[data-target="inbox"]').isVisible(),false,
