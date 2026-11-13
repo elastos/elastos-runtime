@@ -143,6 +143,73 @@ async fn walletconnect_real_project_opens_through_runtime_and_exit() {
     println!("PASS: Runtime -> Exit harness -> authenticated Reown WSS upgrade and subscription; project file set; ephemeral localhost port; no 401/403");
 }
 
+// A separate process makes restart discard every gateway socket and global.
+#[tokio::test]
+#[ignore = "private worker for the real-relay paired recovery test"]
+async fn walletconnect_gateway_process_worker() {
+    let mut bytes = Vec::new();
+    std::io::Read::take(std::io::stdin(), 8192)
+        .read_to_end(&mut bytes)
+        .unwrap();
+    let input: Value = serde_json::from_slice(&bytes).unwrap();
+    let data = std::path::Path::new(input["data"].as_str().unwrap());
+    let addr = input["addr"].as_str().unwrap();
+    let mut state = test_state(data);
+    state.browser_internet = persistent_internet(data).await;
+    let registry = Arc::new(ProviderRegistry::new());
+    registry
+        .register_sub_provider(
+            "exit",
+            Arc::new(Exit {
+                path: data.join("real-relay.sock"),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+        )
+        .await
+        .unwrap();
+    state.provider_registry = Some(registry);
+    let app = gateway_router_with_api_url(state, format!("http://{addr}"));
+    let listener = TcpListener::bind(addr).await.unwrap();
+    println!("WC_GATEWAY_READY");
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn start_gateway_process(f: &Fixture) -> tokio::process::Child {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "api::gateway::gateway_tests::wallet::walletconnect::real_relay::walletconnect_gateway_process_worker", "--ignored", "--nocapture"])
+        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null()).kill_on_drop(true).spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&json!({"data":f.data.path(), "addr":f.addr})).unwrap())
+        .await
+        .unwrap();
+    let mut stdout = tokio::io::BufReader::new(child.stdout.take().unwrap());
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let mut count = 0;
+        loop {
+            let mut line = String::new();
+            let length = stdout.read_line(&mut line).await.unwrap();
+            count += length;
+            assert!(
+                length > 0 && count <= 32768,
+                "gateway worker failed before readiness"
+            );
+            if line.trim() == "WC_GATEWAY_READY" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("gateway worker startup timeout");
+    child.stdout = Some(stdout.into_inner());
+    child
+}
+
 #[tokio::test]
 #[ignore = "operator acceptance: real relay, pinned SDK, Playwright Chromium and WebKit"]
 async fn walletconnect_real_project_opaque_preflight() {
@@ -190,6 +257,9 @@ async fn walletconnect_real_project_opaque_preflight() {
     )
     .unwrap();
     f.allow().await;
+    f.gateway.abort();
+    let _ = (&mut f.gateway).await;
+    let mut gateway_process = start_gateway_process(&f).await;
     let restart_path = f.data.path().join("restart.sock");
     let restart = UnixListener::bind(&restart_path).unwrap();
     let input = serde_json::to_vec(&json!({
@@ -215,16 +285,10 @@ async fn walletconnect_real_project_opaque_preflight() {
                     let mut command = [0u8; 7];
                     tokio::time::timeout(Duration::from_secs(3), connection.read_exact(&mut command)).await.unwrap().unwrap();
                     assert_eq!(&command, b"restart");
-                    gateway_walletconnect::stop_for_restart_test(&f.state).await;
-                    f.gateway.abort(); let _ = (&mut f.gateway).await;
-                    let registry = f.state.provider_registry.clone();
-                    f.state = test_state(f.data.path());
-                    f.state.provider_registry = registry;
-                    f.state.browser_internet = persistent_internet(f.data.path()).await;
-                    let listener = TcpListener::bind(&f.addr).await.unwrap();
-                    f.app = gateway_router_with_api_url(f.state.clone(), format!("http://{}", f.addr));
-                    let app = f.app.clone();
-                    f.gateway = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+                    let previous = gateway_process.id();
+                    gateway_process.kill().await.unwrap();
+                    gateway_process = start_gateway_process(&f).await;
+                    assert_ne!(gateway_process.id(), previous, "restart requires a fresh gateway process");
                     connection.write_all(b"ready").await.unwrap();
                 }
             }
@@ -233,6 +297,7 @@ async fn walletconnect_real_project_opaque_preflight() {
     if result.is_err() {
         waiting.abort();
     }
+    gateway_process.kill().await.unwrap();
     let output = result.expect("real relay paired recovery timeout");
     println!("{}", String::from_utf8_lossy(&output.stdout));
     // The Node driver emits only bounded, value-free evidence. SDK diagnostics

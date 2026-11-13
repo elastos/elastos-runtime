@@ -414,21 +414,6 @@ pub(in crate::api::gateway) async fn expire_admissions_for_test(state: &GatewayS
         *expiry = 0;
     }
 }
-#[cfg(test)]
-pub(in crate::api::gateway) async fn stop_for_restart_test(state: &GatewayState) {
-    let mut inner = state.walletconnect.inner.lock().await;
-    inner.admissions.clear();
-    for socket in inner.sockets.values() {
-        socket.cancel.send_replace(true);
-    }
-    for socket in inner.sockets.values_mut() {
-        tokio::time::timeout(Duration::from_secs(3), socket.done.wait_for(|done| *done))
-            .await
-            .unwrap()
-            .unwrap();
-    }
-    inner.sockets.clear();
-}
 pub(super) async fn admission(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
     let result = async {
         let authority = connector_authority(&state, &headers)?;
