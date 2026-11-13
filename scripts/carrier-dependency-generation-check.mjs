@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -106,13 +106,24 @@ function requireReachable(metadata, graphName, source, target) {
 
 function inspectGraph(manifestPath, graphName) {
   const metadata = loadMetadata(manifestPath);
+  return {
+    manifest: relative(repoRoot, resolve(repoRoot, manifestPath)),
+    packages: inspectMetadata(metadata, graphName),
+  };
+}
+
+export function inspectMetadata(metadata, graphName) {
   const expected = new Map([
-    ["iroh", ["1.0.2"]],
+    ["iroh", ["1.4.1"]],
+    ["iroh-base", ["1.4.1"]],
+    ["iroh-dns", ["1.4.1"]],
+    ["iroh-relay", ["1.4.1"]],
     ["iroh-gossip", ["0.101.0"]],
     ["iroh-mdns-address-lookup", ["0.4.0"]],
     ["distributed-topic-tracker", ["0.3.5"]],
-    ["hickory-proto", ["0.26.1"]],
-    ["hickory-resolver", ["0.26.1"]],
+    ["hickory-proto", ["0.26.2"]],
+    ["hickory-resolver", []],
+    ["n0-dns-resolver", ["0.1.0"]],
     ["ed25519-dalek", ["2.2.0", "3.0.0-rc.0"]],
     ["crossbeam-epoch", ["0.9.20"]],
     ["quinn", ["0.11.9"]],
@@ -131,7 +142,7 @@ function inspectGraph(manifestPath, graphName) {
     metadata,
     graphName,
     { name: "distributed-topic-tracker", version: "0.3.5" },
-    { name: "iroh", version: "1.0.2" },
+    { name: "iroh", version: "1.4.1" },
   );
   requireReachable(
     metadata,
@@ -148,7 +159,7 @@ function inspectGraph(manifestPath, graphName) {
   requireReachable(
     metadata,
     graphName,
-    { name: "iroh", version: "1.0.2" },
+    { name: "iroh", version: "1.4.1" },
     { name: "ed25519-dalek", version: "3.0.0-rc.0" },
   );
   requireReachable(
@@ -158,95 +169,98 @@ function inspectGraph(manifestPath, graphName) {
     { name: "ed25519-dalek", version: "3.0.0-rc.0" },
   );
 
-  return {
-    manifest: relative(repoRoot, resolve(repoRoot, manifestPath)),
-    packages: Object.fromEntries(expected),
-  };
+  return Object.fromEntries(expected);
 }
 
-requireText(
-  "rust-toolchain.toml",
-  /^channel = "1\.91\.0"$/m,
-  "rust-toolchain.toml must pin Rust 1.91.0",
-);
-requireText(
-  "elastos/Cargo.toml",
-  /^rust-version = "1\.91"$/m,
-  "the workspace MSRV must be Rust 1.91",
-);
-// ci.yml pins actions by commit; the comment names the toolchain branch it came from.
-const ci = requireText(
-  ".github/workflows/ci.yml",
-  /dtolnay\/rust-toolchain@[0-9a-f]{40} # 1\.91\.0$/m,
-  "CI must install Rust 1.91.0",
-);
-const ciToolchains = [...ci.matchAll(/dtolnay\/rust-toolchain@(?:[0-9a-f]{40} # )?([^\s]+)/g)].map(
-  (match) => match[1],
-);
-if (
-  ciToolchains.length === 0 ||
-  ciToolchains.some((toolchain) => toolchain !== "1.91.0")
-) {
-  fail(`CI Rust toolchains must all be 1.91.0, got [${ciToolchains.join(", ")}]`);
-}
-requireText(
-  "scripts/setup-source-home.sh",
-  /minor < 91/,
-  "source-home setup must reject Rust older than 1.91",
-);
-for (const path of ["README.md", "docs/GETTING_STARTED.md", "elastos/README.md"]) {
-  requireText(path, /Rust 1\.91(\.0)?\+?|Rust 1\.91 or newer/, `${path} must document the Rust 1.91 floor`);
-}
-const serverManifest = requireText(
-  "elastos/crates/elastos-server/Cargo.toml",
-  /ed25519-dalek3 = \{ package = "ed25519-dalek", version = "=3\.0\.0-rc\.0" \}/,
-  "the Ed25519 3 transport boundary must remain explicit",
-);
-for (const declaration of [
-  /^iroh = "=1\.0\.2"$/m,
-  /^iroh-gossip = "=0\.101\.0"$/m,
-  /^iroh-mdns-address-lookup = "=0\.4\.0"$/m,
-  /^distributed-topic-tracker = "=0\.3\.5"$/m,
-]) {
-  if (!declaration.test(serverManifest)) {
-    fail(`server manifest is missing ${declaration}`);
+function main() {
+  requireText(
+    "rust-toolchain.toml",
+    /^channel = "1\.91\.0"$/m,
+    "rust-toolchain.toml must pin Rust 1.91.0",
+  );
+  requireText(
+    "elastos/Cargo.toml",
+    /^rust-version = "1\.91"$/m,
+    "the workspace MSRV must be Rust 1.91",
+  );
+  // ci.yml pins actions by commit; the comment names the toolchain branch it came from.
+  const ci = requireText(
+    ".github/workflows/ci.yml",
+    /dtolnay\/rust-toolchain@[0-9a-f]{40} # 1\.91\.0$/m,
+    "CI must install Rust 1.91.0",
+  );
+  const ciToolchains = [...ci.matchAll(/dtolnay\/rust-toolchain@(?:[0-9a-f]{40} # )?([^\s]+)/g)].map(
+    (match) => match[1],
+  );
+  if (
+    ciToolchains.length === 0 ||
+    ciToolchains.some((toolchain) => toolchain !== "1.91.0")
+  ) {
+    fail(`CI Rust toolchains must all be 1.91.0, got [${ciToolchains.join(", ")}]`);
   }
-}
-const carrierSource = requireText(
-  "elastos/crates/elastos-server/src/carrier.rs",
-  /ed25519_dalek3::SigningKey::from_bytes\(&sk_bytes\)/,
-  "tracker signing must cross the Ed25519 boundary as raw key bytes",
-);
-if (!/SecretKey::from_bytes\(&signing_key\.to_bytes\(\)\)/.test(carrierSource)) {
-  fail("Iroh signing must cross the Ed25519 boundary as raw key bytes");
-}
-
-// quick-xml 0.41.0 is the patched release for RUSTSEC-2026-0194/0195.
-const closedAdvisories = ["RUSTSEC-2026-0118", "RUSTSEC-2026-0119", "RUSTSEC-2026-0194", "RUSTSEC-2026-0195"];
-const auditConfigPath = resolve(repoRoot, "elastos/.cargo/audit.toml");
-const auditConfig = existsSync(auditConfigPath) ? readFileSync(auditConfigPath, "utf8") : "";
-for (const closed of closedAdvisories) {
-  if (auditConfig.includes(closed)) {
-    fail(`closed advisory ${closed} is still ignored`);
+  requireText(
+    "scripts/setup-source-home.sh",
+    /minor < 91/,
+    "source-home setup must reject Rust older than 1.91",
+  );
+  for (const path of ["README.md", "docs/GETTING_STARTED.md", "elastos/README.md"]) {
+    requireText(path, /Rust 1\.91(\.0)?\+?|Rust 1\.91 or newer/, `${path} must document the Rust 1.91 floor`);
   }
-}
+  const serverManifest = requireText(
+    "elastos/crates/elastos-server/Cargo.toml",
+    /ed25519-dalek3 = \{ package = "ed25519-dalek", version = "=3\.0\.0-rc\.0" \}/,
+    "the Ed25519 3 transport boundary must remain explicit",
+  );
+  for (const declaration of [
+    /^iroh = "=1\.4\.1"$/m,
+    /^iroh-gossip = "=0\.101\.0"$/m,
+    /^iroh-mdns-address-lookup = "=0\.4\.0"$/m,
+    /^distributed-topic-tracker = "=0\.3\.5"$/m,
+  ]) {
+    if (!declaration.test(serverManifest)) {
+      fail(`server manifest is missing ${declaration}`);
+    }
+  }
+  const carrierSource = requireText(
+    "elastos/crates/elastos-server/src/carrier.rs",
+    /ed25519_dalek3::SigningKey::from_bytes\(&sk_bytes\)/,
+    "tracker signing must cross the Ed25519 boundary as raw key bytes",
+  );
+  if (!/SecretKey::from_bytes\(&signing_key\.to_bytes\(\)\)/.test(carrierSource)) {
+    fail("Iroh signing must cross the Ed25519 boundary as raw key bytes");
+  }
 
-const report = {
-  schema: "elastos.carrier-dependency-generation-check/v1",
-  ok: true,
-  rust: "1.91.0",
-  graphs: [
-    inspectGraph("elastos/Cargo.toml", "Runtime workspace"),
-    inspectGraph("capsules/object-provider/Cargo.toml", "object-provider workspace"),
-  ],
-  advisory_disposition: {
-    closed: closedAdvisories,
-    accepted: [],
-    point_updates: {
-      "RUSTSEC-2026-0204": "crossbeam-epoch 0.9.20",
-      "RUSTSEC-2026-0185": "quinn-proto 0.11.15",
+  // quick-xml 0.41.0 is the patched release for RUSTSEC-2026-0194/0195.
+  const closedAdvisories = ["RUSTSEC-2026-0118", "RUSTSEC-2026-0119", "RUSTSEC-2026-0194", "RUSTSEC-2026-0195"];
+  const auditConfigPath = resolve(repoRoot, "elastos/.cargo/audit.toml");
+  const auditConfig = existsSync(auditConfigPath) ? readFileSync(auditConfigPath, "utf8") : "";
+  for (const closed of closedAdvisories) {
+    if (auditConfig.includes(closed)) {
+      fail(`closed advisory ${closed} is still ignored`);
+    }
+  }
+
+  const report = {
+    schema: "elastos.carrier-dependency-generation-check/v1",
+    ok: true,
+    rust: "1.91.0",
+    graphs: [
+      inspectGraph("elastos/Cargo.toml", "Runtime workspace"),
+      inspectGraph("capsules/object-provider/Cargo.toml", "object-provider workspace"),
+    ],
+    advisory_disposition: {
+      closed: closedAdvisories,
+      accepted: [],
+      point_updates: {
+        "RUSTSEC-2026-0204": "crossbeam-epoch 0.9.20",
+        "RUSTSEC-2026-0185": "quinn-proto 0.11.15",
+      },
     },
-  },
-};
+  };
 
-console.log(JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report, null, 2));
+}
+
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+  main();
+}
