@@ -76,18 +76,19 @@ for (const engine of ["chromium", "webkit"]) {
             s => s.setItem("wc@2:core:0.3//keychain", "fixture"),
             s => { s["wc@2:client:0.3//session"] = "fixture"; },
             s => Object.defineProperty(s, "wc@2:core:0.3//pairing", { value: "fixture" }),
+            s => Storage.prototype.setItem.call(s, "wc@2:core:0.3//keychain", "fixture"),
           ]) {
             try { write(window[name]); results.push("accepted"); }
             catch (error) { results.push(error.name); }
           }
           return results;
         });
-        assert.deepEqual(run.refusals, Array(6).fill("SecurityError"));
+        assert.deepEqual(run.refusals, Array(8).fill("SecurityError"));
         await frame.getByRole("button", { name: "Cancel", exact: true }).click();
         await actualFrame.waitForFunction(() => window.cancelled);
         assert.equal(await frame.locator("dialog").count(), 0);
         run.cancelled = true;
-        console.log(`PASS ${engine} ${width}: opaque SDK, QR, Runtime writes, native Storage parity, protocol refusal, Cancel`);
+        console.log(`PASS ${engine} ${width}: opaque SDK, QR, Runtime-adapter fixture writes, covered native Storage operations, protocol refusal, Cancel`);
       } catch (error) {
         run.failure = error.message;
         failures.push(`${engine} ${width}: ${error.message}`);

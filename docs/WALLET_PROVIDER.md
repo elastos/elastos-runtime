@@ -268,8 +268,9 @@ person can check the transaction before sending again. Unused signatures and
 ownership proofs still stop when the account, chain, or request expiry changes.
 
 The opaque-frame SDK qualification test uses capsule-local
-`walletconnect-storage.mjs` for browser Storage compatibility. Its memory holds
-only UI preferences, such as wallet and network choice, and resets on reload.
+`walletconnect-storage.mjs` for browser Storage compatibility. Its non-protocol
+memory supports UI preferences, such as wallet and network choice, and resets
+on reload.
 The Runtime adapter owns sessions, pairings and cryptographic keys. The memory
 store raises `SecurityError` for WalletConnect protocol and keychain names.
 The focused native-Storage comparison runs in Chromium and WebKit with

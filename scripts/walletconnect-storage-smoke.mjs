@@ -52,6 +52,8 @@ for (const engine of ["chromium", "webkit"]) {
         sessionStorage.setItem("network-choice", "fixture");
       });
       await page.reload();
+      assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]),
+        [0, 0], "preference writes leave native persistent storage empty");
       assert.deepEqual(await page.evaluate(async engine => {
         const { installWalletConnectStorage } = await import("/shim.mjs");
         installWalletConnectStorage(window, undefined, engine);
