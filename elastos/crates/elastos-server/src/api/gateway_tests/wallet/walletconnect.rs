@@ -1076,6 +1076,92 @@ async fn walletconnect_capsule_owns_storage_and_admission() {
 }
 
 #[tokio::test]
+async fn walletconnect_delete_storage_checks_selected_launch_before_cleanup_and_allows_revision_retry(
+) {
+    let f = Fixture::new().await;
+    f.allow().await;
+    assert_eq!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"pairing","value":"keep"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let context = runtime_wallet_authority_for_app_token(
+        f.data.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &f.connector,
+    )
+    .home_launch_context();
+    let wrong = issue_home_projection_launch_token_with_context(
+        f.data.path(),
+        WALLET_CAPSULE_ID,
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &context,
+    )
+    .unwrap();
+    for token in [&f.home, &f.inbox, &wrong] {
+        let origin = if token == &f.home {
+            format!("http://{}", f.addr)
+        } else {
+            "null".into()
+        };
+        let response = f
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .header(HOST, &f.addr)
+                    .header("origin", origin)
+                    .header("x-elastos-home-token", token)
+                    .uri(STORAGE)
+                    .method("DELETE")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        if token == &wrong {
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert!(String::from_utf8_lossy(&bytes).contains("own proof-bound capsule launch"));
+        } else {
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+        assert_eq!(
+            f.route(&f.connector, STORAGE, None).await.1["pairing"],
+            "keep"
+        );
+    }
+    for _ in 0..2 {
+        let response = f
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .header(HOST, &f.addr)
+                    .header("origin", "null")
+                    .header("x-elastos-home-token", &f.connector)
+                    .header("if-match", "\"stale\"")
+                    .uri(STORAGE)
+                    .method("DELETE")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    assert_eq!(f.route(&f.connector, STORAGE, None).await.1, json!({}));
+}
+
+#[tokio::test]
 async fn walletconnect_opaque_relay_redeems_once_and_rechecks_launch() {
     let f = Fixture::new().await;
     f.allow().await;
