@@ -588,7 +588,15 @@ async fn content_sandbox_browser_capsule_scripts() {
     let state = test_state(dir.path());
     // Serve the source Home and real app files through the product router and
     // its security headers. Only unused WASM entrypoints are test placeholders.
-    for name in ["home", "home-gui", "home-cli", "documents", "library"] {
+    for name in [
+        "home",
+        "home-gui",
+        "home-cli",
+        "documents",
+        "library",
+        "gba-emulator",
+        "elacity-player",
+    ] {
         let destination = dir.path().join("capsules").join(name);
         activate_test_capsule(dir.path(), name);
         std::fs::create_dir_all(&destination).unwrap();

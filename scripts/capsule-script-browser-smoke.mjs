@@ -54,7 +54,7 @@ try {
       const host = await page.goto(`${origin}/home/`, { waitUntil: 'domcontentloaded' });
       assert.equal(host.status(), 200);
       assert.equal(host.headers()['content-security-policy'], "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
-      for (const app of ['home-gui', 'documents', 'library']) {
+      for (const app of ['home-gui', 'documents', 'library', 'gba-emulator', 'elacity-player']) {
         try {
           if (app !== 'home-gui') {
             const route = await page.evaluate(async ({ app, token, origin }) => {
@@ -112,11 +112,20 @@ try {
           await frame.waitForFunction(app => {
             if (app === 'home-gui') return document.body.dataset.homeStatus === 'ready' && !!document.querySelector('#desktop');
             if (app === 'documents') return !!document.querySelector('#documents-shell') && !document.querySelector('#documents-shell').classList.contains('hidden');
+            if (app === 'gba-emulator') return document.body.dataset.emulatorAccessMode === 'shell' && document.body.dataset.emulatorHostMode === 'embedded';
+            if (app === 'elacity-player') return document.querySelector('#player-status')?.dataset.state === 'error';
             return typeof window.__libraryPerf === 'object' && !!document.querySelector('#library-shell') && !document.querySelector('#library-shell').classList.contains('hidden');
           }, app);
           if (app === 'documents') {
             await frame.locator('#new-document').click();
             await frame.locator('#title-input').waitFor({ state: 'visible' });
+          }
+          if (app === 'elacity-player') {
+            await frame.locator('#player-status').filter({ hasText: 'Missing protected video mint id.' }).waitFor();
+          }
+          if (app === 'gba-emulator') {
+            await frame.locator('#btn-ff').click();
+            await frame.waitForFunction(() => document.querySelector('#btn-ff').classList.contains('active'));
           }
           assert.equal(await frame.evaluate(() => self.origin), 'null');
           console.log(`PASS ${engine} ${browser.version()} ${app}: scripts run; origin null; foreign script blocked`);
