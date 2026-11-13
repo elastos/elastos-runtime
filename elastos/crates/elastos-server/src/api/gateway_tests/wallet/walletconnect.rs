@@ -812,3 +812,138 @@ async fn walletconnect_revoked_owner_cannot_send_another_relay_frame() {
         Some(Ok(Message::Close(_))) | None
     ));
 }
+
+// Real frontdoor and app routes, carrying only the capsule launch token.
+async fn capsule_route(f: &Fixture, token: &str, path: &str, body: Option<Value>) -> StatusCode {
+    f.app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .header(HOST, &f.addr)
+                .header("origin", "null")
+                .header("x-elastos-home-token", token)
+                .header(CONTENT_TYPE, "application/json")
+                .uri(path)
+                .method(if body.is_some() { "POST" } else { "GET" })
+                .body(body.map_or_else(Body::empty, |v| Body::from(v.to_string())))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn walletconnect_capsule_owns_storage_and_admission() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    let context = runtime_wallet_authority_for_app_token(
+        f.data.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &f.connector,
+    )
+    .home_launch_context();
+    let expired = gateway_home_token::issue_expired_home_launch_token_with_context(
+        f.data.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &context,
+    )
+    .unwrap();
+    for (path, body) in [
+        (STORAGE, None),
+        (STORAGE, Some(json!({"key":"positive","value":true}))),
+        (
+            "/api/apps/wallet-walletconnect/relay-admission",
+            Some(json!({})),
+        ),
+    ] {
+        for token in [&f.home, &f.inbox, &expired] {
+            assert_ne!(
+                capsule_route(&f, token, path, body.clone()).await,
+                StatusCode::OK,
+                "{path}: invalid caller"
+            );
+        }
+        assert_eq!(
+            capsule_route(&f, &f.connector, path, body).await,
+            StatusCode::OK,
+            "{path}: capsule owns its resource"
+        );
+    }
+    crate::auth::revoke_session_grant(f.data.path(), &context.session_id, now_ts()).unwrap();
+    for (path, body) in [
+        (STORAGE, None),
+        (STORAGE, Some(json!({"key":"replay","value":true}))),
+        (
+            "/api/apps/wallet-walletconnect/relay-admission",
+            Some(json!({})),
+        ),
+    ] {
+        assert_ne!(
+            capsule_route(&f, &f.connector, path, body).await,
+            StatusCode::OK,
+            "{path}: replay after session revocation"
+        );
+    }
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn walletconnect_opaque_relay_redeems_once_and_rechecks_launch() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    let response = f
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .header(HOST, &f.addr)
+                .header("origin", "null")
+                .header("x-elastos-home-token", &f.connector)
+                .uri("/api/apps/wallet-walletconnect/relay-admission")
+                .method("POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 8192)
+        .await
+        .unwrap();
+    let ticket: Value = serde_json::from_slice(&bytes).unwrap();
+    let mut request = format!("ws://{}/api/apps/wallet-walletconnect/relay", f.addr)
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", "null".parse().unwrap());
+    let (mut socket, _) = connect_async(request.clone()).await.unwrap();
+    let hello = json!({"token":ticket["token"], "relay":RELAY}).to_string();
+    socket.send(Message::Text(hello.clone())).await.unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Text("{\"ready\":true}".into())
+    );
+    let (mut replay, _) = connect_async(request).await.unwrap();
+    replay.send(Message::Text(hello)).await.unwrap();
+    assert!(matches!(
+        replay.next().await,
+        Some(Ok(Message::Close(_))) | None
+    ));
+    let context = runtime_wallet_authority_for_app_token(
+        f.data.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &f.connector,
+    )
+    .home_launch_context();
+    crate::auth::revoke_session_grant(f.data.path(), &context.session_id, now_ts()).unwrap();
+    // The heartbeat must close an idle socket whose launch lost its live session.
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(20), socket.next())
+            .await
+            .unwrap(),
+        Some(Ok(Message::Close(_))) | None
+    ));
+    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
+}
