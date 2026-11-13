@@ -272,13 +272,13 @@ pub(super) fn notification(
     let pending = c.status == "requested" && request(&c).is_ok();
     let active = c.status == "granted"
         || (c.status == "revoked"
-            && state
-                .walletconnect
-                .inner
-                .try_lock()
-                .ok()
-                .is_some_and(|inner| !inner.sockets.is_empty())
-            || (c.status == "revoked" && c.cleanup_pending));
+            && (c.cleanup_pending
+                || state
+                    .walletconnect
+                    .inner
+                    .try_lock()
+                    .ok()
+                    .is_some_and(|inner| !inner.sockets.is_empty())));
     Some(HomeNotificationEntrySummary {
         id: "walletconnect-internet:permission".into(),
         source_app: WALLET_WALLETCONNECT_CAPSULE_ID.into(),

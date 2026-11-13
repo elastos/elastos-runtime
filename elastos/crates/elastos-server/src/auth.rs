@@ -4545,14 +4545,13 @@ fn mutate_auth_state<T>(
     let value = mutation(&mut state)?;
     save_auth_state(data_dir, &state, Some(&baseline))?;
     for principal in previous_principals {
-        if !state.principals.iter().any(|p| p.principal_id == principal) {
-            if crate::api::gateway::clear_walletconnect_principal_storage(data_dir, &principal)
+        if !state.principals.iter().any(|p| p.principal_id == principal)
+            && crate::api::gateway::clear_walletconnect_principal_storage(data_dir, &principal)
                 .is_err()
-            {
-                tracing::warn!(
-                    "WalletConnect session cleanup requires operator retry after principal removal"
-                );
-            }
+        {
+            tracing::warn!(
+                "WalletConnect session cleanup requires operator retry after principal removal"
+            );
         }
     }
     unlock_auth_state_file(lock)?;
