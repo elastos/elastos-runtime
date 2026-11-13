@@ -8,7 +8,6 @@ description = "TCP to vsock proxy for crosvm VMs"
 
 [dependencies]
 libc = "0.2"
-nix = { version = "0.27", features = ["socket"] }
 
 [profile.release]
 opt-level = "z"

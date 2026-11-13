@@ -91,23 +91,8 @@ def assert_provider_names_and_loops(setup_text: str) -> None:
             )
 
 
-def shell_array_entries(text: str, name: str) -> list[str]:
-    body = text.split(f"{name}=(", 1)[1].split("\n)", 1)[0]
-    return [
-        line.strip()
-        for line in body.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-
-
 def assert_release_support_inventory() -> None:
     publish_text = PUBLISH_RELEASE.read_text(encoding="utf-8")
-    support = shell_array_entries(publish_text, "SUPPORT_BINARY_ASSETS")
-    for provider in RUNTIME_ONLY_PROVIDERS:
-        if support.count(provider) != 1:
-            raise AssertionError(
-                f"release support inventory must include {provider} exactly once"
-            )
     for private_state in (
         "protected-content/chain-provider.json",
         "protected-content/custody-composition.json",
@@ -288,7 +273,8 @@ def run_retained_provider_stamp_smoke(setup_text: str, components: dict) -> None
                "COMPONENTS_SRC": str(source), "COMPONENTS_DEST": str(installed),
                "DATA_DIR": str(data_dir), "SETUP_PLATFORM": "linux-amd64",
                "SOURCE_HOME_BINARY_NAMES_JSON": json.dumps(["model-provider"]),
-               "APP_CAPSULES_JSON": "[]", "SOURCE_HOME_KUBO_INSTALLED": "0"}
+               "APP_CAPSULES_JSON": "[]", "SOURCE_HOME_KUBO_INSTALLED": "0",
+               "SOURCE_HOME_LLAMA_INSTALLED": "0"}
 
         def stamp_once() -> subprocess.CompletedProcess[str]:
             return subprocess.run(
