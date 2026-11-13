@@ -1686,6 +1686,7 @@ dependencies = [
  "elastos-storage",
  "elastos-tls",
  "elastos-wallet-contract",
+ "exit-provider",
  "flate2",
  "futures-lite",
  "futures-util",
@@ -1903,6 +1904,16 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "exit-provider"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ureq",
+ "url",
 ]
 
 [[package]]

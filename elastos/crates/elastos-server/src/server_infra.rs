@@ -1241,16 +1241,10 @@ async fn setup_server_infrastructure_impl(
         Ok(Some(path)) => {
             let existing_exit =
                 exit_provider_config_from_env(&data_dir).unwrap_or(serde_json::Value::Null);
-            let extra = match elastos_server::setup::walletconnect::merge_exit_config(
-                existing_exit.clone(),
+            let extra = elastos_server::setup::walletconnect::exit_config(
+                existing_exit,
                 walletconnect_exit.as_ref().map(|(_, provider)| provider),
-            ) {
-                Ok(config) => config,
-                Err(error) => {
-                    tracing::warn!(%error, "Exit configuration needs repair");
-                    existing_exit
-                }
-            };
+            );
             let exit_config = provider::BridgeProviderConfig {
                 extra,
                 ..Default::default()

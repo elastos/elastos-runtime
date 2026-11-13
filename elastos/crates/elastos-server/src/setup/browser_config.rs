@@ -5,6 +5,47 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const GENERATOR: &str = include_str!("../../../../../scripts/browser-source-home-config.mjs");
+/// WalletConnect uses Browser's stable, short IPC names without selecting an Engine.
+pub(super) fn walletconnect_socket_paths(
+    data: &Path,
+    platform: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let mut child = Command::new("node")
+        .env_clear()
+        .args([
+            "--input-type=module",
+            "-",
+            "--walletconnect-socket-paths",
+            "--data-dir",
+        ])
+        .arg(data)
+        .args(["--platform", platform])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(GENERATOR.as_bytes())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while child.try_wait()?.is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("WalletConnect IPC configuration timed out");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "WalletConnect IPC configuration failed"
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
 const CONFIG_FILES: [&str; 4] = [
     "exit-provider.json",
     "browser-local-exit.json",
