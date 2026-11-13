@@ -67,6 +67,25 @@ try {
         }
       });
       const page = await context.newPage();
+      run.relay = {opened:0, ready:0, closed:0, errors:0, sent:0, received:0, rpc:{}};
+      page.on('websocket', socket => {
+        if (new URL(socket.url()).pathname !== '/api/apps/wallet-walletconnect/relay') return;
+        run.relay.opened++;
+        const observe = (payload, direction) => {
+          run.relay[direction]++;
+          try {
+            const message = JSON.parse(String(payload));
+            if (direction === 'received' && message.ready === true) run.relay.ready++;
+            if (['irn_subscribe','irn_batchSubscribe','irn_publish','wc_proposeSession'].includes(message.method)) {
+              run.relay.rpc[message.method] = (run.relay.rpc[message.method] || 0) + 1;
+            }
+          } catch {}
+        };
+        socket.on('framesent', ({payload}) => observe(payload, 'sent'));
+        socket.on('framereceived', ({payload}) => observe(payload, 'received'));
+        socket.on('close', () => run.relay.closed++);
+        socket.on('socketerror', () => run.relay.errors++);
+      });
       run.phase = 'home';
       assert.equal((await page.goto(`${options.origin}/apps/home/`, {timeout:10000})).status(), 200);
       run.phase = 'capsule';
@@ -83,7 +102,17 @@ try {
       frame = await (await page.waitForSelector('#wc-real-preflight', {timeout:10000})).contentFrame();
       assert.ok(frame);
       run.phase = 'runtime-store';
-      await frame.waitForFunction(() => window.failed || document.querySelector('dialog[open] canvas')?.width === 280, null, {timeout:20000});
+      await frame.waitForFunction(() => {
+        if (window.failed) return true;
+        const canvas = document.querySelector('dialog[open] canvas');
+        if (!canvas) return false;
+        const pixels = canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
+        let black = false, white = false;
+        for (let i=0; i<pixels.length; i+=4) {
+          if (pixels[i+3] === 255) { black ||= pixels[i] < 10; white ||= pixels[i] > 240; }
+        }
+        return black && white;
+      }, null, {timeout:20000});
       assert.equal(await frame.evaluate(() => window.failed), undefined);
       assert.equal(await frame.evaluate(() => self.origin), 'null');
       assert.equal(await frame.locator('dialog[open] canvas').count(), 1);
@@ -123,7 +152,13 @@ try {
         try {
           run.state = await Promise.race([
             frame.evaluate(() => ({origin:self.origin, phase:window.phase, refusal:window.refusal,
-              errorName:window.errorName, runtimeTrace:window.runtimeTrace, storageTrace:window.storageTrace})),
+              errorName:window.errorName, runtimeTrace:window.runtimeTrace, storageTrace:window.storageTrace,
+              qr:[...document.querySelectorAll('dialog canvas')].slice(0,2).map(canvas => {
+                const pixels = canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
+                let black=0, white=0;
+                for (let i=0;i<pixels.length;i+=4) if (pixels[i+3] === 255) { if(pixels[i]<10)black++; if(pixels[i]>240)white++; }
+                return {width:canvas.width,height:canvas.height,open:canvas.closest('dialog').open,black,white};
+              })})),
             new Promise((_, reject) => setTimeout(() => reject(new Error('state timeout')), 3000)),
           ]);
         } catch { run.stateUnavailable = true; }
