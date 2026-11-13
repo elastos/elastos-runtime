@@ -154,8 +154,20 @@ async fn walletconnect_gateway_process_worker() {
     let input: Value = serde_json::from_slice(&bytes).unwrap();
     let data = std::path::Path::new(input["data"].as_str().unwrap());
     let addr = input["addr"].as_str().unwrap();
-    let mut state = test_state(data);
-    state.browser_internet = persistent_internet(data).await;
+    // Preserve the already staged production documents and adapter on disk.
+    // test_state() seeds placeholder capsules, so this worker builds state directly.
+    let mut state = GatewayState {
+        provider_registry: None,
+        collaboration_chat_product_port: None,
+        collaboration_presence_product_port: None,
+        carrier_endpoint: None,
+        collaboration_discovery_service: None,
+        browser_internet: persistent_internet(data).await,
+        walletconnect: Default::default(),
+        identity_manager: Arc::new(std::sync::OnceLock::new()),
+        cache_dir: data.to_path_buf(),
+        data_dir: data.to_path_buf(),
+    };
     let registry = Arc::new(ProviderRegistry::new());
     registry
         .register_sub_provider(
