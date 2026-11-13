@@ -11987,6 +11987,15 @@ async fn browser_home_renewal_keeps_launch_page_and_close_binding() {
     std::fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     let home = app_token_for_authority(dir.path(), HOME_CAPSULE_ID, &authority);
     let browser_instance = "browser:0123456789abcdef0123456789abcdef";
+    // Browser launches use a supported host explicitly; this test runs on Linux x86-64 too.
+    let launch_app = Router::new()
+        .route(
+            "/api/apps/home/launch",
+            axum::routing::post(|state, headers, input| async move {
+                home_launch(state, headers, input, "darwin-arm64").await
+            }),
+        )
+        .with_state(state.clone());
     let app = gateway_router(state);
     async fn launch(app: &Router, home: &str, previous: Option<&str>) -> String {
         let mut request = test_browser_request("localhost:61180", "http://localhost:61180")
@@ -12025,7 +12034,7 @@ async fn browser_home_renewal_keeps_launch_page_and_close_binding() {
             .unwrap()
             .to_string()
     }
-    let owner_token = launch(&app, &home, None).await;
+    let owner_token = launch(&launch_app, &home, None).await;
     let opened = app
         .clone()
         .oneshot(
@@ -12063,7 +12072,7 @@ async fn browser_home_renewal_keeps_launch_page_and_close_binding() {
     let page_id = opened["engine_page"]["page_id"].as_str().unwrap();
     let cleanup_id = browser_cleanup_id(&opened);
 
-    let refreshed_token = launch(&app, &home, Some(&owner_token)).await;
+    let refreshed_token = launch(&launch_app, &home, Some(&owner_token)).await;
     assert_ne!(
         owner_token, refreshed_token,
         "the credential changes even within the same second"
