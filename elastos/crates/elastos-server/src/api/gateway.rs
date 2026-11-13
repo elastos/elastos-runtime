@@ -919,6 +919,10 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
             post(gateway_browser::browser_app_profile_reset),
         )
         .route(
+            "/api/apps/browser/pages/:page_id/restore",
+            post(gateway_browser::browser_app_page_restore).layer(DefaultBodyLimit::max(1024)),
+        )
+        .route(
             "/api/apps/browser/pages/:page_id/status",
             get(gateway_browser::browser_app_page_status),
         )

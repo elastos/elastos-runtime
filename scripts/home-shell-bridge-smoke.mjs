@@ -2615,6 +2615,9 @@ assert(
   "Browser renewal accepted a substituted GUI source or fresh token",
   browserRenewalReplies,
 );
+sendChildMessage("null", browserRenewalFrameWindow, {
+  type: "home:app-ready", homeToken: "browser-renewal-fresh-token",
+});
 sendChildMessage("null", shellFrameWindow, renewalSuccess);
 assert(
   browserRenewalReplies.length === 2 &&

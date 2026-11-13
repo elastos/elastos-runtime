@@ -1502,7 +1502,7 @@ export function renewBrowserWindowAuthority(id, options = {}) {
     .then(() =>
       requireWindowHooks().launchTarget("browser", launchQuery, options),
     )
-    .then((launched) => {
+    .then(async (launched) => {
       if (shellState.windows.get(id) !== entry) {
         return false;
       }
@@ -1517,13 +1517,17 @@ export function renewBrowserWindowAuthority(id, options = {}) {
       ) {
         throw new Error("Browser authority renewal returned an invalid launch");
       }
+      await handoverBrowserAuthority(entry, frame, currentAuthority.homeToken, nextAuthority.homeToken,
+        browserInstance, options.timeoutMs);
+      if (shellState.windows.get(id) !== entry) return false;
       launched.title = canonicalTargetTitle(launched.target, launched.title);
       entry.title = launched.title;
       fitLaunchedWindow(entry);
       if (entry.browserCloseRequest) {
         settleBrowserWindowClose(entry.browserCloseRequest, false);
       }
-      syncBrowserWindow(entry, launched);
+      // The same document owns the address, pending permission and live display.
+      frame.dataset.route = launched.route;
       try {
         renderWindowTaskbar();
         persistBrowserSession();
@@ -1542,6 +1546,34 @@ export function renewBrowserWindowAuthority(id, options = {}) {
     });
   entry.browserAuthorityRenewal = renewal;
   return renewal;
+}
+
+function handoverBrowserAuthority(entry, frame, homeToken, freshHomeToken, browserInstance, timeoutMs = 30000) {
+  const requestId = window.crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const finish = error => {
+      window.clearTimeout(timer);
+      window.removeEventListener("message", receive);
+      frame.removeEventListener("load", unloaded);
+      if (error) reject(error); else resolve();
+    };
+    const unloaded = () => finish(new Error("Browser reloaded during session renewal"));
+    const receive = event => {
+      const data = event.data;
+      if (event.source !== frame.contentWindow || event.origin !== "null" ||
+          shellState.windows.get(entry.id) !== entry ||
+          !hasExactKeys(data, ["type", "requestId", "homeToken", "browserInstance", "freshHomeToken", "ok"]) ||
+          data.type !== "elastos.browser.authority-committed/v1" || data.requestId !== requestId ||
+          data.homeToken !== homeToken || data.freshHomeToken !== freshHomeToken ||
+          data.browserInstance !== browserInstance || typeof data.ok !== "boolean") return;
+      finish(data.ok ? null : new Error("Browser could not renew its page authority"));
+    };
+    const timer = window.setTimeout(() => finish(new Error("Browser session renewal timed out")), timeoutMs);
+    window.addEventListener("message", receive);
+    frame.addEventListener("load", unloaded, { once: true });
+    frame.contentWindow.postMessage({ type: "elastos.browser.authority-commit/v1",
+      requestId, homeToken, freshHomeToken, browserInstance }, "*");
+  });
 }
 
 function activateTargetGroup(targetId) {

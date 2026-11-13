@@ -79,11 +79,11 @@ const BROWSER_AUTHORITY_RENEWAL_RETRY_DELAYS_MS = Object.freeze([
 const HOME_GUI_OPAQUE_ORIGIN = "null";
 const params = new URLSearchParams(window.location.search);
 const browserInstanceId = params.get("browser_instance") || "";
-const launchToken = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("home_token") || "";
+let launchToken = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("home_token") || "";
 const homeParentOrigin = params.get("home_origin") || "";
 const debugMetrics =
   params.get("debug") === "1" || params.get("metrics") === "1";
-const { fetchJson, requireViewer } = createRuntimeApi({ launchToken });
+const { fetchJson, requireViewer, setLaunchToken } = createRuntimeApi({ launchToken });
 const homeClipboard = createHomeClipboardClient({
   targetId: "browser",
   homeOrigin: homeParentOrigin,
@@ -456,6 +456,7 @@ function postBrowserAuthorityRenewalRequest(reason) {
   const requestId = browserAuthorityRenewalRequestId();
   const record = {
     requestId,
+    homeToken: launchToken,
     reason,
     timeout: 0,
   };
@@ -504,7 +505,7 @@ function settleBrowserAuthorityRenewal(ok, reason) {
   }
   clearBrowserAuthorityRenewalRequest();
   if (ok) {
-    showStatus("Browser session refreshed. Reopening…", { sticky: true });
+    showStatus("Browser session refreshed.");
     return true;
   }
   scheduleBrowserAuthorityRenewalRetry(request.reason || reason);
@@ -529,7 +530,7 @@ function isHomeBrowserAuthorityRenewalResult(event) {
     ]) ||
     message.type !== BROWSER_AUTHORITY_RENEWAL_RESULT_TYPE ||
     message.requestId !== request.requestId ||
-    message.homeToken !== launchToken ||
+    message.homeToken !== request.homeToken ||
     message.browserInstance !== browserInstanceId ||
     typeof message.ok !== "boolean" ||
     typeof message.freshHomeToken !== "string" ||
@@ -542,7 +543,7 @@ function isHomeBrowserAuthorityRenewalResult(event) {
   return message.ok
     ? Boolean(
         message.freshHomeToken &&
-          message.freshHomeToken !== launchToken &&
+          message.freshHomeToken !== request.homeToken &&
           message.reason === "",
       )
     : message.freshHomeToken === "" && Boolean(message.reason);
@@ -2097,7 +2098,62 @@ function homeBrowserNavigateUrl(event) {
   }
 }
 
+let browserAuthorityCommit = null;
+async function commitBrowserAuthority(event) {
+  const data = event.data;
+  if (event.source !== window.parent || event.source === window.top || event.origin !== "null" ||
+      !hasExactMessageKeys(data, ["type", "requestId", "homeToken", "browserInstance", "freshHomeToken"]) ||
+      data.type !== "elastos.browser.authority-commit/v1" || data.homeToken !== launchToken ||
+      data.browserInstance !== browserInstanceId || typeof data.requestId !== "string" ||
+      !/^[A-Za-z0-9-]{1,128}$/.test(data.requestId) || typeof data.freshHomeToken !== "string" ||
+      !data.freshHomeToken || data.freshHomeToken.length > 4096 || data.freshHomeToken === launchToken ||
+      browserAuthorityCommit) return;
+  browserAuthorityCommit = data;
+  let ok = false;
+  try {
+    if (unloadCleanupStarted || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed || unsettledRuntimeOpen) {
+      throw new Error("Browser is finishing its current action. Try again in a moment.");
+    }
+    const freshApi = createRuntimeApi({ launchToken: data.freshHomeToken });
+    const summary = await freshApi.fetchJson(`/api/apps/browser/summary?browser_instance=${encodeURIComponent(browserInstanceId)}&remote_services=0`,
+      { signal: AbortSignal.timeout(10000) });
+    const retained = recoverableRuntimePage(summary);
+    if (retained?.recovery_state === "active") {
+      if (!sameRuntimePageOwner(runtimePageOwner(retained, currentPageGeneration), currentRuntimePageOwner())) {
+        throw new Error("Browser page ownership changed during renewal.");
+      }
+      await freshApi.fetchJson(`/api/apps/browser/pages/${encodeURIComponent(retained.page_id)}/restore`, {
+        method: "POST", body: { cleanup_id: retained.runtime_cleanup.id, browser_instance: browserInstanceId },
+        signal: AbortSignal.timeout(10000),
+      });
+    }
+    if (unloadCleanupStarted || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) {
+      throw new Error("Browser closed during renewal.");
+    }
+    launchToken = data.freshHomeToken;
+    setLaunchToken(launchToken);
+    homeClipboard.setHomeToken(launchToken);
+    const url = new URL(location.href);
+    url.hash = new URLSearchParams({ home_token: launchToken }).toString();
+    history.replaceState(history.state, "", url);
+    window.top.postMessage({ type: "home:app-ready", homeToken: launchToken }, homeParentOrigin);
+    relaunchRequested = false;
+    if (currentPage && browserInternetAllowed) { startPageHeartbeat(); startPageStatusPolling(); }
+    ok = true;
+  } catch (error) {
+    showStatus(friendlyOpenError(error), { sticky: true });
+  } finally {
+    browserAuthorityCommit = null;
+    event.source.postMessage({ type: "elastos.browser.authority-committed/v1", requestId: data.requestId,
+      homeToken: data.homeToken, browserInstance: browserInstanceId, freshHomeToken: data.freshHomeToken, ok }, "*");
+  }
+}
+
 window.addEventListener("message", (event) => {
+  if (event.data?.type === "elastos.browser.authority-commit/v1") {
+    void commitBrowserAuthority(event);
+    return;
+  }
   if (event.source === window.top && event.origin === homeParentOrigin &&
       event.data?.type === "elastos.home.authority.request/v1" && event.data.homeToken === launchToken &&
       Object.keys(event.data).sort().join(",") === "homeToken,type") {

@@ -132,9 +132,18 @@ async function fixture() {
       } : null}});return;
     }
     if (url.pathname === "/api/apps/browser/pages/retained/status") {
+      if(state.bindOwners && req.headers["x-elastos-home-token"]!==state.ownerToken){res.writeHead(404).end();return;}
       json({schema:"elastos.browser.page-status/v1",page_id:"retained",direct_network:false,actual_url:state.recoverableUrl});return;
     }
+    if (url.pathname === "/api/apps/browser/pages/retained/restore") {
+      assert.equal(input.cleanup_id,"cleanup-retained");
+      assert.match(input.browser_instance,/^browser:/);
+      state.ownerToken=req.headers["x-elastos-home-token"];
+      state.restores=(state.restores||0)+1;
+      json({ok:true});return;
+    }
     if (url.pathname === "/api/apps/browser/pages/retained/input") {
+      if(state.bindOwners && req.headers["x-elastos-home-token"]!==state.ownerToken){res.writeHead(404).end();return;}
       state.navigations.push(input.event);state.recoverableUrl=input.event.url;json({accepted:true});return;
     }
     if (url.pathname === "/api/apps/browser/pages/retained/webrtc" && state.completeOpen) {
@@ -142,6 +151,7 @@ async function fixture() {
       await new Promise(resolve=>res.on("close",resolve));return;
     }
     if (url.pathname === "/api/apps/browser/open") {
+      state.ownerToken=req.headers["x-elastos-home-token"];
       if(state.completeOpen)state.recoverableUrl=input.url;
       state.opens.push(input);json({schema:"elastos.browser.open-accepted/v1",status_url:"/api/apps/browser/open/fixture"});return;
     }
@@ -556,9 +566,10 @@ test("566c Inbox Allow brings a fullscreen Browser back into view", async () => 
 test("566e renewing authority preserves the current page and does not repeat the first open", async t => {
   const f=await fixture();const browser=await chromium.launch({headless:true});
   try {
-    for(const consent of ["off","granted"]) await t.test(consent, async subtest => {
+    for(const consent of ["off","granted","pending"]) await t.test(consent, async subtest => {
       subtest.after(async()=>{for(const context of browser.contexts())await context.close();});
       f.state.consent="granted";f.state.expired=false;f.state.completeOpen=true;
+      f.state.bindOwners=true;f.state.restores=0;
       f.state.opens=[];f.state.requests=0;f.state.navigations=[];f.state.recoverableUrl=null;
       const page=await browser.newPage();await page.goto(f.url+"shell");
       const gui=await (await page.locator("#gui").elementHandle()).contentFrame();
@@ -578,6 +589,12 @@ test("566e renewing authority preserves the current page and does not repeat the
         // Inbox Allow cancelled at the passkey can leave a request unanswered past its TTL.
         f.state.consent="requested";f.state.expired=true;
         await gui.frameLocator('iframe[title="browser"]').getByRole("button",{name:"Open Inbox",exact:true}).waitFor({timeout:5000});
+      } else if(consent==="pending") {
+        f.state.consent="revoked";
+        await gui.frameLocator('iframe[title="browser"]').getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
+        await browserFrame.locator("#browser-url").fill("https://example.com/pending");
+        await browserFrame.locator("#browser-url").press("Enter");
+        await page.waitForFunction(()=>messages.some(m=>m.type==="home:open-target" && m.target==="inbox"));
       }
       const requests=f.state.requests, opens=f.state.opens.length;
       await page.evaluate(()=>messages=[]);await gui.evaluate(()=>fixtureShell.windows.showDesktopHome());
@@ -587,10 +604,17 @@ test("566e renewing authority preserves the current page and does not repeat the
         "renewal leaves Desktop visible instead of opening Inbox again");
       assert.equal(f.state.requests,requests,"renewal with access off files no request");
       assert.equal(f.state.opens.length,opens,"renewal with access on does not navigate to the first URL");
+      assert.equal(f.state.restores,1,"Runtime binds the retained page to the new launch once");
       const frame=gui.frameLocator('iframe[title="browser"]');
       assert.equal(await (await node.contentFrame()).evaluate(()=>window.renewalDocument),documentId,
         "renewal retains the Browser document, its address and pending navigation");
       if(consent==="granted")assert.equal(await frame.locator("#browser-url").inputValue(),"https://example.com/current");
+      if(consent==="pending") {
+        f.state.consent="granted";
+        await browserFrame.waitForFunction(()=>document.querySelector("#browser-url").value==="https://example.com/pending" && document.body.dataset.loading==="false");
+        await page.waitForTimeout(2200);
+        assert.equal(f.state.navigations.filter(n=>n.url==="https://example.com/pending").length,1,"Allow consumes the pre-renewal pending address once");
+      }
       await gui.evaluate(()=>fixtureShell.windows.openTarget("browser",{query:{url:"https://example.com/explicit"}}));
       await page.waitForTimeout(500);
       if(consent==="off")assert.equal(f.state.requests,requests+1);

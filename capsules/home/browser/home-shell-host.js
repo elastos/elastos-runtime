@@ -666,7 +666,7 @@ function settleBrowserAuthorityRenewal(record, result) {
   }
   window.clearTimeout(record.timeout);
   pendingBrowserAuthorityRenewals.delete(record.requestId);
-  if (result.ok) {
+  if (result.ok && record.frameToken !== result.freshHomeToken) {
     retireLaunchedAppContext(record.frameToken);
   }
   postBrowserAuthorityRenewalResult(record, result);
@@ -813,9 +813,9 @@ function handleBrowserAuthorityRenewalResult(context, message) {
     message.reason !== "" ||
     !message.freshHomeToken ||
     message.freshHomeToken === record.oldHomeToken ||
-    oldContext?.targetId !== "browser" ||
-    oldContext.browserInstance !== record.browserInstance ||
-    oldContext.source !== record.source ||
+    (oldContext ? (oldContext.targetId !== "browser" ||
+      oldContext.browserInstance !== record.browserInstance || oldContext.source !== record.source)
+      : record.frameToken !== message.freshHomeToken || freshContext?.source !== record.source) ||
     freshContext?.targetId !== "browser" ||
     freshContext.browserInstance !== record.browserInstance
   ) {
@@ -2324,6 +2324,16 @@ function homeMessageContext(event, data) {
       return null;
     }
     launched.source = event.source;
+    if (launched.targetId === "browser" && launched.browserInstance) {
+      // A renewal keeps the same document and its Home-owned associations.
+      for (const [oldToken, old] of launchedAppContexts) {
+        if (oldToken !== homeToken && old.targetId === "browser" && old.source === event.source &&
+            old.browserInstance === launched.browserInstance) {
+          transferFrameAssociations(old, launched, homeToken);
+          retireLaunchedAppContext(oldToken);
+        }
+      }
+    }
   } else if (launched.source !== event.source) {
     return null;
   }

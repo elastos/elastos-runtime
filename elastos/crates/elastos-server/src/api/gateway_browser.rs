@@ -4206,6 +4206,47 @@ pub(super) async fn browser_app_page_input(
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BrowserPageRestoreRequest {
+    cleanup_id: String,
+    browser_instance: String,
+}
+
+pub(super) async fn browser_app_page_restore(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(page_id): Path<String>,
+    Json(request): Json<BrowserPageRestoreRequest>,
+) -> Response {
+    let authority =
+        match require_runtime_wallet_authority(&state.data_dir, &headers, &[BROWSER_CAPSULE_ID]) {
+            Ok(authority) => authority,
+            Err(err) => return gateway_provider_error_response("browser", err),
+        };
+    if !is_safe_runtime_id(&page_id)
+        || !is_safe_runtime_id(&request.cleanup_id)
+        || request.cleanup_id.len() > 128
+        || browser_instance_id(Some(request.browser_instance.clone())).is_err()
+    {
+        return (StatusCode::BAD_REQUEST, "invalid Browser restore binding").into_response();
+    }
+    match restore_browser_page_owner(
+        &state.data_dir,
+        &page_id,
+        &authority.home_launch_context().principal_id,
+        authority.verified_context().launch_id(),
+        &request.cleanup_id,
+        &request.browser_instance,
+    )
+    .await
+    {
+        Ok(true) => Json(serde_json::json!({"ok":true})).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "browser session is not active").into_response(),
+        Err(message) => (StatusCode::SERVICE_UNAVAILABLE, message).into_response(),
+    }
+}
+
 pub(super) async fn browser_app_page_close(
     State(state): State<GatewayState>,
     headers: HeaderMap,
