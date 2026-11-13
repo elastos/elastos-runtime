@@ -641,6 +641,7 @@ def normalize(info):
     info.uname = info.gname = ""
     info.pax_headers = {}
     info.mode = 0o777 if info.issym() else (
+        0o600 if info.isfile() and info.name == "wallet-walletconnect/vendor/connector.json" else
         0o755 if info.isdir() or info.mode & 0o111 else 0o644
     )
     return info
