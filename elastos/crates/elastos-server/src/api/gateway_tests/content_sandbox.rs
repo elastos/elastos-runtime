@@ -660,9 +660,6 @@ async fn content_sandbox_browser_capsule_scripts() {
 #[tokio::test]
 #[ignore = "requires Playwright Chromium and WebKit; focused WalletConnect sandbox gate"]
 async fn content_sandbox_browser_walletconnect_sdk() {
-    use super::super::gateway::{
-        WALLETCONNECT_CONFIG_PATH, WALLETCONNECT_CONFIG_SCHEMA, WALLETCONNECT_SDK_PACKAGE,
-    };
     let dir = tempfile::tempdir().unwrap();
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     for name in ["home", "wallet-walletconnect"] {
