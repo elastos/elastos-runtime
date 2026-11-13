@@ -41,6 +41,7 @@ use super::gateway::{
     is_wallet_connector_capsule_id, issue_home_launch_token_for_auth_grant,
     require_home_launch_token_binding, require_runtime_wallet_authority, runtime_wallet_authority,
     GatewayState, RuntimeWalletAdapter, RuntimeWalletAuthority, HOME_CAPSULE_ID, HOME_ROUTE,
+    WALLET_WALLETCONNECT_CAPSULE_ID,
 };
 
 use crate::auth::AUTH_SESSION_TTL_SECS;
