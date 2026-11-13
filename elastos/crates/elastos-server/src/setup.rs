@@ -5449,19 +5449,29 @@ pub(crate) mod tests {
         if std::env::var_os(CHILD).is_none() {
             // This fixture needs an empty PATH. Keep that environment in its
             // own process so parallel tests can still launch their tools.
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "setup::tests::test_missing_managed_media_tools_fail_before_first_component_install_effect",
-                    "--nocapture",
+                    "--format=pretty",
                 ])
                 .env(CHILD, "1")
                 .env("PATH", "")
-                .status()
+                .output()
                 .unwrap();
             assert!(
-                status.success(),
-                "isolated media-tools fixture failed: {status}"
+                output.status.success(),
+                "isolated media-tools fixture failed: {}\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(
+                stdout.contains("running 1 test\n")
+                    && stdout.contains("test setup::tests::test_missing_managed_media_tools_fail_before_first_component_install_effect ... ok")
+                    && stdout.contains("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;"),
+                "isolated media-tools fixture must run exactly the expected test:\n{stdout}"
             );
             return;
         }
