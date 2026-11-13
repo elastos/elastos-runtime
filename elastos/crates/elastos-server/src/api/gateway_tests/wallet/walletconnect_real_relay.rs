@@ -17,6 +17,10 @@ fn operator_project() -> String {
     )
     .read_to_end(&mut bytes)
     .expect("read bounded operator project file");
+    assert!(
+        bytes.len() <= 129,
+        "operator project input exceeds its limit"
+    );
     let project = std::str::from_utf8(&bytes)
         .expect("operator project file is UTF-8")
         .trim();
@@ -155,7 +159,7 @@ async fn walletconnect_real_project_opaque_preflight() {
             destination.join("capsule.json"),
         )
         .unwrap();
-        copy_operator_site(
+        super::super::super::content_sandbox::copy_operator_site(
             &repo.join("capsules").join(name).join("browser"),
             &destination.join("browser"),
         );

@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { runtimeStorage } from './walletconnect/runtime-storage.mjs';
 import { importProductSmokePlaywright } from './product-smoke-browser.mjs';
 const require = createRequire(new URL('./walletconnect/package.json', import.meta.url));
 const { SignClient } = require('@walletconnect/sign-client');
@@ -29,9 +30,17 @@ try {
     let browser, wallet;
     try {
       const signer = privateKeyToAccount(generatePrivateKey());
-      wallet = await SignClient.init({ projectId:options.projectId, logger, telemetryEnabled:false,
+      run.phase = 'wallet-init';
+      const values = Object.create(null);
+      const storage = runtimeStorage(async (_, input) => {
+        if (input) { const {key,value} = JSON.parse(input.body); if (value === null) delete values[key]; else values[key] = value; }
+        return structuredClone(values);
+      });
+      wallet = await SignClient.init({ projectId:options.projectId, logger, telemetryEnabled:false, storage,
         metadata:{name:'Disposable test wallet', description:'Isolated recovery fixture', url:'http://localhost', icons:[]} });
+      await wallet.core.relayer.transportOpen();
       run.walletReady = true;
+      run.phase = 'browser';
       wallet.on('session_proposal', async proposal => {
         const approval = await wallet.approve({ id:proposal.id, namespaces:{eip155:{
           chains:['eip155:1'], accounts:[`eip155:1:${signer.address}`],
@@ -52,11 +61,13 @@ try {
       await context.exposeBinding('walletConnectTestOptions', () => options);
       await context.route('**/*', route => new URL(route.request().url()).origin === options.origin ? route.continue() : route.abort());
       const page = await context.newPage();
+      run.phase = 'home';
       const home = await page.goto(`${options.origin}/apps/home/`);
       assert.equal(home.status(), 200);
       const response = await fetch(`${options.origin}/apps/wallet-walletconnect/wc-real.html`);
       run.csp = response.headers.get('content-security-policy');
       assert.ok(run.csp.startsWith('sandbox allow-scripts allow-forms allow-downloads;'));
+      run.phase = 'capsule';
       await page.evaluate(origin => {
         const frame = document.createElement('iframe');
         frame.sandbox = 'allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts';
@@ -67,6 +78,7 @@ try {
       let frame;
       for (let i=0; i<100 && !frame; i++) { frame=page.frames().find(f => f.url().endsWith('/wc-real.html')); if (!frame) await new Promise(resolve => setTimeout(resolve,50)); }
       assert.ok(frame);
+      run.phase = 'runtime-store';
       // The initial Runtime-backed keychain read precedes any pairing proposal.
       await frame.waitForFunction(() => window.failed || document.querySelector('dialog[open] canvas')?.width > 0, null, {timeout:30000});
       run.state = await frame.evaluate(() => ({origin:self.origin,phase:window.phase,

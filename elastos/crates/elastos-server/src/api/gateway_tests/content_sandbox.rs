@@ -438,7 +438,7 @@ async fn content_sandbox_opaque_cookie_requests_require_explicit_launch_authorit
     }
 }
 
-fn copy_operator_site(source: &std::path::Path, destination: &std::path::Path) {
+pub(super) fn copy_operator_site(source: &std::path::Path, destination: &std::path::Path) {
     std::fs::create_dir_all(destination).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
