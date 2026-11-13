@@ -841,34 +841,6 @@ async fn transport(
     anyhow::bail!("The local Exit transport is unavailable on this platform")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn walletconnect_socket_completion_survives_task_unwind() {
-        let (done, finished) = watch::channel(false);
-        let completion = SocketCompletion(done);
-        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            let _completion = completion;
-            panic!("fixture task failure");
-        }));
-        assert!(panic.is_err());
-        assert!(*finished.borrow());
-    }
-    #[test]
-    fn walletconnect_heartbeat_and_idle_have_independent_deadlines() {
-        assert!(check_liveness(Duration::from_secs(44), Duration::from_secs(299)).is_ok());
-        assert!(check_liveness(Duration::from_secs(45), Duration::ZERO)
-            .unwrap_err()
-            .to_string()
-            .contains("heartbeat"));
-        assert!(check_liveness(Duration::ZERO, Duration::from_secs(300))
-            .unwrap_err()
-            .to_string()
-            .contains("idle"));
-    }
-}
-
 // Runtime owns these exact, principal-derived session paths; UI never selects a path.
 pub(crate) fn clear_principal_storage(data: &FsPath, principal: &str) -> anyhow::Result<()> {
     let _files = session_files_lock(data)?;
@@ -1002,4 +974,32 @@ fn bump_storage_revision(data: &FsPath, name: &std::ffi::OsStr) -> anyhow::Resul
         .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("WalletConnect revision overflow"))?;
     crate::auth::atomic_write(&path, &serde_json::to_vec(&next)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn walletconnect_socket_completion_survives_task_unwind() {
+        let (done, finished) = watch::channel(false);
+        let completion = SocketCompletion(done);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _completion = completion;
+            panic!("fixture task failure");
+        }));
+        assert!(panic.is_err());
+        assert!(*finished.borrow());
+    }
+    #[test]
+    fn walletconnect_heartbeat_and_idle_have_independent_deadlines() {
+        assert!(check_liveness(Duration::from_secs(44), Duration::from_secs(299)).is_ok());
+        assert!(check_liveness(Duration::from_secs(45), Duration::ZERO)
+            .unwrap_err()
+            .to_string()
+            .contains("heartbeat"));
+        assert!(check_liveness(Duration::ZERO, Duration::from_secs(300))
+            .unwrap_err()
+            .to_string()
+            .contains("idle"));
+    }
 }
