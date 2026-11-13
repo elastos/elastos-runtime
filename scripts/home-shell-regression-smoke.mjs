@@ -323,6 +323,9 @@ globalThis.window = {
     listeners.push(listener);
     windowEventListeners.set(type, listeners);
   },
+  removeEventListener(type, listener) {
+    windowEventListeners.set(type, (windowEventListeners.get(type) || []).filter(candidate => candidate !== listener));
+  },
   setTimeout,
   clearTimeout,
   clearInterval: () => {},

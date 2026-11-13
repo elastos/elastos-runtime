@@ -7933,7 +7933,7 @@ async fn test_browser_refresh_recovers_and_closes_exact_instance_bound_page() {
             test_browser_request("localhost:61180", "null")
                 .method("POST")
                 .uri("/api/apps/browser/open")
-                .header("x-elastos-home-token", owner_token)
+                .header("x-elastos-home-token", owner_token.clone())
                 .header(CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
@@ -8020,6 +8020,7 @@ async fn test_browser_refresh_recovers_and_closes_exact_instance_bound_page() {
         ),
         (browser_instance, "cleanup:wrong", StatusCode::NOT_FOUND),
         (browser_instance, cleanup_id, StatusCode::OK),
+        (browser_instance, cleanup_id, StatusCode::OK),
     ] {
         let restored = app
             .clone()
@@ -8057,6 +8058,78 @@ async fn test_browser_refresh_recovers_and_closes_exact_instance_bound_page() {
         status.status(),
         StatusCode::OK,
         "renewed launch reads its retained page"
+    );
+    for (method, action, body) in [
+        ("POST", "heartbeat", ""),
+        (
+            "POST",
+            "input",
+            r#"{"event":{"type":"browser_command","command":"navigate","url":"https://example.com/renewed"}}"#,
+        ),
+        (
+            "POST",
+            "webrtc",
+            "{\"type\":\"offer\",\"sdp\":\"v=0\\r\\ns=ElastOS Browser Test\\r\\n\"}",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                test_browser_request("localhost:61180", "null")
+                    .method(method)
+                    .uri(format!("/api/apps/browser/pages/{page_id}/{action}"))
+                    .header("x-elastos-home-token", refreshed_token.clone())
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "renewed launch {action}");
+    }
+    let old_status = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .uri(format!("/api/apps/browser/pages/{page_id}/status"))
+                .header("x-elastos-home-token", owner_token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        old_status.status(),
+        StatusCode::NOT_FOUND,
+        "page routes follow the new owner"
+    );
+    let other = passkey_authority_with_name_role_credential(
+        dir.path(),
+        None,
+        crate::auth::RuntimePrincipalRole::Guest,
+        "566-other-principal",
+    );
+    let other_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &other);
+    let foreign_restore = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .method("POST")
+                .uri(format!("/api/apps/browser/pages/{page_id}/restore"))
+                .header("x-elastos-home-token", other_token)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"cleanup_id":cleanup_id,"browser_instance":browser_instance})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        foreign_restore.status(),
+        StatusCode::NOT_FOUND,
+        "stored principal owns the page"
     );
 
     let wrong_instance_close = app

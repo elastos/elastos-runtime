@@ -1571,8 +1571,10 @@ function handoverBrowserAuthority(entry, frame, homeToken, freshHomeToken, brows
     const timer = window.setTimeout(() => finish(new Error("Browser session renewal timed out")), timeoutMs);
     window.addEventListener("message", receive);
     frame.addEventListener("load", unloaded, { once: true });
-    frame.contentWindow.postMessage({ type: "elastos.browser.authority-commit/v1",
-      requestId, homeToken, freshHomeToken, browserInstance }, "*");
+    try {
+      frame.contentWindow.postMessage({ type: "elastos.browser.authority-commit/v1",
+        requestId, homeToken, freshHomeToken, browserInstance }, "*");
+    } catch (error) { finish(error); }
   });
 }
 
