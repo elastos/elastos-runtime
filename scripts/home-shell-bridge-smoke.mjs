@@ -2576,6 +2576,25 @@ assert(
   browserRenewalReplies,
 );
 
+// Home retains the registered Browser window as the renewal boundary.
+for (const [name, overrides] of [
+  ["other-app", { renewHomeToken: "people-token" }],
+  ["other-window", { query: { browser_instance: "browser:other" } }],
+  ["other-target", { target: "people" }],
+  ["extra-field", { unexpected: true }],
+]) {
+  const requestId = `denied-browser-renewal-${name}`;
+  const before = requests.filter(request => request.url === "/api/apps/home/launch").length;
+  sendChildMessage("null", shellFrameWindow, { type: "home:launch-target", requestId,
+    target: "browser", query: { browser_instance: renewalBrowserInstance },
+    homeToken: "gui-token", renewHomeToken: "browser-renewal-old-token", ...overrides });
+  const reply = await waitForReply(shellMessages, requestId);
+  assert(reply.payload?.error === "Home denied the Browser renewal",
+    "Home accepted a Browser renewal outside its registered window");
+  assert(requests.filter(request => request.url === "/api/apps/home/launch").length === before,
+    "a rejected Browser renewal reached Runtime");
+}
+
 const secondRenewalRequest = {
   ...firstRenewalRequest,
   requestId: "browser-renewal-request-2",
