@@ -8,6 +8,8 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Fixed
 
+- WalletConnect keeps its SDK in the connector capsule, uses capsule-scoped Runtime storage and relay access, and shows recovery instructions for interrupted transactions.
+
 - Apps no longer open blank in Safari and other WebKit browsers.
 
 ## [2.0.1] - 2026-11-09

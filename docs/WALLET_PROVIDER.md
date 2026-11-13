@@ -244,48 +244,55 @@ storage, and signed runtime audit scaffolding. An approval that expires before
 managed signing or external handoff completion fails closed instead of becoming
 a stale signing authority.
 
-WalletConnect is a dedicated connector capsule (`wallet-walletconnect`).
-`wallet-provider` owns proof verification, linked accounts, approval state,
-receipts, and audit. The connector presents the account and approval controls;
-trusted Home hosts the reviewed Reown EVM provider and bundled QR renderer.
-Mode A connects external wallets to sign Runtime challenges and approved
-requests. Mode B, where external dApps use ElastOS as a WalletConnect wallet,
-requires its own security decision. Internal capsules enter the private typed
-Wallet Bus through verified Runtime authority.
+WalletConnect is a dedicated connector capsule (`wallet-walletconnect`). The
+reviewed Reown SDK and its bundled QR renderer run only in that capsule's opaque
+sandboxed frame. `wallet-provider` owns proof verification, linked accounts,
+approval state and receipts. Runtime accepts the connector's own live launch
+capability, bound to its principal, session and launch instance, for storage,
+relay admission, linking and signing handoffs. Home owns window orchestration.
 
-Runtime keeps the SDK key/value store in private files selected by the verified
-principal. Trusted Home combines its own authority with the carried connector
-launch token to use storage and obtain a short-lived, single-use relay admission.
-An opaque capsule cannot read pairing keys or publish encrypted signing requests.
-Home accepts link actions, approval IDs, and disconnect actions; Runtime and
-`wallet-provider` supply the exact proof or signing payload. Pairing carries
-connection state. Each signing request retains its principal, requesting actor,
-account, chain, payload hash, and expiry. Disconnect leaves linked accounts in
-Wallet. Account or chain changes stop a request before the wallet sends it.
-Home passes each returned transaction hash to Runtime once, including after a
-connection or account change. A completion error keeps that hash visible so the
-person can check the transaction before sending again. Unused signatures and
-ownership proofs still stop when the account, chain, or request expiry changes.
+Mode A connects a phone wallet to sign Runtime challenges and approved requests.
+Mode B, where external dApps use ElastOS as a WalletConnect wallet, requires its
+own security decision. The phone holds signing keys and confirms each request.
+Isolation protects Home. A compromised SDK still holds its pairing session and
+could ask the phone to sign a different request; the phone's confirmation is the
+last guard. Signup and sign-in remain candidates for the separate first-run
+authority decision.
 
-The opaque-frame SDK qualification test uses capsule-local
-`walletconnect-storage.mjs` for browser Storage compatibility. Its non-protocol
-memory supports UI preferences, such as wallet and network choice, and resets
-on reload.
-The Runtime adapter owns sessions, pairings and cryptographic keys. The memory
-store raises `SecurityError` for WalletConnect protocol and keychain names.
-The focused native-Storage comparison runs in Chromium and WebKit with
-`node --test scripts/walletconnect-storage-smoke.mjs`; the source gateway test
-`content_sandbox_browser_walletconnect_sdk` checks the same SDK under capsule
-CSP and sandbox headers. This test uses a deterministic relay and key/value
-adapter; a paired reconnect requires the separate real-relay journey.
+Runtime supplies the exact principal, requesting actor, account, chain, payload
+hash and expiry. It checks pending state before handing off once, and checks the
+approved request and hash before completion. A closed connector window leaves an
+approved, unfinished transaction visible with "Check your phone wallet". Opening
+it again supplies recovery instructions and keeps the send control disabled.
+A returned transaction hash is passed to Runtime once even if the account,
+network or expiry changed during the phone prompt. A completion error keeps the
+hash visible for checking before another send. Unused signatures and ownership
+proofs stop when their account, network or expiry changes.
 
-Inbox owns internet consent through the owner's passkey. Runtime connects only
-to `relay.walletconnect.org` and `relay.walletconnect.com` on TLS port 443 through
-the existing local Exit. Runtime authenticates relay TLS, limits frame size and
-sockets per principal, sends heartbeats, and expires idle connections. Turn Off
-cancels handshakes and open sockets. Reopening the connector restores the SDK's
-principal-scoped state and reconnects while consent and Home authority remain
-valid. Hosted Carrier Exit selection remains a separate integration.
+The capsule installs `walletconnect-storage.mjs` before importing the pinned SDK.
+Browser Storage holds UI preferences in memory and resets on reload. Protocol
+and keychain names raise `SecurityError` there. Runtime's private key/value store
+holds pairings, sessions and cryptographic keys, selected by the verified
+principal. The SDK uses the constant context `wallet-walletconnect`; Runtime's
+principal boundary separates each person's files. This unmerged implementation
+has no session migration. Disconnect clears session storage and frame memory
+while linked accounts stay in Wallet. Revocation clears session files; linked
+account removal and principal removal also clear the affected principal's file.
+
+Inbox owns internet consent through one request and the owner's passkey. Allow
+returns focus to the connector; the same Inbox entry offers Turn Off. Runtime
+admits only the opaque connector's single-use relay ticket, caps waiting sockets,
+rechecks the launch and owner on each heartbeat and outbound frame, authenticates
+relay TLS, and limits frames and sockets. It reaches only
+`relay.walletconnect.org` and `relay.walletconnect.com` on TLS port 443 through
+the local Exit. Turn Off cancels handshakes and open sockets. Hosted Carrier Exit
+selection remains a separate integration.
+
+The native-Storage comparison and deterministic sandbox test cover Chromium and
+WebKit. The opt-in real-relay test, selected with
+`ELASTOS_WALLETCONNECT_PROJECT_FILE`, separately checks pairing, page reload and
+a fresh source-gateway process restart. Installed desktop acceptance and a real
+phone wallet require their own evidence.
 
 The connector is installed with Home and stays hidden and unroutable until
 `elastos.walletconnect.connector/v1` configuration and the matching hashed local

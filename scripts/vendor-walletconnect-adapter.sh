@@ -12,10 +12,9 @@ mkdir -p "$(dirname "$OUT_FILE")"
   --inject:"$ROOT_DIR/scripts/walletconnect/runtime-websocket.mjs" --outfile="$OUT_FILE"
 node --input-type=module - "$ROOT_DIR" "$OUT_FILE" <<'JS'
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, copyFileSync, readdirSync, lstatSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 const [root, output] = process.argv.slice(2);
-copyFileSync(join(root, 'scripts/walletconnect/package-lock.json'), join(dirname(output), 'package-lock.json'));
 const sha = path => createHash('sha256').update(readFileSync(path)).digest('hex');
 writeFileSync(join(dirname(output), 'adapter.json'), JSON.stringify({
   sdk_package: '@walletconnect/ethereum-provider', sdk_version: '2.23.9',
