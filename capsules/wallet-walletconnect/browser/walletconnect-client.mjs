@@ -15,12 +15,21 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
   const same = (a,b) => String(a).toLowerCase() === String(b).toLowerCase();
   const signData = message => /^0[xX](?:[0-9a-fA-F]{2})*$/.test(message) ? '0x'+message.slice(2)
     : '0x'+[...new TextEncoder().encode(message)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  const retireAdapter = async () => {
+    let timer;
+    try {
+      await Promise.race([
+        Promise.resolve().then(()=>adapter?.disconnectWalletConnectEvm({api:sessionApi})),
+        new Promise(resolve=>{timer=setTimeout(resolve,5000);}),
+      ]);
+    } catch {} finally { clearTimeout(timer); }
+  };
   const connect = async () => {
     const config = await api('wallet/config');
     const permission = await api('internet');
     if (permission.status !== 'granted') throw new Error('Allow WalletConnect internet access in Inbox, then connect again.');
     if (activeRevision !== undefined && activeRevision !== config.walletconnect.storage_revision) {
-      try { await adapter?.disconnectWalletConnectEvm({api:sessionApi}); } catch {}
+      await retireAdapter();
       provider = undefined; adapter = undefined; clearMemory();
     }
     activeRevision = config.walletconnect.storage_revision;
@@ -41,7 +50,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
   };
   const disconnect = async () => {
     generation++;
-    try { await adapter?.disconnectWalletConnectEvm({api:sessionApi}); }
+    try { await retireAdapter(); }
     finally {
       provider = undefined; adapter = undefined; activeRevision = undefined; clearMemory();
       await api('storage',{method:'DELETE'});
@@ -78,7 +87,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     if (!review || review.status !== 'pending' || !same(review.address,signer) || review.chain_namespace !== namespace) throw new Error('Select the requested account and network in your phone wallet, then review again.');
     const ttl = review.expires_at - Math.ceil(Date.now()/1000);
     if (!Number.isSafeInteger(review.expires_at) || ttl <= 0 || review.intent === 'transaction_intent' && ttl < 300) throw new Error('Wallet request expires soon. Request a fresh review.');
-    const supported = ['auth_challenge','browser_personal_sign','browser_typed_data_sign','capability_grant','credential','publish_envelope','transaction_intent','revocation'];
+    const supported = ['auth_challenge','browser_personal_sign','browser_typed_data_sign','capability_grant','credential','publish_envelope','protected_content_rights_signature','transaction_intent','revocation'];
     if (!supported.includes(review.intent)) throw new Error('This request type is unavailable in WalletConnect. Reject it in Wallet.');
     if (review.intent === 'browser_typed_data_sign' && !provider.session?.namespaces?.eip155?.methods?.includes('eth_signTypedData_v4'))
       throw new Error('Typed data signing is unavailable in this pairing. Reject this request in Wallet or use another linked account.');

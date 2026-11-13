@@ -274,10 +274,13 @@ Browser Storage holds UI preferences in memory and resets on reload. Protocol
 and keychain names raise `SecurityError` there. Runtime's private key/value store
 holds pairings, sessions and cryptographic keys, selected by the verified
 principal. The SDK uses the constant context `wallet-walletconnect`; Runtime's
-principal boundary separates each person's files. The connector supplies no session migration. Disconnect clears session storage and the memory shim
-while linked accounts stay in Wallet. Revocation clears session files; linked
+principal boundary separates each person's files. The connector supplies no
+session migration. Disconnect clears session storage and the memory shim while
+linked accounts stay in Wallet. Revocation clears session files; linked
 account removal and principal removal also clear the affected principal's file.
-A Runtime storage revision fences late writes and relay use from an old SDK
+A cleanup failure after account or principal removal leaves that change saved
+and records an operator-retry warning. Successful cleanup advances a Runtime
+storage revision that fences late writes and relay use from an old SDK
 instance after cleanup. Reopening the connector starts a fresh instance.
 
 Inbox owns internet consent through one request and the owner's passkey. Allow

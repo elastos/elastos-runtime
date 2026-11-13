@@ -42,3 +42,23 @@ test('a reset creates a fresh SDK API while old SDK writes keep their stale revi
   await assert.rejects(sessions[0]('storage',{method:'POST'}),/stale SDK/);
   assert.deepEqual(await sessions[1]('storage',{method:'POST'}),{});
 });
+
+test('protected-content rights signs the exact Runtime hex handoff with personal_sign',async()=>{
+  const r=await exerciseWalletConnect('protected-content');assert.equal(r.error,undefined);
+  assert.deepEqual(r.calls.find(c=>c.method==='personal_sign').params.slice(0,1),['0x414243']);
+  assert.equal(JSON.parse(completed(r)[0].input.body).signature_type,'personal_sign');
+});
+test('a stalled old SDK disconnect cannot block a new storage generation',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
+  let revision='"0"',loads=0;const signer=`0x${'12'.repeat(20)}`;
+  const provider={on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture'};
+  const api=async path=>path==='wallet/config'?{walletconnect:{project_id:'fixture',storage_revision:revision}}:
+    path==='internet'?{status:'granted'}:path.endsWith('/challenge')?{message:'fixture',expires_at:Date.now()/1000+600|0}:{};
+  const client=createWalletConnectClient({api,origin:'http://localhost',loadAdapter:async()=>{loads++;return {
+    connectWalletConnectEvm:async()=>provider,disconnectWalletConnectEvm:()=>new Promise(()=>{}),
+  };}});
+  await client.effect({kind:'link'});revision='"1"';const pending=client.effect({kind:'link'});
+  for(let i=0;i<10;i++)await Promise.resolve();assert.equal(loads,1);
+  t.mock.timers.tick(5000);assert.deepEqual(await pending,{status:'linked'});assert.equal(loads,2);
+});
