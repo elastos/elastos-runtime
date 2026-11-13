@@ -475,7 +475,7 @@ until [ -S /tmp/.X11-unix/X$selkies_display_number ]; do sleep .1; done
 (dbus-run-session -- /usr/bin/wireplumber >/tmp/wireplumber-current.log 2>&1 &)
 (dbus-run-session -- /usr/bin/pipewire-pulse >/tmp/pipewire-pulse-current.log 2>&1 &)
 for attempt in \$(seq 1 80); do
-  if command -v pw-cli >/dev/null 2>&1 && pw-cli ls Node 2>/dev/null | grep -q 'node.name = \"output\"'; then
+  if command -v pw-cli >/dev/null 2>&1 && pw-cli ls Node 2>/dev/null | grep 'node.name = \"output\"' >/dev/null; then
     break
   fi
   if command -v pw-cli >/dev/null 2>&1 && pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=output node.description=output media.class=Audio/Sink object.linger=true audio.position=[FL FR] }' >/tmp/pipewire-null-sink.log 2>&1; then
@@ -542,7 +542,7 @@ python3 -m selkies \
 
 for ((attempt = 0; attempt < timeout_seconds * 10; attempt += 1)); do
   if curl -fsS -m 1 "http://127.0.0.1:$cdp_port/json/version" >/dev/null 2>&1 \
-    && curl -sS -m 1 -i "http://127.0.0.1:$selkies_port/health" 2>/dev/null | grep -Eq 'HTTP/[0-9.]+ (200|401)'; then
+    && curl -sS -m 1 -i "http://127.0.0.1:$selkies_port/health" 2>/dev/null | grep -E 'HTTP/[0-9.]+ (200|401)' >/dev/null; then
     break
   fi
   sleep 0.1
@@ -551,7 +551,7 @@ if ! curl -fsS -m 2 "http://127.0.0.1:$cdp_port/json/version" >/dev/null 2>&1; t
   echo "Chromium CDP endpoint did not become reachable within ${timeout_seconds}s" >&2
   exit 1
 fi
-if ! curl -sS -m 2 -i "http://127.0.0.1:$selkies_port/health" 2>/dev/null | grep -Eq 'HTTP/[0-9.]+ (200|401)'; then
+if ! curl -sS -m 2 -i "http://127.0.0.1:$selkies_port/health" 2>/dev/null | grep -E 'HTTP/[0-9.]+ (200|401)' >/dev/null; then
   echo "Selkies endpoint did not become reachable within ${timeout_seconds}s" >&2
   exit 1
 fi
@@ -695,7 +695,7 @@ if (( verify && cleanup_after_verify )); then
   exit 0
 fi
 
-while docker ps --format '{{.Names}}' | grep -Fxq "$container_name"; do
+while docker ps --format '{{.Names}}' | grep -Fx "$container_name" >/dev/null; do
   if ! kill -0 "$local_exit_pid" >/dev/null 2>&1; then
     echo "browser-local-exit exited" >&2
     exit 1

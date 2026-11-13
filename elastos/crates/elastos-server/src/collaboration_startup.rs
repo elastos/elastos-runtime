@@ -75,6 +75,19 @@ pub struct CollaborationStartupConfiguration {
 }
 
 impl CollaborationStartupConfiguration {
+    /// Connect tickets from the same verified Community profile Home uses.
+    pub fn community_bootstrap_connect_tickets(&self) -> Vec<String> {
+        match &self.configuration {
+            CollaborationNetworkConfiguration::Isolated => Vec::new(),
+            CollaborationNetworkConfiguration::Configured { profile, .. } => profile
+                .profile()
+                .bootstrap_peers
+                .iter()
+                .map(|peer| peer.connect_ticket.clone())
+                .collect(),
+        }
+    }
+
     /// Node ids of the verified Community profile's bootstrap peers; empty
     /// when this Home is isolated. Carrier runs as the Community hub when its
     /// own endpoint is one of them.

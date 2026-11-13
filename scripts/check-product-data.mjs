@@ -220,6 +220,10 @@ export function parsePublishData(shellSource, rustSource) {
     assert(body !== undefined, `${name}: missing declared publish data`);
     return body.replace(/#[^\n]*/g, "").trim().split(/\s+/).filter(Boolean).map((entry) => entry.replace(/^(['"])(.*)\1$/, "$2"));
   };
+  const support = shell("SUPPORT_BINARY_ASSETS");
+  for (const provider of new Set([...protectedProviders, ...support])) {
+    assert.equal(support.filter((entry) => entry === provider).length, 1, `release support inventory must include ${provider} exactly once`);
+  }
   const rust = (name) => {
     const body = rustSource.match(new RegExp(`const\\s+${name}:\\s*&\\[&str\\]\\s*=\\s*&\\[([\\s\\S]*?)\\];`))?.[1];
     assert(body !== undefined, `${name}: missing declared publish data`);

@@ -8,11 +8,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 product_data() {
+  python3 scripts/check-shell-pipe-readers.py
+  python3 scripts/check-shell-pipe-readers-test.py
   node scripts/check-product-data.mjs
+  node scripts/check-elastos-bus-wit.mjs
+  node scripts/check-capsule-templates.mjs
+  node scripts/carrier-dependency-generation-check.mjs
+  node --test scripts/carrier-dependency-generation-check.test.mjs
 }
 
 prepush() {
   python3 scripts/ci-local-prepush-test.py
+  node --test scripts/capsule-script-browser-ci.test.mjs
 }
 
 product_ui() {

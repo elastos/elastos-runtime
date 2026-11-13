@@ -382,12 +382,14 @@ jobs:
         run: |
           # 1.60 fixes ZIP extraction hanging on Node 26 (Playwright #40747).
           npm install --prefix "${RUNNER_TEMP}/content-sandbox-browser" --no-save --package-lock=false playwright@1.60.0
-          "${RUNNER_TEMP}/content-sandbox-browser/node_modules/.bin/playwright" install chromium --with-deps --only-shell
+          "${RUNNER_TEMP}/content-sandbox-browser/node_modules/.bin/playwright" install chromium --with-deps
+          "${RUNNER_TEMP}/content-sandbox-browser/node_modules/.bin/playwright" install webkit --with-deps
       - name: gateway content sandbox browser regression
         working-directory: elastos
         env:
           ELASTOS_PLAYWRIGHT_MODULE: ${{ runner.temp }}/content-sandbox-browser/node_modules/playwright/index.mjs
-        run: cargo test -p elastos-server content_sandbox_browser -- --ignored --nocapture
+        # Match the unit suite's workspace feature graph and reuse its test binaries.
+        run: cargo test --workspace content_sandbox_browser -- --ignored --nocapture
       - name: Rust compile cache statistics
         if: always() && env.RUSTC_WRAPPER == 'sccache'
         run: sccache --show-stats
@@ -587,6 +589,7 @@ jobs:
               - 'elastos/crates/elastos-server/src/server_infra.rs'
               - 'elastos/crates/elastos-server/src/node_cmd.rs'
               - 'elastos/crates/elastos-server/src/protected_content_config.rs'
+              - 'elastos/crates/elastos-server/src/identity_cmd.rs'
       - id: should-run
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "merge_group" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ steps.filter.outputs.custody }}" = "true" ]; then
