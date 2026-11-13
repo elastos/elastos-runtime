@@ -24,7 +24,10 @@ failures = []
 tracked = subprocess.check_output(
     ["git", "ls-files", "-z", "--", "scripts", ".githooks"], cwd=ROOT, text=True,
 )
-for relative in tracked.split("\0"):
+tracked = sorted(set(tracked.split("\0")))
+if Path(__file__).resolve().relative_to(ROOT).as_posix() not in tracked:
+    sys.exit("Shell pipeline reader scanner is missing from the Git file list")
+for relative in tracked:
     if not relative:
         continue
     path = ROOT / relative
