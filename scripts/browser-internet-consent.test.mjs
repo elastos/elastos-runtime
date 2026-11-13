@@ -415,6 +415,7 @@ test("WalletConnect Inbox keeps requests pending, uses passkey consent and separ
       await frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
       assert.equal(await frame.locator("#pending-count").innerText(),"0");
       assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant"]);
+      await page.waitForFunction(()=>messages.some(m=>m.type==='home:open-target' && m.target==='wallet-walletconnect' && Object.keys(m.query).length===0));
       await frame.getByRole("button",{name:"Turn Off",exact:true}).click();
       await frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor({state:"hidden"});
       assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant","walletconnect.internet.revoke"]);

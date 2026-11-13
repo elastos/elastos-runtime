@@ -450,9 +450,16 @@ async function runHostedConnectorSmoke(connectorId = "wallet-metamask") {
   };
 }
 
+async function runWalletConnectSmoke() {
+  const {exerciseWalletConnect} = await import('./lib/walletconnect-capsule-fixture.mjs');
+  const result = await exerciseWalletConnect();
+  if (result.error) throw new Error(result.error);
+  return {connectorId:'wallet-walletconnect',effectOwner:'capsule',result:result.result};
+}
+
 const results = [
   await runHostedConnectorSmoke(),
-  await runHostedConnectorSmoke("wallet-walletconnect"),
+  await runWalletConnectSmoke(),
 ];
 
 console.log(JSON.stringify({ ok: true, results }, null, 2));

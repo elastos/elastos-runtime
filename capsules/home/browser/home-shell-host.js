@@ -93,6 +93,7 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   "home-agent": new Set(["marketplace", "system", "inbox"]),
   "archive-manager": new Set(["library"]),
   browser: new Set(["library", "inbox"]),
+  "wallet-walletconnect": new Set(["inbox"]),
   "chat-room": new Set(["library", "people", "inbox"]),
   "gba-emulator": new Set(["library"]),
   "home-cli": "visible-target",
@@ -2174,11 +2175,11 @@ window.addEventListener("message", (event) => {
     console.warn("home ignored an app's Browser open with a query", context.targetId);
     return;
   }
-  if (context.targetId === "browser" && target === "inbox") {
+  if (["browser", "wallet-walletconnect"].includes(context.targetId) && target === "inbox") {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
       || !data.query || typeof data.query !== "object" || Array.isArray(data.query)
       || Object.keys(data.query).length !== 1
-      || data.query.notification_id !== "browser-internet:permission") return;
+      || data.query.notification_id !== (context.targetId === "browser" ? "browser-internet:permission" : "walletconnect-internet:permission")) return;
   }
   if (context.targetId === "chat-room" && ["people", "inbox"].includes(target)) {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])

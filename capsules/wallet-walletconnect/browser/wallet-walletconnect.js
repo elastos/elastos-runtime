@@ -1,14 +1,10 @@
+import { installWalletConnectStorage } from './walletconnect-storage.mjs';
+import { createWalletConnectClient } from './walletconnect-client.mjs';
 import {
   createHomeClipboardClient,
 } from "/apps/home/home-clipboard-client.js?v=home-20260726a";
 
 const CONNECTOR_ID = "wallet-walletconnect";
-const HOST_EFFECT_TYPE = "home:wallet-connector-effect";
-const HOST_EFFECT_SCHEMA = "elastos.home.wallet-connector-effect/v1";
-const HOST_RESULT_TYPE = "home:wallet-connector-effect-result";
-const HOST_RESULT_SCHEMA = "elastos.home.wallet-connector-effect-result/v1";
-// Cover QR pairing (180 s), the Runtime approval window (600 s), and delivery.
-const HOST_EFFECT_TIMEOUT_MS = 810_000;
 const connectButton = document.querySelector("#wallet-connect");
 const statusNode = document.querySelector("#wallet-status");
 const stateNode = document.querySelector("#wallet-state");
@@ -17,15 +13,21 @@ const requestsNode = document.querySelector("#wallet-requests");
 const frameHomeToken = readLaunchToken();
 const homeOrigin = readQueryParam("home_origin");
 let hostEffectInFlight = false;
-let hostRequestSequence = 0;
+const clearMemory = installWalletConnectStorage(window);
+const runtimeOrigin = new URL(import.meta.url).origin;
+const api = (resource, init={}) => fetchJson(resource.startsWith('/api/') ? runtimeOrigin+resource : `${runtimeOrigin}/api/apps/${CONNECTOR_ID}/${resource}`, {
+  ...init, headers:shellHeaders({'content-type':'application/json'}),
+});
+const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory});
+window.addEventListener('focus',()=>refreshWalletState().catch(()=>{}));
 let connectionTimer;
 let connectionRevision;
 function watchConnection() {
-  if (connectionTimer || typeof window.setInterval !== "function") return;
+  if (!frameHomeToken || connectionTimer || typeof window.setInterval !== "function") return;
   connectionTimer = window.setInterval(async () => {
     if (hostEffectInFlight) return;
     try {
-      const current = await requestHomeWalletEffect({ kind: "status" });
+      const current = await requestCapsuleWalletEffect({ kind: "status" });
       document.querySelector("#wallet-connection").textContent = current.status === "connected" ? "Connected" : "Disconnected";
       if (current.status === "connected" && connectionRevision !== undefined && connectionRevision !== current.revision) {
         showStatus("Wallet changed. Check the account and network on your phone.", "muted");
@@ -46,12 +48,13 @@ boot();
 
 function boot() {
   document.querySelector("#wallet-disconnect")?.addEventListener("click", async () => {
-    try { await requestHomeWalletEffect({ kind: "disconnect" }); document.querySelector("#wallet-connection").textContent = "Disconnected"; showStatus("Disconnected. Linked accounts stay in Wallet.", "muted"); }
+    try { await requestCapsuleWalletEffect({ kind: "disconnect" }); document.querySelector("#wallet-connection").textContent = "Disconnected"; showStatus("Disconnected. Linked accounts stay in Wallet.", "muted"); }
     catch (error) { showStatus(errorMessage(error), "error"); }
   });
   connectButton?.addEventListener("click", onConnect);
   accountsNode?.addEventListener("click", onAccountClick);
   requestsNode?.addEventListener("click", onRequestClick);
+  watchConnection();
   setState("0 linked");
   refreshWalletState().catch((error) => {
     showStatus(errorMessage(error), "error");
@@ -62,7 +65,7 @@ async function onConnect() {
   setButtonBusy(connectButton, true);
   showStatus("Approve in your phone wallet.", "muted");
   try {
-    await requestHomeWalletEffect({ kind: "link" });
+    await requestCapsuleWalletEffect({ kind: "link" });
     document.querySelector("#wallet-connection").textContent = "Connected";
     watchConnection();
     showStatus("Approval method added.", "success");
@@ -141,7 +144,7 @@ function renderRequests(requests) {
   }
   requestsNode.replaceChildren();
   const connectorRequests = requests.filter((request) => (
-    !isManagedWalletRequest(request) && isMetaMaskSignableRequest(request)
+    !isManagedWalletRequest(request) && isWalletConnectSignableRequest(request)
   ));
   if (connectorRequests.length === 0) {
     requestsNode.append(emptyNode("No approval requests."));
@@ -168,6 +171,12 @@ function requestCard(request) {
     || readText(request?.resource)
     || "Approval requested.";
   main.append(title, meta, reason);
+  if (request.status === 'approved' && request.intent === 'transaction_intent') {
+    const recovery = document.createElement('p');
+    recovery.textContent = 'Check your phone wallet. It may have sent this transaction. Check Wallet activity before you send again.';
+    card.append(main,recovery);
+    return card;
+  }
   const sign = document.createElement("button");
   sign.className = "wallet-button";
   sign.type = "button";
@@ -203,7 +212,7 @@ async function onRequestClick(event) {
   setButtonBusy(button, true);
   showStatus("Preparing request.", "muted");
   try {
-    const result = await requestHomeWalletEffect({ kind: "approve", approvalRequestId });
+    const result = await requestCapsuleWalletEffect({ kind: "approve", approvalRequestId });
     watchConnection();
     showStatus(
       result.effect === "transaction" ? "Transaction sent." : "Request signed.",
@@ -218,96 +227,19 @@ async function onRequestClick(event) {
   }
 }
 
-function requestHomeWalletEffect(action) {
-  if (!frameHomeToken || !homeOrigin || window.top === window) {
-    return Promise.reject(new Error("Open this approval method from Wallet."));
-  }
-  if (hostEffectInFlight) {
-    return Promise.reject(new Error("A wallet request is already active."));
-  }
-  const requestId = nextHostRequestId();
+async function requestCapsuleWalletEffect(action) {
+  if (!frameHomeToken || hostEffectInFlight) throw new Error('A wallet request is already active.');
   hostEffectInFlight = true;
-  return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      finish();
-      reject(new Error("Wallet request timed out."));
-    }, action.kind === "status" ? 10000 : ["approve", "link"].includes(action.kind) ? HOST_EFFECT_TIMEOUT_MS : 30000);
-    const finish = () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener("message", onMessage);
-      hostEffectInFlight = false;
-    };
-    const onMessage = (event) => {
-      const data = event.data;
-      if (
-        event.source !== window.top
-        || event.origin !== homeOrigin
-        || data?.type !== HOST_RESULT_TYPE
-        || data.schema !== HOST_RESULT_SCHEMA
-        || data.requestId !== requestId
-        || data.connectorId !== CONNECTOR_ID
-      ) {
-        return;
+  try {
+    if (['link','approve'].includes(action.kind)) {
+      const consent = await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
+      if (consent.status !== 'granted') {
+        window.top.postMessage({type:'home:open-target',target:'inbox',query:{notification_id:'walletconnect-internet:permission'},homeToken:frameHomeToken},homeOrigin);
+        throw new Error('Allow WalletConnect internet access in Inbox, then connect again.');
       }
-      const hasResult = hasExactKeys(data, [
-        "type",
-        "schema",
-        "requestId",
-        "connectorId",
-        "result",
-      ]);
-      const hasError = hasExactKeys(data, [
-        "type",
-        "schema",
-        "requestId",
-        "connectorId",
-        "error",
-      ]);
-      if (!hasResult && !hasError) {
-        return;
-      }
-      finish();
-      if (hasError) {
-        reject(new Error(readText(data.error) || "Wallet request failed."));
-        return;
-      }
-      if (action.kind === "status") {
-        if (!hasExactKeys(data.result, ["status", "revision"]) || !["connected", "disconnected"].includes(data.result.status)
-            || !Number.isSafeInteger(data.result.revision)) { reject(new Error("Home returned an invalid connection state.")); return; }
-        resolve(data.result); return;
-      }
-      const expectedResultKeys = action.kind !== "approve" ? ["status"] : ["status", "effect"];
-      if (
-        !hasExactKeys(data.result, expectedResultKeys)
-        || data.result.status !== (action.kind === "link" ? "linked" : action.kind === "disconnect" ? "disconnected" : "completed")
-        || (
-          action.kind === "approve"
-          && !["signature", "transaction"].includes(data.result.effect)
-        )
-      ) {
-        reject(new Error("Home returned an invalid wallet result."));
-        return;
-      }
-      resolve(data.result);
-    };
-    window.addEventListener("message", onMessage);
-    window.top.postMessage({
-      type: HOST_EFFECT_TYPE,
-      schema: HOST_EFFECT_SCHEMA,
-      requestId,
-      connectorId: CONNECTOR_ID,
-      connectorToken: frameHomeToken,
-      action,
-    }, homeOrigin);
-  });
-}
-
-function nextHostRequestId() {
-  hostRequestSequence += 1;
-  const random = typeof window.crypto?.randomUUID === "function"
-    ? window.crypto.randomUUID()
-    : `${Date.now().toString(36)}-${hostRequestSequence}`;
-  return `wallet-effect:${random}`;
+    }
+    return await connector.effect(action);
+  } finally { hostEffectInFlight = false; }
 }
 
 function walletIntentLabel(intent) {
@@ -341,7 +273,7 @@ function isManagedWalletRequest(request) {
   return ["managed_evm", "managed_btc_p2wpkh"].includes(readText(request?.proof_type));
 }
 
-function isMetaMaskSignableRequest(request) {
+function isWalletConnectSignableRequest(request) {
   return readText(request?.connector_id) === CONNECTOR_ID
     && readText(request?.intent) !== "bitcoin_bip322_proof"
     && ["siwe", "siwe_erc1271"].includes(readText(request?.proof_type));
@@ -359,7 +291,7 @@ async function fetchJson(url, init) {
   const response = await fetch(url, init);
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(`request failed: ${response.status}${detail.trim() ? ` ${detail.trim()}` : ""}`);
+    throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open WalletConnect again.' : detail.trim() || 'Runtime could not complete this wallet request. Try again.');
   }
   return response.json();
 }

@@ -536,6 +536,7 @@
             const stepUpToken = current.status === "revoked" ? undefined : await requestPasskeyStepUp(operation, current.request);
             await inboxAction(id, { step_up_token: stepUpToken });
             await loadInbox(); notifyHome();
+            if (operation === 'walletconnect.internet.grant') window.top.postMessage({type:'home:open-target',homeToken:state.homeToken,target:'wallet-walletconnect',query:{}},homeParentOrigin);
           } finally { setButtonsDisabled(false); }
         };
         if (actionId?.startsWith("walletconnect-internet-allow:")) {

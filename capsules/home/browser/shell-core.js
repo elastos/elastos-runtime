@@ -83,7 +83,6 @@ export function createHomeBackgroundImageReader() {
 
 export async function fetchJson(url, init) {
   const requiresHomeAuthority = url.startsWith("/api/apps/home/wallet-connector/")
-    || url.startsWith("/api/apps/wallet-walletconnect/")
     || url === "/api/apps/home/launch"
     || url === "/api/apps/home/active-shell"
     || url === "/api/apps/home/shared-content/get"
