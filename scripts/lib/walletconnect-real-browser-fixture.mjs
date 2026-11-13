@@ -34,7 +34,9 @@ const api = async (resource, input = {}) => {
     const symKey = pairing && (Array.isArray(keychain) ? new Map(keychain).get(pairing.topic) : keychain?.[pairing.topic]);
     if (pairing && typeof symKey === 'string') {
       const params = new URLSearchParams({symKey, 'relay-protocol':pairing.relay.protocol,
-        expiryTimestamp:String(pairing.expiry), methods:'[wc_sessionPropose]'});
+        expiryTimestamp:String(pairing.expiry)});
+      if (pairing.methods) params.set('methods', pairing.methods.join(','));
+      if (pairing.relay.data) params.set('relay-data', pairing.relay.data);
       window.pairingUri = `wc:${pairing.topic}@2?${params}`;
     }
   }
