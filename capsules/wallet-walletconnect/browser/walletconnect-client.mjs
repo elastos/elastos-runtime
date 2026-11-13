@@ -1,6 +1,6 @@
 // This module runs only in the connector's opaque frame. Runtime owns approval authority.
-export function createWalletConnectClient({ api, origin, loadAdapter = () => import('./vendor/reown-appkit.js'), clearMemory = () => {} }) {
-  let provider, adapter, generation = 0;
+export function createWalletConnectClient({ api, origin, loadAdapter = () => import(`./vendor/reown-appkit.js?instance=${crypto.randomUUID()}`), clearMemory = () => {} }) {
+  let provider, adapter, activeRevision, sessionApi, generation = 0;
   const address = async () => {
     const accounts = await provider.request({method:'eth_accounts'});
     const value = accounts?.[0];
@@ -19,9 +19,17 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     const config = await api('wallet/config');
     const permission = await api('internet');
     if (permission.status !== 'granted') throw new Error('Allow WalletConnect internet access in Inbox, then connect again.');
+    if (activeRevision !== undefined && activeRevision !== config.walletconnect.storage_revision) {
+      try { await adapter?.disconnectWalletConnectEvm({api:sessionApi}); } catch {}
+      provider = undefined; adapter = undefined; clearMemory();
+    }
+    activeRevision = config.walletconnect.storage_revision;
+    const revision = activeRevision;
+    sessionApi = (resource, init={}) => api(resource, ['storage','relay-admission'].includes(resource)
+      ? {...init,headers:{...init.headers,'if-match':revision}} : init);
     adapter ??= await loadAdapter();
     const current = await adapter.connectWalletConnectEvm({
-      contextKey:'wallet-walletconnect', projectId:config.walletconnect.project_id, chains:[1,20,8453,11155111], api,
+      contextKey:'wallet-walletconnect', projectId:config.walletconnect.project_id, chains:[1,20,8453,11155111], api:sessionApi,
       runtimeUrl:`${origin}/api/apps/wallet-walletconnect`, relayUrl:`${origin.replace(/^http/,'ws')}/api/apps/wallet-walletconnect/relay`,
       metadata:{name:'ElastOS Home',description:'Runtime wallet approval',url:origin,icons:[]},
     });
@@ -33,9 +41,9 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
   };
   const disconnect = async () => {
     generation++;
-    try { await adapter?.disconnectWalletConnectEvm({api}); }
+    try { await adapter?.disconnectWalletConnectEvm({api:sessionApi}); }
     finally {
-      provider = undefined; clearMemory();
+      provider = undefined; adapter = undefined; activeRevision = undefined; clearMemory();
       await api('storage',{method:'DELETE'});
     }
     return {status:'disconnected'};
@@ -70,6 +78,10 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     if (!review || review.status !== 'pending' || !same(review.address,signer) || review.chain_namespace !== namespace) throw new Error('Select the requested account and network in your phone wallet, then review again.');
     const ttl = review.expires_at - Math.ceil(Date.now()/1000);
     if (!Number.isSafeInteger(review.expires_at) || ttl <= 0 || review.intent === 'transaction_intent' && ttl < 300) throw new Error('Wallet request expires soon. Request a fresh review.');
+    const supported = ['auth_challenge','browser_personal_sign','browser_typed_data_sign','capability_grant','credential','publish_envelope','transaction_intent','revocation'];
+    if (!supported.includes(review.intent)) throw new Error('This request type is unavailable in WalletConnect. Reject it in Wallet.');
+    if (review.intent === 'browser_typed_data_sign' && !provider.session?.namespaces?.eip155?.methods?.includes('eth_signTypedData_v4'))
+      throw new Error('Typed data signing is unavailable in this pairing. Reject this request in Wallet or use another linked account.');
     const {handoff,binding} = await api(`${path}/approve`,{method:'POST',body:'{}'});
     if (!handoff || !binding || handoff.request_id !== action.approvalRequestId
       || handoff.payload_hash !== binding.payload_hash || !same(handoff.signer,signer)
@@ -91,9 +103,10 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
       return {status:'completed',effect:'transaction'};
     }
     if (handoff.signature_type !== 'personal_sign' || typeof handoff.message !== 'string') throw new Error('Runtime returned an invalid signature request.');
-    const signature = await provider.request({method:'personal_sign',params:[signData(handoff.message),signer]},expiry);
+    const method = handoff.intent === 'browser_typed_data_sign' ? 'eth_signTypedData_v4' : 'personal_sign';
+    const signature = await provider.request({method,params:method === 'eth_signTypedData_v4' ? [signer,handoff.message] : [signData(handoff.message),signer]},expiry);
     await check();
-    await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:'personal_sign'})});
+    await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:method === 'eth_signTypedData_v4' ? 'eip712' : 'personal_sign'})});
     return {status:'completed',effect:'signature'};
   }};
 }

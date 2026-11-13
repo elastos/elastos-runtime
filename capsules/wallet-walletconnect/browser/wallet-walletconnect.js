@@ -16,7 +16,7 @@ let hostEffectInFlight = false;
 const clearMemory = installWalletConnectStorage(window);
 const runtimeOrigin = new URL(import.meta.url).origin;
 const api = (resource, init={}) => fetchJson(resource.startsWith('/api/') ? runtimeOrigin+resource : `${runtimeOrigin}/api/apps/${CONNECTOR_ID}/${resource}`, {
-  ...init, headers:shellHeaders({'content-type':'application/json'}),
+  ...init, headers:shellHeaders({...init.headers,'content-type':'application/json'}),
 });
 const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory});
 window.addEventListener('focus',()=>refreshWalletState().catch(()=>{}));

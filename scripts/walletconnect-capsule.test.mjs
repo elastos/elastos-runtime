@@ -18,3 +18,27 @@ test('Home capsules contain no WalletConnect SDK import or signer',()=>{
   const scan=path=>{for(const e of readdirSync(path,{withFileTypes:true})){const p=join(path,e.name);if(e.isDirectory())scan(p);else if(/\.[cm]?js$/.test(e.name))assert.doesNotMatch(readFileSync(p,'utf8'),/connectWalletConnectEvm|@walletconnect\/|import\s*\([^)]*reown-appkit/);}};
   for(const e of readdirSync('capsules',{withFileTypes:true}))if(e.isDirectory()&&e.name.startsWith('home'))scan(join('capsules',e.name));
 });
+
+test('typed data uses EIP-712 and preserves the exact Runtime message',async()=>{const r=await exerciseWalletConnect('typed');assert.equal(r.error,undefined);const call=r.calls.find(c=>c.method==='eth_signTypedData_v4');assert.equal(call.params[1],'Runtime approval fixture');assert.equal(JSON.parse(completed(r)[0].input.body).signature_type,'eip712');});
+for(const scenario of ['typed-unavailable','unsupported']) test(`${scenario} remains pending instead of consuming an approval`,async()=>{const r=await exerciseWalletConnect(scenario);assert.equal(typeof r.error,'string');assert.equal(r.routes.filter(c=>c.path.endsWith('/approve')).length,0);assert.equal(completed(r).length,0);});
+test('a reset creates a fresh SDK API while old SDK writes keep their stale revision',async()=>{
+  const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
+  let revision='"0"',loads=0,disconnects=0;const sessions=[];
+  const signer=`0x${'12'.repeat(20)}`;
+  const provider={on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture-signature'};
+  const api=async(path,input)=>{
+    if(path==='wallet/config')return {walletconnect:{project_id:'fixture-project',storage_revision:revision}};
+    if(path==='internet')return {status:'granted'};
+    if(path==='storage'){if(input.headers['if-match']!==revision)throw new Error('stale SDK');return {};}
+    if(path.endsWith('/challenge'))return {message:'fixture',expires_at:Date.now()/1000+600|0};
+    if(path.endsWith('/verify'))return {};
+    throw new Error('Unexpected resource');
+  };
+  const client=createWalletConnectClient({api,origin:'http://localhost',loadAdapter:async()=>{loads++;return {
+    connectWalletConnectEvm:async options=>{sessions.push(options.api);return provider;},disconnectWalletConnectEvm:async()=>{disconnects++;},
+  };}});
+  await client.effect({kind:'link'});revision='"1"';await client.effect({kind:'link'});
+  assert.equal(loads,2);assert.equal(disconnects,1);
+  await assert.rejects(sessions[0]('storage',{method:'POST'}),/stale SDK/);
+  assert.deepEqual(await sessions[1]('storage',{method:'POST'}),{});
+});
