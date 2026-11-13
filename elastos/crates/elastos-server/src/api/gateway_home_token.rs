@@ -355,7 +355,10 @@ pub(super) fn grant_bound_token_expiry(
         &context.session_id,
         now_ts(),
     )
-    .map_err(|_| anyhow::anyhow!("home launch token auth session is not active"))?;
+    .map_err(|err| {
+        tracing::warn!(error = %err, "home launch token auth session is not active");
+        anyhow::Error::from(HomeLaunchTokenError::SessionInactive)
+    })?;
     if grant.principal_id != context.principal_id
         || grant.proof_binding_id != proof_binding_id
         || grant.grant_id != context.grant_id
