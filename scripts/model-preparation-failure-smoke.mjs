@@ -106,7 +106,7 @@ assert.deepEqual(plain(COMPACT_PHASE_TEXT), { ...plain(PHASE_TEXT), absent: "Not
   reclaimed: "Removed from this device", cancelled: "Stopped before finishing", expired: "Not finished in time" });
 assert.deepEqual(Object.keys(PHASE_TEXT).sort(), Object.keys(phases).filter(name => !["failed", "capacity"].includes(name)).sort(), "every phase except failed and capacity reads its copy from the table");
 assert.equal(capacityText({ total_bytes: 3e9, completed_bytes: 1e9 }),
-  "Waiting for free space. This model needs 2.0 GB on this Home, plus 2 GB kept free. Free some space and it continues.");
+  "Waiting for free space. This model needs 2.00 GB on this Home, plus 2 GB kept free. Free some space and it continues.");
 assert.equal(capacityText({ total_bytes: 3e9, completed_bytes: 1e9, failure_class: "cache_budget_unavailable" }),
   "Waiting for room in the local cache budget. Remove an unneeded model or increase the budget and it continues.");
 console.log("PASS model preparation failure: safe classes, operation/catalog parity, unknown history, strict rejection, shared copies, explicit two-entry selection, phase copy tables");

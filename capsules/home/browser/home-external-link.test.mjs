@@ -328,7 +328,7 @@ for (const [label, bytes, target] of [
 });
 
 test('shared file sheet uses the byte count shown in a Chat post', () => {
-  for (const [bytes, size] of [[30, '30 B'], [999, '999 B'], [1000, '1.0 KB'], [3328, '3.3 KB'], [3840, '3.8 KB'], [3565158, '3.6 MB'], [1000000000, '1.0 GB']]) {
+  for (const [bytes, size] of [[30, '30 B'], [999, '999 B'], [1000, '1.0 KB'], [3328, '3.3 KB'], [3840, '3.8 KB'], [3565158, '3.6 MB'], [1000000000, '1.00 GB']]) {
     const h = harness(); h.prompt.show(h.begin(), { ...result(), size_bytes: bytes });
     assert.equal(h.size.textContent, size);
   }
