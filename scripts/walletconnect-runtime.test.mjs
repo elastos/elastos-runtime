@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { readFile, mkdtemp, mkdir, writeFile, rm, chmod, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -119,6 +119,7 @@ test("release stage installs config automatically only from the operator file an
     }));
     const script = resolve("scripts/stage-walletconnect-release.mjs");
     const env = { ...process.env }; delete env.ELASTOS_WALLETCONNECT_PROJECT_FILE; delete env.ELASTOS_WALLETCONNECT_PROJECT_ID;
+    env.ELASTOS_WALLETCONNECT_PROJECT_ID = "refused-env-only-project";
     execFileSync(process.execPath, [script, dir], { env });
     await assert.rejects(readFile(join(vendor, "connector.json")), /ENOENT/);
     const project = join(dir, "operator-project"); await writeFile(project, "fixture-project-id");
@@ -127,7 +128,25 @@ test("release stage installs config automatically only from the operator file an
     const config = JSON.parse(await readFile(join(vendor, "connector.json")));
     assert.equal(config.schema, "elastos.walletconnect.connector/v1");
     assert.equal(config.project_id, "fixture-project-id");
+    await chmod(join(vendor, "connector.json"), 0o644);
+    execFileSync(process.execPath, [script, dir], { env });
+    assert.equal((await stat(join(vendor, "connector.json"))).mode & 0o777, 0o600);
     await writeFile(join(vendor, "reown-appkit.js"), "tampered");
     assert.throws(() => execFileSync(process.execPath, [script, dir], { env, stdio: "pipe" }), /failed/);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("release project secret is scoped to the build step and passed only by file", async () => {
+  const workflow = await readFile(resolve(".github/workflows/release-package.yml"), "utf8");
+  assert.doesNotMatch(workflow, /ELASTOS_WALLETCONNECT_PROJECT_ID/);
+  const steps = workflow.split("      - name:");
+  const secretSteps = steps.filter(step => step.includes("secrets.REOWN_PROJECT_ID"));
+  assert.equal(secretSteps.length, 2);
+  for (const step of secretSteps) {
+    assert.match(step, /^ build N, then N\+1/);
+    assert.match(step, /os.fchmod\(f.fileno\(\),0o600\)/);
+    assert.match(step, /ELASTOS_WALLETCONNECT_PROJECT_FILE/);
+    assert.match(step, /unset REOWN_PROJECT_ID/);
+    assert.match(step, /trap .*EXIT/);
+  }
 });

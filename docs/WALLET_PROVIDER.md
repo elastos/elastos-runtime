@@ -249,7 +249,11 @@ reviewed Reown SDK and its bundled QR renderer run only in that capsule's opaque
 sandboxed frame. `wallet-provider` owns proof verification, linked accounts,
 approval state and receipts. Runtime accepts the connector's own live launch
 capability, bound to its principal, session and launch instance, for storage,
-relay admission, linking and signing handoffs. Home owns window orchestration.
+relay admission, linking and signing handoffs. Each route checks the selected
+connector resource and proof binding. Config reads and storage deletion retain
+these launch checks while accepting an older storage revision, so a connector can
+load the current revision or retry cleanup. Relay use and storage writes require
+the current revision. Home owns window orchestration.
 
 Mode A connects a phone wallet to sign Runtime challenges and approved requests.
 Mode B, where external dApps use ElastOS as a WalletConnect wallet, requires its
@@ -265,9 +269,12 @@ approved request and hash before completion. A closed connector window leaves an
 approved, unfinished transaction visible with "Check your phone wallet". Opening
 it again supplies recovery instructions and keeps the send control disabled.
 A returned transaction hash is passed to Runtime once even if the account,
-network or expiry changed during the phone prompt. A completion error keeps the
+network or expiry changed during the phone prompt. Runtime checks the returned
+transaction hash's format only. The phone wallet confirms the transaction;
+the hash alone does not prove that it matches the approved payload. A completion error keeps the
 hash visible for checking before another send. Unused signatures and ownership
-proofs stop when their account, network or expiry changes.
+proofs stop when their account, network or expiry changes. Typed-data requests
+stay pending because this connector's reviewed bundle does not support that method.
 
 The capsule installs `walletconnect-storage.mjs` before importing the pinned SDK.
 Browser Storage holds UI preferences in memory and resets on reload. Protocol
@@ -277,7 +284,9 @@ principal. The SDK uses the constant context `wallet-walletconnect`; Runtime's
 principal boundary separates each person's files. The connector supplies no
 session migration. Disconnect clears session storage and the memory shim while
 linked accounts stay in Wallet. Revocation clears session files; linked
-account removal and principal removal also clear the affected principal's file.
+account removal clears the account owner's file after the last active WalletConnect
+account is removed. Other linked accounts keep their pairing. Principal removal
+clears that principal's file.
 A cleanup failure after account or principal removal leaves that change saved
 and records an operator-retry warning. Successful cleanup advances a Runtime
 storage revision that fences late writes and relay use from an old SDK
@@ -289,7 +298,10 @@ admits only the opaque connector's single-use relay ticket, caps waiting sockets
 rechecks the launch and owner on each heartbeat and outbound frame, authenticates
 relay TLS, and limits frames and sockets. It reaches only
 `relay.walletconnect.org` and `relay.walletconnect.com` on TLS port 443 through
-the local Exit. Turn Off cancels handshakes and open sockets. Hosted Carrier Exit
+a local Exit backend and its separate adapter and relay sockets. Existing Browser
+backends keep first match. Runtime validates the merged configuration with
+exit-provider's parser and keeps the existing Exit configuration if the addition
+is refused. Turn Off cancels handshakes and open sockets. Hosted Carrier Exit
 selection remains a separate integration.
 
 The native-Storage comparison and deterministic sandbox test cover Chromium and
