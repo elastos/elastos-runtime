@@ -533,7 +533,7 @@ globalThis.fetch = async (url, init = {}) => {
       });
     }
     if (body?.target === "browser") {
-      if (body.query?.browser_instance === renewalBrowserInstance && init.headers?.["x-elastos-browser-renew-token"] !== undefined) {
+      if (body.query?.browser_instance === renewalBrowserInstance && renewalBrowserLaunchCount > 0) {
         assert(init.headers?.["x-elastos-browser-renew-token"] === "browser-renewal-old-token",
           "Browser renewal did not reach Runtime with the existing credential");
       }
