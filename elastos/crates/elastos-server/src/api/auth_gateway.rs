@@ -3616,7 +3616,7 @@ fn require_wallet_link_context(
     headers: &HeaderMap,
 ) -> anyhow::Result<WalletLinkContext> {
     let authority =
-        super::gateway::gateway_walletconnect::connector_launch_authority(&state.data_dir, headers)
+        super::gateway::walletconnect_connector_launch_authority(&state.data_dir, headers)
             .map_err(|_| anyhow::Error::new(WalletConnectorBridgeRequired))?;
     verified_wallet_link_context(state, WALLET_WALLETCONNECT_CAPSULE_ID, authority)
 }

@@ -129,6 +129,7 @@ pub(crate) use gateway_home_runtime::is_wallet_connector_capsule_id;
 use gateway_home_runtime::*;
 use gateway_home_shared_content::*;
 pub(crate) use gateway_walletconnect::clear_principal_storage as clear_walletconnect_principal_storage;
+pub(super) use gateway_walletconnect::connector_launch_authority as walletconnect_connector_launch_authority;
 
 pub(crate) fn principal_root_protected_object_inventory(
     localhost_root: &str,

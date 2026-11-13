@@ -572,7 +572,7 @@ pub fn validate_host_shape(host: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn validate_public_ip(ip: IpAddr) -> Result<(), ()> {
+pub fn validate_public_ip(ip: IpAddr) -> Result<(), &'static str> {
     match ip {
         IpAddr::V4(ip) => {
             if ip.is_private()
@@ -581,7 +581,7 @@ pub fn validate_public_ip(ip: IpAddr) -> Result<(), ()> {
                 || ip.is_unspecified()
                 || ip.is_broadcast()
             {
-                Err(())
+                Err("private IP blocked")
             } else {
                 Ok(())
             }
@@ -592,7 +592,7 @@ pub fn validate_public_ip(ip: IpAddr) -> Result<(), ()> {
                 || ip.is_unique_local()
                 || ip.is_unicast_link_local()
             {
-                Err(())
+                Err("private IP blocked")
             } else {
                 Ok(())
             }
