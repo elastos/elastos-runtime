@@ -565,7 +565,6 @@ jobs:
               - 'scripts/setup-source-home.sh'
               - 'scripts/mac-source-home-restart.sh'
               - 'capsules/custody-provider/**'
-              - 'capsules/availability-provider/**'
               - 'capsules/ipfs-provider/**'
               - 'capsules/chain-provider/**'
               - 'elastos/Cargo.toml'

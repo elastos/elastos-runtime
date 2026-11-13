@@ -861,6 +861,14 @@ struct HomeNotificationEntrySummary {
     severity: String,
     read: bool,
     created_at: u64,
+    /// A wallet approval Inbox can sign itself: a built-in wallet, after a
+    /// fresh passkey. Any other account is approved in Wallet.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    passkey_approval: bool,
+    /// The exact request the entry's passkey approval signs, which Inbox
+    /// hands to Home's prompt unchanged and sends back with the action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step_up_request: Option<serde_json::Value>,
 }
 
 #[derive(Default, Serialize)]
@@ -923,6 +931,10 @@ struct InboxActionRequest {
     action_id: String,
     #[serde(default)]
     step_up_token: Option<String>,
+    /// The request the client's passkey approved, compared with the one
+    /// Runtime rebuilds before the approval is spent.
+    #[serde(default)]
+    step_up_request: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]

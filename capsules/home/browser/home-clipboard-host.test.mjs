@@ -214,6 +214,8 @@ test("closed target and purpose policy accepts only approved writes", async () =
     ["library", "resource.identifier", "bafy-library-content"],
     ["assistant", "transcript.markdown", "# Assistant transcript\n\n## User\n\nHello"],
     ["assistant", "message.text", "**Reply** with `code`\n\n```js\nconst x = 1;\n```"],
+    ["custody", "custody.identifier", "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"],
+    ["custody", "custody.fingerprint", `sha256:${"ab".repeat(32)}`],
   ];
   for (const [targetId, purpose, text] of cases) {
     const writes = [];
@@ -589,4 +591,78 @@ test("replay memory remains bounded", async () => {
   }
   assert.equal(f.state.replayIds.size, MAX_HOME_CLIPBOARD_REPLAY_IDS);
   assert.equal(f.state.replayIds.has("bounded:0"), false);
+});
+
+test("pool_address_purpose_accepts_up_to_its_cap_and_has_its_own_prompt", async () => {
+  const {
+    MAX_HOME_CLIPBOARD_POOL_ADDRESS_UTF8_BYTES,
+    homeClipboardOperationAllowed,
+    homeClipboardValidWriteText,
+  } = await import("./home-clipboard-protocol.js");
+  assert.equal(MAX_HOME_CLIPBOARD_POOL_ADDRESS_UTF8_BYTES, 4096);
+  const prefix = "elastos-pool:";
+  const atCap = `${prefix}${"A".repeat(MAX_HOME_CLIPBOARD_POOL_ADDRESS_UTF8_BYTES - prefix.length)}`;
+  for (const address of [`${prefix}AbC-_09`, atCap]) {
+    assert.equal(homeClipboardValidWriteText("custody", "custody.pool_address", address), true);
+  }
+  for (const denied of [
+    "",
+    prefix,
+    `${atCap}A`,
+    `${prefix}AbC=`,
+    `${prefix}Ab Cd`,
+    `${prefix}AbC\n`,
+    ` ${prefix}AbC`,
+    "elastos-node-card:v1:AbC",
+    "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+  ]) {
+    assert.equal(
+      homeClipboardValidWriteText("custody", "custody.pool_address", denied),
+      false,
+      JSON.stringify(denied),
+    );
+  }
+  assert.equal(homeClipboardOperationAllowed("custody", "custody.pool_address", "write"), true);
+  assert.equal(homeClipboardOperationAllowed("custody", "custody.pool_address", "read"), false);
+  assert.equal(homeClipboardOperationAllowed("library", "custody.pool_address", "write"), false);
+
+  // Its own prompt, not the identifier's.
+  function node() {
+    const listeners = new Map();
+    return {
+      hidden: true,
+      textContent: "",
+      addEventListener(type, listener) {
+        listeners.set(type, listener);
+      },
+      click() {
+        listeners.get("click")?.();
+      },
+      setAttribute() {},
+      focus() {},
+    };
+  }
+  const title = node();
+  const copy = node();
+  const allowButton = node();
+  const prompt = createHomeClipboardPrompt({
+    root: node(),
+    title,
+    copy,
+    allowButton,
+    cancelButton: node(),
+  });
+  const decision = prompt.request({
+    requestId: "custody:pool-address",
+    targetId: "custody",
+    operation: "write",
+    purpose: "custody.pool_address",
+    text: `${prefix}AbC`,
+  });
+  assert.equal(title.textContent, "Copy pool address?");
+  assert.match(copy.textContent, /pool address/);
+  assert.doesNotMatch(copy.textContent, /identifier/);
+  assert.equal(allowButton.textContent, "Copy address");
+  allowButton.click();
+  assert.equal(await decision, true);
 });

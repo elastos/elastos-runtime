@@ -1,7 +1,9 @@
 //! Play-path CENC decrypt that runs only after a PQ-hybrid decrypt-session CEK
 //! unwrap. This is not a second wrap path and it never returns CEK bytes.
 
+use elastos_protected_content_contracts::Digest32;
 use elastos_protected_content_provider_contracts::{
+    CencDashMediaIdentityV2, CustodyProtectionHeader, ValidatedCencDashRenditionSessionV2,
     ValidatedCencFmp4MediaSessionLayoutV1, ValidatedCencFmp4SegmentLayoutV1,
 };
 use zeroize::Zeroizing;
@@ -42,17 +44,114 @@ pub fn decrypt_validated_cenc_fmp4_segment_to_clear_v1(
             encrypted_segment,
         )
         .map_err(|_| CustodyError::InvalidPayload("segment_index"))?;
+    decrypt_validated_segment_layout_to_clear(
+        &segment_layout,
+        encrypted_segment,
+        session_secret,
+        wrapped,
+        transcript,
+    )
+}
+
+/// Everything after segment validation, shared by V1 and V2: the CEK is
+/// unwrapped only once the layout has validated.
+fn decrypt_validated_segment_layout_to_clear(
+    segment_layout: &ValidatedCencFmp4SegmentLayoutV1,
+    encrypted_segment: &[u8],
+    session_secret: &DecryptSessionSecretKeyV1,
+    wrapped: &DecryptSessionWrappedContentKeyV1,
+    transcript: &[u8],
+) -> Result<Vec<u8>, CustodyError> {
     let encrypted_mdat = segment_layout.exact_source_mdat_payload(encrypted_segment)?;
     let cenc_key = {
         let content_key =
             unwrap_content_key_in_decrypt_session(session_secret, wrapped, transcript)?;
         Zeroizing::new(content_key.with_bytes(derive_cenc_aes128_key))
     };
-    let clear_mdat = decrypt_validated_segment_mdat_v1(&segment_layout, encrypted_mdat, &cenc_key)?;
+    let clear_mdat = decrypt_validated_segment_mdat_v1(segment_layout, encrypted_mdat, &cenc_key)?;
     rewrite_validated_cenc_fmp4_segment_from_clear_mdat_v1(
-        &segment_layout,
+        segment_layout,
         encrypted_segment,
         &clear_mdat,
+    )
+}
+
+pub fn rewrite_validated_cenc_dash_init_to_clear_v2(
+    session: &ValidatedCencDashRenditionSessionV2,
+    protected_init_segment: &[u8],
+) -> Result<Vec<u8>, CustodyError> {
+    if protected_init_segment.is_empty() {
+        return Err(CustodyError::InvalidPayload("protected_init_segment"));
+    }
+    session
+        .rewrite_clear_init(protected_init_segment)
+        .map_err(Into::into)
+}
+
+/// The one custody binding of a DASH item: `sessions` must cover the whole
+/// `head` in order, and every rendition init must carry an equal custody header
+/// (same KID and same custody pool, epoch and committee) under the same
+/// protection system. Callers run this at
+/// decrypt open and at mint, before storing or staging anything.
+pub fn require_common_cenc_dash_protection_header_v2<'a>(
+    head: &CencDashMediaIdentityV2,
+    sessions: &'a [ValidatedCencDashRenditionSessionV2],
+) -> Result<&'a CustodyProtectionHeader, CustodyError> {
+    const SHAPE: CustodyError = CustodyError::InvalidPayload("rendition_sessions");
+    const BINDING: CustodyError = CustodyError::BindingMismatch("protection_header");
+    if sessions.is_empty() || sessions.len() != head.renditions().len() {
+        return Err(SHAPE);
+    }
+    for (index, (session, rendition)) in sessions.iter().zip(head.renditions()).enumerate() {
+        if session.rendition_index() != index
+            || session.content_access_id() != head.default_kid()
+            || session.kind() != rendition.kind()
+            || session.segment_count() != rendition.segment_count()
+            || session.segments_root() != rendition.segments_root()
+        {
+            return Err(SHAPE);
+        }
+    }
+    let common = sessions[0].protection_header().ok_or(BINDING)?;
+    let system = sessions[0].protection_system();
+    for session in &sessions[1..] {
+        if session.protection_header() != Some(common) || session.protection_system() != system {
+            return Err(BINDING);
+        }
+    }
+    Ok(common)
+}
+
+/// Decrypts one segment that comes with its Merkle proof against the session's
+/// rendition root. A bad proof is a `Contract` `segment_proof` error, distinct
+/// from a layout error.
+pub fn decrypt_validated_cenc_dash_segment_to_clear_v2(
+    session: &ValidatedCencDashRenditionSessionV2,
+    encrypted_segment: &[u8],
+    segment_index: u32,
+    segment_proof: &[Digest32],
+    session_secret: &DecryptSessionSecretKeyV1,
+    wrapped: &DecryptSessionWrappedContentKeyV1,
+    transcript: &[u8],
+) -> Result<Vec<u8>, CustodyError> {
+    if encrypted_segment.is_empty() {
+        return Err(CustodyError::InvalidPayload("encrypted_segment"));
+    }
+    // Defence in depth: the session constructor already refuses an init without
+    // the custody binding (`session_refuses_an_init_without_the_custody_binding`
+    // in the provider contracts), and a later change there must not silently
+    // allow a decrypt without it.
+    if session.protection_header().is_none() {
+        return Err(CustodyError::BindingMismatch("protection_header"));
+    }
+    let segment_layout =
+        session.validate_proven_segment(segment_index, encrypted_segment, segment_proof)?;
+    decrypt_validated_segment_layout_to_clear(
+        &segment_layout,
+        encrypted_segment,
+        session_secret,
+        wrapped,
+        transcript,
     )
 }
 
@@ -66,7 +165,7 @@ fn rewrite_validated_cenc_fmp4_segment_from_clear_mdat_v1(
         .map_err(Into::into)
 }
 
-fn decrypt_validated_segment_mdat_v1(
+pub(crate) fn decrypt_validated_segment_mdat_v1(
     segment_layout: &ValidatedCencFmp4SegmentLayoutV1,
     encrypted_mdat: &[u8],
     cenc_key: &[u8; 16],
@@ -89,7 +188,7 @@ fn decrypt_validated_segment_mdat_v1(
             .get(start..end)
             .ok_or(CustodyError::InvalidPayload("segment_mdat"))?
             .to_vec();
-        let iv16 = pad_iv(&sample.iv())?;
+        let iv16 = pad_iv(sample.iv())?;
         if sample.subsamples().is_empty() {
             ctr_xor(&mut sample_bytes, cenc_key, &iv16);
         } else {
@@ -118,7 +217,8 @@ fn decrypt_validated_segment_mdat_v1(
 mod tests {
     use elastos_protected_content_contracts::CanonicalContract;
     use elastos_protected_content_provider_contracts::{
-        CencFmp4MediaIdentityV1, ValidatedCencFmp4MediaSessionLayoutV1,
+        CencFmp4MediaIdentityV1, ProtectionSystemId, ValidatedCencFmp4MediaSessionLayoutV1,
+        PROTECTION,
     };
     use rand09::{rngs::StdRng as HpkeStdRng, SeedableRng as _};
 
@@ -575,5 +675,327 @@ mod tests {
             TRANSCRIPT,
         )
         .is_err());
+    }
+
+    mod dash_v2 {
+        use elastos_protected_content_contracts::ContractError;
+        use sha2::{Digest as _, Sha256};
+
+        use elastos_protected_content_provider_contracts::CencDashRenditionBytesV2;
+
+        use super::*;
+        use crate::protect::v2_test_media::*;
+
+        fn hex(bytes: &[u8]) -> String {
+            bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+        }
+
+        #[test]
+        fn v2_decrypt_matches_bento4_reference_samples() {
+            let bento = bento4();
+            let layout = bento
+                .session
+                .validate_proven_segment(0, &bento.segment, &[])
+                .unwrap();
+            let mdat = layout.exact_source_mdat_payload(&bento.segment).unwrap();
+            let clear_mdat =
+                decrypt_validated_segment_mdat_v1(&layout, mdat, &BENTO4_RAW_KEY).unwrap();
+            assert_eq!(hex(&Sha256::digest(&clear_mdat)), BENTO4_CLEAR_MDAT_SHA256);
+            let clear = layout
+                .rewrite_clear_segment(&bento.segment, &clear_mdat)
+                .unwrap();
+            for fourcc in [b"saiz", b"saio", b"senc"] {
+                assert!(!clear.windows(4).any(|window| window == fourcc));
+            }
+        }
+
+        fn decrypt(
+            packed: &Packed,
+            segment: &[u8],
+            index: u32,
+            proof: &[elastos_protected_content_contracts::Digest32],
+        ) -> Result<Vec<u8>, CustodyError> {
+            let (secret, wrapped) = wrapped_cek(&ContentEncryptionKeyV1::from_test_bytes(TEST_CEK));
+            decrypt_validated_cenc_dash_segment_to_clear_v2(
+                &packed.session,
+                segment,
+                index,
+                proof,
+                &secret,
+                &wrapped,
+                TRANSCRIPT,
+            )
+        }
+
+        #[test]
+        fn v2_decrypt_refuses_bad_proof_index_rendition_and_bytes() {
+            let packed = pack(V, video_segments(3));
+            let segments = &packed.protected.segments;
+            let good = proof(V, segments, 1);
+            assert_eq!(
+                decrypt(&packed, &segments[1], 1, &good).unwrap(),
+                packed.clear_segments[1]
+            );
+            let mut flipped = good.clone();
+            let mut node = *flipped[0].as_bytes();
+            node[0] ^= 1;
+            flipped[0] = elastos_protected_content_contracts::Digest32::new(node);
+            assert!(matches!(
+                decrypt(&packed, &segments[1], 1, &flipped),
+                Err(CustodyError::Contract(ContractError::InvalidField(
+                    "segment_proof"
+                )))
+            ));
+            assert!(decrypt(&packed, &segments[0], 1, &good).is_err());
+            let long = vec![good[0]; 33];
+            assert!(decrypt(&packed, &segments[1], 1, &long).is_err());
+            assert!(decrypt(&packed, &segments[1], 3, &good).is_err());
+            let audio = pack(A, audio_segments(1));
+            assert!(decrypt(&audio, &segments[1], 0, &[]).is_err());
+            let mut bytes = segments[1].clone();
+            let last = bytes.len() - 1;
+            bytes[last] ^= 1;
+            assert!(decrypt(&packed, &bytes, 1, &good).is_err());
+            assert!(decrypt(&packed, &[], 1, &good).is_err());
+        }
+
+        #[test]
+        fn v2_decrypt_refuses_wrong_secret_and_transcript() {
+            let packed = pack(V, video_segments(1));
+            let segment = &packed.protected.segments[0];
+            let cek = ContentEncryptionKeyV1::from_test_bytes(TEST_CEK);
+            let (secret, wrapped) = wrapped_cek(&cek);
+            let call = |secret: &DecryptSessionSecretKeyV1, transcript: &[u8]| {
+                decrypt_validated_cenc_dash_segment_to_clear_v2(
+                    &packed.session,
+                    segment,
+                    0,
+                    &[],
+                    secret,
+                    &wrapped,
+                    transcript,
+                )
+            };
+            assert!(call(&secret, TRANSCRIPT).is_ok());
+            let (other, _) = mint_decrypt_session_from_seed([0x52; 32]).unwrap();
+            assert!(call(&other, TRANSCRIPT).is_err());
+            assert!(call(&secret, b"another transcript").is_err());
+        }
+
+        #[test]
+        fn v2_renditions_must_share_one_protection_header() {
+            let (video, video_init) = clear_session(V, 1);
+            let (audio, audio_init) = clear_session(A, 1);
+            let video_segments = video_segments(2);
+            let audio_segments = audio_segments(1);
+            let video_data = pssh_data_v2(KID);
+            let other_epoch = pssh_data_v2_with_epoch(KID, 0x77);
+            let build = |audio_data: &CustodyProtectionHeader| {
+                let (protected, head) = protect_clear_cenc_dash_media_for_test_v2(
+                    &[
+                        ClearRenditionV2 {
+                            session: &video,
+                            init: &video_init,
+                            segments: &video_segments,
+                        },
+                        ClearRenditionV2 {
+                            session: &audio,
+                            init: &audio_init,
+                            segments: &audio_segments,
+                        },
+                    ],
+                    &ContentEncryptionKeyV1::from_test_bytes(TEST_CEK),
+                    &video_data,
+                    &[],
+                    IV_PREFIX,
+                )
+                .unwrap();
+                // Re-protect the audio init under `audio_data` and rebuild the head.
+                let audio_init_protected = crate::protect_validated_clear_fmp4_init_to_cenc_v2(
+                    &audio,
+                    &audio_init,
+                    audio_data,
+                    &[],
+                )
+                .unwrap();
+                let head = CencDashMediaIdentityV2::new_from_bytes(
+                    head.default_kid(),
+                    &[
+                        CencDashRenditionBytesV2 {
+                            kind: V,
+                            timescale: TIMESCALE,
+                            init_segment: &protected[0].init,
+                            segments: &protected[0].segments,
+                        },
+                        CencDashRenditionBytesV2 {
+                            kind: A,
+                            timescale: TIMESCALE,
+                            init_segment: &audio_init_protected,
+                            segments: &protected[1].segments,
+                        },
+                    ],
+                )
+                .unwrap();
+                let sessions = vec![
+                    ValidatedCencDashRenditionSessionV2::new(&head, 0, &protected[0].init).unwrap(),
+                    ValidatedCencDashRenditionSessionV2::new(&head, 1, &audio_init_protected)
+                        .unwrap(),
+                ];
+                (head, sessions)
+            };
+            let (head, sessions) = build(&other_epoch);
+            assert!(matches!(
+                require_common_cenc_dash_protection_header_v2(&head, &sessions),
+                Err(CustodyError::BindingMismatch("protection_header"))
+            ));
+            let (head, sessions) = build(&video_data);
+            assert_eq!(
+                require_common_cenc_dash_protection_header_v2(&head, &sessions).unwrap(),
+                &video_data
+            );
+        }
+
+        #[test]
+        fn v2_renditions_must_share_one_protection_system() {
+            let (video, video_init) = clear_session(V, 1);
+            let (audio, audio_init) = clear_session(A, 1);
+            let video_segments = video_segments(2);
+            let audio_segments = audio_segments(1);
+            let data = pssh_data_v2(KID);
+            let writer = PROTECTION.writer().id;
+            let retired = PROTECTION
+                .registry()
+                .systems()
+                .iter()
+                .find(|system| system.is_custody() && !system.can_encode())
+                .expect("a decode-only custody system is registered")
+                .id;
+            let swap = |init: &[u8], to: &ProtectionSystemId| {
+                let at = init
+                    .windows(16)
+                    .position(|window| window == writer.as_bytes())
+                    .unwrap();
+                let mut swapped = init.to_vec();
+                swapped[at..at + 16].copy_from_slice(to.as_bytes());
+                swapped
+            };
+            let (protected, head) = protect_clear_cenc_dash_media_for_test_v2(
+                &[
+                    ClearRenditionV2 {
+                        session: &video,
+                        init: &video_init,
+                        segments: &video_segments,
+                    },
+                    ClearRenditionV2 {
+                        session: &audio,
+                        init: &audio_init,
+                        segments: &audio_segments,
+                    },
+                ],
+                &ContentEncryptionKeyV1::from_test_bytes(TEST_CEK),
+                &data,
+                &[],
+                IV_PREFIX,
+            )
+            .unwrap();
+            let with_systems = |video_system: &ProtectionSystemId,
+                                audio_system: &ProtectionSystemId| {
+                let video_init = swap(&protected[0].init, video_system);
+                let audio_init = swap(&protected[1].init, audio_system);
+                let head = CencDashMediaIdentityV2::new_from_bytes(
+                    head.default_kid(),
+                    &[
+                        CencDashRenditionBytesV2 {
+                            kind: V,
+                            timescale: TIMESCALE,
+                            init_segment: &video_init,
+                            segments: &protected[0].segments,
+                        },
+                        CencDashRenditionBytesV2 {
+                            kind: A,
+                            timescale: TIMESCALE,
+                            init_segment: &audio_init,
+                            segments: &protected[1].segments,
+                        },
+                    ],
+                )
+                .unwrap();
+                let sessions = vec![
+                    ValidatedCencDashRenditionSessionV2::new(&head, 0, &video_init).unwrap(),
+                    ValidatedCencDashRenditionSessionV2::new(&head, 1, &audio_init).unwrap(),
+                ];
+                (head, sessions)
+            };
+            for system in [&writer, &retired] {
+                let (head, sessions) = with_systems(system, system);
+                assert_eq!(
+                    require_common_cenc_dash_protection_header_v2(&head, &sessions).unwrap(),
+                    &data
+                );
+            }
+            for (video_system, audio_system) in [(&writer, &retired), (&retired, &writer)] {
+                let (head, sessions) = with_systems(video_system, audio_system);
+                assert!(matches!(
+                    require_common_cenc_dash_protection_header_v2(&head, &sessions),
+                    Err(CustodyError::BindingMismatch("protection_header"))
+                ));
+            }
+        }
+
+        #[test]
+        fn v2_header_check_refuses_partial_or_foreign_sessions() {
+            let (video, video_init) = clear_session(V, 1);
+            let (audio, audio_init) = clear_session(A, 1);
+            let media = |video_count: usize, kid: [u8; 16]| {
+                let video_segments = video_segments(video_count);
+                let audio_segments = audio_segments(video_count);
+                let (protected, head) = protect_clear_cenc_dash_media_for_test_v2(
+                    &[
+                        ClearRenditionV2 {
+                            session: &video,
+                            init: &video_init,
+                            segments: &video_segments,
+                        },
+                        ClearRenditionV2 {
+                            session: &audio,
+                            init: &audio_init,
+                            segments: &audio_segments,
+                        },
+                    ],
+                    &ContentEncryptionKeyV1::from_test_bytes(TEST_CEK),
+                    &pssh_data_v2(kid),
+                    &[],
+                    IV_PREFIX,
+                )
+                .unwrap();
+                let sessions: Vec<_> = protected
+                    .iter()
+                    .enumerate()
+                    .map(|(index, rendition)| {
+                        ValidatedCencDashRenditionSessionV2::new(&head, index, &rendition.init)
+                            .unwrap()
+                    })
+                    .collect();
+                (head, sessions)
+            };
+            let (head, sessions) = media(2, KID);
+            assert!(require_common_cenc_dash_protection_header_v2(&head, &sessions).is_ok());
+            let refused =
+                |head: &CencDashMediaIdentityV2,
+                 sessions: &[ValidatedCencDashRenditionSessionV2]| {
+                    matches!(
+                        require_common_cenc_dash_protection_header_v2(head, sessions),
+                        Err(CustodyError::InvalidPayload("rendition_sessions"))
+                    )
+                };
+            assert!(refused(&head, &sessions[..1]));
+            assert!(refused(&head, &[sessions[1].clone(), sessions[0].clone()]));
+            assert!(refused(&head, &[]));
+            let (_, foreign) = media(3, KID);
+            assert!(refused(&head, &foreign));
+            // Same segments, different KID: the sessions are not this head's.
+            let (_, other_kid) = media(2, [0x66; 16]);
+            assert!(refused(&head, &other_kid));
+        }
     }
 }

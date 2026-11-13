@@ -1,5 +1,5 @@
-#[cfg(test)]
 use std::fs;
+use std::io::ErrorKind;
 #[cfg(all(unix, test))]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
@@ -23,6 +23,7 @@ use elastos_server::documents::DocumentsProvider;
 use elastos_server::sources::{default_data_dir, local_session_owner};
 use elastos_server::{api, fetcher, ownership};
 use elastos_wallet_contract::WALLET_PROTOCOL_VERSION;
+use serde::{Deserialize, Serialize};
 
 pub(crate) struct ServerInfrastructure {
     pub(crate) audit_log: Arc<primitives::audit::AuditLog>,
@@ -467,15 +468,123 @@ pub(crate) async fn register_content_plane(
     Ok(content_provider)
 }
 
+/// One kubo node this host's own kubo must stay peered with.
+///
+/// Wire-identical to one element of the ipfs-provider's `extra.peering`
+/// array, so a list built here needs no translation on the way out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IpfsPeeringEntry {
+    /// kubo libp2p PeerID (`12D3Koo…` / `Qm…`).
+    id: String,
+    /// Dialable swarm multiaddrs. Empty is meaningful, not a mistake:
+    /// peering by peer id alone still protects an *inbound* connection, and
+    /// that is all a host behind a Docker bridge it cannot dial can offer.
+    #[serde(default)]
+    addrs: Vec<String>,
+}
+
+/// An optional peering list a deployment drops into the data root.
+///
+/// Two sources feed the same list because the two sides of a deployment know
+/// different halves of it. A gateway knows its custody peers, because it
+/// registered them (`elastos node peer add --ipfs-peer-id …`), so its half
+/// comes from the operator peer store. A container knows nothing about the
+/// gateway that will publish to it — it has no operator peer store at all —
+/// so its half is handed to it as a file, synced from `/shared` on every
+/// boot exactly the way `chain-provider.json` already is.
+const IPFS_PEERING_FILE_NAME: &str = "ipfs-peering.json";
+
+/// Where the optional peering list lives. Next to `ipfs-repo/`, which is the
+/// state it configures.
+fn ipfs_peering_file_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(IPFS_PEERING_FILE_NAME)
+}
+
+/// Read `<data_dir>/ipfs-peering.json`, a JSON array of `{id, addrs}`.
+///
+/// Absent is fine and means "no file-supplied peers". Malformed is not: a
+/// peer silently dropped from this list looks exactly like the discovery
+/// failure peering exists to prevent, so it fails closed naming the file.
+fn load_ipfs_peering_file(data_dir: &Path) -> anyhow::Result<Vec<IpfsPeeringEntry>> {
+    let path = ipfs_peering_file_path(data_dir);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).with_context(|| format!("failed to read {}", path.display())),
+    };
+    serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "{} must be a JSON array of {{\"id\": \"12D3Koo…\", \"addrs\": [\"/ip4/…\"]}} objects",
+            path.display()
+        )
+    })
+}
+
+/// The union of both peering sources, deduplicated by peer id (addrs unioned,
+/// first-seen order kept within a peer) and ordered by peer id so the config
+/// handed to kubo is stable across restarts.
+///
+/// Both sources absent or empty yields no operator entries. The IPFS provider
+/// adds its default Elacity peer when it initializes.
+fn ipfs_peering_list(data_dir: &Path) -> anyhow::Result<Vec<IpfsPeeringEntry>> {
+    let mut by_id: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut merge = |entry: IpfsPeeringEntry| {
+        let addrs = by_id.entry(entry.id).or_default();
+        for addr in entry.addrs {
+            if !addrs.contains(&addr) {
+                addrs.push(addr);
+            }
+        }
+    };
+
+    // The operator peer store is already normalised and validated on load
+    // (`normalize_ipfs_peer`); a malformed one is a config error here too.
+    let operator_config = elastos_server::operator_control::load_operator_control(data_dir)
+        .with_context(|| {
+            format!(
+                "operator peer store under {} is invalid, so the ipfs peering list cannot be built",
+                data_dir.display()
+            )
+        })?;
+    for peer in operator_config.peers {
+        if let Some(ipfs_peer) = peer.ipfs_peer {
+            merge(IpfsPeeringEntry {
+                id: ipfs_peer.id,
+                addrs: ipfs_peer.addrs,
+            });
+        }
+    }
+
+    for entry in load_ipfs_peering_file(data_dir)? {
+        merge(entry);
+    }
+
+    Ok(by_id
+        .into_iter()
+        .map(|(id, addrs)| IpfsPeeringEntry { id, addrs })
+        .collect())
+}
+
 /// Spawn the ipfs-provider capsule and register `elastos://ipfs`, the block
 /// backend the content plane pins imported objects through.
+///
+/// The capsule is handed this host's peering list at init so kubo comes up
+/// with `Peering.Peers` already written. Stock kubo drops an untagged
+/// connection within seconds of crossing its ConnMgr high-water mark, and a
+/// peer that has never met the publisher cannot find a freshly published CID
+/// whose DHT provider record has not propagated — which is how a mint that
+/// requires remote replicas wedges on a cold node.
 pub(crate) async fn register_ipfs_provider_plane(
     provider_registry: &Arc<provider::ProviderRegistry>,
     binary_path: &Path,
+    data_dir: &Path,
 ) -> anyhow::Result<()> {
     register_ipfs_provider_plane_with_role(
         provider_registry,
         binary_path,
+        data_dir,
         elastos_server::ipfs::IpfsHostRole::User,
     )
     .await
@@ -484,9 +593,20 @@ pub(crate) async fn register_ipfs_provider_plane(
 async fn register_ipfs_provider_plane_with_role(
     provider_registry: &Arc<provider::ProviderRegistry>,
     binary_path: &Path,
+    data_dir: &Path,
     role: elastos_server::ipfs::IpfsHostRole,
 ) -> anyhow::Result<()> {
-    let config = elastos_server::ipfs::ipfs_provider_config(role);
+    let peering = ipfs_peering_list(data_dir)?;
+    let peering_is_empty = peering.is_empty();
+    let mut config = elastos_server::ipfs::ipfs_provider_config(role);
+    if !peering_is_empty {
+        tracing::info!(
+            peers = peering.len(),
+            "ipfs-provider peering list built from the operator peer store and {}",
+            IPFS_PEERING_FILE_NAME
+        );
+        config.extra["peering"] = serde_json::json!(peering);
+    }
     let bridge = provider::ProviderBridge::spawn(binary_path, config)
         .await
         .map_err(|err| anyhow::anyhow!("failed to spawn ipfs-provider: {err}"))?;
@@ -496,7 +616,95 @@ async fn register_ipfs_provider_plane_with_role(
     provider_registry
         .register_sub_provider("ipfs", ipfs_provider)
         .await
-        .map_err(|err| anyhow::anyhow!("failed to register elastos://ipfs sub-provider: {err}"))
+        .map_err(|err| anyhow::anyhow!("failed to register elastos://ipfs sub-provider: {err}"))?;
+    if !peering_is_empty {
+        ensure_ipfs_started(provider_registry).await;
+    }
+    Ok(())
+}
+
+/// Bring kubo up now rather than on the first content operation.
+///
+/// Writing `Peering.Peers` at init is only half the cure. The peers are dialed
+/// when the daemon starts, and on this host the daemon starts lazily — so
+/// without this the first publish is also the cold start, and the fan-out asks
+/// the custody nodes for a CID over connections that are still being
+/// established. This host is the *publisher*: it holds the only copy of the
+/// blocks the nodes are being asked to fetch, which is why its cold start
+/// matters more than a replica's.
+///
+/// Called only when a peering list exists, so a deployment with no peers keeps
+/// the previous lazy behaviour and pays no daemon it never uses.
+///
+/// Non-fatal, for the same reason it is non-fatal in `provider_host`: a
+/// gateway whose kubo will not start still serves every other plane, and
+/// taking the whole gateway down over a warm-up would turn a slow first
+/// publish into no gateway at all.
+///
+/// Returns the kubo peer id on success, `None` on every failure. The caller
+/// discards it — the value exists so the outcome is observable to a test
+/// rather than only to a log reader.
+async fn ensure_ipfs_started(
+    provider_registry: &Arc<provider::ProviderRegistry>,
+) -> Option<String> {
+    let response = provider_registry
+        .invoke_provider(ProviderInvocation {
+            source: "gateway".to_string(),
+            target: "ipfs".to_string(),
+            op: "ensure_started".to_string(),
+            request: serde_json::json!({ "op": "ensure_started" }),
+            transfer: ProviderTransfer::Json,
+            range: None,
+            progress: None,
+            transport: ProviderInvocationTransport::Local,
+        })
+        .await;
+
+    let response = match response {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::warn!(
+                "ipfs plane did not start eagerly; the first content operation pays the kubo \
+                 cold start and its peers are dialed only then: {err}"
+            );
+            return None;
+        }
+    };
+    if response.get("status").and_then(serde_json::Value::as_str) != Some("ok") {
+        tracing::warn!(
+            code = response
+                .get("code")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown"),
+            "ipfs plane refused ensure_started; the first content operation pays the kubo cold \
+             start: {}",
+            response
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("no message")
+        );
+        return None;
+    }
+    // The identity rides under `data`, the same envelope `provider_host`
+    // reads. `ensure_started` never reports success with an absent identity,
+    // so nothing here is protocol drift rather than a cold daemon.
+    let peer_id = response
+        .get("data")
+        .and_then(|data| data.get("peer_id"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|peer_id| !peer_id.is_empty());
+    let Some(peer_id) = peer_id else {
+        tracing::warn!(
+            "ipfs plane reported ensure_started ok without a peer id; the daemon is up but its \
+             identity is unknown to this gateway"
+        );
+        return None;
+    };
+    tracing::info!(
+        peer_id = %peer_id,
+        "ipfs plane started eagerly; peering dials are already in flight"
+    );
+    Some(peer_id.to_string())
 }
 
 /// Spawn the availability-provider capsule and register `elastos://availability`.
@@ -543,26 +751,12 @@ pub(crate) async fn register_chain_provider_plane(
     // operations are signed there), never this host's own device key; a
     // host without provisioned custody state (the full Home profile, or a
     // chain-only host) is its own Runtime and keeps the device-key issuer.
-    let custody_state_root =
-        elastos_server::protected_content_runtime::inactive_custody_state_root(data_dir);
-    let runtime_issuer = if custody_state_root.is_dir() {
-        let issuer = custody_provider::load_trusted_runtime_issuer(&custody_state_root).map_err(
-            |error| {
-                anyhow::anyhow!(
-                    "provisioned custody state names no readable trusted Runtime issuer: {error:?}"
-                )
-            },
-        )?;
-        tracing::info!(
-            issuer = %format!("0x{}", hex::encode(issuer.as_bytes())),
-            "chain plane trusts the custody state's provisioned Runtime issuer"
-        );
-        issuer
-    } else {
-        let device_key = elastos_identity::load_or_create_device_key(data_dir)
-            .context("chain-provider host identity is unavailable")?;
-        derive_protected_content_runtime_issuer(&device_key)?
-    };
+    let runtime_issuer =
+        elastos_server::protected_content_runtime::chain_plane_runtime_issuer(data_dir)?;
+    tracing::info!(
+        issuer = %format!("0x{}", hex::encode(runtime_issuer.as_bytes())),
+        "chain plane trusts this Runtime issuer"
+    );
     let config = chain_provider_bridge_config(data_dir, &runtime_issuer)
         .context("protected-content chain configuration is invalid")?;
     if config.extra.get("protected_content_network").is_none() {
@@ -644,6 +838,10 @@ async fn setup_server_infrastructure_impl(
     let data_dir = default_data_dir();
     let carrier_bind_addr = configured_carrier_bind_addr(&data_dir)?;
     let _ = ownership::repair_path_recursive(&data_dir);
+    // #388 A1 (A388-I1): the host trust setting is captured here, before any
+    // request is served and whether or not a custody provider registers, so
+    // an edit while running takes effect only at the next clean start.
+    elastos_server::capture_host_trust_at_startup(&data_dir);
     let collaboration_configuration =
         elastos_server::collaboration_startup::load_and_accept_collaboration_startup_configuration(
             &data_dir,
@@ -982,7 +1180,13 @@ async fn setup_server_infrastructure_impl(
 
     match binaries::resolve_verified_native_provider_binary("ipfs-provider") {
         Ok(Some(path)) => {
-            match register_ipfs_provider_plane_with_role(&provider_registry, &path, ipfs_role).await
+            match register_ipfs_provider_plane_with_role(
+                &provider_registry,
+                &path,
+                &data_dir,
+                ipfs_role,
+            )
+            .await
             {
                 Ok(()) => tracing::info!("ipfs-provider capsule from {}", path.display()),
                 Err(e) => tracing::warn!("ipfs-provider unavailable: {}", e),
@@ -1122,13 +1326,33 @@ async fn setup_server_infrastructure_impl(
 
     match binaries::resolve_verified_native_provider_binary("chain-provider") {
         Ok(Some(path)) => {
-            let protected_chain_config = chain_provider_protected_startup_config(
+            match elastos_server::protected_content_config::ensure_default_chain_provider_config(
                 &data_dir,
-                &protected_content_runtime_issuer,
-            );
-            let generic_chain_config = chain_provider_bridge_config_without_protected_network(
-                &protected_content_runtime_issuer,
-            );
+            ) {
+                Ok(true) => tracing::info!(
+                    "Installed the default Base protected-content Chain configuration"
+                ),
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    error = %error,
+                    "Default protected-content Chain configuration could not be installed; protected operations remain unavailable"
+                ),
+            }
+            // A Home that serves a pool owner as its custody node settles that
+            // owner's releases, so its Chain plane trusts the owner's issuer.
+            let chain_runtime_issuer =
+                elastos_server::protected_content_runtime::chain_plane_runtime_issuer(&data_dir)
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(
+                            error = %format!("{error:#}"),
+                            "Chain plane trusts this Home's own issuer; its custody state is unreadable"
+                        );
+                        protected_content_runtime_issuer
+                    });
+            let protected_chain_config =
+                chain_provider_protected_startup_config(&data_dir, &chain_runtime_issuer);
+            let generic_chain_config =
+                chain_provider_bridge_config_without_protected_network(&chain_runtime_issuer);
             match provider::ProviderBridge::spawn(&path, generic_chain_config).await {
                 Ok(bridge) => {
                     let bridge = Arc::new(bridge);
@@ -1333,99 +1557,14 @@ async fn setup_server_infrastructure_impl(
         ),
     }
 
-    if let Some(path) = crate::find_installed_provider_binary("drm-provider") {
-        if let Err(e) = verify_provider_binary("drm-provider", &path) {
-            tracing::warn!("Skipping drm-provider due to verification failure: {}", e);
-        } else {
-            match provider::ProviderBridge::spawn(&path, Default::default()).await {
-                Ok(bridge) => {
-                    let drm_provider: Arc<dyn provider::Provider> = Arc::new(
-                        provider::CapsuleProvider::with_scheme(Arc::new(bridge), "drm"),
-                    );
-                    if let Err(e) = provider_registry
-                        .register_sub_provider("drm", drm_provider)
-                        .await
-                    {
-                        tracing::warn!("Failed to register elastos://drm sub-provider: {}", e);
-                    }
-                    tracing::info!("drm-provider capsule from {}", path.display());
-                }
-                Err(e) => tracing::warn!("Failed to spawn drm-provider: {}", e),
-            }
-        }
-    }
-
-    if let Some(path) = crate::find_installed_provider_binary("rights-provider") {
-        if let Err(e) = verify_provider_binary("rights-provider", &path) {
-            tracing::warn!(
-                "Skipping rights-provider due to verification failure: {}",
-                e
-            );
-        } else {
-            match provider::ProviderBridge::spawn(&path, Default::default()).await {
-                Ok(bridge) => {
-                    let rights_provider: Arc<dyn provider::Provider> = Arc::new(
-                        provider::CapsuleProvider::with_scheme(Arc::new(bridge), "rights"),
-                    );
-                    if let Err(e) = provider_registry
-                        .register_sub_provider("rights", rights_provider)
-                        .await
-                    {
-                        tracing::warn!("Failed to register elastos://rights sub-provider: {}", e);
-                    }
-                    tracing::info!("rights-provider capsule from {}", path.display());
-                }
-                Err(e) => tracing::warn!("Failed to spawn rights-provider: {}", e),
-            }
-        }
-    }
-
-    if let Some(path) = crate::find_installed_provider_binary("key-provider") {
-        if let Err(e) = verify_provider_binary("key-provider", &path) {
-            tracing::warn!("Skipping key-provider due to verification failure: {}", e);
-        } else {
-            match provider::ProviderBridge::spawn(&path, Default::default()).await {
-                Ok(bridge) => {
-                    let key_provider: Arc<dyn provider::Provider> = Arc::new(
-                        provider::CapsuleProvider::with_scheme(Arc::new(bridge), "key"),
-                    );
-                    if let Err(e) = provider_registry
-                        .register_sub_provider("key", key_provider)
-                        .await
-                    {
-                        tracing::warn!("Failed to register elastos://key sub-provider: {}", e);
-                    }
-                    tracing::info!("key-provider capsule from {}", path.display());
-                }
-                Err(e) => tracing::warn!("Failed to spawn key-provider: {}", e),
-            }
-        }
-    }
-
-    if let Some(path) = crate::find_installed_provider_binary("decrypt-provider") {
-        if let Err(e) = verify_provider_binary("decrypt-provider", &path) {
-            tracing::warn!(
-                "Skipping decrypt-provider due to verification failure: {}",
-                e
-            );
-        } else {
-            match provider::ProviderBridge::spawn(&path, Default::default()).await {
-                Ok(bridge) => {
-                    let decrypt_provider: Arc<dyn provider::Provider> = Arc::new(
-                        provider::CapsuleProvider::with_scheme(Arc::new(bridge), "decrypt"),
-                    );
-                    if let Err(e) = provider_registry
-                        .register_sub_provider("decrypt", decrypt_provider)
-                        .await
-                    {
-                        tracing::warn!("Failed to register elastos://decrypt sub-provider: {}", e);
-                    }
-                    tracing::info!("decrypt-provider capsule from {}", path.display());
-                }
-                Err(e) => tracing::warn!("Failed to spawn decrypt-provider: {}", e),
-            }
-        }
-    }
+    // Plan B T4.5: pool viewer records settle at every boot, whether or not
+    // a decrypt target registers below; their delivery secrets did not
+    // survive the restart.
+    elastos_server::protected_content_runtime::reconcile_runtime_custody_pool_viewers_at_boot(
+        &data_dir,
+        provider_registry.clone(),
+    )
+    .await;
 
     if let Some(path) = crate::find_installed_provider_binary("protected-content-decrypt-provider")
     {
@@ -1448,7 +1587,7 @@ async fn setup_server_infrastructure_impl(
             );
         } else {
             tracing::info!(
-                "protected-content-decrypt-provider registered on Runtime-only target protected-content-decrypt; provisional decrypt-provider remains on elastos://decrypt"
+                "protected-content-decrypt-provider registered on Runtime-only target protected-content-decrypt"
             );
             elastos_server::protected_content_runtime::reconcile_runtime_custody_viewers_after_decrypt_boot(
                 &data_dir,
@@ -1488,28 +1627,28 @@ async fn setup_server_infrastructure_impl(
         );
     }
 
+    // A stop part way through Remove or Include is finished before this
+    // Home's custody provider starts.
+    elastos_server::custody_pool_setup::finish_interrupted_local_node_changes(&data_dir).await;
     if let Some(path) = crate::find_installed_provider_binary("custody-provider") {
         if let Err(e) = verify_provider_binary("custody-provider", &path) {
             tracing::warn!(
                 "Skipping custody-provider due to verification failure: {}",
                 e
             );
-        } else if let Err(e) =
-            elastos_server::protected_content_runtime::register_inactive_custody_provider(
-                &provider_registry,
-                &path,
-                &data_dir,
-            )
-            .await
+        } else if let Err(e) = elastos_server::protected_content_runtime::register_custody_provider(
+            &provider_registry,
+            &path,
+            &data_dir,
+        )
+        .await
         {
             tracing::warn!(
                 "Failed to register inactive Runtime-only custody provider: {}",
                 e
             );
         } else {
-            tracing::info!(
-                "custody-provider registered as inactive Runtime custody route; provisional key-provider remains the product path"
-            );
+            tracing::info!("custody-provider registered on the Runtime-only custody target");
         }
     } else {
         tracing::warn!(
@@ -2156,6 +2295,78 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn an_absent_peering_file_and_peer_store_yield_no_peering() {
+        let temp = TempDir::new().unwrap();
+        assert!(ipfs_peering_list(temp.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_peering_list_unions_the_peer_store_and_the_peering_file_by_peer_id() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(
+            elastos_server::operator_control::operator_control_path(temp.path()),
+            serde_json::json!({
+                "schema": "elastos.operator-control/v1",
+                "peers": [
+                    {
+                        "did": "did:key:zStorage",
+                        "ipfs_peer": {
+                            "id": "12D3KooWShared",
+                            "addrs": ["/dns4/custody-a/tcp/4001"],
+                        },
+                    },
+                    // A custody-only peer runs no kubo and contributes nothing.
+                    { "did": "did:key:zCustodyOnly", "provides": ["custody", "chain"] },
+                ],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            ipfs_peering_file_path(temp.path()),
+            serde_json::json!([
+                // Same peer, a second address: unioned, not duplicated.
+                { "id": "12D3KooWShared", "addrs": ["/dns4/custody-a/udp/4001/quic-v1"] },
+                // Peering by id alone is valid: all a node behind a bridge
+                // the other side cannot dial can honestly advertise.
+                { "id": "12D3KooWGateway" },
+            ])
+            .to_string(),
+        )
+        .unwrap();
+
+        let peers = ipfs_peering_list(temp.path()).unwrap();
+        assert_eq!(peers.len(), 2, "{peers:?}");
+        assert_eq!(peers[0].id, "12D3KooWGateway");
+        assert!(peers[0].addrs.is_empty(), "{peers:?}");
+        assert_eq!(peers[1].id, "12D3KooWShared");
+        assert_eq!(
+            peers[1].addrs,
+            vec![
+                "/dns4/custody-a/tcp/4001".to_string(),
+                "/dns4/custody-a/udp/4001/quic-v1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_malformed_peering_file_fails_closed_naming_the_file() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(
+            ipfs_peering_file_path(temp.path()),
+            br#"{"peers": [{"id": "12D3KooWGateway"}]}"#,
+        )
+        .unwrap();
+
+        let error = ipfs_peering_list(temp.path())
+            .expect_err("a peering list that is not an array must fail closed");
+        assert!(
+            format!("{error:#}").contains(IPFS_PEERING_FILE_NAME),
+            "{error:#}"
+        );
+    }
 
     fn test_provider_bridge(
         status: serde_json::Value,
@@ -4242,5 +4453,108 @@ mod tests {
             ),
             "revoked token must stay revoked after restart: {result:?}"
         );
+    }
+
+    /// Answers `ensure_started` with a canned envelope and records every op it
+    /// was asked for, so a test can pin both the request and the reading of
+    /// the reply.
+    struct EnsureStartedProvider {
+        response: serde_json::Value,
+        ops: std::sync::Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl provider::Provider for EnsureStartedProvider {
+        async fn handle(
+            &self,
+            _request: provider::ResourceRequest,
+        ) -> Result<provider::ResourceResponse, provider::ProviderError> {
+            Err(provider::ProviderError::Provider(
+                "this double serves raw operations only".into(),
+            ))
+        }
+
+        fn schemes(&self) -> Vec<&'static str> {
+            Vec::new()
+        }
+
+        fn name(&self) -> &'static str {
+            "ensure-started-test-provider"
+        }
+
+        async fn send_raw(
+            &self,
+            request: &serde_json::Value,
+        ) -> Result<serde_json::Value, provider::ProviderError> {
+            let op = request
+                .get("op")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            self.ops.lock().unwrap().push(op);
+            Ok(self.response.clone())
+        }
+    }
+
+    async fn ensure_started_against(response: serde_json::Value) -> (Option<String>, Vec<String>) {
+        let ops = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let registry = std::sync::Arc::new(provider::ProviderRegistry::new());
+        registry
+            .register_sub_provider(
+                "ipfs",
+                std::sync::Arc::new(EnsureStartedProvider {
+                    response,
+                    ops: std::sync::Arc::clone(&ops),
+                }),
+            )
+            .await
+            .unwrap();
+        let peer_id = ensure_ipfs_started(&registry).await;
+        let seen = ops.lock().unwrap().clone();
+        (peer_id, seen)
+    }
+
+    #[tokio::test]
+    async fn eager_start_asks_the_ipfs_plane_for_ensure_started_and_reads_the_peer_id() {
+        let (peer_id, ops) = ensure_started_against(serde_json::json!({
+            "status": "ok",
+            "data": { "peer_id": "12D3KooWTestPeerIdentity", "swarm_addrs": [] }
+        }))
+        .await;
+        assert_eq!(ops, vec!["ensure_started".to_string()]);
+        assert_eq!(peer_id.as_deref(), Some("12D3KooWTestPeerIdentity"));
+    }
+
+    #[tokio::test]
+    async fn eager_start_reports_no_identity_when_the_plane_refuses() {
+        // Non-fatal by contract: the gateway keeps serving, and the caller
+        // learns only that there is no warm daemon to speak of.
+        let (peer_id, ops) = ensure_started_against(serde_json::json!({
+            "status": "error",
+            "code": "kubo_unavailable",
+            "message": "no kubo binary"
+        }))
+        .await;
+        assert_eq!(ops, vec!["ensure_started".to_string()]);
+        assert_eq!(peer_id, None);
+    }
+
+    #[tokio::test]
+    async fn eager_start_treats_a_missing_peer_id_as_no_identity() {
+        // `ensure_started` never reports success without an identity, so this
+        // is protocol drift. It must not read as a started daemon.
+        let (peer_id, _) = ensure_started_against(serde_json::json!({
+            "status": "ok",
+            "data": { "swarm_addrs": [] }
+        }))
+        .await;
+        assert_eq!(peer_id, None);
+
+        let (peer_id, _) = ensure_started_against(serde_json::json!({
+            "status": "ok",
+            "data": { "peer_id": "" }
+        }))
+        .await;
+        assert_eq!(peer_id, None, "an empty peer id is not an identity");
     }
 }

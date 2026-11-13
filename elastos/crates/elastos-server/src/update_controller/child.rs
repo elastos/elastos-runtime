@@ -3,12 +3,21 @@
 use anyhow::{Context, Result};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+#[cfg(test)]
 use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 
 use elastos_common::process_lifetime::{parent_pipe, pipe_identity, set_cloexec, PARENT_PIPE_ENV};
+// Process birth identity lives in elastos-common so other owners of a child
+// process (the public IPFS store) prove ownership the same way.
+use elastos_common::process_identity::valid_pid;
+pub(crate) use elastos_common::process_identity::{
+    generation_gone, group_descendants, observe_exit, process_identity,
+};
+#[cfg(test)]
+use elastos_common::process_identity::{linux_stat_group, linux_stat_start};
 const GRACE_PERIOD: Duration = Duration::from_secs(12);
 const REAP_PERIOD: Duration = Duration::from_secs(2);
 const POLL_PERIOD: Duration = Duration::from_millis(20);
@@ -167,38 +176,6 @@ impl Drop for OwnedChild {
     }
 }
 
-pub(crate) fn observe_exit(pid: u32) -> io::Result<Option<ExitStatus>> {
-    loop {
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        let result = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                pid as libc::id_t,
-                &mut info,
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-            )
-        };
-        if result != 0 {
-            let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(error);
-        }
-        if unsafe { info.si_pid() } == 0 {
-            return Ok(None);
-        }
-        let status = unsafe { info.si_status() };
-        let raw_status = match info.si_code {
-            libc::CLD_EXITED => status << 8,
-            libc::CLD_KILLED => status,
-            libc::CLD_DUMPED => status | 0x80,
-            _ => return Err(io::Error::other("unexpected owned child exit event")),
-        };
-        return Ok(Some(ExitStatus::from_raw(raw_status)));
-    }
-}
-
 pub(crate) fn signal_group(pid: u32, signal: libc::c_int) -> io::Result<()> {
     if unsafe { libc::kill(-(pid as libc::pid_t), signal) } == 0 {
         return Ok(());
@@ -258,228 +235,6 @@ fn completed_group_after_signal_denial(
 /// Read process birth from the kernel without starting a helper process.
 pub(crate) fn process_start(pid: u32) -> Option<String> {
     process_identity(pid).ok().flatten()
-}
-
-/// Recovery observes an old generation; it gives signal authority only to owners.
-/// A reused PID or incomplete kernel view keeps restoration blocked.
-pub(crate) fn generation_gone(pid: u32, start: &str) -> Result<bool> {
-    for inspection in 0..2 {
-        if let Some(current) = process_identity(pid)? {
-            anyhow::ensure!(
-                current == start,
-                "update child process ID belongs to another generation"
-            );
-            return Ok(false);
-        }
-        // macOS hides zombie birth records from libproc. A direct-child event
-        // still proves that this process has a reserved PID and needs reaping.
-        match observe_exit(pid) {
-            Ok(_) => return Ok(false),
-            Err(error) if error.raw_os_error() == Some(libc::ECHILD) => {}
-            Err(error) => return Err(error.into()),
-        }
-        if inspection == 0 && !group_descendants(pid)?.is_empty() {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-fn valid_pid(pid: u32) -> io::Result<()> {
-    if pid == 0 || pid > libc::pid_t::MAX as u32 {
-        return Err(io::Error::other("invalid update child process ID"));
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn process_identity(pid: u32) -> io::Result<Option<String>> {
-    valid_pid(pid)?;
-    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat,
-        Err(error) if process_vanished(&error) => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let start = linux_stat_start(&stat)?;
-    let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
-        .ok()
-        .map(|boot| boot.trim().to_owned())
-        .filter(|boot| !boot.is_empty());
-    Ok(Some(match boot {
-        Some(boot) => format!("linux:{boot}:{start}"),
-        None => format!("linux:{start}"),
-    }))
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn process_identity(pid: u32) -> io::Result<Option<String>> {
-    valid_pid(pid)?;
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let expected = std::mem::size_of_val(&info) as libc::c_int;
-    unsafe { *libc::__error() = 0 };
-    let bytes = unsafe {
-        libc::proc_pidinfo(
-            pid as libc::pid_t,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&mut info as *mut libc::proc_bsdinfo).cast(),
-            expected,
-        )
-    };
-    if bytes == expected && info.pbi_pid == pid {
-        return Ok(Some(format!(
-            "macos:{}:{}",
-            info.pbi_start_tvsec, info.pbi_start_tvusec
-        )));
-    }
-    let error = io::Error::last_os_error();
-    if bytes == 0 && error.raw_os_error() == Some(libc::ESRCH) {
-        // An inaccessible or unreaped process is ambiguous even if libproc
-        // cannot supply its birth record. Signal zero is an existence check.
-        if unsafe { libc::kill(pid as libc::pid_t, 0) } != 0
-            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-        {
-            return Ok(None);
-        }
-    }
-    Err(if error.raw_os_error() != Some(0) {
-        error
-    } else {
-        io::Error::other("incomplete update child birth record")
-    })
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub(crate) fn process_identity(_pid: u32) -> io::Result<Option<String>> {
-    Err(io::Error::other(
-        "update process birth proof is unsupported on this platform",
-    ))
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn group_descendants(leader: u32) -> io::Result<Vec<u32>> {
-    let mut members = Vec::new();
-    for (index, entry) in std::fs::read_dir("/proc")?.enumerate() {
-        if index >= 16_384 {
-            return Err(io::Error::other("process group scan exceeded its bound"));
-        }
-        let entry = entry?;
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        if pid == leader {
-            continue;
-        }
-        let stat = match std::fs::read_to_string(entry.path().join("stat")) {
-            Ok(stat) => stat,
-            Err(error) if process_vanished(&error) => continue,
-            Err(error) => return Err(error),
-        };
-        if linux_stat_group(&stat)? == leader as libc::pid_t {
-            members.push(pid);
-        }
-    }
-    Ok(members)
-}
-
-/// A process can exit between listing and reading its stat: open then reports
-/// ENOENT or ESRCH, and read reports ESRCH.
-#[cfg(target_os = "linux")]
-fn process_vanished(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn linux_stat_group(stat: &str) -> io::Result<libc::pid_t> {
-    // A process name can contain spaces and closing parentheses. A dead task
-    // that is still listed reports group -1.
-    let group = stat
-        .rsplit_once(')')
-        .and_then(|(_, fields)| fields.split_whitespace().nth(2));
-    group
-        .and_then(|group| group.parse().ok())
-        .ok_or_else(|| io::Error::other("invalid process group in proc stat"))
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn linux_stat_start(stat: &str) -> io::Result<u64> {
-    stat.rsplit_once(')')
-        .and_then(|(_, fields)| fields.split_whitespace().nth(19))
-        .and_then(|start| start.parse().ok())
-        .ok_or_else(|| io::Error::other("invalid process birth in proc stat"))
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn group_descendants(leader: u32) -> io::Result<Vec<u32>> {
-    // PROC_PGRP_ONLY from the SDK's sys/proc_info.h; libc exports the API.
-    const PROC_PGRP_ONLY: u32 = 2;
-    let mut pids = [0 as libc::pid_t; 4096];
-    let buffer_size = std::mem::size_of_val(&pids) as libc::c_int;
-    unsafe { *libc::__error() = 0 };
-    let bytes = unsafe {
-        libc::proc_listpids(
-            PROC_PGRP_ONLY,
-            leader,
-            pids.as_mut_ptr().cast(),
-            buffer_size,
-        )
-    };
-    if bytes < 0 || (bytes == 0 && io::Error::last_os_error().raw_os_error() != Some(0)) {
-        return Err(io::Error::last_os_error());
-    }
-    if bytes >= buffer_size || !(bytes as usize).is_multiple_of(std::mem::size_of::<libc::pid_t>())
-    {
-        return Err(io::Error::other(
-            "owned process group listing exceeded its bound",
-        ));
-    }
-    let mut members = Vec::new();
-    for &pid in &pids[..bytes as usize / std::mem::size_of::<libc::pid_t>()] {
-        if pid <= 0 || pid as u32 == leader {
-            continue;
-        }
-        let mut info: libc::proc_bsdshortinfo = unsafe { std::mem::zeroed() };
-        let expected = std::mem::size_of_val(&info) as libc::c_int;
-        unsafe { *libc::__error() = 0 };
-        let bytes = unsafe {
-            libc::proc_pidinfo(
-                pid,
-                libc::PROC_PIDT_SHORTBSDINFO,
-                0,
-                (&mut info as *mut libc::proc_bsdshortinfo).cast(),
-                expected,
-            )
-        };
-        if bytes != expected {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ESRCH) {
-                // A member can exit between list and info. Keep it pending until
-                // the next group list also proves that its PID has disappeared.
-                members.push(pid as u32);
-                continue;
-            }
-            return Err(if bytes == 0 && error.raw_os_error() != Some(0) {
-                error
-            } else {
-                io::Error::other("incomplete owned process group member info")
-            });
-        }
-        if info.pbsi_pgid == leader {
-            members.push(pid as u32);
-        }
-    }
-    Ok(members)
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub(crate) fn group_descendants(_leader: u32) -> io::Result<Vec<u32>> {
-    Err(io::Error::other(
-        "owned process group proof is unsupported on this platform",
-    ))
 }
 
 pub(crate) fn process_group(pid: u32) -> io::Result<Option<u32>> {

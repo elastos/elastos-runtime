@@ -146,8 +146,6 @@ const methodContracts = [
   ["net-provider", "elastos.provider.net", "stream", "write", "runtime_policy", "event", "elastos://net/*", "stream"],
   ["chain-provider", "elastos.provider.chain", "broadcast_transaction", "payment", "user", "full", "elastos://chain/*", "broadcast_transaction"],
   ["wallet-provider", "elastos.provider.wallet", "status", "read", "runtime_policy", "summary", "elastos://wallet/meta/status", "status"],
-  ["key-provider", "elastos.provider.key", "release", "rights", "user", "full", "elastos://key/*", "release"],
-  ["rights-provider", "elastos.provider.rights", "can_stream", "rights", "runtime_policy", "event", "elastos://rights/*", "can_stream"],
   ["object-provider", "elastos.provider.object", "delete_permanently", "privileged", "user", "full", "elastos://object/*", "delete_permanently"],
 ];
 const schemaContracts = [
@@ -209,10 +207,10 @@ const homeCore = [
   "home", "home-cli", "home-gui", "system", "people", "browser", "documents", "library", "marketplace", "archive-manager", "inbox", "chat-room",
 ];
 const protectedProviders = ["protected-content-protect-provider", "media-provider", "custody-provider", "protected-content-decrypt-provider"];
-const obsolete = ["browser-engine-supervisor", "browser-native-proxy-engine", "browser-stream-bridge", "chat", "agent", "esp-shell", "capsule-inspector", "gba-engine-provider", "ai-provider", "llama-provider"];
+const obsolete = ["browser-engine-supervisor", "browser-native-proxy-engine", "browser-stream-bridge", "chat", "agent", "esp-shell", "capsule-inspector", "gba-engine-provider", "ai-provider", "llama-provider", "drm-provider", "rights-provider", "key-provider", "decrypt-provider"];
 const archiveAssets = ["home", "system", "services", "people", "documents", "library", "marketplace", "archive-manager", "inbox"];
 // Hidden in 0.8.0: fresh Homes do not install them; they stay published for `setup --with` and updates.
-const hiddenFromHome = ["services", "wallet-walletconnect", "content-block-graph-provider", "elacity-player", "protected-content-protect-provider", "protected-content-decrypt-provider", "media-provider", "media-tools"];
+const hiddenFromHome = ["services", "wallet-walletconnect", "content-block-graph-provider", "creator", "custody", "elacity-player", "elacity-reader", "protected-content-protect-provider", "protected-content-decrypt-provider", "media-provider", "media-tools"];
 
 export function parsePublishData(shellSource, rustSource) {
   const shell = (name) => {
@@ -274,7 +272,7 @@ export function validateComponents(components, manifests) {
   same(Object.keys(components.profiles).filter((name) => name !== "browser-host"), ["home"], "Setup installs one Home: profiles");
   const home = components.profiles.home.components;
   for (const name of homeCore) assert(home.includes(name), `home: required component ${name}`);
-  for (const name of ["availability-provider", "site-provider", "tunnel-provider", "cloudflared", "drm-provider", "rights-provider", "key-provider", "decrypt-provider", "custody-provider", "gba-emulator", "gba-ucity"]) assert(!home.includes(name), `Home: ${name} is a developer --with component`);
+  for (const name of ["availability-provider", "site-provider", "tunnel-provider", "cloudflared", "custody-provider", "gba-emulator", "gba-ucity"]) assert(!home.includes(name), `Home: ${name} is a developer --with component`);
   for (const name of hiddenFromHome) {
     assert(!home.includes(name), `Home: ${name} is hidden in 0.8.0 and installs only with --with`);
     assert(object(components.external[name]?.platforms), `${name}: hidden component stays published for --with`);
@@ -305,7 +303,7 @@ export function validateComponents(components, manifests) {
       if (metadata.release_path?.endsWith(".tar.gz") && manifests[name]?.execution === "web-projection") present(metadata.extract_path, `${name}: ${platform} archive extraction path`);
     }
   }
-  for (const name of [...homeCore, "drm-provider", "rights-provider", "key-provider", "decrypt-provider", "availability-provider"]) {
+  for (const name of [...homeCore, "availability-provider"]) {
     for (const platform of ["linux-amd64", "linux-arm64"]) assert(components.external[name]?.platforms[platform] ?? components.external[name]?.platforms["*"], `${name}: release metadata for ${platform}`);
   }
   for (const name of archiveAssets) {

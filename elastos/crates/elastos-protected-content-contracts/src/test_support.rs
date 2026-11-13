@@ -146,3 +146,69 @@ impl AtomicReplayClaimer for TestReplayClaims {
         Ok(())
     }
 }
+
+// ---------------------------------------------------------------------------
+// ADV-01 R5: the archived pre-alignment `rights-request/v2` layout (85966fd12),
+// re-encoded here only so the refusal of those bytes stays testable.
+// Production cannot decode, sign or accept them: decoding returns
+// `ContractError::UnsupportedVersion(PRE_ALIGNMENT_V2)`.
+// ---------------------------------------------------------------------------
+
+/// The 85966fd12 layout: `domain\0 · binding · action · n · recipient×n ·
+/// delivery 32 · issued · expires · nonce`, with no tag and no chain id. It
+/// has `n` X-Wing recipients `digest(0xb1)`.., delivery `digest(0xa0)`, the
+/// wallet 7 binding, `NOW .. NOW + 120` and nonce `0x55`.
+pub(crate) fn archived_pre_alignment_v2_request_bytes(n: u8) -> Vec<u8> {
+    use crate::CanonicalContract as _;
+
+    fn nested(out: &mut Vec<u8>, bytes: &[u8]) {
+        out.extend_from_slice(&u16::try_from(bytes.len()).unwrap().to_be_bytes());
+        out.extend_from_slice(bytes);
+    }
+
+    assert!((1..=4).contains(&n), "a V2 request names 1..=4 recipients");
+    let mut recipients = (0..n)
+        .map(|index| {
+            crate::RecipientKeyIdentityV1::new(
+                crate::CUSTODY_X_WING_AES256GCM_SUITE_ID_V1,
+                digest(0xb1 + index),
+            )
+            .unwrap()
+            .canonical_bytes()
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    recipients.sort();
+
+    let mut out = b"elastos.protected-content.rights-request/v2\0".to_vec();
+    nested(
+        &mut out,
+        &binding_for_wallet(wallet(7)).canonical_bytes().unwrap(),
+    );
+    out.push(crate::RightsActionV1::View as u8);
+    out.push(n);
+    for recipient in &recipients {
+        nested(&mut out, recipient);
+    }
+    out.extend_from_slice(digest(0xa0).as_bytes());
+    out.extend_from_slice(&NOW.to_be_bytes());
+    out.extend_from_slice(&(NOW + 120).to_be_bytes());
+    out.extend_from_slice(&[0x55; 16]);
+    out
+}
+
+/// The archived request of [`archived_pre_alignment_v2_request_bytes`] inside
+/// the `/v2` wallet-signed wrapper, whose own layout is unchanged:
+/// `domain\0 · request (nested) · wallet signature (65 bytes)`. The signature
+/// is a well-formed placeholder; decoding refuses the request first.
+pub(crate) fn archived_pre_alignment_v2_wrapper_bytes(n: u8) -> Vec<u8> {
+    fn nested(out: &mut Vec<u8>, bytes: &[u8]) {
+        out.extend_from_slice(&u16::try_from(bytes.len()).unwrap().to_be_bytes());
+        out.extend_from_slice(bytes);
+    }
+
+    let mut out = b"elastos.protected-content.wallet-signed-rights-request/v2\0".to_vec();
+    nested(&mut out, &archived_pre_alignment_v2_request_bytes(n));
+    nested(&mut out, &[0u8; 65]);
+    out
+}

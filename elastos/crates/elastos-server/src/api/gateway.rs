@@ -59,6 +59,12 @@ pub(crate) use gateway_browser_internet::BrowserInternetService;
 mod gateway_capsule_catalog;
 #[path = "gateway_collaboration_presence.rs"]
 mod gateway_collaboration_presence;
+#[path = "gateway_creator_channels.rs"]
+mod gateway_creator_channels;
+#[path = "gateway_creator_recovery.rs"]
+mod gateway_creator_recovery;
+#[path = "gateway_custody.rs"]
+mod gateway_custody;
 #[path = "gateway_esp.rs"]
 mod gateway_esp;
 #[path = "gateway_frontdoor.rs"]
@@ -89,6 +95,12 @@ mod gateway_inbox;
 mod gateway_inspect_actions;
 #[path = "gateway_marketplace.rs"]
 mod gateway_marketplace;
+#[path = "gateway_marketplace_buy.rs"]
+mod gateway_marketplace_buy;
+#[path = "gateway_marketplace_directory.rs"]
+mod gateway_marketplace_directory;
+#[path = "gateway_marketplace_listing.rs"]
+mod gateway_marketplace_listing;
 #[path = "gateway_model_remote.rs"]
 mod gateway_model_remote;
 #[path = "gateway_model_service.rs"]
@@ -99,12 +111,16 @@ pub(crate) use gateway_model_service::{
     MODEL_GRANT_SCHEMA, MODEL_GRANT_SCOPE, MODEL_GRANT_TTL_SECS, MODEL_LOCAL_OFFER,
     MODEL_OPERATIONS, MODEL_SERVICE_KIND, MODEL_SERVICE_URI,
 };
+#[path = "gateway_onchain_directory.rs"]
+mod gateway_onchain_directory;
 #[path = "gateway_origin.rs"]
 mod gateway_origin;
 #[path = "gateway_passkey_step_up.rs"]
 mod gateway_passkey_step_up;
 #[path = "gateway_provider_proxy.rs"]
 mod gateway_provider_proxy;
+#[path = "gateway_public_ipfs.rs"]
+mod gateway_public_ipfs;
 #[path = "gateway_room.rs"]
 mod gateway_room;
 #[path = "gateway_server.rs"]
@@ -114,18 +130,27 @@ mod gateway_site;
 #[path = "gateway_transaction_effects.rs"]
 mod gateway_transaction_effects;
 #[path = "gateway_wallet.rs"]
-mod gateway_wallet;
+pub(crate) mod gateway_wallet;
 #[path = "gateway_wallet_adapter.rs"]
 mod gateway_wallet_adapter;
 #[cfg(test)]
 use gateway_browser::browser_runtime_stream_socket_path;
 use gateway_capsule_catalog::*;
 use gateway_collaboration_presence::*;
+use gateway_creator_channels::*;
+use gateway_creator_recovery::*;
+pub(crate) use gateway_creator_recovery::{
+    archive_runtime_custody_creator_attempt, runtime_custody_attempt_may_start_over,
+    runtime_custody_unfinished_mint_via_gateway, RuntimeCustodyAttemptArchiveOutcome,
+    RuntimeCustodyUnfinishedMintOutcome,
+};
+use gateway_custody::*;
 use gateway_esp::*;
 use gateway_home_external_link::*;
 pub(crate) use gateway_home_runtime::is_wallet_connector_capsule_id;
 use gateway_home_runtime::*;
 use gateway_home_shared_content::*;
+use gateway_onchain_directory::*;
 
 pub(crate) fn principal_root_protected_object_inventory(
     localhost_root: &str,
@@ -158,12 +183,13 @@ pub(crate) use gateway_home_token::RuntimeWalletAuthority;
 pub(super) use gateway_home_token::{
     home_browser_origin, home_launch_token_header, home_session_clear_cookie_header,
     home_session_cookie_header_for_token, issue_home_launch_token_for_auth_grant,
-    issue_home_projection_launch_token_with_context, require_carried_home_launch_token,
-    require_home_launch_token, require_home_launch_token_binding,
-    require_home_launch_token_context, require_home_launch_token_for_any_app_context,
-    require_home_launch_token_for_any_context, require_home_projection_launch_token_context,
-    require_home_runtime_wallet_authority, require_home_token, require_home_token_context,
-    require_home_viewer_launch_token_context, require_internal_shell_launch_grant_for_any_context,
+    issue_home_projection_launch_token_with_context, require_app_runtime_wallet_authority,
+    require_carried_home_launch_token, require_home_launch_token,
+    require_home_launch_token_binding, require_home_launch_token_context,
+    require_home_launch_token_for_any_app_context, require_home_launch_token_for_any_context,
+    require_home_projection_launch_token_context, require_home_runtime_wallet_authority,
+    require_home_token, require_home_token_context, require_home_viewer_launch_token_context,
+    require_internal_shell_launch_grant_for_any_context,
     require_internal_shell_runtime_wallet_authority, require_runtime_wallet_authority,
     runtime_wallet_authority, HomeLaunchContext, RequiredHomeLaunchToken,
 };
@@ -186,25 +212,35 @@ use gateway_home_wallet_connector::*;
 use gateway_inbox::*;
 use gateway_inspect_actions::*;
 use gateway_marketplace::*;
+use gateway_marketplace_buy::*;
+pub(crate) use gateway_marketplace_buy::{
+    runtime_custody_buy_offer_via_gateway, RuntimeMarketBuyRefusal,
+};
+use gateway_marketplace_directory::*;
+use gateway_marketplace_listing::*;
 use gateway_origin::*;
 use gateway_passkey_step_up::*;
 #[cfg(test)]
 pub(crate) use gateway_passkey_step_up::{
-    advance_passkey_step_up_clock_for_test, issue_passkey_step_up_token_at_for_test,
-    issue_passkey_step_up_token_for_test,
+    advance_passkey_step_up_clock_for_test, consumed_passkey_step_up_count_for_test,
+    issue_passkey_step_up_token_at_for_test, issue_passkey_step_up_token_for_test,
 };
 pub(super) use gateway_passkey_step_up::{
     consume_or_recover_passkey_step_up_effect, consume_passkey_step_up_token,
     require_hosted_step_up_launch,
 };
-#[cfg(test)]
-pub(crate) use gateway_provider_proxy::runtime_custody_publish_creator_tail_for_test;
 use gateway_provider_proxy::*;
 pub(crate) use gateway_provider_proxy::{
     resolve_runtime_custody_creator_publish_binding, runtime_custody_buy_via_gateway,
+    runtime_custody_download_owned_copy_via_gateway, runtime_custody_publish_object_via_gateway,
     runtime_custody_publish_via_gateway, ResolvedProtectedContentMintReceipt,
     ResolvedProtectedContentVerifiedListing,
 };
+#[cfg(test)]
+pub(crate) use gateway_provider_proxy::{
+    runtime_custody_publish_creator_tail_for_test, runtime_custody_resume_creator_tail_for_test,
+};
+use gateway_public_ipfs::*;
 use gateway_room::*;
 pub(crate) use gateway_room::{
     cookie_value_from_headers, request_uses_tls, set_browser_session_cookie_header,
@@ -252,6 +288,52 @@ const WALLET_PRICE_POLICY_FILE: &str = "price-policy.json";
 const WALLET_PRICE_HTTP_REQUEST_ID: &str = "wallet-prices";
 const WALLET_PRICE_HTTP_APPROVE_ACTION_ID: &str = "wallet-price-http-approve:coingecko";
 const WALLET_PRICE_HTTP_DENY_ACTION_PREFIX: &str = "wallet-price-http-deny:";
+
+// Channel discovery for the creator page. The directory is an INDEX, never an
+// authority: it says which channels a creator is likely to want offered, and
+// the chain decides whether a mint on the chosen one is permitted. It is
+// therefore allowed to be absent, stale or wrong without blocking a mint --
+// the picker keeps the configured channel and a typed address either way.
+//
+// Deliberately its own policy, request and actions rather than the wallet's:
+// approving market prices must not silently approve a second external service.
+const CREATOR_CHANNELS_CACHE_TTL_SECS: u64 = 5 * 60;
+const CREATOR_CHANNELS_SOURCE_ENV: &str = "ELASTOS_CREATOR_CHANNELS_SOURCE";
+/// The GraphQL index of on-chain state this Home reads.
+///
+/// Named for what it is rather than for the first question asked of it or for
+/// whoever runs it today: the channel list is one query at this endpoint, and
+/// anything else this Runtime later reads about chain state is the same
+/// address. Each such use keeps its OWN approval -- one endpoint is not one
+/// consent.
+///
+/// It indexes ONE chain, so a Home minting somewhere else must point this at
+/// that chain's index; the default is the one this deployment settles on.
+const ONCHAIN_GRAPHQL_URL_ENV: &str = "ELASTOS_ONCHAIN_GRAPHQL_URL";
+const ONCHAIN_GRAPHQL_DEFAULT_URL: &str = "https://base.ela.city/api/2.0/graphql";
+const CREATOR_CHANNELS_HTTP_APPROVED_ENV: &str = "ELASTOS_CREATOR_CHANNELS_HTTP_APPROVED";
+const CREATOR_CHANNELS_POLICY_SCHEMA: &str = "elastos.creator.channel-directory-policy/v1";
+const CREATOR_CHANNELS_POLICY_ROOT: &str = "localhost://Local/Shared/System/Creator";
+const CREATOR_CHANNELS_POLICY_FILE: &str = "channel-directory-policy.json";
+const CREATOR_CHANNELS_HTTP_REQUEST_ID: &str = "creator-channels";
+const CREATOR_CHANNELS_HTTP_APPROVE_ACTION_ID: &str =
+    "creator-channels-http-approve:onchain-graphql";
+const CREATOR_CHANNELS_HTTP_DENY_ACTION_PREFIX: &str = "creator-channels-http-deny:";
+
+// The Marketplace reads the same index the Creator's picker reads, to list
+// the channels that publish protected items. Its approval is separate from the
+// Creator's, for the reason that comment states: one endpoint is not one
+// consent, and approving a picker in one app must not quietly enable another.
+const MARKETPLACE_DIRECTORY_CACHE_TTL_SECS: u64 = 5 * 60;
+const MARKETPLACE_DIRECTORY_SOURCE_ENV: &str = "ELASTOS_MARKETPLACE_DIRECTORY_SOURCE";
+const MARKETPLACE_DIRECTORY_HTTP_APPROVED_ENV: &str = "ELASTOS_MARKETPLACE_DIRECTORY_HTTP_APPROVED";
+const MARKETPLACE_DIRECTORY_POLICY_SCHEMA: &str = "elastos.marketplace.directory-policy/v1";
+const MARKETPLACE_DIRECTORY_POLICY_ROOT: &str = "localhost://Local/Shared/System/Marketplace";
+const MARKETPLACE_DIRECTORY_POLICY_FILE: &str = "market-directory-policy.json";
+const MARKETPLACE_DIRECTORY_HTTP_REQUEST_ID: &str = "marketplace-directory";
+const MARKETPLACE_DIRECTORY_HTTP_APPROVE_ACTION_ID: &str =
+    "marketplace-directory-http-approve:onchain-graphql";
+const MARKETPLACE_DIRECTORY_HTTP_DENY_ACTION_PREFIX: &str = "marketplace-directory-http-deny:";
 pub(crate) const HOME_LAUNCH_TRUSTED_SIGNER_DID_ENV: &str =
     "ELASTOS_HOME_LAUNCH_TRUSTED_SIGNER_DID";
 pub(crate) const HOME_LAUNCH_TRUSTED_AUTH_DATA_DIR_ENV: &str =
@@ -279,9 +361,11 @@ const HOME_BROWSER_STATE_SCHEMA: &str = "elastos.home.browser-state/v1";
 const HOME_BROWSER_STATE_MAX_BYTES: usize = 64 * 1024;
 const DOCUMENTS_CAPSULE_ID: &str = "documents";
 const LIBRARY_CAPSULE_ID: &str = "library";
+const CREATOR_CAPSULE_ID: &str = "creator";
 const MARKETPLACE_CAPSULE_ID: &str = "marketplace";
 const INBOX_CAPSULE_ID: &str = "inbox";
 const PEOPLE_CAPSULE_ID: &str = "people";
+const CUSTODY_CAPSULE_ID: &str = "custody";
 
 /// Announce this Home's people from the Runtime. See
 /// `gateway_collaboration_presence::publish_runtime_owned_presence`.
@@ -492,6 +576,43 @@ struct WalletPricesResponse {
     note: Option<String>,
 }
 
+/// One channel a creator may mint on, as the directory reports it.
+///
+/// Everything here is display: a reader decides what to show, never what is
+/// permitted. `address` is the only field the mint itself uses, and it is
+/// checked on chain before anything is signed.
+#[derive(Debug, Clone, Serialize)]
+struct CreatorChannelEntry {
+    address: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    name: String,
+    /// True for the channel this Runtime is configured to mint on, which is
+    /// offered whether or not the directory knows about it.
+    configured: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct CreatorChannelsResponse {
+    #[serde(rename = "asOf")]
+    as_of: u64,
+    stale: bool,
+    /// The directory could not be read. The picker still works: it keeps the
+    /// configured channel and a typed address.
+    unavailable: bool,
+    /// The directory has not been approved for external HTTP yet, so the page
+    /// can offer the approval rather than reporting a failure.
+    #[serde(rename = "needsApproval")]
+    needs_approval: bool,
+    channels: Vec<CreatorChannelEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+    /// Why there was nobody to ask the directory about, as a stable code the
+    /// page turns into the one step that fixes it. Approving the directory
+    /// fixes none of these, so `needs_approval` is never set with it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WalletPricePolicy {
@@ -574,6 +695,8 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
         .route("/s/:cid/", get(serve_cid_root))
         .route("/s/:cid/*path", get(serve_cid_file))
         .route("/content/:cid", get(serve_ipfs_cid_root))
+        // A file inside a CID bundle, read by this Home's own app with its token.
+        .route("/content/:cid/*path", get(serve_cid_file))
         // IPFS-compatible paths so install.sh can use this gateway like ipfs.io.
         .route("/ipfs/:cid", get(serve_ipfs_cid_root))
         .route("/ipfs/:cid/", get(serve_cid_root))
@@ -861,6 +984,7 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
         )
         .route("/api/apps/wallet/wallet/summary", get(wallet_app_summary))
         .route("/api/wallet/prices", get(wallet_prices))
+        .route("/api/creator/channels", get(creator_channels))
         .route("/api/wallet/qr", post(wallet_receive_qr))
         .route(
             "/api/apps/wallet/wallet/managed",
@@ -1125,6 +1249,20 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
             )),
         )
         .route("/api/apps/marketplace/catalog", get(marketplace_catalog))
+        .route("/api/apps/marketplace/channels", get(marketplace_channels))
+        .route(
+            "/api/apps/marketplace/items",
+            get(marketplace_catalog_items),
+        )
+        .route("/api/apps/marketplace/listing", post(marketplace_listing))
+        .route(
+            "/api/apps/marketplace/pay-tokens",
+            get(marketplace_pay_tokens),
+        )
+        .route(
+            "/api/apps/marketplace/channel-access",
+            post(marketplace_channel_access),
+        )
         // Reachable only with a Services token, which Home stops issuing while
         // Services is hidden (0.8.0; see capsule_is_offered). The share and
         // request backend stays: Inbox approval, grant use and revocation run on
@@ -1160,6 +1298,83 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
         .route(
             "/api/apps/people/contacts/request",
             post(people_contact_request_create),
+        )
+        .route(crate::custody_surface::ROUTE_SUMMARY, get(custody_summary))
+        .route(
+            crate::custody_surface::ROUTE_SIGNING_KEY,
+            post(custody_signing_key_create),
+        )
+        .route(
+            crate::custody_surface::ROUTE_NODE_CARDS_READ,
+            post(custody_node_card_read),
+        )
+        .route(
+            crate::custody_surface::ROUTE_NODE_CARDS_FETCH,
+            post(custody_node_card_fetch),
+        )
+        .route(
+            crate::custody_surface::ROUTE_LOCAL_NODE,
+            post(custody_local_node_include).delete(custody_local_node_remove),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOL_CHECK,
+            post(custody_pool_check),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOL,
+            get(custody_pool_read).post(custody_pool_install),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOL_VERIFY,
+            post(custody_pool_verify),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOL_NOTIFY,
+            post(custody_pool_notify),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOL_HEALTH,
+            get(custody_pool_health),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOL_MEMBER_REGISTER,
+            post(custody_member_register),
+        )
+        .route(
+            crate::custody_surface::ROUTE_OFFER,
+            get(custody_offer_read).post(custody_offer_set),
+        )
+        .route(
+            crate::custody_surface::ROUTE_NODES_FIND,
+            post(custody_nodes_find),
+        )
+        .route(
+            crate::custody_surface::ROUTE_NODE_REQUESTS,
+            post(custody_node_request_send),
+        )
+        .route(
+            crate::custody_surface::ROUTE_MESSAGES_ENABLE,
+            post(custody_messages_enable),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOLS_KNOWN,
+            get(custody_known_pools_read).post(custody_known_pool_add),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOLS_SERVED,
+            get(custody_served_pools_read),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOL_SERVED,
+            delete(custody_served_pool_remove),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOL_SERVED_PUBLISHER,
+            post(custody_served_pool_confirm_publisher),
+        )
+        .route(
+            crate::custody_surface::ROUTE_PUBLIC_IPFS,
+            get(creator_public_ipfs_read),
         )
         .route("/api/apps/chat-room/summary", get(chat_room_summary))
         .route(

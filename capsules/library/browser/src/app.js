@@ -9,7 +9,7 @@ import {
   isDirectory,
   isProtectedContent,
   isSharingBroken,
-  isRuntimeCustodyProtectableVideo,
+  isRuntimeCustodyProtectable,
   isTrashRootUri,
   isTrashUri,
   isWebSpaceUri,
@@ -42,7 +42,7 @@ import {
 import { createLibraryUploads } from "./uploads.js";
 import {
   createHomeClipboardClient,
-} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+} from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 
     const LIBRARY_SIDEBAR_WIDTH_DEFAULT = 220;
     const LIBRARY_SIDEBAR_WIDTH_MIN = 180;
@@ -1075,7 +1075,7 @@ import {
             if (hasCapability(object, "unpublish")) actions.push(menuAction("Stop sharing", () => unpublishObject(object)));
           } else {
             if (canPublishObject(object)) actions.push(menuAction("Share with contacts", () => publishObject(object)));
-            if (isRuntimeCustodyProtectableVideo(object)) {
+            if (isRuntimeCustodyProtectable(object)) {
               actions.push(menuAction("Protect and List...", () => protectAndListObject(object)));
             }
           }

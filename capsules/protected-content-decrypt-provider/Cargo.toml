@@ -21,6 +21,8 @@ sha2 = "0.10"
 
 [dev-dependencies]
 elastos-auth = { path = "../../elastos/crates/elastos-auth" }
+# Plan B T3.1: the shared V2 pool-release fixture (test builds only).
+elastos-protected-content-contracts = { path = "../../elastos/crates/elastos-protected-content-contracts", features = ["test-fixtures"] }
 ed25519-dalek = "2.1"
 hex = "0.4"
 k256 = { version = "0.13", features = ["ecdsa"] }

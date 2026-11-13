@@ -1010,7 +1010,7 @@ impl ProviderCapabilitySchema {
         for action in &self.actions {
             if !matches!(
                 action.as_str(),
-                "read" | "write" | "execute" | "delete" | "message" | "admin"
+                "read" | "write" | "execute" | "delete" | "message" | "admin" | "buy"
             ) {
                 return Err(format!(
                     "unsupported provider authority action \"{}\"",
@@ -1141,10 +1141,6 @@ pub enum CapsuleRole {
 impl CapsuleRole {
     pub fn is_shell_launchable(&self) -> bool {
         matches!(self, Self::Shell | Self::App | Self::Viewer)
-    }
-
-    pub fn is_content(&self) -> bool {
-        matches!(self, Self::Content)
     }
 
     pub fn is_app_viewer_or_content(&self) -> bool {

@@ -3,7 +3,8 @@ use serde::Serialize;
 use crate::canonical::{CanonicalBody, ContractError, Decoder, Encoder};
 use crate::rights::{validate_active, validate_time_window};
 use crate::{
-    AuthenticatedRuntimeReleaseOperationV1, CanonicalContract, Digest32,
+    AuthenticatedRuntimeReleaseOperationAnyV1, AuthenticatedRuntimeReleaseOperationV1,
+    AuthenticatedRuntimeReleaseOperationV2, CanonicalContract, Digest32,
     EncryptedContentIdentityV1, ProtectedContentBindingV1, RightsActionV1, RightsPolicyIdentityV1,
     WalletAddress,
 };
@@ -146,6 +147,51 @@ impl CanonicalBody for RightsObservationFinalityV1 {
     }
 }
 
+/// The item a creator's policy names (MINT-V2, item 5; DKMS-14): the channel
+/// (ledger) and token id that the content access id must be bound to on
+/// chain, and the creator who sealed the policy. The token id is known only
+/// once the mint is final, so the policy is sealed after the mint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub struct RightsExpectedItemV1 {
+    channel: EvmContractAddressV1,
+    token_id: [u8; 32],
+    creator: WalletAddress,
+}
+
+impl RightsExpectedItemV1 {
+    /// `token_id` is the uint256 token id, big-endian. Zero is refused: the
+    /// gateway treats a zero token id as an unbound content access id.
+    pub fn new(
+        channel: EvmContractAddressV1,
+        token_id: [u8; 32],
+        creator: WalletAddress,
+    ) -> Result<Self, ContractError> {
+        if token_id == [0; 32] {
+            return Err(ContractError::InvalidField("expected_item.token_id"));
+        }
+        if creator == WalletAddress::new([0; 20]) {
+            return Err(ContractError::InvalidField("expected_item.creator"));
+        }
+        Ok(Self {
+            channel,
+            token_id,
+            creator,
+        })
+    }
+
+    pub const fn channel(&self) -> EvmContractAddressV1 {
+        self.channel
+    }
+
+    pub const fn token_id(&self) -> &[u8; 32] {
+        &self.token_id
+    }
+
+    pub const fn creator(&self) -> WalletAddress {
+        self.creator
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RightsPolicyBodyV1 {
     encrypted_content: EncryptedContentIdentityV1,
@@ -157,6 +203,8 @@ pub struct RightsPolicyBodyV1 {
     function_selector: EvmFunctionSelectorV1,
     method_abi: EvmRightsMethodAbiV1,
     observation_finality: RightsObservationFinalityV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_item: Option<RightsExpectedItemV1>,
 }
 
 impl RightsPolicyBodyV1 {
@@ -182,9 +230,44 @@ impl RightsPolicyBodyV1 {
             function_selector,
             method_abi,
             observation_finality,
+            expected_item: None,
         };
         value.validate()?;
         Ok(value)
+    }
+
+    /// The same policy naming the item its kid must be bound to: encoded as
+    /// `rights-policy-body/v2`, so its identity differs from the v1 policy.
+    pub fn with_expected_item(mut self, expected_item: RightsExpectedItemV1) -> Self {
+        self.expected_item = Some(expected_item);
+        self
+    }
+
+    /// `None` for a `rights-policy-body/v1` policy.
+    pub const fn expected_item(&self) -> Option<RightsExpectedItemV1> {
+        self.expected_item
+    }
+
+    /// MINT-V2: the creator's seal step, from the provisional v1 policy to the
+    /// v2 policy naming the minted item. A policy that already names an item
+    /// is never re-pointed, so a sealed identity cannot move to another token.
+    pub fn sealed_for_item(
+        &self,
+        expected_item: RightsExpectedItemV1,
+    ) -> Result<Self, ContractError> {
+        if self.expected_item.is_some() {
+            return Err(ContractError::InvalidField("expected_item"));
+        }
+        Ok(self.clone().with_expected_item(expected_item))
+    }
+
+    /// The `rights-policy-body/v1` policy this policy was sealed from: the
+    /// same fields without the item. A v1 policy returns itself.
+    pub fn unsealed(&self) -> Self {
+        Self {
+            expected_item: None,
+            ..self.clone()
+        }
     }
 
     pub fn encrypted_content(&self) -> &EncryptedContentIdentityV1 {
@@ -232,9 +315,50 @@ impl RightsPolicyBodyV1 {
     }
 }
 
-impl CanonicalBody for RightsPolicyBodyV1 {
-    const DOMAIN: &'static str = "elastos.protected-content.rights-policy-body/v1";
+const RIGHTS_POLICY_BODY_V1_DOMAIN: &str = "elastos.protected-content.rights-policy-body/v1";
+/// v2 appends the expected item. A policy without one keeps the v1 domain and
+/// its exact bytes, so an object sealed under v1 still decodes; whether a
+/// node releases for it is the node's rule, not the codec's.
+const RIGHTS_POLICY_BODY_V2_DOMAIN: &str = "elastos.protected-content.rights-policy-body/v2";
 
+impl CanonicalContract for RightsPolicyBodyV1 {
+    fn canonical_bytes(&self) -> Result<Vec<u8>, ContractError> {
+        self.validate()?;
+        let mut encoder = Encoder::new(if self.expected_item.is_some() {
+            RIGHTS_POLICY_BODY_V2_DOMAIN
+        } else {
+            RIGHTS_POLICY_BODY_V1_DOMAIN
+        });
+        self.encode_fields(&mut encoder)?;
+        Ok(encoder.finish())
+    }
+
+    /// v2 first, then v1; canonical bytes only.
+    fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, ContractError> {
+        let (mut decoder, names_item) = match Decoder::new(bytes, RIGHTS_POLICY_BODY_V2_DOMAIN) {
+            Ok(decoder) => (decoder, true),
+            Err(ContractError::WrongDomain) => {
+                (Decoder::new(bytes, RIGHTS_POLICY_BODY_V1_DOMAIN)?, false)
+            }
+            Err(error) => return Err(error),
+        };
+        let mut value = Self::decode_fields(&mut decoder)?;
+        if names_item {
+            value.expected_item = Some(RightsExpectedItemV1::new(
+                EvmContractAddressV1::new(decoder.fixed()?)?,
+                decoder.fixed()?,
+                WalletAddress::new(decoder.fixed()?),
+            )?);
+        }
+        decoder.finish()?;
+        if value.canonical_bytes()?.as_slice() != bytes {
+            return Err(ContractError::InvalidField("non-canonical encoding"));
+        }
+        Ok(value)
+    }
+}
+
+impl RightsPolicyBodyV1 {
     fn validate(&self) -> Result<(), ContractError> {
         self.encrypted_content.canonical_bytes()?;
         ContentAccessIdV1::new(*self.content_access_id.as_bytes())?;
@@ -257,6 +381,11 @@ impl CanonicalBody for RightsPolicyBodyV1 {
         encoder.fixed(self.function_selector.as_bytes());
         encoder.u8(self.method_abi as u8);
         encoder.nested(&self.observation_finality)?;
+        if let Some(item) = &self.expected_item {
+            encoder.fixed(item.channel.as_bytes());
+            encoder.fixed(&item.token_id);
+            encoder.fixed(item.creator.as_bytes());
+        }
         Ok(())
     }
 
@@ -481,6 +610,50 @@ impl RightsEvaluationEvidenceV1 {
         }
         validate_active(self.acquired_at, self.expires_at, now)
             .map_err(|_| ContractError::InvalidField("evidence.window"))
+    }
+
+    /// E7, beside the V1 check: for V2 both the operation slot and the
+    /// release slot hold the V2 operation hash (L1).
+    pub fn validate_against_runtime_release_v2_at(
+        &self,
+        operation: &AuthenticatedRuntimeReleaseOperationV2,
+        now: u64,
+    ) -> Result<(), ContractError> {
+        self.validate_against_request(
+            operation.statement().evidence_request(),
+            operation.statement().policy_body(),
+        )?;
+        if self.runtime_operation_hash != operation.operation_hash() {
+            return Err(ContractError::InvalidField(
+                "evidence.runtime_operation_hash",
+            ));
+        }
+        if self.release_request_hash != operation.operation_hash() {
+            return Err(ContractError::InvalidField("evidence.release_request_hash"));
+        }
+        if self.acquired_at < operation.statement().issued_at()
+            || self.expires_at > operation.statement().expires_at()
+        {
+            return Err(ContractError::InvalidField("evidence.window"));
+        }
+        validate_active(self.acquired_at, self.expires_at, now)
+            .map_err(|_| ContractError::InvalidField("evidence.window"))
+    }
+
+    /// F2: the V1 or the V2 check, by the operation's version.
+    pub fn validate_against_runtime_release_any_at(
+        &self,
+        operation: &AuthenticatedRuntimeReleaseOperationAnyV1,
+        now: u64,
+    ) -> Result<(), ContractError> {
+        match operation {
+            AuthenticatedRuntimeReleaseOperationAnyV1::V1(operation) => {
+                self.validate_against_runtime_release_at(operation, now)
+            }
+            AuthenticatedRuntimeReleaseOperationAnyV1::V2(operation) => {
+                self.validate_against_runtime_release_v2_at(operation, now)
+            }
+        }
     }
 }
 

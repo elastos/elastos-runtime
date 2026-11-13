@@ -114,6 +114,20 @@
     }
 
     function inboxEntryText(entry, field, fallback) {
+      if (isCustodyRequest(entry)) {
+        const request = custodyStepUpRequest(entry);
+        if (!request) return field === "title" ? "Custody request" : fallback;
+        if (field === "title") {
+          return entry.kind === "custody_node_approving" || entry.kind === "custody_node_resumable"
+            ? `Finish approving ${request.owner_name}'s custody request`
+            : entry.kind === "custody_node_incomplete"
+            ? `Approving ${request.owner_name}'s custody request could not finish`
+            : entry.kind === "custody_node_taken"
+            ? `${request.owner_name}'s custody request can no longer be approved`
+            : request.owner_name + " asks this Home to hold custody";
+        }
+        return `${request.term_days} days, run by ${request.run_by} in ${request.location}`;
+      }
       const text = String(entry[field] || "").trim();
       if (entry.kind === "browser_internet_decision" && field === "body") {
         const date = new Date(entry.created_at * 1000).toLocaleString(undefined, {dateStyle: "medium", timeStyle: "short"});
@@ -242,11 +256,175 @@
       const response = await fetch(path, request);
       if (!response.ok) {
         const text = await response.text();
-        const error = new Error(publicInboxText(text, "Inbox could not complete the request."));
+        const { code, detail } = refusal(text);
+        const error = new Error(code
+          ? refusalText(code, detail)
+          : publicInboxText(text, "Inbox could not complete the request."));
         error.status = response.status;
+        error.code = code;
         throw error;
       }
       return response.json();
+    }
+
+    // A custody refusal answers {code, detail}; Inbox shows its own words for
+    // the code and never the Runtime's detail, which may only pick the words.
+    function refusal(text) {
+      try {
+        const body = JSON.parse(text);
+        if (body && typeof body === "object" && typeof body.code === "string"
+          && /^[a-z_]{1,32}$/.test(body.code)) {
+          return { code: body.code, detail: typeof body.detail === "string" ? body.detail : "" };
+        }
+      } catch (_error) {
+      }
+      return { code: "", detail: "" };
+    }
+
+    function refusalText(code, detail) {
+      switch (code) {
+        case "changed":
+          return "This request changed after it was shown. Review it again, then approve.";
+        case "expired":
+          return "This request has expired. Its owner can send it again.";
+        case "not_pending":
+          return detail === "approving"
+            ? "This request is being approved. Finish approving it."
+            : "This request was already decided.";
+        case "messages_not_enabled":
+          return "Enable custody messages in Custody before approving.";
+        case "not_contact":
+          return "This owner is no longer one of your contacts.";
+        case "unknown_request":
+          return "This request is no longer available.";
+        case "already_serving":
+          return "This Home already serves another owner. Decline this request.";
+        case "not_offering":
+          return "This Home is not offering custody. Turn on Offer custody in Custody first.";
+        case "not_admin":
+          return "Only this Home's admin can decide custody requests.";
+        case "too_many_requests":
+          return "Too many custody requests are waiting. Decide some, then try again.";
+        case "provision_failed":
+          return detail === "custody_state_incomplete"
+            ? "This Home's custody setup did not finish and needs repair. Decline this request."
+            : "This Home could not be set up as a custody node. Try again.";
+        case "card_refused":
+          return "This Home could not be set up as a custody node. Try again.";
+        case "no_address":
+          return "This Home is not reachable on its network yet. Try again in a moment.";
+        case "messages_unavailable":
+          return "Custody messages are not available on this Home.";
+        case "no_profile":
+          return "Save your Profile before deciding custody requests.";
+        case "unavailable":
+          return "This Home could not read its custody setup. Try again later.";
+        case "protected_content_off":
+          return "Turn on protected content for this Home before approving.";
+        case "withdrawal_in_progress":
+          return "Metadata sharing is still stopping. Try again when it has stopped.";
+        case "public_metadata_off":
+          return "Metadata sharing is not offered on this Home.";
+        default:
+          return "Inbox action could not be completed.";
+      }
+    }
+
+    // A request whose approval began and did not finish stays, past its
+    // expiry too: until it is approved again, or, when this Home's custody
+    // state was left incomplete, until it is declined.
+    // An approval that began and set nothing up yet can still be declined.
+    const CUSTODY_REQUEST_KINDS = [
+      "custody_node_request", "custody_node_approving", "custody_node_resumable",
+      "custody_node_incomplete", "custody_node_taken",
+    ];
+    // Approving began and can no longer finish: setup stopped part way, or
+    // this Home serves another owner now. Only Decline settles these.
+    const CUSTODY_DECLINE_ONLY_KINDS = ["custody_node_incomplete", "custody_node_taken"];
+
+    function isCustodyRequest(entry) {
+      return Boolean(entry) && CUSTODY_REQUEST_KINDS.includes(entry.kind);
+    }
+
+    function custodyDeclineOnly(entry) {
+      return CUSTODY_DECLINE_ONLY_KINDS.includes(entry.kind);
+    }
+
+    function custodyApprovalBegan(entry) {
+      return entry.kind === "custody_node_approving" || entry.kind === "custody_node_resumable"
+        || custodyDeclineOnly(entry);
+    }
+
+    const CUSTODY_REQUEST_FIELDS = [
+      "request_id", "request_sha256", "owner_name", "owner_home",
+      "term_days", "run_by", "location", "expires_at",
+    ];
+
+    // The exact request the admin's passkey approves, as the Runtime rebuilt
+    // it from its own record. The card shows these fields and nothing else,
+    // so an entry without a well-formed one offers no approval.
+    function custodyStepUpRequest(entry) {
+      const request = entry && entry.step_up_request;
+      if (!request || typeof request !== "object" || Array.isArray(request)
+        || !hasExactKeys(request, CUSTODY_REQUEST_FIELDS)
+        || typeof request.request_id !== "string" || !/^[0-9a-f]{32}$/.test(request.request_id)
+        || !Number.isSafeInteger(request.term_days) || request.term_days <= 0
+        || !Number.isSafeInteger(request.expires_at) || request.expires_at <= 0
+        || ["request_sha256", "owner_name", "owner_home", "run_by", "location"]
+          .some((field) => typeof request[field] !== "string" || !request[field].trim())
+        || entry.action_ref?.action_id !== (custodyDeclineOnly(entry)
+          ? "custody-decline-request:" : "custody-approve-request:") + request.request_id) {
+        return null;
+      }
+      return request;
+    }
+
+    function custodyExpiry(request) {
+      return new Intl.DateTimeFormat([], { dateStyle: "medium", timeStyle: "short" })
+        .format(new Date(request.expires_at * 1000));
+    }
+
+    // OPEN-LOOP F1 (ADV-14): approving is one consent to both duties of a
+    // pool node, so every card that offers Approve names them.
+    const CUSTODY_NODE_DUTIES = "This Home will hold a key share and keep a copy of this pool's files.";
+
+    // An approval that began is past its request's expiry by design, so its
+    // card does not show that date.
+    function createCustodyFacts(request, showExpiry, approvable) {
+      const list = document.createElement("div");
+      list.className = "entry-facts";
+      if (approvable) {
+        const duties = document.createElement("p");
+        duties.className = "entry-fact-note";
+        duties.textContent = CUSTODY_NODE_DUTIES;
+        list.append(duties);
+      }
+      const fact = (label, value) => {
+        const row = document.createElement("div");
+        row.className = "entry-fact";
+        const name = document.createElement("span");
+        name.className = "entry-fact-label";
+        name.textContent = label;
+        const text = document.createElement("span");
+        text.className = "entry-fact-value";
+        text.textContent = value;
+        row.append(name, text);
+        return row;
+      };
+      const details = document.createElement("details");
+      details.className = "entry-fact-details";
+      const summary = document.createElement("summary");
+      summary.textContent = "Details";
+      details.append(summary, fact("Owner's Home: ", request.owner_home));
+      list.append(
+        fact("Owner: ", request.owner_name),
+        fact("Term: ", request.term_days + " days"),
+        fact("Run by: ", request.run_by),
+        fact("Location: ", request.location),
+        ...(showExpiry ? [fact("Expires: ", custodyExpiry(request))] : []),
+        details,
+      );
+      return list;
     }
 
     async function requestPasskeyStepUp(operation, request) {
@@ -501,6 +679,87 @@
       return card;
     }
 
+    // META-PUBLIC A4: one Runtime-built card per public metadata state. Agree
+    // asks the Home's passkey over exactly the request the card shows; Stop
+    // sharing asks to confirm and needs no passkey; Try again repeats Stop.
+    const PUBLIC_METADATA_KINDS = [
+      "public_metadata_consent", "public_metadata_sharing", "public_metadata_paused",
+      "public_metadata_stopping", "public_metadata_unreadable",
+    ];
+    const PUBLIC_METADATA_ENABLE = "public-metadata-enable";
+    const PUBLIC_METADATA_STOP = "public-metadata-stop";
+
+    function publicMetadataStepUpRequest(entry) {
+      const request = entry && entry.step_up_request;
+      if (entry?.passkey_approval !== true
+        || entry.action_ref?.action_id !== PUBLIC_METADATA_ENABLE
+        || !request || typeof request !== "object" || Array.isArray(request)
+        || !hasExactKeys(request, ["wording_version", "wording_sha256"])
+        || !Number.isInteger(request.wording_version)
+        || typeof request.wording_sha256 !== "string"
+        || !/^[0-9a-f]{64}$/.test(request.wording_sha256)) {
+        return null;
+      }
+      return request;
+    }
+
+    async function agreePublicMetadata(button, request) {
+      setButtonsDisabled(true);
+      button.disabled = true;
+      setStatus("Confirm with your passkey to turn on metadata sharing.");
+      try {
+        // The passkey signs exactly the object the card shows, and the
+        // Runtime compares it with its own request before spending it.
+        const stepUpToken = await requestPasskeyStepUp("creator.public_ipfs.enable", request);
+        const outcome = await inboxAction(PUBLIC_METADATA_ENABLE, {
+          step_up_token: stepUpToken,
+          step_up_request: request,
+        });
+        await loadInbox();
+        notifyHome();
+        elements.statusText.textContent = typeof outcome?.message === "string" && outcome.message.trim()
+          ? outcome.message.trim() : "Metadata sharing is on.";
+      } catch (error) {
+        if (error && error.code) {
+          await loadInbox().catch(() => {});
+        }
+        throw error;
+      } finally {
+        setButtonsDisabled(false);
+      }
+    }
+
+    function confirmPublicMetadataStop() {
+      const dialog = document.querySelector("#public-metadata-confirm");
+      return new Promise(resolve => {
+        dialog.addEventListener("close", () => resolve(dialog.returnValue === "stop"), {once:true});
+        dialog.showModal();dialog.querySelector('[value="cancel"]').focus();
+      });
+    }
+
+    function fillPublicMetadataActions(actions, entry) {
+      const actionId = entry.action_ref && entry.action_ref.action_id;
+      if (entry.kind === "public_metadata_consent") {
+        const request = publicMetadataStepUpRequest(entry);
+        if (request) {
+          actions.appendChild(createButton("Agree", (button) => agreePublicMetadata(button, request), "primary"));
+        }
+        return;
+      }
+      if (actionId !== PUBLIC_METADATA_STOP) {
+        return;
+      }
+      if (entry.kind === "public_metadata_stopping") {
+        actions.appendChild(createActionButton("Try again", PUBLIC_METADATA_STOP, "primary"));
+        return;
+      }
+      actions.appendChild(createButton("Stop sharing", async () => {
+        if (!await confirmPublicMetadataStop()) return;
+        await runAction(PUBLIC_METADATA_STOP);
+        notifyHome();
+      }, "danger"));
+    }
+
     function confirmBrowserInternetOff() {
       const dialog = document.querySelector("#browser-internet-confirm");
       return new Promise(resolve => {
@@ -527,6 +786,11 @@
 
     function fillEntryActions(actions, entry) {
       const actionId = entry.action_ref && entry.action_ref.action_id;
+      // A standing card: its state is the Runtime's, so no Open or Dismiss.
+      if (PUBLIC_METADATA_KINDS.includes(entry.kind)) {
+        fillPublicMetadataActions(actions, entry);
+        return;
+      }
       if (entry.kind === "browser_internet_decision") {
         if (actionId?.startsWith("browser-internet-turn-off:")) {
           actions.appendChild(createButton("Turn Off", async () => {
@@ -568,12 +832,30 @@
         actions.appendChild(createActionButton("Revoke access", actionId, "danger"));
       } else if (typeof actionId === "string" && actionId.startsWith("wallet-approve-request:")) {
         const requestId = actionId.slice("wallet-approve-request:".length);
-        actions.appendChild(createButton("Approve", (button) => approveWalletRequest(button, requestId), "primary"));
-        actions.appendChild(createButton("Review in Wallet", () => openSource("wallet", { wallet_request: requestId })));
+        // Inbox signs only with a built-in wallet, after a passkey. Any other
+        // account, such as an external wallet, is approved in Wallet.
+        const passkeyApproval = entry.passkey_approval === true;
+        if (passkeyApproval) {
+          actions.appendChild(createButton("Approve", (button) => approveWalletRequest(button, requestId), "primary"));
+        }
+        actions.appendChild(createButton("Review in Wallet", () => openSource("wallet", { wallet_request: requestId }), passkeyApproval ? undefined : "primary"));
         actions.appendChild(createActionButton("Reject", "wallet-reject-request:" + actionId.slice("wallet-approve-request:".length), "danger"));
       } else if (typeof actionId === "string" && actionId.startsWith("wallet-review-request:")) {
         const requestId = actionId.slice("wallet-review-request:".length);
         actions.appendChild(createButton("Review in Wallet", () => openSource("wallet", { wallet_request: requestId }), "primary"));
+      } else if (typeof actionId === "string" && actionId.startsWith("custody-approve-request:")) {
+        const requestId = actionId.slice("custody-approve-request:".length);
+        if (entry.passkey_approval === true && custodyStepUpRequest(entry)) {
+          actions.appendChild(createButton("Approve", (button) => approveCustodyRequest(button, entry), "primary"));
+        }
+        // Approving may already have set this Home up; it can only be finished.
+        if (entry.kind !== "custody_node_approving") {
+          actions.appendChild(createActionButton("Decline", "custody-decline-request:" + requestId, "danger"));
+        }
+      } else if (typeof actionId === "string" && actionId.startsWith("custody-decline-request:")
+        && custodyDeclineOnly(entry)) {
+        // Approving can no longer finish: only declining settles it.
+        actions.appendChild(createActionButton("Decline", actionId, "danger"));
       } else if (typeof actionId === "string" && actionId.startsWith("capability-approve-request:")) {
         actions.appendChild(createActionButton("Approve", actionId, "primary"));
         actions.appendChild(createActionButton("Deny", "capability-deny-request:" + actionId.slice("capability-approve-request:".length), "danger"));
@@ -583,9 +865,6 @@
         approveButton.dataset.actionId = actionId;
         actions.appendChild(approveButton);
         actions.appendChild(createButton("Deny", () => denyInspectRequest(requestId), "danger"));
-      } else if (typeof actionId === "string" && actionId.startsWith("wallet-price-http-approve:")) {
-        actions.appendChild(createActionButton("Approve", actionId, "primary"));
-        actions.appendChild(createActionButton("Reject", "wallet-price-http-deny:" + actionId.slice("wallet-price-http-approve:".length), "danger"));
       } else if (typeof actionId === "string" && actionId.startsWith("model-egress-approve:")) {
         actions.appendChild(createActionButton("Approve", actionId, "primary"));
         actions.appendChild(createActionButton("Deny", "model-egress-deny:" + actionId.slice("model-egress-approve:".length), "danger"));
@@ -601,9 +880,18 @@
         actions.appendChild(createActionButton("Only while Community is open", "community-presence-open:" + request));
         actions.appendChild(createActionButton("Later", "community-presence-later:" + request));
         actions.appendChild(createActionButton("Never", "community-presence-never:" + request, "danger"));
+      } else if (typeof actionId === "string" && actionId.includes("-http-approve:")) {
+        // Every request to let this Home talk to an outside service is the
+        // same decision, so it is matched by shape rather than by naming each
+        // one: "<what>-http-approve:<source>" always pairs with
+        // "<what>-http-deny:<source>". Naming them individually is why the
+        // creator's channel-list request arrived with nothing to press.
+        const denyId = actionId.replace("-http-approve:", "-http-deny:");
+        actions.appendChild(createActionButton("Approve", actionId, "primary"));
+        actions.appendChild(createActionButton("Reject", denyId, "danger"));
       }
 
-      if (entry.kind !== "browser_internet_request" && entry.kind !== "wallet_approval_request" && entry.kind !== "capability_request" && entry.kind !== "inspect_action_request" && entry.kind !== "external_http_request" && entry.kind !== "hosted_route_decision" && entry.kind !== "hosted_route_history" && entry.kind !== "contact_request" && entry.kind !== "service_access_request" && entry.kind !== "service_access_grant" && entry.kind !== "community_presence_request") {
+      if (entry.kind !== "browser_internet_request" && entry.kind !== "wallet_approval_request" && entry.kind !== "capability_request" && entry.kind !== "inspect_action_request" && entry.kind !== "external_http_request" && entry.kind !== "hosted_route_decision" && entry.kind !== "hosted_route_history" && entry.kind !== "contact_request" && entry.kind !== "service_access_request" && entry.kind !== "service_access_grant" && entry.kind !== "community_presence_request" && !isCustodyRequest(entry)) {
         actions.appendChild(createActionButton("Dismiss", "notification-dismiss:" + entry.id));
       }
     }
@@ -647,7 +935,10 @@
       }
 
       const bodyText = inboxEntryText(entry, "body", "This request needs your review.");
-      const body = entry.kind === "hosted_route_decision" || entry.kind === "hosted_route_history"
+      const custodyRequest = isCustodyRequest(entry) ? custodyStepUpRequest(entry) : null;
+      const body = custodyRequest
+        ? createCustodyFacts(custodyRequest, !custodyApprovalBegan(entry), !custodyDeclineOnly(entry))
+        : entry.kind === "hosted_route_decision" || entry.kind === "hosted_route_history"
         ? createFactList(bodyText) : document.createElement("p");
       body.classList.add("entry-body");
       if (body.tagName === "P") body.textContent = bodyText;
@@ -739,6 +1030,38 @@
         setStatus("Request signed.");
         await loadInbox();
         notifyHome();
+      } finally {
+        setButtonsDisabled(false);
+      }
+    }
+
+    async function approveCustodyRequest(button, entry) {
+      const request = custodyStepUpRequest(entry);
+      if (!request) {
+        return;
+      }
+      setButtonsDisabled(true);
+      button.disabled = true;
+      setStatus("Confirm with your passkey to approve this custody request.");
+      try {
+        // The passkey signs exactly the object the card shows, and the
+        // Runtime compares it with its own record before spending it.
+        const stepUpToken = await requestPasskeyStepUp("custody.node_request.approve", request);
+        const outcome = await inboxAction("custody-approve-request:" + request.request_id, {
+          step_up_token: stepUpToken,
+          step_up_request: request,
+        });
+        await loadInbox();
+        notifyHome();
+        // Runtime's own copy; it names the owner, so it is shown as text.
+        elements.statusText.textContent = typeof outcome?.message === "string" && outcome.message.trim()
+          ? outcome.message.trim() : "Custody request approved.";
+      } catch (error) {
+        // A refused request shows as it now stands before the reason.
+        if (error && error.code) {
+          await loadInbox().catch(() => {});
+        }
+        throw error;
       } finally {
         setButtonsDisabled(false);
       }
@@ -888,7 +1211,8 @@
         .filter((entry) => entry && entry.id && !entry.read
           && entry.kind !== "wallet_approval_request"
           && entry.kind !== "browser_internet_request"
-          && entry.kind !== "contact_request" && entry.kind !== "service_access_request")
+          && entry.kind !== "contact_request" && entry.kind !== "service_access_request"
+          && !isCustodyRequest(entry))
         .map((entry) => entry.id);
       if (unreadIds.length === 0) {
         return;

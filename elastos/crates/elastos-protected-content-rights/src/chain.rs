@@ -3,7 +3,7 @@ use std::future::Future;
 use ed25519_dalek::SigningKey;
 use elastos_protected_content_contracts::{
     CanonicalContract, Digest32, NodePublicKey, RightsEvaluationEvidenceV1,
-    SignedRuntimeReleaseOperationV1,
+    RuntimeReleaseOperationAnyV1, SignedRuntimeReleaseOperationV1,
 };
 use elastos_protected_content_provider_contracts::{
     RightsProviderRequestV1, RightsProviderResponseV1, ValidatedRightsProviderRequestV1,
@@ -27,6 +27,24 @@ const ALLOWED_CHAIN_EVIDENCE_FIELDS: &[&str] = &[
 
 pub fn chain_rights_evidence_request(
     signed_runtime_release_operation: &SignedRuntimeReleaseOperationV1,
+) -> Result<Value, RightsEvaluationErrorV1> {
+    let hex = format!(
+        "0x{}",
+        hex::encode(signed_runtime_release_operation.canonical_bytes()?)
+    );
+    let request = serde_json::json!({
+        "op": CHAIN_RIGHTS_EVIDENCE_OP,
+        "signed_runtime_release_operation": hex,
+    });
+    reject_injected_chain_request_fields(&request)?;
+    Ok(request)
+}
+
+/// The chain request for a V1 or V2 operation (F2): the same two fields, with
+/// the inner operation's canonical bytes. For V1 it equals
+/// [`chain_rights_evidence_request`].
+pub fn chain_rights_evidence_request_any(
+    signed_runtime_release_operation: &RuntimeReleaseOperationAnyV1,
 ) -> Result<Value, RightsEvaluationErrorV1> {
     let hex = format!(
         "0x{}",
@@ -111,7 +129,7 @@ where
         return Err(RightsEvaluationErrorV1::WrongSelectedNode);
     }
     let chain_request =
-        chain_rights_evidence_request(&request.signed_runtime_release_operation()?)?;
+        chain_rights_evidence_request_any(&request.signed_runtime_release_operation()?)?;
     let chain_data = invoke_chain(chain_request).await?;
     let evidence = parse_chain_rights_evidence_data(&chain_data)?;
     evaluate_validated_rights_with_evidence_at(

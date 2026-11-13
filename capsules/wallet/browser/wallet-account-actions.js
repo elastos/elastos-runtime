@@ -6,6 +6,11 @@ import {
   readText,
   shortAddress,
 } from "./wallet-format.js?v=wallet-20260523a";
+import {
+  EVM_NETWORK_CHOICES,
+  SUGGESTED_EVM_CHAIN_NAMESPACE,
+  accountRecordForNetwork,
+} from "./wallet-network.js?v=wallet-20261028b";
 import { pulseCopied, setBusy, textNode } from "./wallet-render.js?v=wallet-20260523a";
 
 export function createWalletAccountActions({
@@ -68,6 +73,7 @@ export function createWalletAccountActions({
           }
         },
       ),
+      ...networkRows(account),
       flowRow("Rename", "Change display name", () => openRenameAccount(account)),
       flowRow("Receive", "Show QR code", () => renderReceiveAddress(account)),
       flowRow("Copy address", shortAddress(account.address), async () => {
@@ -94,6 +100,53 @@ export function createWalletAccountActions({
       flowRow("Delete account", "Remove from this Wallet", () => confirmDeleteAccount(account)),
     );
     openFlowModal("Account", account.name, rows);
+  }
+
+  function networkRows(account) {
+    if (!account.display_chain_namespace) {
+      return [];
+    }
+    return [
+      flowRow("Network", chainLabel(account.display_chain_namespace), () => openNetworkChoice(account)),
+    ];
+  }
+
+  function openNetworkChoice(account) {
+    openFlowModal(
+      "Network",
+      account.name,
+      EVM_NETWORK_CHOICES.map((choice) =>
+        flowRow(choice.label, networkChoiceDetail(account, choice), () => setAccountNetwork(account, choice))),
+    );
+  }
+
+  function networkChoiceDetail(account, choice) {
+    const details = [];
+    if (choice.chainNamespace === SUGGESTED_EVM_CHAIN_NAMESPACE) {
+      details.push("Suggested");
+    }
+    if (choice.chainNamespace === account.default_chain_namespace) {
+      details.push("Current");
+    }
+    return details.join(" · ") || "EVM network";
+  }
+
+  // The Wallet keeps one EVM transaction default, so choosing a network makes
+  // this account the default there, through the same route as Use by default.
+  async function setAccountNetwork(account, choice) {
+    const record = accountRecordForNetwork(account, choice.chainNamespace);
+    await fetchJson("/api/apps/wallet/wallet/default", {
+      method: "POST",
+      headers: shellHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        account_id: record.account_id,
+        chain_namespace: choice.chainNamespace,
+        intent: "transaction_intent",
+      }),
+    });
+    closeModal();
+    showStatus(`${account.name} is now the default on ${choice.label}.`, "success");
+    await refreshWalletState();
   }
 
   function openRenameAccount(account) {
@@ -343,6 +396,9 @@ export function createWalletAccountActions({
   }
 
   function onDocumentClick(event) {
+    // Serves the signers section's own open buttons. The pending-requests node
+    // has its own handler for the buttons it renders and stops the click
+    // there, so one click never reaches both.
     const openMethod = event.target && event.target.closest("[data-wallet-open-method]");
     if (openMethod) {
       openApprovalMethod(readText(openMethod.dataset.walletOpenMethod));

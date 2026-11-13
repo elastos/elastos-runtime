@@ -9,7 +9,15 @@
 mod custody;
 mod decrypt;
 mod media;
+mod media_dash;
+mod mpd;
+mod object;
+mod pool_custody;
+#[cfg(test)]
+mod pool_custody_tests;
 mod protect;
+mod protection_system;
+pub mod pssh;
 mod rights;
 #[cfg(test)]
 mod test_support;
@@ -28,23 +36,56 @@ pub use custody::{
 };
 pub use decrypt::{
     DecryptProviderRequestOpV1, DecryptProviderRequestV1, DecryptProviderResponseStatusV1,
-    DecryptProviderResponseV1, ValidatedDecryptProviderRequestV1, ViewerMediaPartSelectorV1,
-    DECRYPT_PROVIDER_REQUEST_SCHEMA_V1, DECRYPT_PROVIDER_RESPONSE_SCHEMA_V1,
-    MAX_VIEWER_MEDIA_PART_BYTES_V1,
+    DecryptProviderResponseV1, DecryptViewerContentV1, ValidatedDecryptProviderRequestV1,
+    ViewerMediaPartSelectorV1, DECRYPT_PROVIDER_REQUEST_SCHEMA_V1,
+    DECRYPT_PROVIDER_RESPONSE_SCHEMA_V1, MAX_PREPARED_RECIPIENTS_V1,
+    MAX_SEALED_VIEWER_PART_BYTES_V1, MAX_VIEWER_MEDIA_PART_BYTES_V1, MAX_VIEWER_SESSIONS_V1,
+    SEALED_VIEWER_PART_OVERHEAD_BYTES_V1, VIEWER_SESSION_ID_BYTES_V1,
 };
 pub use media::{
-    CencFmp4MediaIdentityV1, CencFmp4SegmentIdentityV1, ValidatedCencFmp4MediaLayoutV1,
+    CencDashRenditionKindV2, CencFmp4MediaIdentityV1, CencFmp4SegmentIdentityV1, CencLayoutProfile,
+    Fmp4SampleEntryV2, Fmp4SegmentTimelineV2, ValidatedCencFmp4MediaLayoutV1,
     ValidatedCencFmp4MediaSessionLayoutV1, ValidatedCencFmp4SampleLayoutV1,
     ValidatedCencFmp4SegmentLayoutV1, ValidatedCencFmp4SubsampleV1,
     ValidatedClearFmp4MediaSessionLayoutV1, ValidatedClearFmp4SampleLayoutV1,
-    ValidatedClearFmp4SegmentLayoutV1, CENC_FMP4_MEDIA_SUITE_ID_V1,
-    MAX_CENC_FMP4_MEDIA_IDENTITY_BYTES_V1,
+    ValidatedClearFmp4SegmentLayoutV1, ValidatedFmp4RenditionV2, CENC_DASH_MEDIA_SUITE_ID_V2,
+    CENC_FMP4_MEDIA_SUITE_ID_V1, MAX_CENC_FMP4_MEDIA_IDENTITY_BYTES_V1, MAX_INIT_PSSH_BYTES_V2,
+    MAX_PSSH_BOX_BYTES_V2,
+};
+pub use media_dash::{
+    cenc_dash_merkle_audit_path, cenc_dash_merkle_audit_paths, cenc_dash_merkle_root,
+    cenc_dash_segment_leaf_hash, cenc_dash_verify_audit_path, pinned_declaration_v2,
+    CencDashIdentityBuilderV2, CencDashMediaIdentityV2, CencDashMerkleRootBuilderV2,
+    CencDashRenditionBytesV2, CencDashRenditionDeclV2, CencDashRenditionIdentityV2,
+    CiphertextStreamHasher, ValidatedCencDashRenditionSessionV2, MAX_CENC_DASH_AUDIT_PATH_V2,
+    MAX_CENC_DASH_MEDIA_IDENTITY_BYTES_V2,
+};
+pub use mpd::{build_cenc_dash_mpd_v2, CencDashMpdRenditionV2, CencDashMpdSegmentV2};
+pub use object::{
+    ChunkedPayloadObjectIdentityV1, MAX_CHUNKED_PAYLOAD_OBJECT_IDENTITY_BYTES_V1,
+    MAX_OBJECT_FRAMED_CHUNK_BYTES_V1, MAX_OBJECT_FRAMED_HEADER_BYTES_V1,
+    MAX_OBJECT_PLAINTEXT_CHUNK_BYTES_V1,
+};
+pub use pool_custody::{
+    PoolCustodyRequestOpV1, PoolCustodyRequestV1, PoolCustodyResponseStatusV1,
+    PoolCustodyResponseV1, PoolStatementKindV1, ValidatedPoolCustodyRequestV1,
+    ValidatedPoolProvisionV1, ValidatedPoolReleaseV1, ValidatedPoolStatementV1,
+    POOL_CUSTODY_REQUEST_SCHEMA_V1, POOL_CUSTODY_RESPONSE_SCHEMA_V1,
 };
 pub use protect::{
-    ProtectProviderRequestOpV1, ProtectProviderRequestV1, ProtectProviderResponseStatusV1,
-    ProtectProviderResponseV1, ProtectionSessionNodeV1, MAX_PROTECT_MEDIA_PART_BYTES_V1,
-    MAX_PROTECT_MEDIA_SEGMENTS_V1, PROTECT_PROVIDER_REQUEST_SCHEMA_V1,
-    PROTECT_PROVIDER_RESPONSE_SCHEMA_V1,
+    ProtectFailureReasonV2, ProtectProviderRequestOpV1, ProtectProviderRequestV1,
+    ProtectProviderResponseStatusV1, ProtectProviderResponseV1, ProtectionRepresentationV2,
+    ProtectionSessionNodeV1, MAX_PROTECT_MEDIA_PART_BYTES_V1, MAX_PROTECT_MEDIA_SEGMENTS_V1,
+    PROTECT_PROVIDER_REQUEST_SCHEMA_V1, PROTECT_PROVIDER_RESPONSE_SCHEMA_V1,
+};
+pub use protection_system::{
+    require_protection_header_matches_release, CencMediaSuite, CustodyProtectionHeader,
+    ProtectionClass, ProtectionContext, ProtectionRegistry, ProtectionRole, ProtectionSystem,
+    ProtectionSystemId, PROTECTION,
+};
+pub use pssh::{
+    build_pssh_v1, parse_pssh_v0_or_v1, parse_pssh_v1, PsshBoxV1, ELASTOS_PQ_PROTECTION_SCHEME_V0,
+    ELASTOS_PQ_PROTECTION_SCHEME_V1,
 };
 pub use rights::{
     RightsProviderRequestOpV1, RightsProviderRequestV1, RightsProviderResponseStatusV1,
@@ -53,11 +94,13 @@ pub use rights::{
 };
 pub use wire::{
     OpaqueHandleV1, ProviderFailureCodeV1, MAX_CUSTODY_ENVELOPE_BYTES_V1,
-    MAX_CUSTODY_NODE_PROVISIONING_RECORD_BYTES_V1, MAX_PROVIDER_BINDING_BYTES_V1,
-    MAX_PROVIDER_FRAME_BYTES_V1, MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1,
-    MAX_RECIPIENT_IDENTITY_BYTES_V1, MAX_SIGNED_NODE_CONTRIBUTION_BYTES_V1,
-    MAX_SIGNED_NODE_RIGHTS_DECISION_BYTES_V1, MAX_SIGNED_RUNTIME_CUSTODY_PROVISIONING_BYTES_V1,
-    MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V1, MAX_SIGNED_TERMINAL_RECEIPT_BYTES_V1,
+    MAX_CUSTODY_NODE_PROVISIONING_RECORD_BYTES_V1, MAX_POOL_STATEMENT_BYTES_V1,
+    MAX_PROVIDER_BINDING_BYTES_V1, MAX_PROVIDER_FRAME_BYTES_V1,
+    MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1, MAX_RECIPIENT_IDENTITY_BYTES_V1,
+    MAX_SIGNED_NODE_CONTRIBUTION_BYTES_V1, MAX_SIGNED_NODE_RIGHTS_DECISION_BYTES_V1,
+    MAX_SIGNED_RUNTIME_CUSTODY_PROVISIONING_BYTES_V1,
+    MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V1, MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V2,
+    MAX_SIGNED_TERMINAL_RECEIPT_BYTES_V1,
 };
 
 #[cfg(test)]

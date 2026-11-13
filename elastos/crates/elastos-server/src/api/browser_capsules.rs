@@ -402,7 +402,7 @@ fn shell_content_security_policy(
         format!("'self' 'wasm-unsafe-eval' {home_source}")
     };
     Some(format!(
-        "{sandbox}default-src {default_source}; script-src {script_source}; style-src {style_source}; img-src {default_source} blob: data:; connect-src {connect_source}; frame-src {default_source}; object-src 'none'; base-uri 'none'; form-action {default_source}{frame_ancestors}"
+        "{sandbox}default-src {default_source}; script-src {script_source}; style-src {style_source}; img-src {default_source} blob: data:; media-src {default_source} blob:; connect-src {connect_source}; frame-src {default_source}; object-src 'none'; base-uri 'none'; form-action {default_source}{frame_ancestors}"
     ))
 }
 
@@ -1006,6 +1006,41 @@ mod tests {
         );
     }
 
+    /// A player attaches its MediaSource through a `blob:` URL. Without a
+    /// `media-src` that allows it, media falls back to `default-src`, the
+    /// browser refuses the load and every protected video fails to play.
+    #[tokio::test]
+    async fn app_documents_let_media_play_from_blob_urls() {
+        let data_dir = tempfile::tempdir().unwrap();
+        write_test_browser_capsule(data_dir.path(), "test-browser", "Browser test", "app");
+        let response = serve_browser_capsule_asset(
+            data_dir.path(),
+            &test_request_headers(),
+            "test-browser",
+            Some("index.html"),
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let policy = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let media = policy
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("media-src "))
+            .unwrap_or_else(|| panic!("app document policy has no media-src: {policy}"));
+        assert!(
+            media.split_whitespace().any(|source| source == "blob:"),
+            "media-src must allow blob: for MediaSource playback: {media}"
+        );
+        assert!(
+            !media.contains('*') && !media.contains("data:"),
+            "media-src must stay narrow: {media}"
+        );
+    }
+
     #[tokio::test]
     async fn cached_svg_documents_keep_the_opaque_script_policy_on_revalidation() {
         let data_dir = tempfile::tempdir().unwrap();
@@ -1225,7 +1260,7 @@ mod tests {
 
     #[test]
     fn opaque_document_policy_changes_only_the_script_source() {
-        let expected = "sandbox allow-scripts allow-forms allow-downloads; default-src http://localhost:61180; script-src 'self' 'wasm-unsafe-eval' http://localhost:61180; style-src http://localhost:61180 'unsafe-inline'; img-src http://localhost:61180 blob: data:; connect-src http://localhost:61180 ws://localhost:61180; frame-src http://localhost:61180; object-src 'none'; base-uri 'none'; form-action http://localhost:61180";
+        let expected = "sandbox allow-scripts allow-forms allow-downloads; default-src http://localhost:61180; script-src 'self' 'wasm-unsafe-eval' http://localhost:61180; style-src http://localhost:61180 'unsafe-inline'; img-src http://localhost:61180 blob: data:; media-src http://localhost:61180 blob:; connect-src http://localhost:61180 ws://localhost:61180; frame-src http://localhost:61180; object-src 'none'; base-uri 'none'; form-action http://localhost:61180";
         for (app, entrypoint, shell, ancestors) in [
             ("documents", true, false, ""),
             ("home", false, false, ""),

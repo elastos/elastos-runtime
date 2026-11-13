@@ -8,11 +8,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, bail, Context as _};
 use base64::Engine as _;
 use elastos_common::localhost::rooted_localhost_fs_path;
-use elastos_common::protected_content::{
-    DecryptSessionRequestV1, KeyReleaseRequestV1, ReleaseReceiptV1, RightsDecisionReceiptV1,
-    SealedObjectV1, DECRYPT_SESSION_REQUEST_SCHEMA, DECRYPT_SESSION_SCHEMA,
-    KEY_RELEASE_REQUEST_SCHEMA, RELEASE_RECEIPT_SCHEMA, RIGHTS_DECISION_RECEIPT_SCHEMA,
-};
 use elastos_runtime::provider::{
     Provider, ProviderError, ProviderInvocation, ProviderInvocationTransport, ProviderRegistry,
     ProviderTransfer, ResourceRequest, ResourceResponse,
@@ -49,6 +44,12 @@ const RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE: &str = "Runtime custody pub
 const RUNTIME_CUSTODY_SHARE_UNAVAILABLE_MESSAGE: &str =
     "Runtime custody sharing is not available yet";
 const RUNTIME_CUSTODY_PUBLISHED_PAYLOAD: &str = "runtime_custody_encrypted";
+pub(crate) const RUNTIME_CUSTODY_PUBLISH_UNSUPPORTED_TYPE_MESSAGE: &str =
+    "Runtime custody publish does not support this file type";
+/// Refusal for the three protected viewer operations on any route that does
+/// not verify `executable_actor`. See [`LibraryRequestRoute`].
+pub(crate) const RUNTIME_CUSTODY_VIEWER_ROUTE_DENIED_MESSAGE: &str =
+    "Runtime custody viewer operations require the verified viewer gateway route";
 
 static LIBRARY_EVENT_NOTIFY: OnceLock<tokio::sync::Notify> = OnceLock::new();
 
@@ -173,6 +174,30 @@ struct LibraryEvent {
     at: u64,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     details: Value,
+}
+
+/// Which route one Library request arrived on.
+///
+/// Only [`LibraryRequestRoute::VerifiedGatewayLaunchToken`] —
+/// `api::gateway_provider_proxy::gateway_provider_proxy` — cryptographically
+/// verifies the home launch token and then strips any client-supplied
+/// `executable_actor` before inserting the verified
+/// `required.launch_context.executable_actor`. Every other entry point
+/// (`ObjectProvider::send_raw`, the capsule resource-bridge route, and
+/// `handle_object_provider_runtime_request`) leaves that field exactly as the
+/// caller wrote it, so the three protected viewer operations — whose session
+/// binding is keyed on it — are refused there instead of trusting it.
+///
+/// This is deliberately NOT the same signal as the gateway Wallet authority:
+/// the proxy passes `gateway_authority: None` for `open_viewer`/`read_viewer`/
+/// `close_viewer` (it only builds a Wallet authority for protected `publish`
+/// and `buy`), so keying off that would reject the verified route itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LibraryRequestRoute {
+    /// The gateway provider proxy, after home-launch-token verification.
+    VerifiedGatewayLaunchToken,
+    /// Any route whose request fields are entirely caller-supplied.
+    UnverifiedCaller,
 }
 
 #[derive(Debug, Deserialize)]
@@ -320,7 +345,17 @@ enum ObjectProviderRequest {
         #[serde(default)]
         if_revision: Option<String>,
         #[serde(default)]
-        protection: Option<LibraryPublishProtectionRequest>,
+        /// Boxed because this one variant carries every term of a mint --
+        /// channel, token, price scale, access method, royalty split, the
+        /// whole listing -- and an enum is as large as its largest variant.
+        /// Every other request here would otherwise pay for it.
+        protection: Option<Box<LibraryPublishProtectionRequest>>,
+    },
+    /// Read-only: how far this object's publish has got. Takes no revision
+    /// and no protection terms, because it changes nothing.
+    PublishProgress {
+        principal_id: String,
+        uri: String,
     },
     Unpublish {
         principal_id: String,
@@ -329,6 +364,19 @@ enum ObjectProviderRequest {
         if_revision: Option<String>,
     },
     Repair {
+        principal_id: String,
+        uri: String,
+    },
+    /// Start over: set this object's unfinished protection attempt aside --
+    /// archived, never deleted -- so protecting it again starts a new attempt.
+    /// A settled and listed mint is refused beneath this request.
+    DiscardProtection {
+        principal_id: String,
+        uri: String,
+    },
+    /// The unfinished mints of the files in one folder: the recoverable ones
+    /// to offer back, while the unrecoverable ones are archived on the way.
+    UnfinishedProtections {
         principal_id: String,
         uri: String,
     },
@@ -360,9 +408,49 @@ enum ObjectProviderRequest {
         principal_id: String,
         mint_id: String,
     },
+    /// Buy one copy of a live market offer on the terms the buyer agreed to.
+    /// The wire is exactly §5.2 (R20); `item`, `asset_uri` and `seller` are
+    /// claims the purchase re-derives before trusting any of them.
+    BuyOffer {
+        principal_id: String,
+        item: crate::protected_content_market::RuntimeMarketBuyItemClaim,
+        asset_uri: String,
+        seller: String,
+        agreed: crate::protected_content_market::RuntimeMarketAgreedTerms,
+    },
+    /// Rebuild the local copy of an item this principal owns.
+    ///
+    /// A `.ddrm` capsule is made out of public material: the metadata document
+    /// the token URI resolves to, and the content the listing names. Owning the
+    /// access token is what makes the copy theirs, and that lives on the chain,
+    /// so the local file can always be built again from those same sources.
+    /// Buying and minting both write it as a side effect; this is how a person
+    /// asks for it on its own, when that write never happened, when the file
+    /// was deleted, or when they hold the token on a Home that never held it.
+    ///
+    /// Exactly one of `mint_id` and `item`: a copy bought on the market is
+    /// named by its item (§5.2's shape), since until it is adopted there is
+    /// no mint for it on this Home.
+    DownloadOwnedCopy {
+        principal_id: String,
+        #[serde(default)]
+        mint_id: Option<String>,
+        #[serde(default)]
+        item: Option<crate::protected_content_market::RuntimeMarketBuyItemClaim>,
+    },
     OpenViewer {
         principal_id: String,
         mint_id: String,
+        /// The verified viewer capsule (`elacity-player` or
+        /// `elacity-reader`). Never trusted from the client: the gateway
+        /// proxy overwrites this with `required.launch_context.executable_actor`
+        /// before this request reaches here, exactly as it already does for
+        /// `launch_id`/`session_id`/`grant_id`, and
+        /// `handle_runtime_custody_library_request` refuses the viewer
+        /// operations outright on every route that does not do that overwrite
+        /// (see [`LibraryRequestRoute`]).
+        #[serde(default)]
+        executable_actor: Option<String>,
         #[serde(default)]
         launch_id: Option<String>,
         #[serde(default)]
@@ -377,6 +465,8 @@ enum ObjectProviderRequest {
         mint_id: String,
         viewer_session_handle: String,
         #[serde(default)]
+        executable_actor: Option<String>,
+        #[serde(default)]
         launch_id: Option<String>,
         #[serde(default)]
         proof_binding_id: Option<String>,
@@ -384,14 +474,24 @@ enum ObjectProviderRequest {
         session_id: Option<String>,
         #[serde(default)]
         grant_id: Option<String>,
+        /// Media's part selector: absent means the init segment, `Some(n)`
+        /// means segment `n`. Refused outright on an object session.
         #[serde(default)]
         segment_index: Option<u32>,
+        /// The object's part selector: which framed chunk to decrypt.
+        /// Required on an object session (an object has no init part, so
+        /// there is nothing for "absent" to mean) and refused outright on a
+        /// media session — never accepted and ignored.
+        #[serde(default)]
+        chunk_index: Option<u32>,
     },
     CloseViewer {
         principal_id: String,
         mint_id: String,
         viewer_session_handle: String,
         #[serde(default)]
+        executable_actor: Option<String>,
+        #[serde(default)]
         launch_id: Option<String>,
         #[serde(default)]
         proof_binding_id: Option<String>,
@@ -402,15 +502,204 @@ enum ObjectProviderRequest {
     },
 }
 
+impl ObjectProviderRequest {
+    /// A buy the Marketplace page asks for (`buy`, `buy_offer`): its answers
+    /// must never carry this Home's account (D14, R31).
+    fn is_marketplace_buy(&self) -> bool {
+        matches!(self, Self::Buy { .. } | Self::BuyOffer { .. })
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "held boxed in `ObjectProviderRequest::Publish`, so the empty resume variant costs nothing"
+)]
 enum LibraryPublishProtectionRequest {
-    RuntimeCustody { copies: String, price: String },
+    RuntimeCustody {
+        copies: String,
+        /// What a buyer pays for one copy, as a decimal amount of the pay
+        /// token below -- "0.001", not its base units.
+        ///
+        /// The amount rather than the integer, because an integer of some
+        /// token's smallest unit says nothing about which token, and a caller
+        /// that scaled for six decimals while the mint settles in eighteen
+        /// agrees on the digits and disagrees by a factor of a million. The
+        /// decimals live with the pay token in this Runtime's configuration,
+        /// so the scaling happens where they are known and no caller has to
+        /// declare what its number meant.
+        price: String,
+        /// The channel this mint publishes into.
+        ///
+        /// A mint term, beside copies and price, rather than part of the
+        /// listing below: the listing is optional metadata a marketplace
+        /// displays, while a mint without a channel has nowhere to settle.
+        ///
+        /// Defaulted so the field's absence is a clear refusal rather than a
+        /// decode error, and required in `runtime_custody_listing_terms`.
+        #[serde(default)]
+        channel: String,
+        /// The token the sale is priced in. Absent takes the mint source's
+        /// first offered token, which is what a caller that does not choose
+        /// means.
+        #[serde(default)]
+        pay_token: Option<String>,
+
+        /// The listing a marketplace actually displays. Optional: absent means
+        /// the pre-listing behaviour, a mint with no Elacity metadata folder,
+        /// so an existing caller keeps working unchanged.
+        #[serde(default)]
+        listing: Option<LibraryPublishListingRequest>,
+        /// A new mint of this file, as opposed to a retry or a poll of the one
+        /// in flight: whatever attempt is unfinished is set aside first.
+        #[serde(default)]
+        new_attempt: bool,
+        /// Plan B S7-lite T7.6: the pool to mint into, by DID. Absent takes
+        /// this Home's own pool, else the only pool that admits this Home.
+        #[serde(default)]
+        pool_did: Option<String>,
+    },
+    /// Resume the mint already recorded for this object, at its recorded
+    /// terms. Carries no terms on purpose: the person types nothing, and a
+    /// resume can only ever continue what was agreed.
+    RuntimeCustodyResume {},
+}
+
+/// Creator-supplied listing terms.
+///
+/// `deny_unknown_fields` on purpose: a caller that sends a field this build
+/// does not understand is asking for something it will not get, and silently
+/// dropping it is how a listing ends up claiming terms nobody applied.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LibraryPublishListingRequest {
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    thumbnail: Option<LibraryPublishThumbnailRequest>,
+    /// Must total exactly `RUNTIME_CUSTODY_ROYALTY_TOTAL_UNITS`. The protocol's
+    /// own 50 units are minted by the contracts and are not the creator's to
+    /// set, so they never appear here.
+    #[serde(default)]
+    royalties: Vec<LibraryPublishRoyaltyRequest>,
+    /// How people reach the asset: `free`, `buy_once` or `buy_and_resell`.
+    /// Absent means buy once, which is what every caller written before
+    /// creators could choose meant.
+    #[serde(default)]
+    access_method: Option<String>,
+    /// The resale cut in deci-percent (900 is 90%), for `buy_and_resell` only.
+    #[serde(default)]
+    reseller_cut: Option<u16>,
+    /// How many decimal places the caller scaled `price` by.
+    ///
+    /// The price crosses this boundary as an integer of the pay token's
+    /// smallest unit, which says nothing about which token that is. A caller
+    /// that scaled for a six-decimal token and a mint that settles in an
+    /// eighteen-decimal one agree on the digits and disagree by a factor of a
+    /// million, so the meaning has to travel with the number and be checked
+    /// against the token the mint will actually use.
+    ///
+
+    #[serde(default)]
+    adult: bool,
+    #[serde(default)]
+    licensing: Option<Value>,
+    #[serde(default)]
+    legal_attestation: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LibraryPublishThumbnailRequest {
+    mime: String,
+    bytes_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LibraryPublishRoyaltyRequest {
+    address: String,
+    units: u32,
+}
+
+/// The creator's whole share of a primary sale, in ERC-1155 `ROYALTY_SHARE`
+/// units. 1000 exist per asset and one unit is 0.1% of the sale: the creator
+/// splits 950 and the protocol owner's 50 are minted by the contracts
+/// themselves. A split that does not total this is not one the chain can
+/// honour, and a listing showing it would describe a payout that will not
+/// happen.
+const RUNTIME_CUSTODY_ROYALTY_TOTAL_UNITS: u32 = 950;
+
+/// Upper bound on a cover thumbnail, before base64. Large enough for a real
+/// cover, small enough that a publish cannot be used to push arbitrary bulk
+/// through the metadata directory.
+const RUNTIME_CUSTODY_THUMBNAIL_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// Validated listing terms. Distinct from the request type so nothing
+/// downstream can reach an unvalidated field.
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeCustodyListingTerms {
+    pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) category: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) thumbnail: Option<RuntimeCustodyListingThumbnail>,
+    pub(crate) royalties: Vec<RuntimeCustodyListingRoyalty>,
+    /// The access method this mint creates, alongside the royalty split it
+    /// sits with: both are terms the chain call is re-encoded from on a
+    /// retry, not descriptions of the asset.
+    pub(crate) access_method: elastos_protected_content_runtime::RuntimeMintAccessMethod,
+    pub(crate) reseller_cut: Option<u16>,
+    /// The decimal scale the creator's price was expressed in, checked against
+    /// the pay token the mint settles in before anything is signed.
+    pub(crate) adult: bool,
+    pub(crate) licensing: Option<Value>,
+    pub(crate) legal_attestation: Option<Value>,
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeCustodyListingThumbnail {
+    pub(crate) mime: String,
+    pub(crate) bytes: Vec<u8>,
+}
+
+/// Never renders the image bytes: a debug line is for an operator, and an
+/// operator needs the size, not the picture.
+impl std::fmt::Debug for RuntimeCustodyListingThumbnail {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RuntimeCustodyListingThumbnail")
+            .field("mime", &self.mime)
+            .field("bytes", &self.bytes.len())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeCustodyListingRoyalty {
+    pub(crate) address: String,
+    pub(crate) units: u32,
 }
 
 struct LoadedRuntimeCustodyPublishInput {
     copies: String,
     price: String,
+    /// The channel this mint publishes into, lower-cased. Never empty: a
+    /// publish that named none was refused before this was built.
+    channel: String,
+    /// The token the sale is priced in, lower-cased. Empty means the mint
+    /// source's first offered token.
+    pay_token: String,
+    listing: Option<RuntimeCustodyListingTerms>,
+    new_attempt: bool,
+    /// Plan B S7-lite T7.6: the chosen pool's DID; `None` takes the default.
+    pool_did: Option<String>,
 }
 
 pub struct ObjectProvider {
@@ -447,6 +736,7 @@ impl Provider for ObjectProvider {
         };
 
         let data_dir = self.data_dir.clone();
+        let marketplace_buy = request.is_marketplace_buy();
         let result = match request {
             ObjectProviderRequest::Publish {
                 principal_id,
@@ -466,7 +756,7 @@ impl Provider for ObjectProvider {
                     &principal_id,
                     &uri,
                     if_revision.as_deref(),
-                    protection,
+                    protection.map(|protection| *protection),
                     None,
                 )
                 .await
@@ -500,19 +790,13 @@ impl Provider for ObjectProvider {
                 };
                 library_repair(&data_dir, registry, &principal_id, &uri).await
             }
-            request @ (ObjectProviderRequest::Status { .. }
-            | ObjectProviderRequest::Share { .. }
-            | ObjectProviderRequest::SharedAccess { .. }) => {
-                handle_library_request_with_protected_content_status(
-                    data_dir,
-                    request,
-                    self.registry.upgrade(),
-                )
-                .await
-            }
             request @ (ObjectProviderRequest::ListRuntimeCustody { .. }
             | ObjectProviderRequest::ImportRuntimeCustody { .. }
+            | ObjectProviderRequest::DiscardProtection { .. }
+            | ObjectProviderRequest::UnfinishedProtections { .. }
             | ObjectProviderRequest::Buy { .. }
+            | ObjectProviderRequest::BuyOffer { .. }
+            | ObjectProviderRequest::DownloadOwnedCopy { .. }
             | ObjectProviderRequest::OpenViewer { .. }
             | ObjectProviderRequest::ReadViewer { .. }
             | ObjectProviderRequest::CloseViewer { .. }) => {
@@ -522,14 +806,21 @@ impl Provider for ObjectProvider {
                         "object provider registry unavailable",
                     ));
                 };
-                handle_runtime_custody_library_request(data_dir, registry, request, None).await
+                handle_runtime_custody_library_request(
+                    data_dir,
+                    registry,
+                    request,
+                    None,
+                    LibraryRequestRoute::UnverifiedCaller,
+                )
+                .await
             }
             request => handle_library_request_serialized(data_dir, request).await,
         };
 
         Ok(match result {
             Ok(data) => provider_ok(data),
-            Err(err) => provider_error_from("library_error", &err),
+            Err(err) => marketplace_buy_error_from(marketplace_buy, &err),
         })
     }
 }
@@ -550,9 +841,13 @@ pub fn handle_object_provider_raw_request(data_dir: &Path, request: &Value) -> V
         ObjectProviderRequest::Publish { .. }
         | ObjectProviderRequest::Unpublish { .. }
         | ObjectProviderRequest::Repair { .. }
+        | ObjectProviderRequest::DiscardProtection { .. }
+        | ObjectProviderRequest::UnfinishedProtections { .. }
         | ObjectProviderRequest::ListRuntimeCustody { .. }
         | ObjectProviderRequest::ImportRuntimeCustody { .. }
         | ObjectProviderRequest::Buy { .. }
+        | ObjectProviderRequest::BuyOffer { .. }
+        | ObjectProviderRequest::DownloadOwnedCopy { .. }
         | ObjectProviderRequest::OpenViewer { .. }
         | ObjectProviderRequest::ReadViewer { .. }
         | ObjectProviderRequest::CloseViewer { .. } => Err(anyhow!(
@@ -716,7 +1011,14 @@ pub async fn handle_object_provider_runtime_request(
     registry: Arc<ProviderRegistry>,
     request: &Value,
 ) -> Value {
-    handle_object_provider_runtime_request_with_gateway(data_dir, registry, request, None).await
+    handle_object_provider_runtime_request_with_gateway(
+        data_dir,
+        registry,
+        request,
+        None,
+        LibraryRequestRoute::UnverifiedCaller,
+    )
+    .await
 }
 
 pub(crate) async fn handle_object_provider_runtime_request_with_gateway(
@@ -727,6 +1029,7 @@ pub(crate) async fn handle_object_provider_runtime_request_with_gateway(
         &crate::api::gateway::GatewayState,
         &crate::api::gateway::RuntimeWalletAuthority,
     )>,
+    route: LibraryRequestRoute,
 ) -> Value {
     let request = match serde_json::from_value::<ObjectProviderRequest>(request.clone()) {
         Ok(request) => request,
@@ -734,6 +1037,7 @@ pub(crate) async fn handle_object_provider_runtime_request_with_gateway(
     };
 
     let data_dir = data_dir.to_path_buf();
+    let marketplace_buy = request.is_marketplace_buy();
     if library_request_touches_webspace(&request) {
         let result = handle_library_webspace_request(&data_dir, &registry, request).await;
         return match result {
@@ -755,10 +1059,13 @@ pub(crate) async fn handle_object_provider_runtime_request_with_gateway(
                 &principal_id,
                 &uri,
                 if_revision.as_deref(),
-                protection,
+                protection.map(|protection| *protection),
                 gateway_authority,
             )
             .await
+        }
+        ObjectProviderRequest::PublishProgress { principal_id, uri } => {
+            library_publish_progress(&data_dir, &principal_id, &uri)
         }
         ObjectProviderRequest::Unpublish {
             principal_id,
@@ -779,25 +1086,29 @@ pub(crate) async fn handle_object_provider_runtime_request_with_gateway(
         }
         request @ (ObjectProviderRequest::ListRuntimeCustody { .. }
         | ObjectProviderRequest::ImportRuntimeCustody { .. }
+        | ObjectProviderRequest::DiscardProtection { .. }
+        | ObjectProviderRequest::UnfinishedProtections { .. }
         | ObjectProviderRequest::Buy { .. }
+        | ObjectProviderRequest::BuyOffer { .. }
+        | ObjectProviderRequest::DownloadOwnedCopy { .. }
         | ObjectProviderRequest::OpenViewer { .. }
         | ObjectProviderRequest::ReadViewer { .. }
         | ObjectProviderRequest::CloseViewer { .. }) => {
-            handle_runtime_custody_library_request(data_dir, registry, request, gateway_authority)
-                .await
-        }
-        request @ (ObjectProviderRequest::Status { .. }
-        | ObjectProviderRequest::Share { .. }
-        | ObjectProviderRequest::SharedAccess { .. }) => {
-            handle_library_request_with_protected_content_status(data_dir, request, Some(registry))
-                .await
+            handle_runtime_custody_library_request(
+                data_dir,
+                registry,
+                request,
+                gateway_authority,
+                route,
+            )
+            .await
         }
         request => handle_library_request_serialized(data_dir, request).await,
     };
 
     match result {
         Ok(data) => provider_ok(data),
-        Err(err) => provider_error_from("library_error", &err),
+        Err(err) => marketplace_buy_error_from(marketplace_buy, &err),
     }
 }
 
@@ -825,275 +1136,6 @@ async fn handle_library_request_serialized(
         .await
         .map_err(|err| anyhow!("object provider task failed: {err}"))
         .and_then(|result| result)
-}
-
-async fn handle_library_request_with_protected_content_status(
-    data_dir: PathBuf,
-    request: ObjectProviderRequest,
-    registry: Option<Arc<ProviderRegistry>>,
-) -> anyhow::Result<Value> {
-    let request_is_shared_access = matches!(request, ObjectProviderRequest::SharedAccess { .. });
-    let mut data = tokio::task::spawn_blocking(move || handle_library_request(&data_dir, request))
-        .await
-        .map_err(|err| anyhow!("object provider task failed: {err}"))
-        .and_then(|result| result)?;
-    if let Some(registry) = registry {
-        if request_is_shared_access {
-            attach_protected_content_open_chain(&registry, &mut data).await?;
-        }
-        attach_protected_content_provider_status(&registry, &mut data).await;
-    }
-    Ok(data)
-}
-
-async fn attach_protected_content_open_chain(
-    registry: &ProviderRegistry,
-    data: &mut Value,
-) -> anyhow::Result<()> {
-    let object_cid = data
-        .get("cid")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!("protected shared_access missing cid"))?
-        .to_string();
-    let Some(access) = data.get_mut("access") else {
-        return Ok(());
-    };
-    let key_release_required = access
-        .get("key_release")
-        .and_then(|value| value.get("required"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if !key_release_required {
-        return Ok(());
-    }
-
-    let content_security = access
-        .get("content_security")
-        .cloned()
-        .ok_or_else(|| anyhow!("protected shared_access missing content_security"))?;
-    let sealed_object = protected_content_sealed_object_from_security(&content_security)?;
-    let recipient_proof = access
-        .get("recipient_proof")
-        .cloned()
-        .ok_or_else(|| anyhow!("protected shared_access missing recipient_proof"))?;
-    let principal_id = recipient_proof
-        .get("recipient")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!("protected shared_access recipient proof missing recipient"))?
-        .to_string();
-    let session_id = recipient_proof
-        .get("session_id")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!("protected shared_access recipient proof missing session_id"))?
-        .to_string();
-    let now = now_ts();
-    let expires_at = now.saturating_add(900);
-    let action = "view";
-    let reason = "library protected shared_access open";
-
-    let drm_receipt = protected_provider_data(
-        registry,
-        "drm",
-        "open",
-        &json!({
-            "op": "open",
-            "request": {
-                "object": sealed_object,
-                "principal_id": principal_id,
-                "session_id": session_id,
-                "action": action,
-                "reason": reason
-            }
-        }),
-    )
-    .await?;
-    reject_forbidden_protected_content_fields(&drm_receipt)?;
-
-    let rights_receipt_value = protected_provider_data(
-        registry,
-        "rights",
-        "has_access_by_content_id",
-        &json!({
-            "op": "has_access_by_content_id",
-            "request": {
-                "principal_id": principal_id,
-                "session_id": session_id,
-                "content_id": object_cid,
-                "right": action,
-                "reason": reason,
-                "policy_ref": sealed_object.rights_policy_cid
-            }
-        }),
-    )
-    .await?;
-    reject_forbidden_protected_content_fields(&rights_receipt_value)?;
-    let rights_receipt: RightsDecisionReceiptV1 =
-        serde_json::from_value(rights_receipt_value.clone())
-            .context("rights provider returned invalid protected-content receipt")?;
-    if rights_receipt.schema != RIGHTS_DECISION_RECEIPT_SCHEMA || !rights_receipt.allowed {
-        bail!("rights provider did not allow protected shared_access");
-    }
-
-    let key_release_request = KeyReleaseRequestV1 {
-        schema: KEY_RELEASE_REQUEST_SCHEMA.to_string(),
-        request_id: protected_request_id("key-release", &object_cid, &principal_id, now),
-        principal_id: principal_id.clone(),
-        session_id: session_id.clone(),
-        object_cid: object_cid.clone(),
-        action: action.to_string(),
-        rights_receipt,
-        key_envelope: sealed_object.key_envelope.clone(),
-        reason: reason.to_string(),
-        expires_at,
-    };
-    let release_receipt_value = protected_provider_data(
-        registry,
-        "key",
-        "release",
-        &json!({
-            "op": "release",
-            "request": key_release_request
-        }),
-    )
-    .await?;
-    reject_forbidden_protected_content_fields(&release_receipt_value)?;
-    let release_receipt: ReleaseReceiptV1 =
-        serde_json::from_value(release_receipt_value.clone())
-            .context("key provider returned invalid release receipt")?;
-    if release_receipt.schema != RELEASE_RECEIPT_SCHEMA {
-        bail!("key provider returned unsupported release receipt schema");
-    }
-
-    let decrypt_request = DecryptSessionRequestV1 {
-        schema: DECRYPT_SESSION_REQUEST_SCHEMA.to_string(),
-        request_id: protected_request_id("decrypt-session", &object_cid, &principal_id, now),
-        principal_id: principal_id.clone(),
-        session_id: session_id.clone(),
-        object_cid: object_cid.clone(),
-        action: action.to_string(),
-        viewer_interface: sealed_object.viewer.required_interface.clone(),
-        release_receipt,
-        output_kind: "rendered".to_string(),
-        reason: reason.to_string(),
-        expires_at,
-    };
-    let decrypt_session_value = protected_provider_data(
-        registry,
-        "decrypt",
-        "open_session",
-        &json!({
-            "op": "open_session",
-            "request": decrypt_request
-        }),
-    )
-    .await?;
-    reject_forbidden_protected_content_fields(&decrypt_session_value)?;
-    if decrypt_session_value.get("schema").and_then(Value::as_str) != Some(DECRYPT_SESSION_SCHEMA) {
-        bail!("decrypt provider returned unsupported decrypt session schema");
-    }
-
-    if let Some(open) = access.get_mut("open").and_then(Value::as_object_mut) {
-        open.insert(
-            "provider".to_string(),
-            Value::String("decrypt-provider".to_string()),
-        );
-        open.insert(
-            "transport".to_string(),
-            Value::String("runtime-protected-provider-chain".to_string()),
-        );
-        open.insert(
-            "status".to_string(),
-            Value::String("ready_for_protected_viewer_session".to_string()),
-        );
-        open.insert(
-            "protected_content".to_string(),
-            json!({
-                "schema": "elastos.library.protected-open/v1",
-                "action": action,
-                "provider_chain": ["drm-provider.open", "rights-provider.has_access_by_content_id", "key-provider.release", "decrypt-provider.open_session"],
-                "drm_receipt": drm_receipt,
-                "rights_receipt": rights_receipt_value,
-                "key_release_receipt": release_receipt_value,
-                "decrypt_session": decrypt_session_value,
-                "viewer": {
-                    "required_interface": sealed_object.viewer.required_interface,
-                    "handoff": "viewer_capsule_session"
-                },
-                "raw_cek_exposed": false,
-                "raw_plaintext_exposed": false
-            }),
-        );
-    }
-    Ok(())
-}
-
-async fn protected_provider_data(
-    registry: &ProviderRegistry,
-    scheme: &str,
-    op: &str,
-    request: &Value,
-) -> anyhow::Result<Value> {
-    let response = registry
-        .send_raw(scheme, request)
-        .await
-        .map_err(|err| anyhow!("{scheme} provider unavailable for protected {op}: {err}"))?;
-    if response.get("status").and_then(Value::as_str) == Some("error") {
-        let message = response
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("provider returned error");
-        bail!("{scheme} provider rejected protected {op}: {message}");
-    }
-    response
-        .get("data")
-        .cloned()
-        .ok_or_else(|| anyhow!("{scheme} provider protected {op} response missing data"))
-}
-
-fn protected_request_id(kind: &str, object_cid: &str, principal_id: &str, now: u64) -> String {
-    let digest = Sha256::digest(format!("{kind}:{object_cid}:{principal_id}:{now}"));
-    format!("{kind}:{}", hex::encode(&digest[..16]))
-}
-
-fn reject_forbidden_protected_content_fields(value: &Value) -> anyhow::Result<()> {
-    const FORBIDDEN: &[&str] = &[
-        "raw_cek",
-        "cek",
-        "raw_plaintext",
-        "plaintext",
-        "private_key",
-        "provider_credentials",
-        "kms_node_credentials",
-        "wallet_rpc",
-        "chain_rpc",
-        "kubo_api",
-        "kubo_api_url",
-        "ipfs_api",
-        "ipfs_api_url",
-        "elacity_sdk",
-        "elacity_sdk_token",
-        "contract_sdk",
-        "key_backend_sdk",
-    ];
-    let mut stack = vec![value];
-    while let Some(value) = stack.pop() {
-        match value {
-            Value::Object(map) => {
-                for (key, value) in map {
-                    if FORBIDDEN.contains(&key.as_str()) {
-                        bail!("protected provider response exposed forbidden field: {key}");
-                    }
-                    stack.push(value);
-                }
-            }
-            Value::Array(values) => stack.extend(values),
-            _ => {}
-        }
-    }
-    Ok(())
 }
 
 async fn handle_library_webspace_request(
@@ -1282,8 +1324,14 @@ fn handle_library_request(
     request: ObjectProviderRequest,
 ) -> anyhow::Result<Value> {
     match request {
+        ObjectProviderRequest::DownloadOwnedCopy { .. } => {
+            unreachable!("download of an owned copy is handled asynchronously")
+        }
         ObjectProviderRequest::Roots { principal_id } => {
             Ok(json!({ "roots": library_roots(data_dir, &principal_id) }))
+        }
+        ObjectProviderRequest::PublishProgress { principal_id, uri } => {
+            library_publish_progress(data_dir, &principal_id, &uri)
         }
         ObjectProviderRequest::List { principal_id, uri } => {
             let root = crate::auth::principal_localhost_root(&principal_id);
@@ -1787,10 +1835,7 @@ fn handle_library_request(
             let shared_at = now_ts();
             let recipients = normalized_share_recipients(&recipients)?;
             let share_policy = normalized_share_policy(policy.as_deref(), recipients.is_empty())?;
-            let key_release = normalized_key_release_policy(
-                key_release_policy.as_deref(),
-                &record.content_security,
-            )?;
+            let key_release = normalized_key_release_policy(key_release_policy.as_deref())?;
             let remote_enforcement = share_remote_enforcement_contract(&share_policy, &key_release);
             record.shared_at = Some(shared_at);
             record.share_policy = Some(share_policy.clone());
@@ -1900,9 +1945,12 @@ fn handle_library_request(
         ObjectProviderRequest::Publish { .. }
         | ObjectProviderRequest::Unpublish { .. }
         | ObjectProviderRequest::Repair { .. }
+        | ObjectProviderRequest::DiscardProtection { .. }
+        | ObjectProviderRequest::UnfinishedProtections { .. }
         | ObjectProviderRequest::ListRuntimeCustody { .. }
         | ObjectProviderRequest::ImportRuntimeCustody { .. }
         | ObjectProviderRequest::Buy { .. }
+        | ObjectProviderRequest::BuyOffer { .. }
         | ObjectProviderRequest::OpenViewer { .. }
         | ObjectProviderRequest::ReadViewer { .. }
         | ObjectProviderRequest::CloseViewer { .. } => {
@@ -1919,13 +1967,36 @@ async fn handle_runtime_custody_library_request(
         &crate::api::gateway::GatewayState,
         &crate::api::gateway::RuntimeWalletAuthority,
     )>,
+    route: LibraryRequestRoute,
 ) -> anyhow::Result<Value> {
+    // Session binding v3 is keyed on `executable_actor`, and only the gateway
+    // proxy verifies that field (it discards whatever the client sent and
+    // re-inserts the value from the verified home launch token). Refuse the
+    // three viewer operations on every other route rather than bind a session
+    // to a caller-chosen actor. Note this cannot key off `gateway_authority`:
+    // the proxy passes `None` there for viewer ops, since it only builds a
+    // Wallet authority for protected `publish`, `buy` and `buy_offer`.
+    if matches!(
+        request,
+        ObjectProviderRequest::OpenViewer { .. }
+            | ObjectProviderRequest::ReadViewer { .. }
+            | ObjectProviderRequest::CloseViewer { .. }
+    ) && route != LibraryRequestRoute::VerifiedGatewayLaunchToken
+    {
+        anyhow::bail!(RUNTIME_CUSTODY_VIEWER_ROUTE_DENIED_MESSAGE);
+    }
     match request {
         ObjectProviderRequest::ListRuntimeCustody { principal_id } => {
             crate::protected_content_runtime::list_runtime_custody_listings(
                 &data_dir,
                 &principal_id,
             )
+        }
+        ObjectProviderRequest::DiscardProtection { principal_id, uri } => {
+            library_discard_protection(&data_dir, &principal_id, &uri, gateway_authority).await
+        }
+        ObjectProviderRequest::UnfinishedProtections { principal_id, uri } => {
+            library_unfinished_protections(&data_dir, &principal_id, &uri, gateway_authority).await
         }
         ObjectProviderRequest::ImportRuntimeCustody {
             principal_id,
@@ -1936,6 +2007,38 @@ async fn handle_runtime_custody_library_request(
                 registry,
                 &principal_id,
                 &listing_uri,
+            )
+            .await
+        }
+        ObjectProviderRequest::DownloadOwnedCopy {
+            principal_id,
+            mint_id,
+            item,
+        } => {
+            let Some((state, authority)) = gateway_authority else {
+                anyhow::bail!(
+                    crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE
+                );
+            };
+            let copy = match (mint_id, item) {
+                (Some(mint_id), None) => {
+                    crate::protected_content_runtime::RuntimeCustodyOwnedCopy::Mint(mint_id)
+                }
+                (None, Some(item)) => {
+                    crate::protected_content_runtime::RuntimeCustodyOwnedCopy::MarketItem(item)
+                }
+                _ => anyhow::bail!(
+                    crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE
+                ),
+            };
+            crate::api::gateway::runtime_custody_download_owned_copy_via_gateway(
+                state,
+                authority,
+                registry,
+                crate::protected_content_runtime::RuntimeCustodyDownloadInput {
+                    principal_id,
+                    copy,
+                },
             )
             .await
         }
@@ -1959,9 +2062,36 @@ async fn handle_runtime_custody_library_request(
             )
             .await
         }
+        ObjectProviderRequest::BuyOffer {
+            principal_id,
+            item,
+            asset_uri,
+            seller,
+            agreed,
+        } => {
+            let Some((state, authority)) = gateway_authority else {
+                anyhow::bail!(
+                    crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_DENIED_MESSAGE
+                );
+            };
+            crate::api::gateway::runtime_custody_buy_offer_via_gateway(
+                state,
+                authority,
+                registry,
+                crate::protected_content_market::RuntimeMarketBuyInput {
+                    principal_id,
+                    item,
+                    asset_uri,
+                    seller,
+                    agreed,
+                },
+            )
+            .await
+        }
         ObjectProviderRequest::OpenViewer {
             principal_id,
             mint_id,
+            executable_actor,
             launch_id,
             proof_binding_id,
             session_id,
@@ -1973,6 +2103,7 @@ async fn handle_runtime_custody_library_request(
                 crate::protected_content_runtime::RuntimeCustodyViewerOpenInput {
                     principal_id,
                     mint_id,
+                    executable_actor: executable_actor.unwrap_or_default(),
                     launch_id,
                     proof_binding_id,
                     session_id,
@@ -1985,11 +2116,13 @@ async fn handle_runtime_custody_library_request(
             principal_id,
             mint_id,
             viewer_session_handle,
+            executable_actor,
             launch_id,
             proof_binding_id,
             session_id,
             grant_id,
             segment_index,
+            chunk_index,
         } => {
             crate::protected_content_runtime::read_runtime_custody_viewer(
                 &data_dir,
@@ -1997,11 +2130,13 @@ async fn handle_runtime_custody_library_request(
                 &principal_id,
                 &mint_id,
                 &viewer_session_handle,
+                executable_actor.as_deref().unwrap_or_default(),
                 launch_id.as_deref(),
                 proof_binding_id.as_deref(),
                 session_id.as_deref(),
                 grant_id.as_deref(),
                 segment_index,
+                chunk_index,
             )
             .await
         }
@@ -2009,6 +2144,7 @@ async fn handle_runtime_custody_library_request(
             principal_id,
             mint_id,
             viewer_session_handle,
+            executable_actor,
             launch_id,
             proof_binding_id,
             session_id,
@@ -2020,6 +2156,7 @@ async fn handle_runtime_custody_library_request(
                 &principal_id,
                 &mint_id,
                 &viewer_session_handle,
+                executable_actor.as_deref().unwrap_or_default(),
                 launch_id.as_deref(),
                 proof_binding_id.as_deref(),
                 session_id.as_deref(),
@@ -2028,6 +2165,274 @@ async fn handle_runtime_custody_library_request(
             .await
         }
         _ => anyhow::bail!("runtime custody library operation is invalid"),
+    }
+}
+
+/// Start over: set the unfinished attempt to protect one object aside, so
+/// protecting it again starts a new attempt with an identity of its own.
+///
+/// Only an attempt that sent nothing on chain is archived (never deleted), and
+/// one with a Wallet approval out only once the decline is confirmed. An
+/// attempt whose transaction was sent or mined, or that is listed, is refused
+/// with its terms and finished by Resume.
+async fn library_discard_protection(
+    data_dir: &Path,
+    principal_id: &str,
+    uri: &str,
+    gateway_authority: Option<(
+        &crate::api::gateway::GatewayState,
+        &crate::api::gateway::RuntimeWalletAuthority,
+    )>,
+) -> anyhow::Result<Value> {
+    let Some((state, authority)) = gateway_authority else {
+        bail!("Runtime custody creator mint requires verified gateway Wallet authority");
+    };
+    let target = library_target(data_dir, principal_id, uri)?;
+    let source_storage = published_source_storage(data_dir, principal_id, &target)?;
+    let source = crate::protected_content_runtime::runtime_custody_source_lock(
+        data_dir,
+        principal_id,
+        &target.uri,
+        source_storage,
+    )?;
+    let _source = source.lock().await;
+    let outcome = crate::api::gateway::archive_runtime_custody_creator_attempt(
+        state,
+        authority,
+        principal_id,
+        &target.uri,
+        source_storage,
+        crate::protected_content_runtime::RuntimeCustodyAttemptArchiveReason::StartOver,
+    )
+    .await?;
+    // A transaction that was sent or mined keeps its attempt: Resume, not
+    // Start over.
+    if let Some(refusal) = outcome.kept_refusal(None) {
+        return Err(refusal);
+    }
+    let archived = match outcome {
+        crate::api::gateway::RuntimeCustodyAttemptArchiveOutcome::Archived(archived) => {
+            Some(archived)
+        }
+        _ => None,
+    };
+    Ok(json!({
+        "schema": "elastos.library.protection-discarded/v1",
+        "uri": target.uri,
+        "discarded": archived.is_some(),
+        // Which attempt was set aside; the next protect is a new one.
+        "archived_attempt": archived.as_ref().map(|archived| archived.attempt()),
+    }))
+}
+
+/// How many entries of one folder a single look for unfinished mints reads.
+/// Creator's folder holds what a person protected by hand; past this the rest
+/// waits for the next open rather than making one open slow.
+const UNFINISHED_PROTECTIONS_MAX_ENTRIES: usize = 512;
+
+/// The unfinished mints of the files directly in one folder.
+///
+/// Each one is classified by the single rule in
+/// `RuntimeCustodyUnfinishedMintStage::recoverable`: a recoverable attempt is
+/// listed for the creator to resume or start over, an unrecoverable one is
+/// archived here without asking, and a finished one is not mentioned. One
+/// object that cannot be read is skipped rather than failing the whole answer.
+async fn library_unfinished_protections(
+    data_dir: &Path,
+    principal_id: &str,
+    uri: &str,
+    gateway_authority: Option<(
+        &crate::api::gateway::GatewayState,
+        &crate::api::gateway::RuntimeWalletAuthority,
+    )>,
+) -> anyhow::Result<Value> {
+    let Some((state, authority)) = gateway_authority else {
+        bail!("Runtime custody creator mint requires verified gateway Wallet authority");
+    };
+    let folder = library_target(data_dir, principal_id, uri)?;
+    // An archive a crash interrupted is finished before anything is classified.
+    if let Err(error) = crate::protected_content_runtime::runtime_mint_journal(data_dir)
+        .finish_interrupted_archives()
+    {
+        tracing::warn!(error = ?error, "runtime custody creator mint: an interrupted archive could not be finished");
+    }
+    let mut unfinished = Vec::new();
+    let mut archived = 0usize;
+    if folder.path.is_dir() {
+        let mut names = fs::read_dir(&folder.path)
+            .with_context(|| format!("failed to list {:?}", folder.path))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        names.truncate(UNFINISHED_PROTECTIONS_MAX_ENTRIES);
+        for name in names {
+            let object_uri = format!("{}/{}", folder.uri.trim_end_matches('/'), name);
+            // A finished publish is answered from the Library's own record,
+            // without reading the mint journal at all.
+            if read_publish_record(data_dir, principal_id, &object_uri)
+                .is_ok_and(|record| record.listing_uri.is_some())
+            {
+                continue;
+            }
+            let outcome = match library_target(data_dir, principal_id, &object_uri)
+                .and_then(|target| published_source_storage(data_dir, principal_id, &target))
+            {
+                Ok(source_storage) => {
+                    match crate::protected_content_runtime::runtime_custody_source_lock(
+                        data_dir,
+                        principal_id,
+                        &object_uri,
+                        source_storage,
+                    ) {
+                        // A file whose publish is running right now is in
+                        // progress, not unfinished.
+                        Ok(source) => match source.try_lock() {
+                            Ok(_source) => {
+                                crate::api::gateway::runtime_custody_unfinished_mint_via_gateway(
+                                    state,
+                                    authority,
+                                    principal_id,
+                                    &object_uri,
+                                    source_storage,
+                                )
+                                .await
+                            }
+                            Err(_) => continue,
+                        },
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            };
+            match outcome {
+                Ok(crate::api::gateway::RuntimeCustodyUnfinishedMintOutcome::Unfinished(
+                    mut entry,
+                )) => {
+                    entry["uri"] = json!(object_uri);
+                    entry["name"] = json!(name);
+                    unfinished.push(entry);
+                }
+                Ok(crate::api::gateway::RuntimeCustodyUnfinishedMintOutcome::Archived) => {
+                    archived += 1;
+                }
+                Ok(crate::api::gateway::RuntimeCustodyUnfinishedMintOutcome::Nothing) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "runtime custody creator mint: skipped an object whose mint could not be read"
+                    );
+                }
+            }
+        }
+    }
+    Ok(json!({
+        "schema": "elastos.library.unfinished-protections/v1",
+        "uri": folder.uri,
+        "unfinished": unfinished,
+        "archived": archived,
+    }))
+}
+
+/// Bind the creator's account and run one runtime-custody publish of `target`:
+/// protect, escrow, publish, then the creator tail.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one publish binds the target, its type, its terms and where they come from"
+)]
+async fn run_runtime_custody_publish(
+    data_dir: &Path,
+    registry: Arc<ProviderRegistry>,
+    (state, authority): (
+        &crate::api::gateway::GatewayState,
+        &crate::api::gateway::RuntimeWalletAuthority,
+    ),
+    principal_id: &str,
+    target: &LibraryTarget,
+    content_type: &str,
+    loaded: &LoadedRuntimeCustodyPublishInput,
+    terms_source: crate::protected_content_runtime::RuntimeCustodyCreatorTermsSource,
+    source_storage: &str,
+) -> anyhow::Result<crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts> {
+    // Plan B S7-lite T7.6: a Home with no pool to mint into is told so
+    // before any media is processed.
+    crate::protected_content_runtime::load_runtime_custody_mint_pool(
+        data_dir,
+        Arc::clone(&registry),
+        loaded.pool_did.as_deref(),
+        Some((principal_id, &target.uri, source_storage)),
+    )?;
+    let creator_binding = crate::api::gateway::resolve_runtime_custody_creator_publish_binding(
+        state,
+        authority,
+        principal_id,
+        &target.uri,
+        source_storage,
+    )
+    .await?;
+    // Video/audio keep the existing media-provider transcode path
+    // unchanged (D5: audio also transcodes to fMP4). Every other type
+    // takes the EPC1 object path, which now runs the SAME creator tail
+    // (chain mint, metadata document, portable listing) so an object mint
+    // can be bought and opened exactly like a media one.
+    if content_type.starts_with("video/") || content_type.starts_with("audio/") {
+        let runtime_input = crate::protected_content_runtime::RuntimeCustodyLibrarySourceInput {
+            object_uri: target.uri.clone(),
+            principal_id: principal_id.to_string(),
+            source_file_path: target.path.clone(),
+            wallet_account_id: creator_binding.account_id,
+            wallet_account_address: creator_binding.address,
+            creator_mint_source_digest: creator_binding.source_digest,
+            copies: loaded.copies.clone(),
+            price: loaded.price.clone(),
+            channel: loaded.channel.clone(),
+            pay_token: loaded.pay_token.clone(),
+            listing: loaded.listing.clone(),
+            source_storage: source_storage.to_string(),
+            pool_did: loaded.pool_did.clone(),
+        };
+        crate::api::gateway::runtime_custody_publish_via_gateway(
+            state,
+            authority,
+            registry,
+            runtime_input,
+            terms_source,
+        )
+        .await
+    } else {
+        let clear_plaintext = crate::protected_content_runtime::read_runtime_object_source(
+            data_dir,
+            principal_id,
+            &target.uri,
+            &target.path,
+        )?;
+        let runtime_input =
+            crate::protected_content_runtime::RuntimeCustodyLibraryPublishObjectInput {
+                object_uri: target.uri.clone(),
+                principal_id: principal_id.to_string(),
+                content_type: content_type.to_string(),
+                wallet_account_id: creator_binding.account_id,
+                wallet_account_address: creator_binding.address,
+                creator_mint_source_digest: creator_binding.source_digest,
+                copies: loaded.copies.clone(),
+                price: loaded.price.clone(),
+                channel: loaded.channel.clone(),
+                pay_token: loaded.pay_token.clone(),
+                listing: loaded.listing.clone(),
+                clear_plaintext,
+                source_storage: source_storage.to_string(),
+                pool_did: loaded.pool_did.clone(),
+            };
+
+        crate::api::gateway::runtime_custody_publish_object_via_gateway(
+            state,
+            authority,
+            registry,
+            runtime_input,
+            terms_source,
+        )
+        .await
     }
 }
 
@@ -2050,40 +2455,132 @@ async fn library_publish(
             crate::protected_content_runtime::protected_content_enabled(data_dir),
             "protected content is not available in this release"
         );
-        let loaded =
-            validate_runtime_custody_publish_input(data_dir, principal_id, &target, protection)?;
+        let (loaded, terms_source) = match protection {
+            LibraryPublishProtectionRequest::RuntimeCustodyResume {} => (
+                resumed_runtime_custody_publish_input(data_dir, principal_id, &target)?,
+                crate::protected_content_runtime::RuntimeCustodyCreatorTermsSource::Recorded,
+            ),
+            protection => (
+                validate_runtime_custody_publish_input(
+                    data_dir,
+                    principal_id,
+                    &target,
+                    protection,
+                )?,
+                crate::protected_content_runtime::RuntimeCustodyCreatorTermsSource::Requested,
+            ),
+        };
+        let filename = target
+            .uri
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty())
+            .unwrap_or("object.bin");
+        let content_type = mime_for_name(filename);
+        // Fail closed on an unrecognised type, before any Wallet or custody
+        // work. `mime_for_name` returns `application/octet-stream` for
+        // everything its table does not know, and minting that as an EPC1
+        // object would produce content nothing can open (the object open/read
+        // path is deferred) while also burning the source's `same_authority_as`
+        // shape, so a later retry as media would be refused as "conflicts with
+        // existing authority". A clear refusal before any mint is the only safe
+        // answer until object open lands.
+        //
+        // This refusal set has exactly one member, and Library's "Protect and
+        // List" predicate depends on that: it decides whether to offer the
+        // action by testing the object's type against this same one value
+        // rather than restating the `mime_for_name` table, so that a new
+        // extension added above needs no capsule change. Adding a SECOND
+        // refused type here therefore silently makes Library offer an action
+        // this function will reject. If that ever happens, widen
+        // `isRuntimeCustodyProtectable` in
+        // `capsules/library/browser/src/model.js` in the same change.
+        if content_type == "application/octet-stream" {
+            anyhow::bail!(RUNTIME_CUSTODY_PUBLISH_UNSUPPORTED_TYPE_MESSAGE);
+        }
         let source_storage = published_source_storage(data_dir, principal_id, &target)?.to_string();
         let Some((state, authority)) = gateway_authority else {
             anyhow::bail!(
                 "Runtime custody creator mint requires verified gateway Wallet authority"
             );
         };
-        let creator_binding = crate::api::gateway::resolve_runtime_custody_creator_publish_binding(
-            state,
-            authority,
+        // A new mint of a file never waits on an earlier attempt at it: Creator
+        // asks for one explicitly, and whatever attempt is unfinished is set
+        // aside first so this one starts with an identity of its own.
+        // One publish of a source at a time, and never beside a Start over of
+        // it: a request still running after a reload must not write into an
+        // attempt that is being moved aside.
+        let source = crate::protected_content_runtime::runtime_custody_source_lock(
+            data_dir,
             principal_id,
             &target.uri,
             &source_storage,
-        )
-        .await?;
-        let runtime_input = crate::protected_content_runtime::RuntimeCustodyLibrarySourceInput {
-            object_uri: target.uri.clone(),
-            principal_id: principal_id.to_string(),
-            source_file_path: target.path.clone(),
-            wallet_account_id: creator_binding.account_id,
-            wallet_account_address: creator_binding.address,
-            creator_mint_source_digest: creator_binding.source_digest,
-            copies: loaded.copies,
-            price: loaded.price,
-            source_storage,
+        )?;
+        let _source = source.lock().await;
+        // An attempt that was sent or mined is not set aside: the publish goes
+        // on, and the tail refuses other terms against it, naming them.
+        // Boxed: the custody futures are large, and a plain publish shares
+        // this function's state machine.
+        if loaded.new_attempt {
+            Box::pin(crate::api::gateway::archive_runtime_custody_creator_attempt(
+                state,
+                authority,
+                principal_id,
+                &target.uri,
+                &source_storage,
+                crate::protected_content_runtime::RuntimeCustodyAttemptArchiveReason::NewAttempt,
+            ))
+            .await?;
+        }
+        let publish = || {
+            Box::pin(run_runtime_custody_publish(
+                data_dir,
+                Arc::clone(&registry),
+                (state, authority),
+                principal_id,
+                &target,
+                content_type,
+                &loaded,
+                terms_source,
+                &source_storage,
+            ))
         };
-        let facts = crate::api::gateway::runtime_custody_publish_via_gateway(
-            state,
-            authority,
-            registry,
-            runtime_input,
-        )
-        .await?;
+        let facts = match publish().await {
+            // The earlier attempt met other terms and was set aside; this
+            // publish runs again as the new attempt it now is.
+            Err(error)
+                if error
+                    .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorAttemptArchived>()
+                    .is_some() =>
+            {
+                publish().await
+            }
+            result => result,
+        };
+        let facts = match facts {
+            Ok(facts) => facts,
+            Err(mut error) => {
+                // A fail-closed refusal is answered by Start over only when
+                // Start over could set the attempt aside.
+                if let Some(conflict) = error
+                    .downcast_mut::<crate::protected_content_runtime::RuntimeCustodyAttemptConflict>()
+                {
+                    if conflict.answered_by_start_over() {
+                        conflict.set_can_start_over(
+                            crate::api::gateway::runtime_custody_attempt_may_start_over(
+                                state,
+                                authority,
+                                principal_id,
+                                &target.uri,
+                                &source_storage,
+                            )
+                            .await,
+                        );
+                    }
+                }
+                return Err(error);
+            }
+        };
         let record = LibraryPublishRecord {
             schema: "elastos.library.publish-record/v1".to_string(),
             object_uri: target.uri.clone(),
@@ -2102,7 +2599,16 @@ async fn library_publish(
             size_bytes: None,
         };
         write_publish_record(data_dir, principal_id, &record)?;
-        let object = library_object(data_dir, principal_id, &target.uri)?;
+        // The capsule the tail filed for this mint is the openable item, so it
+        // is what the publish answers with. The source keeps its own record --
+        // which is what stops the Library offering to mint the same bytes a
+        // second time -- and stays exactly where the creator put it.
+        let capsule_uri = facts.capsule_uri.clone();
+        let object = library_object(
+            data_dir,
+            principal_id,
+            capsule_uri.as_deref().unwrap_or(&target.uri),
+        )?;
         append_library_event(
             data_dir,
             principal_id,
@@ -2112,6 +2618,7 @@ async fn library_publish(
                 "cid": facts.content_cid,
                 "content_id": facts.content_id,
                 "mint_id": hex::encode(facts.mint_id.as_bytes()),
+                "capsule_uri": capsule_uri,
                 "listing_uri": record.listing_uri,
                 "availability": record.availability,
                 "object": object,
@@ -3979,6 +4486,9 @@ fn library_request_touches_webspace(request: &ObjectProviderRequest) -> bool {
     }
 
     match request {
+        // Named for the same reason `Buy` is: it carries a mint, never a URI,
+        // so no WebSpace path can be hiding in it.
+        ObjectProviderRequest::DownloadOwnedCopy { .. } => false,
         ObjectProviderRequest::List { uri: Some(uri), .. } => any_webspace(&[uri]),
         ObjectProviderRequest::Stat { uri, .. }
         | ObjectProviderRequest::Read { uri, .. }
@@ -3995,6 +4505,8 @@ fn library_request_touches_webspace(request: &ObjectProviderRequest) -> bool {
         | ObjectProviderRequest::Publish { uri, .. }
         | ObjectProviderRequest::Unpublish { uri, .. }
         | ObjectProviderRequest::Repair { uri, .. }
+        | ObjectProviderRequest::DiscardProtection { uri, .. }
+        | ObjectProviderRequest::UnfinishedProtections { uri, .. }
         | ObjectProviderRequest::Share { uri, .. }
         | ObjectProviderRequest::SharedAccess { uri, .. } => any_webspace(&[uri]),
         ObjectProviderRequest::CompressArchive { uri, uris, .. } => {
@@ -4025,13 +4537,15 @@ fn library_request_touches_webspace(request: &ObjectProviderRequest) -> bool {
             .as_deref()
             .map(|target_uri| any_webspace(&[uri, target_uri]))
             .unwrap_or_else(|| any_webspace(&[uri])),
-        ObjectProviderRequest::Roots { .. }
+        ObjectProviderRequest::PublishProgress { .. }
+        | ObjectProviderRequest::Roots { .. }
         | ObjectProviderRequest::List { uri: None, .. }
         | ObjectProviderRequest::EmptyTrash { .. }
         | ObjectProviderRequest::Events { .. }
         | ObjectProviderRequest::ListRuntimeCustody { .. }
         | ObjectProviderRequest::ImportRuntimeCustody { .. }
         | ObjectProviderRequest::Buy { .. }
+        | ObjectProviderRequest::BuyOffer { .. }
         | ObjectProviderRequest::OpenViewer { .. }
         | ObjectProviderRequest::ReadViewer { .. }
         | ObjectProviderRequest::CloseViewer { .. } => false,
@@ -4185,8 +4699,11 @@ fn library_object(data_dir: &Path, principal_id: &str, uri: &str) -> anyhow::Res
         }
         metadata
     };
-    if let Some(protected_content) =
-        active_record.and_then(runtime_custody_library_identity_metadata)
+    if let Some(protected_content) = active_record
+        .and_then(runtime_custody_library_identity_metadata)
+        .or_else(|| {
+            runtime_custody_capsule_identity_metadata(data_dir, principal_id, &target, &name)
+        })
     {
         local_metadata["protected_content"] = protected_content;
     }
@@ -7049,6 +7566,7 @@ pub(crate) fn principal_root_protected_object_inventory(
         "Documents",
         "Pictures",
         "Videos",
+        "Music",
         "Downloads",
         "Public",
         ".Trash",
@@ -7079,8 +7597,8 @@ fn default_publish_content_security() -> Value {
         "source_storage": "unknown",
         "published_payload": "plain_content",
         "key_release_required": false,
-        "status": "not_required_for_plain_published_content",
-        "required_providers": protected_content_provider_requirements(false),
+        "status": "plain_published_content",
+        "protected_content": "runtime_custody_publish_only",
     })
 }
 
@@ -7089,200 +7607,35 @@ fn default_share_key_release() -> Value {
         "schema": "elastos.library.key-release/v1",
         "required": false,
         "status": "not_required_for_plain_published_content",
-        "required_providers": protected_content_provider_requirements(false),
-        "next": "Protected encrypted-content sharing requires drm/rights/key/decrypt providers before content is opened."
+        "protected_content": "runtime_custody_publish_only",
+        "next": "Library share carries plain published content. Protected content is published through Runtime custody and opened in the viewer, not shared through a key-release policy."
     })
 }
 
-fn protected_content_provider_requirements(required: bool) -> Value {
-    let status = if required {
-        "required_for_encrypted_recipient_payload"
-    } else {
-        "not_required_for_plain_published_content"
-    };
-    json!({
-        "schema": "elastos.library.protected-content-provider-requirements/v1",
-        "required": required,
-        "status": status,
-        "providers": [
-            {
-                "id": "drm-provider",
-                "scheme": "drm",
-                "role": "protected-content open orchestration",
-                "operation": "open",
-                "required": required
-            },
-            {
-                "id": "rights-provider",
-                "scheme": "rights",
-                "role": "recipient rights/ACL decision",
-                "operation": "has_access_by_content_id",
-                "required": required
-            },
-            {
-                "id": "key-provider",
-                "scheme": "key",
-                "role": "recipient-scoped key release",
-                "operation": "release",
-                "required": required
-            },
-            {
-                "id": "decrypt-provider",
-                "scheme": "decrypt",
-                "role": "viewer-scoped decrypt/render session",
-                "operation": "open_session",
-                "required": required
-            }
-        ],
-        "authority_boundary": "Library records grants; drm/rights/key/decrypt providers enforce protected-content access without exposing raw CEKs or broad plaintext authority."
-    })
-}
-
-async fn attach_protected_content_provider_status(registry: &ProviderRegistry, data: &mut Value) {
-    let status = protected_content_provider_status(registry).await;
-    if let Some(object) = data.as_object_mut() {
-        object.insert("protected_content".to_string(), status.clone());
-        if let Some(published) = object.get_mut("published").and_then(Value::as_object_mut) {
-            published.insert("protected_content".to_string(), status);
-        }
-    }
-}
-
-async fn protected_content_provider_status(registry: &ProviderRegistry) -> Value {
-    let providers = [
-        protected_content_provider_runtime_status(registry, "drm-provider", "drm", "open").await,
-        protected_content_provider_runtime_status(
-            registry,
-            "rights-provider",
-            "rights",
-            "has_access_by_content_id",
-        )
-        .await,
-        protected_content_provider_runtime_status(registry, "key-provider", "key", "release").await,
-        protected_content_provider_runtime_status(
-            registry,
-            "decrypt-provider",
-            "decrypt",
-            "open_session",
-        )
-        .await,
-    ];
-    let available_count = providers
-        .iter()
-        .filter(|provider| {
-            provider
-                .get("available")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        })
-        .count();
-    let configured_count = providers
-        .iter()
-        .filter(|provider| {
-            provider
-                .get("configured")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        })
-        .count();
-    let provider_chain_ready = configured_count == providers.len();
-    json!({
-        "schema": "elastos.library.protected-content-provider-status/v1",
-        "authority_boundary": "Apps receive provider readiness and receipts only; drm/rights/key/decrypt providers retain protected-content open, dDRM, key-release, and decrypt authority.",
-        "available_provider_count": available_count,
-        "configured_provider_count": configured_count,
-        "required_provider_count": providers.len(),
-        "providers": providers,
-        "encrypted_recipient_sharing": {
-            "schema": "elastos.library.encrypted-recipient-sharing-readiness/v1",
-            "providers_ready": provider_chain_ready,
-            "production_encrypted_publish_mode_ready": false,
-            "status": if provider_chain_ready {
-                "provider_chain_ready"
-            } else {
-                "blocked_until_drm_rights_key_decrypt_providers_configured"
-            },
-            "required_published_payload": "encrypted_recipient_content",
-            "next": if provider_chain_ready {
-                "Protected-content provider chain is configured. Runtime custody publish mode remains inactive until the protected publish path is activated."
-            } else {
-                "Configure drm/rights/key/decrypt providers before protected-content key release can proceed."
-            }
-        }
-    })
-}
-
-async fn protected_content_provider_runtime_status(
-    registry: &ProviderRegistry,
-    id: &str,
-    scheme: &str,
-    primary_operation: &str,
-) -> Value {
-    if registry.get(scheme).await.is_none() {
-        return json!({
-            "id": id,
-            "scheme": scheme,
-            "primary_operation": primary_operation,
-            "available": false,
-            "configured": false,
-            "status": "provider_not_registered",
-            "next": format!("{id} must be installed and registered on the Runtime provider plane.")
-        });
-    }
-    match registry.send_raw(scheme, &json!({ "op": "status" })).await {
-        Ok(response) => {
-            let data = response
-                .get("data")
-                .filter(|_| response.get("status").and_then(Value::as_str) == Some("ok"))
-                .unwrap_or(&response);
-            let configured = data
-                .get("configured")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            json!({
-                "id": id,
-                "scheme": scheme,
-                "primary_operation": primary_operation,
-                "available": true,
-                "configured": configured,
-                "provider": data.get("provider").and_then(Value::as_str).unwrap_or(scheme),
-                "version": data.get("version").cloned().unwrap_or(Value::Null),
-                "contract_schema": data
-                    .get("contract")
-                    .and_then(|contract| contract.get("schema"))
-                    .cloned()
-                    .unwrap_or(Value::Null),
-                "supported_operations": data
-                    .get("supported_operations")
-                    .cloned()
-                    .unwrap_or_else(|| json!([])),
-                "blocked_authority": data
-                    .get("blocked_authority")
-                    .cloned()
-                    .unwrap_or_else(|| json!([])),
-                "status": if configured {
-                    "configured"
-                } else {
-                    "provider_registered_not_configured"
-                },
-                "next": if configured {
-                    "Provider is configured; encrypted publish mode still controls whether Library requests key release."
-                } else {
-                    "Provider is installed but still fail-closed until its backend policy/key/decrypt configuration is complete."
-                }
-            })
-        }
-        Err(err) => json!({
-            "id": id,
-            "scheme": scheme,
-            "primary_operation": primary_operation,
-            "available": false,
-            "configured": false,
-            "status": "provider_status_unavailable",
-            "error": err.to_string(),
-            "next": format!("Inspect {id} registration and provider health.")
-        }),
-    }
+/// Reports how far this object's publish has got, without disturbing it.
+///
+/// The publish itself is one long blocking request, so this is the only way
+/// the page can learn which stage it is in while that request is still open.
+/// It reads the mint journal and nothing else: no provider call, no wallet
+/// authority, no write. An object that was never protected simply has no
+/// progress to report, which is not an error.
+fn library_publish_progress(
+    data_dir: &Path,
+    principal_id: &str,
+    uri: &str,
+) -> anyhow::Result<Value> {
+    let target = library_target(data_dir, principal_id, uri)?;
+    let source_storage = published_source_storage(data_dir, principal_id, &target)?.to_string();
+    let progress = crate::protected_content_runtime::runtime_custody_publish_progress(
+        data_dir,
+        principal_id,
+        &target.uri,
+        &source_storage,
+    )?;
+    Ok(json!({
+        "uri": target.uri,
+        "progress": progress,
+    }))
 }
 
 fn published_source_storage(
@@ -7305,6 +7658,261 @@ fn record_is_runtime_custody(record: &LibraryPublishRecord) -> bool {
         .get("published_payload")
         .and_then(Value::as_str)
         == Some(RUNTIME_CUSTODY_PUBLISHED_PAYLOAD)
+}
+
+/// The Library folder a freshly minted protected item is filed under, so it
+/// lands where the shelf for its kind already is: images in Pictures, video in
+/// Videos, audio in Music, and everything else -- PDF, text, EPUB, 3D, source
+/// -- in Documents.
+///
+/// Placement keys off the ORIGINAL asset mime, never off the on-disk name: the
+/// item written is a `.ddrm` capsule whose own extension says nothing about
+/// what it protects. Every folder named here must also be a `library_roots`
+/// entry, or the item lands somewhere the sidebar cannot reach.
+/// A capsule is a JSON document; its `.ddrm` suffix names the kind of item it
+/// is, not a media type the Library can render on its own.
+const RUNTIME_CUSTODY_CAPSULE_MIME: &str = "application/json";
+/// How many names a capsule tries before giving up, so a collision suffixes
+/// rather than overwrites and a pathological loop still terminates.
+const RUNTIME_CUSTODY_CAPSULE_NAME_ATTEMPTS: usize = 64;
+/// A capsule is a small JSON document. Anything larger is not one, and is not
+/// read into memory to find out.
+const RUNTIME_CUSTODY_CAPSULE_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+pub(crate) fn library_folder_for_mime(mime: &str) -> &'static str {
+    let mime = mime.trim().to_ascii_lowercase();
+    if mime.starts_with("image/") {
+        "Pictures"
+    } else if mime.starts_with("video/") {
+        "Videos"
+    } else if mime.starts_with("audio/") {
+        "Music"
+    } else {
+        "Documents"
+    }
+}
+
+/// The Library name for a minted capsule: the source object's name with its
+/// original extension dropped, since the capsule carries the real MIME in its
+/// record and its own `.ddrm` suffix is what names the kind of file it is.
+fn runtime_custody_capsule_base_name(display_name: &str) -> String {
+    // `file_stem` drops the source extension and, on anything that still looks
+    // like a path, keeps only the final segment -- so a name can never walk out
+    // of the folder the capsule is being filed into.
+    let stem = Path::new(display_name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    let cleaned = stem
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || matches!(ch, '/' | '\\' | ':') {
+                '-'
+            } else {
+                ch
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if cleaned.is_empty() || cleaned.chars().all(|ch| ch == '.') {
+        "protected-content".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// Write the minted asset into the Library as a `.ddrm` capsule, filed on the
+/// shelf its kind belongs to, and answer the URI it landed at.
+///
+/// The capsule is the openable item: it carries the mint identity the viewer
+/// binds a session to, and it names the encrypted content by CID rather than
+/// carrying any of it, so no plaintext and no second copy of the ciphertext
+/// comes to rest here. The creator's original file is left exactly where it
+/// was -- publishing is not a reason to move or delete someone's file.
+///
+/// A name already taken is suffixed rather than overwritten, so minting the
+/// same source twice produces two items instead of silently replacing one.
+/// Write an owned protected item into the Library as a `.ddrm` capsule, filed
+/// on the shelf its kind belongs to, and answer the URI it landed at.
+///
+/// The capsule is the openable item and describes itself: the caller builds the
+/// document (see `runtime_custody_capsule_document`), and this places it. Which
+/// shelf is decided by what the capsule protects, never by its own `.ddrm`
+/// extension, which says nothing about whether it holds a film or a PDF.
+///
+/// Whatever the item was made from is left alone -- acquiring an asset is not a
+/// reason to move or delete someone's file. A name already taken is suffixed
+/// rather than overwritten, so owning the same asset twice produces two items
+/// instead of silently replacing one.
+/// Every shelf a capsule can be filed on, which is every folder
+/// `library_folder_for_mime` can answer.
+///
+/// The trash is deliberately not among them: a capsule the person threw away
+/// is not one to resurrect and rewrite in place. Owning that asset again puts
+/// a fresh item back on a shelf, which is what throwing it away asked for.
+const RUNTIME_CUSTODY_CAPSULE_SHELVES: [&str; 4] = ["Pictures", "Videos", "Music", "Documents"];
+
+/// Where this mint's capsule is already filed, if it is.
+///
+/// Reads each candidate's own identity rather than guessing from its name: a
+/// capsule's file name comes from the source object, so two different assets
+/// can share one, and the same asset can be filed under a name that no longer
+/// matches anything. The mint id inside the document is what actually says
+/// "this is that asset".
+fn runtime_custody_capsule_uri_for_mint(
+    data_dir: &Path,
+    principal_id: &str,
+    mint_id: &str,
+) -> Option<String> {
+    let localhost_root = crate::auth::principal_localhost_root(principal_id);
+    for folder in RUNTIME_CUSTODY_CAPSULE_SHELVES {
+        let folder_uri = format!("{localhost_root}/{folder}");
+        let Ok(folder_target) = library_target(data_dir, principal_id, &folder_uri) else {
+            continue;
+        };
+        let Ok(entries) = fs::read_dir(&folder_target.path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.to_ascii_lowercase().ends_with(".ddrm") {
+                continue;
+            }
+            let uri = format!("{folder_uri}/{name}");
+            let Ok(target) = library_target(data_dir, principal_id, &uri) else {
+                continue;
+            };
+            let Some(identity) =
+                runtime_custody_capsule_identity_metadata(data_dir, principal_id, &target, &name)
+            else {
+                continue;
+            };
+            if identity.get("mint_id").and_then(Value::as_str) == Some(mint_id) {
+                return Some(uri);
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn write_runtime_custody_capsule(
+    data_dir: &Path,
+    principal_id: &str,
+    display_name: &str,
+    content_type: &str,
+    capsule: &Value,
+) -> anyhow::Result<String> {
+    let localhost_root = crate::auth::principal_localhost_root(principal_id);
+    let folder = library_folder_for_mime(content_type);
+    let base = runtime_custody_capsule_base_name(display_name);
+    let bytes = serde_json::to_vec_pretty(capsule)?;
+    // Owning the same asset again is the same item, not a second one. The
+    // repair path re-files a capsule for an asset that already has one, and
+    // suffixing there leaves the person with two files where only one is
+    // current -- and the ownership record pointing at whichever was written
+    // last. Rewrite the capsule already filed for this mint instead.
+    if let Some(mint_id) = capsule
+        .get("mintId")
+        .and_then(Value::as_str)
+        .filter(|mint_id| !mint_id.is_empty())
+    {
+        if let Some(existing) =
+            runtime_custody_capsule_uri_for_mint(data_dir, principal_id, mint_id)
+        {
+            write_library_file_bytes(
+                data_dir,
+                principal_id,
+                &existing,
+                Some(RUNTIME_CUSTODY_CAPSULE_MIME),
+                None,
+                false,
+                &bytes,
+            )?;
+            return Ok(existing);
+        }
+    }
+    let mut last_error = None;
+    for attempt in 1..=RUNTIME_CUSTODY_CAPSULE_NAME_ATTEMPTS {
+        let name = if attempt == 1 {
+            format!("{base}.ddrm")
+        } else {
+            format!("{base} ({attempt}).ddrm")
+        };
+        let uri = format!("{localhost_root}/{folder}/{name}");
+        match write_library_file_bytes(
+            data_dir,
+            principal_id,
+            &uri,
+            Some(RUNTIME_CUSTODY_CAPSULE_MIME),
+            None,
+            true,
+            &bytes,
+        ) {
+            Ok(_) => return Ok(uri),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("library could not write the protected capsule")))
+}
+
+/// What a `.ddrm` says about itself.
+///
+/// A capsule is the item for an owned protected asset however it was acquired,
+/// and a buyer never publishes anything -- so there is no publish record to
+/// read this from, and inventing one would assert a publish that never
+/// happened. The capsule is self-describing instead, which is also what lets an
+/// asset be repaired by writing its file.
+///
+/// Nothing here is trusted as authority. It decides which viewer opens and what
+/// the Library shows; whether this principal may open it at all is the
+/// entitlement check, which answers from the chain. A hand-written capsule
+/// therefore buys nothing: it can only name a mint whose open is refused.
+fn runtime_custody_capsule_identity_metadata(
+    data_dir: &Path,
+    principal_id: &str,
+    target: &LibraryTarget,
+    name: &str,
+) -> Option<Value> {
+    if !name.to_ascii_lowercase().ends_with(".ddrm") {
+        return None;
+    }
+    let metadata = fs::metadata(&target.path).ok()?;
+    if !metadata.is_file() || metadata.len() > RUNTIME_CUSTODY_CAPSULE_MAX_BYTES {
+        return None;
+    }
+    // Read it the way the Library reads any of its files: what is on disk is a
+    // principal-root object carrying the document, not the document itself.
+    let capsule: Value =
+        serde_json::from_slice(&read_library_file_bytes(data_dir, principal_id, target).ok()?)
+            .ok()?;
+    if capsule.get("schema").and_then(Value::as_str)
+        != Some(crate::protected_content_runtime::RUNTIME_CUSTODY_CAPSULE_SCHEMA_V1)
+    {
+        return None;
+    }
+    // Capsules written before the metadata document was embedded spell these
+    // in snake_case. They are on real disks and must keep opening, so both
+    // spellings are read rather than migrating every file to find out.
+    let field = |camel: &str, snake: &str| {
+        capsule
+            .get(camel)
+            .or_else(|| capsule.get(snake))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    Some(json!({
+        "schema": "elastos.library.protected-content-identity/v1",
+        "content_id": field("contentId", "content_id"),
+        "mint_id": field("mintId", "mint_id"),
+        "kid": field("kid", "kid"),
+        "token_id": field("tokenId", "token_id"),
+        "ledger": field("ledger", "ledger"),
+        "authority": field("authority", "authority"),
+        "asset_mime": field("contentType", "asset_mime"),
+        "acquisition": field("acquisition", "acquisition"),
+        "published_cid": field("contentCid", "content_cid"),
+    }))
 }
 
 fn runtime_custody_library_identity_metadata(record: &LibraryPublishRecord) -> Option<Value> {
@@ -7330,9 +7938,9 @@ fn published_content_security(
         "source_storage": published_source_storage(data_dir, principal_id, target)?,
         "published_payload": "plain_content",
         "key_release_required": false,
-        "status": "not_required_for_plain_published_content",
-        "required_providers": protected_content_provider_requirements(false),
-        "next": "Publishing currently materializes a plain content payload through content-provider. Encrypted recipient payloads require drm/rights/key/decrypt providers and encrypted-content publish mode."
+        "status": "plain_published_content",
+        "protected_content": "runtime_custody_publish_only",
+        "next": "Publishing materializes a plain content payload through content-provider. Protected content is published through Runtime custody publish."
     }))
 }
 
@@ -7342,93 +7950,219 @@ fn validate_runtime_custody_publish_input(
     target: &LibraryTarget,
     protection: LibraryPublishProtectionRequest,
 ) -> anyhow::Result<LoadedRuntimeCustodyPublishInput> {
-    let LibraryPublishProtectionRequest::RuntimeCustody { copies, price } = protection;
+    let LibraryPublishProtectionRequest::RuntimeCustody {
+        copies,
+        price,
+        channel,
+        pay_token,
+        listing,
+        new_attempt,
+        pool_did,
+    } = protection
+    else {
+        bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+    };
+    // The channel is the creator's choice and there is no default to fall back
+    // on. Publishing into whichever channel a deployment happens to name is
+    // the behaviour this replaces, so a mint that names none is refused here
+    // rather than quietly settling somewhere.
+    let channel = channel.trim().to_ascii_lowercase();
+    if !is_evm_address(&channel) {
+        bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+    }
+    let pay_token = match pay_token.as_deref().map(str::trim) {
+        None | Some("") => String::new(),
+        Some(pay_token) => {
+            let pay_token = pay_token.to_ascii_lowercase();
+            if !is_evm_address(&pay_token) {
+                bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+            }
+            pay_token
+        }
+    };
     let target_metadata = fs::symlink_metadata(&target.path)
         .map_err(|_| anyhow!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE))?;
     if target_metadata.file_type().is_symlink() || !target_metadata.is_file() {
         bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
     }
     let _ = (data_dir, principal_id);
-    Ok(LoadedRuntimeCustodyPublishInput { copies, price })
+    let listing = listing.map(validate_runtime_custody_listing).transpose()?;
+    let pool_did = pool_did
+        .map(|did| did.trim().to_string())
+        .filter(|did| !did.is_empty());
+    if pool_did.as_deref().is_some_and(|did| {
+        elastos_protected_content_contracts::PoolDidV1::parse_did_key(did).is_err()
+    }) {
+        bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+    }
+    Ok(LoadedRuntimeCustodyPublishInput {
+        copies,
+        price,
+        channel,
+        pay_token,
+        listing,
+        new_attempt,
+        pool_did,
+    })
 }
 
-fn protected_content_sealed_object_from_security(
-    content_security: &Value,
-) -> anyhow::Result<SealedObjectV1> {
-    let sealed = content_security
-        .get("sealed_object")
-        .cloned()
-        .ok_or_else(|| anyhow!("protected content security missing sealed_object"))?;
-    serde_json::from_value(sealed).context("protected content sealed_object is invalid")
+/// The publish input a resume runs with, read from the mint's own record.
+///
+/// The creator tail takes its terms from the record when resuming and reads
+/// none of these; they are filled from it only so that every stage before the
+/// tail sees the same terms the record holds rather than blanks.
+fn resumed_runtime_custody_publish_input(
+    data_dir: &Path,
+    principal_id: &str,
+    target: &LibraryTarget,
+) -> anyhow::Result<LoadedRuntimeCustodyPublishInput> {
+    let source_storage = published_source_storage(data_dir, principal_id, target)?;
+    let recorded = crate::protected_content_runtime::runtime_custody_recorded_creator_terms(
+        data_dir,
+        principal_id,
+        &target.uri,
+        source_storage,
+    )?;
+    Ok(LoadedRuntimeCustodyPublishInput {
+        copies: recorded.copies().to_string(),
+        price: recorded.price().to_string(),
+        channel: recorded.ledger().to_string(),
+        pay_token: recorded.pay_token().to_string(),
+        listing: None,
+        new_attempt: false,
+        // A resume keeps the pool its intent recorded (S7-lite T7.6).
+        pool_did: None,
+    })
 }
 
-fn normalized_key_release_policy(
-    policy: Option<&str>,
-    content_security: &Value,
-) -> anyhow::Result<Value> {
-    let policy = policy
+/// `0x` followed by exactly 40 hex digits.
+fn is_evm_address(value: &str) -> bool {
+    let Some(body) = value.strip_prefix("0x") else {
+        return false;
+    };
+    body.len() == 40 && body.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Validate creator-supplied listing terms, failing closed on each rule.
+///
+/// Every one of these is a claim the listing will make publicly, so an invalid
+/// one is refused rather than normalised: a silently corrected royalty split or
+/// a dropped over-size thumbnail produces a listing that says something the
+/// creator did not ask for. Nothing here is logged — it is the creator's own
+/// title, description and payees.
+fn validate_runtime_custody_listing(
+    listing: LibraryPublishListingRequest,
+) -> anyhow::Result<RuntimeCustodyListingTerms> {
+    let title = listing.title.trim().to_string();
+    if title.is_empty() {
+        bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+    }
+
+    let thumbnail = match listing.thumbnail {
+        None => None,
+        Some(thumbnail) => {
+            let mime = thumbnail.mime.trim().to_ascii_lowercase();
+            if !mime.starts_with("image/") {
+                bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+            }
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(thumbnail.bytes_base64.trim())
+                .map_err(|_| anyhow!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE))?;
+            if bytes.is_empty() || bytes.len() > RUNTIME_CUSTODY_THUMBNAIL_MAX_BYTES {
+                bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+            }
+            Some(RuntimeCustodyListingThumbnail { mime, bytes })
+        }
+    };
+
+    // An empty split is not "no royalties": it is a caller that did not say.
+    // Absent stays absent; present must be exactly what the chain applies.
+    let mut royalties = Vec::with_capacity(listing.royalties.len());
+    if !listing.royalties.is_empty() {
+        let mut total: u32 = 0;
+        for royalty in listing.royalties {
+            let address = royalty.address.trim().to_ascii_lowercase();
+            // 0x + 40 lowercase hex. Kept local rather than reaching into the
+            // gateway's wallet module: this validates a creator-supplied payee
+            // for a metadata document, not a wallet the Runtime will act on.
+            if !is_evm_address(&address) {
+                bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+            }
+            if royalty.units == 0 {
+                bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+            }
+            total = total
+                .checked_add(royalty.units)
+                .ok_or_else(|| anyhow!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE))?;
+            royalties.push(RuntimeCustodyListingRoyalty {
+                address,
+                units: royalty.units,
+            });
+        }
+        if total != RUNTIME_CUSTODY_ROYALTY_TOTAL_UNITS {
+            bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+        }
+    }
+
+    let access_method = match listing.access_method.as_deref().map(str::trim) {
+        None | Some("") | Some("buy_once") => {
+            elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce
+        }
+        Some("free") => elastos_protected_content_runtime::RuntimeMintAccessMethod::Free,
+        Some("buy_and_resell") => {
+            elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyAndResell
+        }
+        Some(_) => bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE),
+    };
+    // The cut belongs to exactly one method. Anywhere else it would be
+    // accepted and then never encoded; on resale its absence shifts the ABI
+    // layout the operative factory decodes positionally.
+    match (access_method, listing.reseller_cut) {
+        (elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyAndResell, Some(cut))
+            if cut <= elastos_protected_content_runtime::RUNTIME_MINT_RESELLER_CUT_MAX => {}
+        (_, None)
+            if access_method
+                != elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyAndResell => {}
+        _ => bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE),
+    }
+    // A free mint creates no operative, so it has no royalty share to split.
+    if !access_method.is_paid() && !royalties.is_empty() {
+        bail!(RUNTIME_CUSTODY_PUBLISH_INPUT_INVALID_MESSAGE);
+    }
+
+    Ok(RuntimeCustodyListingTerms {
+        title,
+        description: listing.description.trim().to_string(),
+        category: listing.category.trim().to_string(),
+        tags: listing
+            .tags
+            .into_iter()
+            .map(|tag| tag.trim().to_string())
+            .filter(|tag| !tag.is_empty())
+            .collect(),
+        thumbnail,
+        royalties,
+        access_method,
+        reseller_cut: listing.reseller_cut,
+
+        adult: listing.adult,
+        licensing: listing.licensing,
+        legal_attestation: listing.legal_attestation,
+    })
+}
+
+fn normalized_key_release_policy(policy: Option<&str>) -> anyhow::Result<Value> {
+    match policy
         .map(str::trim)
         .filter(|policy| !policy.is_empty())
-        .unwrap_or("auto");
-    let content_requires_key_release = content_security
-        .get("key_release_required")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    match policy {
-        "auto" if content_requires_key_release => {
-            protected_content_key_release_policy(content_security)
-        }
-        "auto" | "none" | "plain_published_content" => Ok(json!({
-            "schema": "elastos.library.key-release/v1",
-            "required": false,
-            "status": content_security
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("not_required_for_plain_published_content"),
-            "published_payload": content_security
-                .get("published_payload")
-                .and_then(Value::as_str)
-                .unwrap_or("plain_content"),
-            "source_storage": content_security
-                .get("source_storage")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown"),
-            "required_providers": protected_content_provider_requirements(false),
-            "next": "No recipient key release is needed for the current plain published payload. Encrypted recipient payloads require drm/rights/key/decrypt providers."
-        })),
-        "recipient_key_release" | "protected_content" | "encrypted_recipient"
-            if content_requires_key_release =>
-        {
-            protected_content_key_release_policy(content_security)
-        }
+        .unwrap_or("auto")
+    {
+        "auto" | "none" | "plain_published_content" => Ok(default_share_key_release()),
         "recipient_key_release" | "protected_content" | "encrypted_recipient" => bail!(
-            "recipient key release requires drm/rights/key/decrypt providers and encrypted-content publish mode"
+            "protected content is published through Runtime custody publish; it is not a Library share key-release policy"
         ),
         _ => bail!("unsupported library key_release_policy"),
     }
-}
-
-fn protected_content_key_release_policy(content_security: &Value) -> anyhow::Result<Value> {
-    let sealed_object = protected_content_sealed_object_from_security(content_security)?;
-    Ok(json!({
-        "schema": "elastos.library.key-release/v1",
-        "required": true,
-        "status": "provider_receipt_chain_required",
-        "published_payload": content_security
-            .get("published_payload")
-            .and_then(Value::as_str)
-            .unwrap_or("protected_content"),
-        "payload_cid": sealed_object.payload_cid,
-        "sealed_cid": content_security
-            .get("sealed_cid")
-            .cloned()
-            .unwrap_or(Value::Null),
-        "viewer_interface": sealed_object.viewer.required_interface,
-        "key_envelope": sealed_object.key_envelope,
-        "required_providers": protected_content_provider_requirements(true),
-        "authority_boundary": "Library records the recipient grant; drm/rights/key/decrypt providers must issue receipts before a viewer opens protected content.",
-        "next": "Runtime shared_access must invoke drm, rights, key, and decrypt providers before returning a protected viewer session."
-    }))
 }
 
 fn record_availability_label(record: Option<&LibraryPublishRecord>) -> String {
@@ -7489,40 +8223,24 @@ fn normalized_share_policy(policy: Option<&str>, public_link: bool) -> anyhow::R
 }
 
 fn share_remote_enforcement_contract(policy: &str, key_release: &Value) -> Value {
-    let key_release_required = key_release
-        .get("required")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let recipient_proof_required = policy == "recipient_scoped";
     json!({
         "schema": "elastos.library.remote-access-policy/v1",
         "policy": policy,
         "provider_gate": "object-provider shared_access",
         "recipient_proof_required": recipient_proof_required,
-        "key_release_required": key_release_required,
+        "key_release_required": false,
         "key_release_status": key_release
             .get("status")
             .and_then(Value::as_str)
-            .unwrap_or("unknown"),
-        "required_providers": protected_content_provider_requirements(key_release_required),
-        "provider_invocation": {
-            "drm": "drm-provider.open",
-            "rights": "rights-provider.has_access_by_content_id",
-            "key": "key-provider.release",
-            "decrypt": "decrypt-provider.open_session",
-            "transport": "Carrier provider invocation when encrypted payloads are enabled"
-        },
-        "plain_content_fetch": !key_release_required,
-        "status": if key_release_required {
-            "blocked_until_drm_rights_key_decrypt_providers"
-        } else if recipient_proof_required {
+            .unwrap_or("not_required_for_plain_published_content"),
+        "plain_content_fetch": true,
+        "status": if recipient_proof_required {
             "recipient_proof_enforced_by_runtime"
         } else {
             "public_link_ready"
         },
-        "next": if key_release_required {
-            "Attach drm/rights/key/decrypt providers before releasing encrypted payload keys."
-        } else if recipient_proof_required {
+        "next": if recipient_proof_required {
             "Remote recipients must present a Runtime recipient proof before object-provider returns the shared open contract."
         } else {
             "Published plain content is available to holders of the content URI."
@@ -7695,10 +8413,6 @@ fn shared_access_open_contract(
     key_release: &Value,
     recipient_proof_verified: bool,
 ) -> Value {
-    let key_release_required = key_release
-        .get("required")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     json!({
         "schema": "elastos.library.shared-open/v1",
         "uri": format!("elastos://{}", record.cid),
@@ -7714,17 +8428,8 @@ fn shared_access_open_contract(
             .and_then(Value::as_str)
             .unwrap_or("plain_content"),
         "recipient_proof_verified": recipient_proof_verified,
-        "key_release_required": key_release_required,
-        "drm_provider_required": key_release_required,
-        "rights_provider_required": key_release_required,
-        "key_provider_required": key_release_required,
-        "decrypt_provider_required": key_release_required,
-        "required_providers": protected_content_provider_requirements(key_release_required),
-        "status": if key_release_required {
-            "blocked_until_drm_rights_key_decrypt_providers"
-        } else {
-            "ready_for_plain_content_fetch"
-        },
+        "key_release_required": false,
+        "status": "ready_for_plain_content_fetch",
         "remote_enforcement": share_remote_enforcement_contract(policy, key_release),
     })
 }
@@ -7747,6 +8452,7 @@ fn library_roots(data_dir: &Path, principal_id: &str) -> Vec<LibraryRoot> {
             "directory",
         ),
         ("videos", "Videos", format!("{root}/Videos"), "directory"),
+        ("music", "Music", format!("{root}/Music"), "directory"),
         (
             "downloads",
             "Downloads",
@@ -8198,10 +8904,10 @@ struct PublishedEntry {
 }
 
 impl PublishedEntry {
-    fn of(principal_id: &str, record: &LibraryPublishRecord) -> Self {
+    fn of(data_dir: &Path, principal_id: &str, record: &LibraryPublishRecord) -> Self {
         Self {
             principal_id: principal_id.to_string(),
-            cids: record_shared_cids(record),
+            cids: record_shared_cids(data_dir, record),
             any_peer: record_is_runtime_custody(record),
         }
     }
@@ -8257,20 +8963,98 @@ fn published_index_key(principal_id: &str, record: &LibraryPublishRecord) -> Str
     )))
 }
 
-/// The CIDs one publication shares: its content, and a protected
-/// publication's listing.
-fn record_shared_cids(record: &LibraryPublishRecord) -> BTreeSet<String> {
+/// The CIDs one publication shares: a protected publication's artifact set,
+/// or a Library publication's content. A protected publication whose listing
+/// this Home cannot read shares its content and listing, as it always did.
+fn record_shared_cids(data_dir: &Path, record: &LibraryPublishRecord) -> BTreeSet<String> {
+    if let Some(artifacts) = ProtectedListingArtifacts::of(data_dir, record) {
+        return artifacts.cids();
+    }
     let mut cids = BTreeSet::from([record.cid.clone()]);
-    if let Some(listing_cid) = record
+    if let Some(listing_cid) = record_listing_cid(record) {
+        cids.insert(listing_cid.to_string());
+    }
+    cids
+}
+
+/// The CID of the listing package a protected publication names.
+fn record_listing_cid(record: &LibraryPublishRecord) -> Option<&str> {
+    record
         .listing_uri
         .as_deref()
         .and_then(|uri| uri.strip_prefix("elastos://"))
         .and_then(|rest| rest.split(['/', '?', '#']).next())
         .filter(|cid| !cid.is_empty())
-    {
-        cids.insert(listing_cid.to_string());
+}
+
+/// What a protected publication shares with any peer: the sealed payload,
+/// the listing package, and the tokenURI metadata folder the listing names.
+/// The folder is public by nature -- it is the on-chain tokenURI, and the
+/// public metadata store publishes the same folder -- and a buyer's listing
+/// read starts from it, so its creator's Home serves it with the payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProtectedListingArtifacts {
+    content_cid: String,
+    listing_cid: String,
+    metadata_cid: String,
+}
+
+impl ProtectedListingArtifacts {
+    /// The artifact set of `record`, from the creator listing it names:
+    /// `None` for a Library publication, and for a protected one whose
+    /// listing this Home cannot read or that names another publication.
+    fn of(data_dir: &Path, record: &LibraryPublishRecord) -> Option<Self> {
+        if !record_is_runtime_custody(record) {
+            return None;
+        }
+        let listing_uri = record.listing_uri.as_deref()?;
+        let listing_cid = record_listing_cid(record)?;
+        let mint_id = record
+            .content_security
+            .get("mint_id")
+            .and_then(Value::as_str)
+            .and_then(|mint_id| {
+                crate::protected_content_runtime::parse_mint_id_hex(mint_id).ok()
+            })?;
+        let listing = match crate::protected_content_runtime::load_runtime_custody_listing(
+            data_dir, mint_id,
+        ) {
+            Ok(Some(listing)) => listing,
+            Ok(None) => {
+                tracing::warn!(
+                    cid = %record.cid,
+                    "library: a protected publication has no listing; its metadata folder is not shared"
+                );
+                return None;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    cid = %record.cid,
+                    %error,
+                    "library: a protected publication's listing is unreadable; its metadata folder is not shared"
+                );
+                return None;
+            }
+        };
+        if listing.origin.listing_uri() != Some(listing_uri)
+            || listing.package.content_cid != record.cid
+        {
+            tracing::warn!(
+                cid = %record.cid,
+                "library: a protected publication's listing names another publication; its metadata folder is not shared"
+            );
+            return None;
+        }
+        Some(Self {
+            content_cid: record.cid.clone(),
+            listing_cid: listing_cid.to_string(),
+            metadata_cid: listing.package.metadata_cid,
+        })
     }
-    cids
+
+    fn cids(self) -> BTreeSet<String> {
+        BTreeSet::from([self.content_cid, self.listing_cid, self.metadata_cid])
+    }
 }
 
 fn set_published_index_entry(
@@ -8284,7 +9068,7 @@ fn set_published_index_entry(
         if active {
             index
                 .publications
-                .insert(key, PublishedEntry::of(principal_id, record));
+                .insert(key, PublishedEntry::of(data_dir, principal_id, record));
         } else {
             index.publications.remove(&key);
         }
@@ -8359,7 +9143,7 @@ pub fn reconcile_published_cids(data_dir: &Path) {
             if record_is_published(&record) {
                 publications.insert(
                     published_index_key(principal, &record),
-                    PublishedEntry::of(principal, &record),
+                    PublishedEntry::of(data_dir, principal, &record),
                 );
             }
         }
@@ -8654,34 +9438,74 @@ fn now_nanos() -> u128 {
         .as_nanos()
 }
 
+/// Content type for one Library object name.
+///
+/// The `video/*` and `audio/*` arms are load-bearing beyond metadata: they are
+/// the dispatch gate `library_publish` uses to route protected publishing to
+/// the ffmpeg-backed media provider instead of the EPC1 object path, so a
+/// media container missing here would be sealed as an object rather than
+/// transcoded (and, until the object open/read path lands, could not be opened
+/// at all). The media extensions are therefore taken from the provider's own
+/// accepted input rather than guessed: `capsules/media-provider/src/lib.rs`
+/// imposes no container restriction of its own (it runs `ffprobe`/`ffmpeg`
+/// over a generic `-i input.bin` and only requires a video stream), so the set
+/// below is ffmpeg's own container registry — the "Common extensions" line of
+/// `ffmpeg -h demuxer=<name>` / `ffmpeg -h muxer=<name>` (ffmpeg 7.1.1) for the
+/// A/V container formats. Image-only extensions that ffmpeg's `mov` demuxer
+/// also claims (`avif`, `heic`, `heif`) are deliberately NOT treated as media.
 fn mime_for_name(name: &str) -> &'static str {
     let lower = name.to_lowercase();
-    if lower.ends_with(".md") || lower.ends_with(".txt") {
-        "text/plain"
-    } else if lower.ends_with(".html") {
-        "text/html"
-    } else if lower.ends_with(".json") {
-        "application/json"
-    } else if lower.ends_with(".png") {
-        "image/png"
-    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
-        "image/jpeg"
-    } else if lower.ends_with(".gif") {
-        "image/gif"
-    } else if lower.ends_with(".pdf") {
-        "application/pdf"
-    } else if lower.ends_with(".tar") {
-        "application/x-tar"
-    } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-        "application/gzip"
-    } else if lower.ends_with(".zip") {
-        "application/zip"
-    } else if lower.ends_with(".mp4") {
-        "video/mp4"
-    } else if lower.ends_with(".mp3") {
-        "audio/mpeg"
-    } else {
-        "application/octet-stream"
+    // Two-part suffix: checked before the single-extension table below.
+    if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
+        return "application/gzip";
+    }
+    let Some((_, extension)) = lower.rsplit_once('.') else {
+        return "application/octet-stream";
+    };
+    match extension {
+        "md" | "txt" => "text/plain",
+        "html" => "text/html",
+        "json" => "application/json",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "pdf" => "application/pdf",
+        "tar" => "application/x-tar",
+        "zip" => "application/zip",
+        // Video containers (ffmpeg demuxers: mov, m4v, matroska, webm, ogg,
+        // avi, flv, mpeg, mpegts, asf, vob).
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "3gp" | "3g2" => "video/3gpp",
+        "mkv" | "mk3d" => "video/x-matroska",
+        "webm" => "video/webm",
+        // `ogv` is ffmpeg's `ogg` demuxer, the same one `ogg`/`oga` below
+        // already route to the media path; it was publishable before the
+        // media allowlist landed and is restored here.
+        "ogv" => "video/ogg",
+        // `asf` is ffmpeg's `asf` demuxer -- literally the same demuxer
+        // `wmv` below already routes to the media path, so the provider
+        // demonstrably handles it.
+        "asf" => "video/x-ms-asf",
+        "avi" => "video/x-msvideo",
+        "flv" | "f4v" => "video/x-flv",
+        "mpg" | "mpeg" | "vob" => "video/mpeg",
+        "ts" | "m2t" | "m2ts" | "mts" => "video/mp2t",
+        "wmv" => "video/x-ms-wmv",
+        // Audio containers (ffmpeg demuxers: mp3, mov, aac, wav, flac, ogg,
+        // opus, oga, matroska, asf). Audio follows the media path too: it is
+        // transcoded to an fMP4 audio rendition rather than sealed as an
+        // object.
+        "mp3" | "mp2" | "m2a" | "mpa" => "audio/mpeg",
+        "m4a" | "m4b" => "audio/mp4",
+        "aac" => "audio/aac",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "ogg" | "oga" => "audio/ogg",
+        "opus" => "audio/opus",
+        "mka" => "audio/x-matroska",
+        "wma" => "audio/x-ms-wma",
+        _ => "application/octet-stream",
     }
 }
 
@@ -8698,14 +9522,6 @@ fn viewer_ids_for_name(name: &str) -> Vec<&'static str> {
         vec!["archive-manager"]
     } else if lower.ends_with(".md") || lower.ends_with(".txt") {
         vec!["documents"]
-    } else if lower.ends_with(".png")
-        || lower.ends_with(".jpg")
-        || lower.ends_with(".jpeg")
-        || lower.ends_with(".gif")
-    {
-        vec!["image-viewer"]
-    } else if lower.ends_with(".mp4") {
-        vec!["video-viewer"]
     } else if lower.ends_with(".gba") {
         vec!["gba-emulator"]
     } else {
@@ -8728,8 +9544,6 @@ fn installed_viewer_option(data_dir: &Path, id: &str) -> Option<LibraryViewerOpt
 fn viewer_label(id: &str) -> &str {
     match id {
         "documents" => "Documents",
-        "image-viewer" => "Image Viewer",
-        "video-viewer" => "Video Viewer",
         "gba-emulator" => "GBA Emulator",
         "archive-manager" => "Archive",
         _ => id,
@@ -8755,37 +9569,344 @@ fn provider_error(code: &str, message: &str) -> Value {
 /// app-facing sentence (the outermost error), and `detail` carries the cause
 /// chain beneath it (fail-closed site, provider verdict, RPC revert data) so
 /// an operator or driver can see why without the runtime log.
+///
+/// A refusal that carries its reason as data adds a typed, versioned field of
+/// its own. That field — not the sentence — is what an app branches on: reading
+/// English to decide what to offer is how a recoverable state once reached a
+/// dead end in the apps.
 fn provider_error_from(code: &str, error: &anyhow::Error) -> Value {
     let refusal = find_library_refusal(error);
-    let mut response = provider_error(
+    let mut response = provider_error_with_detail(
         refusal.map_or(code, |refusal| refusal.code),
-        &error.to_string(),
+        error,
+        bounded_error_detail(error_cause_chain(error)),
     );
     if let Some(reason) = refusal.and_then(|refusal| refusal.reason) {
         response["reason"] = Value::String(reason.to_string());
     }
-    let detail = anyhow_error_detail(error);
+    response
+}
+
+/// The error envelope a library request answers with, for tests that assert
+/// the typed fields an app reads.
+#[cfg(test)]
+pub(crate) fn provider_error_from_for_test(error: &anyhow::Error) -> Value {
+    provider_error_from("library_error", error)
+}
+
+/// [`provider_error_from`] with `detail` already built, so a caller that has
+/// to rewrite the cause chain does so before it is bounded (R42).
+fn provider_error_with_detail(code: &str, error: &anyhow::Error, detail: String) -> Value {
+    let mut response = provider_error(code, &error.to_string());
     if !detail.is_empty() {
         response["detail"] = Value::String(detail);
+    }
+    if let Some(blocked) =
+        error.downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+    {
+        response["creator_mint"] = blocked.as_json();
+    }
+    // An attempt that cannot continue as it stands. Refused, and answered by
+    // Start over: the field is what tells an app to offer it.
+    if let Some(conflict) =
+        error.downcast_ref::<crate::protected_content_runtime::RuntimeCustodyAttemptConflict>()
+    {
+        response["attempt_conflict"] = conflict.as_json();
+    }
+    if let Some(unusable) = error
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyWalletDefaultUnusable>(
+    ) {
+        response["wallet_default"] = unusable.as_json();
+    }
+    // A mint bound to an account the wallet no longer defaults to. Its own key,
+    // not `wallet_default`: the default here is fine, and an app that conflated
+    // the two would tell the creator to set a default they have already set.
+    if let Some(drift) =
+        error.downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorWalletDrift>()
+    {
+        response["wallet_drift"] = drift.as_json();
+    }
+    // A waiting state, not a failure. Carried as data so an app stops deciding
+    // control flow by matching the word "pending" in a sentence written for a
+    // person to read.
+    if let Some(pending) =
+        error.downcast_ref::<crate::protected_content_runtime::RuntimeCustodyEffectPending>()
+    {
+        response["effect_pending"] = pending.as_json();
+    }
+    // The buy twin of `open_progress`. A purchase is a sequence of waits, and
+    // an app has to tell "approve this in your wallet" from "the network is
+    // confirming it" from "you declined". All three arrived as one sentence
+    // that Marketplace then dropped, so a purchase in progress read as a
+    // purchase that had failed.
+    if let Some(progress) =
+        error.downcast_ref::<crate::protected_content_runtime::RuntimeCustodyBuyProgress>()
+    {
+        response["buy_progress"] = progress.as_json();
+    }
+    // A market buy refused before anything was raised (§5.3). Its typed code
+    // replaces the generic one: `code` is the field Marketplace branches on,
+    // and `terms_changed` carries the offer the buyer has to decide on anew.
+    if let Some(refusal) = error.downcast_ref::<crate::api::gateway::RuntimeMarketBuyRefusal>() {
+        refusal.project_onto(&mut response);
+    }
+    // An item whose pool this Home cannot reach (Plan B T4.7): the page says
+    // so from `code` rather than reporting a failure.
+    if crate::protected_content_runtime::RuntimeCustodyElsewhere::is(error) {
+        response["code"] = Value::String(
+            crate::protected_content_runtime::RuntimeCustodyElsewhere::CODE.to_string(),
+        );
+    }
+    // Plan B T4.5 (C3): a pool session at its end. The Player or Reader
+    // keeps its place and runs the open once, from `code`.
+    if crate::protected_content_runtime::RuntimeCustodyPoolSessionRenewalRequired::is(error) {
+        response["code"] = Value::String(
+            crate::protected_content_runtime::RuntimeCustodyPoolSessionRenewalRequired::CODE
+                .to_string(),
+        );
+    }
+    // OPEN-LOOP F2: a pool open that failed after the Wallet signed. The
+    // Player or Reader offers Retry and opens nothing on its own, from `code`.
+    if crate::protected_content_runtime::RuntimeCustodyPoolContentUnavailable::is(error) {
+        response["code"] = Value::String(
+            crate::protected_content_runtime::RuntimeCustodyPoolContentUnavailable::CODE
+                .to_string(),
+        );
+    }
+    // A download refused for a reason a person can act on: the page says
+    // what is missing from `code`.
+    if let Some(refusal) =
+        error.downcast_ref::<crate::protected_content_runtime::RuntimeCustodyDownloadRefusal>()
+    {
+        response["code"] = Value::String(refusal.code().to_string());
+    }
+    // The opposite of pending: an approval that is finished and did not
+    // succeed. Its own key, so an app polling for completion can tell "stop
+    // waiting" from "keep waiting" without reading either sentence.
+    if let Some(closed) =
+        error.downcast_ref::<crate::protected_content_runtime::RuntimeCustodyApprovalClosed>()
+    {
+        response["approval_closed"] = closed.as_json();
+    }
+    // How far an open has got. A viewer reads `resumable` here to choose
+    // between waiting for the person's Wallet approval and offering them a
+    // retry, so that choice stops depending on the words in `message`.
+    if let Some(progress) =
+        error.downcast_ref::<crate::protected_content_runtime::RuntimeCustodyOpenProgress>()
+    {
+        response["open_progress"] = progress.as_json();
+    }
+    // A mint whose metadata did not reach the public IPFS store, so no
+    // approval was raised: the typed code says why, and its progress names
+    // the `public_metadata` stage that failed.
+    if let Some(failure) =
+        error.downcast_ref::<crate::public_metadata_publisher::PublicMetadataFailure>()
+    {
+        response["public_metadata"] = failure.as_json();
     }
     response
 }
 
-fn anyhow_error_detail(error: &anyhow::Error) -> String {
-    let mut detail = error
+/// The error envelope for any object request; for a Marketplace buy (`buy`,
+/// `buy_offer`) with every account address taken out of the text (R31).
+fn marketplace_buy_error_from(marketplace_buy: bool, error: &anyhow::Error) -> Value {
+    if !marketplace_buy {
+        return provider_error_from("library_error", error);
+    }
+    // R42: the whole cause chain is redacted before it is bounded, so the
+    // bound can never cut an address into a run too short to be recognised.
+    let detail = bounded_error_detail(redact_evm_address_runs(&error_cause_chain(error)));
+    let mut response = provider_error_with_detail("library_error", error, detail);
+    redact_account_addresses(&mut response);
+    response
+}
+
+/// D14 for a Marketplace buy (R31): the page never learns this Home's account.
+/// A node's own sentence can name it ("insufficient funds ... address 0x…"),
+/// and `detail` carries such sentences, so every `0x` + 40-hex run in `message`
+/// and `detail` becomes `0x…`. Typed fields (`code`, `current`,
+/// `buy_progress`) are left exactly as they are: they are built to carry no
+/// account, and `current` names a seller the page was already shown.
+fn redact_account_addresses(response: &mut Value) {
+    for key in ["message", "detail"] {
+        if let Some(Value::String(text)) = response.get_mut(key) {
+            *text = redact_evm_address_runs(text);
+        }
+    }
+}
+
+/// Replace every `0x` followed by at least 40 hex digits with `0x…`.
+fn redact_evm_address_runs(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let is_prefix = bytes[index] == b'0' && matches!(bytes.get(index + 1), Some(b'x' | b'X'));
+        if is_prefix {
+            let digits = bytes[index + 2..]
+                .iter()
+                .take_while(|byte| byte.is_ascii_hexdigit())
+                .count();
+            if digits >= 40 {
+                out.push_str("0x\u{2026}");
+                index += 2 + digits;
+                continue;
+            }
+        }
+        let ch = text[index..].chars().next().unwrap_or('\u{fffd}');
+        out.push(ch);
+        index += ch.len_utf8();
+    }
+    out
+}
+
+/// The cause chain beneath the outermost error, outermost first.
+fn error_cause_chain(error: &anyhow::Error) -> String {
+    error
         .chain()
         .skip(1)
         .map(|cause| cause.to_string())
         .collect::<Vec<_>>()
-        .join(" <- ");
-    if detail.len() > 1024 {
-        detail.truncate(1024);
+        .join(" <- ")
+}
+
+/// `detail` bounded to 1024 bytes, cut on a character boundary.
+fn bounded_error_detail(mut detail: String) -> String {
+    const MAX_DETAIL_BYTES: usize = 1024;
+    if detail.len() > MAX_DETAIL_BYTES {
+        detail.truncate(detail.floor_char_boundary(MAX_DETAIL_BYTES));
     }
     detail
 }
 
 #[cfg(test)]
 mod tests {
+    /// A minted item must land on the shelf its own kind lives on, and every
+    /// shelf named here must be reachable from the sidebar -- an item filed
+    /// into a folder that is not a Library root is an item the creator cannot
+    /// get to.
+    #[test]
+    fn minted_items_are_filed_by_kind_onto_reachable_shelves() {
+        for (mime, expected) in [
+            ("image/png", "Pictures"),
+            ("IMAGE/JPEG", "Pictures"),
+            ("video/mp4", "Videos"),
+            ("audio/mpeg", "Music"),
+            ("  audio/aac  ", "Music"),
+            ("application/pdf", "Documents"),
+            ("text/plain", "Documents"),
+            ("", "Documents"),
+        ] {
+            let folder = super::library_folder_for_mime(mime);
+            assert_eq!(folder, expected, "mime={mime}");
+            let roots = super::library_roots(std::path::Path::new("/tmp"), "person:local:shelf");
+            assert!(
+                roots
+                    .iter()
+                    .any(|root| root.uri.ends_with(&format!("/{folder}"))),
+                "{folder} must be a Library root, or a {mime} mint lands out of reach"
+            );
+        }
+    }
+
+    /// The capsule drops the source extension (its own `.ddrm` names the kind
+    /// of item it is) and never lets a name escape its folder.
+    #[test]
+    fn capsule_names_drop_the_source_extension_and_cannot_traverse() {
+        for (display_name, expected) in [
+            ("holiday.jpeg", "holiday"),
+            ("report.final.pdf", "report.final"),
+            ("no-extension", "no-extension"),
+            ("../../etc/passwd", "passwd"),
+            ("..", "protected-content"),
+            (".hidden", ".hidden"),
+            ("", "protected-content"),
+        ] {
+            let base = super::runtime_custody_capsule_base_name(display_name);
+            assert_eq!(base, expected, "display_name={display_name}");
+            assert!(!base.contains('/'), "display_name={display_name}");
+        }
+    }
+
+    #[test]
+    fn viewer_ids_for_name_only_names_installed_capsule_ids() {
+        for name in ["clip.mp4", "photo.png", "photo.jpg", "art.gif", "song.mp3"] {
+            assert!(
+                super::viewer_ids_for_name(name).is_empty(),
+                "{name} must not name a phantom viewer"
+            );
+        }
+        assert_eq!(super::viewer_ids_for_name("notes.md"), vec!["documents"]);
+        // Documents edits text only; a PDF is offered as a download.
+        assert!(super::viewer_ids_for_name("paper.pdf").is_empty());
+        assert_eq!(super::viewer_ids_for_name("game.gba"), vec!["gba-emulator"]);
+        assert_eq!(
+            super::viewer_ids_for_name("bundle.zip"),
+            vec!["archive-manager"]
+        );
+    }
+
+    #[test]
+    fn marketplace_buy_errors_redact_every_account_address() {
+        let address = "0x19E7e376E7C213B7E7e7e46cc70A5dD086DAff2A";
+        let error = anyhow::anyhow!("insufficient funds: address {address} have 0")
+            .context("Runtime custody purchase is unavailable");
+        let redacted = super::marketplace_buy_error_from(true, &error);
+        assert_eq!(
+            redacted["detail"],
+            "insufficient funds: address 0x\u{2026} have 0"
+        );
+        assert_eq!(
+            redacted["message"],
+            "Runtime custody purchase is unavailable"
+        );
+        // Another op's envelope is left exactly as it was.
+        let plain = super::marketplace_buy_error_from(false, &error);
+        assert!(plain["detail"].as_str().unwrap().contains(address));
+        // Short hex (a quantity, a code) is not an address; a longer run (a
+        // transaction hash) is redacted all the same.
+        assert_eq!(
+            super::redact_evm_address_runs("value 0x2710 code 0x3 é"),
+            "value 0x2710 code 0x3 é"
+        );
+        assert_eq!(
+            super::redact_evm_address_runs(&format!("tx 0x{} done", "ab".repeat(32))),
+            "tx 0x\u{2026} done"
+        );
+    }
+
+    /// R42 (m1): the bound on `detail` never cuts an address into a run too
+    /// short to be recognised. The whole cause chain is redacted first, and
+    /// only then bounded.
+    #[test]
+    fn marketplace_buy_errors_redact_an_address_the_detail_bound_would_cut() {
+        let address = "0x19E7e376E7C213B7E7e7e46cc70A5dD086DAff2A";
+        for pad in [1000, 1010, 1020, 1023] {
+            let error = anyhow::anyhow!("{} {address} have 0", "n".repeat(pad))
+                .context("Runtime custody purchase is unavailable");
+            let redacted = super::marketplace_buy_error_from(true, &error);
+            let detail = redacted["detail"].as_str().unwrap();
+            assert!(detail.len() <= 1024, "pad {pad}: {} bytes", detail.len());
+            assert!(
+                !detail.contains("0x19"),
+                "pad {pad}: part of the address survived: {detail:?}"
+            );
+        }
+    }
+
+    /// The bound on `detail` lands on a character boundary, whatever the text.
+    #[test]
+    fn error_detail_bound_keeps_multibyte_text_whole() {
+        // One ASCII byte first, so byte 1024 falls inside a two-byte 'é'.
+        let error = anyhow::anyhow!("a{}", "é".repeat(700)).context("outer");
+        for marketplace_buy in [false, true] {
+            let value = super::marketplace_buy_error_from(marketplace_buy, &error);
+            let detail = value["detail"].as_str().unwrap();
+            assert!(detail.len() <= 1024);
+            assert!(detail.chars().skip(1).all(|ch| ch == 'é'));
+        }
+    }
+
     #[test]
     fn provider_error_from_keeps_the_stable_message_and_exposes_the_cause_chain() {
         let error = anyhow::anyhow!("(400, \"upstream_rpc_error: reverted\")")
@@ -8801,6 +9922,1246 @@ mod tests {
         );
         let plain = super::provider_error_from("library_error", &anyhow::anyhow!("only"));
         assert!(plain.get("detail").is_none());
+    }
+
+    /// A refusal that carries its reason as data must reach the caller as data.
+    /// Apps decide what to offer from this field; the sentence is only a
+    /// fallback, and matching patterns against it is what once turned a
+    /// recoverable state into a dead end.
+    #[test]
+    fn provider_error_from_carries_the_typed_creator_mint_refusal() {
+        let recorded = elastos_protected_content_runtime::RuntimeMintCreatorState::new(
+            elastos_protected_content_runtime::RuntimeMintCreatorDesiredTerms::new(
+                "wallet-account-1",
+                "0xa",
+                "0xf4240",
+                Vec::new(),
+                elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce,
+                None,
+                String::new(),
+                String::new(),
+            )
+            .unwrap(),
+            "bafycreatorcid",
+            "ipfs://bafymetadata/metadata.json",
+        )
+        .unwrap();
+        let blocked = crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked::new(
+            elastos_protected_content_contracts::Digest32::new([0x11; 32]),
+            &recorded,
+        );
+        let sentence = blocked.to_string();
+        let value = super::provider_error_from("library_error", &anyhow::Error::new(blocked));
+
+        assert_eq!(value["status"], "error");
+        assert_eq!(value["message"], sentence);
+        assert_eq!(value["creator_mint"]["state"], "recorded_only");
+        assert_eq!(value["creator_mint"]["recorded_copies"], "0xa");
+        assert_eq!(value["creator_mint"]["recorded_price"], "0xf4240");
+        assert_eq!(value["creator_mint"]["can_start_over"], false);
+
+        // Every other failure keeps the envelope it always had.
+        let plain = super::provider_error_from("library_error", &anyhow!("only"));
+        assert!(plain.get("creator_mint").is_none());
+    }
+
+    /// Each fail-closed refusal of an unfinished attempt keeps its sentence and
+    /// adds the code Creator answers with Start over.
+    #[test]
+    fn provider_error_from_carries_the_typed_attempt_conflict() {
+        use crate::protected_content_runtime::{
+            RuntimeCustodyAttemptConflict, RuntimeCustodyAttemptConflictReason,
+        };
+        for (reason, wire, sentence) in [
+            (
+                RuntimeCustodyAttemptConflictReason::SourceChanged,
+                "source_changed",
+                "Runtime custody media preparation conflicts with existing authority",
+            ),
+            (
+                RuntimeCustodyAttemptConflictReason::AuthorityChanged,
+                "authority_changed",
+                "Runtime custody mint intent conflicts with existing authority",
+            ),
+            (
+                RuntimeCustodyAttemptConflictReason::DispatchUncertain,
+                "dispatch_uncertain",
+                "Runtime custody mint requires cleanup reconciliation",
+            ),
+        ] {
+            let value = super::provider_error_from(
+                "library_error",
+                &RuntimeCustodyAttemptConflict::error(reason).context("outer"),
+            );
+            assert_eq!(value["attempt_conflict"]["reason"], wire);
+            // Start over is offered only once the gateway has asked whether
+            // the attempt could be set aside.
+            assert_eq!(value["attempt_conflict"]["can_start_over"], false);
+            let mut error = RuntimeCustodyAttemptConflict::error(reason);
+            error
+                .downcast_mut::<RuntimeCustodyAttemptConflict>()
+                .unwrap()
+                .set_can_start_over(true);
+            let value = super::provider_error_from("library_error", &error);
+            assert_eq!(value["attempt_conflict"]["can_start_over"], true);
+            assert_eq!(value["message"], sentence);
+        }
+        // The two refusals that need the Wallet or an operator are never
+        // answered by Start over.
+        for reason in [
+            RuntimeCustodyAttemptConflictReason::ApprovalOpen,
+            RuntimeCustodyAttemptConflictReason::ListingUnreadable,
+        ] {
+            let mut error = RuntimeCustodyAttemptConflict::error(reason);
+            error
+                .downcast_mut::<RuntimeCustodyAttemptConflict>()
+                .unwrap()
+                .set_can_start_over(true);
+            let value = super::provider_error_from("library_error", &error);
+            assert_eq!(value["attempt_conflict"]["can_start_over"], false);
+        }
+        let plain = super::provider_error_from("library_error", &anyhow!("only"));
+        assert!(plain.get("attempt_conflict").is_none());
+    }
+
+    /// The wallet-default refusal is additive: the opaque sentence every caller
+    /// already matches on stays the `message`, and the typed field beneath it
+    /// says which of the five conditions failed and names the network, so an
+    /// app can offer "link your wallet" rather than "unavailable".
+    #[test]
+    fn provider_error_from_carries_the_typed_wallet_default_refusal() {
+        let unusable =
+            crate::protected_content_runtime::RuntimeCustodyWalletDefaultUnusable::new(
+                crate::protected_content_runtime::RuntimeCustodyWalletDefaultReason::DefaultAccountSigningUnavailable,
+                "eip155:8453",
+            );
+        let actionable = unusable.to_string();
+        let value = super::provider_error_from(
+            "library_error",
+            &anyhow::Error::new(unusable).context("Runtime custody creator mint is unavailable"),
+        );
+
+        assert_eq!(value["status"], "error");
+        assert_eq!(
+            value["message"],
+            "Runtime custody creator mint is unavailable"
+        );
+        assert_eq!(
+            value["wallet_default"]["schema"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_WALLET_DEFAULT_UNUSABLE_SCHEMA_V1
+        );
+        assert_eq!(
+            value["wallet_default"]["reason"],
+            "default_account_signing_unavailable"
+        );
+        assert_eq!(value["wallet_default"]["chain_namespace"], "eip155:8453");
+
+        // The actionable sentence rides in the cause chain, never displacing
+        // the stable one, and it names the way out rather than the cause only.
+        assert_eq!(value["detail"], actionable);
+        assert!(actionable.contains("eip155:8453"));
+        assert!(actionable.contains("link it in Wallet"));
+
+        // Nothing sensitive travels: the answer is a reason and a network.
+        let fields = value["wallet_default"]
+            .as_object()
+            .expect("the typed answer must be an object");
+        assert_eq!(fields.len(), 3);
+
+        let plain = super::provider_error_from("library_error", &anyhow!("only"));
+        assert!(plain.get("wallet_default").is_none());
+    }
+
+    /// Wallet drift gets its own key, not `wallet_default`. The default is
+    /// perfectly usable in this case -- it is simply not the account the mint
+    /// already started on -- so an app that read this as a default problem
+    /// would tell the creator to set a default they have already set.
+    #[test]
+    fn provider_error_from_carries_the_typed_wallet_drift_refusal() {
+        let bound = "0x7ba979fa244b930c01bdc84de851e5bca64b9f81";
+        let current_default = "0xab5028bdbb0826ad6f1885478e421db677b0001a";
+        let drift = crate::protected_content_runtime::RuntimeCustodyCreatorWalletDrift::new(
+            "eip155:8453",
+            bound,
+            current_default,
+        );
+        let actionable = drift.to_string();
+        let value = super::provider_error_from(
+            "library_error",
+            &anyhow::Error::new(drift).context("Runtime custody creator mint is unavailable"),
+        );
+
+        assert_eq!(value["status"], "error");
+        assert_eq!(
+            value["message"],
+            "Runtime custody creator mint is unavailable"
+        );
+        assert_eq!(
+            value["wallet_drift"]["schema"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_CREATOR_WALLET_DRIFT_SCHEMA_V1
+        );
+        assert_eq!(
+            value["wallet_drift"]["reason"],
+            "creator_mint_bound_account_is_not_the_transaction_default"
+        );
+        assert_eq!(value["wallet_drift"]["chain_namespace"], "eip155:8453");
+
+        // Both accounts travel, and they are the point: a refusal that says
+        // "these two differ" without naming them leaves an app nothing to show.
+        assert_eq!(value["wallet_drift"]["bound_address"], bound);
+        assert_eq!(value["wallet_drift"]["default_address"], current_default);
+
+        // The sentence names both ways out, not just the cause.
+        assert_eq!(value["detail"], actionable);
+        assert!(actionable.contains(bound), "{actionable}");
+        assert!(actionable.contains(current_default), "{actionable}");
+        assert!(
+            actionable.contains("discard the recorded terms"),
+            "{actionable}"
+        );
+
+        // Drift is not a default problem; the two answers stay separate so an
+        // app branching on one never sees the other.
+        assert!(value.get("wallet_default").is_none());
+        let plain = super::provider_error_from("library_error", &anyhow!("only"));
+        assert!(plain.get("wallet_drift").is_none());
+    }
+
+    /// A waiting state carried as data. The distinction the typed answer adds
+    /// over the old shared sentence is `awaits_person`: one of these needs the
+    /// creator to go and approve something, and the other needs them to do
+    /// nothing at all.
+    #[test]
+    fn provider_error_from_carries_the_typed_effect_pending_state() {
+        let external =
+            crate::protected_content_runtime::RuntimeCustodyEffectPending::awaiting_wallet_approval(
+                true,
+                Some("metamask"),
+            );
+        assert!(external.awaits_person());
+        let actionable = external.to_string();
+        let value = super::provider_error_from(
+            "library_error",
+            &anyhow::Error::new(external).context(
+                "Runtime custody creator mint is pending exact Wallet or Chain settlement",
+            ),
+        );
+        assert_eq!(
+            value["message"],
+            "Runtime custody creator mint is pending exact Wallet or Chain settlement"
+        );
+        assert_eq!(
+            value["effect_pending"]["schema"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_EFFECT_PENDING_SCHEMA_V1
+        );
+        assert_eq!(value["effect_pending"]["reason"], "wallet_approval");
+        assert_eq!(value["effect_pending"]["awaits_person"], true);
+        assert_eq!(value["effect_pending"]["connector_id"], "metamask");
+        // Names where to go, not merely that something is pending.
+        assert_eq!(value["detail"], actionable);
+        assert!(actionable.contains("metamask"), "{actionable}");
+
+        // A managed approval is outstanding too, but nobody has to act on it.
+        let managed =
+            crate::protected_content_runtime::RuntimeCustodyEffectPending::awaiting_wallet_approval(
+                false, None,
+            );
+        assert!(!managed.awaits_person());
+        let value = super::provider_error_from("library_error", &anyhow::Error::new(managed));
+        assert_eq!(value["effect_pending"]["awaits_person"], false);
+
+        // A chain wait states no signer at all: the signer already did their
+        // part, and the site that raises it has no account in hand to describe.
+        let chain = crate::protected_content_runtime::RuntimeCustodyEffectPending::
+            awaiting_chain_settlement();
+        assert!(!chain.awaits_person());
+        let value = super::provider_error_from("library_error", &anyhow::Error::new(chain));
+        assert_eq!(value["effect_pending"]["reason"], "chain_settlement");
+        assert_eq!(value["effect_pending"]["awaits_person"], false);
+        assert!(value["effect_pending"].get("external_signer").is_none());
+        assert!(value["effect_pending"].get("connector_id").is_none());
+
+        let plain = super::provider_error_from("library_error", &anyhow!("only"));
+        assert!(plain.get("effect_pending").is_none());
+    }
+
+    /// How far an open has got, carried as data. The fact a viewer needs is
+    /// `resumable`: one of these means "ask again once the person answers the
+    /// Wallet" and another means "asking again answers the same". Both used to
+    /// arrive as one sentence, so the viewer showed the sentence and stopped --
+    /// which turned the ordinary first open of every protected item into a dead
+    /// end, because every first rights-signature request needs an approval.
+    #[test]
+    fn provider_error_from_carries_the_typed_open_progress_state() {
+        let external =
+            crate::protected_content_runtime::RuntimeCustodyOpenProgress::awaiting_rights_approval(
+                true,
+                Some("metamask"),
+                "approval-7",
+                1_700_000_290,
+            );
+        assert!(external.awaits_person());
+        assert_eq!(external.stage_label(), "rights_approval");
+        let actionable = external.to_string();
+        let value = super::provider_error_from(
+            "library_error",
+            &anyhow::Error::new(external)
+                .context("Runtime custody viewer release is pending exact Wallet approval"),
+        );
+        assert_eq!(
+            value["message"],
+            "Runtime custody viewer release is pending exact Wallet approval"
+        );
+        assert_eq!(
+            value["open_progress"]["schema"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_OPEN_PROGRESS_SCHEMA_V1
+        );
+        assert_eq!(value["open_progress"]["stage"], "rights_approval");
+        assert_eq!(value["open_progress"]["resumable"], true);
+        assert_eq!(value["open_progress"]["awaits_person"], true);
+        assert_eq!(value["open_progress"]["connector_id"], "metamask");
+        // The exact approval the person answers, as data. It already reached
+        // callers inside the cause chain; a viewer can now name it without
+        // parsing it back out of a sentence.
+        assert_eq!(value["open_progress"]["approval_request_id"], "approval-7");
+        assert_eq!(value["open_progress"]["expires_at"], 1_700_000_290u64);
+        // Names where to go, not merely that something is pending.
+        assert_eq!(value["detail"], actionable);
+        assert!(actionable.contains("metamask"), "{actionable}");
+
+        // A managed approval is outstanding too, and nobody has to act on it.
+        // The open still resumes, so the viewer keeps waiting either way.
+        let managed =
+            crate::protected_content_runtime::RuntimeCustodyOpenProgress::awaiting_rights_approval(
+                false,
+                None,
+                "approval-8",
+                1_700_000_290,
+            );
+        assert!(!managed.awaits_person());
+        let value = super::provider_error_from("library_error", &anyhow::Error::new(managed));
+        assert_eq!(value["open_progress"]["awaits_person"], false);
+        assert_eq!(value["open_progress"]["resumable"], true);
+        assert_eq!(
+            value["open_progress"]["connector_id"],
+            serde_json::Value::Null
+        );
+
+        // Absent for now: the same open can succeed later, and nobody is being
+        // waited on, so no approval is described.
+        let unavailable =
+            crate::protected_content_runtime::RuntimeCustodyOpenProgress::unavailable();
+        let value = super::provider_error_from("library_error", &anyhow::Error::new(unavailable));
+        assert_eq!(value["open_progress"]["stage"], "unavailable");
+        assert_eq!(value["open_progress"]["resumable"], true);
+        assert_eq!(value["open_progress"]["awaits_person"], false);
+        assert!(value["open_progress"].get("approval_request_id").is_none());
+        assert!(value["open_progress"].get("expires_at").is_none());
+
+        // Refused: this is the one a viewer must not keep asking about.
+        let denied = crate::protected_content_runtime::RuntimeCustodyOpenProgress::denied();
+        let value = super::provider_error_from("library_error", &anyhow::Error::new(denied));
+        assert_eq!(value["open_progress"]["stage"], "denied");
+        assert_eq!(value["open_progress"]["resumable"], false);
+        assert_eq!(value["open_progress"]["awaits_person"], false);
+
+        let plain = super::provider_error_from("library_error", &anyhow!("only"));
+        assert!(plain.get("open_progress").is_none());
+    }
+
+    /// How far a purchase has got, carried as data. A buyer's three waits look
+    /// the same from the outside and mean different things: one asks them to
+    /// answer their wallet, one asks nothing while the network confirms, and
+    /// one is their own refusal. All three used to arrive as the same sentence,
+    /// which Marketplace then dropped for containing the word "Runtime", so a
+    /// purchase that was proceeding normally read as one that had failed.
+    #[test]
+    fn provider_error_from_carries_the_typed_buy_progress_state() {
+        use crate::protected_content_runtime::{RuntimeCustodyBuyProgress, RuntimeCustodyBuyStage};
+
+        let external = RuntimeCustodyBuyProgress::awaiting_approval(
+            RuntimeCustodyBuyStage::PurchaseApproval,
+            true,
+            Some("wallet-metamask"),
+        );
+        assert!(external.awaits_person());
+        assert_eq!(external.stage_label(), "purchase_approval");
+        let actionable = external.to_string();
+        let value = super::provider_error_from(
+            "library_error",
+            &anyhow::Error::new(external).context(
+                crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE,
+            ),
+        );
+        assert_eq!(
+            value["message"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE,
+            "the sentence older callers match on stays outermost"
+        );
+        assert_eq!(
+            value["buy_progress"]["schema"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_BUY_PROGRESS_SCHEMA_V1
+        );
+        assert_eq!(value["buy_progress"]["stage"], "purchase_approval");
+        assert_eq!(value["buy_progress"]["resumable"], true);
+        assert_eq!(value["buy_progress"]["awaits_person"], true);
+        assert_eq!(value["buy_progress"]["connector_id"], "wallet-metamask");
+        // Names where to go, not merely that something is pending.
+        assert_eq!(value["detail"], actionable);
+        assert!(actionable.contains("wallet-metamask"), "{actionable}");
+
+        // An allowance is a different approval from the purchase, and a buyer
+        // asked for two in a row needs to know which one they are answering.
+        let allowance = RuntimeCustodyBuyProgress::awaiting_approval(
+            RuntimeCustodyBuyStage::AllowanceApproval,
+            true,
+            None,
+        );
+        assert!(allowance.to_string().contains("Allow the payment"));
+        let value = super::provider_error_from("library_error", &anyhow::Error::new(allowance));
+        assert_eq!(value["buy_progress"]["stage"], "allowance_approval");
+        assert_eq!(value["buy_progress"]["awaits_person"], true);
+
+        // A managed account has an approval outstanding too, and nobody has to
+        // act on it.
+        let managed = RuntimeCustodyBuyProgress::awaiting_approval(
+            RuntimeCustodyBuyStage::PurchaseApproval,
+            false,
+            None,
+        );
+        assert!(!managed.awaits_person());
+        let value = super::provider_error_from("library_error", &anyhow::Error::new(managed));
+        assert_eq!(value["buy_progress"]["awaits_person"], false);
+        assert_eq!(value["buy_progress"]["resumable"], true);
+
+        // Two waits that name nobody: the chain, and the right becoming
+        // readable. The signer has already done everything asked of them.
+        for (stage, wire) in [
+            (RuntimeCustodyBuyStage::ChainSettlement, "chain_settlement"),
+            (RuntimeCustodyBuyStage::AccessEvidence, "access_evidence"),
+        ] {
+            let waiting = RuntimeCustodyBuyProgress::waiting(stage);
+            assert!(!waiting.awaits_person());
+            let value = super::provider_error_from("library_error", &anyhow::Error::new(waiting));
+            assert_eq!(value["buy_progress"]["stage"], wire);
+            assert_eq!(value["buy_progress"]["resumable"], true);
+            assert!(value["buy_progress"].get("external_signer").is_none());
+            assert!(value["buy_progress"].get("connector_id").is_none());
+        }
+
+        // Declining is an answer, and asking again cannot change it. That is
+        // what stops an app polling a purchase that will never settle.
+        let declined = RuntimeCustodyBuyProgress::declined();
+        assert!(!declined.awaits_person());
+        assert_eq!(declined.stage_label(), "declined");
+        let value = super::provider_error_from("library_error", &anyhow::Error::new(declined));
+        assert_eq!(value["buy_progress"]["stage"], "declined");
+        assert_eq!(value["buy_progress"]["resumable"], false);
+
+        let plain = super::provider_error_from("library_error", &anyhow!("only"));
+        assert!(plain.get("buy_progress").is_none());
+    }
+
+    fn listing_request(json: serde_json::Value) -> super::LibraryPublishListingRequest {
+        serde_json::from_value(json).expect("fixture must parse")
+    }
+
+    fn valid_listing_json() -> serde_json::Value {
+        json!({
+            "title": "  My asset  ",
+            "description": " What it is ",
+            "category": "art",
+            "tags": ["one", "  ", "two"],
+            "royalties": [
+                { "address": "0xAB5028BDBB0826AD6F1885478E421DB677B0001A", "units": 900 },
+                { "address": "0x7ba979fa244b930c01bdc84de851e5bca64b9f81", "units": 50 }
+            ],
+            "adult": false
+        })
+    }
+
+    /// Listing terms are claims the listing makes publicly, so each rule fails
+    /// closed rather than normalising: a silently corrected royalty split or a
+    /// dropped over-size cover produces a listing that says something the
+    /// creator never asked for.
+    #[test]
+    fn listing_terms_are_normalised_and_accepted_when_every_rule_holds() {
+        let terms = super::validate_runtime_custody_listing(listing_request(valid_listing_json()))
+            .expect("a complete, consistent listing must be accepted");
+        assert_eq!(terms.title, "My asset");
+        assert_eq!(terms.description, "What it is");
+        // Blank tags are dropped, real ones trimmed and kept in order.
+        assert_eq!(terms.tags, vec!["one".to_string(), "two".to_string()]);
+        // Addresses are lowercased so two spellings of one payee cannot read
+        // as two payees downstream.
+        assert_eq!(
+            terms.royalties[0].address,
+            "0xab5028bdbb0826ad6f1885478e421db677b0001a"
+        );
+        assert_eq!(terms.royalties.len(), 2);
+    }
+
+    #[test]
+    fn listing_terms_require_a_title() {
+        for title in ["", "   "] {
+            let mut value = valid_listing_json();
+            value["title"] = json!(title);
+            super::validate_runtime_custody_listing(listing_request(value))
+                .expect_err("a listing with no title must fail closed");
+        }
+    }
+
+    #[test]
+    fn listing_royalties_must_total_exactly_the_creator_share() {
+        // The chain applies 9500 to the creator and 500 to the protocol. A
+        // split that does not total 9500 is not one the chain can honour, so
+        // showing it would describe a payout that will not happen.
+        for total in [949_u32, 951, 1000] {
+            let mut value = valid_listing_json();
+            value["royalties"] = json!([
+                { "address": "0xab5028bdbb0826ad6f1885478e421db677b0001a", "units": total }
+            ]);
+            super::validate_runtime_custody_listing(listing_request(value))
+                .expect_err("a split that does not total the creator share must fail closed");
+        }
+        let mut value = valid_listing_json();
+        value["royalties"] = json!([
+            { "address": "0xab5028bdbb0826ad6f1885478e421db677b0001a", "units": 950 }
+        ]);
+        super::validate_runtime_custody_listing(listing_request(value))
+            .expect("a split totalling exactly the creator share is accepted");
+    }
+
+    #[test]
+    fn listing_royalties_reject_a_malformed_payee_or_an_empty_share() {
+        for address in [
+            "0xnothex",
+            "ab5028bdbb0826ad6f1885478e421db677b0001a",
+            "0xab50",
+            "",
+        ] {
+            let mut value = valid_listing_json();
+            value["royalties"] = json!([
+                { "address": address, "units": 950 }
+            ]);
+            super::validate_runtime_custody_listing(listing_request(value))
+                .expect_err("a malformed payee address must fail closed");
+        }
+        // A zero share is a payee who is owed nothing: almost certainly a
+        // mistake, and never something to encode on chain.
+        let mut value = valid_listing_json();
+        value["royalties"] = json!([
+            { "address": "0xab5028bdbb0826ad6f1885478e421db677b0001a", "units": 950 },
+            { "address": "0x7ba979fa244b930c01bdc84de851e5bca64b9f81", "units": 0 }
+        ]);
+        super::validate_runtime_custody_listing(listing_request(value))
+            .expect_err("a zero-share payee must fail closed");
+    }
+
+    #[test]
+    fn listing_royalties_may_be_omitted_entirely() {
+        // Absent is not the same as an invalid split: a caller that says
+        // nothing gets the chain's own default, and nothing is claimed.
+        let mut value = valid_listing_json();
+        value["royalties"] = json!([]);
+        let terms = super::validate_runtime_custody_listing(listing_request(value))
+            .expect("an absent split is not an invalid one");
+        assert!(terms.royalties.is_empty());
+    }
+
+    #[test]
+    fn listing_thumbnail_must_be_an_image_within_the_byte_cap() {
+        use base64::Engine as _;
+        let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+
+        let mut value = valid_listing_json();
+        value["thumbnail"] = json!({ "mime": "image/png", "bytes_base64": encode(b"cover") });
+        let terms = super::validate_runtime_custody_listing(listing_request(value))
+            .expect("a small image cover is accepted");
+        assert_eq!(terms.thumbnail.as_ref().unwrap().mime, "image/png");
+        assert_eq!(terms.thumbnail.as_ref().unwrap().bytes, b"cover");
+
+        // Not an image: the cover is published, so its type is a claim too.
+        let mut value = valid_listing_json();
+        value["thumbnail"] = json!({ "mime": "application/pdf", "bytes_base64": encode(b"x") });
+        super::validate_runtime_custody_listing(listing_request(value))
+            .expect_err("a non-image cover must fail closed");
+
+        // Empty, unparseable, and over the cap.
+        for bad in [
+            json!({ "mime": "image/png", "bytes_base64": "" }),
+            json!({ "mime": "image/png", "bytes_base64": "!!not base64!!" }),
+        ] {
+            let mut value = valid_listing_json();
+            value["thumbnail"] = bad;
+            super::validate_runtime_custody_listing(listing_request(value))
+                .expect_err("an unusable cover must fail closed");
+        }
+        let mut value = valid_listing_json();
+        value["thumbnail"] = json!({
+            "mime": "image/png",
+            "bytes_base64": encode(&vec![0u8; super::RUNTIME_CUSTODY_THUMBNAIL_MAX_BYTES + 1]),
+        });
+        super::validate_runtime_custody_listing(listing_request(value))
+            .expect_err("a cover past the byte cap must fail closed");
+    }
+
+    /// A caller that sends a field this build does not understand is asking
+    /// for something it will not get; dropping it silently is how a listing
+    /// ends up claiming terms nobody applied.
+    #[test]
+    fn listing_terms_reject_an_unknown_field() {
+        let mut value = valid_listing_json();
+        value["resale_royalty_percent"] = json!(10);
+        serde_json::from_value::<super::LibraryPublishListingRequest>(value)
+            .expect_err("an unknown listing field must be refused, not ignored");
+    }
+
+    /// A publish with no listing block keeps the pre-listing behaviour, so an
+    /// existing caller is unaffected.
+    #[test]
+    fn a_publish_without_listing_terms_still_parses() {
+        let request: super::LibraryPublishProtectionRequest = serde_json::from_value(json!({
+            "mode": "runtime_custody",
+            "copies": "0x1",
+            "price": "0x1"
+        }))
+        .expect("the pre-listing shape must still parse");
+        let super::LibraryPublishProtectionRequest::RuntimeCustody { listing, .. } = request else {
+            panic!("a runtime custody publish must parse as one");
+        };
+        assert!(listing.is_none());
+    }
+
+    /// A resume names no terms, and cannot be made to: the record supplies
+    /// them, so a resume that also carried some would be asking for terms it
+    /// will not get.
+    #[test]
+    fn a_resume_carries_no_terms() {
+        let request: super::LibraryPublishProtectionRequest =
+            serde_json::from_value(json!({ "mode": "runtime_custody_resume" }))
+                .expect("a resume parses");
+        assert!(matches!(
+            request,
+            super::LibraryPublishProtectionRequest::RuntimeCustodyResume {}
+        ));
+        assert!(
+            serde_json::from_value::<super::LibraryPublishProtectionRequest>(json!({
+                "mode": "runtime_custody_resume",
+                "copies": "0x1"
+            }))
+            .is_err()
+        );
+    }
+
+    /// The opposite of pending, and it used to be indistinguishable from it: a
+    /// declined transaction answered "transaction approval is not completed",
+    /// exactly like one the person simply had not got to, so anything polling
+    /// for completion waited on it forever.
+    #[test]
+    fn provider_error_from_carries_a_closed_wallet_approval() {
+        for (reason, wire, expected_words) in [
+            (
+                crate::protected_content_runtime::RuntimeCustodyApprovalClosedReason::Rejected,
+                "approval_rejected",
+                "declined",
+            ),
+            (
+                crate::protected_content_runtime::RuntimeCustodyApprovalClosedReason::Expired,
+                "approval_expired",
+                "expired",
+            ),
+        ] {
+            let closed =
+                crate::protected_content_runtime::RuntimeCustodyApprovalClosed::new(reason);
+            let actionable = closed.to_string();
+            let value = super::provider_error_from(
+                "library_error",
+                &anyhow::Error::new(closed).context("Runtime custody creator mint is unavailable"),
+            );
+            assert_eq!(
+                value["approval_closed"]["schema"],
+                crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_CLOSED_SCHEMA_V1
+            );
+            assert_eq!(value["approval_closed"]["reason"], wire);
+            assert_eq!(value["detail"], actionable);
+            assert!(actionable.contains(expected_words), "{actionable}");
+            // Terminal and pending are separate answers, so an app polling for
+            // completion can stop on one without parsing the other.
+            assert!(value.get("effect_pending").is_none());
+        }
+
+        let plain = super::provider_error_from("library_error", &anyhow!("only"));
+        assert!(plain.get("approval_closed").is_none());
+    }
+
+    use super::*;
+
+    /// The media families the ffmpeg-backed media provider accepts must be
+    /// recognised as `video/*`/`audio/*`, because `library_publish` uses that
+    /// prefix to keep protected publishing on the media transcode path. Before
+    /// this table was widened only `.mp4`/`.mp3` were, so every other
+    /// container silently fell through to the EPC1 object path — a real
+    /// regression that no test caught, since every protected-content test uses
+    /// `.mp4` or `.mp3` filenames.
+    #[test]
+    fn mime_for_name_routes_every_media_family_to_the_media_path() {
+        for name in [
+            "clip.mov",
+            "CLIP.MOV",
+            "clip.mkv",
+            "clip.webm",
+            "clip.m4v",
+            "clip.mp4",
+            "clip.avi",
+            "clip.3gp",
+            "clip.flv",
+            "clip.mpg",
+            "clip.mpeg",
+            "clip.ts",
+            "clip.m2ts",
+            "clip.wmv",
+            "clip.vob",
+        ] {
+            let mime = mime_for_name(name);
+            assert!(
+                mime.starts_with("video/"),
+                "{name} must stay on the media path, got {mime}"
+            );
+        }
+        for name in [
+            "song.mp3",
+            "song.m4a",
+            "song.aac",
+            "song.wav",
+            "song.flac",
+            "song.ogg",
+            "song.oga",
+            "song.opus",
+            "song.mka",
+            "song.wma",
+        ] {
+            let mime = mime_for_name(name);
+            assert!(
+                mime.starts_with("audio/"),
+                "{name} must stay on the media path, got {mime}"
+            );
+        }
+    }
+
+    /// Non-media names must NOT leak onto the media path, and anything the
+    /// table does not know must stay `application/octet-stream` so
+    /// `library_publish` refuses it instead of minting an un-openable object.
+    /// `avif`/`heic`/`heif` matter specifically: ffmpeg's `mov` demuxer claims
+    /// them, so a naive "whatever ffmpeg reads is media" list would capture
+    /// still images.
+    #[test]
+    fn mime_for_name_keeps_non_media_off_the_media_path() {
+        for (name, expected) in [
+            ("notes.md", "text/plain"),
+            ("notes.txt", "text/plain"),
+            ("page.html", "text/html"),
+            ("data.json", "application/json"),
+            ("shot.png", "image/png"),
+            ("shot.jpg", "image/jpeg"),
+            ("shot.jpeg", "image/jpeg"),
+            ("shot.gif", "image/gif"),
+            ("book.pdf", "application/pdf"),
+            ("bundle.tar", "application/x-tar"),
+            ("bundle.tar.gz", "application/gzip"),
+            ("bundle.tgz", "application/gzip"),
+            ("bundle.zip", "application/zip"),
+            ("shot.avif", "application/octet-stream"),
+            ("shot.heic", "application/octet-stream"),
+            ("shot.heif", "application/octet-stream"),
+            ("model.glb", "application/octet-stream"),
+            ("noextension", "application/octet-stream"),
+        ] {
+            assert_eq!(mime_for_name(name), expected, "{name}");
+        }
+    }
+
+    /// The three protected viewer operations bind a session to
+    /// `executable_actor`, which only the gateway proxy verifies. On the raw
+    /// provider route every request field is caller-supplied, so they must be
+    /// refused there rather than trust it.
+    #[tokio::test]
+    async fn raw_object_provider_route_refuses_protected_viewer_operations() {
+        let registry = Arc::new(ProviderRegistry::new());
+        let temp = tempfile::tempdir().unwrap();
+        let provider = ObjectProvider::new(temp.path().to_path_buf(), Arc::downgrade(&registry));
+        for request in [
+            json!({
+                "op": "open_viewer",
+                "principal_id": "person:local:raw-viewer",
+                "mint_id": "00".repeat(32),
+                "executable_actor": "elacity-player",
+            }),
+            json!({
+                "op": "read_viewer",
+                "principal_id": "person:local:raw-viewer",
+                "mint_id": "00".repeat(32),
+                "viewer_session_handle": "00".repeat(32),
+                "executable_actor": "elacity-player",
+            }),
+            json!({
+                "op": "close_viewer",
+                "principal_id": "person:local:raw-viewer",
+                "mint_id": "00".repeat(32),
+                "viewer_session_handle": "00".repeat(32),
+                "executable_actor": "elacity-player",
+            }),
+        ] {
+            let response = provider.send_raw(&request).await.unwrap();
+            assert_eq!(response["status"], "error", "{request}");
+            assert_eq!(
+                response["message"], RUNTIME_CUSTODY_VIEWER_ROUTE_DENIED_MESSAGE,
+                "{request}"
+            );
+        }
+    }
+
+    /// `chunk_index` is now a DECLARED and honoured selector on `read_viewer`
+    /// (it names the object chunk to decrypt), so a request carrying one must
+    /// no longer be refused as an unknown field — it must reach the ordinary
+    /// viewer-route gate, which still refuses viewer operations on the raw
+    /// provider route. An undeclared selector must still be a request error,
+    /// which is what keeps a future third selector from being accepted and
+    /// silently ignored.
+    #[tokio::test]
+    async fn raw_object_provider_route_parses_a_chunk_index_selector_and_denies_the_route() {
+        let registry = Arc::new(ProviderRegistry::new());
+        let temp = tempfile::tempdir().unwrap();
+        let provider = ObjectProvider::new(temp.path().to_path_buf(), Arc::downgrade(&registry));
+        let response = provider
+            .send_raw(&json!({
+                "op": "read_viewer",
+                "principal_id": "person:local:raw-viewer",
+                "mint_id": "00".repeat(32),
+                "viewer_session_handle": "00".repeat(32),
+                "executable_actor": "elacity-reader",
+                "chunk_index": 0,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(response["status"], "error", "{response}");
+        assert_eq!(
+            response["message"], RUNTIME_CUSTODY_VIEWER_ROUTE_DENIED_MESSAGE,
+            "{response}"
+        );
+
+        let unknown_selector = provider
+            .send_raw(&json!({
+                "op": "read_viewer",
+                "principal_id": "person:local:raw-viewer",
+                "mint_id": "00".repeat(32),
+                "viewer_session_handle": "00".repeat(32),
+                "executable_actor": "elacity-reader",
+                "frame_index": 0,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(unknown_selector["status"], "error");
+        assert_eq!(unknown_selector["code"], "invalid_request");
+        assert!(
+            unknown_selector["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("frame_index"),
+            "{unknown_selector}"
+        );
+    }
+
+    #[test]
+    fn object_provider_exposes_object_scheme_only() {
+        let registry = Arc::new(ProviderRegistry::new());
+        let provider = ObjectProvider::new(PathBuf::new(), Arc::downgrade(&registry));
+        let schemes = provider.schemes();
+
+        assert!(schemes.contains(&"object"));
+        assert!(!schemes.contains(&"library"));
+        assert_eq!(provider.name(), "object-provider");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ELASTOS_LIVE_IPFS_PROVIDER_BIN and ELASTOS_LIVE_IPFS_DATA_DIR"]
+    async fn library_live_ipfs_publish_provider_route_smoke() {
+        let Ok(ipfs_provider_bin) = std::env::var("ELASTOS_LIVE_IPFS_PROVIDER_BIN") else {
+            eprintln!("skipping live Library publish smoke: ELASTOS_LIVE_IPFS_PROVIDER_BIN unset");
+            return;
+        };
+        let Ok(ipfs_data_dir) = std::env::var("ELASTOS_LIVE_IPFS_DATA_DIR") else {
+            eprintln!("skipping live Library publish smoke: ELASTOS_LIVE_IPFS_DATA_DIR unset");
+            return;
+        };
+        let ipfs_provider_bin = PathBuf::from(ipfs_provider_bin);
+        let ipfs_data_dir = PathBuf::from(ipfs_data_dir);
+        assert!(
+            ipfs_provider_bin.is_file(),
+            "ipfs-provider missing: {}",
+            ipfs_provider_bin.display()
+        );
+        assert!(
+            ipfs_data_dir.is_dir(),
+            "IPFS data dir missing: {}",
+            ipfs_data_dir.display()
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(ProviderRegistry::new());
+        let ipfs_config = elastos_runtime::provider::BridgeProviderConfig {
+            base_path: ipfs_data_dir.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let bridge = Arc::new(
+            elastos_runtime::provider::ProviderBridge::spawn(&ipfs_provider_bin, ipfs_config)
+                .await
+                .expect("spawn live ipfs-provider"),
+        );
+        let ipfs_provider: Arc<dyn Provider> = Arc::new(
+            elastos_runtime::provider::CapsuleProvider::with_scheme(Arc::clone(&bridge), "ipfs"),
+        );
+        registry
+            .register_sub_provider("ipfs", ipfs_provider)
+            .await
+            .unwrap();
+        let content_provider = Arc::new(crate::content::ContentProvider::new(
+            dir.path().to_path_buf(),
+            Arc::downgrade(&registry),
+        ));
+        registry.register(content_provider.clone()).await;
+        registry
+            .register_sub_provider("content", content_provider)
+            .await
+            .unwrap();
+
+        let principal_id = "did:key:z6MklibraryLiveIpfsSmoke";
+        let roots = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "roots",
+                "principal_id": principal_id,
+            }),
+        )
+        .await;
+        assert_eq!(roots["status"], "ok", "{roots}");
+        let public_uri = roots["data"]["roots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|root| root["id"] == "public")
+            .and_then(|root| root["uri"].as_str())
+            .expect("public Library root")
+            .to_string();
+
+        let body = format!("Library live IPFS provider route smoke {}\n", now_ts());
+        let file_uri = format!("{public_uri}/library-live-ipfs-provider-smoke.txt");
+        let write = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "write",
+                "principal_id": principal_id,
+                "uri": file_uri,
+                "mime": "text/plain",
+                "data": base64::engine::general_purpose::STANDARD.encode(body.as_bytes()),
+            }),
+        )
+        .await;
+        assert_eq!(write["status"], "ok", "{write}");
+        let revision = write["data"]["object"]["revision"]
+            .as_str()
+            .expect("write revision")
+            .to_string();
+
+        let publish = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "publish",
+                "principal_id": principal_id,
+                "uri": file_uri,
+                "if_revision": revision,
+            }),
+        )
+        .await;
+        assert_eq!(publish["status"], "ok", "{publish}");
+        let cid = publish["data"]["cid"].as_str().expect("publish cid");
+        assert!(!cid.trim().is_empty());
+        assert_eq!(publish["data"]["uri"], format!("elastos://{cid}"));
+        assert_eq!(publish["data"]["availability"]["status"], "local_pinned");
+        assert_eq!(publish["data"]["object"]["published_cid"], cid);
+
+        let status = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "status",
+                "principal_id": principal_id,
+                "uri": file_uri,
+            }),
+        )
+        .await;
+        assert_eq!(status["status"], "ok", "{status}");
+        assert_eq!(status["data"]["published"]["cid"], cid);
+
+        bridge
+            .shutdown()
+            .await
+            .expect("shutdown live ipfs-provider");
+        println!("library live IPFS provider route cid={cid}");
+    }
+
+    #[tokio::test]
+    async fn create_only_write_preserves_existing_file_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(ProviderRegistry::new());
+        let principal_id = "did:key:z6MkCreateOnlyExisting";
+        let file_uri = format!(
+            "{}/Documents/Notes.txt",
+            crate::auth::principal_localhost_root(principal_id)
+        );
+        let original = b"original bytes";
+        let replacement = b"replacement bytes";
+
+        let write = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "write",
+                "principal_id": principal_id,
+                "uri": file_uri,
+                "mime": "text/plain",
+                "data": base64::engine::general_purpose::STANDARD.encode(original),
+            }),
+        )
+        .await;
+        assert_eq!(write["status"], "ok", "{write}");
+
+        let create_only = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "write",
+                "principal_id": principal_id,
+                "uri": file_uri,
+                "mime": "text/plain",
+                "create_only": true,
+                "data": base64::engine::general_purpose::STANDARD.encode(replacement),
+            }),
+        )
+        .await;
+        assert_eq!(create_only["status"], "error", "{create_only}");
+        assert_eq!(
+            create_only["message"], "library destination already exists",
+            "{create_only}"
+        );
+
+        let read = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "read",
+                "principal_id": principal_id,
+                "uri": file_uri,
+            }),
+        )
+        .await;
+        assert_eq!(read["status"], "ok", "{read}");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(read["data"]["data"].as_str().unwrap())
+                .unwrap(),
+            original
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_only_write_is_atomic_for_concurrent_new_file_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(ProviderRegistry::new());
+        let principal_id = "did:key:z6MkCreateOnlyConcurrent";
+        let file_uri = format!(
+            "{}/Documents/Concurrent.txt",
+            crate::auth::principal_localhost_root(principal_id)
+        );
+        let first_payload = base64::engine::general_purpose::STANDARD.encode(b"first");
+        let second_payload = base64::engine::general_purpose::STANDARD.encode(b"second");
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+        let first_request = json!({
+            "op": "write",
+            "principal_id": principal_id,
+            "uri": file_uri,
+            "mime": "text/plain",
+            "create_only": true,
+            "data": first_payload,
+        });
+        let second_request = json!({
+            "op": "write",
+            "principal_id": principal_id,
+            "uri": file_uri,
+            "mime": "text/plain",
+            "create_only": true,
+            "data": second_payload,
+        });
+        let first_task = tokio::spawn({
+            let barrier = Arc::clone(&barrier);
+            let registry = Arc::clone(&registry);
+            let data_dir = dir.path().to_path_buf();
+            async move {
+                barrier.wait().await;
+                handle_object_provider_runtime_request(&data_dir, registry, &first_request).await
+            }
+        });
+        let second_task = tokio::spawn({
+            let barrier = Arc::clone(&barrier);
+            let registry = Arc::clone(&registry);
+            let data_dir = dir.path().to_path_buf();
+            async move {
+                barrier.wait().await;
+                handle_object_provider_runtime_request(&data_dir, registry, &second_request).await
+            }
+        });
+        barrier.wait().await;
+
+        let (first, second) = tokio::join!(async { first_task.await.unwrap() }, async {
+            second_task.await.unwrap()
+        },);
+        let outcomes = [first, second];
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|value| value["status"] == "ok")
+                .count(),
+            1,
+            "{outcomes:?}"
+        );
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|value| value["message"] == "library destination already exists")
+                .count(),
+            1,
+            "{outcomes:?}"
+        );
+        let winning_bytes = if outcomes[0]["status"] == "ok" {
+            b"first".as_slice()
+        } else if outcomes[1]["status"] == "ok" {
+            b"second".as_slice()
+        } else {
+            panic!("missing successful create_only write: {outcomes:?}");
+        };
+
+        let read = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "read",
+                "principal_id": principal_id,
+                "uri": file_uri,
+            }),
+        )
+        .await;
+        assert_eq!(read["status"], "ok", "{read}");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(read["data"]["data"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(bytes, winning_bytes);
+    }
+
+    #[tokio::test]
+    async fn create_only_write_rejects_if_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(ProviderRegistry::new());
+        let principal_id = "did:key:z6MkCreateOnlyIfRevision";
+        let file_uri = format!(
+            "{}/Documents/Notes.txt",
+            crate::auth::principal_localhost_root(principal_id)
+        );
+
+        let write = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "write",
+                "principal_id": principal_id,
+                "uri": file_uri,
+                "mime": "text/plain",
+                "if_revision": "rev:existing",
+                "create_only": true,
+                "data": base64::engine::general_purpose::STANDARD.encode(b"blocked"),
+            }),
+        )
+        .await;
+        assert_eq!(write["status"], "error", "{write}");
+        assert_eq!(
+            write["message"], "library create-only write does not accept if_revision",
+            "{write}"
+        );
+        assert!(!library_target(dir.path(), principal_id, &file_uri)
+            .unwrap()
+            .path
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn revisioned_write_still_replaces_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(ProviderRegistry::new());
+        let principal_id = "did:key:z6MkRevisionedWrite";
+        let file_uri = format!(
+            "{}/Documents/Notes.txt",
+            crate::auth::principal_localhost_root(principal_id)
+        );
+
+        let write = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "write",
+                "principal_id": principal_id,
+                "uri": file_uri,
+                "mime": "text/plain",
+                "data": base64::engine::general_purpose::STANDARD.encode(b"original"),
+            }),
+        )
+        .await;
+        assert_eq!(write["status"], "ok", "{write}");
+        let revision = write["data"]["object"]["revision"].as_str().unwrap();
+
+        let replacement = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "write",
+                "principal_id": principal_id,
+                "uri": file_uri,
+                "mime": "text/plain",
+                "if_revision": revision,
+                "data": base64::engine::general_purpose::STANDARD.encode(b"updated"),
+            }),
+        )
+        .await;
+        assert_eq!(replacement["status"], "ok", "{replacement}");
+
+        let read = handle_object_provider_runtime_request(
+            dir.path(),
+            Arc::clone(&registry),
+            &json!({
+                "op": "read",
+                "principal_id": principal_id,
+                "uri": file_uri,
+            }),
+        )
+        .await;
+        assert_eq!(read["status"], "ok", "{read}");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(read["data"]["data"].as_str().unwrap())
+                .unwrap(),
+            b"updated"
+        );
     }
 
     /// Documents edits text: a name routes to it only when its manifest
@@ -8849,8 +11210,6 @@ mod tests {
             );
         }
     }
-
-    use super::*;
 
     /// #449: a folder added to a copy or move source after the tree check
     /// is refused by the writer itself.
@@ -9405,429 +11764,6 @@ mod tests {
             failures.join("\n")
         );
     }
-
-    #[test]
-    fn object_provider_exposes_object_scheme_only() {
-        let registry = Arc::new(ProviderRegistry::new());
-        let provider = ObjectProvider::new(PathBuf::new(), Arc::downgrade(&registry));
-        let schemes = provider.schemes();
-
-        assert!(schemes.contains(&"object"));
-        assert!(!schemes.contains(&"library"));
-        assert_eq!(provider.name(), "object-provider");
-    }
-
-    #[test]
-    fn protected_content_provider_response_rejects_authority_fields() {
-        let forbidden = [
-            "raw_cek",
-            "wallet_rpc",
-            "chain_rpc",
-            "kubo_api",
-            "ipfs_api",
-            "elacity_sdk",
-            "elacity_sdk_token",
-            "contract_sdk",
-            "key_backend_sdk",
-        ];
-        for key in forbidden {
-            let value = json!({
-                "schema": "elastos.test/v1",
-                "nested": [{ key: "must-not-cross-boundary" }]
-            });
-            assert!(
-                reject_forbidden_protected_content_fields(&value).is_err(),
-                "{key} must be rejected before app/viewer handoff"
-            );
-        }
-
-        assert!(reject_forbidden_protected_content_fields(&json!({
-            "schema": "elastos.decrypt.session/v1",
-            "output": "viewer_capsule_session:fixture"
-        }))
-        .is_ok());
-    }
-
-    #[tokio::test]
-    #[ignore = "requires ELASTOS_LIVE_IPFS_PROVIDER_BIN and ELASTOS_LIVE_IPFS_DATA_DIR"]
-    async fn library_live_ipfs_publish_provider_route_smoke() {
-        let Ok(ipfs_provider_bin) = std::env::var("ELASTOS_LIVE_IPFS_PROVIDER_BIN") else {
-            eprintln!("skipping live Library publish smoke: ELASTOS_LIVE_IPFS_PROVIDER_BIN unset");
-            return;
-        };
-        let Ok(ipfs_data_dir) = std::env::var("ELASTOS_LIVE_IPFS_DATA_DIR") else {
-            eprintln!("skipping live Library publish smoke: ELASTOS_LIVE_IPFS_DATA_DIR unset");
-            return;
-        };
-        let ipfs_provider_bin = PathBuf::from(ipfs_provider_bin);
-        let ipfs_data_dir = PathBuf::from(ipfs_data_dir);
-        assert!(
-            ipfs_provider_bin.is_file(),
-            "ipfs-provider missing: {}",
-            ipfs_provider_bin.display()
-        );
-        assert!(
-            ipfs_data_dir.is_dir(),
-            "IPFS data dir missing: {}",
-            ipfs_data_dir.display()
-        );
-
-        let dir = tempfile::tempdir().unwrap();
-        let registry = Arc::new(ProviderRegistry::new());
-        let ipfs_config = elastos_runtime::provider::BridgeProviderConfig {
-            base_path: ipfs_data_dir.to_string_lossy().to_string(),
-            ..Default::default()
-        };
-        let bridge = Arc::new(
-            elastos_runtime::provider::ProviderBridge::spawn(&ipfs_provider_bin, ipfs_config)
-                .await
-                .expect("spawn live ipfs-provider"),
-        );
-        let ipfs_provider: Arc<dyn Provider> = Arc::new(
-            elastos_runtime::provider::CapsuleProvider::with_scheme(Arc::clone(&bridge), "ipfs"),
-        );
-        registry
-            .register_sub_provider("ipfs", ipfs_provider)
-            .await
-            .unwrap();
-        let content_provider = Arc::new(crate::content::ContentProvider::new(
-            dir.path().to_path_buf(),
-            Arc::downgrade(&registry),
-        ));
-        registry.register(content_provider.clone()).await;
-        registry
-            .register_sub_provider("content", content_provider)
-            .await
-            .unwrap();
-
-        let principal_id = "did:key:z6MklibraryLiveIpfsSmoke";
-        let roots = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "roots",
-                "principal_id": principal_id,
-            }),
-        )
-        .await;
-        assert_eq!(roots["status"], "ok", "{roots}");
-        let public_uri = roots["data"]["roots"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|root| root["id"] == "public")
-            .and_then(|root| root["uri"].as_str())
-            .expect("public Library root")
-            .to_string();
-
-        let body = format!("Library live IPFS provider route smoke {}\n", now_ts());
-        let file_uri = format!("{public_uri}/library-live-ipfs-provider-smoke.txt");
-        let write = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "write",
-                "principal_id": principal_id,
-                "uri": file_uri,
-                "mime": "text/plain",
-                "data": base64::engine::general_purpose::STANDARD.encode(body.as_bytes()),
-            }),
-        )
-        .await;
-        assert_eq!(write["status"], "ok", "{write}");
-        let revision = write["data"]["object"]["revision"]
-            .as_str()
-            .expect("write revision")
-            .to_string();
-
-        let publish = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "publish",
-                "principal_id": principal_id,
-                "uri": file_uri,
-                "if_revision": revision,
-            }),
-        )
-        .await;
-        assert_eq!(publish["status"], "ok", "{publish}");
-        let cid = publish["data"]["cid"].as_str().expect("publish cid");
-        assert!(!cid.trim().is_empty());
-        assert_eq!(publish["data"]["uri"], format!("elastos://{cid}"));
-        assert_eq!(publish["data"]["availability"]["status"], "local_pinned");
-        assert_eq!(publish["data"]["object"]["published_cid"], cid);
-
-        let status = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "status",
-                "principal_id": principal_id,
-                "uri": file_uri,
-            }),
-        )
-        .await;
-        assert_eq!(status["status"], "ok", "{status}");
-        assert_eq!(status["data"]["published"]["cid"], cid);
-
-        bridge
-            .shutdown()
-            .await
-            .expect("shutdown live ipfs-provider");
-        println!("library live IPFS provider route cid={cid}");
-    }
-
-    #[tokio::test]
-    async fn create_only_write_preserves_existing_file_bytes() {
-        let dir = tempfile::tempdir().unwrap();
-        let registry = Arc::new(ProviderRegistry::new());
-        let principal_id = "did:key:z6MkCreateOnlyExisting";
-        let file_uri = format!(
-            "{}/Documents/Notes.txt",
-            crate::auth::principal_localhost_root(principal_id)
-        );
-        let original = b"original bytes";
-        let replacement = b"replacement bytes";
-
-        let write = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "write",
-                "principal_id": principal_id,
-                "uri": file_uri,
-                "mime": "text/plain",
-                "data": base64::engine::general_purpose::STANDARD.encode(original),
-            }),
-        )
-        .await;
-        assert_eq!(write["status"], "ok", "{write}");
-
-        let create_only = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "write",
-                "principal_id": principal_id,
-                "uri": file_uri,
-                "mime": "text/plain",
-                "create_only": true,
-                "data": base64::engine::general_purpose::STANDARD.encode(replacement),
-            }),
-        )
-        .await;
-        assert_eq!(create_only["status"], "error", "{create_only}");
-        assert_eq!(
-            create_only["message"], "library destination already exists",
-            "{create_only}"
-        );
-
-        let read = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "read",
-                "principal_id": principal_id,
-                "uri": file_uri,
-            }),
-        )
-        .await;
-        assert_eq!(read["status"], "ok", "{read}");
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(read["data"]["data"].as_str().unwrap())
-                .unwrap(),
-            original
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn create_only_write_is_atomic_for_concurrent_new_file_requests() {
-        let dir = tempfile::tempdir().unwrap();
-        let registry = Arc::new(ProviderRegistry::new());
-        let principal_id = "did:key:z6MkCreateOnlyConcurrent";
-        let file_uri = format!(
-            "{}/Documents/Concurrent.txt",
-            crate::auth::principal_localhost_root(principal_id)
-        );
-        let first_payload = base64::engine::general_purpose::STANDARD.encode(b"first");
-        let second_payload = base64::engine::general_purpose::STANDARD.encode(b"second");
-        let barrier = Arc::new(tokio::sync::Barrier::new(3));
-        let first_request = json!({
-            "op": "write",
-            "principal_id": principal_id,
-            "uri": file_uri,
-            "mime": "text/plain",
-            "create_only": true,
-            "data": first_payload,
-        });
-        let second_request = json!({
-            "op": "write",
-            "principal_id": principal_id,
-            "uri": file_uri,
-            "mime": "text/plain",
-            "create_only": true,
-            "data": second_payload,
-        });
-        let first_task = tokio::spawn({
-            let barrier = Arc::clone(&barrier);
-            let registry = Arc::clone(&registry);
-            let data_dir = dir.path().to_path_buf();
-            async move {
-                barrier.wait().await;
-                handle_object_provider_runtime_request(&data_dir, registry, &first_request).await
-            }
-        });
-        let second_task = tokio::spawn({
-            let barrier = Arc::clone(&barrier);
-            let registry = Arc::clone(&registry);
-            let data_dir = dir.path().to_path_buf();
-            async move {
-                barrier.wait().await;
-                handle_object_provider_runtime_request(&data_dir, registry, &second_request).await
-            }
-        });
-        barrier.wait().await;
-
-        let (first, second) = tokio::join!(async { first_task.await.unwrap() }, async {
-            second_task.await.unwrap()
-        },);
-        let outcomes = [first, second];
-        assert_eq!(
-            outcomes
-                .iter()
-                .filter(|value| value["status"] == "ok")
-                .count(),
-            1,
-            "{outcomes:?}"
-        );
-        assert_eq!(
-            outcomes
-                .iter()
-                .filter(|value| value["message"] == "library destination already exists")
-                .count(),
-            1,
-            "{outcomes:?}"
-        );
-        let winning_bytes = if outcomes[0]["status"] == "ok" {
-            b"first".as_slice()
-        } else if outcomes[1]["status"] == "ok" {
-            b"second".as_slice()
-        } else {
-            panic!("missing successful create_only write: {outcomes:?}");
-        };
-
-        let read = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "read",
-                "principal_id": principal_id,
-                "uri": file_uri,
-            }),
-        )
-        .await;
-        assert_eq!(read["status"], "ok", "{read}");
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(read["data"]["data"].as_str().unwrap())
-            .unwrap();
-        assert_eq!(bytes, winning_bytes);
-    }
-
-    #[tokio::test]
-    async fn create_only_write_rejects_if_revision() {
-        let dir = tempfile::tempdir().unwrap();
-        let registry = Arc::new(ProviderRegistry::new());
-        let principal_id = "did:key:z6MkCreateOnlyIfRevision";
-        let file_uri = format!(
-            "{}/Documents/Notes.txt",
-            crate::auth::principal_localhost_root(principal_id)
-        );
-
-        let write = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "write",
-                "principal_id": principal_id,
-                "uri": file_uri,
-                "mime": "text/plain",
-                "if_revision": "rev:existing",
-                "create_only": true,
-                "data": base64::engine::general_purpose::STANDARD.encode(b"blocked"),
-            }),
-        )
-        .await;
-        assert_eq!(write["status"], "error", "{write}");
-        assert_eq!(
-            write["message"], "library create-only write does not accept if_revision",
-            "{write}"
-        );
-        assert!(!library_target(dir.path(), principal_id, &file_uri)
-            .unwrap()
-            .path
-            .exists());
-    }
-
-    #[tokio::test]
-    async fn revisioned_write_still_replaces_existing_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let registry = Arc::new(ProviderRegistry::new());
-        let principal_id = "did:key:z6MkRevisionedWrite";
-        let file_uri = format!(
-            "{}/Documents/Notes.txt",
-            crate::auth::principal_localhost_root(principal_id)
-        );
-
-        let write = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "write",
-                "principal_id": principal_id,
-                "uri": file_uri,
-                "mime": "text/plain",
-                "data": base64::engine::general_purpose::STANDARD.encode(b"original"),
-            }),
-        )
-        .await;
-        assert_eq!(write["status"], "ok", "{write}");
-        let revision = write["data"]["object"]["revision"].as_str().unwrap();
-
-        let replacement = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "write",
-                "principal_id": principal_id,
-                "uri": file_uri,
-                "mime": "text/plain",
-                "if_revision": revision,
-                "data": base64::engine::general_purpose::STANDARD.encode(b"updated"),
-            }),
-        )
-        .await;
-        assert_eq!(replacement["status"], "ok", "{replacement}");
-
-        let read = handle_object_provider_runtime_request(
-            dir.path(),
-            Arc::clone(&registry),
-            &json!({
-                "op": "read",
-                "principal_id": principal_id,
-                "uri": file_uri,
-            }),
-        )
-        .await;
-        assert_eq!(read["status"], "ok", "{read}");
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(read["data"]["data"].as_str().unwrap())
-                .unwrap(),
-            b"updated"
-        );
-    }
 }
 
 #[cfg(test)]
@@ -9914,8 +11850,14 @@ mod publish_tests {
         async fn call(&self, op: &str, mut body: Value) -> Value {
             body["op"] = json!(op);
             body["principal_id"] = json!(self.principal);
-            handle_object_provider_runtime_request(self.dir.path(), self.registry.clone(), &body)
-                .await
+            // Boxed: the request future is large, and a test that awaits many
+            // calls would otherwise hold one copy per await in its own frame.
+            Box::pin(handle_object_provider_runtime_request(
+                self.dir.path(),
+                self.registry.clone(),
+                &body,
+            ))
+            .await
         }
 
         fn uri(&self, path: &str) -> String {
@@ -10087,6 +12029,115 @@ mod publish_tests {
             let audience = published_cid_audience(home.dir.path(), cid).unwrap();
             assert!(audience.any_peer, "{cid}");
         }
+    }
+
+    const SEALED_CID: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+    const FOLDER_CID: &str = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG";
+    const LISTING_CID: &str = "bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354";
+
+    /// A minted film: its creator's listing names the three artifacts, and
+    /// the Library publication record names the payload and the listing.
+    #[cfg(unix)]
+    async fn minted_film(home: &Home) -> String {
+        home.write("Documents/film.mp4", b"sealed source").await;
+        let uri = home.uri("Documents/film.mp4");
+        let mint_id = elastos_protected_content_contracts::Digest32::new([0x4d; 32]);
+        crate::protected_content_runtime::tests::persist_creator_listing_for_test(
+            home.dir.path(),
+            home.principal,
+            mint_id,
+            SEALED_CID,
+            FOLDER_CID,
+            LISTING_CID,
+        );
+        let mut content_security = default_publish_content_security();
+        content_security["published_payload"] = json!(RUNTIME_CUSTODY_PUBLISHED_PAYLOAD);
+        content_security["mint_id"] = json!(hex::encode(mint_id.as_bytes()));
+        write_publish_record(
+            home.dir.path(),
+            home.principal,
+            &LibraryPublishRecord {
+                schema: "elastos.library.publish-record/v1".to_string(),
+                object_uri: uri.clone(),
+                cid: SEALED_CID.to_string(),
+                published_at: 1,
+                unpublished_at: None,
+                shared_at: None,
+                share_policy: None,
+                share_grants: Vec::new(),
+                content_security,
+                receipt: json!({}),
+                availability: json!({ "status": "local_pinned" }),
+                listing_uri: Some(format!("elastos://{LISTING_CID}")),
+                revision: None,
+                publication_id: None,
+                size_bytes: None,
+            },
+        )
+        .unwrap();
+        uri
+    }
+
+    /// Whether a peer that is no contact of anyone here may read `cid`.
+    async fn any_peer_reads(home: &Home, cid: &str) -> bool {
+        let stranger = iroh::PublicKey::from_bytes(
+            &ed25519_dalek::SigningKey::from_bytes(&[0x51; 32])
+                .verifying_key()
+                .to_bytes(),
+        )
+        .unwrap();
+        crate::carrier::admit_carrier_peer_content_fetch(
+            home.dir.path(),
+            None,
+            &stranger,
+            &json!({ "cid": cid }),
+        )
+        .await
+        .is_ok()
+    }
+
+    /// A protected publication shares its whole artifact set with any peer:
+    /// the sealed payload, the listing package, and the tokenURI metadata
+    /// folder a buyer's listing read starts from. Unpublish stops all three.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_protected_publication_serves_its_metadata_folder_to_any_peer() {
+        let home = home("did:key:z6MkPublishProtectedFolder").await;
+        let uri = minted_film(&home).await;
+        for cid in [SEALED_CID, LISTING_CID, FOLDER_CID] {
+            assert!(any_peer_reads(&home, cid).await, "{cid}");
+        }
+
+        let unpublish = home.call("unpublish", json!({ "uri": uri })).await;
+        assert_eq!(unpublish["status"], "ok", "{unpublish}");
+        for cid in [SEALED_CID, LISTING_CID, FOLDER_CID] {
+            assert!(!any_peer_reads(&home, cid).await, "{cid}");
+        }
+    }
+
+    /// A Library publication shares only its file, and only with the
+    /// publisher's contacts, as before.
+    #[tokio::test]
+    async fn a_library_publication_shares_only_its_file_with_contacts() {
+        let home = home("did:key:z6MkPublishLibraryUnchanged").await;
+        home.write("Documents/notes.txt", b"hello").await;
+        let publish = home.publish("Documents/notes.txt").await;
+        assert_eq!(publish["status"], "ok", "{publish}");
+        let cid = publish["data"]["cid"].as_str().unwrap();
+
+        let audience = published_cid_audience(home.dir.path(), cid).unwrap();
+        assert!(!audience.any_peer);
+        assert_eq!(
+            audience.principals,
+            BTreeSet::from([home.principal.to_string()])
+        );
+        let index = load_published_index(home.dir.path()).unwrap();
+        let shared: Vec<_> = index
+            .publications
+            .values()
+            .map(|entry| entry.cids.clone())
+            .collect();
+        assert_eq!(shared, vec![BTreeSet::from([cid.to_string()])]);
     }
 
     #[tokio::test]

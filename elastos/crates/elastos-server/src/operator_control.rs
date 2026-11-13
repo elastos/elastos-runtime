@@ -39,12 +39,24 @@ pub const OPERATOR_ACTION_ROOM_OPEN: &str = "room.open";
 /// Lets a Carrier peer place content replicas on this node. It is a
 /// storage permission for the peer, not a remote operator command.
 pub const OPERATOR_ACTION_CONTENT_REPLICA: &str = "content.replica";
+/// Answered only to the pool owner a custody node was set up to trust, never
+/// through an allow list.
+pub const OPERATOR_ACTION_CUSTODY_NODE_CARD_READ: &str =
+    crate::custody_surface::OPERATOR_ACTION_NODE_CARD_READ;
+/// A custody node's refusal when it holds no card to give.
+pub(crate) const CUSTODY_NODE_HAS_NO_CARD: &str = "this node has no custody card";
+
+/// Provider target name for the content plane (kubo). A peer that declares
+/// its capabilities and omits this one does not store content.
+pub const OPERATOR_PROVIDES_IPFS: &str = "ipfs";
 
 const OPERATOR_CONFIG_SCHEMA: &str = "elastos.operator-control/v1";
 const OPERATOR_REQUEST_DOMAIN: &str = "elastos.operator.request.v1";
 const OPERATOR_RESPONSE_DOMAIN: &str = "elastos.operator.response.v1";
 const OPERATOR_AUDIT_FILE: &str = "operator-control-audit.jsonl";
 const OPERATOR_REQUEST_LOG_FILE: &str = "operator-control-requests.jsonl";
+/// The audit only grows; a reader of recent activity reads this much of its end.
+const OPERATOR_AUDIT_TAIL_BYTES: u64 = 256 * 1024;
 const OPERATOR_CONNECT_TIMEOUT_SECS: u64 = 10;
 const OPERATOR_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_UPDATE_METADATA_BYTES: usize = 256 * 1024;
@@ -57,6 +69,13 @@ const OPERATOR_RESPONSE_MAX_BYTES: u64 = 4 * MAX_UPDATE_METADATA_BYTES as u64;
 /// `update.apply` answers after the install finishes.
 const OPERATOR_RESPONSE_WAIT: Duration = Duration::from_secs(60 * 60);
 const OPERATOR_TS_SKEW_SECS: u64 = 5 * 60;
+/// A card answer is small: the dial gets the connect timeout, the answer as
+/// long again.
+const CUSTODY_NODE_CARD_WAIT: Duration = Duration::from_secs(2 * OPERATOR_CONNECT_TIMEOUT_SECS);
+/// An answered connection closes in milliseconds; an unanswered dial drains
+/// for about 3 s (three probe timeouts at QUIC's initial RTT). Callers with a
+/// wait never spend it on a close, so the bound only stops a hung one.
+const OPERATOR_ENDPOINT_CLOSE_WAIT: Duration = Duration::from_secs(4);
 const REQUEST_STATE_RESERVED: &str = "reserved";
 const REQUEST_STATE_COMPLETED: &str = "completed";
 
@@ -85,6 +104,50 @@ pub struct OperatorPeer {
     pub connect_ticket: String,
     #[serde(default)]
     pub allow: Vec<String>,
+    /// Provider target names this peer actually hosts, spelled the way the
+    /// provider host reports them (`custody`, `ipfs`, `availability`,
+    /// `chain`, `content`). Empty means "not declared": callers must treat
+    /// that as unknown, never as "hosts nothing", so records written before
+    /// this field existed keep their previous behaviour.
+    #[serde(default)]
+    pub provides: Vec<String>,
+    /// The peer's kubo node, when it runs one. Carried here so peering can be
+    /// arranged by libp2p identity rather than inferred from the Carrier DID,
+    /// which is a different key space.
+    #[serde(default)]
+    pub ipfs_peer: Option<OperatorPeerIpfs>,
+}
+
+impl OperatorPeer {
+    /// Whether this peer may be asked to hold a content replica.
+    ///
+    /// A custody node's only role is key-share custody and release: it has no
+    /// content plane worth pinning to, and conscripting it as a replica makes
+    /// key custody a failure point for content availability. So a peer that
+    /// declares its capabilities and does not list the content target is not
+    /// a storage candidate.
+    ///
+    /// An empty `provides` means the record predates capability declaration,
+    /// not that the peer stores nothing. Those peers stay eligible on purpose:
+    /// every deployment registered before this field existed must keep
+    /// behaving exactly as it did.
+    pub fn hosts_content_storage(&self) -> bool {
+        self.provides.is_empty()
+            || self
+                .provides
+                .iter()
+                .any(|target| target == OPERATOR_PROVIDES_IPFS)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct OperatorPeerIpfs {
+    /// kubo libp2p PeerID (`12D3Koo…` / `Qm…`, base58btc).
+    pub id: String,
+    /// Dialable swarm multiaddrs. May be empty: peering by ID alone is valid
+    /// and is all a node behind a Docker bridge can honestly advertise.
+    #[serde(default)]
+    pub addrs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -335,6 +398,13 @@ struct PeerProviderEnvelope {
     data: serde_json::Value,
 }
 
+/// A remote node's signed answer: its result, or its own refusal reason.
+#[derive(Debug)]
+pub(crate) enum OperatorAnswer {
+    Accepted(serde_json::Value),
+    Refused(String),
+}
+
 #[derive(Debug, Clone)]
 pub struct OperatorRuntimeContext {
     pub data_dir: PathBuf,
@@ -384,6 +454,7 @@ pub fn supported_actions() -> &'static [&'static str] {
         OPERATOR_ACTION_ROOM_DENY,
         OPERATOR_ACTION_ROOM_OPEN,
         OPERATOR_ACTION_CONTENT_REPLICA,
+        OPERATOR_ACTION_CUSTODY_NODE_CARD_READ,
     ]
 }
 
@@ -400,6 +471,10 @@ pub fn load_operator_control(data_dir: &Path) -> Result<OperatorControlConfig> {
     }
     for peer in &mut config.peers {
         peer.allow = normalize_actions(&peer.allow)?;
+        peer.provides = normalize_provides(&peer.provides)?;
+        if let Some(ipfs_peer) = peer.ipfs_peer.as_mut() {
+            *ipfs_peer = normalize_ipfs_peer(ipfs_peer)?;
+        }
     }
     config.peers.sort_by(|a, b| a.did.cmp(&b.did));
     Ok(config)
@@ -418,9 +493,33 @@ pub fn save_operator_control(data_dir: &Path, config: &OperatorControlConfig) ->
     Ok(())
 }
 
+/// The actions an operator peer's allow list can grant.
+pub fn grantable_actions() -> Vec<&'static str> {
+    supported_actions()
+        .iter()
+        .copied()
+        .filter(|action| *action != OPERATOR_ACTION_CUSTODY_NODE_CARD_READ)
+        .collect()
+}
+
 pub fn upsert_peer(data_dir: &Path, mut peer: OperatorPeer) -> Result<OperatorPeer> {
     validate_peer_did(&peer.did)?;
     peer.allow = normalize_actions(&peer.allow)?;
+    // Refused only here: a stored config that names it still loads, and the
+    // grant is ignored when a request is authorised.
+    if peer
+        .allow
+        .iter()
+        .any(|action| action == OPERATOR_ACTION_CUSTODY_NODE_CARD_READ)
+    {
+        anyhow::bail!(
+            "{OPERATOR_ACTION_CUSTODY_NODE_CARD_READ} is answered only to the node's pool owner and cannot be granted"
+        );
+    }
+    peer.provides = normalize_provides(&peer.provides)?;
+    if let Some(ipfs_peer) = peer.ipfs_peer.as_mut() {
+        *ipfs_peer = normalize_ipfs_peer(ipfs_peer)?;
+    }
 
     let mut config = load_operator_control(data_dir)?;
     if let Some(existing) = config.peers.iter_mut().find(|entry| entry.did == peer.did) {
@@ -433,6 +532,29 @@ pub fn upsert_peer(data_dir: &Path, mut peer: OperatorPeer) -> Result<OperatorPe
         if !peer.allow.is_empty() {
             existing.allow = peer.allow.clone();
         }
+        // Same "omitted means unchanged" rule the other fields follow, so a
+        // re-add that only refreshes the ticket cannot silently erase the
+        // capability declaration this peer was registered with.
+        if !peer.provides.is_empty() {
+            existing.provides = peer.provides.clone();
+        }
+        if let Some(mut ipfs_peer) = peer.ipfs_peer.clone() {
+            // A node card names the kubo id only; addresses the operator
+            // registered for that same node stay, so peering can dial it.
+            // If that node's kubo later moves port, the kept address only
+            // costs a failed dial beside the ones discovery finds; the
+            // operator replaces it by re-adding the peer with new addresses.
+            if ipfs_peer.addrs.is_empty() {
+                if let Some(known) = existing
+                    .ipfs_peer
+                    .as_ref()
+                    .filter(|known| known.id == ipfs_peer.id)
+                {
+                    ipfs_peer.addrs = known.addrs.clone();
+                }
+            }
+            existing.ipfs_peer = Some(ipfs_peer);
+        }
         peer = existing.clone();
     } else {
         config.peers.push(peer.clone());
@@ -441,6 +563,41 @@ pub fn upsert_peer(data_dir: &Path, mut peer: OperatorPeer) -> Result<OperatorPe
     config.peers.sort_by(|a, b| a.did.cmp(&b.did));
     save_operator_control(data_dir, &config)?;
     Ok(peer)
+}
+
+/// Adds `action` to `did`'s allow list and keeps every other field and
+/// action, registering `did` when it is unknown. `upsert_peer` replaces a
+/// given allow list, so the list sent is the kept one plus `action`.
+pub(crate) fn grant_peer_action(data_dir: &Path, did: &str, action: &str) -> Result<()> {
+    let mut allow = granted_peer_actions(data_dir, did).unwrap_or_default();
+    if allow.iter().any(|granted| granted == action) {
+        return Ok(());
+    }
+    allow.push(action.to_string());
+    upsert_peer(
+        data_dir,
+        OperatorPeer {
+            did: did.to_string(),
+            allow,
+            ..OperatorPeer::default()
+        },
+    )
+    .map(drop)
+}
+
+/// Takes `action` from `did`'s allow list and keeps everything else.
+pub(crate) fn revoke_peer_action(data_dir: &Path, did: &str, action: &str) -> Result<()> {
+    validate_peer_did(did)?;
+    let mut config = load_operator_control(data_dir)?;
+    let Some(peer) = config.peers.iter_mut().find(|peer| peer.did == did) else {
+        return Ok(());
+    };
+    let before = peer.allow.len();
+    peer.allow.retain(|granted| granted != action);
+    if peer.allow.len() != before {
+        save_operator_control(data_dir, &config)?;
+    }
+    Ok(())
 }
 
 /// The actions the owner granted to `did` in the operator peer store, or
@@ -904,7 +1061,7 @@ fn validate_action(action: &str) -> Result<()> {
         anyhow::bail!(
             "unsupported operator action '{}'. Supported actions: {}",
             action,
-            supported_actions().join(", ")
+            grantable_actions().join(", ")
         );
     }
 }
@@ -923,6 +1080,57 @@ fn normalize_actions(actions: &[String]) -> Result<Vec<String>> {
     }
     normalized.sort();
     Ok(normalized)
+}
+
+/// Provider target names are an open set (the provider host owns the
+/// vocabulary), so this only enforces that every entry is a real name: a
+/// blank entry would silently widen or narrow a capability check depending on
+/// how the reader treats it, which is exactly the ambiguity to reject.
+fn normalize_provides(provides: &[String]) -> Result<Vec<String>> {
+    let mut normalized: Vec<String> = Vec::new();
+    for target in provides {
+        let trimmed = target.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("operator peer 'provides' entries must not be empty or whitespace");
+        }
+        if !normalized.iter().any(|entry| entry == trimmed) {
+            normalized.push(trimmed.to_string());
+        }
+    }
+    normalized.sort();
+    Ok(normalized)
+}
+
+/// A kubo PeerID is base58btc, so anything outside `[A-Za-z0-9]` is either a
+/// typo or a multiaddr pasted into the wrong flag. Reject it here rather than
+/// write it to disk and let a peering call fail far from the mistake.
+pub(crate) fn normalize_ipfs_peer(ipfs_peer: &OperatorPeerIpfs) -> Result<OperatorPeerIpfs> {
+    let id = ipfs_peer.id.trim();
+    if id.is_empty() {
+        anyhow::bail!("operator peer 'ipfs_peer.id' must not be empty");
+    }
+    if !id.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        anyhow::bail!(
+            "invalid kubo peer id '{}': expected a base58btc PeerID (alphanumeric only)",
+            id
+        );
+    }
+
+    let mut addrs: Vec<String> = Vec::new();
+    for addr in &ipfs_peer.addrs {
+        let trimmed = addr.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("operator peer 'ipfs_peer.addrs' entries must not be empty");
+        }
+        if !addrs.iter().any(|entry| entry == trimmed) {
+            addrs.push(trimmed.to_string());
+        }
+    }
+
+    Ok(OperatorPeerIpfs {
+        id: id.to_string(),
+        addrs,
+    })
 }
 
 fn validate_peer_did(did: &str) -> Result<()> {
@@ -1229,35 +1437,65 @@ async fn request_remote_typed<T: DeserializeOwned>(
     request_remote_typed_with_args(data_dir, peer, action, serde_json::Value::Null).await
 }
 
+/// Ask a custody node for its card. An error means the node was not reached
+/// or its answer did not verify; a refusal is the node's own.
+pub(crate) async fn request_remote_custody_node_card(
+    data_dir: &Path,
+    peer: &OperatorPeer,
+) -> Result<OperatorAnswer> {
+    request_remote_custody_node_card_within(
+        data_dir,
+        peer,
+        OPERATOR_CONNECT_TIMEOUT_SECS,
+        CUSTODY_NODE_CARD_WAIT,
+    )
+    .await
+}
+
+/// The card request with the caller's connect timeout and overall wait, for
+/// callers that must not stall on a stopped node.
+pub(crate) async fn request_remote_custody_node_card_within(
+    data_dir: &Path,
+    peer: &OperatorPeer,
+    connect_timeout_secs: u64,
+    wait: Duration,
+) -> Result<OperatorAnswer> {
+    let (client, response) = tokio::time::timeout(wait, async {
+        let client = OperatorClient::connect(peer, connect_timeout_secs).await?;
+        let response = client
+            .exchange(
+                data_dir,
+                peer,
+                OPERATOR_ACTION_CUSTODY_NODE_CARD_READ,
+                serde_json::Value::Null,
+            )
+            .await;
+        anyhow::Ok((client, response))
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("custody node card request timed out"))??;
+    // The answer is in hand: the endpoint closes in the background, outside
+    // the caller's wait. These callers run in the long-lived gateway.
+    drop(client);
+    let response = response?;
+    Ok(if response.accepted {
+        OperatorAnswer::Accepted(response.result)
+    } else {
+        OperatorAnswer::Refused(
+            response
+                .error
+                .unwrap_or_else(|| "operator request was denied".to_string()),
+        )
+    })
+}
+
 async fn request_remote_typed_with_args<T: DeserializeOwned>(
     data_dir: &Path,
     peer: &OperatorPeer,
     action: &str,
     args: serde_json::Value,
 ) -> Result<T> {
-    validate_action(action)?;
-    let client = OperatorClient::connect(peer, OPERATOR_CONNECT_TIMEOUT_SECS).await?;
-    let (signing_key, requester_did) = elastos_identity::load_or_create_did(data_dir)?;
-    let request_payload = OperatorRequestPayload {
-        version: 1,
-        request_id: random_request_id(),
-        requester_did,
-        target_did: peer.did.clone(),
-        ts: now_ts(),
-        action: action.to_string(),
-        args,
-    };
-    let request = sign_envelope(&signing_key, OPERATOR_REQUEST_DOMAIN, &request_payload)?;
-    let response_bytes = client.send_request(&request).await?;
-    let response = verify_response_envelope(&response_bytes, &peer.did)?;
-
-    if response.request_id != request_payload.request_id {
-        anyhow::bail!(
-            "operator response request_id mismatch: expected {}, got {}",
-            request_payload.request_id,
-            response.request_id
-        );
-    }
+    let response = exchange_remote_request(data_dir, peer, action, args).await?;
     if !response.accepted {
         anyhow::bail!(
             "{}",
@@ -1269,6 +1507,21 @@ async fn request_remote_typed_with_args<T: DeserializeOwned>(
 
     serde_json::from_value(response.result)
         .map_err(|err| anyhow::anyhow!("invalid operator response payload: {}", err))
+}
+
+/// One request with no caller wait around it. The close is awaited, so a
+/// command that exits right after still closes its endpoint.
+async fn exchange_remote_request(
+    data_dir: &Path,
+    peer: &OperatorPeer,
+    action: &str,
+    args: serde_json::Value,
+) -> Result<OperatorResponsePayload> {
+    validate_action(action)?;
+    let client = OperatorClient::connect(peer, OPERATOR_CONNECT_TIMEOUT_SECS).await?;
+    let response = client.exchange(data_dir, peer, action, args).await;
+    client.close().await;
+    response
 }
 
 async fn handle_operator_connection(
@@ -1324,11 +1577,28 @@ async fn handle_operator_stream(
         load_operator_control(&ctx.data_dir).unwrap_or_else(|_| OperatorControlConfig::empty());
     let expected_requesters: Vec<String> =
         config.peers.iter().map(|peer| peer.did.clone()).collect();
+    // A card request claiming the owner is checked against the owner alone.
+    // Anything else, a failed owner claim included, meets the peer set exactly
+    // as before, so no refusal or audit entry tells a stranger who the owner is.
+    // Plan B T2.2: each root answers its own owner; the requester is an owner
+    // when some root trusts it.
+    let custody_owner = (action == OPERATOR_ACTION_CUSTODY_NODE_CARD_READ)
+        .then(|| custody_root_of_owner(&ctx.data_dir, &requester_did))
+        .flatten()
+        .map(|_| requester_did.clone());
+    let owner_request = custody_owner.as_ref().and_then(|owner| {
+        verify_request_envelope(line.trim().as_bytes(), std::slice::from_ref(owner)).ok()
+    });
+    let verified = match owner_request {
+        Some(request) => Ok(request),
+        None => verify_request_envelope(line.trim().as_bytes(), &expected_requesters),
+    };
 
-    let verified = verify_request_envelope(line.trim().as_bytes(), &expected_requesters);
     let authenticated = verified.is_ok();
     let response = match verified {
-        Ok(request) => build_operator_response(ctx, &config, request).await,
+        Ok(request) => {
+            build_operator_response(ctx, &config, custody_owner.as_deref(), request).await
+        }
         Err(err) => {
             tracing::debug!("operator control request from {peer} did not verify");
             OperatorResponsePayload {
@@ -1364,25 +1634,40 @@ async fn handle_operator_stream(
     send_json_line(send, &envelope).await
 }
 
+/// Plan B T2.2: the custody root that answers its card to `owner`, the DID
+/// of the Runtime issuer that root trusts (a Home's issuer is its DID key).
+/// Each root's owner comes from that root alone. An owner a later pool key
+/// of which this Home also serves is answered by the first such root.
+pub(crate) fn custody_root_of_owner(data_dir: &Path, owner: &str) -> Option<String> {
+    crate::custody_consent::custody_root_trusts(data_dir)
+        .inspect_err(|error| tracing::debug!(error = %format!("{error:#}"), "custody roots are unreadable"))
+        .ok()?
+        .into_iter()
+        .find(|(_, trust)| {
+            matches!(trust, crate::custody_consent::RootTrust::Trusts(trusted) if trusted == owner)
+        })
+        .map(|(root, _)| root)
+}
+
 async fn build_operator_response(
     ctx: &OperatorRuntimeContext,
     config: &OperatorControlConfig,
+    custody_owner: Option<&str>,
     request: OperatorRequestPayload,
 ) -> OperatorResponsePayload {
-    let peer = match config
+    let peer = config
         .peers
         .iter()
-        .find(|entry| entry.did == request.requester_did)
-    {
-        Some(peer) => peer,
-        None => {
-            return denied_response(
-                &ctx.local_did,
-                request.request_id,
-                "requester DID is not configured for operator control",
-            )
-        }
-    };
+        .find(|entry| entry.did == request.requester_did);
+    let is_custody_owner = request.action == OPERATOR_ACTION_CUSTODY_NODE_CARD_READ
+        && custody_owner == Some(request.requester_did.as_str());
+    if peer.is_none() && !is_custody_owner {
+        return denied_response(
+            &ctx.local_did,
+            request.request_id,
+            "requester DID is not configured for operator control",
+        );
+    }
 
     if request.target_did != ctx.local_did {
         return denied_response(
@@ -1398,7 +1683,13 @@ async fn build_operator_response(
             "operator request timestamp is outside the allowed skew window",
         );
     }
-    if !action_allowed(peer, &request.action) {
+    // The card goes to the trusted owner alone; an allow list cannot grant it.
+    let allowed = if request.action == OPERATOR_ACTION_CUSTODY_NODE_CARD_READ {
+        is_custody_owner
+    } else {
+        peer.is_some_and(|peer| action_allowed(peer, &request.action))
+    };
+    if !allowed {
         return denied_response(
             &ctx.local_did,
             request.request_id,
@@ -1524,6 +1815,21 @@ async fn build_operator_response(
                     ),
                     Err(err) => error_response(&ctx.local_did, request_id.clone(), err),
                 },
+                Err(err) => error_response(&ctx.local_did, request_id.clone(), err),
+            }
+        }
+        OPERATOR_ACTION_CUSTODY_NODE_CARD_READ => {
+            let root = custody_root_of_owner(&ctx.data_dir, &request.requester_did)
+                .unwrap_or_else(|| custody_provider::CUSTODY_INACTIVE_ROOT_PATH.to_string());
+            match crate::custody_node_card::local_node_card_answer(&ctx.data_dir, &root) {
+                Ok(Some(answer)) => success_response(
+                    &ctx.local_did,
+                    request_id.clone(),
+                    serde_json::to_value(answer),
+                ),
+                Ok(None) => {
+                    denied_response(&ctx.local_did, request_id.clone(), CUSTODY_NODE_HAS_NO_CARD)
+                }
                 Err(err) => error_response(&ctx.local_did, request_id.clone(), err),
             }
         }
@@ -1750,6 +2056,38 @@ fn audit_contains_request_id(data_dir: &Path, requester_did: &str, request_id: &
     })
 }
 
+/// When `requester_did` last had a request accepted, read from the newest
+/// audit entries only. Nothing of any other entry leaves this function.
+pub(crate) fn last_accepted_request_at(data_dir: &Path, requester_did: &str) -> Option<u64> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+
+    if requester_did.is_empty() {
+        return None;
+    }
+    let mut file = std::fs::File::open(data_dir.join(OPERATOR_AUDIT_FILE)).ok()?;
+    let start = file
+        .metadata()
+        .ok()?
+        .len()
+        .saturating_sub(OPERATOR_AUDIT_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(OPERATOR_AUDIT_TAIL_BYTES)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let tail = String::from_utf8_lossy(&bytes);
+    // A tail that starts mid-file starts mid-entry.
+    let whole_lines = if start > 0 {
+        tail.split_once('\n').map_or("", |(_, rest)| rest)
+    } else {
+        &tail
+    };
+    whole_lines.lines().rev().find_map(|line| {
+        let entry = serde_json::from_str::<AuditEntry>(line).ok()?;
+        (entry.accepted && entry.requester_did == requester_did).then_some(entry.ts)
+    })
+}
+
 fn request_log_contains_request_id(data_dir: &Path, requester_did: &str, request_id: &str) -> bool {
     if requester_did.is_empty() || request_id.is_empty() {
         return false;
@@ -1837,25 +2175,41 @@ fn extract_request_meta(envelope_bytes: &[u8]) -> Option<OperatorRequestPayload>
 
 struct OperatorClient {
     conn: iroh::endpoint::Connection,
-    _endpoint: Endpoint,
+    /// Closes the short-lived endpoint when the request ends, or in the
+    /// background when the caller drops the request, as an expired wait does.
+    endpoint_drain: OperatorCarrierDrain,
 }
 
 impl OperatorClient {
     async fn connect_endpoint_addr(addr: iroh::EndpointAddr, timeout_secs: u64) -> Result<Self> {
         let (endpoint, addr) = crate::carrier::bind_short_lived_carrier_dial(addr).await?;
+        let endpoint_drain = operator_endpoint_drain(&endpoint, addr.id);
 
-        let conn = tokio::time::timeout(
+        let connected = match tokio::time::timeout(
             Duration::from_secs(timeout_secs),
             endpoint.connect(addr, OPERATOR_ALPN),
         )
         .await
-        .map_err(|_| anyhow::anyhow!("operator connection timed out"))?
-        .context("operator connect failed")?;
+        {
+            Ok(conn) => conn.context("operator connect failed"),
+            Err(_) => Err(anyhow::anyhow!("operator connection timed out")),
+        };
+        match connected {
+            Ok(conn) => Ok(Self {
+                conn,
+                endpoint_drain,
+            }),
+            Err(error) => {
+                // Closes in the background, so the next ticket endpoint is
+                // tried at once.
+                drop(endpoint_drain);
+                Err(error)
+            }
+        }
+    }
 
-        Ok(Self {
-            conn,
-            _endpoint: endpoint,
-        })
+    async fn close(self) {
+        finish_operator_endpoint(self.endpoint_drain).await;
     }
 
     async fn connect(peer: &OperatorPeer, timeout_secs: u64) -> Result<Self> {
@@ -1885,6 +2239,38 @@ impl OperatorClient {
         Self::connect_endpoint_addr(endpoint, timeout_secs).await
     }
 
+    /// Sign one request, send it and return the peer's verified answer to it.
+    async fn exchange(
+        &self,
+        data_dir: &Path,
+        peer: &OperatorPeer,
+        action: &str,
+        args: serde_json::Value,
+    ) -> Result<OperatorResponsePayload> {
+        let (signing_key, requester_did) = elastos_identity::load_or_create_did(data_dir)?;
+        let request_payload = OperatorRequestPayload {
+            version: 1,
+            request_id: random_request_id(),
+            requester_did,
+            target_did: peer.did.clone(),
+            ts: now_ts(),
+            action: action.to_string(),
+            args,
+        };
+        let request = sign_envelope(&signing_key, OPERATOR_REQUEST_DOMAIN, &request_payload)?;
+        let response_bytes = self.send_request(&request).await?;
+        let response = verify_response_envelope(&response_bytes, &peer.did)?;
+
+        if response.request_id != request_payload.request_id {
+            anyhow::bail!(
+                "operator response request_id mismatch: expected {}, got {}",
+                request_payload.request_id,
+                response.request_id
+            );
+        }
+        Ok(response)
+    }
+
     async fn send_request<T: Serialize>(&self, value: &T) -> Result<Vec<u8>> {
         let (mut send, recv) = self.conn.open_bi().await?;
         let mut bytes = serde_json::to_vec(value)?;
@@ -1905,6 +2291,43 @@ impl OperatorClient {
     }
 }
 
+/// iroh logs an error for an endpoint dropped open. The close is bounded so
+/// a hung one cannot hold its task.
+fn operator_endpoint_drain(endpoint: &Endpoint, dialed: iroh::EndpointId) -> OperatorCarrierDrain {
+    let closing = endpoint.clone();
+    OperatorCarrierDrain::new(async move {
+        let close = async {
+            if close_stalls(&dialed) {
+                tokio::time::sleep(2 * OPERATOR_ENDPOINT_CLOSE_WAIT).await;
+            }
+            closing.close().await;
+        };
+        if tokio::time::timeout(OPERATOR_ENDPOINT_CLOSE_WAIT, close)
+            .await
+            .is_err()
+        {
+            tracing::debug!("operator Carrier endpoint did not close in time");
+        }
+    })
+}
+
+/// A close as slow as a bad link makes it, for tests that dial these nodes.
+#[cfg(test)]
+fn close_stalls(dialed: &iroh::EndpointId) -> bool {
+    tests::STALLED_CLOSE_NODES.lock().unwrap().contains(dialed)
+}
+
+#[cfg(not(test))]
+fn close_stalls(_dialed: &iroh::EndpointId) -> bool {
+    false
+}
+
+async fn finish_operator_endpoint(drain: OperatorCarrierDrain) {
+    if let Err(error) = drain.finish().await {
+        tracing::debug!(error = %format!("{error:#}"), "operator Carrier endpoint close failed");
+    }
+}
+
 fn public_key_from_did(did: &str) -> Result<iroh::PublicKey> {
     let verifying_key = crate::crypto::decode_did_key(did)?;
     iroh::PublicKey::from_bytes(verifying_key.as_bytes())
@@ -1912,7 +2335,7 @@ fn public_key_from_did(did: &str) -> Result<iroh::PublicKey> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::carrier::start_carrier_node;
     use axum::http::{HeaderMap, StatusCode};
@@ -2344,6 +2767,11 @@ mod tests {
     fn normalize_actions_rejects_unknown_entries() {
         let err = normalize_actions(&["remote.shell".to_string()]).unwrap_err();
         assert!(err.to_string().contains("unsupported operator action"));
+        // The card read is answered only to the pool owner, so it is not offered.
+        assert!(err.to_string().contains(OPERATOR_ACTION_STATUS_READ));
+        assert!(!err
+            .to_string()
+            .contains(OPERATOR_ACTION_CUSTODY_NODE_CARD_READ));
     }
 
     #[test]
@@ -2365,6 +2793,7 @@ mod tests {
                 label: "jetson".to_string(),
                 connect_ticket: "ticket-a".to_string(),
                 allow: vec![OPERATOR_ACTION_STATUS_READ.to_string()],
+                ..OperatorPeer::default()
             },
         )
         .unwrap();
@@ -2376,6 +2805,7 @@ mod tests {
                 label: String::new(),
                 connect_ticket: String::new(),
                 allow: vec![OPERATOR_ACTION_UPDATE_CHECK.to_string()],
+                ..OperatorPeer::default()
             },
         )
         .unwrap();
@@ -2385,6 +2815,180 @@ mod tests {
             updated.allow,
             vec![OPERATOR_ACTION_UPDATE_CHECK.to_string()]
         );
+    }
+
+    #[test]
+    fn operator_peer_without_capability_fields_still_deserialises() {
+        // Every operator-control.json written before `provides`/`ipfs_peer`
+        // existed must keep loading unchanged.
+        let peer: OperatorPeer = serde_json::from_str(
+            r#"{"did":"did:key:z6Mkexample","label":"jetson","connect_ticket":"ticket-a","allow":[]}"#,
+        )
+        .unwrap();
+        assert!(peer.provides.is_empty());
+        assert!(peer.ipfs_peer.is_none());
+        assert!(peer.hosts_content_storage());
+
+        let round_tripped: OperatorPeer =
+            serde_json::from_str(&serde_json::to_string(&peer).unwrap()).unwrap();
+        assert_eq!(round_tripped.did, peer.did);
+        assert_eq!(round_tripped.connect_ticket, peer.connect_ticket);
+        assert!(round_tripped.provides.is_empty());
+        assert!(round_tripped.ipfs_peer.is_none());
+    }
+
+    #[test]
+    fn operator_peer_capability_fields_round_trip() {
+        let peer = OperatorPeer {
+            did: "did:key:z6Mkexample".to_string(),
+            provides: vec!["custody".to_string(), "ipfs".to_string()],
+            ipfs_peer: Some(OperatorPeerIpfs {
+                id: "12D3KooWExample".to_string(),
+                addrs: vec!["/ip4/10.0.0.2/tcp/4001".to_string()],
+            }),
+            ..OperatorPeer::default()
+        };
+
+        let round_tripped: OperatorPeer =
+            serde_json::from_str(&serde_json::to_string(&peer).unwrap()).unwrap();
+        assert_eq!(round_tripped.provides, peer.provides);
+        assert_eq!(round_tripped.ipfs_peer, peer.ipfs_peer);
+        assert!(round_tripped.hosts_content_storage());
+    }
+
+    #[test]
+    fn hosts_content_storage_excludes_custody_only_peers() {
+        let custody_only = OperatorPeer {
+            provides: vec!["custody".to_string(), "chain".to_string()],
+            ..OperatorPeer::default()
+        };
+        assert!(!custody_only.hosts_content_storage());
+
+        let full_node = OperatorPeer {
+            provides: vec![
+                "custody".to_string(),
+                "ipfs".to_string(),
+                "availability".to_string(),
+                "chain".to_string(),
+            ],
+            ..OperatorPeer::default()
+        };
+        assert!(full_node.hosts_content_storage());
+
+        // Legacy record: capability unknown, stays eligible.
+        assert!(OperatorPeer::default().hosts_content_storage());
+    }
+
+    #[test]
+    fn upsert_peer_rejects_malformed_capability_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sk, _) = generate_keypair();
+        let did = elastos_identity::encode_signing_key_did(&sk);
+
+        let err = upsert_peer(
+            dir.path(),
+            OperatorPeer {
+                did: did.clone(),
+                ipfs_peer: Some(OperatorPeerIpfs {
+                    id: "/ip4/10.0.0.2/tcp/4001".to_string(),
+                    addrs: Vec::new(),
+                }),
+                ..OperatorPeer::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid kubo peer id"));
+
+        let err = upsert_peer(
+            dir.path(),
+            OperatorPeer {
+                did: did.clone(),
+                provides: vec!["custody".to_string(), "   ".to_string()],
+                ..OperatorPeer::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
+
+        // Neither rejected write may have landed on disk.
+        assert!(load_operator_control(dir.path()).unwrap().peers.is_empty());
+    }
+
+    #[test]
+    fn upsert_peer_keeps_capabilities_when_a_later_add_omits_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sk, _) = generate_keypair();
+        let did = elastos_identity::encode_signing_key_did(&sk);
+
+        upsert_peer(
+            dir.path(),
+            OperatorPeer {
+                did: did.clone(),
+                provides: vec!["custody".to_string(), "chain".to_string()],
+                ipfs_peer: Some(OperatorPeerIpfs {
+                    id: "12D3KooWExample".to_string(),
+                    addrs: Vec::new(),
+                }),
+                ..OperatorPeer::default()
+            },
+        )
+        .unwrap();
+
+        let updated = upsert_peer(
+            dir.path(),
+            OperatorPeer {
+                did,
+                connect_ticket: "ticket-b".to_string(),
+                ..OperatorPeer::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(updated.connect_ticket, "ticket-b");
+        assert_eq!(updated.provides, vec!["chain", "custody"]);
+        assert_eq!(
+            updated.ipfs_peer.as_ref().map(|peer| peer.id.as_str()),
+            Some("12D3KooWExample")
+        );
+        assert!(!updated.hosts_content_storage());
+    }
+
+    #[test]
+    fn upsert_peer_keeps_known_ipfs_addrs_when_the_same_kubo_peer_comes_without_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sk, _) = generate_keypair();
+        let did = elastos_identity::encode_signing_key_did(&sk);
+        let ipfs_peer = |id: &str, addrs: &[&str]| OperatorPeer {
+            did: did.clone(),
+            ipfs_peer: Some(OperatorPeerIpfs {
+                id: id.to_string(),
+                addrs: addrs.iter().map(|addr| addr.to_string()).collect(),
+            }),
+            ..OperatorPeer::default()
+        };
+        let addrs_of = |peer: OperatorPeer| peer.ipfs_peer.unwrap().addrs;
+
+        upsert_peer(
+            dir.path(),
+            ipfs_peer("12D3KooWExample", &["/ip4/127.0.0.1/tcp/4011"]),
+        )
+        .unwrap();
+
+        // A custody node card names the kubo id only; the address the
+        // operator registered must still reach the peering list.
+        let updated = upsert_peer(dir.path(), ipfs_peer("12D3KooWExample", &[])).unwrap();
+        assert_eq!(addrs_of(updated), vec!["/ip4/127.0.0.1/tcp/4011"]);
+
+        let updated = upsert_peer(
+            dir.path(),
+            ipfs_peer("12D3KooWExample", &["/ip4/127.0.0.1/tcp/4012"]),
+        )
+        .unwrap();
+        assert_eq!(addrs_of(updated), vec!["/ip4/127.0.0.1/tcp/4012"]);
+
+        // A new kubo identity is a new node: the old one's addresses go.
+        let updated = upsert_peer(dir.path(), ipfs_peer("12D3KooWReplaced", &[])).unwrap();
+        assert!(addrs_of(updated).is_empty());
     }
 
     #[test]
@@ -2400,6 +3004,7 @@ mod tests {
                 label: "jetson".to_string(),
                 connect_ticket: "ticket-a".to_string(),
                 allow: vec![OPERATOR_ACTION_STATUS_READ.to_string()],
+                ..OperatorPeer::default()
             },
         )
         .unwrap();
@@ -2455,6 +3060,45 @@ mod tests {
             "did:key:z6Mkexample",
             "req-2"
         ));
+    }
+
+    #[test]
+    fn last_accepted_request_reads_only_the_audit_tail() {
+        const OWNER: &str = "did:key:z6MkOwner";
+        let dir = tempfile::tempdir().unwrap();
+        let audit = |ts: u64, requester_did: &str, accepted: bool| {
+            append_audit_entry(
+                dir.path(),
+                AuditEntry {
+                    ts,
+                    request_id: format!("req-{ts}"),
+                    requester_did: requester_did.to_string(),
+                    action: OPERATOR_ACTION_CUSTODY_NODE_CARD_READ.to_string(),
+                    accepted,
+                    error: (!accepted).then(|| "refused".to_string()),
+                },
+            )
+        };
+        assert_eq!(last_accepted_request_at(dir.path(), OWNER), None);
+        audit(100, OWNER, true);
+        audit(200, OWNER, false);
+        audit(300, "did:key:z6MkStranger", true);
+        assert_eq!(last_accepted_request_at(dir.path(), OWNER), Some(100));
+        assert_eq!(last_accepted_request_at(dir.path(), ""), None);
+
+        // Once later entries fill the tail, the owner's entry is out of reach.
+        let mut ts = 400;
+        while std::fs::metadata(dir.path().join(OPERATOR_AUDIT_FILE))
+            .unwrap()
+            .len()
+            < OPERATOR_AUDIT_TAIL_BYTES + 1024
+        {
+            audit(ts, "did:key:z6MkStranger", true);
+            ts += 1;
+        }
+        assert_eq!(last_accepted_request_at(dir.path(), OWNER), None);
+        audit(ts, OWNER, true);
+        assert_eq!(last_accepted_request_at(dir.path(), OWNER), Some(ts));
     }
 
     #[test]
@@ -2546,6 +3190,465 @@ mod tests {
         drop(send);
     }
 
+    /// A custody node with a Carrier endpoint that trusts `owner` as its
+    /// Runtime issuer, the way provisioning leaves it.
+    pub(crate) struct CustodyTestNode {
+        _dir: tempfile::TempDir,
+        pub(crate) data_dir: PathBuf,
+        pub(crate) device: ed25519_dalek::VerifyingKey,
+        /// The route an owner dials: this node's DID and its ticket.
+        pub(crate) peer: OperatorPeer,
+        pub(crate) node: crate::carrier::CarrierNode,
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn start_custody_test_node(
+        seed: u8,
+        owner: &ed25519_dalek::VerifyingKey,
+    ) -> CustodyTestNode {
+        use crate::protected_content_config::ensure_owner_only_dir;
+        use crate::protected_content_config::tests::{owner_only_dir, safe_ancestor_tempdir};
+        use std::os::unix::fs::PermissionsExt;
+
+        // The issuer loader checks every ancestor, so stay under a safe root.
+        let dir = safe_ancestor_tempdir();
+        let data_dir = dir.path().join("data");
+        owner_only_dir(&data_dir);
+        write_test_device_key(&data_dir, &[seed; 32]);
+        let root = crate::protected_content_runtime::inactive_custody_state_root(&data_dir);
+        let custody_dir = root.parent().unwrap();
+        for path in [custody_dir.parent().unwrap(), custody_dir, &root] {
+            ensure_owner_only_dir(path, "test custody root").unwrap();
+        }
+        let issuer_path = root.join("trusted-runtime-issuer");
+        std::fs::write(
+            &issuer_path,
+            format!("0x{}\n", hex::encode(owner.as_bytes())),
+        )
+        .unwrap();
+        std::fs::set_permissions(&issuer_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let (sk, did) = elastos_identity::derive_did(&[seed; 32]);
+        let node = start_carrier_node(&sk, &did, data_dir.clone())
+            .await
+            .unwrap();
+        let peer = OperatorPeer {
+            did,
+            connect_ticket: local_endpoint_ticket(&node.endpoint).unwrap(),
+            ..OperatorPeer::default()
+        };
+        CustodyTestNode {
+            _dir: dir,
+            data_dir,
+            device: sk.verifying_key(),
+            peer,
+            node,
+        }
+    }
+
+    /// Store `bytes` as the node's own descriptor, as provisioning does.
+    pub(crate) fn write_custody_node_descriptor(data_dir: &Path, bytes: &[u8]) {
+        crate::collaboration_config::create_owner_only_file(
+            &crate::protected_content_config::custody_node_descriptor_path(data_dir),
+            bytes,
+            "test custody node details",
+        )
+        .unwrap();
+    }
+
+    /// A Home that only holds a device key, for signing requests.
+    pub(crate) fn test_home(seed: u8) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        write_test_device_key(dir.path(), &[seed; 32]);
+        let (_, did) = elastos_identity::derive_did(&[seed; 32]);
+        (dir, did)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custody_card_read_answers_only_the_trusted_owner() {
+        use base64::Engine as _;
+        use std::os::unix::fs::PermissionsExt;
+
+        let (owner_home, owner_did) = test_home(31);
+        let (owner_sk, _) = elastos_identity::derive_did(&[31; 32]);
+        let node = start_custody_test_node(32, &owner_sk.verifying_key()).await;
+        let descriptor = br#"{"schema":"test-descriptor"}"#;
+        write_custody_node_descriptor(&node.data_dir, descriptor);
+        let run_dir = node.data_dir.join("run");
+        crate::protected_content_config::tests::owner_only_dir(&run_dir);
+        let receipt = run_dir.join("provider-host.ready.json");
+        std::fs::write(
+            &receipt,
+            serde_json::to_vec(&serde_json::json!({
+                "did": node.peer.did,
+                "providers": ["chain-provider", "custody-provider", "ipfs-provider"],
+                "ipfs": { "peer_id": "12D3KooWExample", "swarm_addrs": [] },
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::set_permissions(&receipt, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        // An operator peer allowed every action, this one included: peer add
+        // refuses the grant, but a hand-edited config can still name it.
+        let (peer_home, peer_did) = test_home(33);
+        save_operator_control(
+            &node.data_dir,
+            &OperatorControlConfig {
+                peers: vec![OperatorPeer {
+                    did: peer_did.clone(),
+                    allow: supported_actions().iter().map(|a| a.to_string()).collect(),
+                    ..OperatorPeer::default()
+                }],
+                ..OperatorControlConfig::empty()
+            },
+        )
+        .unwrap();
+        let (stranger_home, stranger_did) = test_home(34);
+
+        match request_remote_custody_node_card(owner_home.path(), &node.peer)
+            .await
+            .unwrap()
+        {
+            OperatorAnswer::Accepted(answer) => assert_eq!(
+                answer,
+                serde_json::json!({
+                    "schema": "elastos.protected-content.custody-node-card-read/v1",
+                    "node": base64::engine::general_purpose::STANDARD.encode(descriptor),
+                    "provides": ["chain", "custody", "ipfs"],
+                    "ipfs_peer_id": "12D3KooWExample",
+                })
+            ),
+            refused => panic!("the trusted owner must get the card: {refused:?}"),
+        }
+        for (home, who) in [
+            (&peer_home, "allow-listed peer"),
+            (&stranger_home, "stranger"),
+        ] {
+            let answer = request_remote_custody_node_card(home.path(), &node.peer)
+                .await
+                .unwrap();
+            assert!(
+                matches!(answer, OperatorAnswer::Refused(_)),
+                "{who} got {answer:?}"
+            );
+        }
+        // Owning the node grants the card, not operator control: for any
+        // other action the owner is refused exactly like a stranger.
+        let owner_error = request_remote_status(owner_home.path(), &node.peer)
+            .await
+            .unwrap_err()
+            .to_string();
+        let stranger_error = request_remote_status(stranger_home.path(), &node.peer)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            owner_error.replace(&owner_did, "<requester>"),
+            stranger_error.replace(&stranger_did, "<requester>")
+        );
+    }
+
+    /// Sign `action` as `claimed_did` with `signing_key` and return the
+    /// node's verified answer, for requests the client would never build.
+    async fn send_signed_request(
+        node: &CustodyTestNode,
+        signing_key: &ed25519_dalek::SigningKey,
+        claimed_did: &str,
+        action: &str,
+    ) -> OperatorResponsePayload {
+        let client = OperatorClient::connect(&node.peer, 10).await.unwrap();
+        let payload = OperatorRequestPayload {
+            version: 1,
+            request_id: random_request_id(),
+            requester_did: claimed_did.to_string(),
+            target_did: node.peer.did.clone(),
+            ts: now_ts(),
+            action: action.to_string(),
+            args: serde_json::Value::Null,
+        };
+        let request = sign_envelope(signing_key, OPERATOR_REQUEST_DOMAIN, &payload).unwrap();
+        let bytes = client.send_request(&request).await.unwrap();
+        verify_response_envelope(&bytes, &node.peer.did).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custody_card_read_keeps_stranger_refusals_unchanged() {
+        let (owner_sk, owner_did) = elastos_identity::derive_did(&[61; 32]);
+        let node = start_custody_test_node(62, &owner_sk.verifying_key()).await;
+        write_custody_node_descriptor(&node.data_dir, b"{}");
+        let (stranger_sk, stranger_did) = elastos_identity::derive_did(&[63; 32]);
+        let (_, other_did) = elastos_identity::derive_did(&[64; 32]);
+        let refusal = |response: OperatorResponsePayload| {
+            assert!(!response.accepted);
+            response.error.unwrap()
+        };
+
+        // An empty peer store, as on most custody nodes: the stranger meets
+        // the refusal it met before the node answered cards.
+        for action in [
+            OPERATOR_ACTION_CUSTODY_NODE_CARD_READ,
+            OPERATOR_ACTION_STATUS_READ,
+        ] {
+            let error =
+                refusal(send_signed_request(&node, &stranger_sk, &stranger_did, action).await);
+            assert_eq!(
+                error, "requester DID is not configured for operator control",
+                "{action}"
+            );
+        }
+        // Claiming a DID it cannot sign for reads the same whether or not
+        // that DID is the owner, so a guess cannot be confirmed.
+        let claims_owner = refusal(
+            send_signed_request(
+                &node,
+                &stranger_sk,
+                &owner_did,
+                OPERATOR_ACTION_CUSTODY_NODE_CARD_READ,
+            )
+            .await,
+        );
+        let claims_other = refusal(
+            send_signed_request(
+                &node,
+                &stranger_sk,
+                &other_did,
+                OPERATOR_ACTION_CUSTODY_NODE_CARD_READ,
+            )
+            .await,
+        );
+        assert_eq!(claims_owner, claims_other);
+
+        // With operator peers configured, the refusal names them, never the owner.
+        let (_, peer_did) = elastos_identity::derive_did(&[65; 32]);
+        upsert_peer(
+            &node.data_dir,
+            OperatorPeer {
+                did: peer_did.clone(),
+                allow: vec![OPERATOR_ACTION_STATUS_READ.to_string()],
+                ..OperatorPeer::default()
+            },
+        )
+        .unwrap();
+        let error = refusal(
+            send_signed_request(
+                &node,
+                &stranger_sk,
+                &stranger_did,
+                OPERATOR_ACTION_CUSTODY_NODE_CARD_READ,
+            )
+            .await,
+        );
+        assert!(error.contains(&peer_did), "{error}");
+        assert!(!error.contains(&owner_did), "{error}");
+
+        // Only verified requests are audited, so a stranger may leave no file.
+        let audit =
+            std::fs::read_to_string(node.data_dir.join(OPERATOR_AUDIT_FILE)).unwrap_or_default();
+        for line in audit.lines() {
+            let entry: AuditEntry = serde_json::from_str(line).unwrap();
+            let error = entry.error.unwrap_or_default();
+            assert!(
+                !error.contains(&owner_did),
+                "audit names the owner: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn peer_add_refuses_the_card_grant_but_a_config_naming_it_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, did) = elastos_identity::derive_did(&[66; 32]);
+        let error = upsert_peer(
+            dir.path(),
+            OperatorPeer {
+                did: did.clone(),
+                allow: vec![OPERATOR_ACTION_CUSTODY_NODE_CARD_READ.to_string()],
+                ..OperatorPeer::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "{OPERATOR_ACTION_CUSTODY_NODE_CARD_READ} is answered only to the node's pool owner and cannot be granted"
+            )
+        );
+        assert!(load_operator_control(dir.path()).unwrap().peers.is_empty());
+        assert!(!grantable_actions().contains(&OPERATOR_ACTION_CUSTODY_NODE_CARD_READ));
+
+        let mut config = OperatorControlConfig::empty();
+        config.peers.push(OperatorPeer {
+            did: did.clone(),
+            allow: vec![OPERATOR_ACTION_CUSTODY_NODE_CARD_READ.to_string()],
+            ..OperatorPeer::default()
+        });
+        save_operator_control(dir.path(), &config).unwrap();
+        let loaded = load_operator_control(dir.path()).unwrap();
+        assert_eq!(
+            loaded.peers[0].allow,
+            [OPERATOR_ACTION_CUSTODY_NODE_CARD_READ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custody_card_read_refuses_without_node_card() {
+        let (owner_home, _) = test_home(41);
+        let (owner_sk, _) = elastos_identity::derive_did(&[41; 32]);
+        let node = start_custody_test_node(42, &owner_sk.verifying_key()).await;
+
+        match request_remote_custody_node_card(owner_home.path(), &node.peer)
+            .await
+            .unwrap()
+        {
+            OperatorAnswer::Refused(reason) => assert_eq!(reason, CUSTODY_NODE_HAS_NO_CARD),
+            accepted => panic!("a node without a card has nothing to give: {accepted:?}"),
+        }
+    }
+
+    /// Nodes whose endpoint close stalls for its whole bound.
+    pub(super) static STALLED_CLOSE_NODES: std::sync::Mutex<Vec<iroh::EndpointId>> =
+        std::sync::Mutex::new(Vec::new());
+
+    /// An answer in hand is an answer, however long the close after it takes,
+    /// and a failed ticket endpoint does not hold the next one.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn slow_close_never_turns_an_answer_into_a_timeout() {
+        use crate::custody_node_card::tests::ticket_at;
+
+        let (owner_home, _) = test_home(47);
+        let (owner_sk, _) = elastos_identity::derive_did(&[47; 32]);
+        let node = start_custody_test_node(48, &owner_sk.verifying_key()).await;
+        let live = decode_ticket_endpoints(&node.peer.connect_ticket).remove(0);
+        STALLED_CLOSE_NODES.lock().unwrap().push(live.id);
+        let answered = |answer: Result<OperatorAnswer>| match answer {
+            Ok(OperatorAnswer::Refused(reason)) => assert_eq!(reason, CUSTODY_NODE_HAS_NO_CARD),
+            other => panic!("the node answered within the wait: {other:?}"),
+        };
+
+        // A loopback answer takes milliseconds; the stalled close takes its
+        // whole bound.
+        answered(
+            request_remote_custody_node_card_within(
+                owner_home.path(),
+                &node.peer,
+                1,
+                Duration::from_millis(900),
+            )
+            .await,
+        );
+
+        // First a ticket endpoint with nothing bound, then the live one.
+        let gone = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let gone_addr = gone.local_addr().unwrap().to_string();
+        drop(gone);
+        let dead = decode_ticket_endpoints(&ticket_at(&node.device, &gone_addr)).remove(0);
+        let ticket = serde_json::json!({ "topic": null, "endpoints": [dead, live] });
+        let two_endpoints = OperatorPeer {
+            connect_ticket: data_encoding::BASE32_NOPAD
+                .encode(&serde_json::to_vec(&ticket).unwrap())
+                .to_ascii_lowercase(),
+            ..node.peer.clone()
+        };
+        // The dead endpoint spends its 1 s connect timeout; its close must
+        // not add another second before the live one is tried.
+        answered(
+            request_remote_custody_node_card_within(
+                owner_home.path(),
+                &two_endpoints,
+                1,
+                Duration::from_millis(1700),
+            )
+            .await,
+        );
+    }
+
+    /// iroh logs an ERROR for every endpoint dropped open, which every health
+    /// probe and card fetch did on each way out.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn operator_requests_close_their_endpoint_on_every_path() {
+        use crate::custody_node_card::tests::ticket_at;
+        use std::io::Write;
+        use std::sync::{Arc as StdArc, Mutex as StdMutex};
+
+        #[derive(Clone)]
+        struct LogWriter(StdArc<StdMutex<Vec<u8>>>);
+        impl Write for LogWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let (owner_home, _) = test_home(45);
+        let (owner_sk, _) = elastos_identity::derive_did(&[45; 32]);
+        let node = start_custody_test_node(46, &owner_sk.verifying_key()).await;
+        let log = StdArc::new(StdMutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer({
+                let log = log.clone();
+                move || LogWriter(log.clone())
+            })
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        // Answered.
+        match request_remote_custody_node_card(owner_home.path(), &node.peer)
+            .await
+            .unwrap()
+        {
+            OperatorAnswer::Refused(reason) => assert_eq!(reason, CUSTODY_NODE_HAS_NO_CARD),
+            accepted => panic!("a node without a card has nothing to give: {accepted:?}"),
+        }
+        // Not reached: nothing is bound at the ticket's address.
+        let gone = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let gone_addr = gone.local_addr().unwrap().to_string();
+        drop(gone);
+        let unreachable = OperatorPeer {
+            connect_ticket: ticket_at(&node.device, &gone_addr),
+            ..node.peer.clone()
+        };
+        request_remote_custody_node_card_within(
+            owner_home.path(),
+            &unreachable,
+            1,
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap_err();
+        // Cancelled: the caller's wait ends while the dial to a silent node
+        // is still pending.
+        let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let silent_peer = OperatorPeer {
+            connect_ticket: ticket_at(&node.device, &silent.local_addr().unwrap().to_string()),
+            ..node.peer.clone()
+        };
+        request_remote_custody_node_card_within(
+            owner_home.path(),
+            &silent_peer,
+            3,
+            Duration::from_millis(300),
+        )
+        .await
+        .unwrap_err();
+        // The failed and cancelled requests' endpoints close in the
+        // background, each within its bound.
+        tokio::time::sleep(OPERATOR_ENDPOINT_CLOSE_WAIT + Duration::from_millis(500)).await;
+
+        let output = String::from_utf8(log.lock().unwrap().clone()).unwrap();
+        assert!(!output.contains("Endpoint dropped"), "{output}");
+    }
+
     #[tokio::test]
     async fn operator_stream_audits_verified_requests_only() {
         let dir = tempfile::tempdir().unwrap();
@@ -2592,6 +3695,8 @@ mod tests {
                 label: "requester".to_string(),
                 connect_ticket: String::new(),
                 allow: vec![OPERATOR_ACTION_STATUS_READ.to_string()],
+                provides: Vec::new(),
+                ipfs_peer: None,
             },
         )
         .unwrap();
@@ -2706,6 +3811,7 @@ mod tests {
                 label: "node2".to_string(),
                 connect_ticket: ticket2,
                 allow: Vec::new(),
+                ..OperatorPeer::default()
             },
         )
         .unwrap();
@@ -2716,6 +3822,7 @@ mod tests {
                 label: "node1".to_string(),
                 connect_ticket: String::new(),
                 allow: vec![OPERATOR_ACTION_STATUS_READ.to_string()],
+                ..OperatorPeer::default()
             },
         )
         .unwrap();

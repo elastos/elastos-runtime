@@ -1,4 +1,7 @@
 use super::*;
+use elastos_wallet_contract::is_eip155_namespace;
+
+const TRANSACTION_INTENT: &str = "transaction_intent";
 use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
 use serde_json::{json, Value};
@@ -26,7 +29,13 @@ impl WalletProvider {
             .filter(|default| default.principal_id == principal_id)
             .filter(|default| {
                 self.active_account(&default.principal_id, &default.account_id)
-                    .map(|account| account.chain_namespace == default.chain_namespace)
+                    .map(|account| {
+                        account_serves_chain_namespace(
+                            &account.chain_namespace,
+                            &account.proof_type,
+                            &default.chain_namespace,
+                        )
+                    })
                     .unwrap_or(false)
             })
             .collect::<Vec<_>>();
@@ -179,6 +188,7 @@ impl WalletProvider {
         };
         self.store.managed_wallets.push(secret);
         self.store.accounts.push(account.clone());
+        self.adopt_first_evm_transaction_default(&account, now);
         if let Err(err) = self.save() {
             self.recover_store_after_save_failure(previous);
             return Response::error("storage_error", err);
@@ -334,6 +344,7 @@ impl WalletProvider {
         } else {
             self.store.accounts.push(account.clone());
         }
+        self.adopt_first_evm_transaction_default(&account, now);
         if let Err(err) = self.save() {
             return Response::error("storage_error", err);
         }
@@ -430,6 +441,7 @@ impl WalletProvider {
         } else {
             self.store.accounts.push(account.clone());
         }
+        self.adopt_first_evm_transaction_default(&account, now);
         if let Err(err) = self.save() {
             return Response::error("storage_error", err);
         }
@@ -609,7 +621,16 @@ impl WalletProvider {
         else {
             return Response::error("not_found", "active linked account not found");
         };
-        if account.chain_namespace != input.chain_namespace {
+        // One EVM key serves every EVM chain, so an externally owned EVM
+        // account may be the default on any numeric eip155 chain. A contract
+        // account and every other namespace are the default only on their own.
+        let serves_chain = account_serves_chain_namespace(
+            &account.chain_namespace,
+            &account.proof_type,
+            &input.chain_namespace,
+        ) && (account.chain_namespace == input.chain_namespace
+            || validate_evm_chain_namespace(&input.chain_namespace).is_ok());
+        if !serves_chain {
             return Response::error(
                 "invalid_request",
                 "default wallet chain must match the linked account",
@@ -645,6 +666,44 @@ impl WalletProvider {
             "default_account": default_account,
             "account": account,
         }))
+    }
+
+    /// Make `account` the transaction default when it is an EVM account and
+    /// the person has no usable EVM transaction default yet.
+    ///
+    /// Otherwise the first account in a fresh Wallet, the one Home setup
+    /// creates, could pay for nothing until the person found "Use by default":
+    /// every app that asks the Wallet for its default account got none. A
+    /// default the person already chose is never replaced.
+    fn adopt_first_evm_transaction_default(&mut self, account: &LinkedAccount, now: u64) {
+        // Any active EVM transaction default counts, including a contract
+        // account's that does not serve this account's chain: replacing it
+        // would undo the person's choice.
+        if !is_eip155_namespace(&account.chain_namespace)
+            || self.store.default_accounts.iter().any(|existing| {
+                existing.principal_id == account.principal_id
+                    && existing.intent == TRANSACTION_INTENT
+                    && is_eip155_namespace(&existing.chain_namespace)
+                    && self
+                        .active_account(&existing.principal_id, &existing.account_id)
+                        .is_some()
+            })
+        {
+            return;
+        }
+        self.store.default_accounts.retain(|existing| {
+            existing.principal_id != account.principal_id
+                || existing.intent != TRANSACTION_INTENT
+                || !is_eip155_namespace(&existing.chain_namespace)
+        });
+        self.store.default_accounts.push(DefaultWalletAccount {
+            schema: "elastos.wallet.default_account/v1".to_string(),
+            principal_id: account.principal_id.clone(),
+            chain_namespace: account.chain_namespace.clone(),
+            intent: TRANSACTION_INTENT.to_string(),
+            account_id: account.account_id.clone(),
+            set_at: now,
+        });
     }
 
     pub(super) fn default_account(
@@ -703,7 +762,11 @@ impl WalletProvider {
                 .filter(|default| {
                     self.active_account(principal_id, &default.account_id)
                         .map(|account| {
-                            chain_namespaces_compatible(&account.chain_namespace, chain_namespace)
+                            account_serves_chain_namespace(
+                                &account.chain_namespace,
+                                &account.proof_type,
+                                chain_namespace,
+                            )
                         })
                         .unwrap_or(false)
                 })
@@ -715,8 +778,4 @@ impl WalletProvider {
                 && default.intent == intent
         })
     }
-}
-
-fn is_eip155_namespace(value: &str) -> bool {
-    value.starts_with("eip155:")
 }

@@ -26,11 +26,11 @@ NC='\033[0m'
 # Default publish scope: runtime core + first-party Home app surface.
 # Wallet/Browser surfaces require chain-provider and wallet-provider authority.
 # Developer-only capsules such as GBA, and the items hidden in 0.8.0
-# (services, wallet-walletconnect, elacity-player, content-block-graph-provider
-# and the protected-content providers), are published by the release asset and
+# (services, wallet-walletconnect, the protected-content apps creator, custody,
+# elacity-player and elacity-reader, content-block-graph-provider and the
+# protected-content providers), are published by the release asset and
 # support-binary loops below and installed with `elastos setup --with <name>`.
-# availability-provider, drm-provider, rights-provider, key-provider,
-# decrypt-provider, and tunnel-provider are supported direct command assets
+# availability-provider and tunnel-provider are supported direct command assets
 # outside the default managed Home. Runtime-only protected providers are
 # support assets selected by the component profile rather than capsule publish.
 DEFAULT_CAPSULES=(
@@ -107,10 +107,6 @@ SUPPORT_BINARY_ASSETS=(
     chain-provider
     wallet-provider
     content-block-graph-provider
-    drm-provider
-    rights-provider
-    key-provider
-    decrypt-provider
     protected-content-protect-provider
     media-provider
     model-provider
@@ -968,7 +964,10 @@ build_platform_independent_direct_assets() {
         gba-nonogram \
         chat-room \
         assistant \
-        elacity-player; do
+        creator \
+        custody \
+        elacity-player \
+        elacity-reader; do
         if [[ -n "${ARTIFACTS_DIR:-}" && -f "${ARTIFACTS_DIR}/${capsule}.capsule.tar.gz" ]]; then
             archive="${ARTIFACTS_DIR}/${capsule}.capsule.tar.gz"
         else

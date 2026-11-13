@@ -17,10 +17,32 @@ pub(super) const PROTECTED_CONTENT_MINT_RECEIPT_SCHEMA: &str =
     "elastos.chain.protected-content-mint-receipt/v1";
 pub(super) const PROTECTED_CONTENT_VERIFIED_LISTING_SCHEMA: &str =
     "elastos.chain.protected-content-verified-listing/v1";
+pub(super) const PROTECTED_CONTENT_ITEM_SCHEMA: &str = "elastos.chain.protected-content-item/v1";
+pub(super) const PROTECTED_CONTENT_KID_BINDING_SCHEMA: &str =
+    "elastos.chain.protected-content-kid-binding/v1";
+pub(super) const PROTECTED_CONTENT_ITEM_OFFERS_SCHEMA: &str =
+    "elastos.chain.protected-content-item-offers/v1";
+pub(super) const PROTECTED_CONTENT_OFFERS_MAX: usize = 32;
+pub(super) const PROTECTED_CONTENT_ITEM_FINALITY_SCHEMA: &str =
+    "elastos.chain.protected-content-item-finality/v1";
 pub(super) const PROTECTED_CONTENT_PURCHASE_SCHEMA: &str =
     "elastos.chain.protected-content-purchase/v1";
 pub(super) const PROTECTED_CONTENT_PURCHASE_ACCESS_SCHEMA: &str =
     "elastos.chain.protected-content-purchase-access/v1";
+pub(super) const PROTECTED_CONTENT_ITEM_ACCESS_SCHEMA: &str =
+    "elastos.chain.protected-content-item-access/v1";
+
+/// The block an access read is evaluated at: `latest` because a grant is
+/// readable in the block that carries it, `finalized` where only state no
+/// reorg can take back will do -- the block custody judges a release by.
+/// Either way every source is pinned to one common block and must agree there.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ProtectedContentAccessBlock {
+    Finalized,
+    #[default]
+    Latest,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -91,10 +113,78 @@ pub(super) struct RightsMethod {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProtectedContentCreatorMintMethod {
+    /// The channel a mint settles on when the creator names none.
+    ///
+    /// Kept because a deployment still has to describe one somewhere, and the
+    /// receipt path resolves its market from the same source. A creator now
+    /// chooses the channel per mint, and the chosen one is what is encoded.
     pub(super) ledger: String,
+    /// The pay token a sale is priced in when the creator names none. The
+    /// chain's own coin on every deployment so far, which is the zero address.
     pub(super) pay_token: String,
+    /// The pay tokens a creator may price a sale in, in the order they are
+    /// offered. THE FIRST IS THE DEFAULT, so the order is a product decision
+    /// rather than a formatting one.
+    ///
+    /// An allow-list rather than "any ERC-20 address the page sends": a price
+    /// is an integer of the token's smallest unit, so accepting an unknown
+    /// token means accepting a number whose meaning this Runtime cannot check.
+    /// Each entry states its decimals, and a mint is refused when the scale the
+    /// creator priced in does not match the token they chose.
+    ///
+    /// Empty falls back to `pay_token` above at eighteen decimals, which is
+    /// what every deployment meant before a creator could choose.
+    #[serde(default)]
+    pub(super) pay_tokens: Vec<ProtectedContentPayToken>,
     pub(super) asset_created_emitter: String,
     pub(super) abi: ProtectedContentCreatorMintAbi,
+    /// How deep a mint's block must be buried before its receipt is accepted.
+    ///
+    /// This used to be L1 finality, which is the strongest bar there is and
+    /// costs the creator twelve minutes on a good day -- longer when Ethereum
+    /// finality lags, which it does. Nothing is spent after this point: the
+    /// mint already carries its own listing, so what the depth protects is a
+    /// local record, not money. Configured rather than constant so the bar can
+    /// be raised for a chain or a deployment that wants it without a rebuild;
+    /// a value below `PROTECTED_CONTENT_MINT_CONFIRMATIONS_FLOOR` is refused at
+    /// load.
+    #[serde(default = "default_protected_content_mint_confirmations")]
+    pub(super) mint_confirmations: u64,
+}
+
+/// One pay token a creator may price a sale in.
+///
+/// `decimals` is stated rather than read from the token because it is what
+/// gives the price its meaning, and a price must not depend on a chain call
+/// that can fail or answer late. It is checked against the scale the creator
+/// priced in before a transaction exists.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProtectedContentPayToken {
+    /// What the creator sees. Display only; the address is what is encoded.
+    pub(super) symbol: String,
+    pub(super) address: String,
+    pub(super) decimals: u8,
+}
+
+/// Buy once, the only method this Runtime could mint before creators could
+/// choose one.
+pub(super) const fn default_protected_content_op_type_code() -> u16 {
+    1
+}
+
+/// The shallowest depth at which a mint receipt's canonical-block check is
+/// decisive, and the default.
+///
+/// Twelve blocks is roughly twenty-four seconds on Base, which is far past any
+/// ordinary sequencer reorg and short enough that a creator sees their listing
+/// appear rather than wonders whether it failed. Below it, a block an ordinary
+/// reorg can still take back would be judged as settled, so a deployment may
+/// raise the depth but not lower it.
+pub(super) const PROTECTED_CONTENT_MINT_CONFIRMATIONS_FLOOR: u64 = 12;
+
+pub(super) const fn default_protected_content_mint_confirmations() -> u64 {
+    PROTECTED_CONTENT_MINT_CONFIRMATIONS_FLOOR
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -175,6 +265,18 @@ pub(super) struct ProtectedContentPolicySource {
 #[serde(rename_all = "snake_case")]
 pub(super) enum RightsMethodAbi {
     HasAccessByContentIdAddressBytes16,
+}
+
+/// One royalty payee, in ERC-1155 `ROYALTY_SHARE` units.
+///
+/// Units are what the mint encodes, so units are what crosses this boundary:
+/// 1000 exist per asset, one unit is 0.1% of the sale, and the creator splits
+/// 950 of them. Nothing is converted here, so nothing can be converted wrongly.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProtectedContentRoyaltyShare {
+    pub address: String,
+    pub units: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -268,6 +370,29 @@ pub(super) enum Request {
         content_access_id: String,
         copies: String,
         price: String,
+        /// Who the creator's royalty share is paid to. Absent or empty means
+        /// the default: the whole creator share to the creator.
+        #[serde(default)]
+        royalties: Vec<ProtectedContentRoyaltyShare>,
+        /// The channel's `opType`: 0 free, 1 buy once, 2 buy and resell.
+        ///
+        /// Defaulted to buy once so a caller built before creators could
+        /// choose keeps meaning what it meant.
+        #[serde(default = "default_protected_content_op_type_code")]
+        op_type_code: u16,
+        /// The resale cut in deci-percent, for buy and resell only. It is the
+        /// trailing `uint16` of that method's `opRawData` and belongs to no
+        /// other method.
+        #[serde(default)]
+        reseller_cut: Option<u16>,
+        /// The channel this mint settles on. Required: there is no default,
+        /// because defaulting it publishes into a channel nobody chose.
+        #[serde(default)]
+        ledger: Option<String>,
+        /// The token the sale is priced in. Absent takes the source's first
+        /// offered token, which is what a caller that does not choose means.
+        #[serde(default)]
+        pay_token: Option<String>,
     },
     ResolveProtectedContentMintReceipt {
         network: String,
@@ -283,6 +408,56 @@ pub(super) enum Request {
         ledger: String,
         token_id: String,
     },
+    /// An item's operative and `tokenURI`, so a `ListingObject` can be built
+    /// from any of the common identifiers in D15 without a seller in hand.
+    ResolveProtectedContentItem {
+        network: String,
+        ledger: String,
+        token_id: String,
+    },
+    /// A KID's on-chain binding to `(ledger, token_id)`, the other leg of the
+    /// D15 binding triangle.
+    ResolveProtectedContentKidBinding {
+        network: String,
+        content_access_id: String,
+    },
+    /// Every live offer (all sellers) for an item, at one finalized block.
+    ResolveProtectedContentItemOffers {
+        network: String,
+        ledger: String,
+        token_id: String,
+    },
+    /// Classification only: whether an item -- named by `(ledger, token_id)`
+    /// or by its KID -- is bound at the chain head. It tells "not final yet"
+    /// apart from "no such item" after a finalized read found nothing, and
+    /// its answer is never evidence for a purchase, an open or a release.
+    ClassifyProtectedContentItemFinality {
+        network: String,
+        #[serde(default)]
+        ledger: Option<String>,
+        #[serde(default)]
+        token_id: Option<String>,
+        #[serde(default)]
+        content_access_id: Option<String>,
+    },
+    /// The payment processor an operative pays an ERC-20 sale through.
+    ///
+    /// Narrower than reading the whole listing back, and deliberately so: a
+    /// mint's own receipt already proves the sale terms through the
+    /// `ItemListed` it emitted, and only this one address lives in chain state
+    /// rather than in the event.
+    ResolveProtectedContentPaymentProcessor {
+        network: String,
+        operative: String,
+    },
+    /// What this account already has on a set of channels, so a surface knows
+    /// which of them to offer a subscription for. Read at the head and
+    /// corroborated: it decides what a card OFFERS, never what anyone may do.
+    ResolveProtectedContentChannelAccess {
+        network: String,
+        account: String,
+        channels: Vec<String>,
+    },
     ResolveProtectedContentPurchase {
         seller: String,
         chain_namespace: String,
@@ -295,6 +470,21 @@ pub(super) enum Request {
         network: String,
         wallet: String,
         content_access_id: String,
+        /// Absent means `latest`, the upfront ownership check. The open asks
+        /// `finalized` to learn whether custody can release yet.
+        #[serde(default)]
+        block: ProtectedContentAccessBlock,
+    },
+    /// R50: whether `wallet` holds access to the item `(ledger, token_id)`,
+    /// asked by the item (`AuthorityGateway.hasAccess`) rather than by its
+    /// KID, corroborated like the content-id read.
+    ResolveProtectedContentItemAccess {
+        request_id: String,
+        network: String,
+        wallet: String,
+        ledger: String,
+        token_id: String,
+        block: ProtectedContentAccessBlock,
     },
     Proof {
         network: String,

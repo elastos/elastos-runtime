@@ -15,12 +15,13 @@ pub mod collaboration_carrier;
 pub mod collaboration_config;
 pub(crate) mod collaboration_contact_store;
 pub(crate) mod collaboration_core;
-pub mod collaboration_default_conversation;
 /// Device signing authority is deliberately unavailable outside this crate.
 ///
 /// ```compile_fail
 /// use elastos_server::collaboration_device_authority::DefaultConversationDeviceAuthority;
 /// ```
+pub(crate) mod collaboration_custody_messages;
+pub mod collaboration_default_conversation;
 pub(crate) mod collaboration_delivery;
 pub(crate) mod collaboration_device_authority;
 pub(crate) mod collaboration_direct_messages;
@@ -42,11 +43,25 @@ pub(crate) mod collaboration_transport;
 pub(crate) mod component;
 pub mod content;
 pub mod crypto;
+pub(crate) mod custody_consent;
+pub(crate) mod custody_consent_protocol;
+pub(crate) mod custody_node_card;
+pub(crate) mod custody_owner_requests;
+pub(crate) mod custody_pool_descriptor;
+pub(crate) mod custody_pool_notices;
+pub(crate) mod custody_pool_resolver;
+pub(crate) mod custody_pool_service;
+pub mod custody_pool_setup;
+pub(crate) mod custody_release_limits;
+pub(crate) mod custody_surface;
 pub mod documents;
 pub mod esp_binding;
 pub mod fetcher;
 pub mod gateway_cmd;
 pub mod host_lock;
+pub(crate) mod host_trust;
+/// A388-I1: the one host-trust entry the Runtime binary needs, at startup.
+pub use host_trust::capture_at_startup as capture_host_trust_at_startup;
 pub mod init;
 pub mod inspect_provider;
 mod install_transaction;
@@ -59,8 +74,15 @@ pub mod notifications;
 pub mod operator_control;
 pub mod ownership;
 pub mod protected_content_config;
+pub(crate) mod protected_content_elacity_metadata;
+pub(crate) mod protected_content_market;
+pub(crate) mod protected_content_pool_open;
 pub mod protected_content_runtime;
 pub mod provider_resource;
+pub(crate) mod public_ipfs_store;
+pub(crate) mod public_metadata_car;
+pub(crate) mod public_metadata_consent;
+pub(crate) mod public_metadata_publisher;
 pub mod release_publication;
 pub mod resource_bridge;
 pub mod room_service;

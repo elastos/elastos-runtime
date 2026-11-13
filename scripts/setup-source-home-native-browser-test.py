@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SETUP = ROOT / "scripts/setup-source-home.sh"
 PLATFORM = "linux-arm64"
 APPS = ("home-cli home-gui home system services people browser documents library "
-        "elacity-player marketplace archive-manager inbox assistant wallet wallet-metamask "
+        "creator custody elacity-player elacity-reader marketplace archive-manager inbox assistant wallet wallet-metamask "
         "wallet-unisat wallet-walletconnect gba-emulator gba-ucity gba-nonogram chat-room").split()
 SUPPORT = (
     "setup-source-home.sh", "browser-source-home-config.mjs", "browser-runtime-turn.mjs",

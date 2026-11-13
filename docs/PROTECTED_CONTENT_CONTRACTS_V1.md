@@ -141,7 +141,7 @@ path into release verification.
 ## Typed policy and recipient-key authorization
 
 `RightsPolicyBodyV1` is the v1 immutable policy body. It is intentionally
-narrow and grounded in the current reviewed rights-provider surface:
+narrow and grounded in the reviewed rights-evaluation surface:
 
 - one exact full `EncryptedContentIdentityV1`;
 - one exact 16-byte `ContentAccessIdV1` bound separately from the full
@@ -166,7 +166,9 @@ action semantics from the boolean on-chain entitlement alone. Production-
 approved chain ids, contract addresses, selectors, and ABI fixtures remain open
 review inputs, but they are required typed policy fields now, not ambient
 provider configuration. The observation finality model itself is fixed to
-`finalized` in this current review v1 line.
+`finalized` in this current review v1 line. The reasons and the cost it adds
+before a new mint or purchase can be opened are in
+[Key release waits for finality](PROTECTED_CONTENT.md#key-release-waits-for-finality).
 
 `RightsEvaluationEvidenceRequestV1` is the matching typed evidence request. It
 pins the exact `ProtectedContentBindingV1` and `RightsPolicyIdentityV1`. A node
@@ -298,6 +300,10 @@ The Runtime and private providers use it in the inactive source path, including
 the process-backed two-Runtime proof. Installed activation and external
 cryptographic review remain open; this contract alone is not production
 confidentiality evidence.
+[Protected-content crypto review](PROTECTED_CONTENT_CRYPTO_REVIEW.md) carries
+the reviewer-facing suite card: each primitive with its resolved crate version
+and parameters, the exact domain separation and AAD binding of every seal, and
+the committed golden vectors that pin them.
 
 ## Terminal result
 
@@ -316,7 +322,33 @@ Contributions from another request or recipient cannot be reused. The receipt
 is audit/result evidence, not a portable grant that can authorize another
 release.
 
+## Media format v2 fields
+
+New media mints use the DASH format (suite `cenc-dash-aes128ctr/v2`, identity
+kind `0x03`, package root `protected-content/v2/`). The provider operations gain
+only optional fields, so a v1 request is byte-identical to before. The decrypt
+provider's open takes `media_identity_v2` and `protected_init_segments` in place
+of the v1 identity and init segment, and its read takes `rendition_index` and
+returns `segment_proof`; the viewer open answer is a new schema,
+`elastos.library.runtime-custody-viewer/v2`. The protect provider takes
+`representations`, `extra_pssh_boxes`, `rendition_index` and
+`media_identity_v2`; the media provider's output is
+`elastos.media-provider.prepared-media/v2`. There are no new routes, operations,
+approval types or capabilities. The identity binds the rendition set through a
+Merkle root per rendition; its domains are
+`elastos.protected-content.cenc-dash-media-identity/v2`,
+`...cenc-dash-segment-leaf/v2` and `...cenc-dash-manifest-root/v2`. The pssh
+system ids and registry are described in
+[Protected content](PROTECTED_CONTENT.md) and the
+[crypto review](PROTECTED_CONTENT_CRYPTO_REVIEW.md).
+
 ## Threat model and fail-closed rules
+
+This section is a list of the inputs these contracts reject. The threat model
+proper — assets, principals, trust boundaries, and what a compromised viewer
+capsule, a compromised single custody node, a replayed release operation and a
+tampered staged file each can and cannot do, each with the test that pins it —
+is in [Protected-content crypto review](PROTECTED_CONTENT_CRYPTO_REVIEW.md).
 
 Tests reject wrong Wallet, attacker-signed victim address, wrong content,
 policy, evidence request, node set, threshold, Profile, session, action,
@@ -344,9 +376,9 @@ Ed25519/classical and full PQ authorization is a pre-activation decision. The
 Runtime mint journal can commit 2-of-3 PQ-hybrid envelopes without claiming
 content availability or a catalog path. Buy/open remains blocked until Runtime
 verifies the existing content provider's exact signed availability receipt.
-Remaining inactive e2e and cutover work is tracked in GitHub issues.
+Remaining installed proof work is tracked in GitHub issues.
 
-The parent branch's provisional `elastos_common::protected_content` DTOs are
-not this canonical contract. Integration must replace that surface atomically
-after independent review. It must not add parallel decoders, migration adapters,
-or compatibility fallbacks.
+The provisional `elastos_common::protected_content` DTOs were never this
+canonical contract, and the atomic cutover removed that surface. No parallel
+decoder, migration adapter, or compatibility fallback was added, and none may
+be introduced.

@@ -182,6 +182,7 @@ async fn test_system_token_can_review_and_reject_wallet_approvals() {
             "expires_at": 20
         })]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
 

@@ -4,10 +4,10 @@ use vsss_rs::Gf256;
 use zeroize::Zeroizing;
 
 use elastos_protected_content_contracts::{
-    AuthenticatedRuntimeReleaseOperationV1, CustodyNodeIdentityV1, Digest32, KeyReleaseError,
-    KeyReleaseOutcomeV1, NodeSetV1, ProtectedContentBindingV1, RecipientKeyIdentityV1,
-    SignedNodeContributionV1, SignedTerminalReceiptV1, TerminalReceiptIssuerKey,
-    VerifiedNodeContributionV1,
+    AuthenticatedRuntimeReleaseOperationV1, AuthenticatedRuntimeReleaseOperationV2,
+    CustodyNodeIdentityV1, Digest32, KeyReleaseError, KeyReleaseOutcomeV1, NodeSetV1,
+    ProtectedContentBindingV1, RecipientKeyIdentityV1, SignedNodeContributionV1,
+    SignedTerminalReceiptV1, TerminalReceiptIssuerKey, VerifiedNodeContributionV1,
 };
 
 #[cfg(test)]
@@ -138,6 +138,101 @@ pub fn reconstruct_content_key_into_decrypt_session<R: CryptoRng + RngCore>(
         inputs.operation.binding().runtime_session_binding(),
         inputs.operation.recipient(),
         inputs.operation.release_request_hash(),
+    )?;
+    wrap_transcript.extend_from_slice(inputs.decrypt_session_public.as_bytes());
+    wrap_content_key_to_decrypt_session(
+        &content_key,
+        inputs.decrypt_session_public,
+        &wrap_transcript,
+        rng,
+    )
+}
+
+/// Plan B T3.1: the content key of a V2 pool release, for the recipient whose
+/// secret is given. Every V2 release slot holds the operation hash (L1); the
+/// committee is the item's epoch in the embedded descriptor; contributions and
+/// the receipt are checked against that recipient, which must be one of the
+/// wallet-signed recipients. The content-key commitment is verified before
+/// the key leaves this function, as for V1.
+pub(crate) fn reconstruct_content_key_from_authenticated_operation_v2(
+    operation: &AuthenticatedRuntimeReleaseOperationV2,
+    content_key_commitment: Digest32,
+    contributions: &[SignedNodeContributionV1],
+    terminal_receipt: &SignedTerminalReceiptV1,
+    expected_terminal_issuer: TerminalReceiptIssuerKey,
+    recipient_secret: &RecipientSecretKeyV1,
+    now: u64,
+) -> Result<ContentEncryptionKeyV1, CustodyError> {
+    let recipient = recipient_secret.identity()?;
+    let possession = require_recipient_possession(
+        recipient_secret,
+        operation.binding(),
+        &recipient,
+        operation.operation_hash(),
+    )?;
+    let custody_epoch = operation.epoch_bundle().signed_epoch().statement();
+    let context = ReconstructionContext {
+        binding: operation.binding(),
+        recipient: &recipient,
+        request_hash: operation.operation_hash(),
+        node_set: custody_epoch.node_set()?,
+        nodes: custody_epoch.nodes(),
+        content_key_commitment,
+        contributions,
+        terminal_receipt,
+        expected_terminal_issuer,
+        recipient_secret: possession.secret(),
+        now,
+    };
+    reconstruct_content_key_impl(
+        &context,
+        |contribution, node_set, now| {
+            operation.verify_node_contribution(contribution, node_set, &recipient, now)
+        },
+        |terminal_receipt, verified_contributions, expected_issuer, now| {
+            operation.verify_terminal_receipt(
+                terminal_receipt,
+                verified_contributions,
+                expected_issuer,
+                now,
+            )
+        },
+    )
+}
+
+/// [`DecryptSessionReconstructionInputsV1`] for a V2 pool release.
+pub struct DecryptSessionReconstructionInputsV2<'a> {
+    pub operation: &'a AuthenticatedRuntimeReleaseOperationV2,
+    pub content_key_commitment: Digest32,
+    pub contributions: &'a [SignedNodeContributionV1],
+    pub terminal_receipt: &'a SignedTerminalReceiptV1,
+    pub expected_terminal_issuer: TerminalReceiptIssuerKey,
+    pub recipient_secret: &'a RecipientSecretKeyV1,
+    pub decrypt_session_public: &'a DecryptSessionPublicKeyV1,
+    pub now: u64,
+}
+
+/// The V2 twin of [`reconstruct_content_key_into_decrypt_session`]. The wrap
+/// transcript names the recipient and the operation hash; the caller builds
+/// the same transcript to unwrap.
+pub fn reconstruct_content_key_into_decrypt_session_v2<R: CryptoRng + RngCore>(
+    inputs: &DecryptSessionReconstructionInputsV2<'_>,
+    rng: &mut R,
+) -> Result<DecryptSessionWrappedContentKeyV1, CustodyError> {
+    let content_key = reconstruct_content_key_from_authenticated_operation_v2(
+        inputs.operation,
+        inputs.content_key_commitment,
+        inputs.contributions,
+        inputs.terminal_receipt,
+        inputs.expected_terminal_issuer,
+        inputs.recipient_secret,
+        inputs.now,
+    )?;
+    let mut wrap_transcript = possession_transcript_v1(
+        inputs.operation.binding().profile(),
+        inputs.operation.binding().runtime_session_binding(),
+        &inputs.recipient_secret.identity()?,
+        inputs.operation.operation_hash(),
     )?;
     wrap_transcript.extend_from_slice(inputs.decrypt_session_public.as_bytes());
     wrap_content_key_to_decrypt_session(
@@ -1356,5 +1451,236 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, CustodyError::ContentKeyCommitmentMismatch));
+    }
+
+    // -----------------------------------------------------------------------
+    // Plan B T3.1: the V2 twins over the shared reconstruction
+    // -----------------------------------------------------------------------
+
+    mod v2 {
+        use ed25519_dalek::Signer as _;
+        use elastos_protected_content_contracts::{
+            test_fixtures::{signed_node_rights_decision, signing_key},
+            AuthenticatedRuntimeReleaseOperationV2, CanonicalContract, KeyReleaseOutcomeV1,
+            NodeContributionRefV1, RightsDecisionV1, SignedNodeContributionV1,
+            SignedTerminalReceiptV1, TerminalReceiptIssuerKey, TerminalReceiptStatementV1,
+        };
+        use rand09::{rngs::StdRng, SeedableRng as _};
+
+        use crate::{
+            node_share::NodeLocalStoredShareV1,
+            possession::DecryptSessionSecretKeyV1,
+            release::produce_pool_contributions_with_rng,
+            test_support::{
+                node_public_key, node_signing_key, pool_node_custody_secret, pool_release_test,
+                recipient_secret, NOW,
+            },
+            CustodyError,
+        };
+
+        use super::super::{
+            reconstruct_content_key_into_decrypt_session_v2, DecryptSessionReconstructionInputsV2,
+        };
+        use crate::reconstruct_content_key_for_object_session_v2;
+
+        /// The fixture's recipient key seed (`pool_release_test`'s recipient).
+        const RECIPIENT_SEED: u8 = 9;
+        /// The Runtime that declares the operation and signs its receipt.
+        const RUNTIME_SEED: u8 = 0x43;
+
+        struct Released {
+            test: crate::test_support::PoolReleaseTestV1,
+            operation: AuthenticatedRuntimeReleaseOperationV2,
+            contributions: Vec<SignedNodeContributionV1>,
+            receipt: SignedTerminalReceiptV1,
+        }
+
+        fn released() -> Released {
+            let test = pool_release_test(vec![(RECIPIENT_SEED, 1)], 1, RUNTIME_SEED);
+            let operation = test.fixture.authenticated();
+            let contributions = [1u8, 2]
+                .into_iter()
+                .map(|node| {
+                    produce_pool_contributions_with_rng(
+                        &operation,
+                        node_public_key(node),
+                        &signed_node_rights_decision(
+                            &operation,
+                            node,
+                            RightsDecisionV1::Allowed,
+                            NOW,
+                        ),
+                        &NodeLocalStoredShareV1::extract_from_envelope(
+                            &test.envelope,
+                            node_public_key(node),
+                        )
+                        .unwrap(),
+                        &node_signing_key(node),
+                        &pool_node_custody_secret(node),
+                        NOW + 5,
+                        NOW + 30,
+                        NOW + 6,
+                        &mut StdRng::from_seed([node; 32]),
+                    )
+                    .unwrap()
+                    .remove(0)
+                })
+                .collect::<Vec<_>>();
+            let node_set = test.fixture.node_set();
+            let recipient = recipient_secret(RECIPIENT_SEED).identity().unwrap();
+            let refs = contributions
+                .iter()
+                .map(|contribution| {
+                    NodeContributionRefV1::from(
+                        &operation
+                            .verify_node_contribution(contribution, &node_set, &recipient, NOW + 6)
+                            .unwrap(),
+                    )
+                })
+                .collect();
+            let key = signing_key(RUNTIME_SEED);
+            let statement = TerminalReceiptStatementV1::new(
+                operation.operation_hash(),
+                operation.binding().clone(),
+                TerminalReceiptIssuerKey::new(key.verifying_key().to_bytes()).unwrap(),
+                KeyReleaseOutcomeV1::Released,
+                refs,
+                // Inside every contribution's window (`NOW + 5 .. NOW + 30`).
+                NOW + 5,
+                NOW + 30,
+            )
+            .unwrap();
+            let receipt = SignedTerminalReceiptV1::new(
+                statement.clone(),
+                key.sign(&statement.canonical_bytes().unwrap())
+                    .to_bytes()
+                    .to_vec(),
+            )
+            .unwrap();
+            Released {
+                test,
+                operation,
+                contributions,
+                receipt,
+            }
+        }
+
+        fn issuer() -> TerminalReceiptIssuerKey {
+            TerminalReceiptIssuerKey::new(signing_key(RUNTIME_SEED).verifying_key().to_bytes())
+                .unwrap()
+        }
+
+        #[test]
+        fn v2_object_session_key_matches_the_envelope_commitment() {
+            let released = released();
+            let commitment = released.test.envelope.manifest().content_key_commitment();
+            let key = reconstruct_content_key_for_object_session_v2(
+                &released.operation,
+                commitment,
+                &released.contributions,
+                &released.receipt,
+                issuer(),
+                &recipient_secret(RECIPIENT_SEED),
+                NOW + 7,
+            )
+            .unwrap();
+            assert!(key.matches_commitment(commitment));
+        }
+
+        #[test]
+        fn v2_reconstructs_into_a_decrypt_session_for_its_recipient_only() {
+            let released = released();
+            let session = DecryptSessionSecretKeyV1::from_seed([0x5c; 32]).unwrap();
+            let public = session.public_key().unwrap();
+            let own = recipient_secret(RECIPIENT_SEED);
+            reconstruct_content_key_into_decrypt_session_v2(
+                &DecryptSessionReconstructionInputsV2 {
+                    operation: &released.operation,
+                    content_key_commitment: released
+                        .test
+                        .envelope
+                        .manifest()
+                        .content_key_commitment(),
+                    contributions: &released.contributions,
+                    terminal_receipt: &released.receipt,
+                    expected_terminal_issuer: issuer(),
+                    recipient_secret: &own,
+                    decrypt_session_public: &public,
+                    now: NOW + 7,
+                },
+                &mut StdRng::from_seed([0x5d; 32]),
+            )
+            .unwrap();
+            // Another recipient's secret opens no share of this release.
+            let other = recipient_secret(RECIPIENT_SEED + 1);
+            assert!(reconstruct_content_key_into_decrypt_session_v2(
+                &DecryptSessionReconstructionInputsV2 {
+                    operation: &released.operation,
+                    content_key_commitment: released
+                        .test
+                        .envelope
+                        .manifest()
+                        .content_key_commitment(),
+                    contributions: &released.contributions,
+                    terminal_receipt: &released.receipt,
+                    expected_terminal_issuer: issuer(),
+                    recipient_secret: &other,
+                    decrypt_session_public: &public,
+                    now: NOW + 7,
+                },
+                &mut StdRng::from_seed([0x5e; 32]),
+            )
+            .is_err());
+        }
+
+        #[test]
+        fn v2_reconstruct_verifies_the_commitment() {
+            let released = released();
+            let err = reconstruct_content_key_for_object_session_v2(
+                &released.operation,
+                crate::test_support::digest(0xee),
+                &released.contributions,
+                &released.receipt,
+                issuer(),
+                &recipient_secret(RECIPIENT_SEED),
+                NOW + 7,
+            )
+            .unwrap_err();
+            assert!(matches!(err, CustodyError::ContentKeyCommitmentMismatch));
+        }
+
+        #[test]
+        fn guard_v2_reconstruct_refuses_a_receipt_from_another_issuer() {
+            let released = released();
+            let other = TerminalReceiptIssuerKey::new(
+                signing_key(RUNTIME_SEED + 1).verifying_key().to_bytes(),
+            )
+            .unwrap();
+            assert!(reconstruct_content_key_for_object_session_v2(
+                &released.operation,
+                released.test.envelope.manifest().content_key_commitment(),
+                &released.contributions,
+                &released.receipt,
+                other,
+                &recipient_secret(RECIPIENT_SEED),
+                NOW + 7,
+            )
+            .is_err());
+        }
+
+        #[test]
+        fn guard_v2_reconstruct_refuses_fewer_contributions_than_the_threshold() {
+            let released = released();
+            assert!(reconstruct_content_key_for_object_session_v2(
+                &released.operation,
+                released.test.envelope.manifest().content_key_commitment(),
+                &released.contributions[..1],
+                &released.receipt,
+                issuer(),
+                &recipient_secret(RECIPIENT_SEED),
+                NOW + 7,
+            )
+            .is_err());
+        }
     }
 }

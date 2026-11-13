@@ -1,13 +1,14 @@
 use elastos_protected_content_contracts::{
-    AuthenticatedRuntimeReleaseOperationV1, ContractError, Digest32, NodePublicKey,
-    RuntimeReleaseAuditIdV1, SignedNodeRightsDecisionV1, SignedRuntimeReleaseOperationV1,
+    AuthenticatedRuntimeReleaseOperationAnyV1, ContractError, Digest32, NodePublicKey, NodeSetV1,
+    RuntimeIssuerPolicyV1, RuntimeReleaseAuditIdV1, RuntimeReleaseOperationAnyV1,
+    SignedNodeRightsDecisionV1, SignedRuntimeReleaseOperationV1,
 };
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::wire::{
     contract_decode_error, decode_json, encode_json, validate_schema, CanonicalBlob,
     ProviderFailureCodeV1, MAX_SIGNED_NODE_RIGHTS_DECISION_BYTES_V1,
-    MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V1,
+    MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V1, MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V2,
 };
 
 pub const RIGHTS_PROVIDER_REQUEST_SCHEMA_V1: &str =
@@ -15,8 +16,10 @@ pub const RIGHTS_PROVIDER_REQUEST_SCHEMA_V1: &str =
 pub const RIGHTS_PROVIDER_RESPONSE_SCHEMA_V1: &str =
     "elastos.protected-content.rights-provider.response/v1";
 
+/// One field for V1 and V2 (E9): the canonical domain picks the version. The
+/// blob takes the V2 cap; a V1 operation keeps the V1 cap.
 type SignedRuntimeReleaseOperationBlobV1 =
-    CanonicalBlob<MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V1>;
+    CanonicalBlob<MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V2>;
 type SignedNodeRightsDecisionBlobV1 = CanonicalBlob<MAX_SIGNED_NODE_RIGHTS_DECISION_BYTES_V1>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +62,22 @@ impl RightsProviderRequestV1 {
         Ok(value)
     }
 
+    /// A V1 or V2 operation (S4 R2). `new_evaluate` stays for V1 callers.
+    pub fn new_evaluate_any(
+        selected_node_public_key: NodePublicKey,
+        signed_runtime_release_operation: &RuntimeReleaseOperationAnyV1,
+    ) -> Result<Self, ContractError> {
+        let value = Self(RightsProviderRequestKindV1::Evaluate {
+            schema: RIGHTS_PROVIDER_REQUEST_SCHEMA_V1.to_string(),
+            selected_node_public_key: *selected_node_public_key.as_bytes(),
+            signed_runtime_release_operation: CanonicalBlob::new(
+                signed_runtime_release_operation.canonical_bytes()?,
+            )?,
+        });
+        value.validate_structure()?;
+        Ok(value)
+    }
+
     pub fn to_json_vec(&self) -> Result<Vec<u8>, serde_json::Error> {
         encode_json(self)
     }
@@ -72,14 +91,25 @@ impl RightsProviderRequestV1 {
         }
     }
 
+    /// The operation, V1 or V2 by its canonical domain (F2). A V1 operation
+    /// above the V1 cap is refused as before.
     pub fn signed_runtime_release_operation(
         &self,
-    ) -> Result<SignedRuntimeReleaseOperationV1, ContractError> {
+    ) -> Result<RuntimeReleaseOperationAnyV1, ContractError> {
         match &self.0 {
             RightsProviderRequestKindV1::Evaluate {
                 signed_runtime_release_operation,
                 ..
-            } => signed_runtime_release_operation.decode(),
+            } => {
+                let bytes = signed_runtime_release_operation.as_slice();
+                let operation = RuntimeReleaseOperationAnyV1::from_canonical_bytes(bytes)?;
+                if matches!(operation, RuntimeReleaseOperationAnyV1::V1(_))
+                    && bytes.len() > MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V1
+                {
+                    return Err(ContractError::FieldTooLong("provider_canonical_blob"));
+                }
+                Ok(operation)
+            }
         }
     }
 
@@ -93,12 +123,7 @@ impl RightsProviderRequestV1 {
                 )?;
                 let selected_node = self.selected_node_public_key()?;
                 let signed_operation = self.signed_runtime_release_operation()?;
-                let node_set = signed_operation
-                    .statement()
-                    .custody_epoch()
-                    .statement()
-                    .node_set()
-                    .map_err(|_| ContractError::InvalidField("signed_runtime_release_operation"))?;
+                let node_set = unverified_node_set(&signed_operation)?;
                 if !node_set.contains(selected_node) {
                     return Err(ContractError::InvalidField("selected_node_public_key"));
                 }
@@ -119,17 +144,22 @@ impl RightsProviderRequestV1 {
         now_unix_seconds: u64,
     ) -> Result<ValidatedRightsProviderRequestV1, ContractError> {
         let selected_node_public_key = self.selected_node_public_key()?;
-        let signed_runtime_release_operation = self.signed_runtime_release_operation()?;
-        let declared_runtime_issuer = signed_runtime_release_operation
-            .statement()
-            .runtime_operation_issuer();
-        let authenticated_runtime_release_operation = signed_runtime_release_operation
-            .verify(declared_runtime_issuer, now_unix_seconds)
-            .map_err(|_| ContractError::InvalidField("signed_runtime_release_operation"))?;
+        let authenticated_runtime_release_operation = match self
+            .signed_runtime_release_operation()?
+        {
+            RuntimeReleaseOperationAnyV1::V1(operation) => {
+                let declared_runtime_issuer = operation.statement().runtime_operation_issuer();
+                operation
+                    .verify(declared_runtime_issuer, now_unix_seconds)
+                    .map(AuthenticatedRuntimeReleaseOperationAnyV1::V1)
+                    .map_err(|_| ContractError::InvalidField("signed_runtime_release_operation"))?
+            }
+            RuntimeReleaseOperationAnyV1::V2(operation) => operation
+                .verify(RuntimeIssuerPolicyV1::Declared, now_unix_seconds)
+                .map(AuthenticatedRuntimeReleaseOperationAnyV1::V2)
+                .map_err(|_| ContractError::InvalidField("signed_runtime_release_operation"))?,
+        };
         let node_set = authenticated_runtime_release_operation
-            .statement()
-            .custody_epoch()
-            .statement()
             .node_set()
             .map_err(|_| ContractError::InvalidField("signed_runtime_release_operation"))?;
         if !node_set.contains(selected_node_public_key) {
@@ -162,7 +192,7 @@ impl Serialize for RightsProviderRequestV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedRightsProviderRequestV1 {
     selected_node_public_key: NodePublicKey,
-    authenticated_runtime_release_operation: AuthenticatedRuntimeReleaseOperationV1,
+    authenticated_runtime_release_operation: AuthenticatedRuntimeReleaseOperationAnyV1,
 }
 
 impl ValidatedRightsProviderRequestV1 {
@@ -183,11 +213,35 @@ impl ValidatedRightsProviderRequestV1 {
         self.selected_node_public_key
     }
 
+    /// The authenticated V1 or V2 operation (F2). Its V1 arm is today's V1
+    /// value; use [`AuthenticatedRuntimeReleaseOperationAnyV1::as_v1`] for the
+    /// V1 statement.
     pub fn authenticated_runtime_release_operation(
         &self,
-    ) -> &AuthenticatedRuntimeReleaseOperationV1 {
+    ) -> &AuthenticatedRuntimeReleaseOperationAnyV1 {
         &self.authenticated_runtime_release_operation
     }
+}
+
+/// The node set the operation names, by decode only: V1 from its custody
+/// epoch, V2 from the descriptor bundle its item's key envelope names.
+fn unverified_node_set(
+    operation: &RuntimeReleaseOperationAnyV1,
+) -> Result<NodeSetV1, ContractError> {
+    match operation {
+        RuntimeReleaseOperationAnyV1::V1(operation) => {
+            operation.statement().custody_epoch().statement().node_set()
+        }
+        RuntimeReleaseOperationAnyV1::V2(operation) => operation
+            .unverified_epoch_bundle()
+            .ok_or(ContractError::InvalidField(
+                "signed_runtime_release_operation",
+            ))?
+            .signed_epoch()
+            .statement()
+            .node_set(),
+    }
+    .map_err(|_| ContractError::InvalidField("signed_runtime_release_operation"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,11 +307,7 @@ impl RightsProviderResponseV1 {
         let authenticated = request.authenticated_runtime_release_operation();
         let value = Self(RightsProviderResponseKindV1::Failure {
             schema: RIGHTS_PROVIDER_RESPONSE_SCHEMA_V1.to_string(),
-            audit_request_id: *authenticated
-                .statement()
-                .audit_request_id()
-                .digest()
-                .as_bytes(),
+            audit_request_id: *authenticated.audit_request_id().digest().as_bytes(),
             runtime_operation_hash: *authenticated.operation_hash().as_bytes(),
             selected_node_public_key: *request.selected_node_public_key().as_bytes(),
             code,
@@ -335,9 +385,6 @@ impl RightsProviderResponseV1 {
                 let validated = request.clone().into_validated_at(now_unix_seconds)?;
                 let node_set = validated
                     .authenticated_runtime_release_operation()
-                    .statement()
-                    .custody_epoch()
-                    .statement()
                     .node_set()
                     .map_err(|_| ContractError::InvalidField("signed_runtime_release_operation"))?;
                 let signed_decision: SignedNodeRightsDecisionV1 =
@@ -359,8 +406,7 @@ impl RightsProviderResponseV1 {
                     .into_validated_at(now_unix_seconds)?
                     .authenticated_runtime_release_operation
                     .clone();
-                if self.failure_audit_request_id()? != authenticated.statement().audit_request_id()
-                {
+                if self.failure_audit_request_id()? != authenticated.audit_request_id() {
                     return Err(ContractError::InvalidField("audit_request_id"));
                 }
                 if self.failure_runtime_operation_hash()? != authenticated.operation_hash() {
@@ -532,6 +578,8 @@ mod tests {
         assert_eq!(
             validated
                 .authenticated_runtime_release_operation()
+                .as_v1()
+                .unwrap()
                 .statement()
                 .runtime_operation_issuer(),
             runtime_operation_issuer_for_seed(0x43)
@@ -596,7 +644,6 @@ mod tests {
             failure.failure_audit_request_id().unwrap(),
             validated
                 .authenticated_runtime_release_operation()
-                .statement()
                 .audit_request_id()
         );
         assert_eq!(
@@ -648,5 +695,113 @@ mod tests {
         assert!(failure
             .validate_against_request_at(&request, crate::test_support::NOW + 10,)
             .is_err());
+    }
+
+    // Plan B T1.3 (E9, F2): one operation field, V1 or V2 by domain.
+
+    fn v2_operation() -> elastos_protected_content_contracts::SignedRuntimeReleaseOperationV2 {
+        use elastos_protected_content_contracts::test_fixtures::{
+            pool_release_fixture, PoolReleaseSpecV1,
+        };
+        pool_release_fixture(&PoolReleaseSpecV1::new(
+            crate::test_support::xwing_public_key_bytes,
+            crate::test_support::policy_body(),
+            crate::test_support::NOW,
+        ))
+        .operation
+    }
+
+    #[test]
+    fn guard_rights_request_with_unknown_operation_domain_is_refused() {
+        let operation = make_signed_runtime_release_operation();
+        let request =
+            RightsProviderRequestV1::new_evaluate(node_public_key(1), &operation).unwrap();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&request.to_json_vec().unwrap()).unwrap();
+        let first = value["signed_runtime_release_operation"]
+            .as_array_mut()
+            .unwrap()
+            .first_mut()
+            .unwrap();
+        *first = serde_json::json!(first.as_u64().unwrap() ^ 1);
+        let bytes = serde_json::to_vec(&value).unwrap();
+        assert!(RightsProviderRequestV1::decode_wire(&bytes).is_err());
+        assert!(decode_request(&bytes).is_err());
+    }
+
+    #[test]
+    fn rights_failure_for_v2_names_the_v2_operation_hash() {
+        use elastos_protected_content_contracts::{
+            CanonicalContract, RuntimeReleaseOperationAnyV1,
+        };
+        let operation = v2_operation();
+        let any = RuntimeReleaseOperationAnyV1::V2(operation.clone());
+        let request = RightsProviderRequestV1::new_evaluate_any(node_public_key(1), &any).unwrap();
+        assert_eq!(request.signed_runtime_release_operation().unwrap(), any);
+        let validated = decode_request(&request.to_json_vec().unwrap()).unwrap();
+        let v2 = validated
+            .authenticated_runtime_release_operation()
+            .as_v2()
+            .unwrap()
+            .clone();
+        let failure = RightsProviderResponseV1::new_failure(
+            &validated,
+            ProviderFailureCodeV1::BackendUnavailable,
+        )
+        .unwrap();
+        assert_eq!(
+            failure.failure_runtime_operation_hash().unwrap(),
+            v2.operation_hash()
+        );
+        assert_eq!(
+            failure.failure_runtime_operation_hash().unwrap(),
+            operation.statement().canonical_hash().unwrap()
+        );
+        assert_eq!(
+            failure.failure_audit_request_id().unwrap(),
+            operation.statement().audit_request_id()
+        );
+        failure
+            .validate_against_request_at(&request, crate::test_support::NOW + 10)
+            .unwrap();
+    }
+
+    #[test]
+    fn v1_rights_decision_is_unchanged_through_the_any_accessor() {
+        use elastos_protected_content_contracts::{
+            AuthenticatedRuntimeReleaseOperationAnyV1, RuntimeReleaseOperationAnyV1,
+        };
+        let operation = make_signed_runtime_release_operation();
+        let request =
+            RightsProviderRequestV1::new_evaluate(node_public_key(1), &operation).unwrap();
+        let any_request = RightsProviderRequestV1::new_evaluate_any(
+            node_public_key(1),
+            &RuntimeReleaseOperationAnyV1::V1(operation.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            any_request.to_json_vec().unwrap(),
+            request.to_json_vec().unwrap()
+        );
+        let validated = decode_request(&request.to_json_vec().unwrap()).unwrap();
+        let expected = operation
+            .verify(
+                operation.statement().runtime_operation_issuer(),
+                crate::test_support::NOW + 10,
+            )
+            .unwrap();
+        assert_eq!(
+            validated.authenticated_runtime_release_operation(),
+            &AuthenticatedRuntimeReleaseOperationAnyV1::V1(expected)
+        );
+        let decision = make_signed_node_rights_decision(
+            &operation,
+            1,
+            elastos_protected_content_contracts::RightsDecisionV1::Allowed,
+        );
+        RightsProviderResponseV1::new_decision(&decision)
+            .unwrap()
+            .validate_against_request_at(&request, crate::test_support::NOW + 10)
+            .unwrap();
     }
 }

@@ -227,3 +227,31 @@ pub(crate) fn validate_eip155_transaction_intent_payload(
     payload_hex_bytes(payload, "data")?;
     Ok(())
 }
+
+/// The signed transaction carries the payload `chain_id`, so it must name the
+/// chain the person approved. An account that serves every EVM chain would
+/// otherwise sign a transaction valid on a chain nobody reviewed.
+pub(crate) fn validate_transaction_intent_chain(
+    payload: &Value,
+    approved_chain_namespace: &str,
+) -> Result<(), String> {
+    let mismatch =
+        || "This transaction is for a different network than the one approved.".to_string();
+    let approved_chain_id = eip155_chain_id(approved_chain_namespace).map_err(|_| mismatch())?;
+    if payload_u64(payload, "chain_id")? != approved_chain_id {
+        return Err(mismatch());
+    }
+    Ok(())
+}
+
+/// A Browser signature payload names the chain the person reviews. It must be
+/// the chain the approval was raised on, since an EVM account serves them all.
+pub(crate) fn validate_browser_signature_chain(
+    payload: &Value,
+    requested_chain_namespace: &str,
+) -> Result<(), String> {
+    if payload.get("chain_namespace").and_then(Value::as_str) != Some(requested_chain_namespace) {
+        return Err("Browser signature chain does not match the requested chain".to_string());
+    }
+    Ok(())
+}

@@ -22,7 +22,52 @@ fn private_ipfs_operation(op: &str) -> bool {
             | "runtime_hash_staged_directory"
             | "runtime_check_capacity"
             | "runtime_add_local_object"
+            | "runtime_export_car"
+            | "runtime_public_import_car"
+            | "runtime_public_pin"
+            | "runtime_public_provide"
+            | "runtime_public_peers"
     )
+}
+
+/// The Runtime-only target of the public IPFS store, which the Home runs while
+/// the admin's consent is enabled. Only [`ProviderRegistry::send_public_ipfs`]
+/// reaches it.
+pub const PUBLIC_IPFS_TARGET: &str = "public-ipfs";
+
+/// The bound of a Runtime public Provide, the provider's own Provide deadline.
+const PUBLIC_IPFS_PROVIDE_TIMEOUT_SECS: u64 = 120;
+
+/// One request to the public IPFS store. Stop is not an op: it goes through
+/// [`ProviderRegistry::unregister_runtime_provider_target`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum PublicIpfsOp {
+    Init(serde_json::Value),
+    EnsureStarted,
+    Status,
+    ImportCar { root: String, car_base64: String },
+    Pin { cid: String },
+    Provide { cid: String },
+    Peers,
+}
+
+impl PublicIpfsOp {
+    fn request(self) -> serde_json::Value {
+        match self {
+            Self::Init(config) => serde_json::json!({"op":"init","config":config}),
+            Self::EnsureStarted => serde_json::json!({"op":"ensure_started"}),
+            Self::Status => serde_json::json!({"op":"status"}),
+            Self::ImportCar { root, car_base64 } => serde_json::json!({
+                "op":"runtime_public_import_car","root":root,"car_base64":car_base64
+            }),
+            Self::Pin { cid } => serde_json::json!({"op":"runtime_public_pin","cid":cid}),
+            Self::Provide { cid } => serde_json::json!({
+                "op":"runtime_public_provide","cid":cid,
+                "timeout_secs":PUBLIC_IPFS_PROVIDE_TIMEOUT_SECS
+            }),
+            Self::Peers => serde_json::json!({"op":"runtime_public_peers"}),
+        }
+    }
 }
 
 fn private_ipfs_unavailable() -> ProviderError {
@@ -30,7 +75,10 @@ fn private_ipfs_unavailable() -> ProviderError {
 }
 
 fn private_provider_configuration(target: &str, op: &str) -> bool {
-    (target.eq_ignore_ascii_case("model") || target.eq_ignore_ascii_case("ipfs")) && op == "init"
+    ["model", "ipfs", "chain", PUBLIC_IPFS_TARGET]
+        .iter()
+        .any(|private| target.eq_ignore_ascii_case(private))
+        && op == "init"
 }
 
 fn model_index_stream(invocation: &ProviderInvocation) -> bool {
@@ -337,6 +385,10 @@ pub enum ProviderCarrierRoute {
         peer_did: Option<String>,
         /// Optional per-hop timeout. Runtime rejects zero-duration values.
         timeout_ms: Option<u64>,
+        /// Optional bound on the wait for the peer's answer, as on
+        /// [`Self::PeerDid`] (Plan B T4.3, S4-Q7). `None` keeps the
+        /// Carrier's open-ended answer wait.
+        reply_wait_ms: Option<u64>,
     },
     /// Internal Carrier peer-DID route. Runtime resolves addressing privately.
     PeerDid {
@@ -355,6 +407,15 @@ impl ProviderCarrierRoute {
         match self {
             Self::ConnectTicket { timeout_ms, .. } | Self::PeerDid { timeout_ms, .. } => {
                 *timeout_ms
+            }
+        }
+    }
+
+    /// The bound on the wait for the peer's answer, on either route.
+    pub fn reply_wait_ms(&self) -> Option<u64> {
+        match self {
+            Self::ConnectTicket { reply_wait_ms, .. } | Self::PeerDid { reply_wait_ms, .. } => {
+                *reply_wait_ms
             }
         }
     }
@@ -682,14 +743,11 @@ const RESERVED_SUB_NAMES: &[&str] = &[
     "browser-engine",
     "wallet",
     "library",
-    "drm",
-    "rights",
-    "key",
-    "decrypt",
     "inspect",
     "availability",
     "block-graph",
     "object",
+    "collaboration-custody",
     "collaboration-direct",
     "collaboration-profile",
 ];
@@ -699,9 +757,12 @@ const RESERVED_RUNTIME_PROVIDER_TARGETS: &[&str] = &[
     "protect",
     "media",
     "custody",
+    // Plan B T3.4: a pool member's viewing-session service.
+    "custody-pool",
     "protected-content-decrypt",
     "collaboration.history",
     "collaboration.shared",
+    PUBLIC_IPFS_TARGET,
 ];
 
 /// Registry of providers
@@ -1250,6 +1311,28 @@ impl ProviderRegistry {
         )
     }
 
+    /// Whether a Runtime-only provider target has any registration, Ready or
+    /// Settling. Read-only: the public store's closed-gate cleanup (META-PUBLIC
+    /// A5) uses it to find a registration in any state.
+    pub async fn has_runtime_provider_target_registration(&self, target: &str) -> bool {
+        let key = target.to_lowercase();
+        if !RESERVED_RUNTIME_PROVIDER_TARGETS.contains(&key.as_str()) {
+            return false;
+        }
+        matches!(
+            self.sub_providers.read().await.get(&key),
+            Some(
+                SubProviderRegistration::Ready {
+                    visibility: ProviderTargetVisibility::RuntimeOnly,
+                    ..
+                } | SubProviderRegistration::Settling {
+                    visibility: ProviderTargetVisibility::RuntimeOnly,
+                    ..
+                }
+            )
+        )
+    }
+
     /// Snapshot the routes actually registered in this Runtime process.
     pub async fn registrations(&self) -> Vec<ProviderRegistration> {
         let providers = self.providers.read().await;
@@ -1337,6 +1420,34 @@ impl ProviderRegistry {
     ) -> Result<serde_json::Value, ProviderError> {
         self.send_raw_with_target_visibility(scheme, request, false)
             .await
+    }
+
+    /// Runtime-only Init refresh of the running Chain plane. The Chain
+    /// provider replaces only what the Init names, so a custody node can trust
+    /// the pool owner it now serves without restarting the plane.
+    pub async fn refresh_chain_configuration(
+        &self,
+        config: &super::BridgeProviderConfig,
+    ) -> Result<(), ProviderError> {
+        let provider = self
+            .sub_providers
+            .read()
+            .await
+            .get("chain")
+            .and_then(SubProviderRegistration::ready_provider)
+            .ok_or_else(|| ProviderError::NoProvider("chain".into()))?;
+        let request = serde_json::json!({"op":"init", "config":config});
+        let response =
+            tokio::time::timeout(super::bridge::REQUEST_TIMEOUT, provider.send_raw(&request))
+                .await
+                .map_err(|_| ProviderError::Provider("chain configuration timed out".into()))??;
+        if response["status"] != "ok" {
+            return Err(ProviderError::Provider(format!(
+                "chain configuration refused: {}",
+                response["code"].as_str().unwrap_or("unknown")
+            )));
+        }
+        Ok(())
     }
 
     /// Runtime-only Init refresh of the existing local model slot. The provider
@@ -1606,6 +1717,79 @@ impl ProviderRegistry {
             private_ipfs_unavailable()
         })?;
         serde_json::from_value(response).map_err(|_| private_ipfs_unavailable())
+    }
+
+    /// Export one DAG as a CAR from the private store, through the exact local
+    /// `ipfs` sub-provider only: no URI, alias or Carrier fallback.
+    pub async fn send_local_ipfs_export_car(
+        &self,
+        cid: &str,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, ProviderError> {
+        if !cfg!(any(target_os = "linux", target_os = "macos")) {
+            return Err(private_ipfs_unavailable());
+        }
+        let failed = || ProviderError::Provider("local CAR export failed".into());
+        if max_bytes == 0 {
+            return Err(failed());
+        }
+        let provider = self
+            .sub_providers
+            .read()
+            .await
+            .get("ipfs")
+            .and_then(SubProviderRegistration::ready_provider)
+            .ok_or_else(private_ipfs_unavailable)?;
+        let response = provider
+            .send_raw(&serde_json::json!({
+                "op":"runtime_export_car","cid":cid,"max_bytes":max_bytes
+            }))
+            .await?;
+        if response["status"] != "ok" {
+            tracing::debug!(
+                code = response["code"].as_str().unwrap_or_default(),
+                message = response["message"].as_str().unwrap_or_default(),
+                "local CAR export refused"
+            );
+            return Err(failed());
+        }
+        let car = response["data"]["car_base64"]
+            .as_str()
+            .filter(|encoded| encoded.len() as u64 <= max_bytes.div_ceil(3).saturating_mul(4))
+            .and_then(|encoded| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .ok()
+            })
+            .ok_or_else(failed)?;
+        if car.len() as u64 > max_bytes {
+            return Err(failed());
+        }
+        Ok(car)
+    }
+
+    /// Send one op to the exact Runtime-only public IPFS target, with the
+    /// caller's dispatch fence, if any, held through the provider's dispatch.
+    pub async fn send_public_ipfs(
+        &self,
+        op: PublicIpfsOp,
+    ) -> Result<serde_json::Value, ProviderError> {
+        let provider = self
+            .sub_providers
+            .read()
+            .await
+            .get(PUBLIC_IPFS_TARGET)
+            .and_then(|entry| match entry {
+                SubProviderRegistration::Ready {
+                    provider,
+                    visibility: ProviderTargetVisibility::RuntimeOnly,
+                } => Some(provider.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| ProviderError::NoProvider(PUBLIC_IPFS_TARGET.to_string()))?;
+        provider
+            .send_raw_fenced(&op.request(), super::dispatch::current())
+            .await
     }
 
     /// Send an already validated Runtime envelope to one exact private target.
@@ -1912,23 +2096,19 @@ fn validate_provider_transfer_contract(
                     ));
                 }
             }
-            ProviderCarrierRoute::PeerDid {
-                peer_did,
-                reply_wait_ms,
-                ..
-            } => {
+            ProviderCarrierRoute::PeerDid { peer_did, .. } => {
                 if peer_did.trim().is_empty() {
                     return Err(ProviderError::Provider(
                         "Carrier provider invocation requires peer_did".to_string(),
                     ));
                 }
-                if *reply_wait_ms == Some(0) {
-                    return Err(ProviderError::Provider(
-                        "Carrier provider invocation reply_wait_ms must be greater than zero"
-                            .to_string(),
-                    ));
-                }
             }
+        }
+        // Both routes bound the answer wait the same way.
+        if route.reply_wait_ms() == Some(0) {
+            return Err(ProviderError::Provider(
+                "Carrier provider invocation reply_wait_ms must be greater than zero".to_string(),
+            ));
         }
         if route.timeout_ms() == Some(0) {
             return Err(ProviderError::Provider(
@@ -3337,6 +3517,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chain_init_is_runtime_owned_and_refreshes_the_running_slot() {
+        let registry = ProviderRegistry::new();
+        let config = super::super::BridgeProviderConfig {
+            extra: serde_json::json!({ "protected_content_runtime_issuer": "0x42" }),
+            ..Default::default()
+        };
+        assert!(matches!(
+            registry.refresh_chain_configuration(&config).await,
+            Err(ProviderError::NoProvider(_))
+        ));
+        let provider = Arc::new(PrivateIpfsMock::default());
+        registry
+            .register_sub_provider("chain", provider.clone())
+            .await
+            .unwrap();
+        let request = serde_json::json!({"op":"init", "config":config});
+        assert!(registry.send_raw("chain", &request).await.is_err());
+        assert!(registry.send_raw("Chain", &request).await.is_err());
+        assert!(registry
+            .send_runtime_provider_target_raw("chain", &request)
+            .await
+            .is_err());
+        assert!(provider.requests.lock().await.is_empty());
+
+        *provider.response.lock().await = Some(serde_json::json!({"status":"ok", "data":{}}));
+        registry.refresh_chain_configuration(&config).await.unwrap();
+        assert_eq!(provider.requests.lock().await.clone(), vec![request]);
+        *provider.response.lock().await =
+            Some(serde_json::json!({"status":"error", "code":"invalid_config"}));
+        let refused = registry.refresh_chain_configuration(&config).await;
+        assert!(
+            matches!(&refused, Err(ProviderError::Provider(detail)) if detail.contains("invalid_config")),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn private_ipfs_generic_and_remote_dispatch_rejected_before_transmission() {
         let registry = ProviderRegistry::new();
         let provider = Arc::new(PrivateIpfsMock::default());
@@ -3635,6 +3852,7 @@ mod tests {
                     connect_ticket,
                     peer_did,
                     timeout_ms,
+                    ..
                 } => (
                     Some(connect_ticket.as_str()),
                     peer_did.as_deref(),
@@ -4524,6 +4742,7 @@ mod tests {
                         connect_ticket: "ticket-secret".to_string(),
                         peer_did: Some("did:key:zRemote".to_string()),
                         timeout_ms: Some(5_000),
+                        reply_wait_ms: None,
                     },
                 ),
             })
@@ -4535,6 +4754,54 @@ mod tests {
         assert!(error.contains("carrier-provider-plane"));
         assert!(error.contains("failed_closed"));
         assert!(!error.contains("ticket-secret"));
+    }
+
+    /// Plan B T4.3 (S4-Q7): both route kinds refuse a zero answer wait
+    /// before any Carrier call, and both report the bound they carry.
+    #[tokio::test]
+    async fn carrier_routes_refuse_a_zero_reply_wait() {
+        let registry = ProviderRegistry::new();
+        let invoker = Arc::new(MockCarrierInvoker::default());
+        registry.set_carrier_invoker(invoker.clone()).await;
+        let ticket = |reply_wait_ms| ProviderCarrierRoute::ConnectTicket {
+            connect_ticket: "ticket-secret".to_string(),
+            peer_did: Some("did:key:zRemote".to_string()),
+            timeout_ms: Some(5_000),
+            reply_wait_ms,
+        };
+        let peer = |reply_wait_ms| ProviderCarrierRoute::PeerDid {
+            peer_did: "did:key:zRemote".to_string(),
+            timeout_ms: Some(5_000),
+            reply_wait_ms,
+        };
+        assert_eq!(ticket(Some(800)).reply_wait_ms(), Some(800));
+        assert_eq!(peer(Some(900)).reply_wait_ms(), Some(900));
+        assert_eq!(ticket(None).reply_wait_ms(), None);
+        for route in [ticket(Some(0)), peer(Some(0))] {
+            let error = registry
+                .invoke_provider(ProviderInvocation {
+                    source: "content-provider".to_string(),
+                    target: "content".to_string(),
+                    op: "status".to_string(),
+                    request: serde_json::json!({ "op": "status" }),
+                    transfer: ProviderTransfer::Json,
+                    range: None,
+                    progress: None,
+                    transport: ProviderInvocationTransport::Carrier(route),
+                })
+                .await
+                .expect_err("a zero answer wait is refused");
+            assert!(
+                error
+                    .to_string()
+                    .contains("reply_wait_ms must be greater than zero"),
+                "{error}"
+            );
+        }
+        assert!(
+            invoker.requests.lock().await.is_empty(),
+            "no Carrier call was made"
+        );
     }
 
     #[tokio::test]
@@ -4563,6 +4830,7 @@ mod tests {
                         connect_ticket: "ticket-secret".to_string(),
                         peer_did: Some("did:key:zRemote".to_string()),
                         timeout_ms: Some(5_000),
+                        reply_wait_ms: None,
                     },
                 ),
             })
@@ -4711,10 +4979,6 @@ mod tests {
             "chain",
             "model",
             "wallet",
-            "drm",
-            "rights",
-            "key",
-            "decrypt",
             "availability",
             "block-graph",
             "object",
@@ -4731,11 +4995,37 @@ mod tests {
         assert!(registry.get_sub_provider("did").await.is_none());
     }
 
+    /// Plan B T3.4: a pool member's `custody-pool` target is a reserved
+    /// runtime target; a near name is not.
+    #[tokio::test]
+    async fn custody_pool_is_a_reserved_runtime_provider_target() {
+        let registry = ProviderRegistry::new();
+        registry
+            .register_runtime_provider_target("custody-pool", Arc::new(RawMockProvider))
+            .await
+            .unwrap();
+        assert!(
+            registry
+                .has_ready_runtime_provider_target("custody-pool")
+                .await
+        );
+        assert!(registry
+            .send_runtime_provider_target_raw("custody-pool", &serde_json::json!({"op": "status"}))
+            .await
+            .is_ok());
+        assert!(registry
+            .register_runtime_provider_target("custody-pools", Arc::new(RawMockProvider))
+            .await
+            .is_err());
+        // A runtime target is not a capsule resource scheme.
+        assert!(registry.sub_provider_schemes().await.is_empty());
+    }
+
     #[tokio::test]
     async fn runtime_only_targets_coexist_without_capsule_resource_exposure() {
         let registry = ProviderRegistry::new();
         registry
-            .register_sub_provider("decrypt", Arc::new(RawMockProvider))
+            .register_sub_provider("library", Arc::new(RawMockProvider))
             .await
             .unwrap();
         for target in [
@@ -4752,10 +5042,10 @@ mod tests {
                 .unwrap();
         }
 
-        let provisional = registry
+        let capsule_scheme = registry
             .invoke_provider(ProviderInvocation {
                 source: "runtime".to_string(),
-                target: "decrypt".to_string(),
+                target: "library".to_string(),
                 op: "status".to_string(),
                 request: serde_json::json!({"op":"status"}),
                 transfer: ProviderTransfer::Json,
@@ -4766,11 +5056,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            provisional["data"]["runtime_invocation"]["target"],
-            "decrypt"
+            capsule_scheme["data"]["runtime_invocation"]["target"],
+            "library"
         );
-        assert_eq!(registry.sub_provider_schemes().await, vec!["decrypt"]);
-        assert!(!registry.has_ready_runtime_provider_target("decrypt").await);
+        assert_eq!(registry.sub_provider_schemes().await, vec!["library"]);
+        assert!(!registry.has_ready_runtime_provider_target("library").await);
         let registrations = registry.registrations().await;
         for target in [
             "protect",
@@ -4830,7 +5120,7 @@ mod tests {
     async fn unregister_api_enforces_provider_target_class() {
         let registry = ProviderRegistry::new();
         registry
-            .register_sub_provider("decrypt", Arc::new(MockProvider::new()))
+            .register_sub_provider("library", Arc::new(MockProvider::new()))
             .await
             .unwrap();
         for target in [
@@ -4867,7 +5157,7 @@ mod tests {
         }
 
         let wrong_runtime_api = registry
-            .unregister_runtime_provider_target("decrypt")
+            .unregister_runtime_provider_target("library")
             .await
             .unwrap_err();
         assert!(wrong_runtime_api
@@ -4876,7 +5166,7 @@ mod tests {
         assert!(matches!(
             registry
                 .route(
-                    "elastos://decrypt/probe",
+                    "elastos://library/probe",
                     "capsule:test",
                     ResourceAction::Write,
                     Some(b"still-registered".to_vec()),
@@ -5373,5 +5663,306 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(ProviderError::NotFound(_))));
+    }
+
+    // ── Public IPFS store: trusted typed dispatch only ─────────────────
+
+    const PUBLIC_IPFS_OPS: [&str; 5] = [
+        "runtime_export_car",
+        "runtime_public_import_car",
+        "runtime_public_pin",
+        "runtime_public_provide",
+        "runtime_public_peers",
+    ];
+
+    fn public_ipfs_ops() -> Vec<(PublicIpfsOp, serde_json::Value)> {
+        vec![
+            (
+                PublicIpfsOp::Init(serde_json::json!({"extra":{"runtime_store_mode":"public"}})),
+                serde_json::json!({"op":"init","config":{"extra":{"runtime_store_mode":"public"}}}),
+            ),
+            (
+                PublicIpfsOp::EnsureStarted,
+                serde_json::json!({"op":"ensure_started"}),
+            ),
+            (PublicIpfsOp::Status, serde_json::json!({"op":"status"})),
+            (
+                PublicIpfsOp::ImportCar {
+                    root: "bafkroot".into(),
+                    car_base64: "Q0FS".into(),
+                },
+                serde_json::json!({"op":"runtime_public_import_car","root":"bafkroot","car_base64":"Q0FS"}),
+            ),
+            (
+                PublicIpfsOp::Pin {
+                    cid: "bafkroot".into(),
+                },
+                serde_json::json!({"op":"runtime_public_pin","cid":"bafkroot"}),
+            ),
+            (
+                PublicIpfsOp::Provide {
+                    cid: "bafkroot".into(),
+                },
+                serde_json::json!({"op":"runtime_public_provide","cid":"bafkroot","timeout_secs":120}),
+            ),
+            (
+                PublicIpfsOp::Peers,
+                serde_json::json!({"op":"runtime_public_peers"}),
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn public_ipfs_trusted_dispatch_reaches_exact_target() {
+        let registry = ProviderRegistry::new();
+        assert!(matches!(
+            registry.send_public_ipfs(PublicIpfsOp::Status).await,
+            Err(ProviderError::NoProvider(_))
+        ));
+        let public = Arc::new(PrivateIpfsMock::default());
+        let private = Arc::new(PrivateIpfsMock::default());
+        *public.response.lock().await = Some(serde_json::json!({"status":"ok","data":{"peers":2}}));
+        registry
+            .register_runtime_provider_target(PUBLIC_IPFS_TARGET, public.clone())
+            .await
+            .unwrap();
+        registry
+            .register_sub_provider("ipfs", private.clone())
+            .await
+            .unwrap();
+        for (op, wire) in public_ipfs_ops() {
+            let answer = registry.send_public_ipfs(op).await.unwrap();
+            assert_eq!(
+                answer,
+                serde_json::json!({"status":"ok","data":{"peers":2}})
+            );
+            assert_eq!(public.requests.lock().await.pop().unwrap(), wire);
+        }
+        assert!(private.requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn public_ipfs_ops_refused_by_generic_target_dispatch() {
+        let registry = ProviderRegistry::new();
+        let public = Arc::new(PrivateIpfsMock::default());
+        let private = Arc::new(PrivateIpfsMock::default());
+        registry
+            .register_runtime_provider_target(PUBLIC_IPFS_TARGET, public.clone())
+            .await
+            .unwrap();
+        registry
+            .register_sub_provider("ipfs", private.clone())
+            .await
+            .unwrap();
+        for op in PUBLIC_IPFS_OPS.iter().chain(&["init"]) {
+            let request = serde_json::json!({"op":op,"cid":"bafkroot","root":"bafkroot",
+                "car_base64":"Q0FS","max_bytes":1,"timeout_secs":1,"config":{}});
+            for target in [PUBLIC_IPFS_TARGET, "ipfs"] {
+                assert!(
+                    registry.send_raw(target, &request).await.is_err(),
+                    "{op} {target}"
+                );
+                assert!(
+                    registry
+                        .send_runtime_provider_target_raw(target, &request)
+                        .await
+                        .is_err(),
+                    "{op} {target}"
+                );
+                let (mut invocation, _) = bounded_read_fixture(ProviderTransfer::Json);
+                invocation.source = "runtime".into();
+                invocation.target = target.into();
+                invocation.op = op.to_string();
+                invocation.request = request.clone();
+                invocation.range = None;
+                assert!(
+                    registry.invoke_provider(invocation).await.is_err(),
+                    "{op} {target}"
+                );
+            }
+        }
+        assert!(public.requests.lock().await.is_empty());
+        assert!(private.requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn public_ipfs_not_capsule_reachable() {
+        let registry = ProviderRegistry::new();
+        let public = Arc::new(PrivateIpfsMock::default());
+        assert!(registry
+            .register_sub_provider(PUBLIC_IPFS_TARGET, public.clone())
+            .await
+            .is_err());
+        registry
+            .register_runtime_provider_target(PUBLIC_IPFS_TARGET, public.clone())
+            .await
+            .unwrap();
+        assert!(
+            registry
+                .has_ready_runtime_provider_target(PUBLIC_IPFS_TARGET)
+                .await
+        );
+        assert!(registry
+            .route(
+                "elastos://public-ipfs/status",
+                "capsule",
+                ResourceAction::Read,
+                None
+            )
+            .await
+            .is_err());
+        assert!(registry
+            .registration_for_uri("elastos://public-ipfs/status")
+            .await
+            .is_none());
+        // A non-private op still cannot reach it through the capsule path.
+        assert!(registry
+            .send_raw(PUBLIC_IPFS_TARGET, &serde_json::json!({"op":"status"}))
+            .await
+            .is_err());
+        assert!(public.requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn public_ipfs_not_on_carrier_allow_list() {
+        let registry = ProviderRegistry::new();
+        let public = Arc::new(PrivateIpfsMock::default());
+        registry
+            .register_runtime_provider_target(PUBLIC_IPFS_TARGET, public.clone())
+            .await
+            .unwrap();
+        let carrier = Arc::new(MockCarrierInvoker::default());
+        registry.set_carrier_invoker(carrier.clone()).await;
+        for op in PUBLIC_IPFS_OPS.iter().chain(&["status", "ensure_started"]) {
+            let (mut invocation, _) = bounded_read_fixture(ProviderTransfer::Json);
+            invocation.source = "runtime".into();
+            invocation.target = PUBLIC_IPFS_TARGET.into();
+            invocation.op = op.to_string();
+            invocation.request = serde_json::json!({"op":op,"cid":"bafkroot"});
+            invocation.range = None;
+            invocation.transport =
+                ProviderInvocationTransport::Carrier(ProviderCarrierRoute::PeerDid {
+                    peer_did: "did:key:zFixture".into(),
+                    timeout_ms: Some(5000),
+                    reply_wait_ms: None,
+                });
+            let _ = registry.invoke_provider(invocation).await;
+        }
+        let forwarded = carrier.requests.lock().await.clone();
+        assert!(
+            forwarded.iter().all(|request| !PUBLIC_IPFS_OPS
+                .iter()
+                .any(|op| request.to_string().contains(op))),
+            "{forwarded:?}"
+        );
+        assert!(public.requests.lock().await.is_empty());
+    }
+
+    struct IpfsSchemeAlias(Arc<PrivateIpfsMock>);
+
+    #[async_trait::async_trait]
+    impl Provider for IpfsSchemeAlias {
+        async fn handle(&self, _: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+            Err(ProviderError::Provider("fixture raw only".into()))
+        }
+        fn schemes(&self) -> Vec<&'static str> {
+            vec!["ipfs"]
+        }
+        fn name(&self) -> &'static str {
+            "ipfs-scheme-alias"
+        }
+        async fn send_raw(
+            &self,
+            request: &serde_json::Value,
+        ) -> Result<serde_json::Value, ProviderError> {
+            self.0.send_raw(request).await
+        }
+    }
+
+    #[tokio::test]
+    async fn local_export_car_uses_exact_ipfs_sub_provider_only() {
+        let registry = ProviderRegistry::new();
+        let private = Arc::new(PrivateIpfsMock::default());
+        *private.response.lock().await =
+            Some(serde_json::json!({"status":"ok","data":{"car_base64":"Q0FS"}}));
+        // A main-scheme alias, a Runtime-only target and Carrier are never used.
+        registry
+            .register(Arc::new(IpfsSchemeAlias(private.clone())))
+            .await;
+        assert!(registry.has_provider("ipfs").await);
+        registry
+            .register_runtime_provider_target(PUBLIC_IPFS_TARGET, private.clone())
+            .await
+            .unwrap();
+        let carrier = Arc::new(MockCarrierInvoker::default());
+        registry.set_carrier_invoker(carrier.clone()).await;
+        assert!(registry
+            .send_local_ipfs_export_car("bafkroot", 16)
+            .await
+            .is_err());
+        assert!(private.requests.lock().await.is_empty());
+
+        let exact = Arc::new(PrivateIpfsMock::default());
+        *exact.response.lock().await =
+            Some(serde_json::json!({"status":"ok","data":{"car_base64":"Q0FS"}}));
+        registry
+            .register_sub_provider("ipfs", exact.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            registry
+                .send_local_ipfs_export_car("bafkroot", 16)
+                .await
+                .unwrap(),
+            b"CAR".to_vec()
+        );
+        assert_eq!(
+            exact.requests.lock().await.clone(),
+            vec![serde_json::json!({"op":"runtime_export_car","cid":"bafkroot","max_bytes":16})]
+        );
+        // The bound holds on the Runtime side too, and errors carry no payload.
+        assert!(registry
+            .send_local_ipfs_export_car("bafkroot", 2)
+            .await
+            .is_err());
+        *exact.response.lock().await =
+            Some(serde_json::json!({"status":"error","code":"export_failed","message":"x"}));
+        assert!(registry
+            .send_local_ipfs_export_car("bafkroot", 16)
+            .await
+            .is_err());
+        assert!(registry
+            .send_local_ipfs_export_car("bafkroot", 0)
+            .await
+            .is_err());
+        assert!(private.requests.lock().await.is_empty());
+        assert!(carrier.requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn public_ipfs_dispatch_honours_the_callers_dispatch_fence() {
+        let registry = ProviderRegistry::new();
+        let public = Arc::new(PrivateIpfsMock::default());
+        *public.response.lock().await = Some(serde_json::json!({"status":"ok"}));
+        registry
+            .register_runtime_provider_target(PUBLIC_IPFS_TARGET, public.clone())
+            .await
+            .unwrap();
+        let fence = super::super::dispatch::DispatchFence::new(|| Ok(()));
+        fence
+            .scope(registry.send_public_ipfs(PublicIpfsOp::Pin {
+                cid: "bafkroot".into(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(public.requests.lock().await.len(), 1);
+        fence.revoke().await;
+        assert!(fence
+            .scope(registry.send_public_ipfs(PublicIpfsOp::Provide {
+                cid: "bafkroot".into(),
+            }))
+            .await
+            .is_err());
+        assert_eq!(public.requests.lock().await.len(), 1);
     }
 }

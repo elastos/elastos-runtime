@@ -247,6 +247,31 @@ pub struct VerifiedKeyReleaseRequestV1 {
 }
 
 impl VerifiedKeyReleaseRequestV1 {
+    /// The release context of an authenticated V2 operation (L1): the V2
+    /// operation hash fills the release slot, the V2 rights hash fills the
+    /// rights slot, the operation's window bounds every node answer, and
+    /// `recipient` is the one recipient a contribution is sealed to. Built
+    /// only by `AuthenticatedRuntimeReleaseOperationV2`, so V1 decisions,
+    /// contributions and receipts verify V2 releases unchanged.
+    pub(crate) fn for_runtime_release_v2(
+        operation_hash: Digest32,
+        binding: ProtectedContentBindingV1,
+        rights_request_hash: Digest32,
+        action: RightsActionV1,
+        recipient: RecipientKeyIdentityV1,
+        window: (u64, u64),
+    ) -> Self {
+        Self {
+            request_hash: operation_hash,
+            binding,
+            rights_request_hash,
+            action,
+            recipient,
+            issued_at: window.0,
+            expires_at: window.1,
+        }
+    }
+
     pub const fn request_hash(&self) -> Digest32 {
         self.request_hash
     }

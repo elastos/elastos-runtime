@@ -3,7 +3,7 @@ import {
   inspectActionRequestValidation,
   provenanceView,
 } from "./esp-projections.mjs";
-import { createHomeClipboardClient } from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+import { createHomeClipboardClient } from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 import { createHomeBackgroundImage } from "/apps/home/home-background-image.js?v=home-20261101d";
 
 const errorNode = document.querySelector(".system-error");

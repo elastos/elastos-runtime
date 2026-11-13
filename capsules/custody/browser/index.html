@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'">
+  <title>Custody · ElastOS</title>
+  <script src="./elastos-theme.js"></script>
+  <script src="./elastos-drawer.js"></script>
+  <link rel="stylesheet" href="./elastos-ui.css">
+  <link rel="stylesheet" href="./style.css?v=custody-20261027e">
+</head>
+<body>
+  <section id="locked-shell" class="locked-shell hidden">
+    <div class="locked-card">
+      <p class="eyebrow">ElastOS</p>
+      <h1>Open from Home</h1>
+      <p>Open Custody from Home.</p>
+    </div>
+  </section>
+
+  <main id="custody-shell" class="cp-shell hidden" aria-label="Custody">
+    <aside id="custody-sidebar" class="cp-sidebar" aria-label="Custody sections" data-el-drawer>
+      <button class="cp-nav" type="button" data-el-drawer-close data-section-target="pools" aria-current="page">
+        <span class="cp-icon cp-icon-pool" aria-hidden="true"></span>
+        <span>Pools</span>
+      </button>
+      <button class="cp-nav" type="button" data-el-drawer-close data-section-target="hosting">
+        <span class="cp-icon cp-icon-host" aria-hidden="true"></span>
+        <span>Hosting</span>
+      </button>
+    </aside>
+
+    <section class="cp-main" data-el-drawer-room="custody-sidebar">
+      <div class="cp-content">
+        <div class="cp-content-inner">
+          <div class="cp-page-head">
+            <button type="button" class="el-drawer-toggle" data-el-drawer-toggle="custody-sidebar" aria-label="Show sections"></button>
+            <h1 class="cp-page-title">Pools</h1>
+          </div>
+
+          <section id="pools" class="cp-section cp-stack" aria-label="Pools"></section>
+
+          <section id="hosting" class="cp-section cp-stack" aria-label="Hosting" hidden>
+            <section class="cp-card cp-card-raised cp-hosting" aria-labelledby="hosting-title">
+              <div>
+                <h2 class="cp-section-title cp-hosting-title" id="hosting-title">Pools this Home serves</h2>
+                <p class="cp-desc">This Home keeps shares for the pools below. A pool owner asks this Home to join; you approve in Inbox.</p>
+              </div>
+              <p class="cp-note">To make this Home one of the nodes in its own pool, use <b>Include this Home</b> in Pools.</p>
+            </section>
+            <div id="hosting-node" class="cp-stack" hidden></div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <input id="card-file" class="hidden" type="file" accept=".node-card,text/plain" tabindex="-1" aria-hidden="true">
+  <script type="module" src="./main.js?v=custody-20261113e"></script>
+</body>
+</html>

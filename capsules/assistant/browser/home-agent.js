@@ -33,7 +33,7 @@ import { bindAssistantModes } from "./assistant-modes.js";
 import {
   createHomeClipboardClient,
   MAX_HOME_CLIPBOARD_TEXT_UTF8_BYTES,
-} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+} from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 
 import { bindAgentShelf, raiseComposerFace, agentShelfFaceActive, composerInput } from "./agent-shelf.js";
 import {

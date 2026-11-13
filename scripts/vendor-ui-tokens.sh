@@ -41,6 +41,8 @@ TARGETS=(
   inbox/browser
   chat-room/browser
   library/browser
+  creator/browser
+  custody/browser
   marketplace/browser
   documents/browser
   archive-manager/browser
@@ -137,7 +139,7 @@ else
 fi
 
 # The phone push drawer ships only to capsules whose sidebar uses it.
-for target_dir in marketplace/browser documents/browser system/browser; do
+for target_dir in marketplace/browser documents/browser system/browser custody/browser; do
   drawer_target="capsules/$target_dir/elastos-drawer.js"
   if [[ "$MODE" == "--check" ]]; then
     if ! cmp -s capsules/_shared/elastos-drawer.js "$drawer_target"; then

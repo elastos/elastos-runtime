@@ -11,8 +11,8 @@
 mod chain;
 
 pub use chain::{
-    chain_rights_evidence_request, evaluate_rights_via_chain, parse_chain_rights_evidence_data,
-    CHAIN_PROVIDER_ID, CHAIN_RIGHTS_EVIDENCE_OP,
+    chain_rights_evidence_request, chain_rights_evidence_request_any, evaluate_rights_via_chain,
+    parse_chain_rights_evidence_data, CHAIN_PROVIDER_ID, CHAIN_RIGHTS_EVIDENCE_OP,
 };
 
 use ed25519_dalek::{Signer as _, SigningKey};
@@ -151,17 +151,19 @@ pub fn evaluate_validated_rights_with_evidence_at(
     if request.selected_node_public_key() != node_public_key {
         return Err(RightsEvaluationErrorV1::WrongSelectedNode);
     }
+    // V1 or V2 (F2): every value below comes from the authenticated
+    // operation's shared accessors; for V2 the release slot is the operation
+    // hash (L1).
     let authenticated = request.authenticated_runtime_release_operation();
-    let statement = authenticated.statement();
     evidence
-        .validate_against_runtime_release_at(authenticated, now_unix_seconds)
+        .validate_against_runtime_release_any_at(authenticated, now_unix_seconds)
         .map_err(|_| RightsEvaluationErrorV1::EvidenceBinding)?;
     let max_expires_at = now_unix_seconds
         .checked_add(MAX_NODE_DECISION_LIFETIME_SECS)
         .ok_or(RightsEvaluationErrorV1::DecisionWindow)?;
     let expires_at = max_expires_at
-        .min(statement.expires_at())
-        .min(statement.release_request().expires_at());
+        .min(authenticated.expires_at())
+        .min(authenticated.rights_expires_at());
     if expires_at <= now_unix_seconds {
         return Err(RightsEvaluationErrorV1::DecisionWindow);
     }
@@ -188,9 +190,7 @@ pub fn evaluate_validated_rights_with_evidence_at(
             .to_bytes()
             .to_vec(),
     )?;
-    let node_set = statement
-        .custody_epoch()
-        .statement()
+    let node_set = authenticated
         .node_set()
         .map_err(|_| RightsEvaluationErrorV1::DecisionBinding)?;
     authenticated
@@ -237,7 +237,6 @@ impl From<KeyReleaseError> for RightsEvaluationErrorV1 {
 mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
-    use elastos_auth::ethereum_signed_message_hash;
     use elastos_protected_content_contracts::{
         CanonicalContract, ContentAccessIdV1, CustodyApprovedSuitesV1,
         CustodyCommitteeAuthorizationIdentityV1, CustodyEnvelopeManifestV1, CustodyEnvelopeV1,
@@ -441,9 +440,7 @@ mod tests {
             .unwrap();
             let key = WalletSigningKey::from_slice(&[7; 32]).unwrap();
             let (signature, recovery_id) = key
-                .sign_prehash_recoverable(&ethereum_signed_message_hash(
-                    &request.canonical_bytes().unwrap(),
-                ))
+                .sign_prehash_recoverable(&request.signing_hash().unwrap())
                 .unwrap();
             let mut signature_bytes = signature.to_bytes().to_vec();
             signature_bytes.push(recovery_id.to_byte());
@@ -531,8 +528,7 @@ mod tests {
         has_access: bool,
     ) -> RightsEvaluationEvidenceV1 {
         let authenticated = request.authenticated_runtime_release_operation();
-        let policy = authenticated.statement().policy_body();
-        let evidence_request = authenticated.statement().evidence_request();
+        let (policy, evidence_request) = statement_parts(authenticated);
         RightsEvaluationEvidenceV1::new(
             authenticated.operation_hash(),
             authenticated.release_request_hash(),
@@ -547,6 +543,23 @@ mod tests {
             NOW + 30,
         )
         .unwrap()
+    }
+
+    /// The policy and evidence request of a V1 or V2 operation.
+    fn statement_parts(
+        operation: &elastos_protected_content_contracts::AuthenticatedRuntimeReleaseOperationAnyV1,
+    ) -> (&RightsPolicyBodyV1, &RightsEvaluationEvidenceRequestV1) {
+        use elastos_protected_content_contracts::AuthenticatedRuntimeReleaseOperationAnyV1 as Any;
+        match operation {
+            Any::V1(operation) => (
+                operation.statement().policy_body(),
+                operation.statement().evidence_request(),
+            ),
+            Any::V2(operation) => (
+                operation.statement().policy_body(),
+                operation.statement().evidence_request(),
+            ),
+        }
     }
 
     fn block_on<F: Future>(future: F) -> F::Output {
@@ -660,12 +673,7 @@ mod tests {
             node_public_key(1)
         );
         let authenticated = allow_request.authenticated_runtime_release_operation();
-        let node_set = authenticated
-            .statement()
-            .custody_epoch()
-            .statement()
-            .node_set()
-            .unwrap();
+        let node_set = authenticated.node_set().unwrap();
         authenticated
             .verify_node_rights_decision(&allow_decision, &node_set, NOW + 4)
             .unwrap();
@@ -706,8 +714,7 @@ mod tests {
         let operation = signed_operation(0x42);
         let request = validated_request(&operation, 1);
         let authenticated = request.authenticated_runtime_release_operation();
-        let evidence_request = authenticated.statement().evidence_request();
-        let policy = authenticated.statement().policy_body();
+        let (policy, evidence_request) = statement_parts(authenticated);
         let stale = RightsEvaluationEvidenceV1::new(
             authenticated.operation_hash(),
             authenticated.release_request_hash(),
@@ -734,8 +741,7 @@ mod tests {
         let operation = signed_operation(0x42);
         let request = validated_request(&operation, 1);
         let authenticated = request.authenticated_runtime_release_operation();
-        let policy = authenticated.statement().policy_body();
-        let evidence_request = authenticated.statement().evidence_request();
+        let (policy, evidence_request) = statement_parts(authenticated);
         let future = RightsEvaluationEvidenceV1::new(
             authenticated.operation_hash(),
             authenticated.release_request_hash(),
@@ -1070,5 +1076,84 @@ mod tests {
         let sent = last_request.lock().unwrap().clone().unwrap();
         assert_eq!(sent.as_object().unwrap().len(), 2);
         assert!(!sent.as_object().unwrap().contains_key("rpc_url"));
+    }
+
+    // Plan B T1.3: V2 releases through the rights crate.
+
+    fn v2_fixture() -> elastos_protected_content_contracts::test_fixtures::PoolReleaseFixtureV1 {
+        use elastos_protected_content_contracts::test_fixtures::{
+            pool_release_fixture, PoolReleaseSpecV1,
+        };
+        pool_release_fixture(&PoolReleaseSpecV1::new(
+            xwing_public_key_bytes,
+            policy_body(),
+            NOW,
+        ))
+    }
+
+    #[test]
+    fn rights_evaluation_of_v2_binds_the_v2_operation_hash() {
+        use elastos_protected_content_contracts::RuntimeReleaseOperationAnyV1;
+        let fixture = v2_fixture();
+        let any = RuntimeReleaseOperationAnyV1::V2(fixture.operation.clone());
+        let request = RightsProviderRequestV1::new_evaluate_any(node_public_key(1), &any).unwrap();
+        let validated = ValidatedRightsProviderRequestV1::decode_and_validate_at(
+            &request.to_json_vec().unwrap(),
+            NOW + 3,
+        )
+        .unwrap();
+        let evidence = evidence_for(&validated, true);
+        let operation_hash = fixture.operation.statement().canonical_hash().unwrap();
+        assert_eq!(evidence.runtime_operation_hash(), operation_hash);
+        assert_eq!(evidence.release_request_hash(), operation_hash);
+
+        let response = evaluate_validated_rights_with_evidence_at(
+            &node_signing_key(1),
+            &validated,
+            evidence,
+            NOW + 4,
+        )
+        .unwrap();
+        let decision = response.signed_node_rights_decision().unwrap();
+        // L1: the V2 operation hash in the release slot.
+        assert_eq!(decision.statement().release_request_hash(), operation_hash);
+        assert_eq!(decision.statement().decision(), RightsDecisionV1::Allowed);
+        response
+            .validate_against_request_at(&request, NOW + 4)
+            .unwrap();
+        fixture
+            .authenticated()
+            .verify_node_rights_decision(&decision, &fixture.node_set(), NOW + 5)
+            .unwrap();
+    }
+
+    #[test]
+    fn chain_evidence_request_from_v2_equals_v1_shape() {
+        use elastos_protected_content_contracts::RuntimeReleaseOperationAnyV1;
+        let v1 = signed_operation(0x42);
+        let v1_request = chain_rights_evidence_request(&v1).unwrap();
+        assert_eq!(
+            chain_rights_evidence_request_any(&RuntimeReleaseOperationAnyV1::V1(v1)).unwrap(),
+            v1_request
+        );
+        let fixture = v2_fixture();
+        let v2_request = chain_rights_evidence_request_any(&RuntimeReleaseOperationAnyV1::V2(
+            fixture.operation.clone(),
+        ))
+        .unwrap();
+        let keys = |value: &serde_json::Value| {
+            let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(keys(&v2_request), keys(&v1_request));
+        assert_eq!(v2_request["op"], CHAIN_RIGHTS_EVIDENCE_OP);
+        assert_eq!(
+            v2_request["signed_runtime_release_operation"],
+            format!(
+                "0x{}",
+                hex::encode(fixture.operation.canonical_bytes().unwrap())
+            )
+        );
     }
 }

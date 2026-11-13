@@ -1,7 +1,7 @@
 import {
   createHomeClipboardClient,
   MAX_HOME_CLIPBOARD_TEXT_UTF8_BYTES,
-} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+} from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 import { renderToString as renderMathToString } from "./vendor/katex/katex.mjs";
 import { catalogModels, selectedModelOffer, readyModelChoices } from "./model-selection.js";
 import { applyRunEventsPage, parseCursor, newModelRequestId, isExpiredInvocationRefusal } from "./model-contract.js";

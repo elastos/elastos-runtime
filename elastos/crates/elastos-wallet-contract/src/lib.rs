@@ -43,6 +43,52 @@ const REQUEST_ID_PREFIX: &str = "wallet-request:";
 const ERC1271_MAGIC_VALUE: &str = "0x1626ba7e";
 const MAX_SIGNED_MESSAGE_BYTES: usize = 32 * 1024;
 
+/// Whether an account on `account_chain_namespace` serves a request on
+/// `requested_chain_namespace`.
+///
+/// One EVM key is one address on every EVM chain, so the Wallet keeps a single
+/// EVM default per intent and an EVM account serves every `eip155:` chain.
+/// Every other namespace matches only itself. Wallet and Runtime both answer
+/// with this one rule, so a default the Wallet shows is the default Runtime
+/// uses.
+pub fn chain_namespaces_compatible(
+    account_chain_namespace: &str,
+    requested_chain_namespace: &str,
+) -> bool {
+    account_chain_namespace == requested_chain_namespace
+        || (is_eip155_namespace(account_chain_namespace)
+            && is_eip155_namespace(requested_chain_namespace))
+}
+
+pub fn is_eip155_namespace(value: &str) -> bool {
+    value.starts_with("eip155:")
+}
+
+/// Whether an account proven with `proof_type` is an externally owned EVM key,
+/// which is one address on every EVM chain. A contract account
+/// (`siwe_erc1271`) exists only on the chain it was deployed to.
+pub fn is_evm_eoa_proof_type(proof_type: &str) -> bool {
+    matches!(proof_type, "managed_evm" | "siwe")
+}
+
+/// Whether an account on `account_chain_namespace`, proven with
+/// `account_proof_type`, serves a request or a default on
+/// `requested_chain_namespace`.
+///
+/// Every account serves its own chain. Only an externally owned EVM key also
+/// serves the other EVM chains, so a contract account's default is never
+/// reused where the contract does not exist. Wallet and Runtime both answer
+/// with this one rule.
+pub fn account_serves_chain_namespace(
+    account_chain_namespace: &str,
+    account_proof_type: &str,
+    requested_chain_namespace: &str,
+) -> bool {
+    account_chain_namespace == requested_chain_namespace
+        || (is_evm_eoa_proof_type(account_proof_type)
+            && chain_namespaces_compatible(account_chain_namespace, requested_chain_namespace))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractError(String);
 
@@ -1167,10 +1213,6 @@ impl WalletProviderRequestV2 {
         Ok(())
     }
 
-    pub fn operation_kind(&self) -> WalletOperationKind {
-        self.operation.kind()
-    }
-
     pub fn is_effectful(&self) -> bool {
         self.operation.is_effectful()
     }
@@ -1550,6 +1592,60 @@ fn canonical_json(value: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_evm_account_serves_every_evm_chain_and_nothing_else() {
+        assert!(super::chain_namespaces_compatible(
+            "eip155:20",
+            "eip155:8453"
+        ));
+        assert!(super::chain_namespaces_compatible(
+            "eip155:8453",
+            "eip155:8453"
+        ));
+        assert!(!super::chain_namespaces_compatible(
+            "eip155:20",
+            "bip122:000000000019d6689c085ae165831e93"
+        ));
+        assert!(!super::chain_namespaces_compatible(
+            "bip122:000000000019d6689c085ae165831e93",
+            "eip155:20"
+        ));
+    }
+
+    #[test]
+    fn only_an_externally_owned_evm_account_serves_another_evm_chain() {
+        for proof_type in ["managed_evm", "siwe"] {
+            assert!(super::is_evm_eoa_proof_type(proof_type));
+            assert!(super::account_serves_chain_namespace(
+                "eip155:20",
+                proof_type,
+                "eip155:8453"
+            ));
+        }
+        // A contract account exists only on the chain it was deployed to.
+        assert!(!super::is_evm_eoa_proof_type("siwe_erc1271"));
+        assert!(!super::account_serves_chain_namespace(
+            "eip155:20",
+            "siwe_erc1271",
+            "eip155:8453"
+        ));
+        assert!(super::account_serves_chain_namespace(
+            "eip155:20",
+            "siwe_erc1271",
+            "eip155:20"
+        ));
+        assert!(!super::account_serves_chain_namespace(
+            "eip155:20",
+            "managed_evm",
+            "bip122:000000000019d6689c085ae165831e93"
+        ));
+        assert!(super::account_serves_chain_namespace(
+            "bip122:000000000019d6689c085ae165831e93",
+            "managed_btc_p2wpkh",
+            "bip122:000000000019d6689c085ae165831e93"
+        ));
+    }
+
     use super::*;
 
     const NOW: u64 = 1_800_000_000;

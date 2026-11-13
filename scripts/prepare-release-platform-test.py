@@ -25,7 +25,8 @@ APPS = [
     "home-cli", "home-gui", "home", "system", "wallet-metamask", "wallet-unisat",
     "wallet-walletconnect", "wallet", "browser", "documents", "library", "marketplace",
     "archive-manager", "inbox", "services", "people", "gba-emulator", "gba-ucity",
-    "gba-nonogram", "chat-room", "assistant", "elacity-player",
+    "gba-nonogram", "chat-room", "assistant", "creator", "custody", "elacity-player",
+    "elacity-reader",
 ]
 MOCK_CARGO = r'''#!/usr/bin/env python3
 import json, os, pathlib, struct, sys
@@ -832,7 +833,8 @@ class PrepareWorkerTest(unittest.TestCase):
         stale.write_bytes(b"stale ignored source renderer")
         data = self.root / "source-home-data"
         env = {**self.env, "ROOT": str(self.repo), "DATA_DIR": str(data),
-               "CARGO_TARGET_DIR": str(self.root / "built")}
+               "CARGO_TARGET_DIR": str(self.root / "built"),
+               "SOURCE_HOME_CARGO_PROFILE_DIR": "release"}
         result = self.command("/bin/bash", "-euc", functions +
                               "\nAPP_CAPSULES=(home-cli)\ninstall_app_capsules\n", env=env)
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -1,0 +1,236 @@
+{
+  "schema": "elastos.capsule/v1",
+  "name": "custody",
+  "version": "0.1.0",
+  "description": "Form this Home's custody pool from node cards and see the installed pool",
+  "author": "elastos",
+  "role": "app",
+  "window_policy": "single",
+  "type": "wasm",
+  "runtime_abi": "elastos.runtime-projection/v1",
+  "bus_contract": "elastos.runtime-projection/v1",
+  "execution": "web-projection",
+  "projections": ["web", "facts", "affordances", "gates"],
+  "entrypoint": "browser/index.html",
+  "icon": "browser/icons",
+  "interfaces": [
+    {
+      "id": "elastos.custody.pool",
+      "version": "0.1.0",
+      "description": "Form, install and read this Home's custody pool",
+      "methods": [
+        {
+          "id": "custody.summary",
+          "description": "Read the threshold, Runtime issuer, pool signing key, chain network, this Home's node and the installed pool",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody",
+          "operation": "read"
+        },
+        {
+          "id": "custody.signing_key.create",
+          "description": "Create the pool signing key, kept on this Home only",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/signing-key",
+          "operation": "create"
+        },
+        {
+          "id": "custody.node_card.read",
+          "description": "Read a node card without side effects, or name why it is refused",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/node-card",
+          "operation": "read"
+        },
+        {
+          "id": "custody.node_card.fetch",
+          "description": "Fetch a node card from its node over Carrier; the node answers only the Home it trusts",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/node-card",
+          "operation": "fetch"
+        },
+        {
+          "id": "custody.local_node.include",
+          "description": "Set up this Home's own custody node with a Run by and a Location",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/local-node",
+          "operation": "include"
+        },
+        {
+          "id": "custody.local_node.remove",
+          "description": "Remove this Home's own custody node before a pool is installed, so this Home can offer custody again",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/local-node",
+          "operation": "remove"
+        },
+        {
+          "id": "custody.pool.check",
+          "description": "Check node cards against the pool rules without side effects",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/pool",
+          "operation": "check"
+        },
+        {
+          "id": "custody.pool.install",
+          "description": "Sign, install and verify the pool, then register its nodes",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/pool",
+          "operation": "install"
+        },
+        {
+          "id": "custody.pool.verify",
+          "description": "Check the installed pool with the Runtime again",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/pool",
+          "operation": "verify"
+        },
+        {
+          "id": "custody.pool.notify",
+          "description": "Tell each member node of the installed pool that it is in the pool, again",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/pool",
+          "operation": "notify"
+        },
+        {
+          "id": "custody.pool.read",
+          "description": "Read the installed pool's members, term, threshold and fingerprint",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/pool",
+          "operation": "read"
+        },
+        {
+          "id": "custody.pool.health",
+          "description": "Ask each pool member's node over Carrier whether it is serving, and weigh the answers against the threshold",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/pool",
+          "operation": "health"
+        },
+        {
+          "id": "custody.node.register",
+          "description": "Register one pool member's node on this Home again",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/pool/members",
+          "operation": "register"
+        },
+        {
+          "id": "custody.offer.read",
+          "description": "Read whether this Home offers custody to its contacts, with its Run by, Location and roles",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/offer",
+          "operation": "read"
+        },
+        {
+          "id": "custody.offer.set",
+          "description": "Offer custody to this Home's contacts, or stop offering it",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/offer",
+          "operation": "set"
+        },
+        {
+          "id": "custody.messages.enable",
+          "description": "Let this Home's Profile sign custody messages to its contacts",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/messages",
+          "operation": "enable"
+        },
+        {
+          "id": "custody.nodes.find",
+          "description": "Ask each of this Home's contacts whether it offers custody",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/nodes",
+          "operation": "find"
+        },
+        {
+          "id": "custody.node_requests.send",
+          "description": "Ask a contact that offers custody to be one of this Home's custody nodes",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/node-requests",
+          "operation": "send"
+        },
+        {
+          "id": "custody.known_pools.read",
+          "description": "Read the pools this Home uses to buy and play items that their nodes keep",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/pools/known",
+          "operation": "read"
+        },
+        {
+          "id": "custody.known_pool.add",
+          "description": "Add a pool by its address after a passkey check, so this Home can buy and play items that its nodes keep",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/pools/known",
+          "operation": "add"
+        },
+        {
+          "id": "custody.served_pools.read",
+          "description": "Read the pools this Home keeps key shares for",
+          "risk": "read",
+          "approval": "runtime_policy",
+          "audit": "summary",
+          "resource": "elastos://custody/pools/served",
+          "operation": "read"
+        },
+        {
+          "id": "custody.served_pool.remove",
+          "description": "Stop keeping key shares for one pool after a passkey check; the other pools keep running",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/pools/served",
+          "operation": "remove"
+        },
+        {
+          "id": "custody.served_pool.confirm_publisher",
+          "description": "Publish one pool's sealed items under your profile after a passkey check",
+          "risk": "write",
+          "approval": "user",
+          "audit": "event",
+          "resource": "elastos://custody/pools/served",
+          "operation": "confirm_publisher"
+        }
+      ]
+    }
+  ],
+  "resources": {
+    "memory_mb": 16,
+    "gpu": false
+  }
+}

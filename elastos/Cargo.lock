@@ -1422,8 +1422,10 @@ dependencies = [
 name = "elastos-common"
 version = "2.0.1"
 dependencies = [
+ "errno",
  "hex",
  "libc",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1536,6 +1538,7 @@ dependencies = [
  "k256",
  "rand 0.10.2",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "sha3 0.10.9",
  "thiserror 1.0.69",
@@ -1554,12 +1557,14 @@ dependencies = [
  "elastos-protected-content-contracts",
  "elastos-protected-content-provider-contracts",
  "ghash",
+ "hex",
  "hkdf",
  "hpke",
  "k256",
  "nix 0.29.0",
  "rand 0.10.2",
  "rand 0.9.5",
+ "serde_json",
  "sha2 0.10.9",
  "sha3 0.10.9",
  "subtle",
@@ -1607,11 +1612,13 @@ name = "elastos-protected-content-runtime"
 version = "2.0.1"
 dependencies = [
  "async-trait",
+ "base64",
  "ed25519-dalek 2.2.0",
  "elastos-auth",
  "elastos-protected-content-contracts",
  "elastos-protected-content-provider-contracts",
  "elastos-wallet-contract",
+ "getrandom 0.2.17",
  "hex",
  "k256",
  "nix 0.29.0",
@@ -1622,6 +1629,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "x-wing",
 ]
 
@@ -1697,6 +1705,7 @@ dependencies = [
  "k256",
  "libc",
  "memchr",
+ "nix 0.31.3",
  "qrcodegen",
  "rand 0.10.2",
  "rand 0.8.7",

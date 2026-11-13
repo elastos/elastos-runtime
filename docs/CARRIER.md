@@ -154,9 +154,14 @@ Provider-to-provider Carrier invocation follows the same boundary. Runtime adds
 an `elastos.provider.invocation/v1` envelope and selects
 `carrier-provider-plane`. The current Carrier provider target allowlist includes
 `content`, `availability`, and the provisional `rights`, `key`, `decrypt`, and
-`drm` labels. It does not yet include a custody route. The target cutover keeps
-the same transport envelope but replaces the provisional protected-content
-surface with Runtime-selected `rights`, `custody`, and `decrypt` providers. Raw
+`drm` labels. The custody targets come from the custody surface
+(`custody_surface.rs`), which declares each target and op once: `custody` for
+release and provisioning, and `custody-pool` for a pool member's viewing
+sessions (`describe`, `session.prepare`, `session.open`, `session.read`,
+`session.close`). A custody refusal travels as a result code inside
+`{ok:true, result}`, not as backend text. The target cutover keeps the same
+transport envelope but replaces the provisional protected-content surface with
+Runtime-selected `rights`, `custody`, and `decrypt` providers. Raw
 connect tickets stay inside Runtime transport state and are not returned in
 app-visible receipts. Raw backend providers such as `ipfs` or `localhost` remain
 local implementation details, not remote Carrier authorities.
@@ -184,7 +189,9 @@ perspective. dKMS nodes still perform end-to-end node authorization, hybrid
 encryption, signing, freshness and replay checks, rights binding, and threshold
 policy. Raw CEKs never pass through Runtime, Carrier, or an ordinary capsule;
 only sealed shares, sealed session material, and bounded receipts may cross the
-transport boundary. Running every quorum member on one machine is useful for
+transport boundary. A pool member that serves a viewing session returns each
+part sealed to the delivery key the buyer's wallet signed; the buyer receives
+no share, contribution it can open, or CEK. Running every quorum member on one machine is useful for
 development and contract tests, but is not evidence of distributed custody.
 
 See [CONTENT_AVAILABILITY.md](CONTENT_AVAILABILITY.md).

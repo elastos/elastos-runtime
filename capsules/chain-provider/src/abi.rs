@@ -5,8 +5,28 @@ pub(super) const PROTECTED_CONTENT_LISTINGS_SELECTOR: &str = "0x6bd3a64b";
 pub(super) const PROTECTED_CONTENT_PAYMENT_PROCESSOR_SELECTOR: &str = "0xf1c6bdf8";
 pub(super) const PROTECTED_CONTENT_BUY_ACCESS_NATIVE_SELECTOR: &str = "0xf7580ad9";
 pub(super) const PROTECTED_CONTENT_BUY_ACCESS_ERC20_SELECTOR: &str = "0x0ede2294";
+/// `ISubscribable.hasActiveSubscription(address)` on the channel itself, which
+/// is what grants access to a Free item: one minted with opType 0 creates no
+/// operative and no listing, so a subscription is the only way anyone but its
+/// creator reaches it.
+pub(super) const CHANNEL_HAS_ACTIVE_SUBSCRIPTION_SELECTOR: &str = "0xbebe4a57";
+/// `IAccessControl.hasRole(bytes32,address)`. A channel's administrator holds
+/// `DEFAULT_ADMIN_ROLE`, which is the zero word -- `ChannelRegistry` decides
+/// the same way, so this Home and the chain agree on who runs a channel.
+pub(super) const CHANNEL_HAS_ROLE_SELECTOR: &str = "0x91d14854";
+pub(super) const CHANNEL_DEFAULT_ADMIN_ROLE_WORD: [u8; 32] = [0u8; 32];
 pub(super) const ACCESS_TOKEN_ID_HEX: &str = "0x1";
 pub(super) const PROTECTED_CONTENT_PURCHASE_QUANTITY_HEX: &str = "0x1";
+pub(super) const AUTHORITY_GATEWAY_CSTORE_SELECTOR: &str = "0xd36f509d";
+pub(super) const IP_TRACKER_IP_REFERENCE_SELECTOR: &str = "0x93d9f5ab";
+pub(super) const OPERATIVE_TOKEN_URI_SELECTOR: &str = "0xc87b56dd";
+pub(super) const AUTHORITY_GATEWAY_SELLERS_OF_SELECTOR: &str = "0x997eab2d";
+/// `AuthorityGateway.hasAccess(address accessor, address ledger, uint256
+/// tokenId)`: the item-keyed twin of `hasAccessByContentId`, answered by the
+/// same `_checkUserAccess` (R50). It needs no KID, so it answers for an item
+/// whose KID is unknown.
+pub(super) const AUTHORITY_GATEWAY_HAS_ACCESS_SELECTOR: &str = "0xcf56b4eb";
+pub(super) const EVM_ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProtectedContentAssetCreatedLog {
@@ -62,6 +82,25 @@ pub(super) fn encode_protected_content_creator_mint_call(
     bytes.extend_from_slice(&enc_op);
     bytes.extend_from_slice(&enc_sell);
     Ok(format!("0x{}", encode_hex(&bytes)))
+}
+
+/// FREE-case `opRawData = abi.encode(bytes16 contentId)`.
+///
+/// A free mint creates no operative: `AssetFactory.registerNewAsset` skips the
+/// whole operative branch for op type 0. What it still does, unconditionally,
+/// is `cstore.bindIP(contentId, ledger, tokenId)` -- and it reads that content
+/// id straight off the head of `opRawData`. So the bytes16 is not optional
+/// padding here; without it the mint reverts, and with it the content id is
+/// bound so `hasAccessByContentId` can answer instead of reverting on an
+/// unbound id.
+///
+/// Nothing else belongs in it. There is no operative to hold a metadata base
+/// URI, no access token to mint and no royalty share to split, so anything
+/// further would be bytes the contracts never read.
+pub(super) fn encode_protected_content_mint_op_raw_free(
+    content_access_id: &[u8; 16],
+) -> Result<Vec<u8>, String> {
+    Ok(abi_word_bytes16(content_access_id))
 }
 
 pub(super) fn encode_protected_content_mint_op_raw_paid(
@@ -153,6 +192,22 @@ pub(super) fn encode_authority_gateway_operative_call(
     Ok(format!("0x{}", encode_hex(&bytes)))
 }
 
+pub(super) fn encode_authority_gateway_has_access_call(
+    accessor: &str,
+    ledger: &str,
+    token_id: &str,
+) -> Result<String, String> {
+    let mut bytes = decode_hex(
+        AUTHORITY_GATEWAY_HAS_ACCESS_SELECTOR,
+        Some(4),
+        "hasAccess selector",
+    )?;
+    bytes.extend_from_slice(&abi_word_address(accessor)?);
+    bytes.extend_from_slice(&abi_word_address(ledger)?);
+    bytes.extend_from_slice(&abi_word_hex_quantity(token_id, "token_id")?);
+    Ok(format!("0x{}", encode_hex(&bytes)))
+}
+
 pub(super) fn encode_authority_gateway_listing_call(
     operative: &str,
     seller: &str,
@@ -171,12 +226,139 @@ pub(super) fn encode_authority_gateway_listing_call(
     Ok(format!("0x{}", encode_hex(&bytes)))
 }
 
+pub(super) fn encode_authority_gateway_cstore_call() -> Result<String, String> {
+    let bytes = decode_hex(
+        AUTHORITY_GATEWAY_CSTORE_SELECTOR,
+        Some(4),
+        "cstore selector",
+    )?;
+    Ok(format!("0x{}", encode_hex(&bytes)))
+}
+
+/// `ipReference(bytes16)`: a bytes16 is LEFT-aligned in its word, which the
+/// existing `abi_word_bytes16` already does.
+pub(super) fn encode_ip_reference_call(content_access_id: &str) -> Result<String, String> {
+    let mut bytes = decode_hex(
+        IP_TRACKER_IP_REFERENCE_SELECTOR,
+        Some(4),
+        "ipReference selector",
+    )?;
+    let kid: [u8; 16] = decode_hex(content_access_id, Some(16), "content_access_id")?
+        .try_into()
+        .map_err(|_| "content_access_id must be 16 bytes".to_string())?;
+    bytes.extend_from_slice(&abi_word_bytes16(&kid));
+    Ok(format!("0x{}", encode_hex(&bytes)))
+}
+
+pub(super) fn encode_operative_token_uri_call() -> Result<String, String> {
+    let mut bytes = decode_hex(OPERATIVE_TOKEN_URI_SELECTOR, Some(4), "tokenURI selector")?;
+    bytes.extend_from_slice(&abi_word_hex_quantity(
+        ACCESS_TOKEN_ID_HEX,
+        "access_token_id",
+    )?);
+    Ok(format!("0x{}", encode_hex(&bytes)))
+}
+
+pub(super) fn encode_authority_gateway_sellers_of_call(operative: &str) -> Result<String, String> {
+    let mut bytes = decode_hex(
+        AUTHORITY_GATEWAY_SELLERS_OF_SELECTOR,
+        Some(4),
+        "sellersOf selector",
+    )?;
+    bytes.extend_from_slice(&abi_word_address(operative)?);
+    bytes.extend_from_slice(&abi_word_hex_quantity(
+        ACCESS_TOKEN_ID_HEX,
+        "access_token_id",
+    )?);
+    Ok(format!("0x{}", encode_hex(&bytes)))
+}
+
+/// `(address channel, uint256 tokenId)`. `word_to_address` refuses a word
+/// with non-zero high bytes, exactly as `decode_evm_address_word` does.
+pub(super) fn decode_ip_reference(value: &Value) -> Result<(String, String), String> {
+    let value = value
+        .as_str()
+        .ok_or_else(|| "ipReference result must be hex string".to_string())?;
+    let bytes = decode_hex(value, Some(64), "ipReference result")?;
+    Ok((
+        word_to_address(&bytes[0..32])?,
+        normalize_hex_quantity_bytes(&bytes[32..64]),
+    ))
+}
+
+/// A single ABI `string` return value: word 0 is the offset of the length
+/// word, which `decode_abi_string` then reads.
+pub(super) fn decode_evm_string(value: &Value, label: &str) -> Result<String, String> {
+    let value = value
+        .as_str()
+        .ok_or_else(|| format!("{label} result must be hex string"))?;
+    let bytes = decode_hex(value, None, label)?;
+    if bytes.len() < 64 {
+        return Err(format!("{label} result is too short for an ABI string"));
+    }
+    let offset = usize_from_word(&bytes[0..32], label)?;
+    decode_abi_string(&bytes, offset, label)
+}
+
+/// A single ABI `address[]` return value. The length is bounded before
+/// anything is allocated, so a hostile RPC cannot make this reserve memory.
+pub(super) fn decode_evm_address_array(value: &Value, label: &str) -> Result<Vec<String>, String> {
+    const MAX: usize = 1024;
+    let value = value
+        .as_str()
+        .ok_or_else(|| format!("{label} result must be hex string"))?;
+    let bytes = decode_hex(value, None, label)?;
+    if bytes.len() < 64 {
+        return Err(format!("{label} result is too short for an ABI array"));
+    }
+    let offset = usize_from_word(&bytes[0..32], label)?;
+    let len_end = offset
+        .checked_add(32)
+        .ok_or_else(|| format!("{label} offset overflows"))?;
+    if len_end > bytes.len() {
+        return Err(format!("{label} length word is out of bounds"));
+    }
+    let length = usize_from_word(&bytes[offset..len_end], label)?;
+    if length > MAX {
+        return Err(format!("{label} has more than {MAX} entries"));
+    }
+    let end = len_end + length * 32;
+    if end > bytes.len() {
+        return Err(format!("{label} entries are truncated"));
+    }
+    bytes[len_end..end]
+        .chunks_exact(32)
+        .map(word_to_address)
+        .collect()
+}
+
 pub(super) fn encode_operatives_payment_processor_call() -> Result<String, String> {
     let bytes = decode_hex(
         PROTECTED_CONTENT_PAYMENT_PROCESSOR_SELECTOR,
         Some(4),
         "paymentProcessor selector",
     )?;
+    Ok(format!("0x{}", encode_hex(&bytes)))
+}
+
+/// Does this account hold an active subscription to this channel?
+pub(super) fn encode_channel_has_active_subscription_call(account: &str) -> Result<String, String> {
+    let mut bytes = decode_hex(
+        CHANNEL_HAS_ACTIVE_SUBSCRIPTION_SELECTOR,
+        Some(4),
+        "hasActiveSubscription selector",
+    )?;
+    bytes.extend_from_slice(&abi_word_address(account)?);
+    Ok(format!("0x{}", encode_hex(&bytes)))
+}
+
+/// Does this account administer this channel? Asked of the chain rather than
+/// taken from a directory: an index saying who created a channel is a label,
+/// and a label must not decide what a person is offered.
+pub(super) fn encode_channel_has_admin_role_call(account: &str) -> Result<String, String> {
+    let mut bytes = decode_hex(CHANNEL_HAS_ROLE_SELECTOR, Some(4), "hasRole selector")?;
+    bytes.extend_from_slice(&CHANNEL_DEFAULT_ADMIN_ROLE_WORD);
+    bytes.extend_from_slice(&abi_word_address(account)?);
     Ok(format!("0x{}", encode_hex(&bytes)))
 }
 
@@ -285,6 +467,66 @@ pub(super) fn decode_protected_content_listing(
         quantity: normalize_hex_quantity_bytes(&bytes[0..32]),
         price: normalize_hex_quantity_bytes(&bytes[32..64]),
         pay_token: word_to_address(&bytes[64..96])?,
+    })
+}
+
+/// `keccak256("ItemListed(address,address,uint256,uint256,uint256,address)")`.
+///
+/// Since the v3 protocol bundled listing into minting, the trade gateway emits
+/// this inside the mint transaction itself -- along with the `ApprovalForAll`
+/// that used to be a separate call a creator had to sign. A mint receipt
+/// therefore already carries the listing it created, which is why the creator
+/// tail no longer reads it back from chain state.
+pub(super) const PROTECTED_CONTENT_ITEM_LISTED_TOPIC0: &str =
+    "0x90aecdd7f5269ac7f11bea516b4768d0391e0a54aabc19aea64c7758104f66d2";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ProtectedContentItemListedLog {
+    pub(super) seller: String,
+    pub(super) operative: String,
+    pub(super) token_id: String,
+    pub(super) listing: ProtectedContentListingRead,
+}
+
+/// Decode one `ItemListed`, in the same shape as the `listing` call it replaces
+/// so that a caller cannot tell where the facts came from.
+pub(super) fn decode_protected_content_item_listed_log(
+    entry: &Value,
+) -> Result<ProtectedContentItemListedLog, String> {
+    let topics = entry
+        .get("topics")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "ItemListed log topics missing".to_string())?;
+    if topics.len() != 4 {
+        return Err("ItemListed log must contain exactly four topics".to_string());
+    }
+    let seller = topic_to_address(topics.get(1), "seller topic")?;
+    let operative = topic_to_address(topics.get(2), "op topic")?;
+    let token_id = topics
+        .get(3)
+        .and_then(Value::as_str)
+        .ok_or_else(|| "ItemListed tkId topic missing".to_string())
+        .and_then(|value| decode_hex(value, Some(32), "ItemListed tkId topic"))
+        .map(|bytes| normalize_hex_quantity_bytes(&bytes))?;
+    let data = entry
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "ItemListed log data missing".to_string())?;
+    let data_bytes = decode_hex(data, None, "ItemListed log data")?;
+    // quantity, pricePerToken, payToken -- the three unindexed parameters, and
+    // exactly the three words the `listing` call returns.
+    if data_bytes.len() != 96 {
+        return Err("ItemListed log data must contain exactly three ABI words".to_string());
+    }
+    Ok(ProtectedContentItemListedLog {
+        seller,
+        operative,
+        token_id,
+        listing: ProtectedContentListingRead {
+            quantity: normalize_hex_quantity_bytes(&data_bytes[0..32]),
+            price: normalize_hex_quantity_bytes(&data_bytes[32..64]),
+            pay_token: word_to_address(&data_bytes[64..96])?,
+        },
     })
 }
 

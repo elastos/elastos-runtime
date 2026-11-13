@@ -5,7 +5,7 @@ import {
   readLaunchToken,
   readQueryParam,
 } from "./wallet-api.js?v=wallet-20260715a";
-import { createWalletAccountActions } from "./wallet-account-actions.js?v=wallet-20260523a";
+import { createWalletAccountActions } from "./wallet-account-actions.js?v=wallet-20261028b";
 import {
   BALANCE_NETWORKS,
   MANAGED_CHAIN_NAMESPACES,
@@ -26,11 +26,15 @@ import {
   readText,
   shortAddress,
   validateAddress,
-} from "./wallet-format.js?v=wallet-20260819f";
-import { createWalletFlows } from "./wallet-flows.js?v=wallet-20260819c";
+} from "./wallet-format.js?v=wallet-20261028a";
+import { createWalletFlows } from "./wallet-flows.js?v=wallet-20261028a";
 import { createWalletCreateAccountFlow } from "./wallet-create-account-flow.js?v=wallet-20260711b";
-import { createWalletReceiveFlow } from "./wallet-receive-flow.js?v=wallet-20260523a";
-import { createWalletRequests } from "./wallet-requests.js?v=wallet-20260731a";
+import {
+  accountDefaultChainNamespace,
+  accountDisplayChainNamespace,
+} from "./wallet-network.js?v=wallet-20261028b";
+import { createWalletReceiveFlow } from "./wallet-receive-flow.js?v=wallet-20261028a";
+import { createWalletRequests } from "./wallet-requests.js?v=wallet-20260922a";
 import { createWalletSendFlow } from "./wallet-send-flow.js?v=wallet-20260711b";
 import { createWalletStateLoader } from "./wallet-state.js?v=wallet-20260819f";
 import { createWalletPreferences } from "./wallet-preferences.js?v=wallet-20260819d";
@@ -42,10 +46,10 @@ import {
   emptyHero,
   setBusy,
   textNode,
-} from "./wallet-render.js?v=wallet-20260819f";
+} from "./wallet-render.js?v=wallet-20261028a";
 import {
   createHomeClipboardClient,
-} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+} from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 
 const statusNode = document.querySelector("#wallet-status");
 const homeParentOrigin = readHomeOrigin();
@@ -586,19 +590,29 @@ function viewAccountForGroup(group) {
   const assets = namespaces
     .map((namespace) => assetForNamespace(group.records, namespace))
     .filter(Boolean);
-  const usd = assets.reduce((sum, asset) => sum + asset.usd, 0);
-  const amount = assets.reduce((sum, asset) => sum + asset.amount, 0);
-  const symbol = assets[0]?.symbol || BALANCE_NETWORKS[primary.chain_namespace]?.symbol || "";
-  const balanceAvailable = assets.some((asset) => asset.available);
-  const priceAvailable = assets.some((asset) => asset.priceAvailable);
+  // An EVM card shows its balance on the network it pays on. Send and the
+  // Wallet total still see every network.
+  const displayChainNamespace = accountDisplayChainNamespace(group.records, currentDefaults);
+  const shownAssets = displayChainNamespace
+    ? assets.filter((asset) => asset.chain_namespace === displayChainNamespace)
+    : assets;
+  const usd = shownAssets.reduce((sum, asset) => sum + asset.usd, 0);
+  const amount = shownAssets.reduce((sum, asset) => sum + asset.amount, 0);
+  const symbol = shownAssets[0]?.symbol
+    || BALANCE_NETWORKS[displayChainNamespace || primary.chain_namespace]?.symbol
+    || "";
+  const balanceAvailable = shownAssets.some((asset) => asset.available);
+  const priceAvailable = shownAssets.some((asset) => asset.priceAvailable);
   return {
     ...primary,
     account_id: primary.account_id,
     account_ids: group.records.map((account) => account.account_id),
     account_records: group.records,
     chain_namespaces: namespaces,
+    display_chain_namespace: displayChainNamespace,
+    default_chain_namespace: accountDefaultChainNamespace(group.records, currentDefaults),
     name: accountName(primary, group.firstIndex),
-    network: accountNetworkLabel(group.records),
+    network: chainLabel(displayChainNamespace || group.records[0]?.chain_namespace),
     method: group.method,
     monogram: METHOD_MONOGRAMS[group.method] || "?",
     balanceAvailable,
@@ -606,6 +620,7 @@ function viewAccountForGroup(group) {
     symbol,
     amount,
     usd,
+    totalUsd: assets.reduce((sum, asset) => sum + asset.usd, 0),
     assets: assets.filter((asset) => asset.rawValue > 0n),
   };
 }
@@ -620,13 +635,6 @@ function namespacesForAccountGroup(records) {
     return Object.keys(BALANCE_NETWORKS).filter((namespace) => namespace.startsWith("eip155:"));
   }
   return [...new Set(records.map((account) => account.chain_namespace))];
-}
-
-function accountNetworkLabel(records) {
-  if (records.some((account) => isEvmChainNamespace(account.chain_namespace))) {
-    return "EVM";
-  }
-  return chainLabel(records[0]?.chain_namespace);
 }
 
 function assetForNamespace(records, namespace) {
@@ -664,7 +672,7 @@ function balanceKey(namespace, address) {
 }
 
 function renderHero(accounts) {
-  const totalUsd = accounts.reduce((sum, account) => sum + account.usd, 0);
+  const totalUsd = accounts.reduce((sum, account) => sum + account.totalUsd, 0);
   const pricedAssets = accounts.filter((account) => account.balanceAvailable && account.priceAvailable);
   if (accounts.length === 0) {
     totalBalanceNode.textContent = "—";

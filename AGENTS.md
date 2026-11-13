@@ -4,6 +4,27 @@ This file is the durable working contract for people and agents changing this
 repo. Product principles live in [PRINCIPLES.md](PRINCIPLES.md). GitHub issues
 are the only place for work status, acceptance criteria and proof.
 
+## Elacity post-quantum roadmap
+
+Work in this repository may belong to the post-quantum assurance roadmap
+(`Elacity/elacity-post-quantum-roadmap`, cloned as a sibling). Before changing
+code here for a roadmap item:
+
+1. Read the hub's `PRINCIPLES.md` and `AGENTS.md`, and the skills `north-star`,
+   `elastos-runtime-architecture` and `evidence-discipline` under `.agents/skills/`.
+2. Find the item: `../elacity-post-quantum-roadmap/hub show <ID>`; read
+   `catalog/items/<ID>.md` in the hub.
+3. Claim it in the hub before working (`./hub start <ID> ...`), so others see it.
+4. Pull requests for a roadmap item: title `[<ID>] <title>`, body ends with the
+   trailer `Roadmap-Item: <ID>`.
+5. Red before green: a test that fails on the current code, then the fix; the
+   whole suite passes.
+
+This repository is public. Unfixed security issues are never described in
+issues, pull requests, commit messages or branch names here; use a private
+security advisory (`elastos/elastos-runtime-ghsa-wgx8-qf6g-cj4h`). Write the
+finding, evidence and fix only after the fix is deployed.
+
 ## Work Tracking And Acceptance
 
 - GitHub issues own the work queue. In each lane, take the lowest-numbered open

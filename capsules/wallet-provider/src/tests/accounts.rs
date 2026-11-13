@@ -505,6 +505,101 @@ fn create_managed_account_reuses_principal_key_across_evm_namespaces() {
     assert_eq!(provider.store.managed_wallets.len(), 2);
 }
 
+/// A fresh Wallet's first EVM account is what Home setup creates. Without a
+/// transaction default it could pay for nothing: Creator found no account to
+/// mint with and listed no channels until the person found "Use by default".
+#[test]
+fn first_evm_account_becomes_the_transaction_default_for_every_evm_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:alice";
+
+    let first_account_id = match invoke_wallet(
+        &mut provider,
+        principal_id,
+        "wallet",
+        WalletProviderOperationV2::CreateManagedAccount {
+            chain_namespace: "eip155:20".into(),
+            label: None,
+            create_new: false,
+        },
+    ) {
+        Response::Ok { data: Some(data) } => data["account"]["account_id"]
+            .as_str()
+            .expect("managed account id")
+            .to_string(),
+        other => panic!("expected managed account, got {other:?}"),
+    };
+    let base_default = |provider: &mut WalletProvider| match invoke_wallet(
+        provider,
+        principal_id,
+        "wallet",
+        WalletProviderOperationV2::DefaultAccount {
+            chain_namespace: "eip155:8453".into(),
+            intent: "transaction_intent".into(),
+        },
+    ) {
+        Response::Ok { data: Some(data) } => data["account"]["account_id"]
+            .as_str()
+            .expect("default account id")
+            .to_string(),
+        other => panic!("expected a Base transaction default, got {other:?}"),
+    };
+    assert_eq!(base_default(&mut provider), first_account_id);
+
+    // A later account, managed or linked, never replaces the default.
+    assert!(matches!(
+        invoke_wallet(
+            &mut provider,
+            principal_id,
+            "wallet",
+            WalletProviderOperationV2::CreateManagedAccount {
+                chain_namespace: "eip155:20".into(),
+                label: Some("Second".into()),
+                create_new: true,
+            },
+        ),
+        Response::Ok { .. }
+    ));
+    assert!(matches!(
+        invoke_wallet(
+            &mut provider,
+            principal_id,
+            "wallet-metamask",
+            WalletProviderOperationV2::LinkVerifiedAccount {
+                proof_binding_id: "proof:eip155:8453:0xabc".into(),
+                chain_namespace: "eip155:8453".into(),
+                address: "0xabc".into(),
+                proof_type: "siwe".into(),
+                label: Some("MetaMask".into()),
+            },
+        ),
+        Response::Ok { .. }
+    ));
+    let mut provider = init_provider(dir.path());
+    assert_eq!(base_default(&mut provider), first_account_id);
+}
+
+#[test]
+fn a_bitcoin_account_does_not_become_a_transaction_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    assert!(matches!(
+        invoke_wallet(
+            &mut provider,
+            "person:local:alice",
+            "wallet",
+            WalletProviderOperationV2::CreateManagedAccount {
+                chain_namespace: "bip122:000000000019d6689c085ae165831e93".into(),
+                label: None,
+                create_new: false,
+            },
+        ),
+        Response::Ok { .. }
+    ));
+    assert!(provider.store.default_accounts.is_empty());
+}
+
 #[test]
 fn create_managed_btc_account_uses_p2wpkh_and_separate_key_scope() {
     let dir = tempfile::tempdir().unwrap();
@@ -639,7 +734,9 @@ fn default_account_is_principal_scoped_and_drives_explicit_signature_requests() 
     ) {
         Response::Ok { data: Some(data) } => {
             assert_eq!(data["accounts"].as_array().unwrap().len(), 1);
-            assert_eq!(data["default_accounts"].as_array().unwrap().len(), 2);
+            // The two chosen here, plus the transaction default the first EVM
+            // account took on its own.
+            assert_eq!(data["default_accounts"].as_array().unwrap().len(), 3);
             assert_eq!(data["default_accounts"][0]["account_id"], account_id);
         }
         other => panic!("expected accounts with defaults, got {other:?}"),
@@ -860,7 +957,7 @@ fn default_account_rejects_cross_chain_or_missing_accounts() {
         principal_id,
         "wallet",
         WalletProviderOperationV2::SetDefaultAccount {
-            chain_namespace: "eip155:8453".into(),
+            chain_namespace: "bip122:000000000019d6689c085ae165831e93".into(),
             intent: "publish_envelope".into(),
             account_id: account_id.into(),
         },
@@ -887,6 +984,299 @@ fn default_account_rejects_cross_chain_or_missing_accounts() {
         }
         other => panic!("expected missing-default rejection, got {other:?}"),
     }
+}
+
+/// One EVM key serves every EVM chain, so the Wallet's network choice makes an
+/// EVM account the default on any EVM chain. Bitcoin stays on its own chain.
+#[test]
+fn evm_account_becomes_the_default_on_any_evm_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:alice";
+    let create = |provider: &mut WalletProvider, chain_namespace: &str| match invoke_wallet(
+        provider,
+        principal_id,
+        "wallet",
+        WalletProviderOperationV2::CreateManagedAccount {
+            chain_namespace: chain_namespace.into(),
+            label: None,
+            create_new: false,
+        },
+    ) {
+        Response::Ok { data: Some(data) } => data["account"]["account_id"]
+            .as_str()
+            .expect("managed account id")
+            .to_string(),
+        other => panic!("expected managed account, got {other:?}"),
+    };
+    let esc_account_id = create(&mut provider, "eip155:20");
+    let bitcoin_account_id = create(&mut provider, "bip122:000000000019d6689c085ae165831e93");
+    let set_default = |provider: &mut WalletProvider, chain_namespace: &str, account_id: &str| {
+        invoke_wallet(
+            provider,
+            principal_id,
+            "wallet",
+            WalletProviderOperationV2::SetDefaultAccount {
+                chain_namespace: chain_namespace.into(),
+                intent: "transaction_intent".into(),
+                account_id: account_id.into(),
+            },
+        )
+    };
+
+    match set_default(&mut provider, "eip155:8453", &esc_account_id) {
+        Response::Ok { data: Some(data) } => {
+            assert_eq!(data["default_account"]["chain_namespace"], "eip155:8453");
+            assert_eq!(data["default_account"]["account_id"], esc_account_id);
+        }
+        other => panic!("expected the Base default, got {other:?}"),
+    }
+    // The Wallet reads the chosen network back from the account list.
+    match invoke_wallet(
+        &mut provider,
+        principal_id,
+        "wallet",
+        WalletProviderOperationV2::ListAccounts {
+            include_revoked: false,
+        },
+    ) {
+        Response::Ok { data: Some(data) } => {
+            let defaults = data["default_accounts"].as_array().unwrap();
+            assert!(defaults.iter().any(|default| {
+                default["account_id"] == esc_account_id
+                    && default["chain_namespace"] == "eip155:8453"
+                    && default["intent"] == "transaction_intent"
+            }));
+        }
+        other => panic!("expected accounts with the Base default, got {other:?}"),
+    }
+    match invoke_wallet(
+        &mut provider,
+        principal_id,
+        "wallet",
+        WalletProviderOperationV2::DefaultAccount {
+            chain_namespace: "eip155:8453".into(),
+            intent: "transaction_intent".into(),
+        },
+    ) {
+        Response::Ok { data: Some(data) } => {
+            assert_eq!(data["account"]["account_id"], esc_account_id);
+        }
+        other => panic!("expected the Base default account, got {other:?}"),
+    }
+
+    for (chain_namespace, account_id) in [
+        ("eip155:not-a-chain", esc_account_id.as_str()),
+        (
+            "bip122:000000000019d6689c085ae165831e93",
+            esc_account_id.as_str(),
+        ),
+        ("eip155:8453", bitcoin_account_id.as_str()),
+    ] {
+        match set_default(&mut provider, chain_namespace, account_id) {
+            Response::Error { code, message } => {
+                assert_eq!(code, "invalid_request");
+                assert!(message.contains("chain"));
+            }
+            other => panic!("expected {chain_namespace} to be refused, got {other:?}"),
+        }
+    }
+}
+
+/// A contract account exists only on the chain it was deployed to, so only an
+/// externally owned account follows the person to another EVM chain.
+#[test]
+fn only_externally_owned_evm_accounts_become_the_default_on_another_evm_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:alice";
+    let link = |provider: &mut WalletProvider, address: &str, proof_type: &str| {
+        assert!(matches!(
+            invoke_wallet(
+                provider,
+                principal_id,
+                "wallet-metamask",
+                WalletProviderOperationV2::LinkVerifiedAccount {
+                    proof_binding_id: format!("proof:eip155:20:{address}"),
+                    chain_namespace: "eip155:20".into(),
+                    address: address.into(),
+                    proof_type: proof_type.into(),
+                    label: None,
+                },
+            ),
+            Response::Ok { .. }
+        ));
+        format!("wallet:eip155:20:{address}")
+    };
+    let contract_account_id = link(
+        &mut provider,
+        "0xcccccccccccccccccccccccccccccccccccccccc",
+        "siwe_erc1271",
+    );
+    let eoa_account_id = link(
+        &mut provider,
+        "0xdddddddddddddddddddddddddddddddddddddddd",
+        "siwe",
+    );
+    let set_default = |provider: &mut WalletProvider, chain_namespace: &str, account_id: &str| {
+        invoke_wallet(
+            provider,
+            principal_id,
+            "wallet",
+            WalletProviderOperationV2::SetDefaultAccount {
+                chain_namespace: chain_namespace.into(),
+                intent: "transaction_intent".into(),
+                account_id: account_id.into(),
+            },
+        )
+    };
+
+    match set_default(&mut provider, "eip155:8453", &contract_account_id) {
+        Response::Error { code, message } => {
+            assert_eq!(code, "invalid_request");
+            assert!(message.contains("chain"));
+        }
+        other => panic!("a contract account must stay on its own chain, got {other:?}"),
+    }
+    assert!(matches!(
+        set_default(&mut provider, "eip155:20", &contract_account_id),
+        Response::Ok { .. }
+    ));
+    assert!(matches!(
+        set_default(&mut provider, "eip155:8453", &eoa_account_id),
+        Response::Ok { .. }
+    ));
+}
+
+/// The Wallet's single EVM default serves other EVM chains only when its
+/// account is an externally owned key. A contract account's default serves
+/// its own chain, and a request for another chain cannot name that account.
+#[test]
+fn a_contract_account_serves_only_its_own_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:alice";
+    let link = |provider: &mut WalletProvider, address: &str, proof_type: &str| {
+        assert!(matches!(
+            invoke_wallet(
+                provider,
+                principal_id,
+                "wallet-metamask",
+                WalletProviderOperationV2::LinkVerifiedAccount {
+                    proof_binding_id: format!("proof:eip155:20:{address}"),
+                    chain_namespace: "eip155:20".into(),
+                    address: address.into(),
+                    proof_type: proof_type.into(),
+                    label: None,
+                },
+            ),
+            Response::Ok { .. }
+        ));
+        format!("wallet:eip155:20:{address}")
+    };
+    let default_on = |provider: &mut WalletProvider, account_id: &str| {
+        assert!(matches!(
+            invoke_wallet(
+                provider,
+                principal_id,
+                "wallet",
+                WalletProviderOperationV2::SetDefaultAccount {
+                    chain_namespace: "eip155:20".into(),
+                    intent: "transaction_intent".into(),
+                    account_id: account_id.into(),
+                },
+            ),
+            Response::Ok { .. }
+        ));
+    };
+    let default_for = |provider: &mut WalletProvider, chain_namespace: &str| match invoke_wallet(
+        provider,
+        principal_id,
+        "wallet",
+        WalletProviderOperationV2::DefaultAccount {
+            chain_namespace: chain_namespace.into(),
+            intent: "transaction_intent".into(),
+        },
+    ) {
+        Response::Ok { data: Some(data) } => {
+            Some(data["account"]["account_id"].as_str().unwrap().to_string())
+        }
+        Response::Error { code, .. } if code == "not_found" => None,
+        other => panic!("unexpected default lookup answer: {other:?}"),
+    };
+    let request_on = |provider: &mut WalletProvider, account_id: &str, chain_namespace: &str| {
+        let chain_id = chain_namespace.trim_start_matches("eip155:");
+        let mut payload = transaction_intent_payload(&account_id["wallet:eip155:20:".len()..]);
+        payload["chain_id"] = json!(chain_id.parse::<u64>().unwrap());
+        invoke_wallet(
+            provider,
+            principal_id,
+            "system",
+            WalletProviderOperationV2::RequestApproval {
+                account_id: account_id.into(),
+                chain_namespace: chain_namespace.into(),
+                intent: "transaction_intent".into(),
+                resource: format!("elastos://wallet/{chain_namespace}/sign/transaction_intent"),
+                reason: "Send".into(),
+                payload,
+                expires_at: now_ts().saturating_add(APPROVAL_REQUEST_TTL_SECS),
+            },
+        )
+    };
+
+    let contract_account_id = link(
+        &mut provider,
+        "0xcccccccccccccccccccccccccccccccccccccccc",
+        "siwe_erc1271",
+    );
+    default_on(&mut provider, &contract_account_id);
+    assert_eq!(
+        default_for(&mut provider, "eip155:20"),
+        Some(contract_account_id.clone())
+    );
+    assert_eq!(default_for(&mut provider, "eip155:8453"), None);
+    match request_on(&mut provider, &contract_account_id, "eip155:8453") {
+        Response::Error { code, .. } => assert_eq!(code, "invalid_request"),
+        other => panic!("a contract account must not serve another chain, got {other:?}"),
+    }
+    assert!(matches!(
+        request_on(&mut provider, &contract_account_id, "eip155:20"),
+        Response::Ok { .. }
+    ));
+    // A new EVM account never replaces the default the person chose, even
+    // though that default does not serve the new account's chain.
+    assert!(matches!(
+        invoke_wallet(
+            &mut provider,
+            principal_id,
+            "wallet",
+            WalletProviderOperationV2::CreateManagedAccount {
+                chain_namespace: "eip155:8453".into(),
+                label: None,
+                create_new: false,
+            },
+        ),
+        Response::Ok { .. }
+    ));
+    assert_eq!(
+        default_for(&mut provider, "eip155:20"),
+        Some(contract_account_id.clone())
+    );
+
+    let eoa_account_id = link(
+        &mut provider,
+        "0xdddddddddddddddddddddddddddddddddddddddd",
+        "siwe",
+    );
+    default_on(&mut provider, &eoa_account_id);
+    assert_eq!(
+        default_for(&mut provider, "eip155:8453"),
+        Some(eoa_account_id.clone())
+    );
+    assert!(matches!(
+        request_on(&mut provider, &eoa_account_id, "eip155:8453"),
+        Response::Ok { .. }
+    ));
 }
 
 #[test]

@@ -17,6 +17,14 @@ use tokio::sync::Mutex;
 use super::*;
 
 const TRANSACTION_EFFECT_STORE_SCHEMA: &str = "elastos.runtime.transaction-effect-store/v1";
+
+/// A wallet approval that will never complete. Callers that poll for
+/// completion match on these to stop waiting, so they are constants rather
+/// than literals repeated at each end.
+pub(in crate::api::gateway) const TRANSACTION_APPROVAL_REJECTED: &str =
+    "transaction approval was rejected";
+pub(in crate::api::gateway) const TRANSACTION_APPROVAL_EXPIRED: &str =
+    "transaction approval expired";
 const TRANSACTION_EFFECT_SCHEMA: &str = "elastos.runtime.transaction-effect/v1";
 const TRANSACTION_EFFECT_STORE_RELATIVE_PATH: &str =
     ".AppData/ElastOS/Runtime/transaction-effects.json";
@@ -217,6 +225,20 @@ impl RuntimeTransactionEffectStore {
 }
 
 impl RuntimeTransactionEffect {
+    /// Nothing durable came of this effect yet: nothing was signed, sent or
+    /// mined. Past this, asking again could put a second transaction on chain
+    /// for one intent, and forgetting the attempt could lose track of one.
+    fn produced_nothing(&self) -> bool {
+        self.signed_transaction.is_none()
+            && self.wallet_transaction_hash.is_none()
+            && self.signed_result.is_none()
+            && self.receipt.is_none()
+            && matches!(
+                self.state,
+                TransactionEffectState::Prepared | TransactionEffectState::ApprovalPending
+            )
+    }
+
     fn validate(&self, principal_id: &str) -> anyhow::Result<()> {
         if self.schema != TRANSACTION_EFFECT_SCHEMA
             || self.authority.principal_id != principal_id
@@ -591,6 +613,118 @@ async fn exact_wallet_approval_by_id(
     Ok(matched)
 }
 
+/// What became of one raised transaction, for a caller deciding whether the
+/// attempt behind it may be forgotten.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::api::gateway) enum RuntimeTransactionEffectProgress {
+    /// The Wallet approval is out and unanswered.
+    AwaitingApproval,
+    /// The approval expired or was declined, and nothing was signed.
+    ClosedWithoutSignature,
+    /// Signed or sent, or approved in the Wallet; a transaction may exist.
+    Signed,
+    /// The transaction has a receipt.
+    Mined,
+    /// Not completed, and the approval went to this external connector, which
+    /// signs and broadcasts outside the Wallet: nothing the Wallet says about
+    /// it proves nothing was sent.
+    InConnector(String),
+    /// The store or the Wallet holds no record of it. Never read as closed.
+    Unknown,
+}
+
+/// Read what the effect store and the Wallet say about one effect.
+///
+/// Closed is only ever answered when the store shows the effect produced
+/// nothing AND the Wallet itself reports the approval expired or declined --
+/// the same two facts that decide whether a lapsed approval may be raised
+/// again. Everything uncertain is answered as something that may still land.
+pub(in crate::api::gateway) async fn runtime_transaction_effect_progress(
+    state: &GatewayState,
+    authority: &RuntimeWalletAuthority,
+    effect_id: &str,
+) -> Result<RuntimeTransactionEffectProgress, (StatusCode, String)> {
+    let principal_id = authority.verified_context().principal_id();
+    let lock = transaction_effect_lock(&state.data_dir, principal_id).await;
+    let _guard = lock.lock().await;
+    let store = load_transaction_effect_store(state, principal_id)?;
+    let Some(effect) = store
+        .effects
+        .iter()
+        .find(|effect| effect.effect_id == effect_id)
+    else {
+        return Ok(RuntimeTransactionEffectProgress::Unknown);
+    };
+    if effect.receipt.is_some() {
+        return Ok(RuntimeTransactionEffectProgress::Mined);
+    }
+    if !effect.produced_nothing() {
+        return Ok(RuntimeTransactionEffectProgress::Signed);
+    }
+    let approval =
+        exact_wallet_approval_by_id(state, authority, &effect.approval_request_id).await?;
+    // A connector-linked account signs and broadcasts outside the Wallet, so a
+    // closed approval there does not prove nothing was sent.
+    let connector = approval
+        .as_ref()
+        .and_then(|approval| approval.get("connector_id"))
+        .and_then(Value::as_str)
+        .filter(|connector| !connector.is_empty());
+    let status = approval
+        .as_ref()
+        .and_then(|approval| approval.get("status"))
+        .and_then(Value::as_str);
+    Ok(match (status, connector) {
+        // A connector-linked account signs and broadcasts outside the Wallet,
+        // so an approval there that is not completed proves nothing either way.
+        (Some("pending" | "expired" | "rejected"), Some(connector)) => {
+            RuntimeTransactionEffectProgress::InConnector(connector.to_string())
+        }
+        (Some("expired" | "rejected"), None) => {
+            RuntimeTransactionEffectProgress::ClosedWithoutSignature
+        }
+        (Some("pending"), None) => RuntimeTransactionEffectProgress::AwaitingApproval,
+        // Approved or completed in the Wallet before the store caught up: a
+        // signature may exist that nothing here has seen yet.
+        (Some(_), _) => RuntimeTransactionEffectProgress::Signed,
+        (None, _) => RuntimeTransactionEffectProgress::Unknown,
+    })
+}
+
+/// Whether [`ensure_exact_runtime_transaction_approval`] would raise this
+/// effect's approval again: the effect is on record, produced nothing, and
+/// the Wallet reports its approval expired. That is a reissued approval, so
+/// a caller that gates new approvals treats it as one, even where
+/// [`runtime_transaction_effect_progress`] reads the effect as still in a
+/// connector. Read-only.
+pub(in crate::api::gateway) async fn runtime_transaction_effect_approval_lapsed(
+    state: &GatewayState,
+    authority: &RuntimeWalletAuthority,
+    effect_id: &str,
+) -> Result<bool, (StatusCode, String)> {
+    let principal_id = authority.verified_context().principal_id();
+    let lock = transaction_effect_lock(&state.data_dir, principal_id).await;
+    let _guard = lock.lock().await;
+    let store = load_transaction_effect_store(state, principal_id)?;
+    let Some(effect) = store
+        .effects
+        .iter()
+        .find(|effect| effect.effect_id == effect_id)
+    else {
+        return Ok(false);
+    };
+    if !effect.produced_nothing() {
+        return Ok(false);
+    }
+    let approval =
+        exact_wallet_approval_by_id(state, authority, &effect.approval_request_id).await?;
+    Ok(approval
+        .as_ref()
+        .and_then(|approval| approval.get("status"))
+        .and_then(Value::as_str)
+        == Some("expired"))
+}
+
 pub(in crate::api::gateway) async fn ensure_exact_runtime_transaction_approval(
     state: &GatewayState,
     authority: &RuntimeWalletAuthority,
@@ -722,14 +856,51 @@ pub(in crate::api::gateway) async fn ensure_exact_runtime_transaction_approval(
             Some(approval) => {
                 let effect = &store.effects[effect_index];
                 validate_approval_snapshot(effect, authority, &approval)?;
-                let effect = &mut store.effects[effect_index];
-                effect.approval_snapshot = Some(approval.clone());
-                if effect.state == TransactionEffectState::Prepared {
-                    effect.state = TransactionEffectState::ApprovalPending;
+                // A lapsed approval is asked again rather than kept forever.
+                //
+                // An approval that expired never produced a signature, so no
+                // transaction can ever come of it -- but the effect stays
+                // bound to it, and every later attempt finds it, reports it
+                // expired, and gives up. The work the effect stands for is
+                // already done and paid for: for a mint, the content is
+                // published and custody provisioned, and only the chain
+                // transaction is missing. Refusing forever would strand all
+                // of it because nobody reached a wallet prompt in ten
+                // minutes.
+                //
+                // Only when the effect produced nothing durable. Past that,
+                // something was signed or sent, and asking again could put a
+                // second transaction on chain for one intent. A rejected
+                // approval is never re-raised either: the person answered.
+                let lapsed = approval.get("status").and_then(Value::as_str) == Some("expired");
+                if lapsed && effect.produced_nothing() {
+                    let effect = &mut store.effects[effect_index];
+                    // The approval operation carries its own expiry, so the
+                    // request binding has to be recomputed against the new
+                    // one or the wallet is asked to honour a stale digest.
+                    effect.approval_expires_at =
+                        now_ts().saturating_add(WALLET_APPROVAL_REQUEST_TTL_SECS);
+                    effect.approval_snapshot = None;
+                    effect.state = TransactionEffectState::Prepared;
+                    rebind_prepared_exact_effect(effect, authority, &request)
+                        .map_err(internal_error)?;
+                    save_transaction_effect_store(state, &store)?;
+                    tracing::debug!(
+                        effect_id = %request.effect_id,
+                        "exact Runtime transaction approval lapsed and was raised again"
+                    );
+                    ensure_effect_wallet_approval(state, authority, &mut store, effect_index)
+                        .await?
+                } else {
+                    let effect = &mut store.effects[effect_index];
+                    effect.approval_snapshot = Some(approval.clone());
+                    if effect.state == TransactionEffectState::Prepared {
+                        effect.state = TransactionEffectState::ApprovalPending;
+                    }
+                    effect.updated_at = now_ts();
+                    save_transaction_effect_store(state, &store)?;
+                    approval
                 }
-                effect.updated_at = now_ts();
-                save_transaction_effect_store(state, &store)?;
-                approval
             }
             None => {
                 let effect = &mut store.effects[effect_index];
@@ -1082,10 +1253,24 @@ pub(in crate::api::gateway) async fn complete_runtime_transaction_effect(
             .await?
         };
         validate_approval_snapshot(&store.effects[effect_index], authority, &approval)?;
-        if approval.get("status").and_then(Value::as_str) != Some("completed") {
+        // "not completed" used to cover all three of pending, rejected and
+        // expired, so a caller polling for completion could not tell a wait
+        // from a dead end and waited on an approval that would never complete.
+        // Only `pending` is a wait; the other two are terminal, because a
+        // declined or lapsed approval never produced a signature and so can
+        // never produce a transaction.
+        let approval_status = approval
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if approval_status != "completed" {
             return Err((
                 StatusCode::BAD_REQUEST,
-                "transaction approval is not completed".to_string(),
+                match approval_status {
+                    "rejected" => TRANSACTION_APPROVAL_REJECTED.to_string(),
+                    "expired" => TRANSACTION_APPROVAL_EXPIRED.to_string(),
+                    _ => "transaction approval is not completed".to_string(),
+                },
             ));
         }
         let signed_result = approval
@@ -2671,6 +2856,87 @@ pub(in crate::api::gateway) fn transaction_effect_store_for_test(
             .expect("load Runtime transaction effect store for test"),
     )
     .expect("encode Runtime transaction effect store for test")
+}
+
+/// What a settled transaction effect still says about itself: the wallet's
+/// validated outcome, and the transaction it actually sent.
+pub(in crate::api::gateway) struct SettledTransactionEffectV1 {
+    pub(in crate::api::gateway) outcome: ValidatedChainOutcomeV1,
+    pub(in crate::api::gateway) effect_id: String,
+    pub(in crate::api::gateway) approval_request_id: String,
+    pub(in crate::api::gateway) request_sha256: String,
+    pub(in crate::api::gateway) chain_namespace: String,
+    pub(in crate::api::gateway) network: String,
+    pub(in crate::api::gateway) to: String,
+    pub(in crate::api::gateway) value: String,
+    pub(in crate::api::gateway) data: String,
+}
+
+/// An effect this principal already settled, read back from their own store.
+///
+/// Read-only and authority-free by design: it opens no approval, signs nothing
+/// and drives no wallet. It answers "what did the wallet record when this
+/// transaction confirmed", which is why it is safe to call from paths the proxy
+/// deliberately denies a Wallet authority -- the protected viewer operations
+/// among them.
+///
+/// Everything here is what was durably recorded at the time, never rebuilt: the
+/// intent carries the exact `to`/`value`/`data` that were approved and sent, so
+/// a caller reconstructing history reports it rather than deriving it.
+///
+/// `None` when no such effect is stored, or when it never confirmed.
+pub(in crate::api::gateway) fn settled_transaction_effect(
+    state: &GatewayState,
+    principal_id: &str,
+    approval_request_id: &str,
+) -> Option<SettledTransactionEffectV1> {
+    let store = load_transaction_effect_store(state, principal_id).ok()?;
+    let index = find_effect_index(
+        &store,
+        &RuntimeTransactionLookup::ApprovalId(approval_request_id),
+    )?;
+    let effect = store.effects.get(index)?;
+    let outcome = validated_chain_outcome(effect).ok()?;
+    let intent_string = |field: &str| {
+        effect
+            .intent
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    Some(SettledTransactionEffectV1 {
+        outcome,
+        effect_id: effect.effect_id.clone(),
+        approval_request_id: effect.approval_request_id.clone(),
+        request_sha256: effect.request_sha256.clone(),
+        chain_namespace: effect.chain_namespace.clone(),
+        network: effect.network.clone(),
+        to: intent_string("to")?,
+        value: intent_string("value")?,
+        data: intent_string("data")?,
+    })
+}
+
+/// Whether this principal's Runtime ever raised the Wallet approval
+/// `approval_request_id` names. A store that cannot be read answers `true`:
+/// the request may be out with the person, and nothing may treat it as never
+/// raised.
+pub(in crate::api::gateway) fn runtime_transaction_approval_raised(
+    state: &GatewayState,
+    principal_id: &str,
+    approval_request_id: &str,
+) -> bool {
+    match load_transaction_effect_store(state, principal_id) {
+        Ok(store) => find_effect_index(
+            &store,
+            &RuntimeTransactionLookup::ApprovalId(approval_request_id),
+        )
+        .is_some(),
+        Err((_, error)) => {
+            tracing::debug!(%error, "transaction effects unreadable; the approval may be raised");
+            true
+        }
+    }
 }
 
 fn find_effect_index(
@@ -4435,5 +4701,149 @@ mod approved_request_resume_tests {
         .await
         .unwrap_err();
         assert_eq!(err.0, StatusCode::NOT_FOUND);
+    }
+
+    /// The test Wallet with every call held while `hold` is set.
+    struct HeldWallet {
+        inner: MockApprovedWalletProvider,
+        hold: std::sync::atomic::AtomicBool,
+        entered: AtomicUsize,
+        release: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl Provider for HeldWallet {
+        async fn handle(
+            &self,
+            request: ResourceRequest,
+        ) -> Result<ResourceResponse, ProviderError> {
+            self.inner.handle(request).await
+        }
+
+        fn schemes(&self) -> Vec<&'static str> {
+            self.inner.schemes()
+        }
+
+        fn name(&self) -> &'static str {
+            "held-wallet-provider"
+        }
+
+        async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+            if self.hold.load(Ordering::SeqCst) {
+                let released = self.release.notified();
+                tokio::pin!(released);
+                released.as_mut().enable();
+                self.entered.fetch_add(1, Ordering::SeqCst);
+                released.await;
+            }
+            self.inner.send_raw(request).await
+        }
+    }
+
+    /// A Wallet approval call that stays pending holds no public IPFS lock:
+    /// the withdrawal reaches durable Disabled with the store down meanwhile,
+    /// and the effect the approval binds is still found afterwards.
+    #[tokio::test(start_paused = true)]
+    async fn public_withdrawal_not_blocked_by_pending_wallet_call() {
+        use crate::public_ipfs_store::{complete_withdrawal, tests::FakeBridge, StopOutcome};
+        use crate::public_metadata_consent::{
+            acquire_public_state_lock, create_withdrawal_marker, read_consent,
+            read_withdrawal_marker, write_consent, ConsentState, STATE_LOCK_BUDGET,
+            WITHDRAWAL_LOCK_BUDGET,
+        };
+
+        let root = crate::protected_content_config::tests::safe_ancestor_tempdir();
+        crate::protected_content_config::tests::owner_only_dir(&root.path().join("data"));
+        let authority = test_authority(
+            "principal:test",
+            "session:create",
+            "library",
+            "launch:create",
+        );
+        let (request, effect, _approval, _hash) = exact_resume_fixture(&authority);
+        let wallet = Arc::new(HeldWallet {
+            inner: MockApprovedWalletProvider::new(vec![]),
+            hold: std::sync::atomic::AtomicBool::new(true),
+            entered: AtomicUsize::new(0),
+            release: tokio::sync::Notify::new(),
+        });
+        let chain = Arc::new(MockPrepareChainProvider::new(
+            request.clone(),
+            effect.intent.clone(),
+        ));
+        let registry = Arc::new(ProviderRegistry::new());
+        registry
+            .register_sub_provider("wallet", wallet.clone())
+            .await
+            .unwrap();
+        registry
+            .register_sub_provider("chain", chain.clone())
+            .await
+            .unwrap();
+        // The running public store.
+        let store = Arc::new(FakeBridge::new());
+        registry
+            .register_runtime_provider_target(
+                crate::public_ipfs_store::PUBLIC_IPFS_TARGET,
+                store.clone(),
+            )
+            .await
+            .unwrap();
+        let state = test_gateway_state(root.path(), Some(registry.clone()));
+        let data_dir = state.data_dir.clone();
+        {
+            let guard = acquire_public_state_lock(&data_dir, STATE_LOCK_BUDGET)
+                .await
+                .unwrap();
+            write_consent(&data_dir, ConsentState::Enabled, "principal:test", &guard).unwrap();
+        }
+
+        // The approval call, pending in the Wallet.
+        let pending = {
+            let (state, request) = (state.clone(), request.clone());
+            tokio::spawn(async move {
+                let authority = test_authority(
+                    "principal:test",
+                    "session:create",
+                    "library",
+                    "launch:create",
+                );
+                ensure_exact_runtime_transaction_approval(&state, &authority, request).await
+            })
+        };
+        while wallet.entered.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        create_withdrawal_marker(&data_dir, "principal:test").unwrap();
+        tokio::time::sleep(WITHDRAWAL_LOCK_BUDGET * 3).await;
+        assert!(!pending.is_finished(), "the Wallet call is still pending");
+        assert_eq!(
+            complete_withdrawal(&registry, &data_dir).await,
+            StopOutcome::Stopped
+        );
+        assert_eq!(
+            read_consent(&data_dir).unwrap().unwrap().state,
+            ConsentState::Disabled
+        );
+        assert!(
+            !registry
+                .has_ready_runtime_provider_target(crate::public_ipfs_store::PUBLIC_IPFS_TARGET)
+                .await
+        );
+        assert_eq!(store.shutdown_calls.load(Ordering::SeqCst), 1);
+        assert!(read_withdrawal_marker(&data_dir).unwrap().is_none());
+        assert!(!pending.is_finished());
+
+        wallet.hold.store(false, Ordering::SeqCst);
+        wallet.release.notify_waiters();
+        let approval = pending.await.unwrap().unwrap();
+        assert_eq!(approval.effect_id, request.effect_id);
+        assert_eq!(
+            runtime_transaction_effect_progress(&state, &authority, &request.effect_id)
+                .await
+                .unwrap(),
+            RuntimeTransactionEffectProgress::AwaitingApproval
+        );
     }
 }

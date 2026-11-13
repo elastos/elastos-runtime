@@ -490,6 +490,49 @@ User test:
   device, principal, or guest fallback. Profile save remains explicit and
   passkey-authorized; public guest invites remain a separate mode.
 
+### Slice 7 - Custody messages between contacts
+
+Status: implemented. Homes find, ask and confirm custody nodes among their
+accepted contacts over the collaboration plane. The custody pool itself is
+described in [PROTECTED_CONTENT.md](PROTECTED_CONTENT.md#finding-nodes-among-contacts).
+
+- **Service.** Custody messages are canonical collaboration envelopes from
+  service `custody`, with five payload types:
+  `elastos.custody.offer-query/v1`, `elastos.custody.offer/v1`,
+  `elastos.custody.node-request/v1`, `elastos.custody.node-decision/v1` and
+  `elastos.custody.pool-active/v1`. They travel on their own provider target,
+  `collaboration-custody`, never on Chat. Its op `query` answers an offer query
+  at once; its op `deliver` takes a request, a decision or a pool notice and
+  returns a signed acceptance receipt.
+- **Opt-in signing scope.** The custody scope is not a default Profile scope.
+  The admin grants it with **Enable custody messages** in Custody › Hosting,
+  after a passkey step. The grant is a new passkey-bound Profile revision for
+  the current endpoint, and the Profile update announcement carries it to
+  contacts. A rename keeps the scope. After an endpoint rotation, such as a
+  recovery onto a new machine, the scope still names the old endpoint, so the
+  admin enables it again.
+- **Contacts only.** A Home takes a custody message only from an accepted
+  contact, sent from that contact's sole Profile endpoint and signed by it.
+  Anything else gets one refusal, `not_contact`, so the answer tells nobody
+  whom this Home knows. The message names no issuer: the receiver uses the
+  verified signer.
+- **Delivery.** Requests, decisions and pool notices go through an outbox
+  that retries on the Runtime-owned sync pass, so they arrive when the other
+  Home comes online with no session open. The outbox and the receipt cache
+  live in memory. Durability comes from each side's own record files: on each
+  pass, the owner and node sides queue again what those records still want
+  sent, so a restart loses nothing that is still live.
+  Offers and offer queries live for 2 minutes, the others for at most
+  24 hours.
+- **Inbox.** A custody request is an Inbox approval for the Home's admin:
+  `custody_node_request` (Approve with a passkey, or Decline). An approval
+  that did not finish shows as `custody_node_approving` (finish only),
+  `custody_node_resumable` (nothing set up yet: finish or decline),
+  `custody_node_incomplete` or `custody_node_taken` (decline only). A confirmed pool shows once, for information, as
+  `custody_pool_active`.
+- **Needs an update.** A contact whose Profile cannot sign custody messages
+  yet reads as "Needs an update" in Find nodes, without a call to its Home.
+
 ## Offline Reach Limits
 
 Both conversation transports have a stated reach limit for a peer that stays

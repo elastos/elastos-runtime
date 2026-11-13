@@ -6,13 +6,30 @@ const MOCK_PROTECTED_CONTENT_OPERATIVE: &str = "0x000000000000000000000000000000
 const MOCK_PROTECTED_CONTENT_PAYMENT_PROCESSOR: &str = "0x00000000000000000000000000000000000000ff";
 const MOCK_PROTECTED_CONTENT_TOKEN_ID: &str = "0x77";
 const MOCK_PROTECTED_CONTENT_LISTING_QUANTITY: &str = "0x2";
-const MOCK_PROTECTED_CONTENT_LISTING_PRICE: &str = "0x5";
+/// 5.5 of the pay token, in its base units at eighteen decimals.
+///
+/// The listing price the chain reports is base units; what a creator types is
+/// an amount. They were the same constant while the page did the scaling, and
+/// they are not the same number: 5.5 tokens is 5.5e18.
+const MOCK_PROTECTED_CONTENT_LISTING_PRICE: &str = "0x4c53ecdc18a60000";
+/// The amount a creator types to reach the price above.
+///
+/// FRACTIONAL on purpose. A whole number like "5" is also valid hex, so a
+/// price that was never scaled still parsed as base units and every test
+/// passed while a real amount -- "0.001" -- failed in front of a creator.
+const MOCK_PROTECTED_CONTENT_LISTING_AMOUNT: &str = "5.5";
 const MOCK_PROTECTED_CONTENT_CHAIN_ID: u64 = 8453;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MockProtectedContentChainMode {
     Success,
     ReceiptError,
+    /// The mint transaction reverted as a second mint of the same content id
+    /// (`IPAlreadyBound` or `InvalidTokenId`). `kid_bound` is whether the
+    /// chain's own `ipReference(kid)` then binds the KID.
+    ReceiptRevertedAlreadyBound {
+        kid_bound: bool,
+    },
     ListingError,
     CreatorMintResolveDrift,
 }
@@ -22,12 +39,17 @@ enum MockProtectedContentPurchaseAccessMode {
     Allow,
     Deny,
     Error,
+    Unbound,
 }
 
 #[derive(Clone)]
 struct MockProtectedContentPurchaseFixture {
     native_purchase: bool,
     access_mode: MockProtectedContentPurchaseAccessMode,
+    /// The KID-keyed access answer at the `finalized` block, when it differs
+    /// from the head's (`access_mode`): a grant the head has and finalized
+    /// does not yet, or one finalized no longer has.
+    finalized_access_mode: Option<MockProtectedContentPurchaseAccessMode>,
     listing_quantity: String,
     /// When set, `isApprovedForAll(creator, gateway)` answers false until a
     /// `setApprovalForAll` transaction has been completed, so the creator
@@ -46,6 +68,7 @@ impl Default for MockProtectedContentPurchaseFixture {
         Self {
             native_purchase: false,
             access_mode: MockProtectedContentPurchaseAccessMode::Allow,
+            finalized_access_mode: None,
             listing_quantity: MOCK_PROTECTED_CONTENT_LISTING_QUANTITY.to_string(),
             creator_operator_unapproved: false,
         }
@@ -90,6 +113,39 @@ fn mock_immutable_content_objects() -> &'static std::sync::Mutex<MockImmutableCo
     static OBJECTS: std::sync::OnceLock<std::sync::Mutex<MockImmutableContentObjects>> =
         std::sync::OnceLock::new();
     OBJECTS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()))
+}
+
+fn mock_published_content_recording() -> &'static std::sync::atomic::AtomicBool {
+    static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    &ENABLED
+}
+
+fn mock_published_content_recording_enabled() -> bool {
+    mock_published_content_recording().load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Let a test fetch back what it published, for the length of the test.
+///
+/// The mock answers every publish with the same CID, so recorded documents live
+/// in one process-wide map. Leaving that on would let a test read a document
+/// some earlier test published -- which is exactly how six buy tests started
+/// building capsules out of another test's metadata and passing alone while
+/// failing together. It is therefore off by default, and the guard clears the
+/// store on the way in and on the way out, including when a test panics.
+#[must_use]
+struct MockPublishedContentRecording;
+
+fn record_mock_published_content() -> MockPublishedContentRecording {
+    reset_mock_immutable_content_objects();
+    mock_published_content_recording().store(true, std::sync::atomic::Ordering::Relaxed);
+    MockPublishedContentRecording
+}
+
+impl Drop for MockPublishedContentRecording {
+    fn drop(&mut self) {
+        mock_published_content_recording().store(false, std::sync::atomic::Ordering::Relaxed);
+        reset_mock_immutable_content_objects();
+    }
 }
 
 fn reset_mock_immutable_content_objects() {
@@ -279,6 +335,11 @@ fn set_mock_protected_content_chain_receipt_error() {
         MockProtectedContentChainMode::ReceiptError;
 }
 
+fn set_mock_protected_content_chain_receipt_reverted_already_bound(kid_bound: bool) {
+    *mock_protected_content_chain_mode().lock().unwrap() =
+        MockProtectedContentChainMode::ReceiptRevertedAlreadyBound { kid_bound };
+}
+
 fn set_mock_protected_content_chain_listing_error() {
     *mock_protected_content_chain_mode().lock().unwrap() =
         MockProtectedContentChainMode::ListingError;
@@ -321,11 +382,29 @@ fn set_mock_protected_content_purchase_access_denied() {
         .access_mode = MockProtectedContentPurchaseAccessMode::Deny;
 }
 
+/// The head grants access and the `finalized` block does not.
+fn set_mock_protected_content_purchase_access_granted_at_head_only() {
+    let mut fixture = mock_protected_content_purchase_fixture().lock().unwrap();
+    fixture.access_mode = MockProtectedContentPurchaseAccessMode::Allow;
+    fixture.finalized_access_mode = Some(MockProtectedContentPurchaseAccessMode::Deny);
+}
+
 fn set_mock_protected_content_purchase_access_error() {
     mock_protected_content_purchase_fixture()
         .lock()
         .unwrap()
         .access_mode = MockProtectedContentPurchaseAccessMode::Error;
+}
+
+/// The content access id the buy is resolving against was never bound on
+/// chain — the same `unknown_protected_content_object` code chain-provider's
+/// real rights observation answers (`capsules/chain-provider/src/main.rs`),
+/// as opposed to `Error`'s unrelated transient/stale-observation code.
+fn set_mock_protected_content_purchase_access_unbound() {
+    mock_protected_content_purchase_fixture()
+        .lock()
+        .unwrap()
+        .access_mode = MockProtectedContentPurchaseAccessMode::Unbound;
 }
 
 fn set_mock_protected_content_listing_quantity(quantity: &str) {
@@ -666,29 +745,74 @@ impl Provider for MockChainProvider {
                     }
                 }))
             }
-            Some("resolve_protected_content_creator_mint") => Ok(json!({
+            Some("resolve_protected_content_payment_processor") => {
+                // The same fixture that once made the whole listing read fail.
+                // A mint priced in an ERC-20 still needs one fact from chain
+                // state, and a test that pins what happens when that read
+                // fails has to fail the read the tail actually makes.
+                if *mock_protected_content_chain_mode().lock().unwrap()
+                    == MockProtectedContentChainMode::ListingError
+                {
+                    return Ok(json!({
+                        "status": "error",
+                        "code": "unavailable",
+                        "message": "mock protected-content payment processor unavailable"
+                    }));
+                }
+                Ok(json!({
                 "status": "ok",
                 "data": {
-                    "schema": "elastos.chain.protected-content-creator-mint/v1",
+                    "schema": "elastos.chain.protected-content-payment-processor/v1",
                     "network": "base-mainnet",
-                    "chain_namespace": "eip155:8453",
-                    "function": "mint(string,uint16,bytes,bytes)",
-                    "ledger": MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY,
-                    "pay_token": if *mock_protected_content_chain_mode().lock().unwrap()
-                        == MockProtectedContentChainMode::CreatorMintResolveDrift
-                    {
-                        "0x00000000000000000000000000000000000000cc"
-                    } else if mock_protected_content_purchase_fixture()
-                        .lock()
-                        .unwrap()
-                        .native_purchase
-                    {
-                        "0x0000000000000000000000000000000000000000"
-                    } else {
-                        MOCK_PROTECTED_CONTENT_PAY_TOKEN
-                    },
-                    "to": MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY,
-                    "data": format!(
+                    "operative": request
+                        .get("operative")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default(),
+                    "payment_processor": MOCK_PROTECTED_CONTENT_PAYMENT_PROCESSOR,
+                }
+                }))
+            }
+            Some("resolve_protected_content_creator_mint") => {
+                // Built from the shared wire type, not from a JSON literal.
+                // A literal here is what let four field mismatches reach a
+                // person: the gateway refuses unknown fields, this mock is
+                // what the tests answer with, and the two drifted every time
+                // the real capsule gained a field. Constructed this way, a
+                // field the capsule adds stops compiling here.
+                let pay_token = if *mock_protected_content_chain_mode().lock().unwrap()
+                    == MockProtectedContentChainMode::CreatorMintResolveDrift
+                {
+                    "0x00000000000000000000000000000000000000cc"
+                } else if mock_protected_content_purchase_fixture()
+                    .lock()
+                    .unwrap()
+                    .native_purchase
+                {
+                    "0x0000000000000000000000000000000000000000"
+                } else {
+                    MOCK_PROTECTED_CONTENT_PAY_TOKEN
+                };
+                // A capsule mints into the channel it was asked to, and echoes
+                // it so the caller can check that it did. A fixed one would
+                // make this mock agree with a gateway that ignored the
+                // creator's choice.
+                let ledger = request
+                    .get("ledger")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY)
+                    .to_string();
+                let answer = elastos_protected_content_contracts::ProtectedContentCreatorMintV1 {
+                    schema:
+                        elastos_protected_content_contracts::PROTECTED_CONTENT_CREATOR_MINT_SCHEMA_V1
+                            .to_string(),
+                    network: "base-mainnet".to_string(),
+                    chain_namespace: "eip155:8453".to_string(),
+                    function: "mint(string,uint16,bytes,bytes)".to_string(),
+                    to: ledger.clone(),
+                    ledger,
+                    pay_token: pay_token.to_string(),
+                    pay_token_decimals: 18,
+                    data: format!(
                         "0x{}",
                         hex::encode(Keccak256::digest(
                             serde_json::to_vec(&json!({
@@ -701,12 +825,25 @@ impl Provider for MockChainProvider {
                             .map_err(|err| ProviderError::Provider(err.to_string()))?
                         ))
                     ),
-                    "value": "0x0",
-                    "content_access_id": required_test_str(request, "content_access_id")?
+                    value: "0x0".to_string(),
+                    content_access_id: required_test_str(request, "content_access_id")?
                         .to_ascii_lowercase(),
-                    "signed": false
-                }
-            })),
+                    op_type_code: request
+                        .get("op_type_code")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(1) as u16,
+                    reseller_cut: request
+                        .get("reseller_cut")
+                        .and_then(serde_json::Value::as_u64)
+                        .map(|cut| cut as u16),
+                    signed: false,
+                };
+                Ok(json!({
+                    "status": "ok",
+                    "data": serde_json::to_value(&answer)
+                        .map_err(|err| ProviderError::Provider(err.to_string()))?,
+                }))
+            }
             Some("describe_protected_content_market_source") => Ok(json!({
                 "status": "ok",
                 "data": {
@@ -722,21 +859,36 @@ impl Provider for MockChainProvider {
                     "schema": "elastos.chain.protected-content-creator-mint-source/v1",
                     "network": "base-mainnet",
                     "chain_namespace": "eip155:8453",
-                    "ledger": MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY,
-                    "pay_token": if mock_protected_content_purchase_fixture()
-                        .lock()
-                        .unwrap()
-                        .native_purchase
-                    {
-                        "0x0000000000000000000000000000000000000000"
-                    } else {
-                        MOCK_PROTECTED_CONTENT_PAY_TOKEN
-                    },
+                    // No channel: the source describes a deployment, and a
+                    // mint settles on the channel its creator chose.
+                    "pay_tokens": [{
+                        "symbol": "native",
+                        "address": if mock_protected_content_purchase_fixture()
+                            .lock()
+                            .unwrap()
+                            .native_purchase
+                        {
+                            "0x0000000000000000000000000000000000000000"
+                        } else {
+                            MOCK_PROTECTED_CONTENT_PAY_TOKEN
+                        },
+                        "decimals": 18,
+                    }],
                     "abi": "elacity_mint_v1",
                     "function": "mint(string,uint16,bytes,bytes)"
                 }
             })),
             Some("resolve_protected_content_mint_receipt") => {
+                if matches!(
+                    *mock_protected_content_chain_mode().lock().unwrap(),
+                    MockProtectedContentChainMode::ReceiptRevertedAlreadyBound { .. }
+                ) {
+                    return Ok(json!({
+                        "status": "error",
+                        "code": "protected_content_mint_receipt_reverted_already_bound",
+                        "message": "mock protected-content mint reverted: content id already bound"
+                    }));
+                }
                 if *mock_protected_content_chain_mode().lock().unwrap()
                     == MockProtectedContentChainMode::ReceiptError
                 {
@@ -753,6 +905,18 @@ impl Provider for MockChainProvider {
                         "message": "mock protected-content mint receipt requires BUY_ONCE op type"
                     }));
                 }
+                // The mint emits its own `ItemListed`, so a receipt carries the
+                // listing it created. The fixture mirrors what the verified
+                // listing below reports, because on chain they are one event.
+                let fixture = mock_protected_content_purchase_fixture()
+                    .lock()
+                    .unwrap()
+                    .clone();
+                let pay_token = if fixture.native_purchase {
+                    "0x0000000000000000000000000000000000000000".to_string()
+                } else {
+                    MOCK_PROTECTED_CONTENT_PAY_TOKEN.to_string()
+                };
                 Ok(json!({
                     "status": "ok",
                     "data": {
@@ -760,7 +924,10 @@ impl Provider for MockChainProvider {
                         "network": required_test_str(request, "network")?,
                         "chain_id": MOCK_PROTECTED_CONTENT_CHAIN_ID,
                         "token_id": MOCK_PROTECTED_CONTENT_TOKEN_ID,
-                        "operative": MOCK_PROTECTED_CONTENT_OPERATIVE
+                        "operative": MOCK_PROTECTED_CONTENT_OPERATIVE,
+                        "quantity": fixture.listing_quantity,
+                        "price": MOCK_PROTECTED_CONTENT_LISTING_PRICE,
+                        "pay_token": pay_token
                     }
                 }))
             }
@@ -856,16 +1023,65 @@ impl Provider for MockChainProvider {
                     }
                 }))
             }
-            Some("resolve_protected_content_purchase_access") => {
+            // R50: the item-keyed twin answers as the KID-keyed read does,
+            // without an "unbound" answer (`hasAccess` has none).
+            Some("resolve_protected_content_item_access") => {
                 let fixture = mock_protected_content_purchase_fixture()
                     .lock()
                     .unwrap()
                     .clone();
+                if matches!(
+                    fixture.access_mode,
+                    MockProtectedContentPurchaseAccessMode::Error
+                        | MockProtectedContentPurchaseAccessMode::Unbound
+                ) {
+                    return Ok(json!({
+                        "status": "error",
+                        "code": "stale_protected_content_purchase_access_observation",
+                        "message": "mock protected-content item access is unavailable"
+                    }));
+                }
+                Ok(json!({
+                    "status": "ok",
+                    "data": {
+                        "schema": "elastos.chain.protected-content-item-access/v1",
+                        "request_id": required_test_str(request, "request_id")?,
+                        "network": required_test_str(request, "network")?,
+                        "chain_id": MOCK_PROTECTED_CONTENT_CHAIN_ID,
+                        "wallet": required_test_str(request, "wallet")?.to_ascii_lowercase(),
+                        "ledger": required_test_str(request, "ledger")?.to_ascii_lowercase(),
+                        "token_id": required_test_str(request, "token_id")?.to_ascii_lowercase(),
+                        "has_access": fixture.access_mode
+                            == MockProtectedContentPurchaseAccessMode::Allow,
+                        "finalized_block_number": 44,
+                        "finalized_block_hash": format!("0x{}", hex::encode([0x44; 32])),
+                        "finalized_block_timestamp": crate::auth::now_ts().saturating_sub(5),
+                        "observed_at": crate::auth::now_ts(),
+                    }
+                }))
+            }
+            Some("resolve_protected_content_purchase_access") => {
+                let mut fixture = mock_protected_content_purchase_fixture()
+                    .lock()
+                    .unwrap()
+                    .clone();
+                if request.get("block").and_then(Value::as_str) == Some("finalized") {
+                    if let Some(finalized) = fixture.finalized_access_mode {
+                        fixture.access_mode = finalized;
+                    }
+                }
                 if fixture.access_mode == MockProtectedContentPurchaseAccessMode::Error {
                     return Ok(json!({
                         "status": "error",
                         "code": "stale_protected_content_purchase_access_observation",
                         "message": "mock protected-content purchase access is unavailable"
+                    }));
+                }
+                if fixture.access_mode == MockProtectedContentPurchaseAccessMode::Unbound {
+                    return Ok(json!({
+                        "status": "error",
+                        "code": "unknown_protected_content_object",
+                        "message": "protected-content content access id is not bound on chain"
                     }));
                 }
                 Ok(json!({
@@ -1222,6 +1438,38 @@ impl Provider for MockChainProvider {
                     }
                 }))
             }
+            // Answered only while a reverted duplicate mint is under test, so
+            // every other test keeps the plain `unsupported` answer.
+            Some("resolve_protected_content_kid_binding")
+                if matches!(
+                    *mock_protected_content_chain_mode().lock().unwrap(),
+                    MockProtectedContentChainMode::ReceiptRevertedAlreadyBound { .. }
+                ) =>
+            {
+                let kid_bound = *mock_protected_content_chain_mode().lock().unwrap()
+                    == MockProtectedContentChainMode::ReceiptRevertedAlreadyBound {
+                        kid_bound: true,
+                    };
+                if !kid_bound {
+                    return Ok(json!({
+                        "status": "error",
+                        "code": "unbound_protected_content_kid",
+                        "message": "mock protected-content kid is not bound"
+                    }));
+                }
+                Ok(json!({
+                    "status": "ok",
+                    "data": {
+                        "schema": "elastos.chain.protected-content-kid-binding/v1",
+                        "network": required_test_str(request, "network")?,
+                        "chain_id": MOCK_PROTECTED_CONTENT_CHAIN_ID,
+                        "content_access_id": required_test_str(request, "content_access_id")?,
+                        "ledger": "0x00000000000000000000000000000000000000cc",
+                        "token_id": MOCK_PROTECTED_CONTENT_TOKEN_ID,
+                        "finalized_block_number": 1
+                    }
+                }))
+            }
             _ => Ok(json!({
                 "status": "error",
                 "code": "unsupported",
@@ -1338,9 +1586,9 @@ impl TwoRuntimeContentProvider {
                 "cid": cid,
                 "uri": format!("elastos://{cid}"),
                 "availability": {
-                    "status": "network_available",
+                    "status": "carrier_announced",
                     "provider": "two-runtime-content-provider",
-                    "replicas": 3,
+                    "replicas": 1,
                 }
             }
         }))
@@ -1369,9 +1617,11 @@ impl TwoRuntimeContentProvider {
             publisher_did,
             provider: "content".to_string(),
             policy: "protected-content-replication/v1".to_string(),
-            status: "network_available".to_string(),
-            replicas: 3,
-            peer_selection: json!({"live_multi_peer_proof": true}),
+            // The creator's Home holds the one copy: its verified pin, announced
+            // over Carrier with no other peer holding it.
+            status: "carrier_announced".to_string(),
+            replicas: 1,
+            peer_selection: json!({"live_multi_peer_proof": false}),
             quota: json!({}),
             repair_worker: json!({}),
             storage_market: json!({}),
@@ -1393,9 +1643,9 @@ impl TwoRuntimeContentProvider {
                 "cid": cid,
                 "uri": format!("elastos://{cid}"),
                 "availability": {
-                    "status": "network_available",
+                    "status": "carrier_announced",
                     "provider": "two-runtime-content-provider",
-                    "replicas": 3,
+                    "replicas": 1,
                 },
                 "receipt": crate::content::SignedAvailabilityReceipt {
                     payload,
@@ -1449,6 +1699,56 @@ impl Provider for TwoRuntimeContentProvider {
             }
             _ => Err(ProviderError::Provider(
                 "unsupported two-runtime content operation".into(),
+            )),
+        }
+    }
+}
+
+/// Records which CIDs were pinned, so a test can assert that owning a copy
+/// keeps its material on this machine rather than leaving reads to the network.
+///
+/// State lives on the instance the test holds, not in a static: two tests using
+/// one of these cannot see each other's pins, and nothing survives the test.
+#[derive(Clone, Default)]
+struct MockPinRecordingIpfsProvider {
+    pinned: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl MockPinRecordingIpfsProvider {
+    fn pinned(&self) -> Vec<String> {
+        self.pinned.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for MockPinRecordingIpfsProvider {
+    async fn handle(&self, _request: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+        Err(ProviderError::Provider(
+            "mock ipfs provider only supports raw requests".into(),
+        ))
+    }
+
+    fn schemes(&self) -> Vec<&'static str> {
+        vec!["ipfs"]
+    }
+
+    fn name(&self) -> &'static str {
+        "mock-pin-recording-ipfs-provider"
+    }
+
+    async fn send_raw(
+        &self,
+        request: &serde_json::Value,
+    ) -> Result<serde_json::Value, ProviderError> {
+        match request.get("op").and_then(Value::as_str) {
+            Some("pin") => {
+                if let Some(cid) = request.get("cid").and_then(Value::as_str) {
+                    self.pinned.lock().unwrap().push(cid.to_string());
+                }
+                Ok(json!({ "status": "ok", "data": {} }))
+            }
+            _ => Err(ProviderError::Provider(
+                "unsupported mock ipfs operation".into(),
             )),
         }
     }
@@ -1567,11 +1867,35 @@ impl Provider for MockContentProvider {
                 }
             })),
             (Some("publish"), _, _) => {
-                if request.get("object_kind").and_then(|value| value.as_str()) != Some("sealed") {
-                    mock_content_publish_requests()
-                        .lock()
-                        .unwrap()
-                        .push(request.clone());
+                mock_content_publish_requests()
+                    .lock()
+                    .unwrap()
+                    .push(request.clone());
+                // Whatever this mock publishes, it can serve back -- but only
+                // for a test that asked for it. Every publish here answers with
+                // the same CID, so recorded documents from different tests
+                // would otherwise evict and leak into each other through this
+                // process-wide store: a test that never published would read
+                // another one's metadata. Off by default, and cleared when the
+                // recording guard drops.
+                if let Some(entries) = request
+                    .get("files")
+                    .and_then(Value::as_array)
+                    .filter(|_| mock_published_content_recording_enabled())
+                {
+                    let mut objects = mock_immutable_content_objects().lock().unwrap();
+                    let files = objects.entry(TEST_CIDV1.to_string()).or_default();
+                    for entry in entries {
+                        let (Some(path), Some(data)) = (
+                            entry.get("path").and_then(Value::as_str),
+                            entry.get("data").and_then(Value::as_str),
+                        ) else {
+                            continue;
+                        };
+                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                            files.insert(path.to_string(), bytes);
+                        }
+                    }
                 }
                 if request.get("object_kind").and_then(Value::as_str)
                     == Some("protected-content-listing")
@@ -1580,9 +1904,6 @@ impl Provider for MockContentProvider {
                     return Err(ProviderError::Provider(
                         "mock protected content listing publish failed".to_string(),
                     ));
-                }
-                if request.get("object_kind").and_then(|value| value.as_str()) == Some("sealed") {
-                    validate_mock_sealed_publish_request(request)?;
                 }
                 if request.get("object_kind").and_then(|value| value.as_str())
                     == Some("protected-content")
@@ -1688,65 +2009,6 @@ impl Provider for MockContentProvider {
             })),
         }
     }
-}
-
-fn validate_mock_sealed_publish_request(request: &serde_json::Value) -> Result<(), ProviderError> {
-    let files = request
-        .get("files")
-        .and_then(|value| value.as_array())
-        .ok_or_else(|| ProviderError::Provider("sealed publish files are required".into()))?;
-    let sealed_entry = files
-        .iter()
-        .find(|entry| entry.get("path").and_then(|value| value.as_str()) == Some("sealed.json"))
-        .ok_or_else(|| ProviderError::Provider("sealed publish requires sealed.json".into()))?;
-    let sealed_data = sealed_entry
-        .get("data")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| ProviderError::Provider("sealed.json data is required".into()))?;
-    let sealed_bytes = base64::engine::general_purpose::STANDARD
-        .decode(sealed_data)
-        .map_err(|err| ProviderError::Provider(err.to_string()))?;
-    let sealed_object: elastos_common::protected_content::SealedObjectV1 =
-        serde_json::from_slice(&sealed_bytes)
-            .map_err(|err| ProviderError::Provider(err.to_string()))?;
-    let links = request
-        .get("links")
-        .and_then(|value| value.as_array())
-        .ok_or_else(|| ProviderError::Provider("sealed publish links are required".into()))?;
-    for (rel, cid) in [
-        (
-            "availability.receipt",
-            sealed_object.availability_receipt_cid.as_str(),
-        ),
-        ("payload", sealed_object.payload_cid.as_str()),
-        ("rights.policy", sealed_object.rights_policy_cid.as_str()),
-    ] {
-        if !links.iter().any(|link| {
-            link.get("rel").and_then(|value| value.as_str()) == Some(rel)
-                && link.get("cid").and_then(|value| value.as_str()) == Some(cid)
-        }) {
-            return Err(ProviderError::Provider(format!(
-                "sealed publish missing {rel} link"
-            )));
-        }
-    }
-    if !links
-        .iter()
-        .any(|link| link.get("rel").and_then(|value| value.as_str()) == Some("provenance"))
-    {
-        return Err(ProviderError::Provider(
-            "sealed publish missing provenance link".into(),
-        ));
-    }
-    if serde_json::to_string(&sealed_object)
-        .map_err(|err| ProviderError::Provider(err.to_string()))?
-        .contains("raw_cek")
-    {
-        return Err(ProviderError::Provider(
-            "sealed publish must not expose raw CEK".into(),
-        ));
-    }
-    Ok(())
 }
 
 struct MockExternalObjectProvider {
@@ -4549,6 +4811,21 @@ struct MockWalletProvider {
     accounts: TokioMutex<Vec<serde_json::Value>>,
     approvals: TokioMutex<Vec<serde_json::Value>>,
     defaults: TokioMutex<Vec<serde_json::Value>>,
+    /// The Wallet cannot be asked: listing and declining approvals fail.
+    approvals_unavailable: TokioMutex<bool>,
+    /// What a decline does, so a test can make it fail or lose a race.
+    reject_behaviour: TokioMutex<MockRejectBehaviour>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum MockRejectBehaviour {
+    #[default]
+    Decline,
+    /// The Wallet refuses the decline and leaves the approval as it is.
+    Refuse,
+    /// The person approves while the decline is on its way: the approval
+    /// completes, and the decline then fails because it is no longer pending.
+    ApprovedFirst,
 }
 
 struct MockWalletChallenge {
@@ -5244,6 +5521,46 @@ impl MockWalletProvider {
             .and_then(|approval| approval.get("signed_result"))
             .and_then(|result| result.get("signed_transaction"))
             .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    }
+
+    /// Let the newest transaction approval lapse unanswered, as the Wallet
+    /// marks one whose window closed.
+    async fn expire_latest_transaction_approval(&self) {
+        let mut approvals = self.approvals.lock().await;
+        let approval = approvals
+            .iter_mut()
+            .rev()
+            .find(|approval| {
+                approval.get("intent").and_then(Value::as_str) == Some("transaction_intent")
+            })
+            .expect("mock transaction approval");
+        approval["status"] = serde_json::Value::String("expired".to_string());
+    }
+
+    /// Set the newest transaction approval's status, as the Wallet or an
+    /// external wallet would have left it.
+    async fn set_latest_transaction_approval_status(&self, status: &str) {
+        let mut approvals = self.approvals.lock().await;
+        let approval = approvals
+            .iter_mut()
+            .rev()
+            .find(|approval| {
+                approval.get("intent").and_then(Value::as_str) == Some("transaction_intent")
+            })
+            .expect("mock transaction approval");
+        approval["status"] = serde_json::Value::String(status.to_string());
+    }
+
+    async fn latest_transaction_approval_status(&self) -> Option<String> {
+        let approvals = self.approvals.lock().await;
+        approvals
+            .iter()
+            .rev()
+            .find(|approval| {
+                approval.get("intent").and_then(Value::as_str) == Some("transaction_intent")
+            })
+            .and_then(|approval| approval.get("status").and_then(Value::as_str))
             .map(ToOwned::to_owned)
     }
 
@@ -5976,6 +6293,9 @@ impl MockWalletProvider {
                 }))
             }
             Some("approval_requests") => {
+                if *self.approvals_unavailable.lock().await {
+                    return Err(ProviderError::Provider("mock Wallet is unreachable".into()));
+                }
                 let principal_id = required_test_str(request, "principal_id")?;
                 let include_resolved = request
                     .get("include_resolved")
@@ -6062,6 +6382,13 @@ impl MockWalletProvider {
                     .and_then(Value::as_str)
                     .map(ToString::to_string)
                     .unwrap_or_else(|| format!("wallet-approval:mock-{}", approvals.len() + 1));
+                // Like the Wallet itself: an approval that lapsed is replaced
+                // by the fresh ask under the same identity; any other answer
+                // stays where it is.
+                approvals.retain(|approval| {
+                    approval.get("request_id").and_then(Value::as_str) != Some(request_id.as_str())
+                        || approval.get("status").and_then(Value::as_str) != Some("expired")
+                });
                 if let Some(existing) = approvals.iter().find(|approval| {
                     approval.get("request_id").and_then(Value::as_str) == Some(request_id.as_str())
                 }) {
@@ -6148,9 +6475,11 @@ impl MockWalletProvider {
                 let signer = required_test_str(&account, "address")?;
                 let signing_key = mock_managed_evm_key_for_address(signer)?;
                 let (signature, recovery_id) = signing_key
-                    .sign_prehash_recoverable(&elastos_auth::ethereum_signed_message_hash(
-                        &rights_bytes,
-                    ))
+                    .sign_prehash_recoverable(
+                        &rights_request
+                            .signing_hash()
+                            .map_err(|err| ProviderError::Provider(format!("{err:?}")))?,
+                    )
                     .map_err(|err| ProviderError::Provider(err.to_string()))?;
                 let mut signature_bytes = signature.to_bytes().to_vec();
                 signature_bytes.push(recovery_id.to_byte());
@@ -6176,6 +6505,22 @@ impl MockWalletProvider {
                 }))
             }
             Some("reject_approval") => {
+                if *self.approvals_unavailable.lock().await {
+                    return Err(ProviderError::Provider("mock Wallet is unreachable".into()));
+                }
+                match *self.reject_behaviour.lock().await {
+                    MockRejectBehaviour::Decline => {}
+                    MockRejectBehaviour::Refuse => {
+                        return Ok(json!({
+                            "status": "error",
+                            "code": "unavailable",
+                            "message": "mock Wallet refused the decline"
+                        }));
+                    }
+                    MockRejectBehaviour::ApprovedFirst => {
+                        self.complete_latest_transaction_approval().await;
+                    }
+                }
                 let principal_id = required_test_str(request, "principal_id")?;
                 let request_id = required_test_str(request, "request_id")?;
                 let mut approvals = self.approvals.lock().await;
@@ -6193,6 +6538,14 @@ impl MockWalletProvider {
                         "message": "wallet approval request not found"
                     }));
                 };
+                // Like the Wallet: only a pending approval can be declined.
+                if approval.get("status").and_then(Value::as_str) != Some("pending") {
+                    return Ok(json!({
+                        "status": "error",
+                        "code": "invalid_request",
+                        "message": "wallet approval request is not pending"
+                    }));
+                }
                 approval["status"] = serde_json::Value::String("rejected".to_string());
                 Ok(json!({
                     "status": "ok",

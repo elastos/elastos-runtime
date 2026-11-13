@@ -10,6 +10,182 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 - Apps no longer open blank in Safari and other WebKit browsers.
 
+#### Protected content and dKMS (#203-#206)
+
+Protected content stays off by default behind the `protected_content` host
+setting.
+
+#### Protected content: Added
+- An open attempted right after a mint or purchase waits instead of failing.
+  Custody releases a key only on rights evidence read at the finalized block,
+  which on Base trails a confirmed transaction by 15-20 minutes. Inside that
+  window the open used to spend a Wallet approval and three custody calls and
+  then fail as unavailable. It now asks the chain the question custody will
+  ask, at the finalized block, before any Wallet request. When access is
+  there only at the head, it answers a typed `finalizing` stage with an
+  estimated ready time, and the Reader and the Player wait through it. The
+  finalized-only rule is unchanged; see
+  [Key release waits for finality](../docs/PROTECTED_CONTENT.md#key-release-waits-for-finality).
+- Approving an open shows a message a person can read. The wallet used to be
+  handed the rights request's canonical bytes hex-encoded, and a wallet decodes
+  a `0x` prefix before displaying it, so a nested identity graph arrived on
+  screen as roughly two kilobytes of replacement characters. The signature over
+  those bytes was sound, so this was a consent defect rather than a correctness
+  one. The wallet now signs four readable lines -- the action, the account, the
+  expiry and one hash that commits to the whole request -- so the three facts a
+  person can check cannot be altered without changing the fourth. Every field
+  is an enum, a number or a hash, so no caller-supplied text reaches the
+  message and there is nothing to escape. `RightsRequestV1::signing_message`
+  and `::signing_hash` are the single definition, reached by the handoff, the
+  managed signing path, the wallet's completion check and `verify_unclaimed`,
+  which the Runtime coordinator and every custody node use. The committed
+  golden vectors moved with the format and carry their reason in place.
+- A `creator` app capsule: upload a file through the Library transport,
+  protect it, and list it in one flow.
+- Non-media objects protect and read end to end. A chunked-payload object
+  identity in the contracts, a streaming sealer and chunk decrypter in
+  custody, object sessions in both sandboxed providers, object content
+  identities through the mint journal, an object identity in the portable
+  listing package, and object publish and read in the Runtime.
+- An `elacity-reader` viewer capsule renders pictures, documents, text, 3D
+  models, books and comics, and states plainly when it has no renderer for a
+  file.
+- Audio is a first-class media rendition alongside video: an AAC fMP4
+  `audio/mp4` / `mp4a.40.2` rendition beside the pinned `video/mp4` /
+  `avc1.640028` one.
+- Protected media carries a CENC `pssh` box declaring the post-quantum
+  hybrid-threshold protection scheme. Its payload is public scheme
+  description only, and its custody identities are bound at publish to the
+  mint's own.
+- A reviewer-facing protected-content crypto review package: every primitive
+  with its version and parameters, what each construction binds, a threat
+  model naming the test that pins each claim, a build card, and committed
+  golden vectors replayed against the shipped code.
+
+- A minted asset publishes the Elacity listing metadata a marketplace reads:
+  `metadata.json`, `content.json`, `contract.json` and the per-token-type
+  documents, carrying the creator's title, description, cover, category and
+  content flags. A creator-named royalty split reaches the chain in ERC-1155
+  `ROYALTY_SHARE` units.
+- Buy any live offer, found by a shared link or in Explore, not only one
+  shared as a `listing.json` package. A `ListingObject` is rebuilt by the
+  Runtime from the chain and the asset's own metadata folder for a
+  `tokenURI`, a KID or `(ledger, tokenId)` alike, so the same verified path
+  covers an item minted here and one minted on ela.city or through the SDK.
+- A minted asset's public metadata can be published on IPFS. With the Home
+  admin's passkey consent, Home runs a separate public IPFS node that holds
+  only each mint's metadata folder and cover, and publishes them before the
+  mint approval. The private store stays offline. Sharing is off by default
+  (`public_metadata` in `config.toml`).
+- Consent and Stop sharing are in Inbox. Creator keeps new mints locked until
+  the admin agrees there. The Inbox mint approval states that the asset's
+  metadata is public on IPFS.
+
+#### Protected content: Fixed
+- A protected-content mint completes on the custody harness again. A replica
+  a publisher places on a custody node over Carrier, by `ensure` or by
+  `import_object`, is proven by that node's own verified local pin and is never
+  forwarded to an external placement service. The model-content object import
+  had made every such replica consult the harness's unreachable
+  `https://replica.invalid/ensure` placeholder, so a mint that placed all three
+  copies settled `repair_needed` with one and the Creator stopped at "Publish
+  to storage". Model-content local-object restore is unchanged.
+- A wallet connector opens the same way from the Wallet rail and the Wallet
+  window. Launched from the rail it went to a separate connector sheet whose
+  "Open MetaMask" did nothing; it now opens as a window from both, and the
+  sheet is removed.
+- An Inbox wallet approval offers only what can complete. Approve appears
+  only for a built-in wallet, which Inbox signs after a passkey; a request on
+  an external wallet such as MetaMask offers "Review in Wallet" instead of a
+  passkey prompt the server then refused. A request Runtime raises itself,
+  such as opening protected content, no longer shows an Open button with no
+  app behind it.
+- A bought market item says what this Home holds of it. Only a copy in this
+  Home's Library reads "In your library"; a purchase whose copy is not here
+  yet, or that opens only on ela.city, reads "Purchased", and no bought card
+  shows a stock line. A Details control on those cards opens the item sheet
+  on the item's properties from its listing -- title, description, who listed
+  it, ledger, token ID, operative, KID, media type and where it opens --
+  instead of its offers.
+- Marketplace Explore opens on the market. It shows a loading state until
+  the market answers, asks once more on its own two seconds after a first
+  read that fails, and then says "Couldn’t reach the market." with a Try
+  again control. This Home's own items join the market's items on Explore
+  and stay in My listings; they no longer stand in for the market when it is
+  slow, which used to need a refresh before anyone else's items appeared.
+- A mint's on-chain token URI names the metadata directory rather than a file
+  inside it. The Operative appends its own suffixes, so the previous URI
+  produced `…/metadata.json/0000…0001.json` and resolved to nothing: the mint
+  completed and the asset was unlistable. The Runtime's own document moved to
+  `manifest.json`, and listings published before the rename still verify.
+- Library opens protected video through the shell instead of a dead route,
+  and the phantom viewer ids are gone.
+- Library offers protection on any file the Runtime accepts and routes by
+  kind, so the creator never picks a viewer.
+- Session binding is keyed to the verified executable actor behind the launch
+  token, and viewer operations are refused on every caller-supplied route.
+- Cover art no longer hijacks the video branch: a tagged music file is
+  protected as audio instead of being re-encoded into a still picture.
+- The purchases ledger takes one exclusive open per read-modify-write instead
+  of an open per access.
+- `ProviderBridge` keeps one child state value instead of several fields that
+  could disagree.
+- A purchase whose chain effect is unbound is surfaced as unbound rather than
+  left pending forever.
+- Marketplace declares its buy affordance in its capsule manifest, and the ESP
+  documents scope the same way.
+- `Action::Buy` is split out of `Write`, so a buy is authorized as a buy.
+- The viewer approval stage is idempotent: a repeated approval settles on the
+  existing effect instead of starting a second one.
+
+#### Protected content: Removed
+- The custody-host storage role's external availability plane: it no longer
+  runs `availability-provider`, needs no `ELASTOS_AVAILABILITY_ENSURE_URL`, and
+  the Compose `https://replica.invalid/ensure` placeholder is gone. Nodes
+  declare `custody,chain,ipfs`. Carrier provider invocation no longer admits
+  the retired `drm`, `rights`, `key` and `decrypt` targets.
+- The provisional `drm-provider`, `rights-provider`, `key-provider`, and
+  `decrypt-provider` capsules, the `elastos://drm`, `elastos://rights`,
+  `elastos://key`, and `elastos://decrypt` provider schemes, the
+  `elastos_common::protected_content` DTO surface, the content plane's
+  `sealed` object kind, the Library share provider chain, and the
+  `protected-content-provider-contract-smoke` retirement guard. The retired
+  scheme
+  names were also dropped from the provider registry's reserved sub-provider
+  allowlist, so they cannot be re-registered.
+
+#### Protected content: Changed
+- The Runtime-owned protect, media, custody, and decrypt plane with Chain
+  rights evidence is the only protected-content authority. Library `share`,
+  `status`, and `shared_access` no longer project provider readiness; plain
+  published content states that no key release applies, and protected content
+  is published through Runtime custody publish rather than a share policy.
+- A market buy (`buy_offer`) no longer runs the read-side checks: no
+  availability receipt, content verification or custody draft rebuild
+  happens before money moves; those stay at open, where they always applied
+  (a buy of an imported listing package still runs them). A price or
+  pay-token change, or a sold-out offer, is now answered as `terms_changed`,
+  with the current terms (`null` once the offer is gone), rather than a
+  generic purchase denial. A press on other terms while an earlier attempt
+  for the item is in flight answers `attempt_in_progress`, and a buyer holds
+  at most one open purchase per item across `buy` and `buy_offer`.
+  A listing-package `buy` that the Wallet declined, or that the chain mined
+  and reverted, is retired, so it no longer blocks a later `buy_offer` for
+  the item. A Library `buy` of the same package is still refused again, as
+  before: its Wallet effect is fixed by the listing.
+- Marketplace keeps a recorded purchase resumable: Continue appears on the
+  recorded terms even when that seller no longer lists the item. A bought
+  item not yet on this Home's shelf offers Download copy, which asks Runtime
+  for the copy by its item, reruns adoption and never pays.
+- Marketplace sells an item whose shared metadata or KID binding Runtime
+  could not read: a listing may state readability `unknown` with a `null`
+  kid, the sheet keeps Buy enabled and says nothing about where the item
+  opens, a Buy names no kid, and a catalog row treats `unknown` as not yet
+  learned. A completed purchase may name a `null` kid. A Buy that Runtime
+  could not take to the market or the chain now says "The market couldn’t be
+  reached. Try again."; "The purchase did not finish." stays for a purchase
+  that failed.
+
 ## [2.0.1] - 2026-11-09
 
 ### Added

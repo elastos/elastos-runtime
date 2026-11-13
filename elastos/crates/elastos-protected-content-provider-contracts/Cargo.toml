@@ -12,6 +12,7 @@ serde_json = "1.0"
 sha2 = "0.10"
 
 [dev-dependencies]
+elastos-protected-content-contracts = { path = "../elastos-protected-content-contracts", features = ["test-fixtures"] }
 elastos-auth = { path = "../elastos-auth" }
 ed25519-dalek = "2.1"
 k256 = { version = "0.13", features = ["ecdsa"] }

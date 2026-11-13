@@ -1,6 +1,11 @@
 use super::*;
+use crate::backends::{interpret_evm_rpc_batch, rate_limit_cooldown_log, rate_limit_retry_log};
+
+/// The channel the creator-mint fixtures publish into. A mint now names its
+/// channel, so the tests name one too rather than leaning on a configured
+/// default that no longer exists.
+const CONFIGURED_TEST_LEDGER: &str = "0x0000000000000000000000000000000000000022";
 use ed25519_dalek::{Signer as _, SigningKey};
-use elastos_auth::ethereum_signed_message_hash;
 use elastos_protected_content_contracts::{
     CanonicalContract, ContentAccessIdV1, CustodyApprovedSuitesV1,
     CustodyCommitteeAuthorizationIdentityV1, CustodyEnvelopeManifestV1, CustodyEnvelopeV1,
@@ -26,6 +31,11 @@ use sha3::Digest as _;
 use x_wing::kem::{Decapsulator as _, KeyExport as _};
 use x_wing::TryKeyInit as _;
 
+mod item_finality;
+mod mint_revert;
+mod rate_limit;
+mod rights_read;
+mod rights_v2;
 mod support;
 
 use support::*;
@@ -503,7 +513,14 @@ fn provider_with_creator_mint_rpc_and_market_sources(
 ) -> ChainProvider {
     let mut provider = ChainProvider::new();
     let init = provider.handle(Request::Init {
-        config: json!({
+        config: creator_mint_init_config(rpc_url, evidence_rpc_urls),
+    });
+    assert!(matches!(init, Response::Ok { .. }));
+    provider
+}
+
+fn creator_mint_init_config(rpc_url: String, evidence_rpc_urls: Vec<String>) -> Value {
+    json!({
             "extra": {
                 "protected_content_runtime_issuer": runtime_issuer_hex(0x42),
                 "protected_content_network": {
@@ -541,10 +558,7 @@ fn provider_with_creator_mint_rpc_and_market_sources(
                     }
                 }
             }
-        }),
-    });
-    assert!(matches!(init, Response::Ok { .. }));
-    provider
+    })
 }
 
 fn resolved_policy_body_from_data(data: &Value) -> RightsPolicyBodyV1 {
@@ -711,6 +725,32 @@ fn protected_content_asset_created_log(
     })
 }
 
+/// The `ItemListed` the trade gateway emits inside the mint, which is where the
+/// creator tail now reads the listing from.
+fn protected_content_item_listed_log(
+    gateway: &str,
+    seller: &str,
+    operative: &str,
+    token_id: u128,
+    quantity: u128,
+    price: u128,
+    pay_token: &str,
+) -> Value {
+    let mut encoded = abi_word_u128(quantity).to_vec();
+    encoded.extend_from_slice(&abi_word_u128(price));
+    encoded.extend_from_slice(&abi_word_address(pay_token).unwrap());
+    json!({
+        "address": gateway,
+        "topics": [
+            PROTECTED_CONTENT_ITEM_LISTED_TOPIC0,
+            format!("0x{}", encode_hex(&abi_word_address(seller).unwrap())),
+            format!("0x{}", encode_hex(&abi_word_address(operative).unwrap())),
+            format!("0x{}", encode_hex(&abi_word_u128(token_id))),
+        ],
+        "data": format!("0x{}", encode_hex(&encoded)),
+    })
+}
+
 fn protected_content_mint_receipt_json(
     transaction_hash: &str,
     from: &str,
@@ -749,6 +789,30 @@ fn finalized_block_json_at(number: &str, hash: &str, timestamp: u64) -> Value {
         "hash": hash,
         "timestamp": format!("0x{:x}", timestamp),
     })
+}
+
+/// ABI-encodes a single `string` return value the way `eth_call` would:
+/// offset word `0x20`, then the length word, then the UTF-8 bytes
+/// right-padded to a multiple of 32 bytes.
+fn abi_encoded_string_for_test(value: &str) -> Value {
+    let bytes = value.as_bytes();
+    let mut out = format!("0x{:0>64x}", 0x20);
+    out.push_str(&format!("{:0>64x}", bytes.len()));
+    out.push_str(&encode_hex(bytes));
+    let padding = (32 - (bytes.len() % 32)) % 32;
+    out.push_str(&"0".repeat(padding * 2));
+    json!(out)
+}
+
+/// ABI-encodes a single `address[]` return value: offset word `0x20`, the
+/// length word, then each address right-aligned in its own 32-byte word.
+fn abi_encoded_address_array_for_test(addresses: &[&str]) -> Value {
+    let mut out = format!("0x{:0>64x}", 0x20);
+    out.push_str(&format!("{:0>64x}", addresses.len()));
+    for address in addresses {
+        out.push_str(&format!("{:0>64}", address.trim_start_matches("0x")));
+    }
+    json!(out)
 }
 
 #[test]
@@ -1070,9 +1134,7 @@ fn signed_runtime_operation_for_policy_and_runtime_seed(
     .unwrap();
     let wallet_key = WalletSigningKey::from_slice(&[7; 32]).unwrap();
     let (wallet_signature, recovery_id) = wallet_key
-        .sign_prehash_recoverable(&ethereum_signed_message_hash(
-            &rights_request.canonical_bytes().unwrap(),
-        ))
+        .sign_prehash_recoverable(&rights_request.signing_hash().unwrap())
         .unwrap();
     let mut wallet_signature_bytes = wallet_signature.to_bytes().to_vec();
     wallet_signature_bytes.push(recovery_id.to_byte());
@@ -2920,6 +2982,134 @@ fn protected_content_creator_royalty_share_value_is_pinned() {
     );
 }
 
+/// Named payees replace the single default royalty entry, one ERC-1155
+/// `ROYALTY_SHARE` entry each, while the access token still mints to the
+/// creator.
+#[test]
+fn resolve_protected_content_creator_mint_encodes_named_royalty_payees() {
+    let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+    let access_id = [0x41; 16];
+    let creator = "0x0000000000000000000000000000000000000011";
+    let payee = "0x0000000000000000000000000000000000000044";
+    let token_uri = "ipfs://protected-content";
+    let data = ok_data(
+        provider.handle(Request::ResolveProtectedContentCreatorMint {
+            creator: creator.to_string(),
+            token_uri: token_uri.to_string(),
+            content_access_id: format!("0x{}", encode_hex(&access_id)),
+            copies: "0x7".to_string(),
+            price: "0x5".to_string(),
+            royalties: vec![
+                ProtectedContentRoyaltyShare {
+                    address: creator.to_string(),
+                    units: 900,
+                },
+                ProtectedContentRoyaltyShare {
+                    address: payee.to_string(),
+                    units: 50,
+                },
+            ],
+            op_type_code: 1,
+            reseller_cut: None,
+            ledger: Some(CONFIGURED_TEST_LEDGER.to_string()),
+            pay_token: None,
+        }),
+    );
+    // 900 + 50 = 950 units, exactly the creator share the contracts expect.
+    // Units cross the boundary already in the chain's denomination, so the
+    // encoded amounts are the same numbers the caller sent.
+    assert_eq!(
+        data["data"],
+        encode_protected_content_creator_mint_call(
+            ProtectedContentCreatorMintAbi::ElacityMintV1.selector(),
+            &protected_content_media_token_uri(token_uri),
+            ProtectedContentAccessMethod::BuyOnce.code(),
+            &encode_protected_content_mint_op_raw_paid(
+                &access_id,
+                token_uri,
+                &[creator.to_string(), creator.to_string(), payee.to_string()],
+                &[
+                    PROTECTED_CONTENT_CREATOR_ACCESS_TOKEN_ROLE,
+                    PROTECTED_CONTENT_CREATOR_ROYALTY_SHARE_ROLE,
+                    PROTECTED_CONTENT_CREATOR_ROYALTY_SHARE_ROLE,
+                ],
+                &["0x7".to_string(), "0x384".to_string(), "0x32".to_string()],
+                None,
+            )
+            .unwrap(),
+            &encode_protected_content_sell_raw_data(
+                "0x7",
+                "0x5",
+                "0x0000000000000000000000000000000000000033"
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    );
+}
+
+/// A split the chain cannot honour is refused rather than rounded or trimmed:
+/// paying someone an amount they did not agree to is worse than not minting.
+#[test]
+fn resolve_protected_content_creator_mint_rejects_an_unpayable_royalty_split() {
+    let creator = "0x0000000000000000000000000000000000000011";
+    let access_id = [0x41; 16];
+    for royalties in [
+        // Does not total the creator's 950 units.
+        vec![ProtectedContentRoyaltyShare {
+            address: creator.to_string(),
+            units: 900,
+        }],
+        // Overshoots it.
+        vec![
+            ProtectedContentRoyaltyShare {
+                address: creator.to_string(),
+                units: 900,
+            },
+            ProtectedContentRoyaltyShare {
+                address: "0x0000000000000000000000000000000000000044".to_string(),
+                units: 100,
+            },
+        ],
+        // A payee owed nothing.
+        vec![
+            ProtectedContentRoyaltyShare {
+                address: creator.to_string(),
+                units: 950,
+            },
+            ProtectedContentRoyaltyShare {
+                address: "0x0000000000000000000000000000000000000044".to_string(),
+                units: 0,
+            },
+        ],
+        // Not an address.
+        vec![ProtectedContentRoyaltyShare {
+            address: "0xnothex".to_string(),
+            units: 950,
+        }],
+    ] {
+        let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+        let response = provider.handle(Request::ResolveProtectedContentCreatorMint {
+            creator: creator.to_string(),
+            token_uri: "ipfs://protected-content".to_string(),
+            content_access_id: format!("0x{}", encode_hex(&access_id)),
+            copies: "0x7".to_string(),
+            price: "0x5".to_string(),
+            royalties,
+            op_type_code: 1,
+            reseller_cut: None,
+            ledger: Some(CONFIGURED_TEST_LEDGER.to_string()),
+            pay_token: None,
+        });
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["status"], "error", "{value}");
+        assert_eq!(
+            value["code"], "invalid_protected_content_creator_mint_request",
+            "{value}"
+        );
+    }
+}
+
 #[test]
 fn resolve_protected_content_creator_mint_returns_exact_call_and_content_access_id() {
     let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
@@ -2928,10 +3118,15 @@ fn resolve_protected_content_creator_mint_returns_exact_call_and_content_access_
     let data = ok_data(
         provider.handle(Request::ResolveProtectedContentCreatorMint {
             creator: creator.to_string(),
-            token_uri: "ipfs://protected-content/metadata.json".to_string(),
+            token_uri: "ipfs://protected-content".to_string(),
             content_access_id: format!("0x{}", encode_hex(&access_id)),
             copies: "0x7".to_string(),
             price: "0x5".to_string(),
+            royalties: Vec::new(),
+            op_type_code: 1,
+            reseller_cut: None,
+            ledger: Some(CONFIGURED_TEST_LEDGER.to_string()),
+            pay_token: None,
         }),
     );
     assert_eq!(data["schema"], PROTECTED_CONTENT_CREATOR_MINT_SCHEMA);
@@ -2956,11 +3151,13 @@ fn resolve_protected_content_creator_mint_returns_exact_call_and_content_access_
         data["data"],
         encode_protected_content_creator_mint_call(
             ProtectedContentCreatorMintAbi::ElacityMintV1.selector(),
+            // The media token names the document; the operative's base URI
+            // below stays the folder it lives in. One CID, two shapes.
             "ipfs://protected-content/metadata.json",
-            PROTECTED_CONTENT_CREATOR_BUY_ONCE_OP_TYPE,
+            ProtectedContentAccessMethod::BuyOnce.code(),
             &encode_protected_content_mint_op_raw_paid(
                 &access_id,
-                "ipfs://protected-content/metadata.json",
+                "ipfs://protected-content",
                 &[creator.to_string(), creator.to_string()],
                 &[
                     PROTECTED_CONTENT_CREATOR_ACCESS_TOKEN_ROLE,
@@ -2992,10 +3189,18 @@ fn describe_protected_content_creator_mint_source_returns_exact_configured_facts
     assert_eq!(data["schema"], PROTECTED_CONTENT_CREATOR_MINT_SOURCE_SCHEMA);
     assert_eq!(data["network"], "base-local");
     assert_eq!(data["chain_namespace"], "eip155:8453");
-    assert_eq!(data["ledger"], "0x0000000000000000000000000000000000000022");
+    // The source no longer names a channel: a mint settles on the one its
+    // creator chose, and a source that named one was read as "the" channel.
+    assert!(data.get("ledger").is_none());
+    // It offers what a creator may price in instead, first entry first -- the
+    // order is the default, so it is asserted rather than left to formatting.
     assert_eq!(
-        data["pay_token"],
-        "0x0000000000000000000000000000000000000033"
+        data["pay_tokens"],
+        json!([{
+            "symbol": "native",
+            "address": "0x0000000000000000000000000000000000000033",
+            "decimals": 18,
+        }])
     );
     assert_eq!(data["abi"], "elacity_mint_v1");
     assert_eq!(
@@ -3042,6 +3247,11 @@ fn resolve_protected_content_creator_mint_rejects_missing_or_competing_creator_n
                 content_access_id: format!("0x{}", encode_hex(&[0x41; 16])),
                 copies: "0x1".to_string(),
                 price: "0x5".to_string(),
+                royalties: Vec::new(),
+                op_type_code: 1,
+                reseller_cut: None,
+                ledger: Some(CONFIGURED_TEST_LEDGER.to_string()),
+                pay_token: None,
             })
         ),
         "protected_content_creator_mint_not_configured"
@@ -3105,6 +3315,11 @@ fn resolve_protected_content_creator_mint_rejects_missing_or_competing_creator_n
                 content_access_id: format!("0x{}", encode_hex(&[0x41; 16])),
                 copies: "0x1".to_string(),
                 price: "0x5".to_string(),
+                royalties: Vec::new(),
+                op_type_code: 1,
+                reseller_cut: None,
+                ledger: Some(CONFIGURED_TEST_LEDGER.to_string()),
+                pay_token: None,
             })
         ),
         "protected_content_creator_mint_not_configured"
@@ -3156,9 +3371,423 @@ fn resolve_protected_content_mint_receipt_requires_two_finalized_agreeing_receip
     let ledger = "0x0000000000000000000000000000000000000022";
     let operative = "0x0000000000000000000000000000000000000044";
     let emitter = "0x00000000000000000000000000000000000000dd";
-    let token_uri = "ipfs://protected-content/metadata.json";
+    // The request carries the metadata FOLDER; `AssetCreated` echoes the mint
+    // call's first argument, which names the document inside it.
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
     let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let finalized_hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let receipt = protected_content_mint_receipt_json(
+        hash,
+        creator,
+        ledger,
+        "0x2a",
+        receipt_block_hash,
+        "0x1",
+        vec![
+            protected_content_asset_created_log(
+                emitter,
+                creator,
+                ledger,
+                operative,
+                "0x03",
+                &emitted_uri,
+                1,
+            ),
+            // The mint lists in the same transaction, so its receipt carries
+            // the listing the creator tail used to read back separately.
+            protected_content_item_listed_log(
+                "0x00000000000000000000000000000000000000aa",
+                creator,
+                operative,
+                3,
+                7,
+                1_000_000,
+                "0x0000000000000000000000000000000000000000",
+            ),
+        ],
+    );
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x2105")),
+        ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+        // Head far enough past the mint's block to satisfy the confirmation
+        // depth. The receipt no longer waits for L1 finality: the mint carries
+        // its own ItemListed, so nothing is read back and nothing is spent
+        // after this point.
+        ("eth_blockNumber", json!([]), json!("0x40")),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
+        ),
+    ];
+    let mut provider = provider_with_creator_mint_rpc_and_market_sources(
+        "http://127.0.0.1:9".to_string(),
+        vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ],
+    );
+    let data = ok_data(
+        provider.handle(Request::ResolveProtectedContentMintReceipt {
+            network: "base-local".to_string(),
+            hash: hash.to_string(),
+            creator: creator.to_string(),
+            ledger: ledger.to_string(),
+            token_uri: token_uri.to_string(),
+            op_type_code: 1,
+        }),
+    );
+    assert_eq!(data["schema"], PROTECTED_CONTENT_MINT_RECEIPT_SCHEMA);
+    assert_eq!(data["network"], "base-local");
+    assert_eq!(data["chain_id"], 8453);
+    assert_eq!(data["token_id"], "0x3");
+    assert_eq!(data["operative"], operative);
+}
+
+/// A mint settles on the channel its creator chose, and on no channel at all
+/// when they chose none.
+///
+/// Defaulting it was the old behaviour and it published every mint into one
+/// configured channel, which is not what a creator with several means.
+#[test]
+fn resolve_protected_content_creator_mint_requires_a_chosen_channel() {
+    let access_id = [0x41; 16];
+    let creator = "0x0000000000000000000000000000000000000011";
+    let chosen = "0x00000000000000000000000000000000000000cc";
+    let request = |ledger: Option<&str>| Request::ResolveProtectedContentCreatorMint {
+        creator: creator.to_string(),
+        token_uri: "ipfs://protected-content".to_string(),
+        content_access_id: format!("0x{}", encode_hex(&access_id)),
+        copies: "0x7".to_string(),
+        price: "0x5".to_string(),
+        royalties: Vec::new(),
+        op_type_code: 1,
+        reseller_cut: None,
+        ledger: ledger.map(str::to_string),
+        pay_token: None,
+    };
+    let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+    let data = ok_data(provider.handle(request(Some(chosen))));
+    // The chosen channel is both the listing's ledger and the call's target.
+    assert_eq!(data["ledger"], chosen);
+    assert_eq!(data["to"], chosen);
+
+    for missing in [None, Some(""), Some("   "), Some("0xnothex")] {
+        let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+        assert_eq!(
+            error_code(provider.handle(request(missing))),
+            "invalid_protected_content_creator_mint_request"
+        );
+    }
+}
+
+/// A price is an integer of the chosen token's smallest unit, so the token and
+/// the scale must agree. They are checked against each other because agreeing
+/// on the digits while disagreeing on the token is not a rounding error: six
+/// decimals against eighteen is a factor of a million.
+#[test]
+fn resolve_protected_content_creator_mint_prices_in_the_token_that_was_chosen() {
+    let access_id = [0x41; 16];
+    let creator = "0x0000000000000000000000000000000000000011";
+    let configured = "0x0000000000000000000000000000000000000033";
+    let request = |pay_token: Option<&str>| Request::ResolveProtectedContentCreatorMint {
+        creator: creator.to_string(),
+        token_uri: "ipfs://protected-content".to_string(),
+        content_access_id: format!("0x{}", encode_hex(&access_id)),
+        copies: "0x7".to_string(),
+        price: "0x5".to_string(),
+        royalties: Vec::new(),
+        op_type_code: 1,
+        reseller_cut: None,
+        ledger: Some(CONFIGURED_TEST_LEDGER.to_string()),
+        pay_token: pay_token.map(str::to_string),
+    };
+    // Naming no token takes the source's first offered one, and states what a
+    // price in it means.
+    let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+    let data = ok_data(provider.handle(request(None)));
+    assert_eq!(data["pay_token"], configured);
+    assert_eq!(data["pay_token_decimals"], 18);
+
+    // Naming it explicitly is the same answer.
+    let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+    assert_eq!(
+        ok_data(provider.handle(request(Some(configured))))["pay_token"],
+        configured
+    );
+
+    // A token this deployment does not offer has unknown decimals, so a price
+    // in it has unknown meaning.
+    let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+    assert_eq!(
+        error_code(provider.handle(request(Some("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913")))),
+        "invalid_protected_content_creator_mint_request"
+    );
+}
+
+/// A free mint carries the content id and nothing else.
+///
+/// `AssetFactory.registerNewAsset` skips its whole operative branch for op
+/// type 0, so there is no access token to mint, no royalty share to split and
+/// no listing to create -- but it still reads the `bytes16` off the head of
+/// `opRawData` to bind the content id, so that one word is not optional.
+#[test]
+fn resolve_protected_content_creator_mint_encodes_a_free_mint_as_the_content_id_alone() {
+    let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+    let access_id = [0x41; 16];
+    let creator = "0x0000000000000000000000000000000000000011";
+    let data = ok_data(
+        provider.handle(Request::ResolveProtectedContentCreatorMint {
+            creator: creator.to_string(),
+            token_uri: "ipfs://protected-content".to_string(),
+            content_access_id: format!("0x{}", encode_hex(&access_id)),
+            copies: "0x0".to_string(),
+            price: "0x0".to_string(),
+            royalties: Vec::new(),
+            op_type_code: 0,
+            reseller_cut: None,
+            ledger: Some(CONFIGURED_TEST_LEDGER.to_string()),
+            pay_token: None,
+        }),
+    );
+    assert_eq!(data["op_type_code"], 0);
+    assert!(data.get("reseller_cut").is_none());
+    assert_eq!(
+        data["data"],
+        encode_protected_content_creator_mint_call(
+            ProtectedContentCreatorMintAbi::ElacityMintV1.selector(),
+            "ipfs://protected-content/metadata.json",
+            0,
+            &encode_protected_content_mint_op_raw_free(&access_id).unwrap(),
+            // Empty: `_listAccess` is only reached through the operative
+            // branch, so sell terms would be bytes the contracts never read.
+            &[],
+        )
+        .unwrap()
+    );
+}
+
+/// A free mint refuses terms it cannot apply rather than dropping them.
+///
+/// Each of these would otherwise be accepted and then silently left out of the
+/// chain call -- a listing claiming terms nobody applied.
+#[test]
+fn resolve_protected_content_creator_mint_refuses_paid_terms_on_a_free_mint() {
+    let creator = "0x0000000000000000000000000000000000000011";
+    let access_id = [0x41; 16];
+    let free =
+        |royalties: Vec<ProtectedContentRoyaltyShare>, price: &str, reseller_cut: Option<u16>| {
+            Request::ResolveProtectedContentCreatorMint {
+                creator: creator.to_string(),
+                token_uri: "ipfs://protected-content".to_string(),
+                content_access_id: format!("0x{}", encode_hex(&access_id)),
+                copies: "0x0".to_string(),
+                price: price.to_string(),
+                royalties,
+                op_type_code: 0,
+                reseller_cut,
+                ledger: Some(CONFIGURED_TEST_LEDGER.to_string()),
+                pay_token: None,
+            }
+        };
+    for request in [
+        free(Vec::new(), "0x5", None),
+        free(
+            vec![ProtectedContentRoyaltyShare {
+                address: creator.to_string(),
+                units: 950,
+            }],
+            "0x0",
+            None,
+        ),
+        free(Vec::new(), "0x0", Some(900)),
+    ] {
+        let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+        assert_eq!(
+            error_code(provider.handle(request)),
+            "invalid_protected_content_creator_mint_request"
+        );
+    }
+}
+
+/// Buy and resell is the one method whose `opRawData` carries a trailing
+/// `uint16 resellerCut`, and `OperativeBuyAndSellableFactory.createFromBytes`
+/// decodes it positionally -- so omitting it there, or supplying it anywhere
+/// else, shifts the ABI layout rather than being ignored.
+#[test]
+fn resolve_protected_content_creator_mint_carries_the_resale_cut_only_on_buy_and_resell() {
+    let access_id = [0x41; 16];
+    let creator = "0x0000000000000000000000000000000000000011";
+    let resell = |op_type_code: u16, reseller_cut: Option<u16>| {
+        Request::ResolveProtectedContentCreatorMint {
+            creator: creator.to_string(),
+            token_uri: "ipfs://protected-content".to_string(),
+            content_access_id: format!("0x{}", encode_hex(&access_id)),
+            copies: "0x7".to_string(),
+            price: "0x5".to_string(),
+            royalties: Vec::new(),
+            op_type_code,
+            reseller_cut,
+            ledger: Some(CONFIGURED_TEST_LEDGER.to_string()),
+            pay_token: None,
+        }
+    };
+    let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+    let data = ok_data(provider.handle(resell(2, Some(900))));
+    assert_eq!(data["op_type_code"], 2);
+    assert_eq!(data["reseller_cut"], 900);
+    assert_eq!(
+        data["data"],
+        encode_protected_content_creator_mint_call(
+            ProtectedContentCreatorMintAbi::ElacityMintV1.selector(),
+            "ipfs://protected-content/metadata.json",
+            2,
+            &encode_protected_content_mint_op_raw_paid(
+                &access_id,
+                "ipfs://protected-content",
+                &[creator.to_string(), creator.to_string()],
+                &[
+                    PROTECTED_CONTENT_CREATOR_ACCESS_TOKEN_ROLE,
+                    PROTECTED_CONTENT_CREATOR_ROYALTY_SHARE_ROLE,
+                ],
+                &[
+                    "0x7".to_string(),
+                    PROTECTED_CONTENT_CREATOR_ROYALTY_SHARE_UNITS.to_string(),
+                ],
+                Some(900),
+            )
+            .unwrap(),
+            &encode_protected_content_sell_raw_data(
+                "0x7",
+                "0x5",
+                "0x0000000000000000000000000000000000000033",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    );
+    for request in [
+        // Resale without a cut, and a cut on a method that has no resale.
+        resell(2, None),
+        resell(1, Some(900)),
+        // A cut larger than the whole sale is not a share.
+        resell(2, Some(1001)),
+        // An op type no factory is registered for.
+        resell(3, None),
+    ] {
+        let mut provider = provider_with_creator_mint_rpc("http://127.0.0.1:9".to_string());
+        assert_eq!(
+            error_code(provider.handle(request)),
+            "invalid_protected_content_creator_mint_request"
+        );
+    }
+}
+
+/// A mint settles on confirmation depth, not on L1 finality.
+///
+/// Observed on Base: the mint was minted, successful and already indexed
+/// downstream, while the runtime refused to record it because the block was not
+/// yet `finalized` -- twelve minutes on a good night, thirty-six on the night
+/// this was written, because Ethereum finality lagged. Nothing is signed or
+/// spent after this point: the mint emits its own `ItemListed`, so what the
+/// gate protects is a local record.
+#[test]
+fn resolve_protected_content_mint_receipt_settles_on_confirmations_not_finality() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let creator = "0x0000000000000000000000000000000000000011";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let emitter = "0x00000000000000000000000000000000000000dd";
+    // The request carries the metadata FOLDER; `AssetCreated` echoes the mint
+    // call's first argument, which names the document inside it.
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
+    let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let receipt = protected_content_mint_receipt_json(
+        hash,
+        creator,
+        ledger,
+        "0x2a",
+        receipt_block_hash,
+        "0x1",
+        vec![
+            protected_content_asset_created_log(
+                emitter,
+                creator,
+                ledger,
+                operative,
+                "0x03",
+                &emitted_uri,
+                1,
+            ),
+            protected_content_item_listed_log(
+                "0x00000000000000000000000000000000000000aa",
+                creator,
+                operative,
+                3,
+                7,
+                1_000_000,
+                "0x0000000000000000000000000000000000000000",
+            ),
+        ],
+    );
+    // Head exactly `mint_confirmations` past the mint's block: the shallowest
+    // depth that must settle. No `finalized` is ever requested -- a sequence
+    // server asserts the exact calls, so asking for one would fail here.
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x2105")),
+        ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+        ("eth_blockNumber", json!([]), json!("0x35")),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
+        ),
+    ];
+    let mut provider = provider_with_creator_mint_rpc_and_market_sources(
+        "http://127.0.0.1:9".to_string(),
+        vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ],
+    );
+    let data = ok_data(
+        provider.handle(Request::ResolveProtectedContentMintReceipt {
+            network: "base-local".to_string(),
+            hash: hash.to_string(),
+            creator: creator.to_string(),
+            ledger: ledger.to_string(),
+            token_uri: token_uri.to_string(),
+            op_type_code: 1,
+        }),
+    );
+    assert_eq!(data["token_id"], "0x3");
+    // The listing travels with the receipt, so a caller needs no second read.
+    assert_eq!(data["quantity"], "0x7");
+    assert_eq!(data["price"], "0xf4240");
+    assert_eq!(
+        data["pay_token"],
+        "0x0000000000000000000000000000000000000000"
+    );
+}
+
+/// A free mint's receipt proves a mint and nothing else.
+///
+/// It reaches `_listAccess` only through the operative branch `AssetFactory`
+/// skips for op type 0, so no `ItemListed` is emitted. Demanding one would
+/// refuse a mint that succeeded, and reporting a zero price instead of an
+/// absence would read as a sale at no cost.
+#[test]
+fn resolve_protected_content_mint_receipt_accepts_a_free_mint_that_lists_nothing() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let creator = "0x0000000000000000000000000000000000000011";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    // No operative is created, so the event names the zero address.
+    let operative = "0x0000000000000000000000000000000000000000";
+    let emitter = "0x00000000000000000000000000000000000000dd";
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
+    let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let receipt = protected_content_mint_receipt_json(
         hash,
         creator,
@@ -3167,21 +3796,23 @@ fn resolve_protected_content_mint_receipt_requires_two_finalized_agreeing_receip
         receipt_block_hash,
         "0x1",
         vec![protected_content_asset_created_log(
-            emitter, creator, ledger, operative, "0x03", token_uri, 0,
+            emitter,
+            creator,
+            ledger,
+            operative,
+            "0x03",
+            &emitted_uri,
+            0,
         )],
     );
     let sequence = vec![
         ("eth_chainId", json!([]), json!("0x2105")),
         ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+        ("eth_blockNumber", json!([]), json!("0x35")),
         (
             "eth_getBlockByNumber",
             json!(["0x2a", false]),
             canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
-        ),
-        (
-            "eth_getBlockByNumber",
-            json!(["finalized", false]),
-            finalized_block_json("0x2b", finalized_hash),
         ),
     ];
     let mut provider = provider_with_creator_mint_rpc_and_market_sources(
@@ -3201,11 +3832,931 @@ fn resolve_protected_content_mint_receipt_requires_two_finalized_agreeing_receip
             op_type_code: 0,
         }),
     );
-    assert_eq!(data["schema"], PROTECTED_CONTENT_MINT_RECEIPT_SCHEMA);
-    assert_eq!(data["network"], "base-local");
-    assert_eq!(data["chain_id"], 8453);
     assert_eq!(data["token_id"], "0x3");
     assert_eq!(data["operative"], operative);
+    assert!(data["quantity"].is_null());
+    assert!(data["price"].is_null());
+    assert!(data["pay_token"].is_null());
+}
+
+/// The op type is part of what the receipt binds: a mint that settled as a
+/// different access method than the one recorded is not this mint.
+#[test]
+fn resolve_protected_content_mint_receipt_refuses_a_different_op_type() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let creator = "0x0000000000000000000000000000000000000011";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let emitter = "0x00000000000000000000000000000000000000dd";
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
+    let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let receipt = protected_content_mint_receipt_json(
+        hash,
+        creator,
+        ledger,
+        "0x2a",
+        receipt_block_hash,
+        "0x1",
+        vec![protected_content_asset_created_log(
+            emitter,
+            creator,
+            ledger,
+            operative,
+            "0x03",
+            &emitted_uri,
+            // Settled as buy and resell.
+            2,
+        )],
+    );
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x2105")),
+        ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+        ("eth_blockNumber", json!([]), json!("0x35")),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
+        ),
+    ];
+    let mut provider = provider_with_creator_mint_rpc_and_market_sources(
+        "http://127.0.0.1:9".to_string(),
+        vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ],
+    );
+    assert_eq!(
+        error_code(
+            provider.handle(Request::ResolveProtectedContentMintReceipt {
+                network: "base-local".to_string(),
+                hash: hash.to_string(),
+                creator: creator.to_string(),
+                ledger: ledger.to_string(),
+                token_uri: token_uri.to_string(),
+                // Recorded as buy once.
+                op_type_code: 1,
+            })
+        ),
+        "invalid_protected_content_mint_receipt"
+    );
+}
+
+/// One block short of the depth is still pending, so the bar is a real one.
+#[test]
+fn resolve_protected_content_mint_receipt_is_pending_below_the_confirmation_depth() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let creator = "0x0000000000000000000000000000000000000011";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let emitter = "0x00000000000000000000000000000000000000dd";
+    // The request carries the metadata FOLDER; `AssetCreated` echoes the mint
+    // call's first argument, which names the document inside it.
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
+    let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let receipt = protected_content_mint_receipt_json(
+        hash,
+        creator,
+        ledger,
+        "0x2a",
+        receipt_block_hash,
+        "0x1",
+        vec![
+            protected_content_asset_created_log(
+                emitter,
+                creator,
+                ledger,
+                operative,
+                "0x03",
+                &emitted_uri,
+                1,
+            ),
+            protected_content_item_listed_log(
+                "0x00000000000000000000000000000000000000aa",
+                creator,
+                operative,
+                3,
+                7,
+                1_000_000,
+                "0x0000000000000000000000000000000000000000",
+            ),
+        ],
+    );
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x2105")),
+        ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+        // 0x34 is eleven confirmations where twelve are required. A block
+        // this shallow is never compared with the canonical one, so the
+        // source is not asked for it.
+        ("eth_blockNumber", json!([]), json!("0x34")),
+    ];
+    let mut provider = provider_with_creator_mint_rpc_and_market_sources(
+        "http://127.0.0.1:9".to_string(),
+        vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ],
+    );
+    assert_eq!(
+        error_code(
+            provider.handle(Request::ResolveProtectedContentMintReceipt {
+                network: "base-local".to_string(),
+                hash: hash.to_string(),
+                creator: creator.to_string(),
+                ledger: ledger.to_string(),
+                token_uri: token_uri.to_string(),
+                op_type_code: 1,
+            })
+        ),
+        "protected_content_mint_receipt_pending"
+    );
+}
+
+/// One source ahead of the other is waiting, not refusing.
+///
+/// Two independent RPCs reach a given confirmation depth at their own pace, so
+/// for a few seconds after a fresh mint exactly one of them can corroborate it.
+/// Observed on Base the night confirmation depth replaced finality: the mint
+/// was signed, mined and already indexed downstream, and the creator was shown
+/// a red terminal error while the only thing wrong was that the second RPC had
+/// not caught up. Retrying by hand succeeded every time, which is the signature
+/// of a wait misreported as a failure. The caller distinguishes the two solely
+/// by the `_pending` suffix, so an incomplete quorum must carry it -- otherwise
+/// the tail abandons a mint that is already on chain.
+#[test]
+fn resolve_protected_content_mint_receipt_is_pending_when_only_one_source_has_caught_up() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let creator = "0x0000000000000000000000000000000000000011";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let emitter = "0x00000000000000000000000000000000000000dd";
+    // The request carries the metadata FOLDER; `AssetCreated` echoes the mint
+    // call's first argument, which names the document inside it.
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
+    let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let receipt = protected_content_mint_receipt_json(
+        hash,
+        creator,
+        ledger,
+        "0x2a",
+        receipt_block_hash,
+        "0x1",
+        vec![
+            protected_content_asset_created_log(
+                emitter,
+                creator,
+                ledger,
+                operative,
+                "0x03",
+                &emitted_uri,
+                1,
+            ),
+            protected_content_item_listed_log(
+                "0x00000000000000000000000000000000000000aa",
+                creator,
+                operative,
+                3,
+                7,
+                1_000_000,
+                "0x0000000000000000000000000000000000000000",
+            ),
+        ],
+    );
+    let source_sequence = |head: &'static str| {
+        vec![
+            ("eth_chainId", json!([]), json!("0x2105")),
+            ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+            ("eth_blockNumber", json!([]), json!(head)),
+            (
+                "eth_getBlockByNumber",
+                json!(["0x2a", false]),
+                canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
+            ),
+        ]
+    };
+    let mut provider = provider_with_creator_mint_rpc_and_market_sources(
+        "http://127.0.0.1:9".to_string(),
+        vec![
+            // Past the depth: this source can corroborate the mint.
+            spawn_rpc_sequence_asserting_server(source_sequence("0x40")),
+            // Eleven confirmations where twelve are required: still catching up.
+            spawn_rpc_sequence_asserting_server(source_sequence("0x34")),
+        ],
+    );
+    assert_eq!(
+        error_code(
+            provider.handle(Request::ResolveProtectedContentMintReceipt {
+                network: "base-local".to_string(),
+                hash: hash.to_string(),
+                creator: creator.to_string(),
+                ledger: ledger.to_string(),
+                token_uri: token_uri.to_string(),
+                op_type_code: 1,
+            })
+        ),
+        "protected_content_mint_receipt_pending"
+    );
+}
+
+/// What one evidence source reports for a fresh buy-once mint in block 0x2a:
+/// the receipt, the block it reads at that height, and its head.
+fn mint_receipt_source_state(
+    canonical_block: Value,
+    head: &str,
+) -> Vec<(&'static str, Value, Value)> {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let creator = "0x0000000000000000000000000000000000000011";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let emitter = "0x00000000000000000000000000000000000000dd";
+    let emitted_uri = protected_content_media_token_uri("ipfs://protected-content");
+    let receipt = protected_content_mint_receipt_json(
+        hash,
+        creator,
+        ledger,
+        "0x2a",
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "0x1",
+        vec![
+            protected_content_asset_created_log(
+                emitter,
+                creator,
+                ledger,
+                operative,
+                "0x03",
+                &emitted_uri,
+                1,
+            ),
+            protected_content_item_listed_log(
+                "0x00000000000000000000000000000000000000aa",
+                creator,
+                operative,
+                3,
+                7,
+                1_000_000,
+                "0x0000000000000000000000000000000000000000",
+            ),
+        ],
+    );
+    vec![
+        ("eth_chainId", json!([]), json!("0x2105")),
+        ("eth_getTransactionReceipt", json!([hash]), receipt),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            canonical_block,
+        ),
+        ("eth_blockNumber", json!([]), json!(head)),
+    ]
+}
+
+fn resolve_mint_receipt_against(sources: Vec<Vec<(&'static str, Value, Value)>>) -> Response {
+    resolve_mint_receipt_against_urls(sources.into_iter().map(spawn_rpc_state_server).collect())
+}
+
+fn resolve_mint_receipt_against_urls(evidence_rpc_urls: Vec<String>) -> Response {
+    let mut provider = provider_with_creator_mint_rpc_and_market_sources(
+        "http://127.0.0.1:9".to_string(),
+        evidence_rpc_urls,
+    );
+    provider.handle(Request::ResolveProtectedContentMintReceipt {
+        network: "base-local".to_string(),
+        hash: "0x1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+        creator: "0x0000000000000000000000000000000000000011".to_string(),
+        ledger: "0x0000000000000000000000000000000000000022".to_string(),
+        token_uri: "ipfs://protected-content".to_string(),
+        op_type_code: 1,
+    })
+}
+
+/// A block that is not yet deep enough may still change, so what it says
+/// about the receipt is not yet an answer.
+///
+/// Observed on Base mainnet with load-balanced public RPCs: one backend served
+/// the receipt and another served the block at its height, still on the other
+/// side of a tip reorg. The provider compared the two before it checked the
+/// depth, so the fresh mint was refused with
+/// `invalid_protected_content_mint_receipt` and Creator gave up on a mint that
+/// settled a few seconds later. Below `mint_confirmations` the receipt is
+/// pending, whatever the block hash says.
+#[test]
+fn mint_receipt_in_unconfirmed_block_with_different_canonical_hash_is_pending() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    for (label, canonical_block) in [
+        (
+            "different canonical hash",
+            canonical_block_json(
+                "0x2a",
+                "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                vec![hash],
+            ),
+        ),
+        (
+            "transaction missing from the canonical block",
+            canonical_block_json(
+                "0x2a",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                vec!["0x2222222222222222222222222222222222222222222222222222222222222222"],
+            ),
+        ),
+    ] {
+        // 0x34 is eleven confirmations where twelve are required.
+        let state = mint_receipt_source_state(canonical_block, "0x34");
+        assert_eq!(
+            error_code(resolve_mint_receipt_against(vec![state.clone(), state])),
+            "protected_content_mint_receipt_pending",
+            "{label}"
+        );
+    }
+}
+
+/// Depth makes the canonical-block check decisive: once the block is buried
+/// `mint_confirmations` deep, a receipt in a block the source no longer
+/// carries is refused exactly as before.
+#[test]
+fn mint_receipt_confirmed_with_different_canonical_hash_is_refused() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    for (label, canonical_block, expected_message) in [
+        (
+            "different canonical hash",
+            canonical_block_json(
+                "0x2a",
+                "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                vec![hash],
+            ),
+            "protected-content mint receipt block does not match the canonical block",
+        ),
+        (
+            "transaction missing from the canonical block",
+            canonical_block_json(
+                "0x2a",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                vec!["0x2222222222222222222222222222222222222222222222222222222222222222"],
+            ),
+            "canonical block does not contain the protected-content mint transaction",
+        ),
+    ] {
+        // 0x35 is exactly twelve confirmations: the shallowest decisive depth.
+        let state = mint_receipt_source_state(canonical_block, "0x35");
+        match resolve_mint_receipt_against(vec![state.clone(), state]) {
+            Response::Error { code, message } => {
+                assert_eq!(code, "invalid_protected_content_mint_receipt", "{label}");
+                assert_eq!(message, expected_message, "{label}");
+            }
+            other => panic!("{label}: expected a refusal, got {other:?}"),
+        }
+    }
+}
+
+/// The ordinary case through the same chain state: deep enough, canonical by
+/// hash, and carrying the transaction.
+#[test]
+fn mint_receipt_confirmed_and_canonical_is_accepted() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let state = mint_receipt_source_state(
+        canonical_block_json(
+            "0x2a",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            vec![hash],
+        ),
+        "0x35",
+    );
+    let data = ok_data(resolve_mint_receipt_against(vec![state.clone(), state]));
+    assert_eq!(data["token_id"], "0x3");
+    assert_eq!(data["price"], "0xf4240");
+}
+
+/// A source that is deep enough but answers its canonical block from the other
+/// side of a reorg.
+fn deep_mismatched_mint_receipt_source() -> Vec<(&'static str, Value, Value)> {
+    mint_receipt_source_state(
+        canonical_block_json(
+            "0x2a",
+            "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            vec!["0x1111111111111111111111111111111111111111111111111111111111111111"],
+        ),
+        "0x35",
+    )
+}
+
+/// A source that carries the mint canonically, at `head`.
+fn canonical_mint_receipt_source(head: &str) -> Vec<(&'static str, Value, Value)> {
+    mint_receipt_source_state(
+        canonical_block_json(
+            "0x2a",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            vec!["0x1111111111111111111111111111111111111111111111111111111111111111"],
+        ),
+        head,
+    )
+}
+
+/// One source's view of the canonical chain is not the quorum's. While another
+/// source has not yet reached the depth, it may still corroborate the mint, so
+/// a single deep mismatch is a wait, not a refusal. Quorum still decides: two
+/// agreeing sources accept the mint whatever a third one says.
+#[test]
+fn one_deep_mismatched_source_does_not_veto_while_another_is_pending() {
+    for (label, sources) in [
+        (
+            "mismatch first, other source short of the depth",
+            vec![
+                deep_mismatched_mint_receipt_source(),
+                canonical_mint_receipt_source("0x34"),
+            ],
+        ),
+        (
+            "mismatch last, other source short of the depth",
+            vec![
+                canonical_mint_receipt_source("0x34"),
+                deep_mismatched_mint_receipt_source(),
+            ],
+        ),
+        (
+            "one confirmed, one mismatched, one short of the depth",
+            vec![
+                canonical_mint_receipt_source("0x35"),
+                deep_mismatched_mint_receipt_source(),
+                canonical_mint_receipt_source("0x34"),
+            ],
+        ),
+    ] {
+        assert_eq!(
+            error_code(resolve_mint_receipt_against(sources)),
+            "protected_content_mint_receipt_pending",
+            "{label}"
+        );
+    }
+
+    let data = ok_data(resolve_mint_receipt_against(vec![
+        deep_mismatched_mint_receipt_source(),
+        canonical_mint_receipt_source("0x35"),
+        canonical_mint_receipt_source("0x35"),
+    ]));
+    assert_eq!(data["token_id"], "0x3");
+}
+
+/// Once every source has answered at depth and no quorum agrees, a deep
+/// mismatch is the answer, with the refusal it always had.
+#[test]
+fn deep_mismatch_refuses_once_no_source_is_pending() {
+    for (label, sources) in [
+        (
+            "one confirmed, one mismatched",
+            vec![
+                canonical_mint_receipt_source("0x35"),
+                deep_mismatched_mint_receipt_source(),
+            ],
+        ),
+        (
+            "both mismatched",
+            vec![
+                deep_mismatched_mint_receipt_source(),
+                deep_mismatched_mint_receipt_source(),
+            ],
+        ),
+    ] {
+        match resolve_mint_receipt_against(sources) {
+            Response::Error { code, message } => {
+                assert_eq!(code, "invalid_protected_content_mint_receipt", "{label}");
+                assert_eq!(
+                    message,
+                    "protected-content mint receipt block does not match the canonical block",
+                    "{label}"
+                );
+            }
+            other => panic!("{label}: expected a refusal, got {other:?}"),
+        }
+    }
+}
+
+/// The deep block answers a source can give that are not a well-formed
+/// canonical block for the receipt, with the refusal each one has always had.
+fn malformed_deep_block_cases() -> Vec<(&'static str, Value, &'static str)> {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    vec![
+        (
+            "block number missing",
+            json!({ "hash": block_hash, "transactions": [hash] }),
+            "canonical block number is missing",
+        ),
+        (
+            "block number not hex",
+            json!({ "number": "forty-two", "hash": block_hash, "transactions": [hash] }),
+            "canonical block number must be a hex quantity",
+        ),
+        (
+            "block hash missing",
+            json!({ "number": "0x2a", "transactions": [hash] }),
+            "canonical block hash is missing",
+        ),
+        (
+            "block hash not 32 bytes",
+            json!({ "number": "0x2a", "hash": "0xaaaa", "transactions": [hash] }),
+            "canonical block hash must be 32 bytes",
+        ),
+        (
+            "transaction list missing",
+            json!({ "number": "0x2a", "hash": block_hash }),
+            "canonical block transaction list is missing",
+        ),
+    ]
+}
+
+/// A malformed block answer at depth says as little about the receipt as a
+/// mismatched one: it is one source's view of the chain. It weighs the same,
+/// so it decides only once no source is pending, and quorum still decides.
+#[test]
+fn one_malformed_deep_block_does_not_veto_while_another_is_pending() {
+    for (label, block, expected_message) in malformed_deep_block_cases() {
+        let malformed = || mint_receipt_source_state(block.clone(), "0x35");
+        assert_eq!(
+            error_code(resolve_mint_receipt_against(vec![
+                malformed(),
+                canonical_mint_receipt_source("0x34"),
+            ])),
+            "protected_content_mint_receipt_pending",
+            "{label}: other source short of the depth"
+        );
+        match resolve_mint_receipt_against(vec![malformed(), canonical_mint_receipt_source("0x35")])
+        {
+            Response::Error { code, message } => {
+                assert_eq!(code, "invalid_protected_content_mint_receipt", "{label}");
+                assert_eq!(message, expected_message, "{label}");
+            }
+            other => panic!("{label}: expected a refusal once none is pending, got {other:?}"),
+        }
+        let data = ok_data(resolve_mint_receipt_against(vec![
+            malformed(),
+            canonical_mint_receipt_source("0x35"),
+            canonical_mint_receipt_source("0x35"),
+        ]));
+        assert_eq!(data["token_id"], "0x3", "{label}: quorum accepts");
+    }
+}
+
+/// A source that cannot be reached is pending like one short of the depth: it
+/// may still corroborate the mint, so a deep mismatch or a malformed block on
+/// another source waits for it.
+#[test]
+fn deep_disagreement_does_not_veto_while_another_source_is_down() {
+    let down = "http://127.0.0.1:9".to_string();
+    let mut disagreeing = vec![("deep mismatch", deep_mismatched_mint_receipt_source())];
+    for (label, block, _) in malformed_deep_block_cases() {
+        disagreeing.push((label, mint_receipt_source_state(block, "0x35")));
+    }
+    for (label, source) in disagreeing {
+        assert_eq!(
+            error_code(resolve_mint_receipt_against_urls(vec![
+                spawn_rpc_state_server(source.clone()),
+                down.clone(),
+            ])),
+            "protected_content_mint_receipt_pending",
+            "{label}: other source down"
+        );
+        assert_eq!(
+            error_code(resolve_mint_receipt_against_urls(vec![
+                spawn_rpc_state_server(source),
+                spawn_rpc_state_server(canonical_mint_receipt_source("0x35")),
+                down.clone(),
+            ])),
+            "protected_content_mint_receipt_pending",
+            "{label}: one confirmed, one down"
+        );
+    }
+}
+
+/// With four sources, two agreeing confirmations decide whatever the other two
+/// say; short of that, a disagreement waits for any pending source and refuses
+/// once none is left.
+#[test]
+fn mint_receipt_quorum_decides_across_four_sources() {
+    let malformed = || {
+        mint_receipt_source_state(
+            json!({
+                "number": "0x2a",
+                "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }),
+            "0x35",
+        )
+    };
+    for (label, sources) in [
+        (
+            "two confirmed, one mismatched, one pending",
+            vec![
+                deep_mismatched_mint_receipt_source(),
+                canonical_mint_receipt_source("0x34"),
+                canonical_mint_receipt_source("0x35"),
+                canonical_mint_receipt_source("0x35"),
+            ],
+        ),
+        (
+            "two confirmed, one mismatched, one malformed",
+            vec![
+                deep_mismatched_mint_receipt_source(),
+                canonical_mint_receipt_source("0x35"),
+                malformed(),
+                canonical_mint_receipt_source("0x35"),
+            ],
+        ),
+    ] {
+        let data = ok_data(resolve_mint_receipt_against(sources));
+        assert_eq!(data["token_id"], "0x3", "{label}");
+    }
+
+    assert_eq!(
+        error_code(resolve_mint_receipt_against(vec![
+            deep_mismatched_mint_receipt_source(),
+            malformed(),
+            canonical_mint_receipt_source("0x35"),
+            canonical_mint_receipt_source("0x34"),
+        ])),
+        "protected_content_mint_receipt_pending",
+        "one confirmed, two disagreeing, one pending"
+    );
+
+    match resolve_mint_receipt_against(vec![
+        deep_mismatched_mint_receipt_source(),
+        malformed(),
+        canonical_mint_receipt_source("0x35"),
+        deep_mismatched_mint_receipt_source(),
+    ]) {
+        Response::Error { code, message } => {
+            assert_eq!(code, "invalid_protected_content_mint_receipt");
+            assert_eq!(
+                message,
+                "protected-content mint receipt block does not match the canonical block"
+            );
+        }
+        other => panic!("one confirmed, three disagreeing: expected a refusal, got {other:?}"),
+    }
+}
+
+/// A depth below the floor makes the canonical-block check decisive on blocks
+/// an ordinary reorg can still take back. That is a configuration error, so it
+/// is refused at load, never quietly raised.
+#[test]
+fn mint_confirmations_below_floor_is_refused_at_load() {
+    let init_with = |mint_confirmations: u64| {
+        let mut config = creator_mint_init_config(
+            "http://127.0.0.1:9".to_string(),
+            vec![
+                "https://market-a.example.invalid".to_string(),
+                "https://market-b.example.invalid".to_string(),
+            ],
+        );
+        config["extra"]["protected_content_network"]["protected_content_creator_mint"]
+            ["mint_confirmations"] = json!(mint_confirmations);
+        ChainProvider::new().handle(Request::Init { config })
+    };
+    for below in [0, 1, 11] {
+        match init_with(below) {
+            Response::Error { code, message } => {
+                assert_eq!(code, "invalid_config", "{below}");
+                assert_eq!(
+                    message,
+                    format!(
+                        "network base-local protected_content_creator_mint.mint_confirmations \
+                         is {below}; the floor is 12"
+                    ),
+                    "{below}"
+                );
+            }
+            other => panic!("{below}: expected invalid_config, got {other:?}"),
+        }
+    }
+    for at_or_above in [12, 64] {
+        assert!(
+            matches!(init_with(at_or_above), Response::Ok { .. }),
+            "{at_or_above}"
+        );
+    }
+}
+
+/// A mint whose receipt carries no `ItemListed` is refused rather than guessed
+/// at: since the v3 protocol bundled listing into minting, a mint without one
+/// is not the shape this Runtime knows how to record.
+#[test]
+fn resolve_protected_content_mint_receipt_requires_the_listing_it_minted() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let creator = "0x0000000000000000000000000000000000000011";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let emitter = "0x00000000000000000000000000000000000000dd";
+    // The request carries the metadata FOLDER; `AssetCreated` echoes the mint
+    // call's first argument, which names the document inside it.
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
+    let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let receipt = protected_content_mint_receipt_json(
+        hash,
+        creator,
+        ledger,
+        "0x2a",
+        receipt_block_hash,
+        "0x1",
+        vec![protected_content_asset_created_log(
+            emitter,
+            creator,
+            ledger,
+            operative,
+            "0x03",
+            &emitted_uri,
+            1,
+        )],
+    );
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x2105")),
+        ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+        ("eth_blockNumber", json!([]), json!("0x40")),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
+        ),
+    ];
+    let mut provider = provider_with_creator_mint_rpc_and_market_sources(
+        "http://127.0.0.1:9".to_string(),
+        vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ],
+    );
+    assert_eq!(
+        error_code(
+            provider.handle(Request::ResolveProtectedContentMintReceipt {
+                network: "base-local".to_string(),
+                hash: hash.to_string(),
+                creator: creator.to_string(),
+                ledger: ledger.to_string(),
+                token_uri: token_uri.to_string(),
+                op_type_code: 1,
+            })
+        ),
+        "protected_content_mint_receipt_not_bound"
+    );
+}
+
+/// A creator signing from an EIP-7702 delegated account settles like any other.
+///
+/// Observed on Base: MetaMask upgraded the creator's account, so
+/// `eth_sendTransaction` went to the delegation executor, which then called the
+/// ledger. The mint succeeded -- the configured emitter logged `AssetCreated`
+/// naming this exact ledger, creator, token URI and op type -- but the receipt
+/// was refused because its `to` was the executor rather than the ledger. The
+/// transaction's target names whichever contract the account called first and
+/// binds nothing else, so it is not what proves a mint.
+#[test]
+fn resolve_protected_content_mint_receipt_accepts_a_delegated_account_target() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let creator = "0x0000000000000000000000000000000000000011";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let emitter = "0x00000000000000000000000000000000000000dd";
+    // Not the ledger: the account's 7702 delegation executor.
+    let delegation_executor = "0x00000000000000000000000000000000000000ee";
+    // The request carries the metadata FOLDER; `AssetCreated` echoes the mint
+    // call's first argument, which names the document inside it.
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
+    let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let receipt = protected_content_mint_receipt_json(
+        hash,
+        creator,
+        delegation_executor,
+        "0x2a",
+        receipt_block_hash,
+        "0x1",
+        vec![
+            protected_content_asset_created_log(
+                emitter,
+                creator,
+                ledger,
+                operative,
+                "0x03",
+                &emitted_uri,
+                1,
+            ),
+            // The mint lists in the same transaction, so its receipt carries
+            // the listing the creator tail used to read back separately.
+            protected_content_item_listed_log(
+                "0x00000000000000000000000000000000000000aa",
+                creator,
+                operative,
+                3,
+                7,
+                1_000_000,
+                "0x0000000000000000000000000000000000000000",
+            ),
+        ],
+    );
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x2105")),
+        ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+        // Head far enough past the mint's block to satisfy the confirmation
+        // depth. The receipt no longer waits for L1 finality: the mint carries
+        // its own ItemListed, so nothing is read back and nothing is spent
+        // after this point.
+        ("eth_blockNumber", json!([]), json!("0x40")),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
+        ),
+    ];
+    let mut provider = provider_with_creator_mint_rpc_and_market_sources(
+        "http://127.0.0.1:9".to_string(),
+        vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ],
+    );
+    let data = ok_data(
+        provider.handle(Request::ResolveProtectedContentMintReceipt {
+            network: "base-local".to_string(),
+            hash: hash.to_string(),
+            creator: creator.to_string(),
+            ledger: ledger.to_string(),
+            token_uri: token_uri.to_string(),
+            op_type_code: 1,
+        }),
+    );
+    assert_eq!(data["token_id"], "0x3");
+    assert_eq!(data["operative"], operative);
+}
+
+/// Dropping the target check gives nothing away: the ledger is still bound, by
+/// the event rather than by the transport. A receipt sent straight to the
+/// ledger whose `AssetCreated` names a different one is still refused.
+#[test]
+fn resolve_protected_content_mint_receipt_still_binds_the_ledger_through_the_event() {
+    let hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let creator = "0x0000000000000000000000000000000000000011";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let foreign_ledger = "0x0000000000000000000000000000000000000099";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let emitter = "0x00000000000000000000000000000000000000dd";
+    // The request carries the metadata FOLDER; `AssetCreated` echoes the mint
+    // call's first argument, which names the document inside it.
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
+    let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    // The transaction went straight to the ledger, so the old check would have
+    // been satisfied; the event names someone else's channel.
+    let receipt = protected_content_mint_receipt_json(
+        hash,
+        creator,
+        ledger,
+        "0x2a",
+        receipt_block_hash,
+        "0x1",
+        vec![protected_content_asset_created_log(
+            emitter,
+            creator,
+            foreign_ledger,
+            operative,
+            "0x03",
+            &emitted_uri,
+            1,
+        )],
+    );
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x2105")),
+        ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+        // Head far enough past the mint's block to satisfy the confirmation
+        // depth. The receipt no longer waits for L1 finality: the mint carries
+        // its own ItemListed, so nothing is read back and nothing is spent
+        // after this point.
+        ("eth_blockNumber", json!([]), json!("0x40")),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
+        ),
+    ];
+    let mut provider = provider_with_creator_mint_rpc_and_market_sources(
+        "http://127.0.0.1:9".to_string(),
+        vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ],
+    );
+    assert_eq!(
+        error_code(
+            provider.handle(Request::ResolveProtectedContentMintReceipt {
+                network: "base-local".to_string(),
+                hash: hash.to_string(),
+                creator: creator.to_string(),
+                ledger: ledger.to_string(),
+                token_uri: token_uri.to_string(),
+                op_type_code: 1,
+            })
+        ),
+        "invalid_protected_content_mint_receipt"
+    );
 }
 
 #[test]
@@ -3217,9 +4768,11 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
     let operative = "0x0000000000000000000000000000000000000044";
     let wrong_ledger = "0x00000000000000000000000000000000000000aa";
     let emitter = "0x00000000000000000000000000000000000000dd";
-    let token_uri = "ipfs://protected-content/metadata.json";
+    // The request carries the metadata FOLDER; `AssetCreated` echoes the mint
+    // call's first argument, which names the document inside it.
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
     let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let finalized_hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     fn mutate_asset_created_log_data(mut log: Value, mutate: impl FnOnce(&mut Vec<u8>)) -> Value {
         let data = log
@@ -3260,8 +4813,8 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                     ledger,
                     operative,
                     "0x03",
-                    token_uri,
-                    0,
+                    &emitted_uri,
+                    1,
                 )],
             ),
             "protected_content_mint_receipt_not_bound",
@@ -3281,8 +4834,8 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                     ledger,
                     operative,
                     "0x03",
-                    token_uri,
-                    0,
+                    &emitted_uri,
+                    1,
                 )],
             ),
             "invalid_protected_content_mint_receipt",
@@ -3302,8 +4855,8 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                     wrong_ledger,
                     operative,
                     "0x03",
-                    token_uri,
-                    0,
+                    &emitted_uri,
+                    1,
                 )],
             ),
             "invalid_protected_content_mint_receipt",
@@ -3319,7 +4872,13 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x1",
                 vec![
                     protected_content_asset_created_log(
-                        emitter, creator, ledger, operative, "0x03", token_uri, 0,
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
                     ),
                     protected_content_asset_created_log(
                         emitter,
@@ -3327,8 +4886,8 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                         ledger,
                         "0x0000000000000000000000000000000000000055",
                         "0x04",
-                        token_uri,
-                        0,
+                        &emitted_uri,
+                        1,
                     ),
                 ],
             ),
@@ -3343,9 +4902,26 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x2a",
                 receipt_block_hash,
                 "0x1",
-                vec![protected_content_asset_created_log(
-                    emitter, creator, ledger, operative, "0x03", token_uri, 0,
-                )],
+                vec![
+                    protected_content_asset_created_log(
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
+                    ),
+                    protected_content_item_listed_log(
+                        "0x00000000000000000000000000000000000000aa",
+                        creator,
+                        operative,
+                        3,
+                        7,
+                        1_000_000,
+                        "0x0000000000000000000000000000000000000000",
+                    ),
+                ],
             ),
             "invalid_protected_content_mint_receipt",
         ),
@@ -3358,9 +4934,26 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x2a",
                 receipt_block_hash,
                 "0x2",
-                vec![protected_content_asset_created_log(
-                    emitter, creator, ledger, operative, "0x03", token_uri, 0,
-                )],
+                vec![
+                    protected_content_asset_created_log(
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
+                    ),
+                    protected_content_item_listed_log(
+                        "0x00000000000000000000000000000000000000aa",
+                        creator,
+                        operative,
+                        3,
+                        7,
+                        1_000_000,
+                        "0x0000000000000000000000000000000000000000",
+                    ),
+                ],
             ),
             "invalid_protected_content_mint_receipt",
         ),
@@ -3375,7 +4968,13 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x1",
                 vec![mutate_asset_created_log_topic(
                     protected_content_asset_created_log(
-                        emitter, creator, ledger, operative, "0x03", token_uri, 0,
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
                     ),
                     1,
                     |topic| topic[0] = 1,
@@ -3394,7 +4993,13 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x1",
                 vec![mutate_asset_created_log_data(
                     protected_content_asset_created_log(
-                        emitter, creator, ledger, operative, "0x03", token_uri, 0,
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
                     ),
                     |data| data[63] = 0x80,
                 )],
@@ -3412,7 +5017,13 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x1",
                 vec![mutate_asset_created_log_data(
                     protected_content_asset_created_log(
-                        emitter, creator, ledger, operative, "0x03", token_uri, 0,
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
                     ),
                     |data| data.extend_from_slice(&[0u8; 32]),
                 )],
@@ -3430,7 +5041,13 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x1",
                 vec![mutate_asset_created_log_data(
                     protected_content_asset_created_log(
-                        emitter, creator, ledger, operative, "0x03", token_uri, 0,
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
                     ),
                     |data| {
                         let last = data.last_mut().expect("token uri padding byte");
@@ -3444,15 +5061,12 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
         let sequence = vec![
             ("eth_chainId", json!([]), json!("0x2105")),
             ("eth_getTransactionReceipt", json!([hash]), receipt.clone()),
+            // Depth rather than finality; see the note on the accepting test.
+            ("eth_blockNumber", json!([]), json!("0x40")),
             (
                 "eth_getBlockByNumber",
                 json!(["0x2a", false]),
                 canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
-            ),
-            (
-                "eth_getBlockByNumber",
-                json!(["finalized", false]),
-                finalized_block_json("0x2b", finalized_hash),
             ),
         ];
         let mut provider = provider_with_creator_mint_rpc_and_market_sources(
@@ -3470,7 +5084,7 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                     creator: creator.to_string(),
                     ledger: ledger.to_string(),
                     token_uri: token_uri.to_string(),
-                    op_type_code: 0,
+                    op_type_code: 1,
                 })
             ),
             expected_code,
@@ -3490,20 +5104,37 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x2a",
                 receipt_block_hash,
                 "0x1",
-                vec![protected_content_asset_created_log(
-                    emitter, creator, ledger, operative, "0x03", token_uri, 0,
-                )],
+                vec![
+                    protected_content_asset_created_log(
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
+                    ),
+                    protected_content_item_listed_log(
+                        "0x00000000000000000000000000000000000000aa",
+                        creator,
+                        operative,
+                        3,
+                        7,
+                        1_000_000,
+                        "0x0000000000000000000000000000000000000000",
+                    ),
+                ],
             ),
         ),
+        // Head far enough past the mint's block to satisfy the confirmation
+        // depth. The receipt no longer waits for L1 finality: the mint carries
+        // its own ItemListed, so nothing is read back and nothing is spent
+        // after this point.
+        ("eth_blockNumber", json!([]), json!("0x40")),
         (
             "eth_getBlockByNumber",
             json!(["0x2a", false]),
             canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
-        ),
-        (
-            "eth_getBlockByNumber",
-            json!(["finalized", false]),
-            finalized_block_json("0x2b", finalized_hash),
         ),
     ];
     let conflicting_b = vec![
@@ -3518,26 +5149,37 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x2a",
                 receipt_block_hash,
                 "0x1",
-                vec![protected_content_asset_created_log(
-                    emitter,
-                    creator,
-                    ledger,
-                    "0x0000000000000000000000000000000000000055",
-                    "0x04",
-                    token_uri,
-                    0,
-                )],
+                vec![
+                    protected_content_asset_created_log(
+                        emitter,
+                        creator,
+                        ledger,
+                        "0x0000000000000000000000000000000000000055",
+                        "0x04",
+                        &emitted_uri,
+                        1,
+                    ),
+                    protected_content_item_listed_log(
+                        "0x00000000000000000000000000000000000000aa",
+                        creator,
+                        "0x0000000000000000000000000000000000000055",
+                        4,
+                        7,
+                        1_000_000,
+                        "0x0000000000000000000000000000000000000000",
+                    ),
+                ],
             ),
         ),
+        // Head far enough past the mint's block to satisfy the confirmation
+        // depth. The receipt no longer waits for L1 finality: the mint carries
+        // its own ItemListed, so nothing is read back and nothing is spent
+        // after this point.
+        ("eth_blockNumber", json!([]), json!("0x40")),
         (
             "eth_getBlockByNumber",
             json!(["0x2a", false]),
             canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
-        ),
-        (
-            "eth_getBlockByNumber",
-            json!(["finalized", false]),
-            finalized_block_json("0x2b", finalized_hash),
         ),
     ];
     let mut conflicting_provider = provider_with_creator_mint_rpc_and_market_sources(
@@ -3555,7 +5197,7 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 creator: creator.to_string(),
                 ledger: ledger.to_string(),
                 token_uri: token_uri.to_string(),
-                op_type_code: 0,
+                op_type_code: 1,
             })
         ),
         "conflicting_protected_content_mint_receipt_observations"
@@ -3594,19 +5236,22 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                     receipt_block_hash,
                     "0x1",
                     vec![protected_content_asset_created_log(
-                        emitter, creator, ledger, operative, "0x03", token_uri, 0,
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
                     )],
                 ),
             ),
+            // Depth rather than finality; see the note on the accepting test.
+            ("eth_blockNumber", json!([]), json!("0x40")),
             (
                 "eth_getBlockByNumber",
                 json!(["0x2a", false]),
                 canonical_block,
-            ),
-            (
-                "eth_getBlockByNumber",
-                json!(["finalized", false]),
-                finalized_block_json("0x2b", finalized_hash),
             ),
         ];
         let mut provider = provider_with_creator_mint_rpc_and_market_sources(
@@ -3624,7 +5269,7 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                     creator: creator.to_string(),
                     ledger: ledger.to_string(),
                     token_uri: token_uri.to_string(),
-                    op_type_code: 0,
+                    op_type_code: 1,
                 })
             ),
             expected_code,
@@ -3644,10 +5289,56 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 "0x2a",
                 receipt_block_hash,
                 "0x0",
-                vec![protected_content_asset_created_log(
-                    emitter, creator, ledger, operative, "0x03", token_uri, 0,
-                )],
+                vec![
+                    protected_content_asset_created_log(
+                        emitter,
+                        creator,
+                        ledger,
+                        operative,
+                        "0x03",
+                        &emitted_uri,
+                        1,
+                    ),
+                    protected_content_item_listed_log(
+                        "0x00000000000000000000000000000000000000aa",
+                        creator,
+                        operative,
+                        3,
+                        7,
+                        1_000_000,
+                        "0x0000000000000000000000000000000000000000",
+                    ),
+                ],
             ),
+        ),
+        // A reverted receipt is judged only at depth, in the block the
+        // source carries canonically.
+        ("eth_blockNumber", json!([]), json!("0x40")),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
+        ),
+        (
+            "eth_getTransactionByHash",
+            json!([hash]),
+            json!({
+                "hash": hash,
+                "from": creator,
+                "to": ledger,
+                "input": "0x6d696e74",
+                "value": "0x0",
+                "blockNumber": "0x2a",
+                "blockHash": receipt_block_hash,
+            }),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "from": creator, "to": ledger, "data": "0x6d696e74", "value": "0x0" },
+                "0x2a"
+            ]),
+            json!("0x"),
         ),
     ];
     let mut failed_provider = provider_with_creator_mint_rpc_and_market_sources(
@@ -3665,14 +5356,20 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 creator: creator.to_string(),
                 ledger: ledger.to_string(),
                 token_uri: token_uri.to_string(),
-                op_type_code: 0,
+                op_type_code: 1,
             })
         ),
         "protected_content_mint_receipt_failed"
     );
 
     let mut extra_topics_log = protected_content_asset_created_log(
-        emitter, creator, ledger, operative, "0x03", token_uri, 0,
+        emitter,
+        creator,
+        ledger,
+        operative,
+        "0x03",
+        &emitted_uri,
+        1,
     );
     extra_topics_log
         .get_mut("topics")
@@ -3696,15 +5393,15 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 vec![extra_topics_log],
             ),
         ),
+        // Head far enough past the mint's block to satisfy the confirmation
+        // depth. The receipt no longer waits for L1 finality: the mint carries
+        // its own ItemListed, so nothing is read back and nothing is spent
+        // after this point.
+        ("eth_blockNumber", json!([]), json!("0x40")),
         (
             "eth_getBlockByNumber",
             json!(["0x2a", false]),
             canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
-        ),
-        (
-            "eth_getBlockByNumber",
-            json!(["finalized", false]),
-            finalized_block_json("0x2b", finalized_hash),
         ),
     ];
     let mut extra_topics_provider = provider_with_creator_mint_rpc_and_market_sources(
@@ -3722,7 +5419,7 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
                 creator: creator.to_string(),
                 ledger: ledger.to_string(),
                 token_uri: token_uri.to_string(),
-                op_type_code: 0,
+                op_type_code: 1,
             })
         ),
         "invalid_protected_content_mint_receipt"
@@ -4037,6 +5734,1337 @@ fn resolve_protected_content_verified_listing_rejects_noncanonical_address_word(
 }
 
 #[test]
+fn resolve_protected_content_item_reads_operative_and_token_uri() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let token_uri =
+        "ipfs://bafyfolder/0000000000000000000000000000000000000000000000000000000000000001.json";
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": operative, "data": encode_operative_token_uri_call().unwrap() },
+                at
+            ]),
+            abi_encoded_string_for_test(token_uri),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ]),
+    );
+    let item = ok_data(provider.handle(Request::ResolveProtectedContentItem {
+        network: "esc-local".to_string(),
+        ledger: ledger.to_string(),
+        token_id: "0x3".to_string(),
+    }));
+    assert_eq!(item["schema"], PROTECTED_CONTENT_ITEM_SCHEMA);
+    assert_eq!(item["operative"], operative);
+    assert_eq!(item["token_uri"], token_uri);
+    assert_eq!(item["token_id"], "0x3");
+}
+
+#[test]
+fn resolve_protected_content_item_rejects_an_unbound_item() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                at
+            ]),
+            json!(format!("0x{:0>64}", "")),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ]),
+    );
+    assert_eq!(
+        error_code(provider.handle(Request::ResolveProtectedContentItem {
+            network: "esc-local".to_string(),
+            ledger: ledger.to_string(),
+            token_id: "0x3".to_string(),
+        })),
+        "unbound_protected_content_item"
+    );
+}
+
+#[test]
+fn resolve_protected_content_item_rejects_conflicting_sources() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let sequence_a = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": operative, "data": encode_operative_token_uri_call().unwrap() },
+                at.clone()
+            ]),
+            abi_encoded_string_for_test("ipfs://bafyfolder/one.json"),
+        ),
+    ];
+    let sequence_b = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": operative, "data": encode_operative_token_uri_call().unwrap() },
+                at
+            ]),
+            abi_encoded_string_for_test("ipfs://bafyfolder/other.json"),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence_a),
+            spawn_rpc_sequence_asserting_server(sequence_b),
+        ]),
+    );
+    assert_eq!(
+        error_code(provider.handle(Request::ResolveProtectedContentItem {
+            network: "esc-local".to_string(),
+            ledger: ledger.to_string(),
+            token_id: "0x3".to_string(),
+        })),
+        "conflicting_protected_content_item_observations"
+    );
+}
+
+#[test]
+fn resolve_protected_content_kid_binding_reads_ip_reference() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let store = "0x00000000000000000000000000000000000000cc";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let kid = "0x0123456789abcdef0123456789abcdef";
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_cstore_call().unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", store.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": store, "data": encode_ip_reference_call(kid).unwrap() },
+                at
+            ]),
+            json!(format!(
+                "0x{:0>64}{:0>64}",
+                ledger.trim_start_matches("0x"),
+                "3"
+            )),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ]),
+    );
+    let binding = ok_data(provider.handle(Request::ResolveProtectedContentKidBinding {
+        network: "esc-local".to_string(),
+        content_access_id: kid.to_string(),
+    }));
+    assert_eq!(binding["schema"], PROTECTED_CONTENT_KID_BINDING_SCHEMA);
+    assert_eq!(binding["ledger"], ledger);
+    assert_eq!(binding["token_id"], "0x3");
+}
+
+#[test]
+fn resolve_protected_content_kid_binding_rejects_an_unbound_kid() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let store = "0x00000000000000000000000000000000000000cc";
+    let kid = "0x0123456789abcdef0123456789abcdef";
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_cstore_call().unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", store.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": store, "data": encode_ip_reference_call(kid).unwrap() },
+                at
+            ]),
+            json!(format!("0x{:0>64}{:0>64}", "", "")),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ]),
+    );
+    assert_eq!(
+        error_code(provider.handle(Request::ResolveProtectedContentKidBinding {
+            network: "esc-local".to_string(),
+            content_access_id: kid.to_string(),
+        })),
+        "unbound_protected_content_kid"
+    );
+}
+
+#[test]
+fn resolve_protected_content_item_offers_reads_every_seller() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let seller1 = "0x0000000000000000000000000000000000000011";
+    let seller2 = "0x0000000000000000000000000000000000000099";
+    let pay_token = "0x0000000000000000000000000000000000000033";
+    let payment_processor = "0x00000000000000000000000000000000000000bb";
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_sellers_of_call(operative).unwrap() },
+                at.clone()
+            ]),
+            // Sellers are returned out of order to prove the resolver sorts
+            // them ascending before it decides which to read.
+            abi_encoded_address_array_for_test(&[seller2, seller1]),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_listing_call(operative, seller1).unwrap() },
+                at.clone()
+            ]),
+            json!(concat!(
+                "0x",
+                "0000000000000000000000000000000000000000000000000000000000000007",
+                "0000000000000000000000000000000000000000000000000000000000000005",
+                "0000000000000000000000000000000000000000000000000000000000000033"
+            )),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_listing_call(operative, seller2).unwrap() },
+                at.clone()
+            ]),
+            json!(concat!(
+                "0x",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "0000000000000000000000000000000000000000000000000000000000000009",
+                "0000000000000000000000000000000000000000000000000000000000000033"
+            )),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": operative, "data": encode_operatives_payment_processor_call().unwrap() },
+                at
+            ]),
+            json!(format!(
+                "0x{:0>64}",
+                payment_processor.trim_start_matches("0x")
+            )),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ]),
+    );
+    let offers = ok_data(provider.handle(Request::ResolveProtectedContentItemOffers {
+        network: "esc-local".to_string(),
+        ledger: ledger.to_string(),
+        token_id: "0x3".to_string(),
+    }));
+    assert_eq!(offers["schema"], PROTECTED_CONTENT_ITEM_OFFERS_SCHEMA);
+    assert_eq!(offers["operative"], operative);
+    assert_eq!(offers["truncated"], false);
+    let offers_array = offers["offers"].as_array().unwrap();
+    assert_eq!(offers_array.len(), 1);
+    assert_eq!(offers_array[0]["seller"], seller1);
+    assert_eq!(offers_array[0]["quantity"], "0x7");
+    assert_eq!(offers_array[0]["price"], "0x5");
+    assert_eq!(offers_array[0]["pay_token"], pay_token);
+    assert_eq!(offers_array[0]["payment_processor"], payment_processor);
+}
+
+#[test]
+fn resolve_protected_content_item_offers_truncates_beyond_the_cap() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let sellers: Vec<String> = (1..=33).map(|n: u32| format!("0x{n:040x}")).collect();
+    let sellers_str: Vec<&str> = sellers.iter().map(String::as_str).collect();
+    let mut reversed = sellers_str.clone();
+    reversed.reverse();
+    let mut sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_sellers_of_call(operative).unwrap() },
+                at.clone()
+            ]),
+            // Out of order, same as above -- and one more than the cap.
+            abi_encoded_address_array_for_test(&reversed),
+        ),
+    ];
+    for seller in &sellers_str[..32] {
+        sequence.push((
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_listing_call(operative, seller).unwrap() },
+                at.clone()
+            ]),
+            json!(concat!(
+                "0x",
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            )),
+        ));
+    }
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ]),
+    );
+    let offers = ok_data(provider.handle(Request::ResolveProtectedContentItemOffers {
+        network: "esc-local".to_string(),
+        ledger: ledger.to_string(),
+        token_id: "0x3".to_string(),
+    }));
+    assert_eq!(offers["truncated"], true);
+    let offers_array = offers["offers"].as_array().unwrap();
+    assert_eq!(offers_array.len(), 32);
+    assert_eq!(offers_array[0]["seller"], sellers_str[0]);
+    assert_eq!(offers_array[31]["seller"], sellers_str[31]);
+}
+
+#[test]
+fn resolve_protected_content_item_offers_rejects_conflicting_sources() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let seller = "0x0000000000000000000000000000000000000011";
+    let sequence_a = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_sellers_of_call(operative).unwrap() },
+                at.clone()
+            ]),
+            abi_encoded_address_array_for_test(&[seller]),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_listing_call(operative, seller).unwrap() },
+                at.clone()
+            ]),
+            json!(concat!(
+                "0x",
+                "0000000000000000000000000000000000000000000000000000000000000007",
+                "0000000000000000000000000000000000000000000000000000000000000005",
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            )),
+        ),
+    ];
+    let sequence_b = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_sellers_of_call(operative).unwrap() },
+                at.clone()
+            ]),
+            abi_encoded_address_array_for_test(&[seller]),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_listing_call(operative, seller).unwrap() },
+                at
+            ]),
+            json!(concat!(
+                "0x",
+                // Disagrees on price with source A.
+                "0000000000000000000000000000000000000000000000000000000000000007",
+                "0000000000000000000000000000000000000000000000000000000000000009",
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            )),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence_a),
+            spawn_rpc_sequence_asserting_server(sequence_b),
+        ]),
+    );
+    assert_eq!(
+        error_code(provider.handle(Request::ResolveProtectedContentItemOffers {
+            network: "esc-local".to_string(),
+            ledger: ledger.to_string(),
+            token_id: "0x3".to_string(),
+        })),
+        "conflicting_protected_content_item_offers_observations"
+    );
+}
+
+/// R32 / SM-I5: sources may legitimately disagree on the finalized head by
+/// a block or more; the item read pins every source to the lowest finalized
+/// block (the same algorithm the rights read uses -- see
+/// `pin_to_lowest_finalized`) instead of demanding the sources' finalized
+/// heads match exactly.
+#[test]
+fn resolve_protected_content_item_pins_lagging_sources_to_the_lowest_finalized_block() {
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let token_uri =
+        "ipfs://bafyfolder/0000000000000000000000000000000000000000000000000000000000000001.json";
+    let older_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let newer_hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let operative_call = |hash: &str| {
+        json!([
+            { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let token_uri_call = |hash: &str| {
+        json!([
+            { "to": operative, "data": encode_operative_token_uri_call().unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let operative_word = json!(format!("0x{:0>64}", operative.trim_start_matches("0x")));
+    // Source A already finalized block 0x2b; after pinning it must confirm
+    // 0x2a is canonical under the older hash and answer both calls there.
+    let ahead_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2b", newer_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(newer_hash),
+            operative_word.clone(),
+        ),
+        (
+            "eth_call",
+            token_uri_call(newer_hash),
+            abi_encoded_string_for_test(token_uri),
+        ),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(older_hash),
+            operative_word.clone(),
+        ),
+        (
+            "eth_call",
+            token_uri_call(older_hash),
+            abi_encoded_string_for_test(token_uri),
+        ),
+    ];
+    // Source B still finalizes 0x2a; pinned to its own head, it re-confirms
+    // the block and re-answers both calls there.
+    let behind_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(older_hash),
+            operative_word.clone(),
+        ),
+        (
+            "eth_call",
+            token_uri_call(older_hash),
+            abi_encoded_string_for_test(token_uri),
+        ),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        ("eth_call", operative_call(older_hash), operative_word),
+        (
+            "eth_call",
+            token_uri_call(older_hash),
+            abi_encoded_string_for_test(token_uri),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(ahead_sequence),
+            spawn_rpc_sequence_asserting_server(behind_sequence),
+        ]),
+    );
+    let item = ok_data(provider.handle(Request::ResolveProtectedContentItem {
+        network: "esc-local".to_string(),
+        ledger: ledger.to_string(),
+        token_id: "0x3".to_string(),
+    }));
+    assert_eq!(item["operative"], operative);
+    assert_eq!(item["token_uri"], token_uri);
+    assert_eq!(item["finalized_block_number"], json!(0x2a));
+}
+
+/// Pinning to the lowest finalized block does not launder a real
+/// disagreement: if the two sources' data differs once re-evaluated at the
+/// same pinned block, it is still a conflict.
+#[test]
+fn resolve_protected_content_item_rejects_conflicting_data_at_the_pinned_block() {
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let older_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let newer_hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let operative_call = |hash: &str| {
+        json!([
+            { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let token_uri_call = |hash: &str| {
+        json!([
+            { "to": operative, "data": encode_operative_token_uri_call().unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let operative_word = json!(format!("0x{:0>64}", operative.trim_start_matches("0x")));
+    let ahead_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2b", newer_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(newer_hash),
+            operative_word.clone(),
+        ),
+        (
+            "eth_call",
+            token_uri_call(newer_hash),
+            abi_encoded_string_for_test("ipfs://bafyfolder/initial-a.json"),
+        ),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(older_hash),
+            operative_word.clone(),
+        ),
+        (
+            "eth_call",
+            token_uri_call(older_hash),
+            // Disagrees with source B's re-pinned answer below.
+            abi_encoded_string_for_test("ipfs://bafyfolder/repinned-a.json"),
+        ),
+    ];
+    let behind_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(older_hash),
+            operative_word.clone(),
+        ),
+        (
+            "eth_call",
+            token_uri_call(older_hash),
+            abi_encoded_string_for_test("ipfs://bafyfolder/initial-b.json"),
+        ),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        ("eth_call", operative_call(older_hash), operative_word),
+        (
+            "eth_call",
+            token_uri_call(older_hash),
+            abi_encoded_string_for_test("ipfs://bafyfolder/repinned-b.json"),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(ahead_sequence),
+            spawn_rpc_sequence_asserting_server(behind_sequence),
+        ]),
+    );
+    assert_eq!(
+        error_code(provider.handle(Request::ResolveProtectedContentItem {
+            network: "esc-local".to_string(),
+            ledger: ledger.to_string(),
+            token_id: "0x3".to_string(),
+        })),
+        "conflicting_protected_content_item_observations"
+    );
+}
+
+/// R32 applied to the kid-binding read: same lag-tolerant pinning, proven
+/// independently of the item read to show the algorithm is reused rather
+/// than copied and reimplemented per op.
+#[test]
+fn resolve_protected_content_kid_binding_pins_lagging_sources_to_the_lowest_finalized_block() {
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let store = "0x00000000000000000000000000000000000000cc";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let kid = "0x0123456789abcdef0123456789abcdef";
+    let older_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let newer_hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let cstore_call = |hash: &str| {
+        json!([
+            { "to": gateway, "data": encode_authority_gateway_cstore_call().unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let ip_reference_call = |hash: &str| {
+        json!([
+            { "to": store, "data": encode_ip_reference_call(kid).unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let cstore_word = json!(format!("0x{:0>64}", store.trim_start_matches("0x")));
+    let ip_reference_word = json!(format!(
+        "0x{:0>64}{:0>64}",
+        ledger.trim_start_matches("0x"),
+        "3"
+    ));
+    let ahead_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2b", newer_hash),
+        ),
+        ("eth_call", cstore_call(newer_hash), cstore_word.clone()),
+        (
+            "eth_call",
+            ip_reference_call(newer_hash),
+            ip_reference_word.clone(),
+        ),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        ("eth_call", cstore_call(older_hash), cstore_word.clone()),
+        (
+            "eth_call",
+            ip_reference_call(older_hash),
+            ip_reference_word.clone(),
+        ),
+    ];
+    let behind_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        ("eth_call", cstore_call(older_hash), cstore_word.clone()),
+        (
+            "eth_call",
+            ip_reference_call(older_hash),
+            ip_reference_word.clone(),
+        ),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        ("eth_call", cstore_call(older_hash), cstore_word),
+        ("eth_call", ip_reference_call(older_hash), ip_reference_word),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(ahead_sequence),
+            spawn_rpc_sequence_asserting_server(behind_sequence),
+        ]),
+    );
+    let binding = ok_data(provider.handle(Request::ResolveProtectedContentKidBinding {
+        network: "esc-local".to_string(),
+        content_access_id: kid.to_string(),
+    }));
+    assert_eq!(binding["ledger"], ledger);
+    assert_eq!(binding["token_id"], "0x3");
+    assert_eq!(binding["finalized_block_number"], json!(0x2a));
+}
+
+/// R32 applied to the item-offers read.
+#[test]
+fn resolve_protected_content_item_offers_pins_lagging_sources_to_the_lowest_finalized_block() {
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let seller = "0x0000000000000000000000000000000000000011";
+    let older_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let newer_hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let operative_call = |hash: &str| {
+        json!([
+            { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let sellers_call = |hash: &str| {
+        json!([
+            { "to": gateway, "data": encode_authority_gateway_sellers_of_call(operative).unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let listing_call = |hash: &str| {
+        json!([
+            { "to": gateway, "data": encode_authority_gateway_listing_call(operative, seller).unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let operative_word = json!(format!("0x{:0>64}", operative.trim_start_matches("0x")));
+    let sellers_word = abi_encoded_address_array_for_test(&[seller]);
+    let listing_word = json!(concat!(
+        "0x",
+        "0000000000000000000000000000000000000000000000000000000000000007",
+        "0000000000000000000000000000000000000000000000000000000000000005",
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    ));
+    let ahead_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2b", newer_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(newer_hash),
+            operative_word.clone(),
+        ),
+        ("eth_call", sellers_call(newer_hash), sellers_word.clone()),
+        ("eth_call", listing_call(newer_hash), listing_word.clone()),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(older_hash),
+            operative_word.clone(),
+        ),
+        ("eth_call", sellers_call(older_hash), sellers_word.clone()),
+        ("eth_call", listing_call(older_hash), listing_word.clone()),
+    ];
+    let behind_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(older_hash),
+            operative_word.clone(),
+        ),
+        ("eth_call", sellers_call(older_hash), sellers_word.clone()),
+        ("eth_call", listing_call(older_hash), listing_word.clone()),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        ("eth_call", operative_call(older_hash), operative_word),
+        ("eth_call", sellers_call(older_hash), sellers_word),
+        ("eth_call", listing_call(older_hash), listing_word),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(ahead_sequence),
+            spawn_rpc_sequence_asserting_server(behind_sequence),
+        ]),
+    );
+    let offers = ok_data(provider.handle(Request::ResolveProtectedContentItemOffers {
+        network: "esc-local".to_string(),
+        ledger: ledger.to_string(),
+        token_id: "0x3".to_string(),
+    }));
+    assert_eq!(offers["finalized_block_number"], json!(0x2a));
+    let offers_array = offers["offers"].as_array().unwrap();
+    assert_eq!(offers_array.len(), 1);
+    assert_eq!(offers_array[0]["seller"], seller);
+}
+
+/// ERC-20 flag fix: a sold-out listing's `pay_token` must not be the reason
+/// `paymentProcessor()` gets called. The mock sequence has no trailing call
+/// for it -- if the fix regresses, the request has nothing left to answer
+/// that extra call and fails instead of succeeding with an empty offer set.
+#[test]
+fn resolve_protected_content_item_offers_skips_payment_processor_for_a_sold_out_erc20_listing() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let seller = "0x0000000000000000000000000000000000000011";
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                at.clone()
+            ]),
+            json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_sellers_of_call(operative).unwrap() },
+                at.clone()
+            ]),
+            abi_encoded_address_array_for_test(&[seller]),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_listing_call(operative, seller).unwrap() },
+                at
+            ]),
+            // Sold out (quantity 0x0) with a nonzero (ERC-20) pay_token.
+            json!(concat!(
+                "0x",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "0000000000000000000000000000000000000000000000000000000000000005",
+                "0000000000000000000000000000000000000000000000000000000000000033"
+            )),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ]),
+    );
+    let offers = ok_data(provider.handle(Request::ResolveProtectedContentItemOffers {
+        network: "esc-local".to_string(),
+        ledger: ledger.to_string(),
+        token_id: "0x3".to_string(),
+    }));
+    assert_eq!(offers["offers"].as_array().unwrap().len(), 0);
+}
+
+/// cstore zero-check: a zero cstore means the authority gateway has no
+/// protected-content store bound on this network at all. No ipReference
+/// call belongs in the mock sequence -- calling it on the zero address is
+/// exactly the bug this guard exists to prevent.
+#[test]
+fn resolve_protected_content_kid_binding_rejects_a_zero_cstore() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let kid = "0x0123456789abcdef0123456789abcdef";
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2c", finalized_hash),
+        ),
+        (
+            "eth_call",
+            json!([
+                { "to": gateway, "data": encode_authority_gateway_cstore_call().unwrap() },
+                at
+            ]),
+            json!(format!("0x{:0>64}", "")),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(sequence.clone()),
+            spawn_rpc_sequence_asserting_server(sequence),
+        ]),
+    );
+    assert_eq!(
+        error_code(provider.handle(Request::ResolveProtectedContentKidBinding {
+            network: "esc-local".to_string(),
+            content_access_id: kid.to_string(),
+        })),
+        "unbound_protected_content_store"
+    );
+}
+
+/// R36 / PS-I4: chain-provider is the producer of the typed `Resolved...`
+/// wire shapes the server test deserializes; this writes one real answer of
+/// each of the three ops (plus a truncated item_offers, and the head
+/// classification read) to the fixture, to hold the eventual server-side
+/// structs to what Runtime really sends.
+#[test]
+fn chain_market_ops_writes_the_server_fixture() {
+    let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let at = json!({ "blockHash": finalized_hash, "requireCanonical": true });
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let store = "0x00000000000000000000000000000000000000cc";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let kid = "0x0123456789abcdef0123456789abcdef";
+
+    let item = {
+        let token_uri = "ipfs://bafyfolder/0000000000000000000000000000000000000000000000000000000000000001.json";
+        let sequence = vec![
+            ("eth_chainId", json!([]), json!("0x14")),
+            (
+                "eth_getBlockByNumber",
+                json!(["finalized", false]),
+                finalized_block_json("0x2c", finalized_hash),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                    at.clone()
+                ]),
+                json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": operative, "data": encode_operative_token_uri_call().unwrap() },
+                    at.clone()
+                ]),
+                abi_encoded_string_for_test(token_uri),
+            ),
+        ];
+        let mut provider = provider_with_rights_rpc_policies_and_purchase(
+            "http://127.0.0.1:9".to_string(),
+            "0x12345678",
+            json!([]),
+            protected_content_market_source(vec![
+                spawn_rpc_sequence_asserting_server(sequence.clone()),
+                spawn_rpc_sequence_asserting_server(sequence),
+            ]),
+        );
+        ok_data(provider.handle(Request::ResolveProtectedContentItem {
+            network: "esc-local".to_string(),
+            ledger: ledger.to_string(),
+            token_id: "0x3".to_string(),
+        }))
+    };
+
+    let kid_binding = {
+        let sequence = vec![
+            ("eth_chainId", json!([]), json!("0x14")),
+            (
+                "eth_getBlockByNumber",
+                json!(["finalized", false]),
+                finalized_block_json("0x2c", finalized_hash),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_cstore_call().unwrap() },
+                    at.clone()
+                ]),
+                json!(format!("0x{:0>64}", store.trim_start_matches("0x"))),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": store, "data": encode_ip_reference_call(kid).unwrap() },
+                    at.clone()
+                ]),
+                json!(format!(
+                    "0x{:0>64}{:0>64}",
+                    ledger.trim_start_matches("0x"),
+                    "3"
+                )),
+            ),
+        ];
+        let mut provider = provider_with_rights_rpc_policies_and_purchase(
+            "http://127.0.0.1:9".to_string(),
+            "0x12345678",
+            json!([]),
+            protected_content_market_source(vec![
+                spawn_rpc_sequence_asserting_server(sequence.clone()),
+                spawn_rpc_sequence_asserting_server(sequence),
+            ]),
+        );
+        ok_data(provider.handle(Request::ResolveProtectedContentKidBinding {
+            network: "esc-local".to_string(),
+            content_access_id: kid.to_string(),
+        }))
+    };
+
+    // One ERC-20 offer, one native offer.
+    let item_offers = {
+        let native_seller = "0x0000000000000000000000000000000000000011";
+        let erc20_seller = "0x0000000000000000000000000000000000000099";
+        let payment_processor = "0x00000000000000000000000000000000000000bb";
+        let sequence = vec![
+            ("eth_chainId", json!([]), json!("0x14")),
+            (
+                "eth_getBlockByNumber",
+                json!(["finalized", false]),
+                finalized_block_json("0x2c", finalized_hash),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                    at.clone()
+                ]),
+                json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_sellers_of_call(operative).unwrap() },
+                    at.clone()
+                ]),
+                abi_encoded_address_array_for_test(&[native_seller, erc20_seller]),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_listing_call(operative, native_seller).unwrap() },
+                    at.clone()
+                ]),
+                json!(concat!(
+                    "0x",
+                    "0000000000000000000000000000000000000000000000000000000000000007",
+                    "0000000000000000000000000000000000000000000000000000000000000005",
+                    "0000000000000000000000000000000000000000000000000000000000000000"
+                )),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_listing_call(operative, erc20_seller).unwrap() },
+                    at.clone()
+                ]),
+                json!(concat!(
+                    "0x",
+                    "0000000000000000000000000000000000000000000000000000000000000009",
+                    "0000000000000000000000000000000000000000000000000000000000000006",
+                    "0000000000000000000000000000000000000000000000000000000000000033"
+                )),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": operative, "data": encode_operatives_payment_processor_call().unwrap() },
+                    at.clone()
+                ]),
+                json!(format!(
+                    "0x{:0>64}",
+                    payment_processor.trim_start_matches("0x")
+                )),
+            ),
+        ];
+        let mut provider = provider_with_rights_rpc_policies_and_purchase(
+            "http://127.0.0.1:9".to_string(),
+            "0x12345678",
+            json!([]),
+            protected_content_market_source(vec![
+                spawn_rpc_sequence_asserting_server(sequence.clone()),
+                spawn_rpc_sequence_asserting_server(sequence),
+            ]),
+        );
+        ok_data(provider.handle(Request::ResolveProtectedContentItemOffers {
+            network: "esc-local".to_string(),
+            ledger: ledger.to_string(),
+            token_id: "0x3".to_string(),
+        }))
+    };
+
+    // 33 sellers, one more than the cap.
+    let item_offers_truncated = {
+        let sellers: Vec<String> = (1..=33).map(|n: u32| format!("0x{n:040x}")).collect();
+        let sellers_str: Vec<&str> = sellers.iter().map(String::as_str).collect();
+        let mut reversed = sellers_str.clone();
+        reversed.reverse();
+        let mut sequence = vec![
+            ("eth_chainId", json!([]), json!("0x14")),
+            (
+                "eth_getBlockByNumber",
+                json!(["finalized", false]),
+                finalized_block_json("0x2c", finalized_hash),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x3").unwrap() },
+                    at.clone()
+                ]),
+                json!(format!("0x{:0>64}", operative.trim_start_matches("0x"))),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_sellers_of_call(operative).unwrap() },
+                    at.clone()
+                ]),
+                abi_encoded_address_array_for_test(&reversed),
+            ),
+        ];
+        for seller in &sellers_str[..32] {
+            sequence.push((
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_listing_call(operative, seller).unwrap() },
+                    at.clone()
+                ]),
+                json!(concat!(
+                    "0x",
+                    "0000000000000000000000000000000000000000000000000000000000000001",
+                    "0000000000000000000000000000000000000000000000000000000000000001",
+                    "0000000000000000000000000000000000000000000000000000000000000000"
+                )),
+            ));
+        }
+        let mut provider = provider_with_rights_rpc_policies_and_purchase(
+            "http://127.0.0.1:9".to_string(),
+            "0x12345678",
+            json!([]),
+            protected_content_market_source(vec![
+                spawn_rpc_sequence_asserting_server(sequence.clone()),
+                spawn_rpc_sequence_asserting_server(sequence),
+            ]),
+        );
+        ok_data(provider.handle(Request::ResolveProtectedContentItemOffers {
+            network: "esc-local".to_string(),
+            ledger: ledger.to_string(),
+            token_id: "0x3".to_string(),
+        }))
+    };
+
+    let fixture = json!({
+        "item": item,
+        "kid_binding": kid_binding,
+        "item_offers": item_offers,
+        "item_offers_truncated": item_offers_truncated,
+        "item_finality": item_finality::bound_item_finality_answer(),
+    });
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../elastos/crates/elastos-server/src/api/gateway_tests/fixtures/chain-market-ops.json",
+    );
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut bytes = serde_json::to_vec_pretty(&fixture).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&path, bytes).unwrap();
+}
+
+#[test]
 fn resolve_protected_content_purchase_returns_exact_network_target_value_and_data() {
     let finalized_hash = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     let operative = "0x0000000000000000000000000000000000000044";
@@ -4346,7 +7374,7 @@ fn resolve_protected_content_purchase_access_uses_view_policy_source_and_hides_t
         ("eth_chainId", json!([]), json!("0x14")),
         (
             "eth_getBlockByNumber",
-            json!(["finalized", false]),
+            json!(["latest", false]),
             json!({
                 "number": "0x2c",
                 "hash": finalized_hash,
@@ -4385,6 +7413,7 @@ fn resolve_protected_content_purchase_access_uses_view_policy_source_and_hides_t
             network: "esc-local".to_string(),
             wallet: wallet.to_string(),
             content_access_id: format!("0x{}", encode_hex(access_id.as_bytes())),
+            block: ProtectedContentAccessBlock::Latest,
         }),
     );
     let rendered = serde_json::to_string(&data).unwrap();
@@ -4405,6 +7434,151 @@ fn resolve_protected_content_purchase_access_uses_view_policy_source_and_hides_t
     assert!(!rendered.contains("http://127.0.0.1:9"));
     assert!(!rendered.contains("\"contract\""));
     assert!(!rendered.contains("\"selector\""));
+}
+
+/// The upfront access check must read the chain head, not finalized state.
+///
+/// A grant is readable by `hasAccess` in the very block that carries the
+/// acquisition, while finality on an L2 trails the head by many minutes. Read
+/// at `finalized`, the call reverts as an unbound content id -- so a creator
+/// who just watched their own mint confirm is told the asset is not theirs,
+/// and no owned copy is ever recorded for it.
+///
+/// This mock answers `latest` and nothing else: were the tag to go back to
+/// `finalized`, the request assertion fails rather than this test silently
+/// passing against a different block.
+#[test]
+fn resolve_protected_content_purchase_access_reads_the_head_so_a_just_settled_grant_resolves() {
+    let access_id = content_access_id(0x51);
+    let wallet = "0x0000000000000000000000000000000000000007";
+    let expected_data =
+        encode_has_access_by_content_id_call("0x12345678", access_id.as_bytes(), wallet).unwrap();
+    let head_hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["latest", false]),
+            json!({
+                "number": "0x2c",
+                "hash": head_hash,
+                "timestamp": format!("0x{:x}", RIGHTS_EVIDENCE_NOW - 2),
+            }),
+        ),
+        (
+            "eth_call",
+            json!([
+                {
+                    "to": "0x0000000000000000000000000000000000000001",
+                    "data": expected_data
+                },
+                {
+                    "blockHash": head_hash,
+                    "requireCanonical": true
+                }
+            ]),
+            evm_bool_word(true),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_and_policies(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        protected_content_policy_sources(
+            "view",
+            vec![
+                spawn_rpc_sequence_asserting_server(sequence.clone()),
+                spawn_rpc_sequence_asserting_server(sequence),
+            ],
+        ),
+    );
+    let data = ok_data(
+        provider.handle(Request::ResolveProtectedContentPurchaseAccess {
+            request_id: "purchase-access:just-settled".to_string(),
+            network: "esc-local".to_string(),
+            wallet: wallet.to_string(),
+            content_access_id: format!("0x{}", encode_hex(access_id.as_bytes())),
+            block: ProtectedContentAccessBlock::Latest,
+        }),
+    );
+    assert_eq!(data["has_access"], true);
+}
+
+/// The open asks the content-id read at `finalized` -- the block custody
+/// judges a release by -- to tell a copy still inside the finality lag from
+/// one that can open now. The mock answers `finalized` and nothing else.
+#[test]
+fn resolve_protected_content_purchase_access_finalized_variant_reads_the_finalized_block() {
+    let access_id = content_access_id(0x51);
+    let wallet = "0x0000000000000000000000000000000000000007";
+    let expected_data =
+        encode_has_access_by_content_id_call("0x12345678", access_id.as_bytes(), wallet).unwrap();
+    let finalized_hash = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            json!({
+                "number": "0x2c",
+                "hash": finalized_hash,
+                "timestamp": format!("0x{:x}", RIGHTS_EVIDENCE_NOW - 900),
+            }),
+        ),
+        (
+            "eth_call",
+            json!([
+                {
+                    "to": "0x0000000000000000000000000000000000000001",
+                    "data": expected_data
+                },
+                {
+                    "blockHash": finalized_hash,
+                    "requireCanonical": true
+                }
+            ]),
+            evm_bool_word(false),
+        ),
+    ];
+    let mut provider = provider_with_rights_rpc_and_policies(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        protected_content_policy_sources(
+            "view",
+            vec![
+                spawn_rpc_sequence_asserting_server(sequence.clone()),
+                spawn_rpc_sequence_asserting_server(sequence),
+            ],
+        ),
+    );
+    let data = ok_data(
+        provider.handle(Request::ResolveProtectedContentPurchaseAccess {
+            request_id: "purchase-access:finalized".to_string(),
+            network: "esc-local".to_string(),
+            wallet: wallet.to_string(),
+            content_access_id: format!("0x{}", encode_hex(access_id.as_bytes())),
+            block: ProtectedContentAccessBlock::Finalized,
+        }),
+    );
+    assert_eq!(data["has_access"], false);
+    assert_eq!(data["finalized_block_hash"], finalized_hash);
+    assert_eq!(data["finalized_block_timestamp"], RIGHTS_EVIDENCE_NOW - 900);
+}
+
+/// Callers that predate the `block` field keep reading the head.
+#[test]
+fn resolve_protected_content_purchase_access_block_defaults_to_the_head_on_the_wire() {
+    let request: Request = serde_json::from_value(json!({
+        "op": "resolve_protected_content_purchase_access",
+        "request_id": "purchase-access:wire",
+        "network": "esc-local",
+        "wallet": "0x0000000000000000000000000000000000000007",
+        "content_access_id": format!("0x{}", "51".repeat(16)),
+    }))
+    .unwrap();
+    let Request::ResolveProtectedContentPurchaseAccess { block, .. } = request else {
+        panic!("expected a purchase access request");
+    };
+    assert_eq!(block, ProtectedContentAccessBlock::Latest);
 }
 
 #[test]
@@ -4428,6 +7602,7 @@ fn resolve_protected_content_purchase_access_rejects_non_view_policy_source() {
                 network: "esc-local".to_string(),
                 wallet: "0x0000000000000000000000000000000000000007".to_string(),
                 content_access_id: format!("0x{}", encode_hex(access_id.as_bytes())),
+                block: ProtectedContentAccessBlock::Latest,
             })
         ),
         "protected_content_purchase_access_not_configured"
@@ -4450,7 +7625,7 @@ fn resolve_protected_content_purchase_access_rejects_stale_or_future_finalized_o
             ("eth_chainId", json!([]), json!("0x14")),
             (
                 "eth_getBlockByNumber",
-                json!(["finalized", false]),
+                json!(["latest", false]),
                 json!({
                     "number": "0x2c",
                     "hash": finalized_hash,
@@ -4490,11 +7665,251 @@ fn resolve_protected_content_purchase_access_rejects_stale_or_future_finalized_o
                     network: "esc-local".to_string(),
                     wallet: wallet.to_string(),
                     content_access_id: format!("0x{}", encode_hex(access_id.as_bytes())),
+                    block: ProtectedContentAccessBlock::Latest,
                 })
             ),
             "stale_protected_content_purchase_access_observation"
         );
     }
+}
+
+/// R50: `AuthorityGateway.hasAccess(address accessor, address ledger, uint256
+/// tokenId)` -- the item-keyed twin of `hasAccessByContentId`, answered by the
+/// same `_checkUserAccess`. The selector is the reviewed signature's.
+#[test]
+fn authority_gateway_has_access_selector_and_encoding_match_the_abi() {
+    let selector = &sha3::Keccak256::digest(b"hasAccess(address,address,uint256)")[..4];
+    assert_eq!(
+        format!("0x{}", encode_hex(selector)),
+        AUTHORITY_GATEWAY_HAS_ACCESS_SELECTOR
+    );
+    assert_eq!(AUTHORITY_GATEWAY_HAS_ACCESS_SELECTOR, "0xcf56b4eb");
+    assert_eq!(
+        encode_authority_gateway_has_access_call(
+            "0x0000000000000000000000000000000000000007",
+            "0x0000000000000000000000000000000000000022",
+            "0x3",
+        )
+        .unwrap(),
+        concat!(
+            "0xcf56b4eb",
+            "0000000000000000000000000000000000000000000000000000000000000007",
+            "0000000000000000000000000000000000000000000000000000000000000022",
+            "0000000000000000000000000000000000000000000000000000000000000003"
+        )
+    );
+}
+
+fn item_access_sequence(
+    tag: &'static str,
+    block_hash: &str,
+    block_timestamp: u64,
+    wallet: &str,
+    has_access: bool,
+) -> Vec<(&'static str, Value, Value)> {
+    let expected_data = encode_authority_gateway_has_access_call(
+        wallet,
+        "0x0000000000000000000000000000000000000022",
+        "0x3",
+    )
+    .unwrap();
+    vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!([tag, false]),
+            json!({
+                "number": "0x2c",
+                "hash": block_hash,
+                "timestamp": format!("0x{:x}", block_timestamp),
+            }),
+        ),
+        (
+            "eth_call",
+            json!([
+                {
+                    "to": "0x0000000000000000000000000000000000000001",
+                    "data": expected_data
+                },
+                {
+                    "blockHash": block_hash,
+                    "requireCanonical": true
+                }
+            ]),
+            evm_bool_word(has_access),
+        ),
+    ]
+}
+
+fn item_access_request(block: ProtectedContentAccessBlock) -> Request {
+    Request::ResolveProtectedContentItemAccess {
+        request_id: "item-access:exact".to_string(),
+        network: "esc-local".to_string(),
+        wallet: "0x0000000000000000000000000000000000000007".to_string(),
+        ledger: "0x0000000000000000000000000000000000000022".to_string(),
+        token_id: "0x03".to_string(),
+        block,
+    }
+}
+
+/// R50: the item-keyed access read is corroborated by the view policy's
+/// sources, exactly like the content-id read, and answers the item it was
+/// asked about -- never the sources, the contract or the selector.
+#[test]
+fn resolve_protected_content_item_access_reads_the_head_by_item_and_hides_topology() {
+    let wallet = "0x0000000000000000000000000000000000000007";
+    let hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let sequence = item_access_sequence("latest", hash, RIGHTS_EVIDENCE_NOW - 5, wallet, true);
+    let mut provider = provider_with_rights_rpc_and_policies(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        protected_content_policy_sources(
+            "view",
+            vec![
+                spawn_rpc_sequence_asserting_server(sequence.clone()),
+                spawn_rpc_sequence_asserting_server(sequence),
+            ],
+        ),
+    );
+    let data = ok_data(provider.handle(item_access_request(ProtectedContentAccessBlock::Latest)));
+    let rendered = serde_json::to_string(&data).unwrap();
+    assert_eq!(
+        data,
+        json!({
+            "schema": PROTECTED_CONTENT_ITEM_ACCESS_SCHEMA,
+            "request_id": "item-access:exact",
+            "network": "esc-local",
+            "chain_id": 20,
+            "wallet": wallet,
+            "ledger": "0x0000000000000000000000000000000000000022",
+            "token_id": "0x3",
+            "has_access": true,
+            "finalized_block_number": 44,
+            "finalized_block_hash": hash,
+            "finalized_block_timestamp": RIGHTS_EVIDENCE_NOW - 5,
+            "observed_at": RIGHTS_EVIDENCE_NOW,
+        })
+    );
+    assert!(!rendered.contains("http://127.0.0.1:9"));
+    assert!(!rendered.contains("\"contract\""));
+    assert!(!rendered.contains("\"selector\""));
+}
+
+/// R50: the finalized variant asks every source for its `finalized` block --
+/// the mock answers that tag and nothing else -- and a denial is an answer.
+#[test]
+fn resolve_protected_content_item_access_finalized_variant_reads_the_finalized_block() {
+    let wallet = "0x0000000000000000000000000000000000000007";
+    let hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let sequence =
+        item_access_sequence("finalized", hash, RIGHTS_EVIDENCE_NOW - 900, wallet, false);
+    let mut provider = provider_with_rights_rpc_and_policies(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        protected_content_policy_sources(
+            "view",
+            vec![
+                spawn_rpc_sequence_asserting_server(sequence.clone()),
+                spawn_rpc_sequence_asserting_server(sequence),
+            ],
+        ),
+    );
+    let data =
+        ok_data(provider.handle(item_access_request(ProtectedContentAccessBlock::Finalized)));
+    assert_eq!(data["has_access"], false);
+    assert_eq!(data["finalized_block_hash"], hash);
+}
+
+/// R50: `hasAccess(accessor, ledger, tokenId)` has no "unbound" answer. A
+/// source whose call reverts -- even with the content-id path's
+/// `UnboundContentId` -- observed nothing, so two reverting sources are too
+/// few observations, never a denial.
+#[test]
+fn resolve_protected_content_item_access_treats_a_revert_as_no_observation() {
+    let wallet = "0x0000000000000000000000000000000000000007";
+    let hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let mut sequence: Vec<(&'static str, Value, RpcReply)> =
+        item_access_sequence("latest", hash, RIGHTS_EVIDENCE_NOW - 5, wallet, true)
+            .into_iter()
+            .map(|(method, params, result)| (method, params, RpcReply::Result(result)))
+            .collect();
+    sequence[2].2 = RpcReply::Error(unbound_content_id_error(&content_access_id(0x51)));
+    let mut provider = provider_with_rights_rpc_and_policies(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        protected_content_policy_sources(
+            "view",
+            vec![
+                spawn_rpc_sequence_asserting_server_with_replies(sequence.clone()),
+                spawn_rpc_sequence_asserting_server_with_replies(sequence),
+            ],
+        ),
+    );
+    assert_eq!(
+        error_code(provider.handle(item_access_request(ProtectedContentAccessBlock::Latest))),
+        "insufficient_rights_observations"
+    );
+}
+
+#[test]
+fn resolve_protected_content_item_access_rejects_a_bad_request_before_any_read() {
+    let mut provider = provider_with_rights_rpc("http://127.0.0.1:9".to_string(), "0x12345678");
+    for (wallet, ledger, token_id) in [
+        ("0x07", "0x0000000000000000000000000000000000000022", "0x3"),
+        (
+            "0x0000000000000000000000000000000000000007",
+            "ledger",
+            "0x3",
+        ),
+        (
+            "0x0000000000000000000000000000000000000007",
+            "0x0000000000000000000000000000000000000022",
+            "3",
+        ),
+    ] {
+        assert_eq!(
+            error_code(provider.handle(Request::ResolveProtectedContentItemAccess {
+                request_id: "item-access:bad".to_string(),
+                network: "esc-local".to_string(),
+                wallet: wallet.to_string(),
+                ledger: ledger.to_string(),
+                token_id: token_id.to_string(),
+                block: ProtectedContentAccessBlock::Latest,
+            })),
+            "invalid_protected_content_item_access_request"
+        );
+    }
+}
+
+#[test]
+fn resolve_protected_content_item_access_request_names_its_block() {
+    let request: Request = serde_json::from_value(json!({
+        "op": "resolve_protected_content_item_access",
+        "request_id": "r",
+        "network": "esc-local",
+        "wallet": "0x0000000000000000000000000000000000000007",
+        "ledger": "0x0000000000000000000000000000000000000022",
+        "token_id": "0x3",
+        "block": "finalized",
+    }))
+    .unwrap();
+    assert!(matches!(
+        request,
+        Request::ResolveProtectedContentItemAccess {
+            block: ProtectedContentAccessBlock::Finalized,
+            ..
+        }
+    ));
+    assert!(serde_json::from_value::<Request>(json!({
+        "op": "resolve_protected_content_item_access",
+        "request_id": "r",
+        "network": "esc-local",
+        "wallet": "0x0000000000000000000000000000000000000007",
+        "ledger": "0x0000000000000000000000000000000000000022",
+        "token_id": "0x3",
+        "block": "safe",
+    }))
+    .is_err());
 }
 
 #[test]
@@ -4866,12 +8281,20 @@ fn resolve_protected_content_mint_receipt_rejects_huge_token_uri_length_without_
     let ledger = "0x0000000000000000000000000000000000000022";
     let operative = "0x0000000000000000000000000000000000000044";
     let emitter = "0x00000000000000000000000000000000000000dd";
-    let token_uri = "ipfs://protected-content/metadata.json";
+    // The request carries the metadata FOLDER; `AssetCreated` echoes the mint
+    // call's first argument, which names the document inside it.
+    let token_uri = "ipfs://protected-content";
+    let emitted_uri = protected_content_media_token_uri(token_uri);
     let receipt_block_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let finalized_hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let huge_length_log = mutated_asset_created_log_data(
         protected_content_asset_created_log(
-            emitter, creator, ledger, operative, "0x03", token_uri, 0,
+            emitter,
+            creator,
+            ledger,
+            operative,
+            "0x03",
+            &emitted_uri,
+            1,
         ),
         |data| {
             data[96..128].fill(0xff);
@@ -4892,15 +8315,15 @@ fn resolve_protected_content_mint_receipt_rejects_huge_token_uri_length_without_
                 vec![huge_length_log],
             ),
         ),
+        // Head far enough past the mint's block to satisfy the confirmation
+        // depth. The receipt no longer waits for L1 finality: the mint carries
+        // its own ItemListed, so nothing is read back and nothing is spent
+        // after this point.
+        ("eth_blockNumber", json!([]), json!("0x40")),
         (
             "eth_getBlockByNumber",
             json!(["0x2a", false]),
             canonical_block_json("0x2a", receipt_block_hash, vec![hash]),
-        ),
-        (
-            "eth_getBlockByNumber",
-            json!(["finalized", false]),
-            finalized_block_json("0x2b", finalized_hash),
         ),
     ];
     let mut provider = provider_with_creator_mint_rpc_and_market_sources(
@@ -4918,7 +8341,7 @@ fn resolve_protected_content_mint_receipt_rejects_huge_token_uri_length_without_
                 creator: creator.to_string(),
                 ledger: ledger.to_string(),
                 token_uri: token_uri.to_string(),
-                op_type_code: 0,
+                op_type_code: 1,
             })
         ),
         "invalid_protected_content_mint_receipt"
@@ -5285,4 +8708,218 @@ fn protected_content_rights_evidence_pins_lagging_sources_to_the_lowest_finalize
         }
         other => panic!("expected pinned corroboration to succeed, got {other:?}"),
     }
+}
+
+/// One source is never enough, disagreement is never an answer, and a missing
+/// answer is never a `false`.
+///
+/// This decides whether a Shops card offers a subscription. `Some(false)` is
+/// what draws the button, so every path that is not a corroborated "no" has to
+/// come back `None` -- otherwise an RPC hiccup invites someone to pay for a
+/// subscription they already hold.
+#[test]
+fn corroborated_bool_needs_two_sources_that_agree() {
+    // Two agreeing sources answer.
+    assert_eq!(
+        corroborated_bool(&[vec![Some(true)], vec![Some(true)]], 0),
+        Some(true)
+    );
+    assert_eq!(
+        corroborated_bool(&[vec![Some(false)], vec![Some(false)]], 0),
+        Some(false)
+    );
+    // Three agreeing sources answer too, and one silent source among them does
+    // not spoil the other two.
+    assert_eq!(
+        corroborated_bool(&[vec![Some(false)], vec![None], vec![Some(false)]], 0),
+        Some(false)
+    );
+    // One source alone is not corroboration.
+    assert_eq!(corroborated_bool(&[vec![Some(false)]], 0), None);
+    assert_eq!(corroborated_bool(&[vec![Some(false)], vec![None]], 0), None);
+    // Disagreement is not an answer, in either direction.
+    assert_eq!(
+        corroborated_bool(&[vec![Some(true)], vec![Some(false)]], 0),
+        None
+    );
+    assert_eq!(
+        corroborated_bool(&[vec![Some(false)], vec![Some(false)], vec![Some(true)]], 0),
+        None
+    );
+    // Nothing answered at all.
+    assert_eq!(corroborated_bool(&[vec![None], vec![None]], 0), None);
+    assert_eq!(corroborated_bool(&[], 0), None);
+    // Each question is read at its own index, so one channel's answer is never
+    // another's: two channels, the second subscribed and the first not.
+    let per_source = vec![
+        vec![Some(false), Some(false), Some(true), Some(false)],
+        vec![Some(false), Some(false), Some(true), Some(false)],
+    ];
+    assert_eq!(corroborated_bool(&per_source, 0), Some(false));
+    assert_eq!(corroborated_bool(&per_source, 2), Some(true));
+    // An index no source answered is unknown, not false.
+    assert_eq!(corroborated_bool(&per_source, 9), None);
+}
+
+/// A source that refuses a batch must be told from one that answered.
+///
+/// Both refusals below are real answers from the configured evidence sources
+/// to a forty-call batch. The second is the dangerous one: a well-formed array
+/// whose every element is an error reads exactly like a source that answered
+/// and knew nothing, and read that way it made a source contribute silence
+/// while looking healthy -- which is what left most channel cards saying
+/// "access unknown".
+#[test]
+fn evm_rpc_batch_tells_a_refusal_from_an_answer() {
+    // mainnet.base.org: a single object where an array was expected.
+    let base_refusal = json!({
+        "jsonrpc": "2.0",
+        "error": { "code": -32014, "message": "maximum 10 calls in 1 batch" },
+        "id": null
+    });
+    assert!(interpret_evm_rpc_batch(&base_refusal, 40).is_err());
+
+    // base.drpc.org: a perfectly shaped array, every element an error.
+    let drpc_refusal = Value::Array(
+        (0..3)
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "jsonrpc": "2.0",
+                    "error": { "code": 31, "message": "Batch of more than 3 requests are not allowed on free plan" }
+                })
+            })
+            .collect(),
+    );
+    assert!(interpret_evm_rpc_batch(&drpc_refusal, 3).is_err());
+
+    // An answer, with one call among it reverting. That is an answer about
+    // that call, not a failure of the batch.
+    let mixed = json!([
+        { "id": 0, "jsonrpc": "2.0", "result": "0x1" },
+        { "id": 1, "jsonrpc": "2.0", "error": { "code": 3, "message": "execution reverted" } },
+        { "id": 2, "jsonrpc": "2.0", "result": "0x0" }
+    ]);
+    let answers = interpret_evm_rpc_batch(&mixed, 3).expect("a batch with one revert is an answer");
+    assert_eq!(answers[0], Some(json!("0x1")));
+    assert_eq!(answers[1], None);
+    assert_eq!(answers[2], Some(json!("0x0")));
+
+    // Answers are placed by their own id, never by position: the same batch
+    // returned in reverse must give the same result.
+    let reversed = json!([
+        { "id": 2, "jsonrpc": "2.0", "result": "0x0" },
+        { "id": 1, "jsonrpc": "2.0", "error": { "code": 3, "message": "execution reverted" } },
+        { "id": 0, "jsonrpc": "2.0", "result": "0x1" }
+    ]);
+    assert_eq!(interpret_evm_rpc_batch(&reversed, 3).unwrap(), answers);
+
+    // An id outside the batch is ignored rather than trusted into a slot.
+    let stray = json!([
+        { "id": 99, "jsonrpc": "2.0", "result": "0xdead" },
+        { "id": 0, "jsonrpc": "2.0", "result": "0x1" }
+    ]);
+    let answers = interpret_evm_rpc_batch(&stray, 2).unwrap();
+    assert_eq!(answers, vec![Some(json!("0x1")), None]);
+}
+
+/// Installed failure (2026-09-25): independent RPC providers finalize at
+/// different heights, and the purchase's verified-listing read compared the
+/// raw observations -- block included -- so every Buy "disagreed on the
+/// finalized tuple". It now pins every source to the lowest finalized block
+/// first (R32), like the other market reads.
+#[test]
+fn resolve_protected_content_verified_listing_pins_lagging_sources_to_the_lowest_finalized_block() {
+    let gateway = "0x00000000000000000000000000000000000000aa";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let operative = "0x0000000000000000000000000000000000000044";
+    let seller = "0x0000000000000000000000000000000000000011";
+    let older_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let newer_hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let operative_call = |hash: &str| {
+        json!([
+            { "to": gateway, "data": encode_authority_gateway_operative_call(ledger, "0x03").unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let listing_call = |hash: &str| {
+        json!([
+            { "to": gateway, "data": encode_authority_gateway_listing_call(operative, seller).unwrap() },
+            { "blockHash": hash, "requireCanonical": true }
+        ])
+    };
+    let operative_word = json!(format!("0x{:0>64}", operative.trim_start_matches("0x")));
+    // Native offer: no payment processor read.
+    let listing_word = json!(concat!(
+        "0x",
+        "0000000000000000000000000000000000000000000000000000000000000007",
+        "0000000000000000000000000000000000000000000000000000000000000005",
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    ));
+    let ahead_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2b", newer_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(newer_hash),
+            operative_word.clone(),
+        ),
+        ("eth_call", listing_call(newer_hash), listing_word.clone()),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(older_hash),
+            operative_word.clone(),
+        ),
+        ("eth_call", listing_call(older_hash), listing_word.clone()),
+    ];
+    let behind_sequence = vec![
+        ("eth_chainId", json!([]), json!("0x14")),
+        (
+            "eth_getBlockByNumber",
+            json!(["finalized", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        (
+            "eth_call",
+            operative_call(older_hash),
+            operative_word.clone(),
+        ),
+        ("eth_call", listing_call(older_hash), listing_word.clone()),
+        (
+            "eth_getBlockByNumber",
+            json!(["0x2a", false]),
+            finalized_block_json("0x2a", older_hash),
+        ),
+        ("eth_call", operative_call(older_hash), operative_word),
+        ("eth_call", listing_call(older_hash), listing_word),
+    ];
+    let mut provider = provider_with_rights_rpc_policies_and_purchase(
+        "http://127.0.0.1:9".to_string(),
+        "0x12345678",
+        json!([]),
+        protected_content_market_source(vec![
+            spawn_rpc_sequence_asserting_server(ahead_sequence),
+            spawn_rpc_sequence_asserting_server(behind_sequence),
+        ]),
+    );
+    let listing = ok_data(
+        provider.handle(Request::ResolveProtectedContentVerifiedListing {
+            network: "esc-local".to_string(),
+            seller: seller.to_string(),
+            ledger: ledger.to_string(),
+            token_id: "0x03".to_string(),
+        }),
+    );
+    assert_eq!(listing["operative"], operative);
+    assert_eq!(listing["quantity"], "0x7");
+    assert_eq!(listing["price"], "0x5");
 }

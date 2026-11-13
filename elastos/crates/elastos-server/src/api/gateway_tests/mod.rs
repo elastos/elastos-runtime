@@ -1118,6 +1118,9 @@ async fn wallet_chain_test_state_with_shared_wallet_provider(
     wallet_provider: Arc<dyn Provider>,
 ) -> GatewayState {
     seed_test_browser_capsules(cache_dir);
+    // The mock private store here cannot export a CAR, so a mint's public
+    // metadata step is stood in; the `public_` creator-tail tests clear it.
+    crate::public_metadata_publisher::test_seams::stand_in(cache_dir);
     let registry = Arc::new(ProviderRegistry::new());
     registry
         .register_sub_provider("wallet", wallet_provider)
@@ -1146,8 +1149,12 @@ include!("support_runtime.rs");
 mod assistant_workspace_v2;
 mod browser_profile;
 mod browser_reconciliation;
+mod buy_offer;
 mod collaboration_presence;
 mod content_sandbox;
+mod creator_channels;
+#[cfg(unix)]
+mod custody;
 mod documents;
 mod esp;
 mod frontdoor;
@@ -1158,10 +1165,14 @@ mod home_agent;
 mod home_system;
 mod inspect;
 mod library;
+mod listing_object;
+mod market_directory;
 mod marketplace;
 mod model;
 #[cfg(target_os = "macos")]
 mod model_installed_fixture;
+#[cfg(unix)]
+mod public_ipfs;
 mod recovery;
 #[cfg(unix)]
 mod remote_engine;

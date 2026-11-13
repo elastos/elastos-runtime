@@ -14,9 +14,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use elastos_common::protected_content::{
-    validate_protected_content_key_envelope_algorithms, SealedObjectV1, SEALED_OBJECT_SCHEMA,
-};
 use elastos_runtime::provider::{
     Provider, ProviderByteRange, ProviderCarrierRoute, ProviderError, ProviderInvocation,
     ProviderInvocationTransport, ProviderProgress, ProviderRegistry, ProviderStreamOptions,
@@ -30,6 +27,13 @@ const AVAILABILITY_RECEIPT_SCHEMA: &str = "elastos.content.availability.receipt/
 const AVAILABILITY_RECEIPT_DOMAIN: &str = "elastos.content.availability.receipt.v1";
 const AVAILABILITY_DASHBOARD_SCHEMA: &str = "elastos.content.availability.dashboard/v1";
 const CONTENT_ADMISSION_DOMAIN: &str = "elastos.content.admission.v1";
+/// The policies a publisher sends when it asks one admitted peer to hold one
+/// copy on itself. `carrier_replica` asks for the copy; `carrier_block_graph_import`
+/// confirms one whose blocks the publisher has just delivered. Both are answered
+/// by that peer's own verified pin.
+/// See `ContentProvider::is_local_replica_request`.
+pub(crate) const LOCAL_REPLICA_AVAILABILITY_POLICIES: [&str; 2] =
+    ["carrier_replica", "carrier_block_graph_import"];
 const CONTENT_ACCOUNTING_SCHEMA: &str = "elastos.content.accounting/v1";
 const CONTENT_STORAGE_ACCOUNTING_LEDGER_SCHEMA: &str =
     "elastos.content.storage-accounting.ledger/v1";
@@ -98,7 +102,6 @@ pub(crate) const LOCAL_PIN_AVAILABILITY_POLICY: &str = "local_pin";
 const AVAILABILITY_DASHBOARD_REMOTE_ROW_LIMIT: usize = 10;
 const OBJECT_MANIFEST_SCHEMA: &str = "elastos.content.object.manifest/v1";
 const OBJECT_MANIFEST_PATH: &str = "_elastos_object.json";
-const SEALED_OBJECT_PATH: &str = "sealed.json";
 
 pub const CONTENT_OBJECT_MANIFEST_PATH: &str = OBJECT_MANIFEST_PATH;
 const MAX_LOCAL_OBJECT_DIRS: usize = 16;
@@ -229,6 +232,9 @@ struct ContentFetchTransfer {
     max_bytes: Option<u64>,
     /// A local whole read's own limit, applied by the local backend.
     whole_max_bytes: Option<u64>,
+    /// After a local miss, ask only the holders Carrier knows now rather
+    /// than wait for one to announce itself.
+    known_holders_only: bool,
 }
 
 impl ContentFetchTransfer {
@@ -344,6 +350,15 @@ impl ContentFetchTransfer {
             progress,
             max_bytes,
             whole_max_bytes,
+            known_holders_only: match request.get("known_holders_only") {
+                None | Some(Value::Bool(false)) => false,
+                Some(Value::Bool(true)) => true,
+                _ => {
+                    return Err(ProviderError::Provider(
+                        "known_holders_only must be a boolean".into(),
+                    ))
+                }
+            },
             bounded_read: match request.get("bounded_read") {
                 None | Some(Value::Bool(false)) => false,
                 Some(Value::Bool(true)) => true,
@@ -2479,16 +2494,6 @@ fn external_repair_fleet_dispatch_failed(reason: String) -> Value {
     })
 }
 
-pub async fn publish_directory_via_provider(
-    registry: &ProviderRegistry,
-    dir: &Path,
-    object_did: Option<&str>,
-    publisher_did: Option<&str>,
-) -> anyhow::Result<String> {
-    publish_directory_via_provider_with_kind(registry, dir, "directory", object_did, publisher_did)
-        .await
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ContentPublishRequirements {
     min_replicas: u32,
@@ -2771,6 +2776,7 @@ impl ModelPartReads {
             bounded_read: true,
             max_bytes: index_read.then_some(limit),
             whole_max_bytes: None,
+            known_holders_only: false,
         };
         let fetched = ContentProvider::fetch_from_availability_provider(
             registry,
@@ -2860,7 +2866,7 @@ pub async fn fetch_bytes_via_provider(
     cid: &str,
     path: Option<&str>,
 ) -> anyhow::Result<Vec<u8>> {
-    fetch_bytes_via_content(registry, cid, path, None).await
+    fetch_bytes_via_content(registry, cid, path, None, None, false).await
 }
 
 /// Read from this node's IPFS repo only, refused once the file passes
@@ -2872,15 +2878,52 @@ pub(crate) async fn fetch_verified_local_bytes_via_provider(
     path: Option<&str>,
     max_bytes: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    fetch_bytes_via_content(registry, cid, path, Some(max_bytes)).await
+    fetch_bytes_via_content(registry, cid, path, Some(max_bytes), None, false).await
 }
 
-/// `local_max_bytes` makes the read local-only and bounds it at the backend.
+/// Fetch at most `max_bytes + 1` bytes of a file: the range travels with the
+/// request, so the content plane answers no more than that, and a caller that
+/// gets more than `max_bytes` back knows the file is larger than it accepts
+/// without ever holding the rest of it (R30).
+pub async fn fetch_bytes_via_provider_capped(
+    registry: &ProviderRegistry,
+    cid: &str,
+    path: Option<&str>,
+    max_bytes: usize,
+) -> anyhow::Result<Vec<u8>> {
+    let range = ProviderByteRange {
+        start: 0,
+        end: Some(u64::try_from(max_bytes).unwrap_or(u64::MAX)),
+    };
+    fetch_bytes_via_content(registry, cid, path, None, Some(range), false).await
+}
+
+/// [`fetch_bytes_via_provider_capped`] that asks only the holders Carrier
+/// knows now: a file no known holder serves fails as soon as each of them has
+/// answered, rather than after the wait for a holder to announce itself.
+pub(crate) async fn fetch_bytes_from_known_holders_capped(
+    registry: &ProviderRegistry,
+    cid: &str,
+    path: Option<&str>,
+    max_bytes: usize,
+) -> anyhow::Result<Vec<u8>> {
+    let range = ProviderByteRange {
+        start: 0,
+        end: Some(u64::try_from(max_bytes).unwrap_or(u64::MAX)),
+    };
+    fetch_bytes_via_content(registry, cid, path, None, Some(range), true).await
+}
+
+/// `local_max_bytes` makes the read local-only and bounds it at the backend;
+/// `range` bounds what the content plane answers; `known_holders_only` asks
+/// Carrier only the holders it knows now.
 async fn fetch_bytes_via_content(
     registry: &ProviderRegistry,
     cid: &str,
     path: Option<&str>,
     local_max_bytes: Option<usize>,
+    range: Option<ProviderByteRange>,
+    known_holders_only: bool,
 ) -> anyhow::Result<Vec<u8>> {
     let mut request = json!({
         "op": "fetch",
@@ -2898,6 +2941,12 @@ async fn fetch_bytes_via_content(
     if let Some(path) = path.filter(|path| !path.is_empty()) {
         request["path"] = Value::String(path.to_string());
     }
+    if let Some(range) = range {
+        request["range"] = json!({ "start": range.start, "end": range.end });
+    }
+    if known_holders_only {
+        request["known_holders_only"] = Value::Bool(true);
+    }
 
     let mut session = registry
         .open_provider_stream(
@@ -2907,7 +2956,7 @@ async fn fetch_bytes_via_content(
                 op: "fetch".to_string(),
                 request,
                 transfer: ProviderTransfer::Stream,
-                range: None,
+                range,
                 progress: Some(ProviderProgress {
                     request_id: format!("content-fetch:{cid}:{}", path.unwrap_or("root")),
                     expected_bytes: None,
@@ -3537,6 +3586,9 @@ impl ContentProvider {
         if !path.is_empty() {
             request["path"] = Value::String(path.to_string());
         }
+        if transfer.known_holders_only {
+            request["known_holders_only"] = Value::Bool(true);
+        }
         // A bounded read travels as its own request so the holder applies the
         // exact range or metadata bound once and returns only those bytes.
         // Runtime's outer invocation carries no range to slice again.
@@ -3697,6 +3749,12 @@ impl ContentProvider {
                 "content publish exceeds the principal storage quota",
             ));
         }
+        // Writing bytes into the local store and replicating them across the
+        // availability plane are different orders of magnitude -- the first is
+        // local I/O, the second waits on other nodes -- so they are timed
+        // apart. A publish that takes minutes is almost always the second, and
+        // saying so should not require inferring it.
+        let started = std::time::Instant::now();
         let ipfs_response = self
             .invoke_provider(
                 &registry,
@@ -3707,6 +3765,13 @@ impl ContentProvider {
             )
             .await?;
         let cid = provider_response_cid(&ipfs_response)?;
+        tracing::debug!(
+            phase = "ipfs_add",
+            op = %ipfs_op,
+            bytes = accounting_observation.bytes.unwrap_or_default(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "content publish phase"
+        );
         let local_outcome = AvailabilityOutcome::local_publish(pin);
         // `local_pin` keeps the object on this node only; no network replication is attempted.
         let local_only_policy = request
@@ -3714,22 +3779,37 @@ impl ContentProvider {
             .and_then(|value| value.as_str())
             == Some(LOCAL_PIN_AVAILABILITY_POLICY);
         let outcome = if pin && !local_only_policy {
-            self.ensure_network_availability(
-                &registry,
-                &cid,
-                request,
-                &local_outcome,
-                AvailabilityRequestContext {
-                    object_did: object_did.as_deref(),
-                    publisher_did: publisher_did.as_deref(),
-                    accounting_observation,
-                },
-            )
-            .await?
-            .unwrap_or(local_outcome)
+            let started = std::time::Instant::now();
+            let ensured = self
+                .ensure_network_availability(
+                    &registry,
+                    &cid,
+                    request,
+                    &local_outcome,
+                    AvailabilityRequestContext {
+                        object_did: object_did.as_deref(),
+                        publisher_did: publisher_did.as_deref(),
+                        accounting_observation,
+                    },
+                )
+                .await?
+                .unwrap_or(local_outcome);
+            tracing::debug!(
+                phase = "availability_ensure",
+                status = %ensured.status,
+                replicas = ensured.replicas,
+                elapsed_ms = started.elapsed().as_millis(),
+                "content publish phase"
+            );
+            ensured
         } else {
             local_outcome
         };
+        // The tail after availability. Measured at ~14 s for a 29 KB object
+        // while a Mainline DHT put_mutable timed out on the same millisecond,
+        // which is a coincidence worth either proving or discarding: the work
+        // here is local file writes and should be immeasurable.
+        let tail_started = std::time::Instant::now();
         let receipt = self.write_receipt(ReceiptInput {
             cid: cid.clone(),
             object_did,
@@ -3751,7 +3831,18 @@ impl ContentProvider {
                 storage_quota,
             ),
         })?;
+        let receipt_ms = tail_started.elapsed().as_millis();
         let repair_task = self.record_repair_task(&receipt, &outcome, requirements, false)?;
+        tracing::debug!(
+            phase = "publish_tail",
+            receipt_ms,
+            repair_task_ms = tail_started
+                .elapsed()
+                .as_millis()
+                .saturating_sub(receipt_ms),
+            total_ms = tail_started.elapsed().as_millis(),
+            "content publish phase"
+        );
 
         Ok(provider_ok(json!({
             "cid": cid,
@@ -4197,6 +4288,24 @@ impl ContentProvider {
             .await
     }
 
+    /// Distinguishes the two facts an availability request can ask for.
+    ///
+    /// The publisher asking this admitted peer for one copy on itself is
+    /// answered completely by a verified local pin, and the publisher counts
+    /// this node as one distinct peer. That covers `carrier_replica`, and
+    /// `carrier_block_graph_import` for a graph whose blocks the publisher has
+    /// just delivered.
+    ///
+    /// Every other policy is this node asking the network for placement, which
+    /// still goes to the configured availability provider under its requested
+    /// requirements.
+    fn is_local_replica_request(request: &Value) -> bool {
+        request
+            .get("availability_policy")
+            .and_then(|value| value.as_str())
+            .is_some_and(|policy| LOCAL_REPLICA_AVAILABILITY_POLICIES.contains(&policy))
+    }
+
     async fn repair(&self, request: &Value) -> Result<Value, ProviderError> {
         self.pin_for_availability(request, "local_repair_pin", "local_repair_failed", false)
             .await
@@ -4287,12 +4396,16 @@ impl ContentProvider {
             .transpose()?
             .map(|receipt| content_accounting_observation_from_value(&receipt.payload.accounting))
             .unwrap_or_default();
-        // `local_pin` keeps the object on this node only, for repair as for publish.
+        // `local_pin` keeps the object on this node only, for repair as for
+        // publish, and a peer's own replica copy is answered by its local pin.
         let local_only_policy = request
             .get("availability_policy")
             .and_then(|value| value.as_str())
             == Some(LOCAL_PIN_AVAILABILITY_POLICY);
-        let outcome = if local_outcome.status == "local_pinned" && !local_only_policy {
+        let outcome = if local_outcome.status == "local_pinned"
+            && !local_only_policy
+            && !Self::is_local_replica_request(request)
+        {
             self.ensure_network_availability(
                 &registry,
                 cid,
@@ -8895,7 +9008,6 @@ fn directory_object_manifest(
     let links = parse_content_object_links(links)?;
     let mut seen_paths = BTreeSet::new();
     let mut object_files = Vec::with_capacity(files.len());
-    let mut sealed_object = None;
     for file in files {
         let path = file
             .get("path")
@@ -8930,15 +9042,6 @@ fn directory_object_manifest(
                     "directory publish file {path} has invalid base64 data: {err}"
                 ))
             })?;
-        if kind == "sealed" && path == SEALED_OBJECT_PATH {
-            let sealed: SealedObjectV1 = serde_json::from_slice(&bytes).map_err(|err| {
-                ProviderError::Provider(format!(
-                    "sealed content object has invalid {SEALED_OBJECT_PATH}: {err}"
-                ))
-            })?;
-            validate_sealed_object_descriptor(&sealed)?;
-            sealed_object = Some(sealed);
-        }
         object_files.push(ContentObjectFile {
             path: path.to_string(),
             sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
@@ -8946,14 +9049,6 @@ fn directory_object_manifest(
         });
     }
     object_files.sort_by(|a, b| a.path.cmp(&b.path));
-    if kind == "sealed" {
-        let sealed_object = sealed_object.ok_or_else(|| {
-            ProviderError::Provider(format!(
-                "sealed content object requires {SEALED_OBJECT_PATH}"
-            ))
-        })?;
-        validate_sealed_content_links(&sealed_object, &links)?;
-    }
 
     let mut hasher = sha2::Sha256::new();
     for file in &object_files {
@@ -8984,7 +9079,6 @@ fn validate_content_object_kind(kind: &str) -> Result<String, ProviderError> {
         | "protected-content"
         | "protected-content-listing"
         | "release"
-        | "sealed"
         | "share"
         | "site" => Ok(kind.to_string()),
         _ => Err(ProviderError::Provider(format!(
@@ -9031,73 +9125,6 @@ fn parse_content_object_links(
     }
     parsed.sort_by(|a, b| a.rel.cmp(&b.rel).then_with(|| a.cid.cmp(&b.cid)));
     Ok(parsed)
-}
-
-fn validate_sealed_object_descriptor(object: &SealedObjectV1) -> Result<(), ProviderError> {
-    if object.schema != SEALED_OBJECT_SCHEMA {
-        return Err(ProviderError::Provider(
-            "sealed content object schema is unsupported".to_string(),
-        ));
-    }
-    validate_linked_cid(&object.payload_cid, "payload_cid")?;
-    validate_linked_cid(&object.rights_policy_cid, "rights_policy_cid")?;
-    validate_linked_cid(&object.availability_receipt_cid, "availability_receipt_cid")?;
-    require_field(&object.key_envelope.scheme, "key_envelope.scheme")?;
-    require_field(&object.key_envelope.kid, "key_envelope.kid")?;
-    require_field(&object.key_envelope.wrapped_cek, "key_envelope.wrapped_cek")?;
-    require_field(&object.key_envelope.policy_hash, "key_envelope.policy_hash")?;
-    validate_protected_content_key_envelope_algorithms(&object.key_envelope.algorithms)
-        .map_err(|err| ProviderError::Provider(format!("sealed content object {err}")))?;
-    require_field(
-        &object.viewer.required_interface,
-        "viewer.required_interface",
-    )
-}
-
-fn validate_sealed_content_links(
-    object: &SealedObjectV1,
-    links: &[ContentObjectLink],
-) -> Result<(), ProviderError> {
-    require_link(links, "payload", &object.payload_cid)?;
-    require_link(links, "rights.policy", &object.rights_policy_cid)?;
-    require_link(
-        links,
-        "availability.receipt",
-        &object.availability_receipt_cid,
-    )?;
-    if !links.iter().any(|link| link.rel == "provenance") {
-        return Err(ProviderError::Provider(
-            "sealed content object requires provenance link".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn require_link(links: &[ContentObjectLink], rel: &str, cid: &str) -> Result<(), ProviderError> {
-    if links.iter().any(|link| link.rel == rel && link.cid == cid) {
-        Ok(())
-    } else {
-        Err(ProviderError::Provider(format!(
-            "sealed content object requires {rel} link to {cid}"
-        )))
-    }
-}
-
-fn validate_linked_cid(value: &str, field: &str) -> Result<(), ProviderError> {
-    require_field(value, field)?;
-    cid::Cid::try_from(value)
-        .map(|_| ())
-        .map_err(|err| ProviderError::Provider(format!("invalid sealed object {field}: {err}")))
-}
-
-fn require_field(value: &str, field: &str) -> Result<(), ProviderError> {
-    if value.trim().is_empty() {
-        Err(ProviderError::Provider(format!(
-            "sealed content object {field} is required"
-        )))
-    } else {
-        Ok(())
-    }
 }
 
 fn validate_content_object_link_rel(rel: &str) -> Result<(), ProviderError> {
@@ -11240,6 +11267,75 @@ mod tests {
         assert_eq!(requests.len(), 2);
     }
 
+    /// A `carrier_replica` ensure asks this peer for exactly one copy on
+    /// itself. The publisher admitted it and counts it as one distinct peer,
+    /// so its own verified local pin is the whole requested placement.
+    ///
+    /// Before this, a successful local pin was still forwarded to the
+    /// configured external placement service. On the custody hosts that target
+    /// was then the Compose placeholder `https://replica.invalid/ensure`, so a
+    /// pin that had already succeeded came back `repair_needed` and the
+    /// publisher re-imported the entire object it had just placed.
+    #[tokio::test]
+    async fn carrier_replica_ensure_proves_the_local_pin_without_external_placement() {
+        let (_data_dir, registry, ipfs, content) = registry_with_content_and_ipfs().await;
+        let availability = Arc::new(MockAvailabilityProvider {
+            requests: Mutex::new(Vec::new()),
+            response: Mutex::new(provider_ok(json!({
+                "availability": {
+                    "status": "repair_needed",
+                    "provider": "availability-provider",
+                    "policy": "network_default",
+                    "replicas": 0,
+                    "reason": "https://replica.invalid/ensure is unreachable",
+                }
+            }))),
+        });
+        registry.register(availability.clone()).await;
+
+        // Both policies mean the same thing to this peer: the publisher has
+        // handed it the object and wants it held. `carrier_block_graph_import`
+        // is the arbitrary-DAG path, where the blocks arrived immediately
+        // before this call.
+        // Listed literally rather than read from the production constant, so
+        // dropping a policy from that constant fails here instead of quietly
+        // shrinking what this test covers.
+        for policy in ["carrier_replica", "carrier_block_graph_import"] {
+            let response = content
+                .send_raw(&json!({
+                    "op": "ensure",
+                    "cid": TEST_CID,
+                    "availability_policy": policy,
+                    "availability_requirements": {
+                        "min_replicas": 1,
+                        "max_replicas": 1,
+                        "require_live_multi_peer_proof": false,
+                    },
+                }))
+                .await
+                .unwrap();
+
+            assert_eq!(response["status"], "ok", "policy {policy}");
+            assert_eq!(
+                response["data"]["availability"]["status"], "local_pinned",
+                "policy {policy}"
+            );
+            assert_eq!(
+                response["data"]["availability"]["replicas"], 1,
+                "policy {policy}"
+            );
+            assert!(
+                ipfs.pinned.lock().await.iter().any(|cid| cid == TEST_CID),
+                "the local replica must be really pinned before it is claimed ({policy})"
+            );
+            assert!(
+                availability.requests.lock().await.is_empty(),
+                "one local copy must not depend on an unrelated external \
+                 placement service ({policy})"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn content_publish_accepts_carrier_announced_availability() {
         let (_data_dir, registry, _ipfs, content) = registry_with_content_and_ipfs().await;
@@ -11512,63 +11608,21 @@ mod tests {
         assert!(manifest.content_digest.starts_with("sha256:"));
     }
 
-    fn sealed_object_value() -> Value {
-        json!({
-            "schema": "elastos.sealed.object/v1",
-            "payload_cid": TEST_CID,
-            "rights_policy_cid": TEST_CID,
-            "availability_receipt_cid": TEST_CID,
-            "key_envelope": {
-                "scheme": "elastos-pq-hybrid-threshold-v0",
-                "kid": "kid:test",
-                "wrapped_cek": "wrapped",
-                "policy_hash": "sha256:test",
-                "algorithms": {
-                    "cipher": "aes-256-gcm",
-                    "signature": ["ed25519", "ml-dsa-65"],
-                    "kem": ["x25519", "ml-kem-768"],
-                    "share_scheme": "shamir-t-of-n"
-                }
-            },
-            "viewer": {
-                "required_interface": "elastos.viewer/document@1"
-            }
-        })
-    }
-
-    fn sealed_object_data() -> String {
-        base64::engine::general_purpose::STANDARD
-            .encode(serde_json::to_vec(&sealed_object_value()).unwrap())
-    }
-
-    fn sealed_object_data_from(value: &Value) -> String {
-        base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(value).unwrap())
-    }
-
-    fn sealed_object_links() -> Vec<Value> {
-        vec![
-            json!({"rel": "availability.receipt", "cid": TEST_CID}),
-            json!({"rel": "payload", "cid": TEST_CID}),
-            json!({"rel": "provenance", "cid": TEST_CID}),
-            json!({"rel": "rights.policy", "cid": TEST_CID}),
-        ]
-    }
-
     #[tokio::test]
-    async fn content_publish_directory_accepts_linked_release_and_sealed_manifests() {
+    async fn content_publish_directory_accepts_linked_release_manifest() {
         let (_data_dir, _registry, ipfs, content) = registry_with_content_and_ipfs().await;
-        let response = content
+        let release_response = content
             .send_raw(&json!({
                 "op": "publish",
                 "kind": "directory",
-                "object_kind": "sealed",
-                "links": sealed_object_links(),
-                "files": [{"path": "sealed.json", "data": sealed_object_data()}],
+                "object_kind": "release",
+                "links": [{"rel": "payload", "cid": TEST_CID}],
+                "files": [{"path": "release.json", "data": "e30="}],
             }))
             .await
             .unwrap();
+        assert_eq!(release_response["status"], "ok");
 
-        assert_eq!(response["status"], "ok");
         let directories = ipfs.added_directories.lock().await;
         let manifest_entry = directories[0]
             .iter()
@@ -11578,82 +11632,31 @@ mod tests {
             .decode(manifest_entry["data"].as_str().unwrap())
             .unwrap();
         let manifest: ContentObjectManifest = serde_json::from_slice(&manifest_bytes).unwrap();
-
-        assert_eq!(manifest.kind, "sealed");
-        assert_eq!(manifest.links.len(), 4);
-        assert_eq!(manifest.links[0].rel, "availability.receipt");
+        assert_eq!(manifest.kind, "release");
+        assert_eq!(manifest.links.len(), 1);
+        assert_eq!(manifest.links[0].rel, "payload");
         assert_eq!(manifest.links[0].cid, TEST_CID);
-        assert_eq!(manifest.links[1].rel, "payload");
-        assert_eq!(manifest.links[1].cid, TEST_CID);
-        assert_eq!(manifest.links[2].rel, "provenance");
-        assert_eq!(manifest.links[2].cid, TEST_CID);
-        assert_eq!(manifest.links[3].rel, "rights.policy");
-        assert_eq!(manifest.links[3].cid, TEST_CID);
-        drop(directories);
-
-        let release_response = content
-            .send_raw(&json!({
-                "op": "publish",
-                "kind": "directory",
-                "object_kind": "release",
-                "links": [{"rel": "sealed", "cid": TEST_CID}],
-                "files": [{"path": "release.json", "data": "e30="}],
-            }))
-            .await
-            .unwrap();
-        assert_eq!(release_response["status"], "ok");
     }
 
     #[tokio::test]
-    async fn content_publish_directory_rejects_incomplete_sealed_objects() {
+    async fn content_publish_directory_rejects_retired_sealed_object_kind() {
         let (_data_dir, _registry, _ipfs, content) = registry_with_content_and_ipfs().await;
-        let missing_descriptor = content
+        let error = content
             .send_raw(&json!({
                 "op": "publish",
                 "kind": "directory",
                 "object_kind": "sealed",
-                "links": sealed_object_links(),
-                "files": [{"path": "payload.bin", "data": "c2VhbGVkCg=="}],
+                "files": [{"path": "sealed.json", "data": "e30="}],
             }))
             .await
-            .unwrap_err();
-        assert!(missing_descriptor
-            .to_string()
-            .contains("sealed content object requires sealed.json"));
+            .expect_err("the retired provisional sealed object kind must fail closed");
 
-        let missing_provenance = content
-            .send_raw(&json!({
-                "op": "publish",
-                "kind": "directory",
-                "object_kind": "sealed",
-                "links": [
-                    {"rel": "availability.receipt", "cid": TEST_CID},
-                    {"rel": "payload", "cid": TEST_CID},
-                    {"rel": "rights.policy", "cid": TEST_CID}
-                ],
-                "files": [{"path": "sealed.json", "data": sealed_object_data()}],
-            }))
-            .await
-            .unwrap_err();
-        assert!(missing_provenance
-            .to_string()
-            .contains("sealed content object requires provenance link"));
-
-        let mut weak_envelope = sealed_object_value();
-        weak_envelope["key_envelope"]["algorithms"]["cipher"] = Value::String("aes-128-gcm".into());
-        let weak_cipher = content
-            .send_raw(&json!({
-                "op": "publish",
-                "kind": "directory",
-                "object_kind": "sealed",
-                "links": sealed_object_links(),
-                "files": [{"path": "sealed.json", "data": sealed_object_data_from(&weak_envelope)}],
-            }))
-            .await
-            .unwrap_err();
-        assert!(weak_cipher
-            .to_string()
-            .contains("key_envelope.algorithms.cipher uses unsupported algorithm"));
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported content object kind"),
+            "unexpected error: {error}"
+        );
     }
 
     #[tokio::test]
@@ -12973,6 +12976,40 @@ mod tests {
 
         assert!(err.to_string().contains("content fetch"));
         assert!(availability.requests.lock().await.is_empty());
+    }
+
+    /// A read that asks only the holders known now says so to the
+    /// availability plane after a local miss; any other read does not.
+    #[tokio::test]
+    async fn content_fetch_passes_known_holders_only_to_the_availability_plane() {
+        let (_data_dir, registry, ipfs, content) = registry_with_content_and_ipfs().await;
+        ipfs.missing_paths
+            .lock()
+            .await
+            .push("metadata.json".to_string());
+        let availability = Arc::new(MockAvailabilityProvider {
+            requests: Mutex::new(Vec::new()),
+            response: Mutex::new(provider_ok(json!({
+                "data": base64::engine::general_purpose::STANDARD.encode(b"{}"),
+                "availability": { "status": "network_available" }
+            }))),
+        });
+        registry.register(availability.clone()).await;
+
+        for known_holders_only in [true, false] {
+            let mut request = json!({ "op": "fetch", "cid": TEST_CID, "path": "metadata.json" });
+            if known_holders_only {
+                request["known_holders_only"] = json!(true);
+            }
+            let response = content.send_raw(&request).await.unwrap();
+            assert_eq!(response["status"], "ok", "{response}");
+            let forwarded = availability.requests.lock().await.pop().unwrap();
+            assert_eq!(
+                forwarded.get("known_holders_only") == Some(&json!(true)),
+                known_holders_only,
+                "{forwarded}"
+            );
+        }
     }
 
     #[test]

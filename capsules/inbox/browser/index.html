@@ -427,6 +427,15 @@
       margin: 0;
     }
 
+    .entry-fact-details summary {
+      cursor: pointer;
+      color: var(--muted);
+    }
+
+    .entry-fact-details .entry-fact {
+      margin-top: 6px;
+    }
+
     @media (max-width: 520px) {
       .entry-fact {
         grid-template-columns: minmax(0, 1fr);
@@ -636,6 +645,9 @@
     #browser-internet-confirm {border:1px solid var(--line);border-radius:16px;max-width:440px;padding:24px;color:var(--ink);background:var(--panel);}
     #browser-internet-confirm::backdrop {background:rgba(0,0,0,.3);}
     #browser-internet-confirm .entry-actions {justify-content:flex-end;}
+    #public-metadata-confirm {border:1px solid var(--line);border-radius:16px;max-width:440px;padding:24px;color:var(--ink);background:var(--panel);}
+    #public-metadata-confirm::backdrop {background:rgba(0,0,0,.3);}
+    #public-metadata-confirm .entry-actions {justify-content:flex-end;}
   </style>
 </head>
 <body>
@@ -689,6 +701,12 @@
       <div class="entry-actions"><button class="entry-action" value="cancel">Cancel</button><button class="entry-action danger" value="off">Turn Off</button></div>
     </form>
   </dialog>
-  <script src="./inbox.js?v=inbox-20261110c"></script>
+  <dialog id="public-metadata-confirm" aria-labelledby="public-metadata-question">
+    <form method="dialog">
+      <p id="public-metadata-question">Stop sharing minted assets' metadata on public IPFS? Your Home stops its public IPFS node. Copies other nodes already keep stay with them.</p>
+      <div class="entry-actions"><button class="entry-action" value="cancel">Cancel</button><button class="entry-action danger" value="stop">Stop sharing</button></div>
+    </form>
+  </dialog>
+  <script src="./inbox.js?v=inbox-20261113b"></script>
 </body>
 </html>

@@ -28,6 +28,7 @@ fn protected_content_gateway_mock_test_guard() -> &'static tokio::sync::Mutex<()
 }
 
 const ELACITY_PLAYER_CAPSULE_ID_FOR_TEST: &str = "elacity-player";
+const ELACITY_READER_CAPSULE_ID_FOR_TEST: &str = "elacity-reader";
 const RUNTIME_PORTABLE_LISTING_TEST_CID: &str =
     "bafybeibwzif2r5tn7z7cq4f5a2mmepmab4s4m5a2hqu5v4f4uzkd3t2u7m";
 
@@ -215,13 +216,17 @@ fn assert_no_publish_records(data_dir: &std::path::Path, principal_id: &str) {
     }
 }
 
+/// The seeded mints below are v1 records: a seeded record needs no protect run,
+/// and v1 stays readable. They declare what the v1 test media always did.
+const SEEDED_V1_MIME_TYPE: &str = "video/mp4";
+const SEEDED_V1_CODECS: &str = "avc1.64001f,mp4a.40.2";
+
 fn runtime_custody_creator_test_input(
     principal_id: &str,
     object_uri: &str,
     seed: u8,
     wallet_account_id: &str,
 ) -> crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput {
-    let (clear_init_segment, clear_segments) = clear_runtime_custody_media(seed);
     let wallet_account_address = wallet_account_id
         .rsplit(':')
         .next()
@@ -229,29 +234,33 @@ fn runtime_custody_creator_test_input(
         .unwrap_or("0x1111111111111111111111111111111111111111")
         .to_string();
     crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput {
+        // Every mint names the channel it publishes into.
+        channel: "0x0000000000000000000000000000000000000022".to_string(),
+        pay_token: String::new(),
+        listing: None,
         object_uri: object_uri.to_string(),
         principal_id: principal_id.to_string(),
-        mime_type: "video/mp4".to_string(),
-        codecs: "avc1.64001f,mp4a.40.2".to_string(),
         wallet_account_id: wallet_account_id.to_string(),
         wallet_account_address,
         creator_mint_source_digest: runtime_custody_creator_source_digest(),
         copies: "0x2".to_string(),
-        price: MOCK_PROTECTED_CONTENT_LISTING_PRICE.to_string(),
-        clear_init_segment,
-        clear_segments,
+        price: MOCK_PROTECTED_CONTENT_LISTING_AMOUNT.to_string(),
+        media: crate::protected_content_runtime::tests::declared_prepared_media_for_test(seed),
         source_storage: "protected_principal_root".to_string(),
+        pool_did: None,
     }
 }
 
 fn runtime_custody_creator_source_digest() -> elastos_protected_content_contracts::Digest32 {
     let mut hasher = sha2::Sha256::new();
-    hasher.update(b"elastos.runtime-custody.creator-mint-source/v1");
+    // The deployment, and only the deployment. The channel and the pay token
+    // used to be hashed in here, back when a Home had exactly one of each;
+    // they are the creator's choice now and are pinned in the mint's own
+    // recorded terms instead.
+    hasher.update(b"elastos.runtime-custody.creator-mint-source/v2");
     for field in [
         "base-mainnet",
         "eip155:8453",
-        MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY,
-        MOCK_PROTECTED_CONTENT_PAY_TOKEN,
         "elacity_mint_v1",
         "mint(string,uint16,bytes,bytes)",
     ] {
@@ -261,10 +270,24 @@ fn runtime_custody_creator_source_digest() -> elastos_protected_content_contract
     elastos_protected_content_contracts::Digest32::new(hasher.finalize().into())
 }
 
-fn seed_completed_runtime_custody_mint(
+/// Everything a mint record needs before its custody fan-out: the composition,
+/// the draft, and the intent recorded against it.
+///
+/// Extracted so a seeder can stop at the fan-out and take a different ending.
+/// The two seeders must share this part or they stop testing the same mint.
+struct SeededRuntimeCustodyMintDraft {
+    journal: elastos_protected_content_runtime::RuntimeMintJournal,
+    draft: elastos_protected_content_runtime::RuntimeMintDraft,
+    node_bindings: Vec<elastos_protected_content_runtime::RuntimeMintNodeBinding>,
+    request_id: elastos_protected_content_contracts::Digest32,
+    protected_init_segment: Vec<u8>,
+    protected_segments: Vec<Vec<u8>>,
+}
+
+fn seed_runtime_custody_mint_draft(
     data_dir: &std::path::Path,
     input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
-) -> crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts {
+) -> SeededRuntimeCustodyMintDraft {
     let protected_content_root = data_dir.join("protected-content");
     std::fs::create_dir_all(&protected_content_root).unwrap();
     #[cfg(unix)]
@@ -281,14 +304,21 @@ fn seed_completed_runtime_custody_mint(
         crate::protected_content_runtime::tests::media_components(0x41);
     let (node_bindings, pool_identity, epoch_identity, committee_identity) =
         crate::protected_content_runtime::tests::library_publish_test_mint_composition(data_dir);
+    // One per object: a mint record is found for its intent by this id and
+    // the custody selection, and the selection repeats within a second, so a
+    // journal holding several seeded mints needs each to carry its own.
+    let mut content_access_id = [0x51; 16];
+    content_access_id.copy_from_slice(
+        &<sha2::Sha256 as sha2::Digest>::digest(input.object_uri.as_bytes())[..16],
+    );
     let content_access_id =
-        elastos_protected_content_contracts::ContentAccessIdV1::new([0x51; 16]).unwrap();
+        elastos_protected_content_contracts::ContentAccessIdV1::new(content_access_id).unwrap();
     let media_identity =
         elastos_protected_content_provider_contracts::CencFmp4MediaIdentityV1::new_from_bytes(
             &protected_init_segment,
             &protected_segments,
-            input.mime_type.clone(),
-            input.codecs.clone(),
+            SEEDED_V1_MIME_TYPE,
+            SEEDED_V1_CODECS,
         )
         .unwrap();
     let threshold = elastos_protected_content_contracts::ThresholdV1::new(2, 3).unwrap();
@@ -319,8 +349,8 @@ fn seed_completed_runtime_custody_mint(
     let draft = elastos_protected_content_runtime::RuntimeMintDraft::new(
         &protected_init_segment,
         &protected_segments,
-        input.mime_type.clone(),
-        input.codecs.clone(),
+        SEEDED_V1_MIME_TYPE.to_string(),
+        SEEDED_V1_CODECS.to_string(),
         content_access_id,
         key_envelope,
         policy,
@@ -336,6 +366,7 @@ fn seed_completed_runtime_custody_mint(
         &input.source_storage,
     )
     .unwrap();
+    let (seeded_clear_init_segment, seeded_clear_segments) = clear_runtime_custody_media(0x41);
     let intent = elastos_protected_content_runtime::RuntimeMintIntent::new(
         input.principal_id.clone(),
         &input.object_uri,
@@ -343,10 +374,10 @@ fn seed_completed_runtime_custody_mint(
         input.wallet_account_id.clone(),
         input.wallet_account_address.clone(),
         input.creator_mint_source_digest,
-        input.mime_type.clone(),
-        input.codecs.clone(),
-        &input.clear_init_segment,
-        &input.clear_segments,
+        SEEDED_V1_MIME_TYPE.to_string(),
+        SEEDED_V1_CODECS.to_string(),
+        &seeded_clear_init_segment,
+        &seeded_clear_segments,
         draft.content_access_id(),
         draft.pool(),
         draft.epoch(),
@@ -361,6 +392,77 @@ fn seed_completed_runtime_custody_mint(
     journal
         .mark_intent_protect_closed_before_draft(request_id)
         .unwrap();
+    SeededRuntimeCustodyMintDraft {
+        journal,
+        draft,
+        node_bindings,
+        request_id,
+        protected_init_segment,
+        protected_segments,
+    }
+}
+
+/// A mint that took a receipt from one node and then aborted, the shape the
+/// owner's own failed mints left on disk.
+///
+/// Returns the mint id. The record is terminal: the journal refuses every
+/// further custody transition against it.
+fn seed_aborted_runtime_custody_mint(
+    data_dir: &std::path::Path,
+    input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+) -> elastos_protected_content_contracts::Digest32 {
+    let SeededRuntimeCustodyMintDraft {
+        journal,
+        draft,
+        node_bindings,
+        ..
+    } = seed_runtime_custody_mint_draft(data_dir, input);
+    let first = &node_bindings[0];
+    journal
+        .mark_node_effect_started(draft.mint_id(), first.node_public_key())
+        .unwrap();
+    journal
+        .mark_node_receipt(
+            draft.mint_id(),
+            elastos_protected_content_runtime::RuntimeMintNodeReceipt::new(
+                first.node_public_key(),
+                elastos_protected_content_contracts::RuntimeCustodyProvisioningIdV1::new(
+                    elastos_protected_content_contracts::Digest32::new([0x71; 32]),
+                )
+                .unwrap(),
+                elastos_protected_content_contracts::CustodyNodeProvisioningRecordIdentityV1::new(
+                    elastos_protected_content_contracts::Digest32::new([0x81; 32]),
+                    128,
+                )
+                .unwrap(),
+                first.owner_state_root(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    journal
+        .mark_node_effect_started(draft.mint_id(), node_bindings[1].node_public_key())
+        .unwrap();
+    journal
+        .mark_aborted_partial_provision(draft.mint_id())
+        .unwrap();
+    draft.mint_id()
+}
+
+/// A mint whose escrow settled on every node and whose ciphertext never
+/// reached verified availability: the shape a failed "Publish to storage"
+/// leaves behind.
+fn seed_provisioned_runtime_custody_mint(
+    data_dir: &std::path::Path,
+    input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+) -> SeededRuntimeCustodyMintDraft {
+    let seeded = seed_runtime_custody_mint_draft(data_dir, input);
+    let SeededRuntimeCustodyMintDraft {
+        journal,
+        draft,
+        node_bindings,
+        ..
+    } = &seeded;
     for (index, node) in node_bindings.iter().enumerate() {
         journal
             .mark_node_effect_started(draft.mint_id(), node.node_public_key())
@@ -386,6 +488,21 @@ fn seed_completed_runtime_custody_mint(
             .unwrap();
     }
     journal.mark_custody_provisioned(draft.mint_id()).unwrap();
+    seeded
+}
+
+fn seed_completed_runtime_custody_mint(
+    data_dir: &std::path::Path,
+    input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+) -> crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts {
+    let SeededRuntimeCustodyMintDraft {
+        journal,
+        draft,
+        request_id,
+        protected_init_segment,
+        protected_segments,
+        ..
+    } = seed_provisioned_runtime_custody_mint(data_dir, input);
     let content_id =
         crate::protected_content_runtime::runtime_protected_content_id(draft.encrypted_content())
             .unwrap();
@@ -419,7 +536,9 @@ fn seed_completed_runtime_custody_mint(
         crate::auth::now_ts(),
         elastos_protected_content_contracts::Digest32::new([0xa1; 32]),
         draft.encrypted_content().clone(),
-        draft.media_identity().media_manifest_root(),
+        elastos_protected_content_runtime::RuntimeVerifiedContentIdentityRootV1::for_media(
+            draft.media_identity().unwrap(),
+        ),
     )
     .unwrap();
     journal
@@ -428,7 +547,7 @@ fn seed_completed_runtime_custody_mint(
     seed_mock_published_protected_content(
         &content_id,
         &publisher_profile_did,
-        draft.media_identity(),
+        draft.media_identity().unwrap(),
         &protected_init_segment,
         &protected_segments,
         evidence.checked_at(),
@@ -452,9 +571,12 @@ fn seed_completed_runtime_custody_mint(
         }),
         content_security: json!({
             "mode": "runtime_custody",
+            // Every mint names the channel it publishes into.
+            "channel": "0x0000000000000000000000000000000000000022",
             "access": "buyer_purchase_required"
         }),
         listing_uri: None,
+        capsule_uri: None,
     }
 }
 
@@ -511,6 +633,21 @@ fn seed_runtime_custody_creator_listing_for_buy(
     crate::protected_content_runtime::load_runtime_custody_listing(data_dir, facts.mint_id)
         .unwrap()
         .unwrap()
+}
+
+fn runtime_custody_owned_copy_path_for_test(
+    data_dir: &std::path::Path,
+    principal_id: &str,
+    mint_id: elastos_protected_content_contracts::Digest32,
+) -> std::path::PathBuf {
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+    <sha2::Sha256 as sha2::Digest>::update(&mut hasher, principal_id.as_bytes());
+    data_dir
+        .join("protected-content/runtime-purchases")
+        .join(hex::encode(<sha2::Sha256 as sha2::Digest>::finalize(
+            hasher,
+        )))
+        .join(format!("{}.json", hex::encode(mint_id.as_bytes())))
 }
 
 fn runtime_custody_listing_path_for_test(
@@ -575,6 +712,46 @@ async fn create_runtime_custody_publish_directory(
     (init, segments)
 }
 
+/// Reads every part of an open v2 viewer in the order `read_viewer` walks
+/// (every init, then each segment index across the renditions) and requires
+/// each to decrypt to the clear part the media provider prepared. `extra` is
+/// merged into every request, so a caller can send fields that must be ignored.
+async fn assert_runtime_custody_dash_media_reads(
+    app: &axum::Router,
+    token: &str,
+    mint_id_hex: &str,
+    viewer_handle: &str,
+    extra: serde_json::Value,
+) {
+    for (rendition, segment, expected) in
+        crate::protected_content_runtime::tests::runtime_custody_gateway_media_parts_for_test()
+    {
+        let mut body = json!({
+            "mint_id": mint_id_hex,
+            "viewer_session_handle": viewer_handle,
+        });
+        if let Some(extra) = extra.as_object() {
+            body.as_object_mut().unwrap().extend(extra.clone());
+        }
+        if let Some(index) = segment {
+            body["segment_index"] = json!(index);
+        }
+        let (status, payload) = post_library(app.clone(), token, "read_viewer", body).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            payload["status"], "ok",
+            "rendition {rendition} segment {segment:?}: {payload}"
+        );
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(payload["data"]["data"].as_str().unwrap())
+                .unwrap(),
+            expected,
+            "rendition {rendition} segment {segment:?}"
+        );
+    }
+}
+
 fn enable_protected_content(data_dir: &std::path::Path) {
     std::fs::write(data_dir.join("config.toml"), "protected_content = true\n").unwrap();
 }
@@ -592,8 +769,10 @@ async fn publish_runtime_custody(
             "uri": uri,
             "protection": {
                 "mode": "runtime_custody",
+                // Every mint names the channel it publishes into.
+                "channel": "0x0000000000000000000000000000000000000022",
                 "copies": "0x1",
-                "price": "0xde0b6b3a7640000"
+                "price": "1"
             }
         }),
     )
@@ -7348,29 +7527,29 @@ async fn test_library_provider_records_recipient_scoped_share_grants() {
         share["data"]["grants"][0]["key_release"]["status"],
         "not_required_for_plain_published_content"
     );
-    assert_eq!(
-        share["data"]["remote_enforcement"]["required_providers"]["schema"],
-        "elastos.library.protected-content-provider-requirements/v1"
+    assert!(
+        share["data"]["remote_enforcement"]
+            .get("required_providers")
+            .is_none(),
+        "the retired provisional provider requirement projection must be gone"
+    );
+    assert!(
+        share["data"]["remote_enforcement"]
+            .get("provider_invocation")
+            .is_none(),
+        "the retired provisional provider chain must not be projected"
+    );
+    assert!(
+        share["data"].get("protected_content").is_none(),
+        "share must not project provisional protected-content provider readiness"
     );
     assert_eq!(
-        share["data"]["remote_enforcement"]["provider_invocation"]["drm"],
-        "drm-provider.open"
+        share["data"]["remote_enforcement"]["status"],
+        "recipient_proof_enforced_by_runtime"
     );
     assert_eq!(
-        share["data"]["remote_enforcement"]["provider_invocation"]["rights"],
-        "rights-provider.has_access_by_content_id"
-    );
-    assert_eq!(
-        share["data"]["protected_content"]["schema"],
-        "elastos.library.protected-content-provider-status/v1"
-    );
-    assert_eq!(
-        share["data"]["protected_content"]["encrypted_recipient_sharing"]["status"],
-        "blocked_until_drm_rights_key_decrypt_providers_configured"
-    );
-    assert_eq!(
-        share["data"]["protected_content"]["required_provider_count"],
-        4
+        share["data"]["key_release"]["protected_content"],
+        "runtime_custody_publish_only"
     );
 
     let (status_status, status) = post_library(
@@ -7384,13 +7563,15 @@ async fn test_library_provider_records_recipient_scoped_share_grants() {
     .await;
     assert_eq!(status_status, StatusCode::OK);
     assert_eq!(status["status"], "ok");
-    assert_eq!(
-        status["data"]["protected_content"]["schema"],
-        "elastos.library.protected-content-provider-status/v1"
+    assert!(
+        status["data"].get("protected_content").is_none(),
+        "status must not project provisional protected-content provider readiness"
     );
-    assert_eq!(
-        status["data"]["published"]["protected_content"]["encrypted_recipient_sharing"]["status"],
-        "blocked_until_drm_rights_key_decrypt_providers_configured"
+    assert!(
+        status["data"]["published"]
+            .get("protected_content")
+            .is_none(),
+        "published record must not carry provisional provider readiness"
     );
 
     let (access_status, access) = post_library(
@@ -7454,35 +7635,28 @@ async fn test_library_provider_records_recipient_scoped_share_grants() {
         false
     );
     assert_eq!(
-        access["data"]["access"]["open"]["drm_provider_required"],
-        false
-    );
-    assert_eq!(
         access["data"]["access"]["open"]["recipient_proof_verified"],
         true
     );
+    for retired in [
+        "drm_provider_required",
+        "rights_provider_required",
+        "key_provider_required",
+        "decrypt_provider_required",
+        "required_providers",
+    ] {
+        assert!(
+            access["data"]["access"]["open"].get(retired).is_none(),
+            "shared-open must not project {retired} after the cutover"
+        );
+    }
     assert_eq!(
-        access["data"]["access"]["open"]["rights_provider_required"],
-        false
+        access["data"]["access"]["open"]["status"],
+        "ready_for_plain_content_fetch"
     );
-    assert_eq!(
-        access["data"]["access"]["open"]["key_provider_required"],
-        false
-    );
-    assert_eq!(
-        access["data"]["access"]["open"]["decrypt_provider_required"],
-        false
-    );
-    assert_eq!(
-        access["data"]["access"]["open"]["required_providers"]["providers"]
-            .as_array()
-            .unwrap()
-            .len(),
-        4
-    );
-    assert_eq!(
-        access["data"]["protected_content"]["schema"],
-        "elastos.library.protected-content-provider-status/v1"
+    assert!(
+        access["data"].get("protected_content").is_none(),
+        "shared_access must not project provisional provider readiness"
     );
     assert_eq!(
         access["data"]["access"]["key_release"]["status"],
@@ -7598,7 +7772,7 @@ async fn test_library_provider_records_recipient_scoped_share_grants() {
 }
 
 #[tokio::test]
-async fn test_library_provider_rejects_key_release_policy_until_provider_exists() {
+async fn test_library_provider_rejects_recipient_key_release_share_policy() {
     let dir = tempfile::tempdir().unwrap();
     let app = gateway_router(library_test_state(dir.path()).await);
     let authority = passkey_authority_with_name(dir.path(), Some("admin"));
@@ -7642,10 +7816,14 @@ async fn test_library_provider_rejects_key_release_policy_until_provider_exists(
     .await;
     assert_eq!(share_status, StatusCode::OK);
     assert_eq!(share["status"], "error");
-    assert!(share["message"]
-        .as_str()
-        .unwrap()
-        .contains("drm/rights/key/decrypt providers"));
+    assert!(
+        share["message"]
+            .as_str()
+            .unwrap()
+            .contains("published through Runtime custody publish"),
+        "unexpected message: {}",
+        share["message"]
+    );
 }
 
 #[tokio::test]
@@ -7682,8 +7860,10 @@ async fn test_library_provider_publish_rejects_removed_fixture_and_unknown_prote
                 "uri": uri,
                 "protection": {
                     "mode": "runtime_custody",
+                    // Every mint names the channel it publishes into.
+                    "channel": "0x0000000000000000000000000000000000000022",
                     "copies": "0x1",
-                    "price": "0xde0b6b3a7640000",
+                    "price": "1",
                     "extra": true
                 }
             }),
@@ -7788,21 +7968,21 @@ async fn test_library_provider_runtime_custody_publish_fails_closed_without_comp
         &token,
         &authority.principal_id,
         &uri,
-        crate::protected_content_runtime::RUNTIME_CUSTODY_COMPOSITION_MISSING_MESSAGE,
+        // Plan B S7-lite T7.6: a Home with no pool to mint into is told so
+        // plainly, before any media is processed.
+        crate::protected_content_runtime::RUNTIME_CUSTODY_MINT_NO_POOL_MESSAGE,
     )
     .await;
     let mint_root = dir.path().join("protected-content/runtime-mint");
-    let journal_entries = std::fs::read_dir(mint_root)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    assert_eq!(journal_entries.len(), 2, "{journal_entries:?}");
-    assert!(journal_entries
-        .iter()
-        .any(|name| name == "runtime-mint-journal.lock"));
-    assert!(journal_entries
-        .iter()
-        .any(|name| name.starts_with("prepare-")));
+    let prepared = std::fs::read_dir(mint_root)
+        .map(|entries| {
+            entries
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with("prepare-"))
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(prepared, 0, "no media preparation without a pool");
 }
 
 #[tokio::test]
@@ -7852,6 +8032,22 @@ async fn test_runtime_custody_creator_tail_pending_or_failed_never_persists_list
         err.to_string(),
         "Runtime custody creator mint is pending exact Wallet or Chain settlement"
     );
+    // The wait carries how far the publish actually got, as fields. Without
+    // this the tail could stop attaching progress entirely and every other
+    // assertion in the suite would still pass, because nothing else reads it.
+    let pending = err
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyEffectPending>()
+        .expect("a wait must reach the caller as data, not as prose");
+    assert_eq!(
+        pending.as_json()["progress"]["stages"],
+        serde_json::json!([
+            { "id": "escrow", "state": "done" },
+            { "id": "publish", "state": "done" },
+            { "id": "public_metadata", "state": "done" },
+            { "id": "listing", "state": "active" },
+        ]),
+        "custody and availability are durable here; only the listing is still running"
+    );
     assert_eq!(mock_content_publish_request_count(), 1);
     assert!(
         crate::protected_content_runtime::load_runtime_custody_listing(dir.path(), mint_id)
@@ -7881,6 +8077,7 @@ async fn test_runtime_custody_creator_tail_pending_or_failed_never_persists_list
         receipt: json!({"schema": "elastos.content.availability.receipt/v1"}),
         content_security: json!({"mode": "runtime_custody"}),
         listing_uri: None,
+        capsule_uri: None,
     };
     let err = runtime_custody_publish_creator_tail_for_test(
         &state,
@@ -7912,7 +8109,7 @@ async fn test_runtime_custody_creator_tail_pending_or_failed_never_persists_list
 }
 
 #[tokio::test]
-async fn test_runtime_custody_creator_tail_raises_operator_approval_before_finalizing() {
+async fn test_runtime_custody_creator_tail_raises_exactly_one_wallet_effect() {
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
     let dir = tempfile::tempdir().unwrap();
     let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
@@ -7953,6 +8150,7 @@ async fn test_runtime_custody_creator_tail_raises_operator_approval_before_final
                 receipt: facts.receipt.clone(),
                 content_security: facts.content_security.clone(),
                 listing_uri: facts.listing_uri.clone(),
+                capsule_uri: facts.capsule_uri.clone(),
             }
         };
 
@@ -7980,56 +8178,12 @@ async fn test_runtime_custody_creator_tail_raises_operator_approval_before_final
         .complete_latest_transaction_approval()
         .await;
 
-    // Second shot: the mint settled, the ledger reports no operator approval,
-    // so a distinct `setApprovalForAll` effect is raised and awaits approval.
-    let pending = runtime_custody_publish_creator_tail_for_test(
-        &state,
-        &runtime_authority,
-        registry.clone(),
-        input.clone(),
-        facts_for_shot(&facts),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(
-        pending.to_string(),
-        "Runtime custody creator mint is pending exact Wallet or Chain settlement"
-    );
-    let approval_request_id = wallet_provider
-        .provider
-        .latest_transaction_approval_request_id()
-        .await
-        .unwrap();
-    assert_ne!(approval_request_id, mint_request_id);
-    let journal = crate::protected_content_runtime::runtime_mint_journal(dir.path());
-    let creator_state = journal
-        .load(mint_id)
-        .unwrap()
-        .creator_state()
-        .cloned()
-        .unwrap();
-    let operator_approval = creator_state
-        .operator_approval()
-        .expect("operator approval effect bound in the journal");
-    assert_eq!(operator_approval.approval_request_id(), approval_request_id);
-    assert!(operator_approval != creator_state.effect().unwrap());
-    // The approval targets the operative that holds the copies (what the
-    // market gateway transfers from), never the asset ledger.
-    assert_eq!(
-        wallet_provider
-            .provider
-            .latest_transaction_approval_to()
-            .await
-            .unwrap()
-            .to_ascii_lowercase(),
-        MOCK_PROTECTED_CONTENT_OPERATIVE.to_ascii_lowercase()
-    );
-    wallet_provider
-        .provider
-        .complete_latest_transaction_approval()
-        .await;
-
-    // Third shot: both effects settled, the listing finalizes.
+    // Second shot: the mint settled and the listing finalizes. No further
+    // wallet effect is raised -- the market gateway moves the copies without a
+    // separate ERC-1155 operator approval, so the mint transaction is the ONLY
+    // thing the creator ever approves. The tail used to raise a second
+    // `setApprovalForAll` here, gated on an `isApprovedForAll` probe that read
+    // any undecodable answer as "not approved" and so re-asked on every mint.
     let finalized = runtime_custody_publish_creator_tail_for_test(
         &state,
         &runtime_authority,
@@ -8040,6 +8194,7 @@ async fn test_runtime_custody_creator_tail_raises_operator_approval_before_final
     .await
     .unwrap();
     assert!(finalized.listing_uri.is_some());
+    let journal = crate::protected_content_runtime::runtime_mint_journal(dir.path());
     let creator_state = journal
         .load(mint_id)
         .unwrap()
@@ -8047,7 +8202,28 @@ async fn test_runtime_custody_creator_tail_raises_operator_approval_before_final
         .cloned()
         .unwrap();
     assert!(creator_state.terminal().is_some());
-    assert!(creator_state.operator_approval().is_some());
+    assert_eq!(
+        wallet_provider
+            .provider
+            .latest_transaction_approval_request_id()
+            .await
+            .unwrap(),
+        mint_request_id,
+        "the creator tail must raise exactly one wallet effect: the mint"
+    );
+    // That one effect is the mint itself. An ERC-1155 operator approval was
+    // the only effect that ever targeted the operative, so its absence there
+    // is what proves the second prompt is gone.
+    assert_ne!(
+        wallet_provider
+            .provider
+            .latest_transaction_approval_to()
+            .await
+            .unwrap()
+            .to_ascii_lowercase(),
+        MOCK_PROTECTED_CONTENT_OPERATIVE.to_ascii_lowercase(),
+        "the creator tail must not raise an ERC-1155 operator approval"
+    );
 }
 
 #[tokio::test]
@@ -8119,6 +8295,7 @@ async fn test_runtime_custody_creator_tail_confirmed_replay_is_exact_and_immutab
         receipt: json!({"schema": "elastos.content.availability.receipt/v1"}),
         content_security: json!({"mode": "runtime_custody"}),
         listing_uri: None,
+        capsule_uri: None,
     };
     set_mock_runtime_listing_publish_failure(true);
     let publish_error = runtime_custody_publish_creator_tail_for_test(
@@ -8151,6 +8328,7 @@ async fn test_runtime_custody_creator_tail_confirmed_replay_is_exact_and_immutab
         receipt: json!({"schema": "elastos.content.availability.receipt/v1"}),
         content_security: json!({"mode": "runtime_custody"}),
         listing_uri: None,
+        capsule_uri: None,
     };
     let ok = runtime_custody_publish_creator_tail_for_test(
         &state,
@@ -8163,6 +8341,37 @@ async fn test_runtime_custody_creator_tail_confirmed_replay_is_exact_and_immutab
     .unwrap();
     assert_eq!(ok.mint_id, mint_id);
     assert_eq!(ok.listing_uri, Some(format!("elastos://{TEST_CIDV1}")));
+    // This call settled nothing -- the mint was already terminal when it
+    // arrived, so no effect was raised and no transaction was sent. The answer
+    // has to say so, or a replay is indistinguishable from a fresh mint and
+    // the Creator reports "Listed for sale" for work done earlier.
+    assert_eq!(ok.content_security["settled_before_this_request"], true);
+    assert!(
+        ok.content_security["settled_at"].as_u64().unwrap_or(0) > 0,
+        "a settled mint must carry when it settled: {}",
+        ok.content_security
+    );
+    assert_eq!(
+        ok.content_security["transaction_hash"]
+            .as_str()
+            .unwrap_or_default(),
+        crate::protected_content_runtime::runtime_mint_journal(dir.path())
+            .load(mint_id)
+            .unwrap()
+            .creator_state()
+            .unwrap()
+            .terminal()
+            .unwrap()
+            .transaction_hash(),
+        "the hash named must be the one the mint actually settled with"
+    );
+    // Which account it minted on. A settled mint is never refused over a
+    // changed default, so naming the seller is the only way a creator who has
+    // switched wallets since can see the listing is not on today's account.
+    assert_eq!(
+        ok.content_security["settled_seller_address"],
+        MOCK_MANAGED_EVM_ADDRESS.to_ascii_lowercase()
+    );
     let listing =
         crate::protected_content_runtime::load_runtime_custody_listing(dir.path(), mint_id)
             .unwrap()
@@ -8177,9 +8386,11 @@ async fn test_runtime_custody_creator_tail_confirmed_replay_is_exact_and_immutab
     );
     assert_eq!(listing.package.chain_namespace, "eip155:8453");
     assert_eq!(listing.package.network, "base-mainnet");
+    // The channel the creator chose, which is what the mint settled on -- not
+    // whatever channel the deployment happens to name.
     assert_eq!(
         listing.package.ledger,
-        MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY.to_ascii_lowercase()
+        "0x0000000000000000000000000000000000000022"
     );
     assert_eq!(listing.package.token_id, MOCK_PROTECTED_CONTENT_TOKEN_ID);
     assert_eq!(
@@ -8202,7 +8413,7 @@ async fn test_runtime_custody_creator_tail_confirmed_replay_is_exact_and_immutab
     );
     assert_eq!(
         listing_publish["availability_requirements"],
-        json!({"min_replicas": 3, "require_live_multi_peer_proof": true})
+        json!({"min_replicas": 1, "require_live_multi_peer_proof": false})
     );
     assert_eq!(
         listing_publish["links"],
@@ -8224,6 +8435,7 @@ async fn test_runtime_custody_creator_tail_confirmed_replay_is_exact_and_immutab
         receipt: json!({"schema": "elastos.content.availability.receipt/v1"}),
         content_security: json!({"mode": "runtime_custody"}),
         listing_uri: None,
+        capsule_uri: None,
     };
     let replay = runtime_custody_publish_creator_tail_for_test(
         &state,
@@ -8254,6 +8466,1522 @@ async fn test_runtime_custody_creator_tail_confirmed_replay_is_exact_and_immutab
             .as_deref(),
         Some(approval_request_id.as_str())
     );
+}
+
+/// Publish progress is read from the mint journal, so it cannot claim a phase
+/// the server has not actually reached.
+///
+/// The Creator used to drive four dots itself and label two "(not tracked)",
+/// because the whole server pipeline ran inside one request and the client had
+/// no way to know. Every state asserted here is evidence the journal already
+/// holds -- and the ordering is the journal's own, not this projection's:
+/// `bind_creator_state` refuses outright unless custody is provisioned and the
+/// content availability evidence is present, so "listing" cannot report before
+/// "escrow" and "publish" have.
+#[tokio::test]
+async fn test_runtime_custody_creator_progress_is_read_from_the_mint_journal() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let _ = &state;
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+
+    let authority = passkey_authority_with_profile(dir.path(), "admin");
+    let wallet_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal(&authority.principal_id)
+        .await;
+    let uri = format!(
+        "{}/Documents/protected-progress",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+    let input =
+        runtime_custody_creator_test_input(&authority.principal_id, &uri, 0x8d, &wallet_account_id);
+    let facts = seed_completed_runtime_custody_mint(dir.path(), &input);
+    let mint_id = facts.mint_id;
+    let journal = crate::protected_content_runtime::runtime_mint_journal(dir.path());
+
+    // Custody provisioned and the ciphertext verifiably available, but no
+    // creator terms recorded yet.
+    let progress = crate::protected_content_runtime::runtime_custody_creator_progress(
+        &journal.load(mint_id).unwrap(),
+    );
+    assert_eq!(
+        progress["schema"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_CREATOR_PROGRESS_SCHEMA_V1
+    );
+    let stage = |value: &serde_json::Value, id: &str| -> String {
+        value["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == id)
+            .unwrap_or_else(|| panic!("progress must carry the {id} stage"))["state"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(stage(&progress, "escrow"), "done");
+    assert_eq!(stage(&progress, "publish"), "done");
+    assert_eq!(
+        stage(&progress, "listing"),
+        "pending",
+        "nothing is recorded against the chain yet"
+    );
+
+    // Terms recorded, nothing raised: the listing phase is under way.
+    journal
+        .bind_creator_state(
+            mint_id,
+            elastos_protected_content_runtime::RuntimeMintCreatorState::new(
+                elastos_protected_content_runtime::RuntimeMintCreatorDesiredTerms::new(
+                    wallet_account_id.clone(),
+                    input.copies.clone(),
+                    MOCK_PROTECTED_CONTENT_LISTING_PRICE.to_string(),
+                    Vec::new(),
+                    elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce,
+                    None,
+                    "0x0000000000000000000000000000000000000022".to_string(),
+                    String::new(),
+                )
+                .unwrap(),
+                "bafyprogresscid",
+                "ipfs://bafyprogresscid/metadata.json",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let progress = crate::protected_content_runtime::runtime_custody_creator_progress(
+        &journal.load(mint_id).unwrap(),
+    );
+    assert_eq!(stage(&progress, "escrow"), "done");
+    assert_eq!(stage(&progress, "publish"), "done");
+    assert_eq!(stage(&progress, "listing"), "active");
+}
+
+/// A terminal custody state is not a successful one.
+///
+/// `custody_terminal()` is `Some` for `AbortedPartialProvision` as much as for
+/// The page can read a publish's progress from the object alone, while the
+/// publish request that would eventually report it is still outstanding.
+///
+/// Without this the Creator can only guess, and it guesses the first stage --
+/// which is why publishing and replicating for the better part of a minute
+/// showed as a stalled "Encrypt & escrow" when escrow had finished in
+/// milliseconds. The journal knew the truth the whole time; nothing asked it.
+#[tokio::test]
+async fn test_runtime_custody_publish_progress_is_readable_from_the_object_uri() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let _ = &state;
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+
+    let authority = passkey_authority_with_profile(dir.path(), "admin");
+    let wallet_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal(&authority.principal_id)
+        .await;
+    let uri = format!(
+        "{}/Documents/publish-progress-by-uri",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+    let input =
+        runtime_custody_creator_test_input(&authority.principal_id, &uri, 0x9c, &wallet_account_id);
+    let facts = seed_completed_runtime_custody_mint(dir.path(), &input);
+
+    // Found from the object path, with no mint id supplied by the caller --
+    // the same derivation the publish itself uses.
+    let progress = crate::protected_content_runtime::runtime_custody_publish_progress(
+        dir.path(),
+        &authority.principal_id,
+        &uri,
+        &input.source_storage,
+    )
+    .expect("reading publish progress must not fail")
+    .expect("a seeded mint must report progress");
+    assert_eq!(
+        progress["schema"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_CREATOR_PROGRESS_SCHEMA_V1
+    );
+    // Identical to what the blocking response would carry for the same record,
+    // so the page is never shown two different accounts of one publish.
+    let journal = crate::protected_content_runtime::runtime_mint_journal(dir.path());
+    assert_eq!(
+        progress,
+        crate::protected_content_runtime::runtime_custody_creator_progress(
+            &journal.load(facts.mint_id).unwrap()
+        )
+    );
+
+    // An object that was never protected has no progress, which is an answer,
+    // not a failure.
+    let untouched = format!(
+        "{}/Documents/never-protected",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+    assert!(
+        crate::protected_content_runtime::runtime_custody_publish_progress(
+            dir.path(),
+            &authority.principal_id,
+            &untouched,
+            &input.source_storage,
+        )
+        .expect("an unprotected object must not error")
+        .is_none()
+    );
+}
+
+/// `CustodyProvisioned`, and the projection used to read it as a bare
+/// `is_some()`. The result told a creator their escrow had completed at the
+/// exact moment their mint became unrecoverable, and nothing downstream of
+/// escrow had begun or ever would.
+#[tokio::test]
+async fn test_runtime_custody_creator_progress_reports_an_aborted_mint_as_failed() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let _ = &state;
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+
+    let authority = passkey_authority_with_profile(dir.path(), "admin");
+    let wallet_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal(&authority.principal_id)
+        .await;
+    let uri = format!(
+        "{}/Documents/protected-aborted",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+    let input =
+        runtime_custody_creator_test_input(&authority.principal_id, &uri, 0x8e, &wallet_account_id);
+    let mint_id = seed_aborted_runtime_custody_mint(dir.path(), &input);
+    let journal = crate::protected_content_runtime::runtime_mint_journal(dir.path());
+    let record = journal.load(mint_id).unwrap();
+    assert_eq!(
+        record.custody_terminal(),
+        Some(
+            elastos_protected_content_runtime::RuntimeCustodyTerminalKind::AbortedPartialProvision
+        )
+    );
+    assert_eq!(
+        record.accepted_orphans().len(),
+        1,
+        "the fixture must be the shape a real abort leaves: one share stranded"
+    );
+
+    let progress = crate::protected_content_runtime::runtime_custody_creator_progress(&record);
+    let stage = |value: &serde_json::Value, id: &str| -> String {
+        value["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == id)
+            .unwrap_or_else(|| panic!("progress must carry the {id} stage"))["state"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_ne!(
+        stage(&progress, "escrow"),
+        "done",
+        "an aborted partial provision is not a completed escrow"
+    );
+    assert_eq!(stage(&progress, "escrow"), "failed");
+    assert_eq!(
+        stage(&progress, "publish"),
+        "pending",
+        "availability work never started and never will under this mint"
+    );
+    assert_eq!(stage(&progress, "listing"), "pending");
+}
+
+/// A mint that has recorded its terms and raised nothing yet is refused when
+/// the wallet's transaction default has moved on, and the refusal names both
+/// accounts.
+///
+/// Recorded is the only stage where this is safe. `EffectRaised` has an
+/// approval out that may already be signed or broadcast, so refusing would
+/// strand a transaction in flight rather than prevent one; `Settled` is a
+/// replay whose chain effect is done, and refusing would leave the listing
+/// permanently unpublishable. Both of those keep their account, and the
+/// end-to-end journeys in this file cover exactly that: they change the
+/// default mid-mint and must still complete.
+#[tokio::test]
+async fn test_runtime_custody_creator_tail_refuses_recorded_terms_when_the_default_drifted() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let registry = state.provider_registry.as_ref().unwrap().clone();
+    registry
+        .register_sub_provider("content", std::sync::Arc::new(MockContentProvider))
+        .await
+        .unwrap();
+    reset_mock_content_publish_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+
+    let authority = passkey_authority_with_profile(dir.path(), "admin");
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let runtime_authority =
+        runtime_wallet_authority_for_app_token(dir.path(), LIBRARY_CAPSULE_ID, &token);
+    let bound_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&authority.principal_id, 1)
+        .await;
+    let drifted_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&authority.principal_id, 2)
+        .await;
+    let uri = format!(
+        "{}/Documents/protected-tail-drifted-default",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+    let input =
+        runtime_custody_creator_test_input(&authority.principal_id, &uri, 0x8c, &bound_account_id);
+    let facts = seed_completed_runtime_custody_mint(dir.path(), &input);
+    let mint_id = facts.mint_id;
+    // Terms on record, nothing raised: stage Recorded.
+    crate::protected_content_runtime::runtime_mint_journal(dir.path())
+        .bind_creator_state(
+            mint_id,
+            elastos_protected_content_runtime::RuntimeMintCreatorState::new(
+                elastos_protected_content_runtime::RuntimeMintCreatorDesiredTerms::new(
+                    bound_account_id.clone(),
+                    input.copies.clone(),
+                    MOCK_PROTECTED_CONTENT_LISTING_PRICE.to_string(),
+                    Vec::new(),
+                    elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce,
+                    None,
+                    "0x0000000000000000000000000000000000000022".to_string(),
+                    String::new(),
+                )
+                .unwrap(),
+                "bafydriftedcreatorcid",
+                "ipfs://bafydriftedcreatorcid/metadata.json",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    // The creator changed their mind before anything was raised.
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &authority.principal_id,
+        "eip155:8453",
+        &drifted_account_id,
+        20,
+    )
+    .await;
+
+    let refusal = runtime_custody_publish_creator_tail_for_test(
+        &state,
+        &runtime_authority,
+        registry.clone(),
+        input,
+        facts,
+    )
+    .await
+    .unwrap_err();
+
+    // The stable sentence stays outermost, so nothing matching on it breaks.
+    assert_eq!(
+        refusal.to_string(),
+        "Runtime custody creator mint is unavailable"
+    );
+    let drift = refusal
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorWalletDrift>()
+        .expect("the refusal must carry the typed drift answer");
+    let answer = drift.as_json();
+    assert_eq!(
+        answer["schema"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_CREATOR_WALLET_DRIFT_SCHEMA_V1
+    );
+    assert_eq!(answer["chain_namespace"], "eip155:8453");
+    assert_eq!(
+        answer["bound_address"],
+        mock_managed_evm_address(1).unwrap()
+    );
+    assert_eq!(
+        answer["default_address"],
+        mock_managed_evm_address(2).unwrap()
+    );
+    // Refused before raising anything: no approval, and the mint is still at
+    // Recorded so the creator can discard and start over on their new default.
+    assert!(wallet_provider
+        .provider
+        .latest_transaction_approval_request_id()
+        .await
+        .is_none());
+    assert_eq!(
+        crate::protected_content_runtime::runtime_mint_journal(dir.path())
+            .load(mint_id)
+            .unwrap()
+            .creator_state()
+            .unwrap()
+            .stage(),
+        elastos_protected_content_runtime::RuntimeMintCreatorStage::Recorded
+    );
+}
+
+/// One creator with one managed Wallet account, on a gateway whose chain and
+/// content providers are mocks. Every creator-recovery test starts here so
+/// they all exercise the same mint shapes.
+struct CreatorRecoveryFixture {
+    dir: tempfile::TempDir,
+    state: GatewayState,
+    wallet_provider: Arc<RecordingWalletProvider>,
+    registry: Arc<ProviderRegistry>,
+    authority: TestPasskeyAuthority,
+    wallet_account_id: String,
+}
+
+impl CreatorRecoveryFixture {
+    async fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+        let registry = state.provider_registry.as_ref().unwrap().clone();
+        registry
+            .register_sub_provider("content", Arc::new(MockContentProvider))
+            .await
+            .unwrap();
+        reset_mock_content_publish_requests();
+        set_mock_runtime_listing_publish_failure(false);
+        reset_mock_protected_content_chain_mode();
+        reset_mock_protected_content_purchase_fixture();
+        let authority = passkey_authority_with_profile(dir.path(), "admin");
+        let wallet_account_id = wallet_provider
+            .provider
+            .seed_managed_evm_account_for_principal(&authority.principal_id)
+            .await;
+        Self {
+            dir,
+            state,
+            wallet_provider,
+            registry,
+            authority,
+            wallet_account_id,
+        }
+    }
+
+    fn wallet_authority(&self) -> RuntimeWalletAuthority {
+        let token = app_token_for_authority(self.dir.path(), CREATOR_CAPSULE_ID, &self.authority);
+        runtime_wallet_authority_for_app_token(self.dir.path(), CREATOR_CAPSULE_ID, &token)
+    }
+
+    fn input(
+        &self,
+        name: &str,
+        seed: u8,
+    ) -> crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput {
+        let uri = format!(
+            "{}/Creator/{name}",
+            crate::auth::principal_localhost_root(&self.authority.principal_id)
+        );
+        let mut input = runtime_custody_creator_test_input(
+            &self.authority.principal_id,
+            &uri,
+            seed,
+            &self.wallet_account_id,
+        );
+        // The storage the Library itself names for this principal's root, so
+        // a mint seeded here is the one a Library request finds.
+        let root = crate::auth::principal_localhost_root(&self.authority.principal_id);
+        input.source_storage = if crate::auth::load_principal_root_protection(
+            self.dir.path(),
+            &self.authority.principal_id,
+            &root,
+        )
+        .unwrap()
+        .is_some()
+        {
+            "protected_principal_root"
+        } else {
+            "plain_localhost_root"
+        }
+        .to_string();
+        input
+    }
+
+    async fn tail(
+        &self,
+        input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+        facts: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts,
+    ) -> anyhow::Result<crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts> {
+        runtime_custody_publish_creator_tail_for_test(
+            &self.state,
+            &self.wallet_authority(),
+            self.registry.clone(),
+            input.clone(),
+            recovery_facts(facts),
+        )
+        .await
+    }
+
+    async fn resume(
+        &self,
+        input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+        facts: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts,
+    ) -> anyhow::Result<crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts> {
+        crate::api::gateway::runtime_custody_resume_creator_tail_for_test(
+            &self.state,
+            &self.wallet_authority(),
+            self.registry.clone(),
+            input.clone(),
+            recovery_facts(facts),
+        )
+        .await
+    }
+
+    async fn unfinished(
+        &self,
+        input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+    ) -> crate::api::gateway::RuntimeCustodyUnfinishedMintOutcome {
+        crate::api::gateway::runtime_custody_unfinished_mint_via_gateway(
+            &self.state,
+            &self.wallet_authority(),
+            &input.principal_id,
+            &input.object_uri,
+            &input.source_storage,
+        )
+        .await
+        .unwrap()
+    }
+
+    fn current_attempt(
+        &self,
+        input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+    ) -> elastos_protected_content_runtime::RuntimeMintAttemptV1 {
+        crate::protected_content_runtime::runtime_mint_journal(self.dir.path())
+            .current_attempt(
+                &input.principal_id,
+                &input.object_uri,
+                &input.source_storage,
+            )
+            .unwrap()
+    }
+
+    /// Make the creator's account an external, connector-linked one at the
+    /// same account id, so the approvals it raises carry the connector.
+    async fn link_account_to_connector(&self, connector: &str) {
+        let mut accounts = self.wallet_provider.provider.accounts.lock().await;
+        let account = accounts
+            .iter_mut()
+            .find(|account| {
+                account.get("account_id").and_then(Value::as_str)
+                    == Some(self.wallet_account_id.as_str())
+            })
+            .expect("the seeded account");
+        account["connector_id"] = json!(connector);
+        account["proof_type"] = json!("siwe");
+        account["signing_status"] = json!("external_connector_available");
+    }
+
+    fn is_in_journal(&self, mint_id: elastos_protected_content_contracts::Digest32) -> bool {
+        crate::protected_content_runtime::runtime_mint_journal(self.dir.path())
+            .load(mint_id)
+            .is_ok()
+    }
+
+    fn mint(
+        &self,
+        mint_id: elastos_protected_content_contracts::Digest32,
+    ) -> elastos_protected_content_runtime::PersistedRuntimeMint {
+        crate::protected_content_runtime::runtime_mint_journal(self.dir.path())
+            .load(mint_id)
+            .unwrap()
+    }
+
+    fn bind_recorded_terms(
+        &self,
+        mint_id: elastos_protected_content_contracts::Digest32,
+        copies: &str,
+        price: &str,
+    ) -> elastos_protected_content_runtime::RuntimeMintCreatorState {
+        let recorded = elastos_protected_content_runtime::RuntimeMintCreatorState::new(
+            elastos_protected_content_runtime::RuntimeMintCreatorDesiredTerms::new(
+                self.wallet_account_id.clone(),
+                copies,
+                price,
+                Vec::new(),
+                elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce,
+                None,
+                "0x0000000000000000000000000000000000000022".to_string(),
+                String::new(),
+            )
+            .unwrap(),
+            "bafystalledcreatorcid",
+            "ipfs://bafystalledcreatorcid/metadata.json",
+        )
+        .unwrap();
+        crate::protected_content_runtime::runtime_mint_journal(self.dir.path())
+            .bind_creator_state(mint_id, recorded.clone())
+            .unwrap();
+        recorded
+    }
+}
+
+fn recovery_facts(
+    facts: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts,
+) -> crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts {
+    crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts {
+        content_cid: facts.content_cid.clone(),
+        mint_id: facts.mint_id,
+        content_id: facts.content_id.clone(),
+        display_name: facts.display_name.clone(),
+        availability: facts.availability.clone(),
+        receipt: facts.receipt.clone(),
+        content_security: facts.content_security.clone(),
+        listing_uri: None,
+        capsule_uri: None,
+    }
+}
+
+/// The note filed beside an archived attempt, found by the request id it was
+/// archived under, together with the directory its records were moved into.
+fn archived_attempt(
+    data_dir: &std::path::Path,
+    request_id: elastos_protected_content_contracts::Digest32,
+) -> (std::path::PathBuf, serde_json::Value) {
+    let name = hex::encode(request_id.as_bytes());
+    for entry in std::fs::read_dir(data_dir.join("protected-content")).unwrap() {
+        let entry = entry.unwrap();
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("runtime-mint-set-aside-")
+        {
+            continue;
+        }
+        let directory = entry.path().join(&name);
+        if directory.is_dir() {
+            let note =
+                serde_json::from_slice(&std::fs::read(directory.join("archive.json")).unwrap())
+                    .unwrap();
+            return (directory, note);
+        }
+    }
+    panic!("no archived attempt {name}");
+}
+
+const RECOVERY_PENDING_MESSAGE: &str =
+    "Runtime custody creator mint is pending exact Wallet or Chain settlement";
+
+/// The rule, one stage at a time: what a creator is offered back and what is
+/// dropped. Nothing about the Wallet is consulted here -- the effect's state
+/// is an input -- so this pins the rule itself rather than the plumbing.
+#[tokio::test]
+async fn test_runtime_custody_unfinished_mint_classification_per_stage() {
+    use crate::protected_content_runtime::{
+        classify_runtime_custody_unfinished_mint as classify,
+        RuntimeCustodyCreatorEffectProgress as Effect, RuntimeCustodyUnfinishedMintStage as Stage,
+    };
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let journal = crate::protected_content_runtime::runtime_mint_journal(fx.dir.path());
+
+    // The fan-out to the custody nodes never settled: shares may be out there.
+    let escrowing =
+        seed_runtime_custody_mint_draft(fx.dir.path(), &fx.input("escrowing.mp4", 0x90));
+    let mint = journal.load(escrowing.draft.mint_id()).unwrap();
+    assert_eq!(classify(&mint, None, false), Some(Stage::EscrowIncomplete));
+
+    // Escrowed, and "Publish to storage" never verified.
+    let publishing =
+        seed_provisioned_runtime_custody_mint(fx.dir.path(), &fx.input("publishing.mp4", 0x91));
+    let mint = journal.load(publishing.draft.mint_id()).unwrap();
+    assert_eq!(classify(&mint, None, false), Some(Stage::PublishIncomplete));
+
+    // Escrowed and published with no terms yet: nothing waits on anyone, and
+    // the next protect of the file continues from it.
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &fx.input("terms.mp4", 0x92));
+    let mint_id = facts.mint_id;
+    assert_eq!(classify(&fx.mint(mint_id), None, false), None);
+
+    let recorded = fx.bind_recorded_terms(mint_id, "0x2", "0xde0b6b3a7640000");
+    assert_eq!(
+        classify(&fx.mint(mint_id), None, false),
+        Some(Stage::RecordedOnly)
+    );
+
+    journal
+        .bind_creator_effect(
+            mint_id,
+            &recorded,
+            elastos_protected_content_runtime::RuntimeMintCreatorEffectBinding::new(
+                "creator-effect-1",
+                "approval-request-1",
+                "request-sha256",
+                fx.wallet_account_id.clone(),
+                "0x1111111111111111111111111111111111111111",
+                "eip155:8453",
+                "base-mainnet",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raised = fx.mint(mint_id);
+    for (effect, expected) in [
+        (Some(Effect::AwaitingApproval), Stage::ApprovalPending),
+        (
+            Some(Effect::ClosedWithoutTransaction),
+            Stage::ApprovalClosed,
+        ),
+        (Some(Effect::Sent), Stage::TransactionSent),
+        (Some(Effect::Mined), Stage::TransactionMined),
+        (
+            Some(Effect::InConnector {
+                connector: "metamask".to_string(),
+            }),
+            Stage::ApprovalInConnector,
+        ),
+        (
+            Some(Effect::WalletUnreachable),
+            Stage::TransactionUnconfirmed,
+        ),
+        (Some(Effect::NotOnRecord), Stage::TransactionUnconfirmed),
+        // A raised effect nobody could ask about is never read as closed.
+        (None, Stage::TransactionUnconfirmed),
+    ] {
+        assert_eq!(
+            classify(&raised, effect.clone(), false),
+            Some(expected),
+            "{effect:?}"
+        );
+    }
+
+    journal
+        .mark_creator_completed(
+            mint_id,
+            elastos_protected_content_runtime::RuntimeMintCreatorTerminalEvidence::new(
+                "bafystalledcreatorcid",
+                "ipfs://bafystalledcreatorcid/metadata.json",
+                "0x1111111111111111111111111111111111111111",
+                "eip155:8453",
+                "base-mainnet",
+                "0x0000000000000000000000000000000000000022",
+                "0x0a",
+                "0x2222222222222222222222222222222222222222",
+                "0x2",
+                "0xde0b6b3a7640000",
+                "0x3333333333333333333333333333333333333333",
+                None,
+                "0x5555555555555555555555555555555555555555555555555555555555555555",
+                123,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let settled = fx.mint(mint_id);
+    assert_eq!(
+        classify(&settled, Some(Effect::Mined), false),
+        Some(Stage::ListingNotAssembled)
+    );
+    assert_eq!(classify(&settled, Some(Effect::Mined), true), None);
+
+    // Which attempts are offered back: all but the two nothing irreversible
+    // came of, which are archived without asking.
+    for stage in [
+        Stage::EscrowIncomplete,
+        Stage::PublishIncomplete,
+        Stage::ApprovalPending,
+        Stage::ApprovalInConnector,
+        Stage::TransactionSent,
+        Stage::TransactionMined,
+        Stage::TransactionUnconfirmed,
+        Stage::ListingNotAssembled,
+    ] {
+        assert!(stage.recoverable(), "{stage:?}");
+    }
+    assert!(!Stage::RecordedOnly.recoverable());
+    assert!(!Stage::ApprovalClosed.recoverable());
+
+    // The never-block rule, one place: what may be set aside, and Start over
+    // follows it exactly.
+    use crate::protected_content_runtime::RuntimeCustodyAttemptDisposition as Disposition;
+    for (stage, disposition) in [
+        (Stage::EscrowIncomplete, Disposition::SetAside),
+        (Stage::PublishIncomplete, Disposition::SetAside),
+        (Stage::RecordedOnly, Disposition::SetAside),
+        (Stage::ApprovalClosed, Disposition::SetAside),
+        (Stage::ApprovalPending, Disposition::SetAsideOnceDeclined),
+        (Stage::ApprovalInConnector, Disposition::Refuse),
+        (Stage::TransactionUnconfirmed, Disposition::Refuse),
+        (Stage::TransactionSent, Disposition::Keep),
+        (Stage::TransactionMined, Disposition::Keep),
+        (Stage::ListingNotAssembled, Disposition::Keep),
+    ] {
+        assert_eq!(stage.disposition(), disposition, "{stage:?}");
+        assert_eq!(
+            stage.may_start_over(),
+            matches!(
+                disposition,
+                Disposition::SetAside | Disposition::SetAsideOnceDeclined
+            ),
+            "{stage:?}"
+        );
+    }
+}
+
+/// The live defect: an earlier attempt kept refusing every new one -- "waiting
+/// for approval in Wallet", even after that approval had expired -- and the
+/// controller had to move the records aside by hand. Now a new mint at other
+/// terms never waits on an attempt that sent nothing on chain: it is archived
+/// (moved aside, never deleted) and the publish runs again as a new attempt.
+/// An attempt whose transaction was sent or mined, or that is listed, keeps
+/// its terms: the refusal names the ones that differ and Resume finishes it.
+#[tokio::test]
+async fn test_runtime_custody_creator_new_terms_archive_the_unfinished_attempt() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let archived_error = |error: anyhow::Error| {
+        assert!(
+            error
+                .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorAttemptArchived>()
+                .is_some(),
+            "{error:#}"
+        );
+    };
+    let other_terms =
+        |input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput| {
+            let mut other = input.clone();
+            other.copies = "0x64".to_string();
+            other.price = "2".to_string();
+            other
+        };
+
+    // Terms on record, nothing raised.
+    let recorded = fx.input("recorded.mp4", 0x8b);
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &recorded);
+    fx.bind_recorded_terms(facts.mint_id, "0x2", "0xde0b6b3a7640000");
+    let attempt = fx.current_attempt(&recorded);
+    archived_error(fx.tail(&other_terms(&recorded), &facts).await.unwrap_err());
+    assert!(!fx.is_in_journal(facts.mint_id));
+    let (directory, note) = archived_attempt(fx.dir.path(), attempt.request_id());
+    assert!(directory
+        .join(hex::encode(facts.mint_id.as_bytes()))
+        .is_file());
+    assert!(directory
+        .join(format!(
+            "intent-{}",
+            hex::encode(attempt.request_id().as_bytes())
+        ))
+        .is_file());
+    assert_eq!(note["reason"], "new_attempt");
+    assert_eq!(note["stage"], "recorded_only");
+    assert_eq!(note["attempt"], 0);
+    assert_eq!(note["terms"]["copies"], "0x2");
+    assert_eq!(note["chain"]["transaction"], "none");
+    let next = fx.current_attempt(&recorded);
+    assert_eq!(next.attempt(), 1);
+    assert_ne!(next.request_id(), attempt.request_id());
+
+    // A Wallet approval is out: it is declined on the way, so the archived
+    // attempt can never put a transaction on chain after the fact.
+    let pending = fx.input("pending.mp4", 0x8c);
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &pending);
+    assert_eq!(
+        fx.tail(&pending, &facts).await.unwrap_err().to_string(),
+        RECOVERY_PENDING_MESSAGE
+    );
+    let attempt = fx.current_attempt(&pending);
+    archived_error(fx.tail(&other_terms(&pending), &facts).await.unwrap_err());
+    let (_, note) = archived_attempt(fx.dir.path(), attempt.request_id());
+    assert_eq!(note["stage"], "approval_pending");
+    assert_eq!(note["chain"]["approval_declined"], true);
+    assert_eq!(note["chain"]["transaction"], "none");
+    assert_eq!(
+        fx.wallet_provider
+            .provider
+            .latest_transaction_approval_status()
+            .await
+            .as_deref(),
+        Some("rejected")
+    );
+
+    // Sent, and mined: never archived. The refusal names the terms that
+    // differ, and Resume finishes the attempt at its own terms.
+    for (name, seed, mined) in [("sent.mp4", 0x8d, false), ("mined.mp4", 0x8f, true)] {
+        let input = fx.input(name, seed);
+        let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+        assert!(fx.tail(&input, &facts).await.is_err());
+        fx.wallet_provider
+            .provider
+            .complete_latest_transaction_approval()
+            .await;
+        if mined {
+            set_mock_protected_content_chain_receipt_error();
+            assert!(fx.tail(&input, &facts).await.is_err());
+            reset_mock_protected_content_chain_mode();
+        }
+        assert_kept_with_terms_named(&fx, &input, &facts, &other_terms(&input)).await;
+        let resumed = fx.resume(&input, &facts).await.unwrap();
+        assert!(resumed.listing_uri.is_some(), "{name}");
+    }
+
+    // A settled and listed mint is not an unfinished attempt: its terms stay,
+    // and the refusal names the ones that differ.
+    let listed = fx.input("listed.mp4", 0x8e);
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &listed);
+    assert!(fx.tail(&listed, &facts).await.is_err());
+    fx.wallet_provider
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    fx.tail(&listed, &facts).await.unwrap();
+    let refusal = fx.tail(&other_terms(&listed), &facts).await.unwrap_err();
+    let blocked = refusal
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+        .expect("the refusal carries its reason as data")
+        .as_json();
+    assert_eq!(blocked["state"], "already_minted");
+    assert_eq!(blocked["differing_terms"], json!(["copies", "price"]));
+    assert!(fx.is_in_journal(facts.mint_id));
+    assert_eq!(fx.current_attempt(&listed).attempt(), 0);
+}
+
+/// Runs one creator tail up to its mint receipt and answers that receipt as a
+/// reverted second mint of the same content id; `kid_bound` is whether the
+/// chain then binds the KID. Returns the tail's refusal.
+async fn reverted_duplicate_mint_refusal(
+    fx: &CreatorRecoveryFixture,
+    name: &str,
+    seed: u8,
+    kid_bound: bool,
+) -> (
+    anyhow::Error,
+    crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts,
+) {
+    let input = fx.input(name, seed);
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+    // The first pass raises the Wallet approval and waits on it.
+    assert!(fx.tail(&input, &facts).await.is_err());
+    fx.wallet_provider
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    set_mock_protected_content_chain_receipt_reverted_already_bound(kid_bound);
+    let refusal = fx.tail(&input, &facts).await.unwrap_err();
+    reset_mock_protected_content_chain_mode();
+    (refusal, facts)
+}
+
+/// F3: a second mint of the same file reverts on chain (`IPAlreadyBound` or
+/// `InvalidTokenId`). Once the chain's own binding confirms the KID is bound,
+/// the attempt ends as `already_minted`, not as a generic failure.
+#[tokio::test]
+async fn reverted_duplicate_mint_settles_already_minted() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let (refusal, facts) = reverted_duplicate_mint_refusal(&fx, "duplicate.mp4", 0x93, true).await;
+    let blocked = refusal
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+        .unwrap_or_else(|| panic!("a reverted duplicate mint is already minted: {refusal:#}"))
+        .as_json();
+    assert_eq!(blocked["state"], "already_minted");
+    assert_eq!(blocked["mint_id"], hex::encode(facts.mint_id.as_bytes()));
+    assert!(fx.is_in_journal(facts.mint_id));
+}
+
+/// The revert alone never decides: when the chain does not bind the KID, the
+/// attempt stays the failure it was.
+#[tokio::test]
+async fn already_bound_revert_without_chain_binding_stays_failed() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let (refusal, facts) =
+        reverted_duplicate_mint_refusal(&fx, "unconfirmed.mp4", 0x94, false).await;
+    assert!(
+        refusal
+            .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+            .is_none(),
+        "an unconfirmed duplicate stays failed: {refusal:#}"
+    );
+    assert!(fx.is_in_journal(facts.mint_id));
+}
+
+/// An attempt that ended as a reverted duplicate offers neither Start over nor
+/// Resume: the file is minted, and nothing this attempt can do settles it.
+#[tokio::test]
+async fn already_minted_offers_no_start_over() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let (refusal, _) = reverted_duplicate_mint_refusal(&fx, "minted.mp4", 0x95, true).await;
+    let blocked = refusal
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+        .unwrap_or_else(|| panic!("a reverted duplicate mint is already minted: {refusal:#}"))
+        .as_json();
+    assert_eq!(blocked["state"], "already_minted");
+    assert_eq!(blocked["can_start_over"], false);
+    assert_eq!(blocked["can_resume"], false);
+}
+
+/// A kept attempt: the new terms are refused with the terms that differ, no
+/// Start over is offered, and nothing moved.
+async fn assert_kept_with_terms_named(
+    fx: &CreatorRecoveryFixture,
+    input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+    facts: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts,
+    other: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+) {
+    let attempt = fx.current_attempt(input);
+    let refusal = fx.tail(other, facts).await.unwrap_err();
+    let blocked = refusal
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+        .unwrap_or_else(|| panic!("a minted attempt is refused with its terms: {refusal:#}"))
+        .as_json();
+    assert_eq!(blocked["differing_terms"], json!(["copies", "price"]));
+    assert_eq!(blocked["can_resume"], true);
+    assert_eq!(blocked["can_start_over"], false);
+    assert!(fx.is_in_journal(facts.mint_id));
+    assert_eq!(fx.current_attempt(input).attempt(), attempt.attempt());
+}
+
+/// The money-safety rule: a Wallet approval left out by an attempt is declined
+/// and confirmed closed before the attempt is set aside. Anything less moves
+/// nothing.
+#[tokio::test]
+async fn test_runtime_custody_creator_attempt_is_archived_only_once_its_approval_is_confirmed_closed(
+) {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let other_terms =
+        |input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput| {
+            let mut other = input.clone();
+            other.copies = "0x64".to_string();
+            other.price = "2".to_string();
+            other
+        };
+    let pending_attempt = |name: &'static str, seed: u8| {
+        let input = fx.input(name, seed);
+        let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+        (input, facts)
+    };
+    let approval_open = |error: anyhow::Error, cause: &str, message: &str| {
+        let value = crate::library::provider_error_from_for_test(&error);
+        assert_eq!(
+            value["attempt_conflict"]["reason"], "approval_open",
+            "{value}"
+        );
+        assert_eq!(value["attempt_conflict"]["cause"], cause, "{value}");
+        assert_eq!(value["attempt_conflict"]["can_start_over"], false);
+        assert_eq!(value["attempt_conflict"]["can_resume"], true);
+        assert_eq!(value["message"], message);
+    };
+
+    // The Wallet refuses the decline: the approval stays out, nothing moves.
+    let (input, facts) = pending_attempt("refused.mp4", 0xb1);
+    assert!(fx.tail(&input, &facts).await.is_err());
+    *fx.wallet_provider.provider.reject_behaviour.lock().await = MockRejectBehaviour::Refuse;
+    approval_open(
+        fx.tail(&other_terms(&input), &facts).await.unwrap_err(),
+        "still_open",
+        "An earlier approval for this file is still open in Wallet. Decline it there, then try again.",
+    );
+    *fx.wallet_provider.provider.reject_behaviour.lock().await = MockRejectBehaviour::Decline;
+    assert!(fx.is_in_journal(facts.mint_id));
+    assert_eq!(fx.current_attempt(&input).attempt(), 0);
+    assert_eq!(
+        fx.wallet_provider
+            .provider
+            .latest_transaction_approval_status()
+            .await
+            .as_deref(),
+        Some("pending")
+    );
+
+    // The Wallet cannot be asked at all: nothing moves.
+    let (input, facts) = pending_attempt("unreachable.mp4", 0xb2);
+    assert!(fx.tail(&input, &facts).await.is_err());
+    *fx.wallet_provider
+        .provider
+        .approvals_unavailable
+        .lock()
+        .await = true;
+    let refusal = fx.tail(&other_terms(&input), &facts).await.unwrap_err();
+    *fx.wallet_provider
+        .provider
+        .approvals_unavailable
+        .lock()
+        .await = false;
+    approval_open(
+        refusal,
+        "wallet_unreachable",
+        "Wallet could not be reached to confirm the earlier approval for this file. Resume it to continue, or try again once Wallet is available.",
+    );
+    assert!(fx.is_in_journal(facts.mint_id));
+    assert_eq!(fx.current_attempt(&input).attempt(), 0);
+
+    // The person approves while the decline runs: the transaction is now
+    // sent, so the attempt is kept with its terms and Resume finishes it.
+    let (input, facts) = pending_attempt("raced.mp4", 0xb3);
+    assert!(fx.tail(&input, &facts).await.is_err());
+    *fx.wallet_provider.provider.reject_behaviour.lock().await = MockRejectBehaviour::ApprovedFirst;
+    assert_kept_with_terms_named(&fx, &input, &facts, &other_terms(&input)).await;
+    *fx.wallet_provider.provider.reject_behaviour.lock().await = MockRejectBehaviour::Decline;
+    assert_eq!(
+        fx.wallet_provider
+            .provider
+            .latest_transaction_approval_status()
+            .await
+            .as_deref(),
+        Some("completed")
+    );
+    let resumed = fx.resume(&input, &facts).await.unwrap();
+    assert!(resumed.listing_uri.is_some());
+
+    // The approval is on record in the journal and nowhere else (a crash
+    // between binding it and raising it, or an evicted record): it cannot be
+    // shown closed, so nothing moves, and Resume is the way on.
+    let (input, facts) = pending_attempt("unrecorded.mp4", 0xb5);
+    let recorded = fx.bind_recorded_terms(facts.mint_id, "0x2", "0xde0b6b3a7640000");
+    crate::protected_content_runtime::runtime_mint_journal(fx.dir.path())
+        .bind_creator_effect(
+            facts.mint_id,
+            &recorded,
+            elastos_protected_content_runtime::RuntimeMintCreatorEffectBinding::new(
+                "creator-effect-never-raised",
+                "approval-request-never-raised",
+                "request-sha256",
+                fx.wallet_account_id.clone(),
+                "0x1111111111111111111111111111111111111111",
+                "eip155:8453",
+                "base-mainnet",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    approval_open(
+        fx.tail(&other_terms(&input), &facts).await.unwrap_err(),
+        "not_on_record",
+        "The earlier approval for this file is not on record here, so it cannot be confirmed closed. Resume it to continue.",
+    );
+    assert!(fx.is_in_journal(facts.mint_id));
+    assert_eq!(fx.current_attempt(&input).attempt(), 0);
+}
+
+/// An approval that went to an external connector (MetaMask, WalletConnect)
+/// may be signed and sent there without the Wallet knowing, so it is never
+/// declined and its attempt never set aside -- pending, expired or declined.
+/// The refusal names the connector, offers no Start over, and Resume stays
+/// the way on.
+#[tokio::test]
+async fn test_runtime_custody_creator_connector_approval_is_never_declined_or_set_aside() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    fx.link_account_to_connector("metamask").await;
+    let other_terms =
+        |input: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput| {
+            let mut other = input.clone();
+            other.copies = "0x64".to_string();
+            other
+        };
+    let in_connector = |error: anyhow::Error| {
+        let value = crate::library::provider_error_from_for_test(&error);
+        assert_eq!(
+            value["attempt_conflict"]["reason"], "approval_in_connector",
+            "{value}"
+        );
+        assert_eq!(value["attempt_conflict"]["connector"], "metamask");
+        assert_eq!(value["attempt_conflict"]["can_start_over"], false);
+        assert_eq!(value["attempt_conflict"]["can_resume"], true);
+        assert_eq!(
+            value["message"],
+            "The earlier approval for this file went to metamask. Runtime cannot tell whether it was signed there, so that attempt is kept. Resume it to finish."
+        );
+    };
+
+    let mut attempts = Vec::new();
+    for (name, seed, status) in [
+        ("pending.mp4", 0xc1, "pending"),
+        ("expired.mp4", 0xc2, "expired"),
+        ("declined.mp4", 0xc3, "rejected"),
+    ] {
+        let input = fx.input(name, seed);
+        let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+        assert!(fx.tail(&input, &facts).await.is_err(), "{name}");
+        fx.wallet_provider
+            .provider
+            .set_latest_transaction_approval_status(status)
+            .await;
+
+        // Offered back with Resume only.
+        match fx.unfinished(&input).await {
+            crate::api::gateway::RuntimeCustodyUnfinishedMintOutcome::Unfinished(entry) => {
+                assert_eq!(entry["stage"], "approval_in_connector", "{name}");
+                assert_eq!(entry["can_start_over"], false, "{name}");
+            }
+            other => panic!("{name}: expected an offered attempt, got {other:?}"),
+        }
+        assert!(
+            !crate::api::gateway::runtime_custody_attempt_may_start_over(
+                &fx.state,
+                &fx.wallet_authority(),
+                &input.principal_id,
+                &input.object_uri,
+                &input.source_storage,
+            )
+            .await,
+            "{name}"
+        );
+
+        // A new mint at other terms: refused, nothing declined, nothing moved.
+        in_connector(fx.tail(&other_terms(&input), &facts).await.unwrap_err());
+        assert_eq!(
+            fx.wallet_provider
+                .provider
+                .latest_transaction_approval_status()
+                .await
+                .as_deref(),
+            Some(status),
+            "{name}: never declined"
+        );
+        assert!(fx.is_in_journal(facts.mint_id), "{name}");
+        assert_eq!(fx.current_attempt(&input).attempt(), 0, "{name}");
+        attempts.push((name, input, facts));
+    }
+
+    // Resume is the way on: a pending approval waits for the person, and an
+    // expired one is asked again. A declined one stays closed -- the known
+    // limitation recorded in the report.
+    for (name, input, facts) in &attempts {
+        if *name == "declined.mp4" {
+            continue;
+        }
+        assert_eq!(
+            fx.resume(input, facts).await.unwrap_err().to_string(),
+            RECOVERY_PENDING_MESSAGE,
+            "{name}"
+        );
+    }
+}
+
+/// A settled mint whose listing file cannot be read is never taken for an
+/// unfinished one: nothing is archived and the refusal says why.
+#[tokio::test]
+async fn test_runtime_custody_creator_unreadable_listing_is_never_archived() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let input = fx.input("listed.mp4", 0xb4);
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+    assert!(fx.tail(&input, &facts).await.is_err());
+    fx.wallet_provider
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    fx.tail(&input, &facts).await.unwrap();
+    let listing = crate::protected_content_runtime::runtime_listing_path_for_test(
+        fx.dir.path(),
+        facts.mint_id,
+    );
+    assert!(listing.is_file());
+    std::fs::write(&listing, b"not a listing").unwrap();
+
+    let mut other = input.clone();
+    other.copies = "0x64".to_string();
+    let refusal = fx.tail(&other, &facts).await.unwrap_err();
+    let value = crate::library::provider_error_from_for_test(&refusal);
+    assert_eq!(
+        value["attempt_conflict"]["reason"], "listing_unreadable",
+        "{value}"
+    );
+    assert!(fx.is_in_journal(facts.mint_id));
+    assert_eq!(fx.current_attempt(&input).attempt(), 0);
+}
+
+/// Pending approval, signed transaction, mined transaction, settled mint with
+/// no listing: each is offered back with its recorded terms to resume or start
+/// over, and looking at them never archives them.
+#[tokio::test]
+async fn test_runtime_custody_recoverable_attempts_are_offered_and_never_dropped() {
+    use crate::api::gateway::RuntimeCustodyUnfinishedMintOutcome as Outcome;
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let input = fx.input("recoverable.mp4", 0x93);
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+    let mint_id = facts.mint_id;
+    let mint_hex = hex::encode(mint_id.as_bytes());
+    let assert_offered = |outcome: Outcome, stage: &str| match outcome {
+        Outcome::Unfinished(entry) => {
+            assert_eq!(entry["stage"], stage, "{entry}");
+            assert_eq!(entry["mint_id"], mint_hex);
+            assert_eq!(entry["resume"], "recorded_terms");
+            // Start over only while nothing went on chain.
+            assert_eq!(
+                entry["can_start_over"],
+                stage == "approval_pending",
+                "{stage}"
+            );
+            assert_eq!(entry["terms"]["copies"], "0x2");
+            assert_eq!(
+                entry["terms"]["channel"],
+                "0x0000000000000000000000000000000000000022"
+            );
+        }
+        other => panic!("{stage}: expected an offered attempt, got {other:?}"),
+    };
+
+    // A Wallet approval is out.
+    assert_eq!(
+        fx.tail(&input, &facts).await.unwrap_err().to_string(),
+        RECOVERY_PENDING_MESSAGE
+    );
+    assert_offered(fx.unfinished(&input).await, "approval_pending");
+    let raised = fx.mint(mint_id).creator_state().cloned().unwrap();
+
+    // Signed in the Wallet: a transaction may be on its way.
+    fx.wallet_provider
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    assert_offered(fx.unfinished(&input).await, "transaction_sent");
+    assert!(fx.mint(mint_id).creator_state() == Some(&raised));
+
+    // Mined, and the mint receipt could not be read yet.
+    set_mock_protected_content_chain_receipt_error();
+    assert!(fx.tail(&input, &facts).await.is_err());
+    reset_mock_protected_content_chain_mode();
+    assert_offered(fx.unfinished(&input).await, "transaction_mined");
+    assert!(fx.mint(mint_id).creator_state() == Some(&raised));
+
+    // Settled on chain, and the listing never published.
+    set_mock_runtime_listing_publish_failure(true);
+    assert!(fx.tail(&input, &facts).await.is_err());
+    set_mock_runtime_listing_publish_failure(false);
+    let settled = fx.mint(mint_id).creator_state().cloned().unwrap();
+    assert!(settled.terminal().is_some());
+    assert_offered(fx.unfinished(&input).await, "listing_not_assembled");
+    assert!(fx.mint(mint_id).creator_state() == Some(&settled));
+    // Once Resume has published the listing, nothing is left to offer.
+    fx.resume(&input, &facts).await.unwrap();
+    assert!(matches!(fx.unfinished(&input).await, Outcome::Nothing));
+
+    // Before any terms: the escrow and the failed publish are offered too, as
+    // attempts whose terms the creator enters again.
+    let publishing = fx.input("publish-failed.mp4", 0x94);
+    seed_provisioned_runtime_custody_mint(fx.dir.path(), &publishing);
+    match fx.unfinished(&publishing).await {
+        Outcome::Unfinished(entry) => {
+            assert_eq!(entry["stage"], "publish_incomplete");
+            assert_eq!(entry["resume"], "enter_terms");
+            assert_eq!(entry["terms"], json!(null));
+        }
+        other => panic!("expected an offered attempt, got {other:?}"),
+    }
+}
+
+/// Resume re-runs the attempt at its RECORDED terms, whatever the request
+/// carries: an approval that lapsed is raised again for the same transaction,
+/// and nothing about the terms moves.
+#[tokio::test]
+async fn test_runtime_custody_creator_resume_raises_an_expired_approval_again() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let input = fx.input("resume-expired.mp4", 0x95);
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+    let mint_id = facts.mint_id;
+    assert_eq!(
+        fx.tail(&input, &facts).await.unwrap_err().to_string(),
+        RECOVERY_PENDING_MESSAGE
+    );
+    let approval = fx
+        .wallet_provider
+        .provider
+        .latest_transaction_approval_request_id()
+        .await
+        .unwrap();
+    let raised = fx.mint(mint_id).creator_state().cloned().unwrap();
+    fx.wallet_provider
+        .provider
+        .expire_latest_transaction_approval()
+        .await;
+
+    // What a resume carries for terms is ignored; the record decides.
+    let mut ignored = input.clone();
+    ignored.copies = "0x9".to_string();
+    ignored.price = "9".to_string();
+    assert_eq!(
+        fx.resume(&ignored, &facts).await.unwrap_err().to_string(),
+        RECOVERY_PENDING_MESSAGE
+    );
+    assert_eq!(
+        fx.wallet_provider
+            .provider
+            .latest_transaction_approval_request_id()
+            .await
+            .unwrap(),
+        approval,
+        "the same transaction is asked for again"
+    );
+    assert_eq!(
+        fx.wallet_provider
+            .provider
+            .latest_transaction_approval_status()
+            .await
+            .as_deref(),
+        Some("pending")
+    );
+    assert!(fx.mint(mint_id).creator_state() == Some(&raised));
+}
+
+/// A mint that settled on chain but whose listing never published is finished
+/// by Resume from the record: nothing new is sent to the chain.
+#[tokio::test]
+async fn test_runtime_custody_creator_resume_assembles_the_listing_of_a_settled_mint() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let input = fx.input("resume-listing.mp4", 0x96);
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+    assert!(fx.tail(&input, &facts).await.is_err());
+    fx.wallet_provider
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    set_mock_runtime_listing_publish_failure(true);
+    assert!(fx.tail(&input, &facts).await.is_err());
+    set_mock_runtime_listing_publish_failure(false);
+
+    let mut ignored = input.clone();
+    ignored.price = "9".to_string();
+    let resumed = fx.resume(&ignored, &facts).await.unwrap();
+    assert_eq!(resumed.listing_uri, Some(format!("elastos://{TEST_CIDV1}")));
+    assert_eq!(
+        resumed.content_security["settled_before_this_request"],
+        true
+    );
+}
+
+/// Resume has nothing to run from before terms were recorded, and says so
+/// rather than inventing terms.
+#[tokio::test]
+async fn test_runtime_custody_creator_resume_without_recorded_terms_is_refused() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    let input = fx.input("resume-nothing.mp4", 0x97);
+    let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+    let refusal = fx.resume(&input, &facts).await.unwrap_err();
+    assert_eq!(
+        refusal.to_string(),
+        crate::protected_content_runtime::RUNTIME_CUSTODY_CREATOR_NOTHING_TO_RESUME_MESSAGE
+    );
+    assert!(fx.mint(facts.mint_id).creator_state().is_none());
+}
+
+/// Creator asks once, on open, for the unfinished mints in its folder: the
+/// recoverable ones come back to offer, the unrecoverable ones are archived
+/// on the way, and a finished one is not mentioned at all. Start over then
+/// archives an offered one, and is refused for a mint that is listed.
+#[tokio::test]
+async fn test_creator_unfinished_protections_offers_recoverable_and_archives_the_rest() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    fx.registry
+        .register_sub_provider(
+            "object",
+            Arc::new(crate::library::ObjectProvider::new(
+                fx.dir.path().to_path_buf(),
+                Arc::downgrade(&fx.registry),
+            )),
+        )
+        .await
+        .unwrap();
+    let app = gateway_router(fx.state.clone());
+    let creator_token = app_token_for_authority(fx.dir.path(), CREATOR_CAPSULE_ID, &fx.authority);
+    let root = crate::auth::principal_localhost_root(&fx.authority.principal_id);
+
+    let pending = fx.input("pending.mp4", 0x98);
+    let stale = fx.input("stale.mp4", 0x99);
+    for input in [&pending, &stale] {
+        let (status, _, upload) =
+            put_library_upload(app.clone(), &creator_token, &input.object_uri, b"media").await;
+        assert_eq!(status, StatusCode::OK, "{upload}");
+    }
+    let pending_facts = seed_completed_runtime_custody_mint(fx.dir.path(), &pending);
+    assert!(fx.tail(&pending, &pending_facts).await.is_err());
+    let stale_facts = seed_completed_runtime_custody_mint(fx.dir.path(), &stale);
+    fx.bind_recorded_terms(stale_facts.mint_id, "0x2", "0xde0b6b3a7640000");
+
+    let (status, answer) = post_library(
+        app.clone(),
+        &creator_token,
+        "unfinished_protections",
+        json!({ "uri": format!("{root}/Creator") }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(answer["status"], "ok", "{answer}");
+    let data = &answer["data"];
+    assert_eq!(data["schema"], "elastos.library.unfinished-protections/v1");
+    assert_eq!(data["archived"], 1, "{data}");
+    let unfinished = data["unfinished"].as_array().unwrap();
+    assert_eq!(unfinished.len(), 1, "{data}");
+    assert_eq!(unfinished[0]["uri"], pending.object_uri);
+    assert_eq!(unfinished[0]["name"], "pending.mp4");
+    assert_eq!(unfinished[0]["stage"], "approval_pending");
+    assert_eq!(unfinished[0]["can_start_over"], true);
+    assert!(!fx.is_in_journal(stale_facts.mint_id));
+    assert_eq!(fx.current_attempt(&stale).attempt(), 1);
+    assert!(fx.mint(pending_facts.mint_id).creator_state().is_some());
+
+    // Start over: the offered attempt is archived and the file is on a new
+    // attempt.
+    let (status, answer) = post_library(
+        app.clone(),
+        &creator_token,
+        "discard_protection",
+        json!({ "uri": pending.object_uri }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(answer["data"]["discarded"], true, "{answer}");
+    assert_eq!(answer["data"]["archived_attempt"], 0);
+    assert!(!fx.is_in_journal(pending_facts.mint_id));
+    assert_eq!(fx.current_attempt(&pending).attempt(), 1);
+
+    // An attempt that sent its transaction, and a listed mint, are never
+    // started over: the refusal offers Resume, with nothing moved.
+    for (name, seed, settle) in [("sent.mp4", 0x9b, false), ("listed.mp4", 0x9a, true)] {
+        let kept = fx.input(name, seed);
+        let kept_facts = seed_completed_runtime_custody_mint(fx.dir.path(), &kept);
+        assert!(fx.tail(&kept, &kept_facts).await.is_err());
+        fx.wallet_provider
+            .provider
+            .complete_latest_transaction_approval()
+            .await;
+        if settle {
+            fx.tail(&kept, &kept_facts).await.unwrap();
+        }
+        let (_, answer) = post_library(
+            app.clone(),
+            &creator_token,
+            "discard_protection",
+            json!({ "uri": kept.object_uri }),
+        )
+        .await;
+        assert_eq!(answer["status"], "error", "{answer}");
+        assert_eq!(answer["creator_mint"]["can_resume"], true, "{answer}");
+        assert_eq!(answer["creator_mint"]["can_start_over"], false, "{answer}");
+        assert!(fx.is_in_journal(kept_facts.mint_id), "{name}");
+        assert_eq!(fx.current_attempt(&kept).attempt(), 0, "{name}");
+    }
+
+    // Only the app that mints from that folder asks.
+    let library_token = app_token_for_authority(fx.dir.path(), LIBRARY_CAPSULE_ID, &fx.authority);
+    let response = app
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .method("POST")
+                .uri("/api/provider/object/unfinished_protections")
+                .header("x-elastos-home-token", &library_token)
+                .header(CONTENT_TYPE, "application/json")
+                .body(provider_body(json!({ "uri": format!("{root}/Creator") })))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -8340,6 +10068,7 @@ async fn test_runtime_custody_creator_tail_listing_error_is_unavailable_without_
         receipt: json!({"schema": "elastos.content.availability.receipt/v1"}),
         content_security: json!({"mode": "runtime_custody"}),
         listing_uri: None,
+        capsule_uri: None,
     };
     let err = runtime_custody_publish_creator_tail_for_test(
         &state,
@@ -8399,6 +10128,7 @@ async fn test_runtime_custody_creator_tail_listing_error_is_unavailable_without_
         receipt: json!({"schema": "elastos.content.availability.receipt/v1"}),
         content_security: json!({"mode": "runtime_custody"}),
         listing_uri: None,
+        capsule_uri: None,
     };
     let err = runtime_custody_publish_creator_tail_for_test(
         &state,
@@ -8519,6 +10249,7 @@ async fn test_runtime_custody_buy_raw_provider_call_requires_gateway_wallet_auth
             "mint_id": "00".repeat(32),
         }),
         None,
+        crate::library::LibraryRequestRoute::UnverifiedCaller,
     )
     .await;
     assert_eq!(response["status"], "error");
@@ -8914,6 +10645,164 @@ async fn test_runtime_custody_buy_completion_projects_outcome_under_the_approval
     );
 }
 
+/// A settled buy's terminal facts, as a completed purchase records them.
+pub(super) fn completed_market_terminal_for_test(
+) -> crate::protected_content_runtime::RuntimeCustodyTerminalPurchaseRecord {
+    let now = crate::auth::now_ts();
+    crate::protected_content_runtime::RuntimeCustodyTerminalPurchaseRecord {
+        chain_transaction: format!("0x{}", hex::encode([0xaa; 32])),
+        wallet_binding: elastos_wallet_contract::ValidatedChainOutcomeBindingV1::ManagedSigned {
+            signed_transaction_sha256: format!("sha256:{}", hex::encode([0xab; 32])),
+        },
+        chain_observation: json!({ "schema": "elastos.chain.broadcast_receipt/v1" }),
+        access_evidence: Some(
+            crate::protected_content_runtime::RuntimeCustodyPurchaseAccessEvidenceRecord {
+                schema: "elastos.chain.protected-content-purchase-access/v1".to_string(),
+                request_id: "purchase-access:test".to_string(),
+                network: "base-mainnet".to_string(),
+                chain_id: 8453,
+                wallet: MOCK_MANAGED_EVM_ADDRESS.to_ascii_lowercase(),
+                content_access_id: Some(format!("0x{}", "00".repeat(16))),
+                ledger: None,
+                token_id: None,
+                has_access: true,
+                finalized_block_number: 44,
+                finalized_block_hash: format!("0x{}", hex::encode([0xad; 32])),
+                finalized_block_timestamp: now,
+                observed_at: now,
+            },
+        ),
+        confirmed_at: now,
+        acquired_at: now,
+    }
+}
+
+/// R29 (SM-I2), the `buy` half: one purchase per item across both paths. A
+/// market purchase of the item under way refuses a listing-package buy before
+/// any Wallet request or purchase record; a completed one is `already_owned`.
+#[tokio::test]
+async fn test_runtime_custody_buy_refuses_an_item_a_market_purchase_holds() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let registry = state.provider_registry.as_ref().unwrap().clone();
+    registry
+        .register_sub_provider("content", Arc::new(MockContentProvider))
+        .await
+        .unwrap();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    reset_mock_chain_raw_requests();
+
+    let authority = passkey_authority_with_profile(dir.path(), "buyer");
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let wallet_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal(&authority.principal_id)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &authority.principal_id,
+        "eip155:8453",
+        &wallet_account_id,
+        10,
+    )
+    .await;
+    let uri = format!(
+        "{}/Documents/protected-buy-market-held",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+    let publish_input =
+        runtime_custody_creator_test_input(&authority.principal_id, &uri, 0x94, &wallet_account_id);
+    let facts = seed_completed_runtime_custody_mint(dir.path(), &publish_input);
+    let listing = seed_runtime_custody_creator_listing_for_buy(
+        dir.path(),
+        &authority.principal_id,
+        &facts,
+        MOCK_MANAGED_EVM_ADDRESS,
+        true,
+    );
+    let kid = crate::protected_content_market::normalize_runtime_market_kid(
+        &listing.package.content_access_id,
+    )
+    .unwrap();
+    let (item, offer) =
+        crate::protected_content_market::market_terms_from_package(&listing.package, &kid);
+    let mut market = crate::protected_content_market::RuntimeMarketPurchaseRecord {
+        schema: crate::protected_content_market::RUNTIME_MARKET_PURCHASE_SCHEMA_V1.to_string(),
+        principal_id: authority.principal_id.clone(),
+        account_id: wallet_account_id.clone(),
+        address: MOCK_MANAGED_EVM_ADDRESS.to_ascii_lowercase(),
+        item: item.clone(),
+        asset_uri: format!("elastos://{}", listing.package.metadata_cid),
+        offer: crate::protected_content_market::RuntimeMarketOffer {
+            quantity: "0x1".to_string(),
+            ..offer
+        },
+        attempt_id: "0123456789abcdef0123456789abcdef".to_string(),
+        approval_stage: None,
+        acquisition_stage: crate::protected_content_runtime::RuntimeCustodyPurchaseStageRecord {
+            stage: "buy".to_string(),
+            effect_id: "runtime-effect:33333333333333333333333333333333".to_string(),
+            approval_request_id: "wallet-request:33333333333333333333333333333333".to_string(),
+            request_sha256: format!("sha256:{}", "77".repeat(32)),
+            chain_namespace: item.chain_namespace.clone(),
+            network: item.network.clone(),
+            to: MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY.to_ascii_lowercase(),
+            value: "0x0".to_string(),
+            data: "0x".to_string(),
+        },
+        progress: crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
+            confirmed_approval: None,
+            confirmed_buy: None,
+        },
+        adopted_mint_id: None,
+        created_at: 1,
+        updated_at: 1,
+    };
+    crate::protected_content_market::persist_runtime_market_purchase(dir.path(), &market).unwrap();
+    let app = gateway_router(state);
+    let buy_body = json!({ "mint_id": hex::encode(facts.mint_id.as_bytes()) });
+
+    let (status, payload) = post_library(app.clone(), &token, "buy", buy_body.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["status"], "error", "{payload}");
+    assert_eq!(payload["code"], "attempt_in_progress", "{payload}");
+    assert_eq!(
+        payload["current"]["seller"], market.offer.seller,
+        "{payload}"
+    );
+    assert!(wallet_provider
+        .provider
+        .latest_transaction_approval_request_id()
+        .await
+        .is_none());
+    assert!(
+        crate::protected_content_runtime::load_runtime_custody_purchase(
+            dir.path(),
+            &authority.principal_id,
+            facts.mint_id,
+        )
+        .unwrap()
+        .is_none()
+    );
+
+    // A market purchase that completed: this person owns the item.
+    market.progress = crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Complete {
+        terminal: completed_market_terminal_for_test(),
+    };
+    crate::protected_content_market::persist_runtime_market_purchase(dir.path(), &market).unwrap();
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let (_, payload) = post_library(app, &token, "buy", buy_body).await;
+    assert_eq!(payload["code"], "already_owned", "{payload}");
+    assert!(wallet_provider
+        .provider
+        .latest_transaction_approval_request_id()
+        .await
+        .is_none());
+}
+
 #[tokio::test]
 async fn test_runtime_custody_buy_erc20_orders_approval_then_buy_without_duplicate_plan() {
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
@@ -9068,6 +10957,150 @@ async fn test_runtime_custody_buy_erc20_orders_approval_then_buy_without_duplica
     );
 }
 
+/// Once the ERC-20 approval stage has confirmed on chain, a retried `buy`
+/// must not re-drive it: no extra Wallet lookup for the already-confirmed
+/// approval effect, and the persisted record remembers the confirmation so
+/// it can be skipped instead of re-derived from scratch on every call.
+#[tokio::test]
+async fn test_runtime_custody_buy_confirmed_approval_stage_is_not_redriven() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let registry = state.provider_registry.as_ref().unwrap().clone();
+    registry
+        .register_sub_provider("content", Arc::new(MockContentProvider))
+        .await
+        .unwrap();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    reset_mock_chain_raw_requests();
+
+    let authority = passkey_authority_with_profile(dir.path(), "buyer");
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let wallet_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal(&authority.principal_id)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &authority.principal_id,
+        "eip155:8453",
+        &wallet_account_id,
+        10,
+    )
+    .await;
+    let uri = format!(
+        "{}/Documents/protected-buy-approval-idempotent",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+    let publish_input =
+        runtime_custody_creator_test_input(&authority.principal_id, &uri, 0x93, &wallet_account_id);
+    let facts = seed_completed_runtime_custody_mint(dir.path(), &publish_input);
+    seed_runtime_custody_creator_listing_for_buy(
+        dir.path(),
+        &authority.principal_id,
+        &facts,
+        MOCK_MANAGED_EVM_ADDRESS,
+        false,
+    );
+    let app = gateway_router(state.clone());
+    let buy_body = json!({ "mint_id": hex::encode(facts.mint_id.as_bytes()) });
+
+    // Priming call: creates the approval and buy stages; approval pending.
+    let (priming_status, priming_payload) =
+        post_library(app.clone(), &token, "buy", buy_body.clone()).await;
+    assert_eq!(priming_status, StatusCode::OK);
+    assert_eq!(priming_payload["status"], "error");
+    assert_eq!(
+        priming_payload["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+    );
+    wallet_provider
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+
+    // First counted call: the approval stage's transaction confirms on chain
+    // within this call; the buy stage raises its own (still pending)
+    // approval and the purchase stays pending overall.
+    let first_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let (first_status, first_payload) =
+        post_library(app.clone(), &first_token, "buy", buy_body.clone()).await;
+    assert_eq!(first_status, StatusCode::OK);
+    assert_eq!(first_payload["status"], "error");
+    assert_eq!(
+        first_payload["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+    );
+
+    let purchase_after_first = crate::protected_content_runtime::load_runtime_custody_purchase(
+        dir.path(),
+        &authority.principal_id,
+        facts.mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    match &purchase_after_first.progress {
+        crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
+            confirmed_approval,
+            confirmed_buy,
+        } => {
+            assert!(
+                confirmed_approval.is_some(),
+                "approval stage must be confirmed after the first call"
+            );
+            assert!(
+                confirmed_buy.is_none(),
+                "buy stage must still be pending after the first call"
+            );
+        }
+        other => panic!("expected a pending purchase, got {other:?}"),
+    }
+
+    // Second counted call: the already-confirmed approval stage must not be
+    // re-driven. Only the buy stage's still-pending Wallet approval should
+    // be looked up (two `ListApprovals` reads: one from the exact-effect
+    // recovery, one from the completion check) -- not a third for approval.
+    wallet_provider.clear_requests().await;
+    let second_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let (second_status, second_payload) = post_library(app, &second_token, "buy", buy_body).await;
+    assert_eq!(second_status, StatusCode::OK);
+    assert_eq!(second_payload["status"], "error");
+    assert_eq!(
+        second_payload["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+    );
+    let second_call_ops = wallet_provider.recorded_v2_operation_kinds().await;
+    let list_approvals_count = second_call_ops
+        .iter()
+        .filter(|kind| **kind == WalletOperationKind::ListApprovals)
+        .count();
+    assert_eq!(
+        list_approvals_count, 2,
+        "confirmed approval stage must not be re-driven: {second_call_ops:?}"
+    );
+
+    let purchase_after_second = crate::protected_content_runtime::load_runtime_custody_purchase(
+        dir.path(),
+        &authority.principal_id,
+        facts.mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(
+        matches!(
+            &purchase_after_second.progress,
+            crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
+                confirmed_approval: Some(_),
+                confirmed_buy: None,
+            }
+        ),
+        "approval stays confirmed and buy stays pending: {:?}",
+        purchase_after_second.progress
+    );
+}
+
 #[tokio::test]
 async fn test_runtime_custody_buy_access_corroboration_stays_nonterminal_until_allow() {
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
@@ -9166,7 +11199,8 @@ async fn test_runtime_custody_buy_access_corroboration_stays_nonterminal_until_a
         assert!(matches!(
             purchase.progress,
             crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
-                confirmed_buy: Some(_)
+                confirmed_buy: Some(_),
+                ..
             }
         ));
     }
@@ -9186,6 +11220,124 @@ async fn test_runtime_custody_buy_access_corroboration_stays_nonterminal_until_a
     assert_eq!(ok_status, StatusCode::OK);
     assert_eq!(ok_payload["status"], "ok");
     assert_eq!(ok_payload["data"]["availability"]["status"], "buyer_owned");
+}
+
+/// #49 item 3: chain-provider answers `unknown_protected_content_object`
+/// when the content access id the buy is resolving is not bound on chain at
+/// all — distinct from `Error`'s transient/stale-observation failure, which
+/// stays the ordinary "pending" retry above. An unbound target can never
+/// become bound by retrying, so it must surface as a real buy failure
+/// instead of parking behind the pending message forever. The ledger keeps
+/// its `Pending` semantics untouched (no new terminal state): the buy stage
+/// the chain confirmed earlier stays recorded, only the access check fails.
+#[tokio::test]
+async fn buy_reports_unbound_content_access_id() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let registry = state.provider_registry.as_ref().unwrap().clone();
+    registry
+        .register_sub_provider("content", Arc::new(MockContentProvider))
+        .await
+        .unwrap();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    reset_mock_chain_raw_requests();
+
+    let authority = passkey_authority_with_profile(dir.path(), "buyer");
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let wallet_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal(&authority.principal_id)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &authority.principal_id,
+        "eip155:8453",
+        &wallet_account_id,
+        10,
+    )
+    .await;
+    let uri = format!(
+        "{}/Documents/protected-buy-unbound",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+    let publish_input =
+        runtime_custody_creator_test_input(&authority.principal_id, &uri, 0x97, &wallet_account_id);
+    let facts = seed_completed_runtime_custody_mint(dir.path(), &publish_input);
+    seed_runtime_custody_creator_listing_for_buy(
+        dir.path(),
+        &authority.principal_id,
+        &facts,
+        MOCK_MANAGED_EVM_ADDRESS,
+        true,
+    );
+    let app = gateway_router(state);
+
+    // First call raises the Wallet approval for the (native, single-step)
+    // buy transaction; the purchase record is created as
+    // `Pending { confirmed_buy: None }`.
+    let _ = post_library(
+        app.clone(),
+        &token,
+        "buy",
+        json!({
+            "mint_id": hex::encode(facts.mint_id.as_bytes()),
+        }),
+    )
+    .await;
+    let _tx_hash = wallet_provider
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    let signed_transaction = wallet_provider
+        .provider
+        .latest_transaction_signed_transaction()
+        .await
+        .expect("completed mock transaction");
+    reset_mock_chain_broadcast_count(&signed_transaction);
+
+    // The replay call completes the buy transaction (confirmed_buy becomes
+    // `Some`) and then resolves purchase access, which the mock now answers
+    // unbound.
+    set_mock_protected_content_purchase_access_unbound();
+    let replay_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let (status, payload) = post_library(
+        app,
+        &replay_token,
+        "buy",
+        json!({
+            "mint_id": hex::encode(facts.mint_id.as_bytes()),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["status"], "error");
+    assert_eq!(
+        payload["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_UNBOUND_MESSAGE
+    );
+
+    let purchase = crate::protected_content_runtime::load_runtime_custody_purchase(
+        dir.path(),
+        &authority.principal_id,
+        facts.mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(
+        matches!(
+            purchase.progress,
+            crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
+                confirmed_buy: Some(_),
+                ..
+            }
+        ),
+        "the confirmed buy stage stays recorded and the ledger never \
+         advances to Complete on an unbound access check: {purchase:?}"
+    );
 }
 
 #[tokio::test]
@@ -9294,6 +11446,218 @@ async fn test_runtime_custody_buy_selects_latest_chain_transaction_default() {
     assert_eq!(purchase.chain_namespace, "eip155:8453");
 }
 
+/// A fresh Home's Wallet holds one EVM account, the native one on Elastos
+/// Smart Chain, and the Wallet keeps a single EVM default for every EVM chain.
+/// With no default set on Base itself, that account is the creator's Base
+/// account; requiring an exact Base default left Creator with nobody to mint as.
+#[tokio::test]
+async fn test_runtime_custody_creator_publish_binding_uses_the_wallet_evm_default_without_a_base_one(
+) {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    reset_mock_chain_raw_requests();
+
+    let authority = passkey_authority_with_profile(dir.path(), "creator");
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let runtime_authority =
+        runtime_wallet_authority_for_app_token(dir.path(), LIBRARY_CAPSULE_ID, &token);
+    let native_address = mock_managed_evm_address(3).unwrap();
+    let native_account_id = format!("wallet:eip155:20:{native_address}");
+    wallet_provider.provider.accounts.lock().await.push(json!({
+        "account_id": native_account_id,
+        "principal_id": authority.principal_id,
+        "proof_binding_id": format!("proof:wallet:managed:eip155:20:{native_address}"),
+        "chain_namespace": "eip155:20",
+        "address": native_address,
+        "proof_type": "managed_evm",
+        "signing_available": true,
+        "signing_status": "managed_key_available",
+        "label": "EVM Account",
+        "linked_at": crate::auth::now_ts()
+    }));
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &authority.principal_id,
+        "eip155:20",
+        &native_account_id,
+        10,
+    )
+    .await;
+
+    let binding = crate::api::gateway::resolve_runtime_custody_creator_publish_binding(
+        &state,
+        &runtime_authority,
+        &authority.principal_id,
+        &format!(
+            "{}/Documents/protected-native-default",
+            crate::auth::principal_localhost_root(&authority.principal_id)
+        ),
+        "plain_localhost_root",
+    )
+    .await
+    .unwrap();
+    assert_eq!(binding.account_id, native_account_id);
+    assert_eq!(binding.address, native_address.to_ascii_lowercase());
+}
+
+/// The Wallet's Network choice records the default on the chosen chain while
+/// the account stays on the chain it was created on. One EVM key is one
+/// address everywhere, so a Base default naming the native Elastos Smart Chain
+/// account is the creator's Base account.
+#[tokio::test]
+async fn test_runtime_custody_creator_publish_binding_uses_a_base_default_naming_a_native_evm_account(
+) {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    reset_mock_chain_raw_requests();
+
+    let authority = passkey_authority_with_profile(dir.path(), "creator");
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let runtime_authority =
+        runtime_wallet_authority_for_app_token(dir.path(), LIBRARY_CAPSULE_ID, &token);
+    let native_address = mock_managed_evm_address(3).unwrap();
+    let native_account_id = format!("wallet:eip155:20:{native_address}");
+    wallet_provider.provider.accounts.lock().await.push(json!({
+        "account_id": native_account_id,
+        "principal_id": authority.principal_id,
+        "proof_binding_id": format!("proof:wallet:managed:eip155:20:{native_address}"),
+        "chain_namespace": "eip155:20",
+        "address": native_address,
+        "proof_type": "managed_evm",
+        "signing_available": true,
+        "signing_status": "managed_key_available",
+        "label": "EVM Account",
+        "linked_at": crate::auth::now_ts()
+    }));
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &authority.principal_id,
+        "eip155:8453",
+        &native_account_id,
+        10,
+    )
+    .await;
+
+    let binding = crate::api::gateway::resolve_runtime_custody_creator_publish_binding(
+        &state,
+        &runtime_authority,
+        &authority.principal_id,
+        &format!(
+            "{}/Documents/protected-native-base-default",
+            crate::auth::principal_localhost_root(&authority.principal_id)
+        ),
+        "plain_localhost_root",
+    )
+    .await
+    .expect("a Base default naming the native EVM account must back a Base mint");
+    assert_eq!(binding.account_id, native_account_id);
+    assert_eq!(binding.address, native_address.to_ascii_lowercase());
+}
+
+/// A contract account exists only on the chain it was deployed to. Its
+/// Elastos Smart Chain default must never become the creator's Base account,
+/// while an externally owned account in the same place still does.
+#[tokio::test]
+async fn test_runtime_custody_creator_publish_binding_never_reuses_a_contract_account_default_for_another_chain(
+) {
+    use crate::protected_content_runtime::{
+        RuntimeCustodyWalletDefaultReason, RuntimeCustodyWalletDefaultUnusable,
+    };
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    reset_mock_chain_raw_requests();
+
+    let authority = passkey_authority_with_profile(dir.path(), "creator");
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let runtime_authority =
+        runtime_wallet_authority_for_app_token(dir.path(), LIBRARY_CAPSULE_ID, &token);
+    let linked_address = mock_managed_evm_address(4).unwrap();
+    let linked_account_id = format!("wallet:eip155:20:{linked_address}");
+    let linked_account = |proof_type: &str| {
+        json!({
+            "account_id": linked_account_id,
+            "principal_id": authority.principal_id,
+            "proof_binding_id": format!("proof:wallet:connector:eip155:20:{linked_address}"),
+            "chain_namespace": "eip155:20",
+            "address": linked_address,
+            "proof_type": proof_type,
+            "connector_id": "metamask",
+            "signing_available": true,
+            "signing_status": "external_connector_available",
+            "label": "Linked",
+            "linked_at": crate::auth::now_ts()
+        })
+    };
+    wallet_provider
+        .provider
+        .accounts
+        .lock()
+        .await
+        .push(linked_account("siwe_erc1271"));
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &authority.principal_id,
+        "eip155:20",
+        &linked_account_id,
+        10,
+    )
+    .await;
+    let object_uri = format!(
+        "{}/Documents/protected-contract-default",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+
+    let refusal = crate::api::gateway::resolve_runtime_custody_creator_publish_binding(
+        &state,
+        &runtime_authority,
+        &authority.principal_id,
+        &object_uri,
+        "plain_localhost_root",
+    )
+    .await
+    .expect_err("a contract account default must not serve another chain");
+    assert!(
+        refusal.chain().any(|cause| cause
+            .downcast_ref::<RuntimeCustodyWalletDefaultUnusable>()
+            .is_some_and(|unusable| unusable.reason()
+                == RuntimeCustodyWalletDefaultReason::NoTransactionDefaultForChainNamespace)),
+        "{refusal:#}"
+    );
+
+    *wallet_provider
+        .provider
+        .accounts
+        .lock()
+        .await
+        .iter_mut()
+        .find(|account| {
+            account.get("account_id").and_then(Value::as_str) == Some(linked_account_id.as_str())
+        })
+        .unwrap() = linked_account("siwe");
+    let binding = crate::api::gateway::resolve_runtime_custody_creator_publish_binding(
+        &state,
+        &runtime_authority,
+        &authority.principal_id,
+        &object_uri,
+        "plain_localhost_root",
+    )
+    .await
+    .expect("an externally owned account default serves every EVM chain");
+    assert_eq!(binding.account_id, linked_account_id);
+}
+
 #[tokio::test]
 async fn test_runtime_custody_creator_publish_binding_selects_latest_chain_transaction_default() {
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
@@ -9394,6 +11758,11 @@ async fn test_runtime_custody_creator_publish_binding_reuses_media_preparation_a
         .provider
         .seed_managed_evm_account_for_principal_with_index(&authority.principal_id, 2)
         .await;
+    // Deliberately NOT the bound account: the binding layer pins to what the
+    // preparation recorded regardless of what the wallet defaults to now, which
+    // is what keeps an effect identity durable across retries. Whether that pin
+    // is still wanted is a question for the creator tail, which knows the
+    // mint's stage -- see the drift test there.
     set_mock_wallet_transaction_default(
         &wallet_provider.provider,
         &authority.principal_id,
@@ -9443,6 +11812,9 @@ async fn test_runtime_custody_creator_publish_binding_reuses_media_preparation_a
     .unwrap();
     assert_eq!(binding.account_id, bound_account_id);
     assert_eq!(binding.address, mock_managed_evm_address(1).unwrap());
+    // `newer_account_id` exists in the wallet throughout: merely holding
+    // another account must not disturb a mint already under way.
+    assert_ne!(binding.account_id, newer_account_id);
 }
 
 #[tokio::test]
@@ -9475,7 +11847,10 @@ async fn test_runtime_custody_creator_publish_binding_requires_a_valid_chain_tra
     let cases = [
         ("missing", vec![], None),
         (
-            "wrong_chain",
+            // A contract account lives on one chain; its default there never
+            // serves Base. (An externally owned account would: one key, one
+            // address on every EVM chain.)
+            "contract_on_another_chain",
             vec![json!({
                 "schema": "elastos.wallet.default_account/v1",
                 "principal_id": authority.principal_id,
@@ -9484,7 +11859,19 @@ async fn test_runtime_custody_creator_publish_binding_requires_a_valid_chain_tra
                 "account_id": valid_account_id,
                 "set_at": 10,
             })],
-            None,
+            Some(json!({
+                "account_id": valid_account_id,
+                "principal_id": authority.principal_id,
+                "proof_binding_id": format!("proof:wallet:connector:eip155:20:{}", mock_managed_evm_address(1).unwrap()),
+                "chain_namespace": "eip155:20",
+                "address": mock_managed_evm_address(1).unwrap(),
+                "proof_type": "siwe_erc1271",
+                "connector_id": "metamask",
+                "signing_available": true,
+                "signing_status": "external_connector_available",
+                "label": "Contract",
+                "linked_at": crate::auth::now_ts(),
+            })),
         ),
         (
             "stale",
@@ -9585,6 +11972,100 @@ async fn test_runtime_custody_creator_publish_binding_requires_a_valid_chain_tra
     }
 }
 
+/// A MetaMask account that is linked to a connector CAN back a protected-content
+/// mint, and the creator binding must accept it.
+///
+/// This is the capability nothing covered. The gate that used to reject it
+/// tested the proof type -- `is_managed_wallet_proof_type` -- alongside the
+/// real precondition, so every external wallet was refused whether or not it
+/// could sign. Removing the proof-type half is only safe if something proves
+/// the accepted shape actually is accepted; otherwise the path is enabled and
+/// unexercised, which PRINCIPLES.md 11 forbids more strongly than refusing.
+///
+/// The fixture is the shape wallet-provider really produces: a non-managed
+/// proof type with a `connector_id`, which its `account_signing_status` reports
+/// as `signing_available: true` / `external_connector_available`. The sibling
+/// case in `..._requires_a_valid_chain_transaction_default` covers the other
+/// half -- an external account with no connector still fails closed -- so the
+/// two together pin the rule: signability decides, not proof type.
+///
+/// The buyer path is the same gate, not a parallel one: both creator and buyer
+/// reach `resolve_runtime_custody_wallet_default_account`, so there is one
+/// place where proof type could creep back in and this is it.
+#[tokio::test]
+async fn test_runtime_custody_creator_publish_binding_accepts_a_connector_linked_external_account()
+{
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    reset_mock_chain_raw_requests();
+
+    let authority = passkey_authority_with_profile(dir.path(), "creator");
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let runtime_authority =
+        runtime_wallet_authority_for_app_token(dir.path(), LIBRARY_CAPSULE_ID, &token);
+    let account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&authority.principal_id, 1)
+        .await;
+    let external_address = mock_managed_evm_address(1).unwrap();
+
+    // Replace the seeded managed account with the external, connector-linked
+    // shape at the same account id, so the default below names it.
+    {
+        let mut accounts = wallet_provider.provider.accounts.lock().await;
+        let existing = accounts
+            .iter_mut()
+            .find(|existing| {
+                existing.get("account_id").and_then(Value::as_str) == Some(account_id.as_str())
+            })
+            .expect("the seeded account must exist");
+        *existing = json!({
+            "account_id": account_id,
+            "principal_id": authority.principal_id,
+            "proof_binding_id": format!(
+                "proof:wallet:connector:eip155:8453:{external_address}"
+            ),
+            "chain_namespace": "eip155:8453",
+            "address": external_address,
+            // The real MetaMask proof type: external, never managed.
+            "proof_type": "siwe",
+            "connector_id": "metamask",
+            "signing_available": true,
+            "signing_status": "external_connector_available",
+            "label": "External",
+            "linked_at": crate::auth::now_ts(),
+        });
+    }
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &authority.principal_id,
+        "eip155:8453",
+        &account_id,
+        10,
+    )
+    .await;
+    let object_uri = format!(
+        "{}/Documents/protected-connector-default",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+
+    let binding = crate::api::gateway::resolve_runtime_custody_creator_publish_binding(
+        &state,
+        &runtime_authority,
+        &authority.principal_id,
+        &object_uri,
+        "plain_localhost_root",
+    )
+    .await
+    .expect("a connector-linked external account must be able to back a mint");
+    assert_eq!(binding.account_id, account_id);
+    assert_eq!(binding.address, external_address);
+}
+
 #[tokio::test]
 async fn test_runtime_custody_buy_requires_a_valid_chain_transaction_default() {
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
@@ -9623,7 +12104,10 @@ async fn test_runtime_custody_buy_requires_a_valid_chain_transaction_default() {
     let cases = [
         ("missing", vec![], None),
         (
-            "wrong_chain",
+            // A contract account lives on one chain; its default there never
+            // serves Base. (An externally owned account would: one key, one
+            // address on every EVM chain.)
+            "contract_on_another_chain",
             vec![json!({
                 "schema": "elastos.wallet.default_account/v1",
                 "principal_id": authority.principal_id,
@@ -9632,7 +12116,19 @@ async fn test_runtime_custody_buy_requires_a_valid_chain_transaction_default() {
                 "account_id": valid_account_id,
                 "set_at": 10,
             })],
-            None,
+            Some(json!({
+                "account_id": valid_account_id,
+                "principal_id": authority.principal_id,
+                "proof_binding_id": format!("proof:wallet:connector:eip155:20:{}", mock_managed_evm_address(1).unwrap()),
+                "chain_namespace": "eip155:20",
+                "address": mock_managed_evm_address(1).unwrap(),
+                "proof_type": "siwe_erc1271",
+                "connector_id": "metamask",
+                "signing_available": true,
+                "signing_status": "external_connector_available",
+                "label": "Contract",
+                "linked_at": crate::auth::now_ts(),
+            })),
         ),
         (
             "stale",
@@ -9753,6 +12249,32 @@ enum RuntimePortableListingMismatch {
     Links,
     Cid,
     Publisher,
+    /// The package states none of the facts a published package states (no
+    /// mint transaction, no publication time), as only an adopted one may.
+    UnpublishedFacts,
+}
+
+/// `MockContentProvider`, remembering every request it was sent.
+struct RecordingMockContentProvider(std::sync::Mutex<Vec<Value>>);
+
+#[async_trait::async_trait]
+impl Provider for RecordingMockContentProvider {
+    async fn handle(&self, request: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+        MockContentProvider.handle(request).await
+    }
+
+    fn schemes(&self) -> Vec<&'static str> {
+        vec!["content"]
+    }
+
+    fn name(&self) -> &'static str {
+        "recording-mock-content-provider"
+    }
+
+    async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+        self.0.lock().unwrap().push(request.clone());
+        MockContentProvider.send_raw(request).await
+    }
 }
 
 #[cfg(unix)]
@@ -9772,7 +12294,10 @@ async fn run_runtime_custody_portable_listing_import(
         protected_content_identity: &'a str,
         mint_id: &'a str,
         publisher_profile_did: &'a str,
-        media_identity_base64: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        media_identity_base64: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content_identity_base64: Option<&'a str>,
         key_envelope_identity_base64: &'a str,
         rights_policy_identity_base64: &'a str,
         content_key_commitment_base64: &'a str,
@@ -9813,14 +12338,15 @@ async fn run_runtime_custody_portable_listing_import(
         serde_json::to_vec(&PortableMetadataFixture {
             schema: "elastos.protected-content.metadata/v1",
             name: &listing.package.display_name,
-            mime_type: &input.mime_type,
-            codecs: &input.codecs,
+            mime_type: SEEDED_V1_MIME_TYPE,
+            codecs: SEEDED_V1_CODECS,
             encrypted_content_cid: &listing.package.content_cid,
             content_access_id: &listing.package.content_access_id,
             protected_content_identity: &listing.package.content_id,
             mint_id: &listing.package.mint_id,
             publisher_profile_did: &listing.package.publisher_profile_did,
-            media_identity_base64: &listing.package.media_identity_base64,
+            media_identity_base64: listing.package.media_identity_base64.as_deref(),
+            content_identity_base64: listing.package.content_identity_base64.as_deref(),
             key_envelope_identity_base64: &listing.package.key_envelope_identity_base64,
             rights_policy_identity_base64: &listing.package.rights_policy_identity_base64,
             content_key_commitment_base64: &listing.package.content_key_commitment_base64,
@@ -9834,6 +12360,10 @@ async fn run_runtime_custody_portable_listing_import(
     if mismatch == RuntimePortableListingMismatch::Package {
         portable_package.content_key_commitment_base64 =
             base64::engine::general_purpose::STANDARD.encode([0x7d; 32]);
+    }
+    if mismatch == RuntimePortableListingMismatch::UnpublishedFacts {
+        portable_package.mint_transaction_hash = None;
+        portable_package.published_at = None;
     }
     let mut links = vec![
         crate::content::ContentObjectLink {
@@ -9874,8 +12404,11 @@ async fn run_runtime_custody_portable_listing_import(
     .unwrap();
     let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
     let registry = state.provider_registry.as_ref().unwrap().clone();
+    let content = std::sync::Arc::new(RecordingMockContentProvider(std::sync::Mutex::new(
+        Vec::new(),
+    )));
     registry
-        .register_sub_provider("content", std::sync::Arc::new(MockContentProvider))
+        .register_sub_provider("content", content.clone())
         .await
         .unwrap();
     let buyer = passkey_authority_with_profile_role_credential(
@@ -9920,6 +12453,19 @@ async fn run_runtime_custody_portable_listing_import(
 
     assert_eq!(status, StatusCode::OK);
     let listing_path = runtime_custody_listing_path_for_test(dir.path(), facts.mint_id);
+    if mismatch == RuntimePortableListingMismatch::UnpublishedFacts {
+        // T8-M4: the origin's facts are checked before any network
+        // verification -- nothing beyond the listing's own folder is read.
+        let elsewhere = content
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| request["cid"] != RUNTIME_PORTABLE_LISTING_TEST_CID)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(elsewhere.is_empty(), "{elsewhere:#?}");
+    }
     if mismatch != RuntimePortableListingMismatch::None {
         assert_eq!(imported["status"], "error", "{imported}");
         assert!(!listing_path.exists());
@@ -10103,6 +12649,7 @@ async fn test_runtime_custody_import_rejects_manifest_and_package_mismatch() {
         RuntimePortableListingMismatch::Links,
         RuntimePortableListingMismatch::Cid,
         RuntimePortableListingMismatch::Publisher,
+        RuntimePortableListingMismatch::UnpublishedFacts,
     ] {
         run_runtime_custody_portable_listing_import(mismatch, false, false).await;
     }
@@ -10197,15 +12744,17 @@ async fn test_runtime_custody_typed_publish_buy_open_read_segment_and_close() {
 
     let creator_root = crate::auth::principal_localhost_root(&creator.principal_id);
     let uri = format!("{creator_root}/Documents/protected-runtime-proof.mp4");
-    let (clear_init, clear_segments) =
-        crate::protected_content_runtime::tests::runtime_custody_gateway_media_output_for_test();
     write_library_bytes(&app, &creator_token, &uri, b"media").await;
     let publish_body = json!({
         "uri": uri,
         "protection": {
             "mode": "runtime_custody",
+            // Every mint names the channel it publishes into.
+            "channel": "0x0000000000000000000000000000000000000022",
             "copies": "0x2",
-            "price": MOCK_PROTECTED_CONTENT_LISTING_PRICE,
+            // The amount a creator types; the host scales it into the
+            // token's base units, which is what the listing then reports.
+            "price": MOCK_PROTECTED_CONTENT_LISTING_AMOUNT,
         },
     });
     let (publish_pending_status, publish_pending) =
@@ -10404,22 +12953,43 @@ async fn test_runtime_custody_typed_publish_buy_open_read_segment_and_close() {
         .keys()
         .map(String::as_str)
         .collect::<std::collections::BTreeSet<_>>();
+    // The v2 answer: the five kind-independent keys and one entry per
+    // rendition, video first.
     assert_eq!(
         open_keys,
         std::collections::BTreeSet::from([
-            "codecs",
+            "content_kind",
             "expires_at",
-            "has_init_segment",
-            "mime_type",
             "mint_id",
+            "renditions",
             "schema",
-            "segment_count",
             "viewer_session_handle",
         ])
     );
     assert_eq!(
-        open_payload["data"]["segment_count"].as_u64(),
-        Some(clear_segments.len() as u64)
+        open_payload["data"]["schema"],
+        "elastos.library.runtime-custody-viewer/v2"
+    );
+    assert_eq!(
+        open_payload["data"]["content_kind"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_VIEWER_CONTENT_KIND_MEDIA
+    );
+    assert_eq!(
+        open_payload["data"]["renditions"],
+        json!([
+            {
+                "rendition": "video",
+                "mime_type": "video/mp4",
+                "codecs": "avc1.640028",
+                "segment_count": 2,
+            },
+            {
+                "rendition": "audio",
+                "mime_type": "audio/mp4",
+                "codecs": "mp4a.40.2",
+                "segment_count": 2,
+            },
+        ])
     );
 
     let substituted_player_token = projection_launch_token_for_authority_context(
@@ -10444,48 +13014,40 @@ async fn test_runtime_custody_typed_publish_buy_open_read_segment_and_close() {
         "Runtime custody viewer session is unavailable"
     );
 
-    let (init_status, init_payload) = post_library(
+    // A part out of order is refused before anything is fetched or decrypted,
+    // and does not move the cursor: the first part is the video init.
+    let (early_status, early_payload) = post_library(
         app.clone(),
         &player_token,
         "read_viewer",
         json!({
             "mint_id": hex::encode(mint_id.as_bytes()),
-            "viewer_session_handle": viewer_handle,
-            "principal_id": "person:substituted",
-            "proof_binding_id": "proof:substituted",
-            "session_id": "runtime-session:substituted",
-            "grant_id": "grant:substituted",
-        }),
-    )
-    .await;
-    assert_eq!(init_status, StatusCode::OK);
-    assert_eq!(init_payload["status"], "ok", "{init_payload}");
-    let init_bytes = base64::engine::general_purpose::STANDARD
-        .decode(init_payload["data"]["data"].as_str().unwrap())
-        .unwrap();
-    assert_eq!(init_bytes, clear_init);
-
-    let (segment_status, segment_payload) = post_library(
-        app.clone(),
-        &player_token,
-        "read_viewer",
-        json!({
-            "mint_id": hex::encode(mint_id.as_bytes()),
-            "viewer_session_handle": open_payload["data"]["viewer_session_handle"],
-            "principal_id": "person:substituted",
-            "proof_binding_id": "proof:substituted",
-            "session_id": "runtime-session:substituted",
-            "grant_id": "grant:substituted",
+            "viewer_session_handle": viewer_handle.clone(),
             "segment_index": 0,
         }),
     )
     .await;
-    assert_eq!(segment_status, StatusCode::OK);
-    assert_eq!(segment_payload["status"], "ok", "{segment_payload}");
-    let segment_bytes = base64::engine::general_purpose::STANDARD
-        .decode(segment_payload["data"]["data"].as_str().unwrap())
-        .unwrap();
-    assert_eq!(segment_bytes, clear_segments[0]);
+    assert_eq!(early_status, StatusCode::OK);
+    assert_eq!(early_payload["status"], "error", "{early_payload}");
+    assert_eq!(
+        early_payload["message"],
+        "Runtime custody viewer media part is invalid"
+    );
+    // Then every part in the interleave, each decrypting to the clear part.
+    // The substituted identity fields in the request are ignored.
+    assert_runtime_custody_dash_media_reads(
+        &app,
+        &player_token,
+        &hex::encode(mint_id.as_bytes()),
+        &viewer_handle,
+        json!({
+            "principal_id": "person:substituted",
+            "proof_binding_id": "proof:substituted",
+            "session_id": "runtime-session:substituted",
+            "grant_id": "grant:substituted",
+        }),
+    )
+    .await;
 
     let (close_status, close_payload) = post_library(
         app.clone(),
@@ -10541,38 +13103,14 @@ async fn test_runtime_custody_typed_publish_buy_open_read_segment_and_close() {
     let imported_handle = imported_open["data"]["viewer_session_handle"]
         .as_str()
         .unwrap();
-    let (_, imported_init) = post_library(
-        app.clone(),
+    assert_runtime_custody_dash_media_reads(
+        &app,
         &imported_player_token,
-        "read_viewer",
-        json!({"mint_id": mint_id_hex, "viewer_session_handle": imported_handle}),
+        &mint_id_hex,
+        imported_handle,
+        json!({}),
     )
     .await;
-    assert_eq!(imported_init["status"], "ok", "{imported_init}");
-    assert_eq!(
-        base64::engine::general_purpose::STANDARD
-            .decode(imported_init["data"]["data"].as_str().unwrap())
-            .unwrap(),
-        clear_init
-    );
-    let (_, imported_segment) = post_library(
-        app.clone(),
-        &imported_player_token,
-        "read_viewer",
-        json!({
-            "mint_id": mint_id_hex,
-            "viewer_session_handle": imported_handle,
-            "segment_index": 0,
-        }),
-    )
-    .await;
-    assert_eq!(imported_segment["status"], "ok", "{imported_segment}");
-    assert_eq!(
-        base64::engine::general_purpose::STANDARD
-            .decode(imported_segment["data"]["data"].as_str().unwrap())
-            .unwrap(),
-        clear_segments[0]
-    );
     let (_, imported_close) = post_library(
         app,
         &imported_player_token,
@@ -10582,6 +13120,707 @@ async fn test_runtime_custody_typed_publish_buy_open_read_segment_and_close() {
     .await;
     assert_eq!(imported_close["status"], "ok", "{imported_close}");
     assert!(!dir.path().join("protected-content/runtime-mint").exists());
+}
+
+/// An audio file protects and lists through the media path, carrying the AAC
+/// fMP4 rendition pair rather than the H.264 one. Before audio was accepted
+/// the media path refused the source outright, so no `.mp3` could reach a
+/// listing at all.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_runtime_custody_audio_publish_lists_the_aac_rendition() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    enable_protected_content(dir.path());
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let registry = state.provider_registry.as_ref().unwrap().clone();
+    reset_mock_content_publish_requests();
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    registry
+        .register_sub_provider("content", std::sync::Arc::new(MockContentProvider))
+        .await
+        .unwrap();
+    registry
+        .register_sub_provider(
+            "object",
+            std::sync::Arc::new(crate::library::ObjectProvider::new(
+                dir.path().to_path_buf(),
+                std::sync::Arc::downgrade(&registry),
+            )),
+        )
+        .await
+        .unwrap();
+    let _process_fixture = crate::protected_content_runtime::tests::register_runtime_custody_process_providers_for_test_registry(
+        dir.path(),
+        &registry,
+    )
+    .await;
+    crate::protected_content_runtime::tests::register_runtime_custody_mock_audio_media_provider_for_test_registry(
+        dir.path(),
+        &registry,
+    )
+    .await;
+    let creator = passkey_authority_with_profile_role_credential(
+        dir.path(),
+        "audio-creator",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-audio-creator",
+    );
+    let buyer = passkey_authority_with_profile_role_credential(
+        dir.path(),
+        "audio-buyer",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-audio-buyer",
+    );
+    let creator_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &creator);
+    let buyer_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &buyer);
+    let creator_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&creator.principal_id, 1)
+        .await;
+    let buyer_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&buyer.principal_id, 2)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &creator.principal_id,
+        "eip155:8453",
+        &creator_account_id,
+        10,
+    )
+    .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &buyer.principal_id,
+        "eip155:8453",
+        &buyer_account_id,
+        10,
+    )
+    .await;
+    let app = gateway_router(state.clone());
+
+    let creator_root = crate::auth::principal_localhost_root(&creator.principal_id);
+    let uri = format!("{creator_root}/Documents/protected-audio-proof.mp3");
+    write_library_bytes(&app, &creator_token, &uri, b"audio source").await;
+    let publish_body = json!({
+        "uri": uri,
+        "protection": {
+            "mode": "runtime_custody",
+            // Every mint names the channel it publishes into.
+            "channel": "0x0000000000000000000000000000000000000022",
+            "copies": "0x2",
+            // The amount a creator types; the host scales it into the
+            // token's base units, which is what the listing then reports.
+            "price": MOCK_PROTECTED_CONTENT_LISTING_AMOUNT,
+        },
+    });
+    let (publish_pending_status, publish_pending) =
+        post_library(app.clone(), &creator_token, "publish", publish_body.clone()).await;
+    assert_eq!(publish_pending_status, StatusCode::OK);
+    assert_eq!(publish_pending["status"], "error", "{publish_pending}");
+    assert_eq!(
+        publish_pending["message"],
+        "Runtime custody creator mint is pending exact Wallet or Chain settlement"
+    );
+    let creator_signed_transaction = {
+        let _ = wallet_provider
+            .provider
+            .complete_latest_transaction_approval()
+            .await;
+        wallet_provider
+            .provider
+            .latest_transaction_signed_transaction()
+            .await
+            .expect("completed creator transaction")
+    };
+    reset_mock_chain_broadcast_count(&creator_signed_transaction);
+    let (publish_ok_status, publish_ok) =
+        post_library(app.clone(), &creator_token, "publish", publish_body).await;
+    assert_eq!(publish_ok_status, StatusCode::OK);
+    assert_eq!(publish_ok["status"], "ok", "{publish_ok}");
+    let mint_id_hex = publish_ok["data"]["content_security"]["mint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (_, listed) =
+        post_library(app.clone(), &buyer_token, "list_runtime_custody", json!({})).await;
+    let summary = listed["data"]["listings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["mint_id"] == mint_id_hex.as_str())
+        .expect("the audio listing must be listed");
+    assert_eq!(summary["mime_type"], "audio/mp4");
+    assert_eq!(summary["codecs"], "mp4a.40.2");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_runtime_custody_object_publish_buy_open_read_chunk_and_close() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    // This journey reads back the metadata document it published, the way an
+    // owned capsule does. Scoped to this test so no other one can see it.
+    let _recording = record_mock_published_content();
+    let dir = tempfile::tempdir().unwrap();
+    enable_protected_content(dir.path());
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let registry = state.provider_registry.as_ref().unwrap().clone();
+    reset_mock_content_publish_requests();
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    registry
+        .register_sub_provider("content", std::sync::Arc::new(MockContentProvider))
+        .await
+        .unwrap();
+    // Watches what owning a copy keeps on this machine.
+    let ipfs = MockPinRecordingIpfsProvider::default();
+    registry
+        .register_sub_provider("ipfs", std::sync::Arc::new(ipfs.clone()))
+        .await
+        .unwrap();
+    registry
+        .register_sub_provider(
+            "object",
+            std::sync::Arc::new(crate::library::ObjectProvider::new(
+                dir.path().to_path_buf(),
+                std::sync::Arc::downgrade(&registry),
+            )),
+        )
+        .await
+        .unwrap();
+    let _process_fixture = crate::protected_content_runtime::tests::register_runtime_custody_process_providers_for_test_registry(
+        dir.path(),
+        &registry,
+    )
+    .await;
+    let creator = passkey_authority_with_profile_role_credential(
+        dir.path(),
+        "object-creator",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-object-creator",
+    );
+    let buyer = passkey_authority_with_profile_role_credential(
+        dir.path(),
+        "object-buyer",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-object-buyer",
+    );
+    let creator_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &creator);
+    let buyer_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &buyer);
+    let reader_token = projection_launch_token_for_authority_context(
+        dir.path(),
+        ELACITY_READER_CAPSULE_ID_FOR_TEST,
+        &buyer,
+    );
+    let player_token = projection_launch_token_for_authority_context(
+        dir.path(),
+        ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
+        &buyer,
+    );
+    let creator_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&creator.principal_id, 1)
+        .await;
+    let buyer_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&buyer.principal_id, 2)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &creator.principal_id,
+        "eip155:8453",
+        &creator_account_id,
+        10,
+    )
+    .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &buyer.principal_id,
+        "eip155:8453",
+        &buyer_account_id,
+        10,
+    )
+    .await;
+    let app = gateway_router(state.clone());
+
+    // A non-media file: `mime_for_name` routes `.pdf` to the EPC1 object
+    // path, not to the media provider (which is deliberately not registered
+    // in this test at all -- if the dispatch regressed to media, publish
+    // would fail on a missing media provider rather than silently pass).
+    // Deliberately MULTI-chunk (1 MiB + 4 KiB → a full chunk and a short
+    // final one): a single-chunk object would never exercise the framed-chunk
+    // slicing offsets, the in-order chunk sequence, or the short last chunk.
+    let clear_object = (0u32..(1_048_576 + 4096))
+        .map(|value| (value % 251) as u8)
+        .collect::<Vec<u8>>();
+    let creator_root = crate::auth::principal_localhost_root(&creator.principal_id);
+    let uri = format!("{creator_root}/Documents/protected-object-proof.pdf");
+    write_library_bytes(&app, &creator_token, &uri, &clear_object).await;
+    let publish_body = json!({
+        "uri": uri,
+        "protection": {
+            "mode": "runtime_custody",
+            // Every mint names the channel it publishes into.
+            "channel": "0x0000000000000000000000000000000000000022",
+            "copies": "0x2",
+            // The amount a creator types; the host scales it into the
+            // token's base units, which is what the listing then reports.
+            "price": MOCK_PROTECTED_CONTENT_LISTING_AMOUNT,
+        },
+    });
+    let (publish_pending_status, publish_pending) =
+        post_library(app.clone(), &creator_token, "publish", publish_body.clone()).await;
+    assert_eq!(publish_pending_status, StatusCode::OK);
+    assert_eq!(publish_pending["status"], "error", "{publish_pending}");
+    assert_eq!(
+        publish_pending["message"],
+        "Runtime custody creator mint is pending exact Wallet or Chain settlement"
+    );
+    let creator_signed_transaction = {
+        let _ = wallet_provider
+            .provider
+            .complete_latest_transaction_approval()
+            .await;
+        wallet_provider
+            .provider
+            .latest_transaction_signed_transaction()
+            .await
+            .expect("completed creator transaction")
+    };
+    reset_mock_chain_broadcast_count(&creator_signed_transaction);
+    let (publish_ok_status, publish_ok) =
+        post_library(app.clone(), &creator_token, "publish", publish_body).await;
+    assert_eq!(publish_ok_status, StatusCode::OK);
+    assert_eq!(publish_ok["status"], "ok", "{publish_ok}");
+    let mint_id_hex = publish_ok["data"]["content_security"]["mint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mint_id = elastos_protected_content_contracts::Digest32::new(
+        hex::decode(&mint_id_hex).unwrap().try_into().unwrap(),
+    );
+    // The minted item is a `.ddrm` capsule filed by the asset's own kind -- a
+    // PDF belongs on the Documents shelf -- and it, not the source file, is
+    // what the publish hands back as the Library object.
+    let capsule_uri = publish_ok["data"]["object"]["uri"].as_str().unwrap();
+    assert_eq!(
+        capsule_uri,
+        format!("{creator_root}/Documents/protected-object-proof.ddrm"),
+        "{publish_ok}"
+    );
+    // The capsule's extension cannot say what it protects, so the viewer routes
+    // on the mime the gateway recorded instead.
+    assert_eq!(
+        publish_ok["data"]["object"]["metadata"]["protected_content"]["asset_mime"],
+        "application/pdf",
+        "{publish_ok}"
+    );
+    // Publishing is not a reason to move or delete the creator's own file --
+    // and the source keeps a marker of its own, so it still reads as minted
+    // and the Library will not offer to mint the same bytes a second time.
+    let (source_status, source) =
+        post_library(app.clone(), &creator_token, "stat", json!({ "uri": uri })).await;
+    assert_eq!(source_status, StatusCode::OK);
+    assert_eq!(
+        source["status"], "ok",
+        "the source object must survive its own publish: {source}"
+    );
+    assert_eq!(source["data"]["object"]["published"], true, "{source}");
+    assert_eq!(
+        source["data"]["object"]["metadata"]["protected_content"]["mint_id"],
+        serde_json::Value::String(
+            publish_ok["data"]["content_security"]["mint_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        ),
+        "{source}"
+    );
+    // An object publish now runs the SAME creator tail as media: encrypted
+    // content, metadata document and portable listing are all published.
+    assert_eq!(mock_content_publish_request_count(), 3);
+
+    // The creator holds a copy from the moment the mint lands, so they open it
+    // the way anyone holding one does -- without buying their own asset. That
+    // is the point of recording the minted copy: below the entitlement check a
+    // minted copy and a bought one are the same thing, and the right itself is
+    // the chain's answer for the creator's wallet.
+    let creator_reader_token = projection_launch_token_for_authority_context(
+        dir.path(),
+        ELACITY_READER_CAPSULE_ID_FOR_TEST,
+        &creator,
+    );
+    let (creator_open_status, creator_open) = post_library(
+        app.clone(),
+        &creator_reader_token,
+        "open_viewer",
+        json!({"mint_id": mint_id_hex}),
+    )
+    .await;
+    assert_eq!(creator_open_status, StatusCode::OK);
+    assert_eq!(
+        creator_open["status"], "ok",
+        "a creator must be able to open the asset they minted: {creator_open}"
+    );
+
+    // An asset minted before minted copies were recorded as owned has a
+    // listing, a terminal and no owned copy -- exactly what deleting the record
+    // leaves behind. Opening it restores the record from what was already
+    // written down, without the creator being asked to do anything.
+    let owned_copy_path =
+        runtime_custody_owned_copy_path_for_test(dir.path(), &creator.principal_id, mint_id);
+    assert!(
+        owned_copy_path.is_file(),
+        "the mint must have recorded a copy"
+    );
+    std::fs::remove_file(&owned_copy_path).unwrap();
+    let (repaired_status, repaired) = post_library(
+        app.clone(),
+        &creator_reader_token,
+        "open_viewer",
+        json!({"mint_id": mint_id_hex}),
+    )
+    .await;
+    assert_eq!(repaired_status, StatusCode::OK);
+    assert_eq!(
+        repaired["status"], "ok",
+        "a copy minted before it was recorded must repair itself on open: {repaired}"
+    );
+    assert!(
+        owned_copy_path.is_file(),
+        "the restored copy must be durable, not rebuilt on every open"
+    );
+    let listing_path = runtime_custody_listing_path_for_test(dir.path(), mint_id);
+    let listing_before_buy = std::fs::read(&listing_path).unwrap();
+    let listing_json: serde_json::Value = serde_json::from_slice(&listing_before_buy).unwrap();
+    assert!(
+        listing_json["package"]["media_identity_base64"].is_null(),
+        "an object listing must not carry a media identity"
+    );
+    assert!(listing_json["package"]["content_identity_base64"].is_string());
+
+    let (_, listed) =
+        post_library(app.clone(), &buyer_token, "list_runtime_custody", json!({})).await;
+    let summary = listed["data"]["listings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["mint_id"] == mint_id_hex.as_str())
+        .expect("the object listing must be listed");
+    assert_eq!(summary["mime_type"], "application/pdf");
+    assert_eq!(summary["codecs"], "");
+
+    // Buy: identical flow to media (approval, then the buy transaction).
+    for _ in 0..2 {
+        let (buy_status, buy_pending) = post_library(
+            app.clone(),
+            &buyer_token,
+            "buy",
+            json!({"mint_id": mint_id_hex}),
+        )
+        .await;
+        assert_eq!(buy_status, StatusCode::OK);
+        assert_eq!(buy_pending["status"], "error", "{buy_pending}");
+        assert_eq!(
+            buy_pending["message"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+        );
+        let _ = wallet_provider
+            .provider
+            .complete_latest_transaction_approval()
+            .await;
+    }
+    let (buy_ok_status, buy_ok) = post_library(
+        app.clone(),
+        &buyer_token,
+        "buy",
+        json!({"mint_id": mint_id_hex}),
+    )
+    .await;
+    assert_eq!(buy_ok_status, StatusCode::OK);
+    assert_eq!(buy_ok["status"], "ok", "{buy_ok}");
+    assert_eq!(buy_ok["data"]["availability"]["status"], "buyer_owned");
+    // A bought copy is filed exactly like a minted one: the buyer gets their own
+    // `.ddrm` on the shelf its kind belongs to, describing the same asset. This
+    // is what makes "owned" one thing rather than two.
+    let buyer_root = crate::auth::principal_localhost_root(&buyer.principal_id);
+    let (buyer_documents_status, buyer_documents) = post_library(
+        app.clone(),
+        &buyer_token,
+        "list",
+        json!({ "uri": format!("{buyer_root}/Documents") }),
+    )
+    .await;
+    assert_eq!(buyer_documents_status, StatusCode::OK);
+    let buyer_capsule = buyer_documents["data"]["objects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|object| {
+            object["name"]
+                .as_str()
+                .is_some_and(|name| name.ends_with(".ddrm"))
+        })
+        .unwrap_or_else(|| panic!("a bought copy must be filed as a capsule: {buyer_documents}"));
+    assert_eq!(
+        buyer_capsule["metadata"]["protected_content"]["mint_id"], mint_id_hex,
+        "{buyer_capsule}"
+    );
+    assert_eq!(
+        buyer_capsule["metadata"]["protected_content"]["asset_mime"], "application/pdf",
+        "{buyer_capsule}"
+    );
+    assert_eq!(
+        buyer_capsule["metadata"]["protected_content"]["acquisition"], "bought",
+        "{buyer_capsule}"
+    );
+
+    // Owning a copy keeps its material here: the encrypted content and the
+    // metadata document are pinned locally, so reads come off this machine
+    // rather than going back to custody for every chunk. Pinned, not merely
+    // fetched -- an unpinned block is collectable, and reads would drift back
+    // onto the network without anything saying so.
+    let pinned = ipfs.pinned();
+    assert!(
+        pinned.contains(&TEST_CIDV1.to_string()),
+        "an owned copy must keep its material locally: {pinned:?}"
+    );
+
+    // Kind <-> viewer: the media player must not be able to open an object.
+    let (_, player_open) = post_library(
+        app.clone(),
+        &player_token,
+        "open_viewer",
+        json!({"mint_id": mint_id_hex}),
+    )
+    .await;
+    assert_eq!(player_open["status"], "error", "{player_open}");
+    assert_eq!(
+        player_open["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE
+    );
+
+    let (open_status, open_payload) = post_library(
+        app.clone(),
+        &reader_token,
+        "open_viewer",
+        json!({"mint_id": mint_id_hex}),
+    )
+    .await;
+    assert_eq!(open_status, StatusCode::OK);
+    assert_eq!(open_payload["status"], "ok", "{open_payload}");
+    let open_keys = open_payload["data"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        open_keys,
+        std::collections::BTreeSet::from([
+            "chunk_count",
+            "chunk_plaintext_bytes",
+            "content_kind",
+            "content_type",
+            "expires_at",
+            "mint_id",
+            "plaintext_bytes",
+            "schema",
+            "viewer_session_handle",
+        ])
+    );
+    assert_eq!(
+        open_payload["data"]["content_kind"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_VIEWER_CONTENT_KIND_OBJECT
+    );
+    assert_eq!(open_payload["data"]["content_type"], "application/pdf");
+    assert_eq!(
+        open_payload["data"]["plaintext_bytes"].as_u64(),
+        Some(clear_object.len() as u64)
+    );
+    assert_eq!(open_payload["data"]["chunk_count"].as_u64(), Some(2));
+    assert_eq!(
+        open_payload["data"]["chunk_plaintext_bytes"].as_u64(),
+        Some(1_048_576),
+        "the reader needs the plaintext chunk size to size its buffer"
+    );
+    let viewer_handle = open_payload["data"]["viewer_session_handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // A replayed open returns the identical object response, not a media one.
+    let (_, open_replay) = post_library(
+        app.clone(),
+        &reader_token,
+        "open_viewer",
+        json!({"mint_id": mint_id_hex}),
+    )
+    .await;
+    assert_eq!(open_replay, open_payload);
+
+    // The open staged the verified object, so every chunk read seeks into it
+    // rather than fetching and re-hashing the whole file again. Without this
+    // the cleanup assertion at the end of the test would pass on a file that
+    // was never written.
+    let staged_during_session =
+        runtime_custody_viewer_record_path_for_test(dir.path(), &buyer.principal_id, mint_id)
+            .with_extension("framed");
+    assert!(
+        staged_during_session.exists(),
+        "an open object session must stage its verified object at {staged_during_session:?}"
+    );
+
+    // Media's selector on an object session is refused, not ignored.
+    let (_, wrong_selector) = post_library(
+        app.clone(),
+        &reader_token,
+        "read_viewer",
+        json!({
+            "mint_id": mint_id_hex,
+            "viewer_session_handle": viewer_handle,
+            "segment_index": 0,
+        }),
+    )
+    .await;
+    assert_eq!(wrong_selector["status"], "error", "{wrong_selector}");
+    // An object read must name its chunk; there is no init-part default.
+    let (_, missing_selector) = post_library(
+        app.clone(),
+        &reader_token,
+        "read_viewer",
+        json!({"mint_id": mint_id_hex, "viewer_session_handle": viewer_handle}),
+    )
+    .await;
+    assert_eq!(missing_selector["status"], "error", "{missing_selector}");
+    // Chunks are released in order: chunk 1 before chunk 0 is refused.
+    let (_, out_of_order) = post_library(
+        app.clone(),
+        &reader_token,
+        "read_viewer",
+        json!({
+            "mint_id": mint_id_hex,
+            "viewer_session_handle": viewer_handle,
+            "chunk_index": 1,
+        }),
+    )
+    .await;
+    assert_eq!(out_of_order["status"], "error", "{out_of_order}");
+
+    // Walk every chunk in order and reassemble: the full chunk first, then
+    // the short final one. Each response must name the chunk it carries, and
+    // the concatenation must be the creator's exact clear bytes -- which is
+    // what proves the Runtime sliced `object.epc1` at the sealer's own framed
+    // offsets rather than at offsets it re-derived.
+    let mut reassembled: Vec<u8> = Vec::with_capacity(clear_object.len());
+    for chunk_index in 0..2u32 {
+        let (chunk_status, chunk_payload) = post_library(
+            app.clone(),
+            &reader_token,
+            "read_viewer",
+            json!({
+                "mint_id": mint_id_hex,
+                "viewer_session_handle": viewer_handle,
+                "chunk_index": chunk_index,
+            }),
+        )
+        .await;
+        assert_eq!(chunk_status, StatusCode::OK);
+        assert_eq!(chunk_payload["status"], "ok", "{chunk_payload}");
+        assert_eq!(
+            chunk_payload["data"]["content_kind"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_VIEWER_CONTENT_KIND_OBJECT
+        );
+        assert_eq!(
+            chunk_payload["data"]["chunk_index"].as_u64(),
+            Some(u64::from(chunk_index))
+        );
+        let plaintext = base64::engine::general_purpose::STANDARD
+            .decode(chunk_payload["data"]["data"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            plaintext.len(),
+            if chunk_index == 0 { 1_048_576 } else { 4096 },
+            "chunk {chunk_index} must carry its own plaintext length"
+        );
+        reassembled.extend_from_slice(&plaintext);
+    }
+    assert_eq!(
+        reassembled, clear_object,
+        "the reader must recover the exact clear object bytes"
+    );
+
+    // Every chunk has been released: replaying the last one is refused, so a
+    // session cannot be milked for repeat decryptions of the same chunk.
+    let (_, replayed_chunk) = post_library(
+        app.clone(),
+        &reader_token,
+        "read_viewer",
+        json!({
+            "mint_id": mint_id_hex,
+            "viewer_session_handle": viewer_handle,
+            "chunk_index": 1,
+        }),
+    )
+    .await;
+    assert_eq!(replayed_chunk["status"], "error", "{replayed_chunk}");
+    // ...and so is the one-past-the-end chunk, which the in-order counter
+    // alone would admit on an exhausted session (`next` now equals the chunk
+    // count): only the chunk-count ceiling refuses it.
+    let (_, past_the_end_chunk) = post_library(
+        app.clone(),
+        &reader_token,
+        "read_viewer",
+        json!({
+            "mint_id": mint_id_hex,
+            "viewer_session_handle": viewer_handle,
+            "chunk_index": 2,
+        }),
+    )
+    .await;
+    assert_eq!(
+        past_the_end_chunk["status"], "error",
+        "{past_the_end_chunk}"
+    );
+
+    let (close_status, close_payload) = post_library(
+        app.clone(),
+        &reader_token,
+        "close_viewer",
+        json!({"mint_id": mint_id_hex, "viewer_session_handle": viewer_handle}),
+    )
+    .await;
+    assert_eq!(close_status, StatusCode::OK);
+    assert_eq!(close_payload["status"], "ok", "{close_payload}");
+    let viewer_record: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(runtime_custody_viewer_record_path_for_test(
+            dir.path(),
+            &buyer.principal_id,
+            mint_id,
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(viewer_record["lifecycle_status"], "closed");
+    assert_eq!(std::fs::read(&listing_path).unwrap(), listing_before_buy);
+
+    // The object this session staged is gone with it. Staged ciphertext is
+    // already published and secret from nobody, but it is session state, and
+    // session state that outlives its session is a leak whatever it contains.
+    let staged =
+        runtime_custody_viewer_record_path_for_test(dir.path(), &buyer.principal_id, mint_id)
+            .with_extension("framed");
+    assert!(
+        !staged.exists(),
+        "a closed session must leave no staged object at {staged:?}"
+    );
 }
 
 #[cfg(unix)]
@@ -10653,8 +13892,12 @@ async fn test_runtime_custody_two_runtime_portable_listing_gateway_journey() {
         "uri": creator_uri,
         "protection": {
             "mode": "runtime_custody",
+            // Every mint names the channel it publishes into.
+            "channel": "0x0000000000000000000000000000000000000022",
             "copies": "0x1",
-            "price": MOCK_PROTECTED_CONTENT_LISTING_PRICE,
+            // The amount a creator types; the host scales it into the
+            // token's base units, which is what the listing then reports.
+            "price": MOCK_PROTECTED_CONTENT_LISTING_AMOUNT,
         },
     });
     let (_, publish_pending) = post_library(
@@ -10747,7 +13990,7 @@ async fn test_runtime_custody_two_runtime_portable_listing_gateway_journey() {
     );
     assert_eq!(
         publish_requests[2]["availability_requirements"],
-        json!({"min_replicas": 3, "require_live_multi_peer_proof": true})
+        json!({"min_replicas": 1, "require_live_multi_peer_proof": false})
     );
     assert_eq!(publish_requests[2]["links"].as_array().unwrap().len(), 2);
 
@@ -10947,40 +14190,14 @@ async fn test_runtime_custody_two_runtime_portable_listing_gateway_journey() {
     )
     .await;
     assert_eq!(open_replay, opened);
-    let (clear_init, clear_segments) =
-        crate::protected_content_runtime::tests::runtime_custody_gateway_media_output_for_test();
-    let (_, init) = post_library(
-        app_b.clone(),
+    assert_runtime_custody_dash_media_reads(
+        &app_b,
         &player_token,
-        "read_viewer",
-        json!({"mint_id": mint_id_hex, "viewer_session_handle": viewer_handle}),
+        &mint_id_hex,
+        &viewer_handle,
+        json!({}),
     )
     .await;
-    assert_eq!(init["status"], "ok", "{init}");
-    assert_eq!(
-        base64::engine::general_purpose::STANDARD
-            .decode(init["data"]["data"].as_str().unwrap())
-            .unwrap(),
-        clear_init
-    );
-    let (_, segment) = post_library(
-        app_b.clone(),
-        &player_token,
-        "read_viewer",
-        json!({
-            "mint_id": mint_id_hex,
-            "viewer_session_handle": viewer_handle,
-            "segment_index": 0,
-        }),
-    )
-    .await;
-    assert_eq!(segment["status"], "ok", "{segment}");
-    assert_eq!(
-        base64::engine::general_purpose::STANDARD
-            .decode(segment["data"]["data"].as_str().unwrap())
-            .unwrap(),
-        clear_segments[0]
-    );
     let (_, closed) = post_library(
         app_b,
         &player_token,
@@ -11011,6 +14228,1175 @@ async fn test_runtime_custody_two_runtime_portable_listing_gateway_journey() {
         .path()
         .join("protected-content/runtime-mint")
         .exists());
+}
+
+// --- Read after a buy: adoption from the shared document (D10) -------------
+
+/// What the creator Home left behind for a buyer: the shared content plane
+/// (IPFS, as both Homes see it), the custody process fixture both Homes use,
+/// and the package the creator recorded -- which the buyer never receives.
+struct TwoRuntimeMarketAsset {
+    _runtime_a: tempfile::TempDir,
+    shared_content: TwoRuntimeContentStore,
+    process_fixture: crate::protected_content_runtime::tests::RuntimeCustodyProcessProviderFixture,
+    package: crate::protected_content_runtime::RuntimePortableListingPackage,
+}
+
+/// The creator half of `test_runtime_custody_two_runtime_portable_listing_gateway_journey`:
+/// Runtime A mints and publishes. Nothing is shared with a buyer but the
+/// content plane and the chain.
+async fn publish_two_runtime_market_asset() -> TwoRuntimeMarketAsset {
+    let shared_content = std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    let runtime_a = tempfile::tempdir().unwrap();
+    enable_protected_content(runtime_a.path());
+    crate::protected_content_runtime::tests::write_device_key(runtime_a.path(), 0x5a);
+    let content_a = TwoRuntimeContentProvider::new(0x5a, shared_content.clone());
+    let (state_a, wallet_a) = wallet_chain_test_state_with_observer(runtime_a.path()).await;
+    let registry_a = state_a.provider_registry.as_ref().unwrap().clone();
+    registry_a
+        .register_sub_provider("content", content_a)
+        .await
+        .unwrap();
+    registry_a
+        .register_sub_provider(
+            "object",
+            std::sync::Arc::new(crate::library::ObjectProvider::new(
+                runtime_a.path().to_path_buf(),
+                std::sync::Arc::downgrade(&registry_a),
+            )),
+        )
+        .await
+        .unwrap();
+    let process_fixture = crate::protected_content_runtime::tests::register_runtime_custody_process_providers_for_test_registry(
+        runtime_a.path(),
+        &registry_a,
+    )
+    .await;
+    crate::protected_content_runtime::tests::register_runtime_custody_mock_media_provider_for_test_registry(
+        runtime_a.path(),
+        &registry_a,
+    )
+    .await;
+    let creator = passkey_authority_with_profile_role_credential(
+        runtime_a.path(),
+        "market-asset-creator",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-market-asset-creator",
+    );
+    let creator_token = app_token_for_authority(runtime_a.path(), LIBRARY_CAPSULE_ID, &creator);
+    let creator_account = wallet_a
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&creator.principal_id, 1)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet_a.provider,
+        &creator.principal_id,
+        "eip155:8453",
+        &creator_account,
+        10,
+    )
+    .await;
+    let app_a = gateway_router(state_a);
+    let creator_uri = format!(
+        "{}/Documents/market-asset-proof.mp4",
+        crate::auth::principal_localhost_root(&creator.principal_id)
+    );
+    write_library_bytes(&app_a, &creator_token, &creator_uri, b"media").await;
+    let publish_body = json!({
+        "uri": creator_uri,
+        "protection": {
+            "mode": "runtime_custody",
+            "channel": "0x0000000000000000000000000000000000000022",
+            "copies": "0x1",
+            "price": MOCK_PROTECTED_CONTENT_LISTING_AMOUNT,
+        },
+    });
+    let (_, pending) = post_library(
+        app_a.clone(),
+        &creator_token,
+        "publish",
+        publish_body.clone(),
+    )
+    .await;
+    assert_eq!(
+        pending["message"],
+        "Runtime custody creator mint is pending exact Wallet or Chain settlement"
+    );
+    let _ = wallet_a
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    let (_, published) = post_library(app_a, &creator_token, "publish", publish_body).await;
+    assert_eq!(published["status"], "ok", "{published}");
+    let mint_id = elastos_protected_content_contracts::Digest32::new(
+        hex::decode(
+            published["data"]["content_security"]["mint_id"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap()
+        .try_into()
+        .unwrap(),
+    );
+    let package =
+        crate::protected_content_runtime::load_runtime_custody_listing(runtime_a.path(), mint_id)
+            .unwrap()
+            .unwrap()
+            .package;
+    TwoRuntimeMarketAsset {
+        _runtime_a: runtime_a,
+        shared_content,
+        process_fixture,
+        package,
+    }
+}
+
+/// The market as a buyer's chain states it for this one item: the item's
+/// operative and token URI, and the KID bound to it. Everything else --
+/// the offer, the Wallet effects, access -- is the shared mock's.
+struct AdoptionMarketChain {
+    ledger: String,
+    token_id: String,
+    operative: String,
+    token_uri: String,
+    kid: String,
+    /// Every transaction receipt reads as mined and reverted (`status` 0x0).
+    revert_receipts: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The chain cannot state the KID's binding.
+    kid_binding_unavailable: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl Provider for AdoptionMarketChain {
+    async fn handle(&self, _request: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+        Err(ProviderError::Provider("raw requests only".into()))
+    }
+
+    fn schemes(&self) -> Vec<&'static str> {
+        vec!["elastos"]
+    }
+
+    fn name(&self) -> &'static str {
+        "adoption-market-chain"
+    }
+
+    async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+        let network = request.get("network").cloned().unwrap_or(Value::Null);
+        match request.get("op").and_then(Value::as_str) {
+            Some("resolve_protected_content_item")
+                if request["ledger"] == self.ledger.as_str()
+                    && request["token_id"] == self.token_id.as_str() =>
+            {
+                Ok(json!({
+                    "status": "ok",
+                    "data": {
+                        "schema": "elastos.chain.protected-content-item/v1",
+                        "network": network,
+                        "chain_id": 8453,
+                        "ledger": self.ledger,
+                        "token_id": self.token_id,
+                        "operative": self.operative,
+                        "token_uri": self.token_uri,
+                        "finalized_block_number": 44,
+                    }
+                }))
+            }
+            // The listing object's offers read. The offers themselves are the
+            // shared mock's business (`buy_offer` reads them through the
+            // purchase plan); the object only needs an answer for the item.
+            Some("resolve_protected_content_item_offers")
+                if request["ledger"] == self.ledger.as_str()
+                    && request["token_id"] == self.token_id.as_str() =>
+            {
+                Ok(json!({
+                    "status": "ok",
+                    "data": {
+                        "schema": "elastos.chain.protected-content-item-offers/v1",
+                        "network": network,
+                        "chain_id": 8453,
+                        "ledger": self.ledger,
+                        "token_id": self.token_id,
+                        "operative": self.operative,
+                        "finalized_block_number": 44,
+                        "truncated": false,
+                        "offers": [],
+                    }
+                }))
+            }
+            Some("resolve_protected_content_kid_binding")
+                if self
+                    .kid_binding_unavailable
+                    .load(std::sync::atomic::Ordering::SeqCst) =>
+            {
+                Ok(json!({
+                    "status": "error",
+                    "code": "upstream_rpc_error",
+                    "message": "mock kid binding is unavailable"
+                }))
+            }
+            Some("resolve_protected_content_kid_binding")
+                if request["content_access_id"] == self.kid.as_str() =>
+            {
+                Ok(json!({
+                    "status": "ok",
+                    "data": {
+                        "schema": "elastos.chain.protected-content-kid-binding/v1",
+                        "network": network,
+                        "chain_id": 8453,
+                        "content_access_id": self.kid,
+                        "ledger": self.ledger,
+                        "token_id": self.token_id,
+                        "finalized_block_number": 44,
+                    }
+                }))
+            }
+            Some("receipt")
+                if self
+                    .revert_receipts
+                    .load(std::sync::atomic::Ordering::SeqCst) =>
+            {
+                let mut answer = MockChainProvider.send_raw(request).await?;
+                if let Some(receipt) = answer.pointer_mut("/data/receipt") {
+                    if receipt.is_object() {
+                        receipt["status"] = json!("0x0");
+                    }
+                }
+                Ok(answer)
+            }
+            _ => MockChainProvider.send_raw(request).await,
+        }
+    }
+}
+
+/// The buyer's content plane. Its `ensure` writes a receipt bound to the
+/// publisher the request names, and `status` answers that latest receipt,
+/// exactly as `ContentProvider::ensure` does (`effective_publisher_did`,
+/// `write_receipt`). The shared two-Runtime mock always answers with the
+/// publisher the object was first published under.
+struct PublisherBindingContentProvider {
+    inner: std::sync::Arc<TwoRuntimeContentProvider>,
+    /// `cid` -> the publisher its latest `ensure` named.
+    ensured: std::sync::Mutex<BTreeMap<String, String>>,
+}
+
+#[async_trait::async_trait]
+impl Provider for PublisherBindingContentProvider {
+    async fn handle(&self, request: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+        self.inner.handle(request).await
+    }
+
+    fn schemes(&self) -> Vec<&'static str> {
+        vec!["content"]
+    }
+
+    fn name(&self) -> &'static str {
+        "publisher-binding-content-provider"
+    }
+
+    async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+        let mut answer = self.inner.send_raw(request).await?;
+        let op = request.get("op").and_then(Value::as_str);
+        let cid = request
+            .get("cid")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if op == Some("ensure") {
+            if let Some(publisher_did) = request.get("publisher_did").and_then(Value::as_str) {
+                self.ensured
+                    .lock()
+                    .unwrap()
+                    .insert(cid.clone(), publisher_did.to_string());
+            }
+        }
+        let bound = self.ensured.lock().unwrap().get(&cid).cloned();
+        if let (Some("ensure" | "status"), Some(publisher_did)) = (op, bound) {
+            let mut receipt: crate::content::SignedAvailabilityReceipt =
+                serde_json::from_value(answer["data"]["receipt"].clone())
+                    .map_err(|error| ProviderError::Provider(error.to_string()))?;
+            receipt.payload.publisher_did = publisher_did;
+            let payload_bytes =
+                serde_json::to_string(&serde_json::to_value(&receipt.payload).unwrap()).unwrap();
+            let (signature, signer_did) = crate::crypto::domain_separated_sign(
+                &self.inner.signing_key,
+                "elastos.content.availability.receipt.v1",
+                payload_bytes.as_bytes(),
+            );
+            receipt.signature = signature;
+            receipt.signer_did = signer_did;
+            answer["data"]["receipt"] = serde_json::to_value(receipt).unwrap();
+        }
+        Ok(answer)
+    }
+}
+
+/// A buyer Home that has never seen the creator's listing: its own data dir,
+/// device key and Wallet; the shared content plane; the market chain above.
+struct AdoptionBuyer {
+    runtime: tempfile::TempDir,
+    app: axum::Router,
+    content: std::sync::Arc<TwoRuntimeContentProvider>,
+    wallet: std::sync::Arc<RecordingWalletProvider>,
+    buyer: TestPasskeyAuthority,
+    market_token: String,
+    library_token: String,
+    revert_receipts: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    kid_binding_unavailable: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The buyer's own custody pool, when it has one: three more nodes that
+    /// trust only this Home's Runtime, as every Home's own pool does.
+    _own_pool:
+        Option<crate::protected_content_runtime::tests::RuntimeCustodyProcessProviderFixture>,
+}
+
+/// The two-Runtime tests' buyer Home: it shares the creator's custody pool,
+/// whose nodes also trust this Home's Runtime.
+async fn adoption_buyer(asset: &TwoRuntimeMarketAsset) -> AdoptionBuyer {
+    adoption_buyer_on(asset, BuyerPool::SharedWith(&asset.process_fixture)).await
+}
+
+/// Whose custody pool a test buyer Home runs.
+enum BuyerPool<'a> {
+    /// This pool's, whose nodes also trust the buyer's Runtime.
+    SharedWith(&'a crate::protected_content_runtime::tests::RuntimeCustodyProcessProviderFixture),
+    /// Its own: three more nodes that trust only the buyer's Runtime.
+    Own,
+}
+
+/// A buyer Home with its own custody pool, as every real Home has: the
+/// creator's item is held by a pool this Home neither belongs to nor can
+/// reach.
+async fn adoption_buyer_with_own_pool(asset: &TwoRuntimeMarketAsset) -> AdoptionBuyer {
+    adoption_buyer_on(asset, BuyerPool::Own).await
+}
+
+async fn adoption_buyer_on(asset: &TwoRuntimeMarketAsset, pool: BuyerPool<'_>) -> AdoptionBuyer {
+    let runtime = tempfile::tempdir().unwrap();
+    crate::protected_content_runtime::tests::write_device_key(runtime.path(), 0x5b);
+    seed_test_browser_capsules(runtime.path());
+    let content = TwoRuntimeContentProvider::new(0x5b, asset.shared_content.clone());
+    let wallet = std::sync::Arc::new(RecordingWalletProvider::new(MockWalletProvider::default()));
+    let registry = std::sync::Arc::new(ProviderRegistry::new());
+    let revert_receipts = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let kid_binding_unavailable = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    registry
+        .register_sub_provider("wallet", wallet.clone())
+        .await
+        .unwrap();
+    registry
+        .register_sub_provider(
+            "chain",
+            std::sync::Arc::new(AdoptionMarketChain {
+                revert_receipts: revert_receipts.clone(),
+                kid_binding_unavailable: kid_binding_unavailable.clone(),
+                ledger: asset.package.ledger.clone(),
+                token_id: asset.package.token_id.clone(),
+                operative: asset.package.operative.clone(),
+                token_uri: format!(
+                    "ipfs://{}/0000000000000000000000000000000000000000000000000000000000000001.json",
+                    asset.package.metadata_cid
+                ),
+                kid: asset.package.content_access_id.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+    registry
+        .register_sub_provider(
+            "content",
+            std::sync::Arc::new(PublisherBindingContentProvider {
+                inner: content.clone(),
+                ensured: std::sync::Mutex::new(BTreeMap::new()),
+            }),
+        )
+        .await
+        .unwrap();
+    registry
+        .register_sub_provider(
+            "object",
+            std::sync::Arc::new(crate::library::ObjectProvider::new(
+                runtime.path().to_path_buf(),
+                std::sync::Arc::downgrade(&registry),
+            )),
+        )
+        .await
+        .unwrap();
+    let own_pool = match pool {
+        BuyerPool::Own => Some(
+            crate::protected_content_runtime::tests::register_runtime_custody_process_providers_for_test_registry(
+                runtime.path(),
+                &registry,
+            )
+            .await,
+        ),
+        BuyerPool::SharedWith(fixture) => {
+            crate::protected_content_runtime::tests::attach_runtime_custody_process_providers_for_buyer_runtime(
+                fixture,
+                runtime.path(),
+                &registry,
+            )
+            .await;
+            None
+        }
+    };
+    let buyer = passkey_authority_with_profile_role_credential(
+        runtime.path(),
+        "market-asset-buyer",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-market-asset-buyer",
+    );
+    let buyer_account = wallet
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&buyer.principal_id, 2)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet.provider,
+        &buyer.principal_id,
+        "eip155:8453",
+        &buyer_account,
+        10,
+    )
+    .await;
+    let market_token = app_token_for_authority(runtime.path(), MARKETPLACE_CAPSULE_ID, &buyer);
+    let library_token = app_token_for_authority(runtime.path(), LIBRARY_CAPSULE_ID, &buyer);
+    let state = GatewayState {
+        provider_registry: Some(registry),
+        collaboration_chat_product_port: None,
+        collaboration_presence_product_port: None,
+        carrier_endpoint: None,
+        collaboration_discovery_service: None,
+        browser_internet: Default::default(),
+        identity_manager: std::sync::Arc::new(std::sync::OnceLock::new()),
+        cache_dir: runtime.path().to_path_buf(),
+        data_dir: runtime.path().to_path_buf(),
+    };
+    AdoptionBuyer {
+        app: gateway_router(state),
+        runtime,
+        content,
+        wallet,
+        buyer,
+        market_token,
+        library_token,
+        revert_receipts,
+        kid_binding_unavailable,
+        _own_pool: own_pool,
+    }
+}
+
+/// Exactly what the Marketplace page sends for the creator's own offer.
+fn adoption_buy_offer_body(
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+) -> Value {
+    json!({
+        "item": {
+            "chain_namespace": package.chain_namespace,
+            "network": package.network,
+            "ledger": package.ledger,
+            "token_id": package.token_id,
+            "kid": package.content_access_id,
+        },
+        "asset_uri": format!("elastos://{}", package.metadata_cid),
+        "seller": package.seller_address,
+        "agreed": {
+            "price": package.price,
+            "pay_token": package.pay_token,
+            "quantity": "0x1",
+        },
+    })
+}
+
+/// Buy the asset on the market and answer the completion. The chain says
+/// "no access" until the buy settles, then "access".
+async fn complete_adoption_market_purchase(
+    buyer: &AdoptionBuyer,
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+) -> Value {
+    complete_adoption_market_purchase_as(buyer, &buyer.market_token, package).await
+}
+
+/// [`complete_adoption_market_purchase`] for whichever person on the
+/// buyer's Home `market_token` names.
+async fn complete_adoption_market_purchase_as(
+    buyer: &AdoptionBuyer,
+    market_token: &str,
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+) -> Value {
+    set_mock_protected_content_purchase_access_denied();
+    let (_, pending) = post_library(
+        buyer.app.clone(),
+        market_token,
+        "buy_offer",
+        adoption_buy_offer_body(package),
+    )
+    .await;
+    assert_eq!(
+        pending["buy_progress"]["stage"], "purchase_approval",
+        "{pending}"
+    );
+    let _ = buyer
+        .wallet
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    let (_, complete) = post_library(
+        buyer.app.clone(),
+        market_token,
+        "buy_offer",
+        adoption_buy_offer_body(package),
+    )
+    .await;
+    assert_eq!(complete["status"], "ok", "{complete}");
+    complete["data"].clone()
+}
+
+/// Review focus 5 and D10: an asset bought on the market opens through the
+/// existing open path, unchanged, fed only by what every marketplace reads.
+/// The creator's ElastOS-only `manifest.json` is deleted before the buyer
+/// ever looks, so nothing ElastOS-only can be what made it open.
+#[tokio::test]
+async fn adopted_listing_opens_through_the_existing_viewer_path() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let removed = asset
+        .shared_content
+        .lock()
+        .unwrap()
+        .get_mut(&package.metadata_cid)
+        .expect("the creator published its metadata folder")
+        .remove("manifest.json");
+    assert!(
+        removed.is_some(),
+        "the folder carried a manifest.json to delete"
+    );
+
+    let buyer = adoption_buyer(&asset).await;
+    let complete = complete_adoption_market_purchase(&buyer, &package).await;
+    assert_eq!(
+        complete["schema"],
+        "elastos.marketplace.buy-offer-complete/v1"
+    );
+    assert_eq!(complete["adoption"], "adopted", "{complete}");
+
+    // The mint was computed from the rebuilt draft; it is the creator's own.
+    let market = crate::protected_content_market::load_completed_runtime_market_purchase_by_key(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+        &package.chain_namespace,
+        &package.ledger,
+        &package.token_id,
+    )
+    .unwrap()
+    .expect("the market purchase is complete");
+    assert_eq!(
+        market.adopted_mint_id.as_deref(),
+        Some(package.mint_id.as_str())
+    );
+    let mint_id = elastos_protected_content_contracts::Digest32::new(
+        hex::decode(&package.mint_id).unwrap().try_into().unwrap(),
+    );
+    let listing = crate::protected_content_runtime::load_runtime_custody_listing(
+        buyer.runtime.path(),
+        mint_id,
+    )
+    .unwrap()
+    .expect("adoption recorded a listing");
+    assert_eq!(
+        listing.origin,
+        crate::protected_content_runtime::RuntimeCustodyListingOrigin::Asset {
+            asset_uri: format!("elastos://{}", package.metadata_cid),
+        }
+    );
+    assert_eq!(listing.package.mint_transaction_hash, None);
+    assert_eq!(listing.package.published_at, None);
+    assert!(listing
+        .package
+        .publisher_profile_did
+        .starts_with("did:pkh:eip155:8453:0x"));
+    assert_eq!(listing.package.content_id, package.content_id);
+    assert_eq!(listing.package.content_cid, package.content_cid);
+    let purchase = crate::protected_content_runtime::load_runtime_custody_purchase(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+        mint_id,
+    )
+    .unwrap()
+    .expect("adoption recorded a purchase");
+    assert_eq!(
+        purchase.acquisition,
+        crate::protected_content_runtime::RuntimeCustodyAcquisitionV1::Market
+    );
+    assert_eq!(purchase.listing_sha256, listing.portable_package_digest());
+    assert!(purchase.capsule_uri.is_some(), "the owned .ddrm was filed");
+
+    // The unchanged open path.
+    let player_token = projection_launch_token_for_authority_context(
+        buyer.runtime.path(),
+        ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
+        &buyer.buyer,
+    );
+    let (_, opened) = post_library(
+        buyer.app.clone(),
+        &player_token,
+        "open_viewer",
+        json!({"mint_id": package.mint_id}),
+    )
+    .await;
+    assert_eq!(opened["status"], "ok", "{opened}");
+    let viewer_handle = opened["data"]["viewer_session_handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_runtime_custody_dash_media_reads(
+        &buyer.app,
+        &player_token,
+        &package.mint_id,
+        &viewer_handle,
+        json!({}),
+    )
+    .await;
+    let (_, closed) = post_library(
+        buyer.app.clone(),
+        &player_token,
+        "close_viewer",
+        json!({"mint_id": package.mint_id, "viewer_session_handle": viewer_handle}),
+    )
+    .await;
+    assert_eq!(closed["status"], "ok", "{closed}");
+
+    // Nothing ElastOS-only was ever asked for.
+    let manifest_reads = buyer
+        .content
+        .requests()
+        .into_iter()
+        .filter(|request| request["path"] == "manifest.json")
+        .count();
+    assert_eq!(manifest_reads, 0);
+
+    // A second press is the same completed purchase, still adopted, and the
+    // item can be downloaded by its item alone.
+    let (_, again) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(again["data"], complete);
+    let (_, downloaded) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({"item": adoption_buy_offer_body(&package)["item"]}),
+    )
+    .await;
+    assert_eq!(downloaded["status"], "ok", "{downloaded}");
+    assert_eq!(downloaded["data"]["mint_id"], package.mint_id);
+    assert_eq!(downloaded["data"]["acquisition"], "market");
+    assert_eq!(
+        downloaded["data"]["capsule_uri"],
+        json!(purchase.capsule_uri)
+    );
+    crate::protected_content_runtime::tests::assert_no_unresolved_runtime_custody_release_for_test(
+        buyer.runtime.path(),
+    );
+}
+
+/// R39 (T8-I1): a Home that already holds a listing of the mint -- imported
+/// from the creator's published package -- on exactly the terms the market
+/// purchase paid binds the purchase to that listing, instead of leaving the
+/// purchase unopenable. The listing is not overwritten, and it opens.
+#[tokio::test]
+async fn adoption_binds_to_a_listing_already_held_on_the_same_terms() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let mint_id = elastos_protected_content_contracts::Digest32::new(
+        hex::decode(&package.mint_id).unwrap().try_into().unwrap(),
+    );
+    let creator_record = crate::protected_content_runtime::load_runtime_custody_listing(
+        asset._runtime_a.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    let crate::protected_content_runtime::RuntimeCustodyListingOrigin::LocalCreator {
+        listing_uri,
+        package_sha256,
+        ..
+    } = creator_record.origin.clone()
+    else {
+        panic!("the creator's own listing is LocalCreator");
+    };
+    let imported = crate::protected_content_runtime::RuntimeCustodyListingRecord {
+        origin: crate::protected_content_runtime::RuntimeCustodyListingOrigin::Imported {
+            listing_uri,
+            package_sha256,
+        },
+        ..creator_record
+    };
+    imported.validate().unwrap();
+
+    let buyer = adoption_buyer(&asset).await;
+    crate::protected_content_runtime::persist_runtime_custody_listing(
+        buyer.runtime.path(),
+        &imported,
+    )
+    .unwrap();
+    let complete = complete_adoption_market_purchase(&buyer, &package).await;
+    assert_eq!(complete["adoption"], "adopted", "{complete}");
+
+    let held = crate::protected_content_runtime::load_runtime_custody_listing(
+        buyer.runtime.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(held.origin, imported.origin, "the held listing is kept");
+    assert_eq!(held.package, imported.package);
+    let purchase = crate::protected_content_runtime::load_runtime_custody_purchase(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+        mint_id,
+    )
+    .unwrap()
+    .expect("the purchase is bound to the held listing");
+    assert_eq!(purchase.listing_sha256, imported.portable_package_digest());
+    assert_eq!(
+        purchase.acquisition,
+        crate::protected_content_runtime::RuntimeCustodyAcquisitionV1::Market
+    );
+
+    let player_token = projection_launch_token_for_authority_context(
+        buyer.runtime.path(),
+        ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
+        &buyer.buyer,
+    );
+    let (_, opened) = post_library(
+        buyer.app.clone(),
+        &player_token,
+        "open_viewer",
+        json!({"mint_id": package.mint_id}),
+    )
+    .await;
+    assert_eq!(opened["status"], "ok", "{opened}");
+    let viewer_handle = opened["data"]["viewer_session_handle"].clone();
+    let (_, closed) = post_library(
+        buyer.app.clone(),
+        &player_token,
+        "close_viewer",
+        json!({"mint_id": package.mint_id, "viewer_session_handle": viewer_handle}),
+    )
+    .await;
+    assert_eq!(closed["status"], "ok", "{closed}");
+}
+
+/// A buyer Home holding an imported copy of the creator's listing, so the
+/// Library `buy` (the listing-package path) can buy the same item that
+/// Marketplace `buy_offer` names.
+async fn buyer_holding_an_imported_listing(
+    asset: &TwoRuntimeMarketAsset,
+) -> (AdoptionBuyer, elastos_protected_content_contracts::Digest32) {
+    let mint_id = elastos_protected_content_contracts::Digest32::new(
+        hex::decode(&asset.package.mint_id)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    let creator_record = crate::protected_content_runtime::load_runtime_custody_listing(
+        asset._runtime_a.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    let crate::protected_content_runtime::RuntimeCustodyListingOrigin::LocalCreator {
+        listing_uri,
+        package_sha256,
+        ..
+    } = creator_record.origin.clone()
+    else {
+        panic!("the creator's own listing is LocalCreator");
+    };
+    let imported = crate::protected_content_runtime::RuntimeCustodyListingRecord {
+        origin: crate::protected_content_runtime::RuntimeCustodyListingOrigin::Imported {
+            listing_uri,
+            package_sha256,
+        },
+        ..creator_record
+    };
+    imported.validate().unwrap();
+    let buyer = adoption_buyer(asset).await;
+    crate::protected_content_runtime::persist_runtime_custody_listing(
+        buyer.runtime.path(),
+        &imported,
+    )
+    .unwrap();
+    (buyer, mint_id)
+}
+
+/// Start a Library `buy` of the imported item: its first press records the
+/// listing-package purchase and raises the Wallet request.
+async fn start_library_buy(
+    buyer: &AdoptionBuyer,
+    mint_id: elastos_protected_content_contracts::Digest32,
+) -> crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
+    let (_, pending) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "buy",
+        json!({"mint_id": hex::encode(mint_id.as_bytes())}),
+    )
+    .await;
+    assert_eq!(
+        pending["buy_progress"]["stage"], "purchase_approval",
+        "{pending}"
+    );
+    crate::protected_content_runtime::load_runtime_custody_purchase(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+        mint_id,
+    )
+    .unwrap()
+    .expect("the first press records the purchase")
+}
+
+/// Marketplace's first press for the same item: a fresh attempt, and a fresh
+/// Wallet request.
+async fn assert_market_buy_starts(
+    buyer: &AdoptionBuyer,
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+) {
+    let (_, market) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(package),
+    )
+    .await;
+    assert_eq!(
+        market["buy_progress"]["stage"], "purchase_approval",
+        "{market}"
+    );
+    assert!(
+        crate::protected_content_market::load_runtime_market_purchase_by_key(
+            buyer.runtime.path(),
+            &buyer.buyer.principal_id,
+            &package.chain_namespace,
+            &package.ledger,
+            &package.token_id,
+        )
+        .unwrap()
+        .is_some()
+    );
+}
+
+/// R41 (NEW-I1): a Library `buy` the person declined is over -- nothing was
+/// signed, so nothing can be paid -- and its record is retired, exactly as a
+/// declined market attempt is (R25). The same item can then be bought from
+/// Marketplace: R29 refuses only a purchase that is still under way.
+#[tokio::test]
+async fn declined_library_buy_does_not_block_a_market_purchase() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    set_mock_protected_content_purchase_access_denied();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let (buyer, mint_id) = buyer_holding_an_imported_listing(&asset).await;
+    start_library_buy(&buyer, mint_id).await;
+    {
+        let mut approvals = buyer.wallet.provider.approvals.lock().await;
+        let approval = approvals
+            .iter_mut()
+            .rev()
+            .find(|approval| approval["intent"] == "transaction_intent")
+            .unwrap();
+        approval["status"] = json!("rejected");
+    }
+    let (_, declined) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "buy",
+        json!({"mint_id": package.mint_id}),
+    )
+    .await;
+    assert_eq!(declined["buy_progress"]["stage"], "declined", "{declined}");
+    assert_eq!(declined["buy_progress"]["resumable"], false, "{declined}");
+    assert!(
+        crate::protected_content_runtime::load_runtime_custody_purchase(
+            buyer.runtime.path(),
+            &buyer.buyer.principal_id,
+            mint_id,
+        )
+        .unwrap()
+        .is_none(),
+        "a declined listing purchase is retired"
+    );
+
+    assert_market_buy_starts(&buyer, &package).await;
+}
+
+/// R41: a Library `buy` the chain mined and reverted is a spent effect that
+/// paid nothing. Its record is retired (R21's discipline on the listing
+/// path), so the item can be bought from Marketplace.
+#[tokio::test]
+async fn reverted_library_buy_does_not_block_a_market_purchase() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    set_mock_protected_content_purchase_access_denied();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let (buyer, mint_id) = buyer_holding_an_imported_listing(&asset).await;
+    start_library_buy(&buyer, mint_id).await;
+    let _ = buyer
+        .wallet
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    buyer
+        .revert_receipts
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (_, reverted) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "buy",
+        json!({"mint_id": package.mint_id}),
+    )
+    .await;
+    assert_eq!(reverted["status"], "error", "{reverted}");
+    assert_eq!(reverted["code"], "library_error", "{reverted}");
+    assert!(
+        crate::protected_content_runtime::load_runtime_custody_purchase(
+            buyer.runtime.path(),
+            &buyer.buyer.principal_id,
+            mint_id,
+        )
+        .unwrap()
+        .is_none(),
+        "a reverted listing purchase is retired"
+    );
+
+    buyer
+        .revert_receipts
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_market_buy_starts(&buyer, &package).await;
+}
+
+/// T8-M3: a shared document carrying a well-formed, decodable key envelope
+/// that belongs to ANOTHER asset is not adopted: the purchase stays complete,
+/// adoption is `pending`, and no read-side record is written.
+#[tokio::test]
+async fn adoption_refuses_a_decodable_envelope_from_another_asset() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let other = publish_two_runtime_market_asset().await;
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    assert_ne!(
+        other.package.key_envelope_identity_base64,
+        package.key_envelope_identity_base64
+    );
+    {
+        let mut shared = asset.shared_content.lock().unwrap();
+        let folder = shared.get_mut(&package.metadata_cid).unwrap();
+        let mut document: Value =
+            serde_json::from_slice(folder.get("metadata.json").unwrap()).unwrap();
+        document["asset"]["protections"][0]["key_envelope_identity_base64"] =
+            json!(other.package.key_envelope_identity_base64);
+        folder.insert(
+            "metadata.json".to_string(),
+            serde_json::to_vec(&document).unwrap(),
+        );
+    }
+    // The buyer runs the pool the forged envelope names, so the custody
+    // guard lets the purchase through and adoption's own check of the
+    // envelope against the asset is what refuses it.
+    let buyer = adoption_buyer_on(&asset, BuyerPool::SharedWith(&other.process_fixture)).await;
+    let complete = complete_adoption_market_purchase(&buyer, &package).await;
+    assert_eq!(complete["adoption"], "pending", "{complete}");
+    // What refused it is the envelope's own check against the asset's
+    // content identity (`decode_and_validate`), which runs before anything
+    // is pinned: the custody guard would have answered `custody_elsewhere`,
+    // and a later failure would have pinned the content first.
+    assert_eq!(
+        foreign_pool_ensures(&buyer, &package.content_cid),
+        0,
+        "refused before the rebuild pinned anything"
+    );
+    let root = buyer
+        .runtime
+        .path()
+        .join("protected-content/runtime-listings");
+    assert_eq!(
+        std::fs::read_dir(root).map_or(0, |entries| entries.count()),
+        0,
+        "no listing for an envelope that is not this asset's"
+    );
+    let purchases = buyer
+        .runtime
+        .path()
+        .join("protected-content/runtime-purchases");
+    let purchase_files = std::fs::read_dir(&purchases)
+        .map(|dirs| {
+            dirs.flatten()
+                .flat_map(|dir| {
+                    std::fs::read_dir(dir.path())
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                })
+                .filter(|file| file.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(purchase_files, 0, "no read-side purchase record either");
+}
+
+/// A shared document whose identities do not verify is not adopted: the
+/// purchase stays complete, and no read-side record is written. Once the
+/// document is right again, the next press adopts it.
+#[tokio::test]
+async fn adoption_refuses_identities_that_do_not_verify() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let original = asset
+        .shared_content
+        .lock()
+        .unwrap()
+        .get(&package.metadata_cid)
+        .unwrap()
+        .get("metadata.json")
+        .unwrap()
+        .clone();
+    let publish_tampered = |tamper: &dyn Fn(&mut Value)| {
+        let mut document: Value = serde_json::from_slice(&original).unwrap();
+        tamper(&mut document);
+        asset
+            .shared_content
+            .lock()
+            .unwrap()
+            .get_mut(&package.metadata_cid)
+            .unwrap()
+            .insert(
+                "metadata.json".to_string(),
+                serde_json::to_vec(&document).unwrap(),
+            );
+    };
+    let listings = |buyer: &AdoptionBuyer| {
+        let root = buyer
+            .runtime
+            .path()
+            .join("protected-content/runtime-listings");
+        std::fs::read_dir(root).map_or(0, |entries| entries.count())
+    };
+
+    // 1. The content identity, tampered by one bit. The identity is bound to
+    // its own ciphertext digest, so it no longer decodes as one.
+    publish_tampered(&|document| {
+        let identity = document["asset"]["protections"][0]["content_identity_base64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let mut bytes = base64::engine::general_purpose::STANDARD
+            .decode(identity)
+            .unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0x01;
+        document["asset"]["protections"][0]["content_identity_base64"] =
+            json!(base64::engine::general_purpose::STANDARD.encode(bytes));
+    });
+    let buyer = adoption_buyer(&asset).await;
+    let complete = complete_adoption_market_purchase(&buyer, &package).await;
+    assert_eq!(complete["adoption"], "pending", "{complete}");
+    let market = crate::protected_content_market::load_completed_runtime_market_purchase_by_key(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+        &package.chain_namespace,
+        &package.ledger,
+        &package.token_id,
+    )
+    .unwrap()
+    .expect("the purchase is complete whatever adoption says");
+    assert_eq!(market.adopted_mint_id, None);
+    assert_eq!(
+        listings(&buyer),
+        0,
+        "no listing for an identity that does not decode"
+    );
+
+    // 2. Well-formed identities that do not verify: the document's content
+    // is another published object than the one its identities describe. Only
+    // verifying the content against the identity refuses this.
+    publish_tampered(&|document| {
+        document["media"]["uri"] = json!(format!("ipfs://{}", package.metadata_cid));
+    });
+    let (_, again) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(again["status"], "ok", "{again}");
+    assert_eq!(again["data"]["adoption"], "pending", "{again}");
+    assert_eq!(
+        listings(&buyer),
+        0,
+        "no listing for content that does not verify"
+    );
+    assert!(
+        crate::protected_content_runtime::load_runtime_custody_purchase(
+            buyer.runtime.path(),
+            &buyer.buyer.principal_id,
+            elastos_protected_content_contracts::Digest32::new(
+                hex::decode(&package.mint_id).unwrap().try_into().unwrap(),
+            ),
+        )
+        .unwrap()
+        .is_none(),
+        "no read-side purchase record either"
+    );
+
+    // The document restored, the next press adopts.
+    publish_tampered(&|_| {});
+    let (_, again) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(again["data"]["adoption"], "adopted", "{again}");
+    assert_eq!(listings(&buyer), 1);
 }
 
 #[tokio::test]
@@ -11098,6 +15484,7 @@ async fn test_runtime_custody_creator_tail_rejects_resolved_source_drift_before_
         receipt: json!({"schema": "elastos.content.availability.receipt/v1"}),
         content_security: json!({"mode": "runtime_custody"}),
         listing_uri: None,
+        capsule_uri: None,
     };
     let err = runtime_custody_publish_creator_tail_for_test(
         &state,
@@ -11256,6 +15643,30 @@ async fn test_library_provider_runtime_custody_viewer_ops_require_player_launch_
         "home launch token is not authorized for this viewer"
     );
 
+    // Session binding v3 admits a second viewer capsule. A reader launch token
+    // whose `selected_resource` matches its `executable_actor` must clear the
+    // proxy's viewer admission — it is then denied by the Runtime for the
+    // ordinary reason (no purchase), not by the proxy's 403.
+    let reader_token = projection_launch_token_for_authority_context(
+        dir.path(),
+        ELACITY_READER_CAPSULE_ID_FOR_TEST,
+        &authority,
+    );
+    let (reader_status, reader_payload) = post_library(
+        app.clone(),
+        &reader_token,
+        "open_viewer",
+        json!({ "mint_id": "00".repeat(32) }),
+    )
+    .await;
+    assert_eq!(reader_status, StatusCode::OK, "{reader_payload}");
+    assert_eq!(reader_payload["status"], "error", "{reader_payload}");
+    assert_eq!(
+        reader_payload["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE,
+        "{reader_payload}"
+    );
+
     let player_token = projection_launch_token_for_authority_context(
         dir.path(),
         ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
@@ -11289,6 +15700,73 @@ async fn test_library_provider_runtime_custody_viewer_ops_require_player_launch_
         .await
         .unwrap();
     assert_eq!(wrong_origin.status(), StatusCode::FORBIDDEN);
+}
+
+/// The protected-publish content-type gate.
+///
+/// `library_publish` routes `video/*`/`audio/*` to the unchanged media
+/// transcode path and everything else to the EPC1 object path. Before
+/// `mime_for_name` was widened, every media container but `.mp4`/`.mp3`
+/// resolved to `application/octet-stream` and was sealed as an object instead
+/// — un-openable, and poisoning the source's authority shape for any later
+/// retry. Media families must now pass the gate, and a type the table does not
+/// know must be refused outright rather than minted.
+#[tokio::test]
+async fn test_library_provider_runtime_custody_publish_gates_on_content_type() {
+    let dir = tempfile::tempdir().unwrap();
+    enable_protected_content(dir.path());
+    let app = gateway_router(library_test_state_without_content(dir.path()).await);
+    let authority = passkey_authority_with_name(dir.path(), Some("admin"));
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    crate::auth::store_test_principal_root_protection(dir.path(), &authority.principal_id);
+    let root = crate::auth::principal_localhost_root(&authority.principal_id);
+    let unsupported = crate::library::RUNTIME_CUSTODY_PUBLISH_UNSUPPORTED_TYPE_MESSAGE;
+
+    for name in [
+        "clip.mkv",
+        "clip.mov",
+        "clip.webm",
+        "clip.m4v",
+        "clip.avi",
+        "clip.ts",
+        // `.ogv` (ffmpeg's `ogg` demuxer) and `.asf` (the same `asf` demuxer
+        // `.wmv` already uses) were publishable before the media allowlist
+        // landed and must stay so.
+        "clip.ogv",
+        "clip.asf",
+        "song.m4a",
+        "song.wav",
+        "song.flac",
+        "song.ogg",
+        "song.opus",
+        "notes.md",
+        "shot.png",
+        "book.pdf",
+    ] {
+        let uri = format!("{root}/Documents/gate-{name}");
+        write_library_bytes(&app, &token, &uri, b"source-bytes").await;
+        let (status, payload) = publish_runtime_custody(&app, &token, &uri).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_ne!(
+            payload["message"].as_str().unwrap_or_default(),
+            unsupported,
+            "{name} must pass the protected-publish content-type gate: {payload}"
+        );
+    }
+
+    for name in ["archive.xyz", "blob.bin", "noextension", "shot.heic"] {
+        let uri = format!("{root}/Documents/gate-{name}");
+        write_library_bytes(&app, &token, &uri, b"source-bytes").await;
+        assert_runtime_custody_publish_error(
+            dir.path(),
+            &app,
+            &token,
+            &authority.principal_id,
+            &uri,
+            unsupported,
+        )
+        .await;
+    }
 }
 
 #[tokio::test]
@@ -11650,7 +16128,8 @@ async fn test_library_provider_runtime_custody_publish_passes_one_file_to_runtim
         &token,
         &authority.principal_id,
         &uri,
-        "Runtime custody media preparation provider is unavailable",
+        // Plan B S7-lite T7.6: without a pool the refusal comes first.
+        crate::protected_content_runtime::RUNTIME_CUSTODY_MINT_NO_POOL_MESSAGE,
     )
     .await;
     let text = payload.to_string();
@@ -11740,6 +16219,2173 @@ async fn test_library_provider_unpublish_and_repair_update_status() {
     assert_eq!(
         status["data"]["published"]["availability"]["status"],
         "local_pinned"
+    );
+}
+
+// Task 7 (#42 gap 2): the `creator` app capsule uploads through the Library
+// transport and protects-and-lists in one flow. These two tests prove the
+// gateway allowlist change: a Creator launch token may reach the upload and
+// publish routes Library already used, but stays refused everywhere else in
+// the Library-only object surface.
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_creator_token_can_upload_and_publish_runtime_custody() {
+    // Mirrors test_runtime_custody_typed_publish_buy_open_read_segment_and_close's
+    // protect-and-list happy path fixture-for-fixture. The only deliberate
+    // differences are: (1) the creator's launch token is a Creator token, not
+    // a Library token, and (2) the source file reaches Library through the
+    // upload route Creator actually uses, not the "write" op. Creator's job
+    // ends at a successful listing, so this test stops there (no buy/open).
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    enable_protected_content(dir.path());
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let registry = state.provider_registry.as_ref().unwrap().clone();
+    reset_mock_content_publish_requests();
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    registry
+        .register_sub_provider("content", std::sync::Arc::new(MockContentProvider))
+        .await
+        .unwrap();
+    registry
+        .register_sub_provider(
+            "object",
+            std::sync::Arc::new(crate::library::ObjectProvider::new(
+                dir.path().to_path_buf(),
+                std::sync::Arc::downgrade(&registry),
+            )),
+        )
+        .await
+        .unwrap();
+
+    let _process_fixture = crate::protected_content_runtime::tests::register_runtime_custody_process_providers_for_test_registry(
+        dir.path(),
+        &registry,
+    )
+    .await;
+    crate::protected_content_runtime::tests::register_runtime_custody_mock_media_provider_for_test_registry(
+        dir.path(),
+        &registry,
+    )
+    .await;
+    let creator = passkey_authority_with_profile_role_credential(
+        dir.path(),
+        "creator",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-creator",
+    );
+    let buyer = passkey_authority_with_profile_role_credential(
+        dir.path(),
+        "buyer",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-buyer",
+    );
+    let creator_token = app_token_for_authority(dir.path(), CREATOR_CAPSULE_ID, &creator);
+    let _buyer_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &buyer);
+    let _player_token = projection_launch_token_for_authority_context(
+        dir.path(),
+        ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
+        &buyer,
+    );
+    let creator_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&creator.principal_id, 1)
+        .await;
+    let replacement_creator_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&creator.principal_id, 3)
+        .await;
+    let buyer_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&buyer.principal_id, 2)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &creator.principal_id,
+        "eip155:8453",
+        &creator_account_id,
+        10,
+    )
+    .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &buyer.principal_id,
+        "eip155:8453",
+        &buyer_account_id,
+        10,
+    )
+    .await;
+    let app = gateway_router(state.clone());
+
+    let creator_root = crate::auth::principal_localhost_root(&creator.principal_id);
+    let uri = format!("{creator_root}/Creator/protected-runtime-proof.mp4");
+
+    // The point of this test: a Creator-launched token can reach the upload
+    // route that used to be Library-only. Library's own upload coverage
+    // already proves the transport mechanics; here we only need it to work.
+    let (upload_status, _upload_headers, upload) =
+        put_library_upload(app.clone(), &creator_token, &uri, b"media").await;
+    assert_eq!(upload_status, StatusCode::OK, "{upload}");
+    assert_eq!(upload["status"], "ok", "{upload}");
+
+    let publish_body = json!({
+        "uri": uri,
+        "protection": {
+            "mode": "runtime_custody",
+            // Every mint names the channel it publishes into.
+            "channel": "0x0000000000000000000000000000000000000022",
+            "copies": "0x2",
+            // The amount a creator types; the host scales it into the
+            // token's base units, which is what the listing then reports.
+            "price": MOCK_PROTECTED_CONTENT_LISTING_AMOUNT,
+        },
+    });
+    let (publish_pending_status, publish_pending) =
+        post_library(app.clone(), &creator_token, "publish", publish_body.clone()).await;
+    assert_eq!(publish_pending_status, StatusCode::OK);
+    assert_eq!(publish_pending["status"], "error");
+    assert_eq!(
+        publish_pending["message"],
+        "Runtime custody creator mint is pending exact Wallet or Chain settlement"
+    );
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &creator.principal_id,
+        "eip155:8453",
+        &replacement_creator_account_id,
+        20,
+    )
+    .await;
+    let creator_signed_transaction = {
+        let _ = wallet_provider
+            .provider
+            .complete_latest_transaction_approval()
+            .await;
+        wallet_provider
+            .provider
+            .latest_transaction_signed_transaction()
+            .await
+            .expect("completed creator transaction")
+    };
+    reset_mock_chain_broadcast_count(&creator_signed_transaction);
+
+    let (publish_ok_status, publish_ok) =
+        post_library(app.clone(), &creator_token, "publish", publish_body).await;
+    assert_eq!(publish_ok_status, StatusCode::OK);
+    assert_eq!(publish_ok["status"], "ok", "{publish_ok}");
+    let mint_id_hex = publish_ok["data"]["content_security"]["mint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mint_id = elastos_protected_content_contracts::Digest32::new(
+        hex::decode(&mint_id_hex).unwrap().try_into().unwrap(),
+    );
+    let persisted_mint = crate::protected_content_runtime::runtime_mint_journal(dir.path())
+        .load(mint_id)
+        .unwrap();
+    assert_eq!(
+        persisted_mint
+            .creator_state()
+            .unwrap()
+            .desired_terms()
+            .wallet_account_id(),
+        creator_account_id
+    );
+}
+
+/// The binding rule, end to end with the real pipeline. An attempt that sent
+/// nothing on chain never blocks a new mint of the same file: the new mint
+/// proceeds to its own Wallet approval, the earlier attempt is archived (moved
+/// aside, never deleted), and the new mint has an identity of its own. An
+/// attempt whose transaction was sent or mined keeps its terms: the new mint
+/// is refused with the terms that differ, nothing moves, and Resume finishes
+/// it. Creator asks for a new mint explicitly; Library gets the same outcome
+/// as soon as its terms differ. A fail-closed refusal over an attempt that
+/// sent nothing offers Start over, and Start over unblocks it.
+#[tokio::test]
+async fn test_creator_new_mint_of_the_same_file_proceeds_unless_the_last_one_was_sent() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    enable_protected_content(dir.path());
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let registry = state.provider_registry.as_ref().unwrap().clone();
+    reset_mock_content_publish_requests();
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_runtime_listing_publish_failure(false);
+    registry
+        .register_sub_provider("content", Arc::new(MockContentProvider))
+        .await
+        .unwrap();
+    registry
+        .register_sub_provider(
+            "object",
+            Arc::new(crate::library::ObjectProvider::new(
+                dir.path().to_path_buf(),
+                Arc::downgrade(&registry),
+            )),
+        )
+        .await
+        .unwrap();
+    let creator = passkey_authority_with_profile_role_credential(
+        dir.path(),
+        "creator",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-creator",
+    );
+    let creator_token = app_token_for_authority(dir.path(), CREATOR_CAPSULE_ID, &creator);
+    let wallet_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&creator.principal_id, 1)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &creator.principal_id,
+        "eip155:8453",
+        &wallet_account_id,
+        10,
+    )
+    .await;
+    let app = gateway_router(state.clone());
+    let root = crate::auth::principal_localhost_root(&creator.principal_id);
+    let source_storage =
+        if crate::auth::load_principal_root_protection(dir.path(), &creator.principal_id, &root)
+            .unwrap()
+            .is_some()
+        {
+            "protected_principal_root"
+        } else {
+            "plain_localhost_root"
+        };
+    let journal = crate::protected_content_runtime::runtime_mint_journal(dir.path());
+    let tail =
+        |input: crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
+         facts: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts| {
+            let token = app_token_for_authority(dir.path(), CREATOR_CAPSULE_ID, &creator);
+            let authority =
+                runtime_wallet_authority_for_app_token(dir.path(), CREATOR_CAPSULE_ID, &token);
+            let state = state.clone();
+            let registry = registry.clone();
+            let facts = recovery_facts(facts);
+            async move {
+                runtime_custody_publish_creator_tail_for_test(
+                    &state, &authority, registry, input, facts,
+                )
+                .await
+            }
+        };
+    let publish = |uri: String, copies: &'static str, new_attempt: bool| {
+        let app = app.clone();
+        let token = creator_token.clone();
+        async move {
+            post_library(
+                app,
+                &token,
+                "publish",
+                json!({
+                    "uri": uri,
+                    "protection": {
+                        "mode": "runtime_custody",
+                        "channel": "0x0000000000000000000000000000000000000022",
+                        "copies": copies,
+                        "price": MOCK_PROTECTED_CONTENT_LISTING_AMOUNT,
+                        "new_attempt": new_attempt,
+                    },
+                }),
+            )
+            .await
+        }
+    };
+
+    // Every stage is seeded first: the seeded records carry a test custody
+    // composition, and the real providers registered below replace it with
+    // their own for the new mints.
+    let mut seeded = Vec::new();
+    for (seed, name, stage) in [
+        (0xa1, "escrowing.mp4", "escrow_incomplete"),
+        (0xa2, "escrowed.mp4", "publish_incomplete"),
+        (0xa3, "recorded.mp4", "recorded_only"),
+        (0xa4, "pending.mp4", "approval_pending"),
+        (0xa8, "drift.mp4", "authority_drift"),
+        (0xa9, "v1prepared.mp4", "v1_prepared"),
+    ] {
+        let uri = format!("{root}/Creator/{name}");
+        let (status, _, upload) =
+            put_library_upload(app.clone(), &creator_token, &uri, b"media").await;
+        assert_eq!(status, StatusCode::OK, "{upload}");
+        let mut input = runtime_custody_creator_test_input(
+            &creator.principal_id,
+            &uri,
+            seed,
+            &wallet_account_id,
+        );
+        input.source_storage = source_storage.to_string();
+        let old_mint_id = match stage {
+            "v1_prepared" => {
+                // A preparation the v1 writer settled and nothing consumed: its
+                // files sit directly in prepared/, which no v2 mint can use.
+                let journal = crate::protected_content_runtime::runtime_mint_journal(dir.path());
+                let preparation =
+                    elastos_protected_content_runtime::RuntimeMediaPreparationRecord::new(
+                        &input.principal_id,
+                        &input.object_uri,
+                        &input.source_storage,
+                        elastos_protected_content_contracts::Digest32::new(
+                            <sha2::Sha256 as sha2::Digest>::digest(b"media").into(),
+                        ),
+                        crate::protected_content_runtime::MEDIA_PROVIDER_ID,
+                        input.wallet_account_id.clone(),
+                        input.wallet_account_address.clone(),
+                        input.creator_mint_source_digest,
+                    )
+                    .unwrap();
+                journal.persist_media_preparation(&preparation).unwrap();
+                journal
+                    .mark_media_preparation_effect_started(preparation.request_id())
+                    .unwrap();
+                journal
+                    .mark_media_preparation_prepared(
+                        preparation.request_id(),
+                        elastos_protected_content_contracts::Digest32::new([0xd1; 32]),
+                    )
+                    .unwrap();
+                let operation_root = dir
+                    .path()
+                    .join("protected-content/media-provider/staging")
+                    .join(hex::encode(preparation.operation_id().as_bytes()));
+                std::fs::create_dir_all(operation_root.join("prepared/segments")).unwrap();
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut dir_to_lock = operation_root.clone();
+                    while dir_to_lock.starts_with(dir.path().join("protected-content")) {
+                        std::fs::set_permissions(
+                            &dir_to_lock,
+                            std::fs::Permissions::from_mode(0o700),
+                        )
+                        .unwrap();
+                        if !dir_to_lock.pop() {
+                            break;
+                        }
+                    }
+                }
+                std::fs::write(operation_root.join("prepared/init.mp4"), b"v1 init").unwrap();
+                elastos_protected_content_contracts::Digest32::new([0; 32])
+            }
+            "escrow_incomplete" | "authority_drift" => {
+                seed_runtime_custody_mint_draft(dir.path(), &input)
+                    .draft
+                    .mint_id()
+            }
+            "publish_incomplete" => seed_provisioned_runtime_custody_mint(dir.path(), &input)
+                .draft
+                .mint_id(),
+            _ => {
+                let facts = seed_completed_runtime_custody_mint(dir.path(), &input);
+                if stage == "recorded_only" {
+                    journal
+                        .bind_creator_state(
+                            facts.mint_id,
+                            elastos_protected_content_runtime::RuntimeMintCreatorState::new(
+                                elastos_protected_content_runtime::RuntimeMintCreatorDesiredTerms::new(
+                                    wallet_account_id.clone(),
+                                    "0x2",
+                                    "0xde0b6b3a7640000",
+                                    Vec::new(),
+                                    elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce,
+                                    None,
+                                    "0x0000000000000000000000000000000000000022".to_string(),
+                                    String::new(),
+                                )
+                                .unwrap(),
+                                "bafystalledcreatorcid",
+                                "ipfs://bafystalledcreatorcid/metadata.json",
+                            )
+                            .unwrap(),
+                        )
+                        .unwrap();
+                } else {
+                    assert!(tail(input.clone(), &facts).await.is_err());
+                    if stage != "approval_pending" {
+                        wallet_provider
+                            .provider
+                            .complete_latest_transaction_approval()
+                            .await;
+                    }
+                    if matches!(stage, "transaction_mined" | "listing_not_assembled") {
+                        if stage == "transaction_mined" {
+                            set_mock_protected_content_chain_receipt_error();
+                        } else {
+                            set_mock_runtime_listing_publish_failure(true);
+                        }
+                        assert!(tail(input.clone(), &facts).await.is_err());
+                        reset_mock_protected_content_chain_mode();
+                        set_mock_runtime_listing_publish_failure(false);
+                    }
+                }
+                facts.mint_id
+            }
+        };
+        let archived = journal
+            .current_attempt(&creator.principal_id, &uri, source_storage)
+            .unwrap();
+        assert_eq!(archived.attempt(), 0, "{stage}");
+        seeded.push((uri, stage, old_mint_id, archived));
+    }
+    let _process_fixture = crate::protected_content_runtime::tests::register_runtime_custody_process_providers_for_test_registry(
+        dir.path(),
+        &registry,
+    )
+    .await;
+    crate::protected_content_runtime::tests::register_runtime_custody_mock_media_provider_for_test_registry(
+        dir.path(),
+        &registry,
+    )
+    .await;
+
+    let resume = |uri: String| {
+        let app = app.clone();
+        let token = creator_token.clone();
+        async move {
+            post_library(
+                app,
+                &token,
+                "publish",
+                json!({ "uri": uri, "protection": { "mode": "runtime_custody_resume" } }),
+            )
+            .await
+        }
+    };
+    for (uri, stage, old_mint_id, archived) in seeded {
+        if stage == "authority_drift" || stage == "v1_prepared" {
+            // The file is not the one the attempt prepared: refused, and since
+            // that attempt sent nothing, answered by Start over.
+            let (_, refused) = publish(uri.clone(), "0x5", false).await;
+            assert_eq!(
+                refused["attempt_conflict"]["reason"], "authority_changed",
+                "{refused}"
+            );
+            assert_eq!(
+                refused["attempt_conflict"]["can_start_over"], true,
+                "{refused}"
+            );
+            let (_, started_over) = post_library(
+                app.clone(),
+                &creator_token,
+                "discard_protection",
+                json!({ "uri": uri }),
+            )
+            .await;
+            assert_eq!(started_over["data"]["discarded"], true, "{started_over}");
+            let (_, proceeded) = publish(uri.clone(), "0x5", false).await;
+            assert_eq!(
+                proceeded["message"], RECOVERY_PENDING_MESSAGE,
+                "{proceeded}"
+            );
+            assert!(journal.load(old_mint_id).is_err());
+            continue;
+        }
+        let (status, answer) = publish(uri.clone(), "0x5", true).await;
+        assert_eq!(status, StatusCode::OK, "{stage}");
+        assert_eq!(
+            answer["message"], RECOVERY_PENDING_MESSAGE,
+            "{stage}: {answer}"
+        );
+
+        let current = journal
+            .current_attempt(&creator.principal_id, &uri, source_storage)
+            .unwrap();
+        assert_eq!(current.attempt(), 1, "{stage}");
+        let new_mint = crate::protected_content_runtime::runtime_custody_open_mint_for_source(
+            dir.path(),
+            &creator.principal_id,
+            &uri,
+            source_storage,
+        )
+        .unwrap()
+        .expect("the new attempt has its own mint");
+        assert_ne!(new_mint.draft().mint_id(), old_mint_id, "{stage}");
+        assert_eq!(
+            new_mint.creator_state().unwrap().desired_terms().copies(),
+            "0x5",
+            "{stage}"
+        );
+        assert!(journal.load(old_mint_id).is_err(), "{stage}: moved aside");
+        let (directory, note) = archived_attempt(dir.path(), archived.request_id());
+        assert!(
+            directory
+                .join(hex::encode(old_mint_id.as_bytes()))
+                .is_file(),
+            "{stage}: the old record is kept, aside"
+        );
+        assert_eq!(note["stage"], stage);
+        assert_eq!(note["reason"], "new_attempt");
+        assert_eq!(note["chain"]["transaction"], "none");
+        assert_eq!(
+            note["chain"]["approval_declined"],
+            stage == "approval_pending",
+            "{stage}"
+        );
+    }
+
+    // Sent, mined, and settled without a listing, each from a real first
+    // attempt: kept. A new mint at other terms is refused with the terms
+    // named, nothing moves, no Start over is offered, and Resume finishes it.
+    for (name, stage) in [
+        ("sent.mp4", "transaction_sent"),
+        ("mined.mp4", "transaction_mined"),
+        ("settled.mp4", "listing_not_assembled"),
+    ] {
+        let uri = format!("{root}/Creator/{name}");
+        let (status, _, upload) =
+            put_library_upload(app.clone(), &creator_token, &uri, b"media").await;
+        assert_eq!(status, StatusCode::OK, "{upload}");
+        let (_, first) = publish(uri.clone(), "0x2", true).await;
+        assert_eq!(
+            first["message"], RECOVERY_PENDING_MESSAGE,
+            "{stage}: {first}"
+        );
+        wallet_provider
+            .provider
+            .complete_latest_transaction_approval()
+            .await;
+        if stage != "transaction_sent" {
+            if stage == "transaction_mined" {
+                set_mock_protected_content_chain_receipt_error();
+            } else {
+                set_mock_runtime_listing_publish_failure(true);
+            }
+            let (_, stopped) = publish(uri.clone(), "0x2", false).await;
+            assert_eq!(stopped["status"], "error", "{stage}: {stopped}");
+            reset_mock_protected_content_chain_mode();
+            set_mock_runtime_listing_publish_failure(false);
+        }
+        let kept = crate::protected_content_runtime::runtime_custody_open_mint_for_source(
+            dir.path(),
+            &creator.principal_id,
+            &uri,
+            source_storage,
+        )
+        .unwrap()
+        .unwrap();
+        let (_, answer) = publish(uri.clone(), "0x5", true).await;
+        assert_eq!(answer["status"], "error", "{stage}: {answer}");
+        assert_eq!(
+            answer["creator_mint"]["differing_terms"],
+            json!(["copies"]),
+            "{stage}: {answer}"
+        );
+        assert_eq!(answer["creator_mint"]["can_start_over"], false, "{stage}");
+        assert_eq!(answer["creator_mint"]["can_resume"], true, "{stage}");
+        assert!(
+            journal.load(kept.draft().mint_id()).is_ok(),
+            "{stage}: kept"
+        );
+        assert_eq!(
+            journal
+                .current_attempt(&creator.principal_id, &uri, source_storage)
+                .unwrap()
+                .attempt(),
+            0,
+            "{stage}"
+        );
+        let (_, resumed) = resume(uri.clone()).await;
+        assert_eq!(resumed["status"], "ok", "{stage}: {resumed}");
+    }
+
+    // A caller that does not ask for a new mint (Library) gets one as soon as
+    // its terms differ from an unfinished attempt's.
+    let uri = format!("{root}/Creator/library.mp4");
+    let (status, _, upload) = put_library_upload(app.clone(), &creator_token, &uri, b"media").await;
+    assert_eq!(status, StatusCode::OK, "{upload}");
+    let (_, first) = publish(uri.clone(), "0x2", false).await;
+    assert_eq!(first["message"], RECOVERY_PENDING_MESSAGE, "{first}");
+    let first_mint = crate::protected_content_runtime::runtime_custody_open_mint_for_source(
+        dir.path(),
+        &creator.principal_id,
+        &uri,
+        source_storage,
+    )
+    .unwrap()
+    .unwrap();
+    // The same terms continue the same attempt.
+    let (_, again) = publish(uri.clone(), "0x2", false).await;
+    assert_eq!(again["message"], RECOVERY_PENDING_MESSAGE, "{again}");
+    assert_eq!(
+        journal
+            .current_attempt(&creator.principal_id, &uri, source_storage)
+            .unwrap()
+            .attempt(),
+        0
+    );
+    let (_, other) = publish(uri.clone(), "0x5", false).await;
+    assert_eq!(other["message"], RECOVERY_PENDING_MESSAGE, "{other}");
+    let current = journal
+        .current_attempt(&creator.principal_id, &uri, source_storage)
+        .unwrap();
+    assert_eq!(current.attempt(), 1);
+    let second_mint = crate::protected_content_runtime::runtime_custody_open_mint_for_source(
+        dir.path(),
+        &creator.principal_id,
+        &uri,
+        source_storage,
+    )
+    .unwrap()
+    .unwrap();
+    assert_ne!(second_mint.draft().mint_id(), first_mint.draft().mint_id());
+    assert!(journal.load(first_mint.draft().mint_id()).is_err());
+
+    // Once the new attempt has sent its transaction, Library's other terms are
+    // refused with the terms named, and nothing is archived.
+    wallet_provider
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    let (_, minted) = publish(uri.clone(), "0x7", false).await;
+    assert_eq!(minted["status"], "error", "{minted}");
+    assert_eq!(
+        minted["creator_mint"]["differing_terms"],
+        json!(["copies"]),
+        "{minted}"
+    );
+    assert!(journal.load(second_mint.draft().mint_id()).is_ok());
+    assert_eq!(
+        journal
+            .current_attempt(&creator.principal_id, &uri, source_storage)
+            .unwrap()
+            .attempt(),
+        1
+    );
+}
+
+/// Starting over is an action the creator takes from the app that offered it,
+/// so both surfaces that can protect a file can also set a stalled attempt
+/// aside. The rule about WHEN that is allowed is not here — it is enforced
+/// beneath this route, and neither app is trusted with it.
+#[tokio::test]
+async fn test_discard_protection_is_reachable_from_both_protecting_apps() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(library_test_state(dir.path()).await);
+    let authority = passkey_authority_with_name(dir.path(), Some("admin"));
+    let root = crate::auth::principal_localhost_root(&authority.principal_id);
+    let uri = format!("{root}/Documents/never-protected.txt");
+
+    for capsule in [LIBRARY_CAPSULE_ID, CREATOR_CAPSULE_ID] {
+        let token = app_token_for_authority(dir.path(), capsule, &authority);
+        let (status, payload) = post_library(
+            app.clone(),
+            &token,
+            "discard_protection",
+            json!({ "uri": uri }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "capsule={capsule}");
+        // Nothing was ever recorded for this object, so there is nothing to
+        // drop and the answer says exactly that: a successful answer carrying
+        // `discarded: false`, never an error. (This previously asserted the
+        // whole payload equalled `null`, which no route response can be, and
+        // which contradicted the very next line.)
+        assert_eq!(payload["status"], "ok", "capsule={capsule}");
+        assert_eq!(payload["error"], json!(null), "capsule={capsule}");
+        assert_eq!(payload["data"]["discarded"], false, "capsule={capsule}");
+        assert_eq!(
+            payload["data"]["schema"], "elastos.library.protection-discarded/v1",
+            "capsule={capsule}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_creator_token_is_refused_library_only_ops() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(library_test_state(dir.path()).await);
+    let authority = passkey_authority_with_name(dir.path(), Some("admin"));
+    let token = app_token_for_authority(dir.path(), CREATOR_CAPSULE_ID, &authority);
+    let root = crate::auth::principal_localhost_root(&authority.principal_id);
+    let uri = format!("{root}/Creator/refused.txt");
+
+    for op in ["list", "write", "trash"] {
+        let body = json!({ "uri": uri }).to_string();
+        let response = app
+            .clone()
+            .oneshot(
+                test_browser_request("localhost:61180", "null")
+                    .method("POST")
+                    .uri(format!("/api/provider/object/{op}"))
+                    .header("x-elastos-home-token", &token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "op={op}");
+    }
+}
+
+/// A copy someone owns can always be built again, and one they do not own
+/// cannot be built at all.
+///
+/// The `.ddrm` file is made of public material — the metadata document the
+/// token URI resolves to, and the content the listing names — so the only
+/// question the door asks is whether the chain grants this account the access
+/// token. Buying and minting both write the file as a side effect and neither
+/// offers a way to ask again, which left a person who owned something and
+/// could not see it with nothing to press.
+#[tokio::test]
+async fn test_runtime_custody_download_rebuilds_an_owned_copy_and_refuses_one_that_is_not() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let registry = state.provider_registry.as_ref().unwrap().clone();
+    registry
+        .register_sub_provider("content", Arc::new(MockContentProvider))
+        .await
+        .unwrap();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    reset_mock_chain_raw_requests();
+
+    let authority = passkey_authority_with_profile(dir.path(), "owner");
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let wallet_account_id = wallet_provider
+        .provider
+        .seed_managed_evm_account_for_principal(&authority.principal_id)
+        .await;
+    set_mock_wallet_transaction_default(
+        &wallet_provider.provider,
+        &authority.principal_id,
+        "eip155:8453",
+        &wallet_account_id,
+        10,
+    )
+    .await;
+    let uri = format!(
+        "{}/Documents/protected-download",
+        crate::auth::principal_localhost_root(&authority.principal_id)
+    );
+    let publish_input =
+        runtime_custody_creator_test_input(&authority.principal_id, &uri, 0x94, &wallet_account_id);
+    let facts = seed_completed_runtime_custody_mint(dir.path(), &publish_input);
+    seed_runtime_custody_creator_listing_for_buy(
+        dir.path(),
+        &authority.principal_id,
+        &facts,
+        MOCK_MANAGED_EVM_ADDRESS,
+        true,
+    );
+    // The metadata document the token URI resolves to. The rebuild reads it to
+    // learn what the copy protects, exactly as a marketplace indexer would.
+    reset_mock_immutable_content_objects();
+    seed_mock_immutable_content_object(
+        TEST_CIDV0,
+        "protected-content-metadata",
+        "metadata.json",
+        serde_json::to_vec(&json!({
+            "name": "protected-download",
+            "media": { "contentType": "video/mp4" },
+        }))
+        .unwrap(),
+        None,
+        None,
+        Vec::new(),
+    );
+    let app = gateway_router(state);
+    let request = json!({ "mint_id": hex::encode(facts.mint_id.as_bytes()) });
+
+    // The chain says this account holds no such grant. Nothing is written.
+    set_mock_protected_content_purchase_access_denied();
+    let (_, refused) =
+        post_library(app.clone(), &token, "download_owned_copy", request.clone()).await;
+    assert_eq!(refused["status"], "error");
+    assert_eq!(
+        refused["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE
+    );
+
+    // The grant is readable, so the copy is theirs and the file is rebuilt.
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    let (status, built) =
+        post_library(app.clone(), &token, "download_owned_copy", request.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(built["status"], "ok", "{built}");
+    assert_eq!(
+        built["data"]["schema"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_SCHEMA_V1
+    );
+    let capsule_uri = built["data"]["capsule_uri"]
+        .as_str()
+        .expect("a rebuilt copy names the file it wrote")
+        .to_string();
+    assert!(capsule_uri.ends_with(".ddrm"), "{capsule_uri}");
+
+    // Asking twice is the whole point: a person presses this when the file is
+    // missing, and pressing it again has to be safe.
+    let (_, again) = post_library(app, &token, "download_owned_copy", request).await;
+    assert_eq!(again["status"], "ok", "{again}");
+    assert_eq!(again["data"]["capsule_uri"], capsule_uri);
+}
+
+/// The mint `package` names, as a digest.
+fn granted_test_mint_id(
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+) -> elastos_protected_content_contracts::Digest32 {
+    elastos_protected_content_contracts::Digest32::new(
+        hex::decode(&package.mint_id).unwrap().try_into().unwrap(),
+    )
+}
+
+/// A download refused for any reason writes no listing and no owned copy.
+fn assert_nothing_granted_was_written(
+    buyer: &AdoptionBuyer,
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+) {
+    let mint_id = granted_test_mint_id(package);
+    assert!(
+        crate::protected_content_runtime::load_runtime_custody_listing(
+            buyer.runtime.path(),
+            mint_id
+        )
+        .unwrap()
+        .is_none(),
+        "a refused download wrote a listing"
+    );
+    assert!(
+        crate::protected_content_runtime::load_runtime_custody_purchase(
+            buyer.runtime.path(),
+            &buyer.buyer.principal_id,
+            mint_id,
+        )
+        .unwrap()
+        .is_none(),
+        "a refused download wrote an owned copy"
+    );
+}
+
+/// Access is the chain's to decide, not how it was come by: an account the
+/// chain grants the item -- a channel admin, say -- downloads it with no
+/// purchase anywhere, the copy says `granted`, and it opens through the
+/// normal open path. Once the grant is gone at the finalized block, the copy
+/// no longer opens.
+#[tokio::test]
+async fn chain_granted_access_downloads_and_opens_without_a_purchase() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    // Only what the buyer's Home asks from here on.
+    reset_mock_chain_raw_requests();
+    let item = adoption_buy_offer_body(&package)["item"].clone();
+    let (_, downloaded) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": item }),
+    )
+    .await;
+    assert_eq!(downloaded["status"], "ok", "{downloaded}");
+    assert_eq!(downloaded["data"]["mint_id"], package.mint_id);
+    assert_eq!(downloaded["data"]["acquisition"], "granted");
+    // What the copy is, so the page opens it in the viewer its kind needs.
+    assert_eq!(downloaded["data"]["content_kind"], "media");
+    assert!(downloaded["data"]["capsule_uri"]
+        .as_str()
+        .is_some_and(|uri| uri.ends_with(".ddrm")));
+
+    // Nothing was bought: no market purchase, and no transaction raised.
+    assert!(
+        crate::protected_content_market::load_runtime_market_purchase_by_key(
+            buyer.runtime.path(),
+            &buyer.buyer.principal_id,
+            &package.chain_namespace,
+            &package.ledger,
+            &package.token_id,
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(
+        mock_chain_raw_request_count("resolve_protected_content_purchase"),
+        0
+    );
+
+    // The listing is the asset's, on zero terms nobody could buy on.
+    let mint_id = granted_test_mint_id(&package);
+    let listing = crate::protected_content_runtime::load_runtime_custody_listing(
+        buyer.runtime.path(),
+        mint_id,
+    )
+    .unwrap()
+    .expect("the granted copy has a listing");
+    assert_eq!(
+        listing.origin,
+        crate::protected_content_runtime::RuntimeCustodyListingOrigin::Granted {
+            asset_uri: format!("elastos://{}", package.metadata_cid),
+        }
+    );
+    assert_eq!(listing.package.seller_address, package.operative);
+    assert_eq!(listing.package.price, "0x0");
+    assert_eq!(
+        listing.package.pay_token,
+        "0x0000000000000000000000000000000000000000"
+    );
+    assert_eq!(listing.package.payment_processor, None);
+    assert_eq!(listing.package.quantity, "0x1");
+    assert_eq!(listing.package.content_id, package.content_id);
+
+    // The owned copy says how it was come by, and carries the chain's grant
+    // instead of a transaction.
+    let owned = crate::protected_content_runtime::load_runtime_custody_purchase(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+        mint_id,
+    )
+    .unwrap()
+    .expect("the granted copy is recorded");
+    assert_eq!(
+        owned.acquisition,
+        crate::protected_content_runtime::RuntimeCustodyAcquisitionV1::Granted
+    );
+    assert_eq!(owned.listing_sha256, listing.portable_package_digest());
+    let crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Granted {
+        access_evidence,
+        ..
+    } = &owned.progress
+    else {
+        panic!("a granted copy records the grant: {:?}", owned.progress);
+    };
+    assert!(access_evidence.has_access);
+    assert_eq!(
+        access_evidence.content_access_id.as_deref(),
+        Some(package.content_access_id.as_str())
+    );
+
+    // The shelf of listings never offers it to share, and the market sees it
+    // as this person's.
+    let (_, shelf) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "list_runtime_custody",
+        json!({}),
+    )
+    .await;
+    assert_eq!(shelf["status"], "ok", "{shelf}");
+    assert_eq!(shelf["data"]["listings"], json!([]), "{shelf}");
+    let index = crate::protected_content_runtime::runtime_custody_listing_chain_index(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+    )
+    .unwrap();
+    assert_eq!(index.len(), 1);
+    assert_eq!(index[0].access_state, "purchased");
+
+    // The normal open path.
+    let player_token = projection_launch_token_for_authority_context(
+        buyer.runtime.path(),
+        ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
+        &buyer.buyer,
+    );
+    let (_, opened) = post_library(
+        buyer.app.clone(),
+        &player_token,
+        "open_viewer",
+        json!({"mint_id": package.mint_id}),
+    )
+    .await;
+    assert_eq!(opened["status"], "ok", "{opened}");
+    let viewer_handle = opened["data"]["viewer_session_handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, _, clear_init) =
+        crate::protected_content_runtime::tests::runtime_custody_gateway_media_parts_for_test()
+            .into_iter()
+            .next()
+            .unwrap();
+    let (_, init) = post_library(
+        buyer.app.clone(),
+        &player_token,
+        "read_viewer",
+        json!({"mint_id": package.mint_id, "viewer_session_handle": viewer_handle}),
+    )
+    .await;
+    assert_eq!(init["status"], "ok", "{init}");
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(init["data"]["data"].as_str().unwrap())
+            .unwrap(),
+        clear_init
+    );
+    let (_, closed) = post_library(
+        buyer.app.clone(),
+        &player_token,
+        "close_viewer",
+        json!({"mint_id": package.mint_id, "viewer_session_handle": viewer_handle}),
+    )
+    .await;
+    assert_eq!(closed["status"], "ok", "{closed}");
+
+    // Downloading again is the same copy.
+    let (_, again) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": item }),
+    )
+    .await;
+    assert_eq!(again["status"], "ok", "{again}");
+    assert_eq!(
+        again["data"]["capsule_uri"],
+        downloaded["data"]["capsule_uri"]
+    );
+    assert_eq!(again["data"]["acquisition"], "granted");
+
+    // The head still grants it, but the finalized block no longer does: the
+    // copy no longer opens, because the open reads the grant at finalized.
+    set_mock_protected_content_purchase_access_granted_at_head_only();
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &player_token,
+        "open_viewer",
+        json!({"mint_id": package.mint_id}),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(
+        refused["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE
+    );
+    crate::protected_content_runtime::tests::assert_no_unresolved_runtime_custody_release_for_test(
+        buyer.runtime.path(),
+    );
+}
+
+/// No grant, no copy: the refusal says the account has no access, as data,
+/// and nothing is written.
+#[tokio::test]
+async fn chain_granted_download_refuses_an_account_without_access() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    set_mock_protected_content_purchase_access_denied();
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": adoption_buy_offer_body(&package)["item"] }),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(refused["code"], "no_access", "{refused}");
+    assert_eq!(
+        refused["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE
+    );
+    assert_nothing_granted_was_written(&buyer, &package);
+}
+
+/// A chain that cannot answer is not a "no": the download is unavailable,
+/// says nothing about access, and writes nothing.
+#[tokio::test]
+async fn chain_granted_download_is_unavailable_when_the_chain_cannot_answer() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    set_mock_protected_content_purchase_access_error();
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": adoption_buy_offer_body(&package)["item"] }),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_ne!(refused["code"], "no_access", "{refused}");
+    assert_eq!(
+        refused["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_UNAVAILABLE_MESSAGE
+    );
+    assert_nothing_granted_was_written(&buyer, &package);
+}
+
+/// Every identifier in the request is re-derived from the chain and the
+/// asset folder: a KID or a chain the item does not have is refused before
+/// access is even asked, and nothing is written.
+#[tokio::test]
+async fn chain_granted_download_refuses_identifiers_the_chain_does_not_bind() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    // Only what the buyer's Home asks from here on.
+    reset_mock_chain_raw_requests();
+    let item = adoption_buy_offer_body(&package)["item"].clone();
+    let mut forged_kid = item.clone();
+    forged_kid["kid"] = json!(format!("0x{}", "11".repeat(16)));
+    let mut forged_chain = item.clone();
+    forged_chain["chain_namespace"] = json!("eip155:1");
+    let mut forged_network = item;
+    forged_network["network"] = json!("another-network");
+    for forged in [forged_kid, forged_chain, forged_network] {
+        let (_, refused) = post_library(
+            buyer.app.clone(),
+            &buyer.library_token,
+            "download_owned_copy",
+            json!({ "item": forged }),
+        )
+        .await;
+        assert_eq!(refused["status"], "error", "{refused}");
+        assert_ne!(refused["code"], "no_access", "{refused}");
+        assert_eq!(
+            refused["message"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE,
+            "{refused}"
+        );
+        assert_nothing_granted_was_written(&buyer, &package);
+    }
+    assert_eq!(
+        mock_chain_raw_request_count("resolve_protected_content_purchase_access"),
+        0,
+        "no access is asked about an item the request misnames"
+    );
+}
+
+/// A granted listing carries zero terms nobody agreed to sell on. It is never
+/// a purchase target, never on the shelf of listings to share, and never in
+/// another person's view of what this Home holds.
+#[tokio::test]
+async fn chain_granted_listing_is_never_bought_or_shared() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    let (_, downloaded) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": adoption_buy_offer_body(&package)["item"] }),
+    )
+    .await;
+    assert_eq!(downloaded["status"], "ok", "{downloaded}");
+
+    let other = passkey_authority_with_profile_role_credential(
+        buyer.runtime.path(),
+        "market-asset-other",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-market-asset-other",
+    );
+    let other_account = buyer
+        .wallet
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&other.principal_id, 3)
+        .await;
+    set_mock_wallet_transaction_default(
+        &buyer.wallet.provider,
+        &other.principal_id,
+        "eip155:8453",
+        &other_account,
+        10,
+    )
+    .await;
+    let other_market_token =
+        app_token_for_authority(buyer.runtime.path(), MARKETPLACE_CAPSULE_ID, &other);
+    buyer.wallet.clear_requests().await;
+    reset_mock_chain_raw_requests();
+    for (token, who) in [
+        (&other_market_token, "another person"),
+        (&buyer.market_token, "the grantee"),
+    ] {
+        let (_, refused) = post_library(
+            buyer.app.clone(),
+            token,
+            "buy",
+            json!({"mint_id": package.mint_id}),
+        )
+        .await;
+        assert_eq!(refused["status"], "error", "{who}: {refused}");
+        assert_eq!(
+            refused["message"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_DENIED_MESSAGE,
+            "{who}: {refused}"
+        );
+    }
+    assert!(
+        buyer.wallet.requests.lock().await.is_empty(),
+        "a granted listing raised a Wallet request"
+    );
+    assert_eq!(
+        mock_chain_raw_request_count("resolve_protected_content_purchase"),
+        0
+    );
+
+    let (_, shelf) = post_library(
+        buyer.app.clone(),
+        &other_market_token,
+        "list_runtime_custody",
+        json!({}),
+    )
+    .await;
+    assert_eq!(shelf["status"], "ok", "{shelf}");
+    assert_eq!(shelf["data"]["listings"], json!([]), "{shelf}");
+    assert!(
+        crate::protected_content_runtime::runtime_custody_listing_chain_index(
+            buyer.runtime.path(),
+            &other.principal_id,
+        )
+        .unwrap()
+        .is_empty(),
+        "another person's view of this Home holds the granted listing"
+    );
+}
+
+/// A grant the head has and the finalized block does not yet is not a grant
+/// to build a copy on: custody would refuse it. Nothing is written, and the
+/// answer says the access is still being confirmed rather than missing.
+#[tokio::test]
+async fn chain_granted_download_waits_while_the_grant_is_only_at_the_head() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    set_mock_protected_content_purchase_access_granted_at_head_only();
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": adoption_buy_offer_body(&package)["item"] }),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(refused["code"], "access_confirming", "{refused}");
+    assert_nothing_granted_was_written(&buyer, &package);
+}
+
+/// A KID binding the chain cannot state is the chain being unreachable, not
+/// the item being misnamed: the download is unavailable, and nothing is
+/// written.
+#[tokio::test]
+async fn chain_granted_download_is_unavailable_when_the_kid_binding_cannot_be_read() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    buyer
+        .kid_binding_unavailable
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": adoption_buy_offer_body(&package)["item"] }),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(
+        refused["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_UNAVAILABLE_MESSAGE,
+        "{refused}"
+    );
+    assert_nothing_granted_was_written(&buyer, &package);
+}
+
+/// A market purchase still under way is neither a purchase nor a grant to
+/// download on: the download is refused, and nothing is adopted for it.
+#[tokio::test]
+async fn chain_granted_download_refuses_while_a_market_purchase_is_pending() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    set_mock_protected_content_purchase_access_denied();
+    let (_, pending) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(
+        pending["buy_progress"]["stage"], "purchase_approval",
+        "{pending}"
+    );
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": adoption_buy_offer_body(&package)["item"] }),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(
+        refused["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE,
+        "{refused}"
+    );
+    assert_nothing_granted_was_written(&buyer, &package);
+}
+
+/// Open, read the first part and close `mint_id` as the person
+/// `player_token` names, asserting each step answers ok.
+async fn assert_granted_test_copy_opens(
+    buyer: &AdoptionBuyer,
+    player_token: &str,
+    mint_id: &str,
+    who: &str,
+) {
+    let (_, opened) = post_library(
+        buyer.app.clone(),
+        player_token,
+        "open_viewer",
+        json!({"mint_id": mint_id}),
+    )
+    .await;
+    assert_eq!(opened["status"], "ok", "{who}: {opened}");
+    let viewer_handle = opened["data"]["viewer_session_handle"].clone();
+    let (_, init) = post_library(
+        buyer.app.clone(),
+        player_token,
+        "read_viewer",
+        json!({"mint_id": mint_id, "viewer_session_handle": viewer_handle}),
+    )
+    .await;
+    assert_eq!(init["status"], "ok", "{who}: {init}");
+    let (_, closed) = post_library(
+        buyer.app.clone(),
+        player_token,
+        "close_viewer",
+        json!({"mint_id": mint_id, "viewer_session_handle": viewer_handle}),
+    )
+    .await;
+    assert_eq!(closed["status"], "ok", "{who}: {closed}");
+}
+
+/// The grantee downloads the copy here, so this Home holds a granted listing
+/// on zero terms.
+async fn download_granted_test_copy(
+    buyer: &AdoptionBuyer,
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+) {
+    let (_, downloaded) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": adoption_buy_offer_body(package)["item"] }),
+    )
+    .await;
+    assert_eq!(downloaded["status"], "ok", "{downloaded}");
+    assert_eq!(downloaded["data"]["acquisition"], "granted");
+}
+
+/// A granted listing never stands in a buyer's way: another person on the
+/// same Home who buys the item on the market adopts it on the terms they
+/// paid, the real listing replaces the granted one, and both copies open.
+#[tokio::test]
+async fn chain_granted_listing_gives_way_to_another_persons_market_purchase() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    download_granted_test_copy(&buyer, &package).await;
+
+    let other = passkey_authority_with_profile_role_credential(
+        buyer.runtime.path(),
+        "market-asset-other",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-market-asset-other",
+    );
+    let other_account = buyer
+        .wallet
+        .provider
+        .seed_managed_evm_account_for_principal_with_index(&other.principal_id, 3)
+        .await;
+    set_mock_wallet_transaction_default(
+        &buyer.wallet.provider,
+        &other.principal_id,
+        "eip155:8453",
+        &other_account,
+        10,
+    )
+    .await;
+    let other_market_token =
+        app_token_for_authority(buyer.runtime.path(), MARKETPLACE_CAPSULE_ID, &other);
+    let complete =
+        complete_adoption_market_purchase_as(&buyer, &other_market_token, &package).await;
+    assert_eq!(complete["adoption"], "adopted", "{complete}");
+
+    let mint_id = granted_test_mint_id(&package);
+    let listing = crate::protected_content_runtime::load_runtime_custody_listing(
+        buyer.runtime.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        listing.origin,
+        crate::protected_content_runtime::RuntimeCustodyListingOrigin::Asset {
+            asset_uri: format!("elastos://{}", package.metadata_cid),
+        },
+        "the market purchase's listing replaces the granted one"
+    );
+    assert_eq!(listing.package.price, package.price);
+    let bought = crate::protected_content_runtime::load_runtime_custody_purchase(
+        buyer.runtime.path(),
+        &other.principal_id,
+        mint_id,
+    )
+    .unwrap()
+    .expect("the buyer's copy is recorded");
+    assert_eq!(bought.listing_sha256, listing.portable_package_digest());
+    assert_eq!(bought.price, package.price);
+
+    let other_player = projection_launch_token_for_authority_context(
+        buyer.runtime.path(),
+        ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
+        &other,
+    );
+    assert_granted_test_copy_opens(&buyer, &other_player, &package.mint_id, "buyer").await;
+    let grantee_player = projection_launch_token_for_authority_context(
+        buyer.runtime.path(),
+        ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
+        &buyer.buyer,
+    );
+    assert_granted_test_copy_opens(&buyer, &grantee_player, &package.mint_id, "grantee").await;
+    let index = crate::protected_content_runtime::runtime_custody_listing_chain_index(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+    )
+    .unwrap();
+    assert_eq!(
+        index[0].access_state, "purchased",
+        "the grantee still holds it"
+    );
+}
+
+/// The creator's published package replaces a granted listing on import,
+/// and the grantee's copy keeps opening through it.
+#[tokio::test]
+async fn chain_granted_listing_gives_way_to_the_creators_imported_package() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let mint_id = granted_test_mint_id(&package);
+    let creator_record = crate::protected_content_runtime::load_runtime_custody_listing(
+        asset._runtime_a.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    let listing_uri = creator_record.origin.listing_uri().unwrap().to_string();
+    let buyer = adoption_buyer(&asset).await;
+    download_granted_test_copy(&buyer, &package).await;
+
+    let (_, imported) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "import_runtime_custody",
+        json!({"listing_uri": listing_uri}),
+    )
+    .await;
+    assert_eq!(imported["status"], "ok", "{imported}");
+    let listing = crate::protected_content_runtime::load_runtime_custody_listing(
+        buyer.runtime.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(
+        matches!(
+            listing.origin,
+            crate::protected_content_runtime::RuntimeCustodyListingOrigin::Imported { .. }
+        ),
+        "the imported package replaces the granted listing: {:?}",
+        listing.origin
+    );
+    assert_eq!(listing.package, creator_record.package);
+
+    let grantee_player = projection_launch_token_for_authority_context(
+        buyer.runtime.path(),
+        ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
+        &buyer.buyer,
+    );
+    assert_granted_test_copy_opens(&buyer, &grantee_player, &package.mint_id, "grantee").await;
+}
+
+/// A grant binds to a real listing this Home already holds for the mint --
+/// here the creator's imported package -- and never writes a granted one
+/// beside it. The copy opens through that listing.
+#[tokio::test]
+async fn chain_granted_copy_binds_to_an_imported_listing_and_opens() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let mint_id = granted_test_mint_id(&package);
+    let creator_record = crate::protected_content_runtime::load_runtime_custody_listing(
+        asset._runtime_a.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    let listing_uri = creator_record.origin.listing_uri().unwrap().to_string();
+    let buyer = adoption_buyer(&asset).await;
+    let (_, imported) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "import_runtime_custody",
+        json!({"listing_uri": listing_uri}),
+    )
+    .await;
+    assert_eq!(imported["status"], "ok", "{imported}");
+    let held = crate::protected_content_runtime::load_runtime_custody_listing(
+        buyer.runtime.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+
+    download_granted_test_copy(&buyer, &package).await;
+    let listing = crate::protected_content_runtime::load_runtime_custody_listing(
+        buyer.runtime.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(listing, held, "the held listing is kept as it was");
+    let owned = crate::protected_content_runtime::load_runtime_custody_purchase(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        owned.acquisition,
+        crate::protected_content_runtime::RuntimeCustodyAcquisitionV1::Granted
+    );
+    assert_eq!(owned.listing_sha256, held.portable_package_digest());
+    let grantee_player = projection_launch_token_for_authority_context(
+        buyer.runtime.path(),
+        ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
+        &buyer.buyer,
+    );
+    assert_granted_test_copy_opens(&buyer, &grantee_player, &package.mint_id, "grantee").await;
+}
+
+/// `POST /api/apps/marketplace/listing` as the Marketplace page sends it.
+async fn post_market_listing(buyer: &AdoptionBuyer, body: Value) -> (StatusCode, Value) {
+    let response = buyer
+        .app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .method("POST")
+                .uri("/api/apps/marketplace/listing")
+                .header("x-elastos-home-token", &buyer.market_token)
+                .header(CONTENT_TYPE, "application/json")
+                .body(provider_body(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+/// How many times the buyer's Home asked the content plane to hold `cid`.
+fn foreign_pool_ensures(buyer: &AdoptionBuyer, cid: &str) -> usize {
+    buyer
+        .content
+        .requests()
+        .into_iter()
+        .filter(|request| request["op"] == "ensure" && request["cid"] == cid)
+        .count()
+}
+
+/// An item minted under another Home's custody pool cannot be built or opened
+/// here: its key envelope names a pool this Home's composition is not. The
+/// granted download says so as data -- `custody_elsewhere` -- before
+/// anything is pinned or written, instead of failing deep in the rebuild.
+#[tokio::test]
+async fn foreign_pool_granted_download_answers_custody_elsewhere() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer_with_own_pool(&asset).await;
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": adoption_buy_offer_body(&package)["item"] }),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(refused["code"], "custody_elsewhere", "{refused}");
+    assert_nothing_granted_was_written(&buyer, &package);
+    assert_eq!(
+        foreign_pool_ensures(&buyer, &package.content_cid),
+        0,
+        "nothing is pinned for an item this Home cannot hold"
+    );
+}
+
+/// The market tells the buyer before they pay: the listing object states
+/// `custody_route: "unresolved"` (Plan B T4.7: no pool this Home knows keeps
+/// the item), and `buy_offer` refuses it as `custody_elsewhere` before any
+/// Wallet request is raised.
+#[tokio::test]
+async fn foreign_pool_market_buy_is_refused_before_payment() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    set_mock_protected_content_purchase_access_denied();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer_with_own_pool(&asset).await;
+    let (status, listing) = post_market_listing(
+        &buyer,
+        json!({"start": {"item": {"ledger": package.ledger, "token_id": package.token_id}}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    assert_eq!(listing["custody_route"], "unresolved", "{listing}");
+    assert!(listing.get("custody_elsewhere").is_none(), "{listing}");
+
+    buyer.wallet.clear_requests().await;
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(refused["code"], "custody_elsewhere", "{refused}");
+    // Reading which account would pay is not a request; asking for an
+    // approval is, and none was raised.
+    let raised = buyer.wallet.recorded_v2_operation_kinds().await;
+    assert!(
+        !raised.contains(&WalletOperationKind::RequestApproval),
+        "a refused buy raised a Wallet request: {raised:?}"
+    );
+    assert!(
+        crate::protected_content_market::load_runtime_market_purchase_by_key(
+            buyer.runtime.path(),
+            &buyer.buyer.principal_id,
+            &package.chain_namespace,
+            &package.ledger,
+            &package.token_id,
+        )
+        .unwrap()
+        .is_none()
+    );
+}
+
+/// A purchase of a foreign-pool item that completed on chain -- started while
+/// this Home's pool still held the item's keys, and paid after it changed --
+/// answers `custody_elsewhere`, never `pending` forever.
+#[tokio::test]
+async fn foreign_pool_completed_purchase_adopts_as_custody_elsewhere() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer_with_own_pool(&asset).await;
+    crate::protected_content_runtime::tests::install_runtime_custody_composition_for_test(
+        &asset.process_fixture,
+        buyer.runtime.path(),
+    );
+    set_mock_protected_content_purchase_access_denied();
+    let (_, pending) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(
+        pending["buy_progress"]["stage"], "purchase_approval",
+        "{pending}"
+    );
+    // The pool changes while the Wallet holds the approval. The approval is
+    // the person's to give now: the purchase is driven to the end.
+    crate::protected_content_runtime::tests::install_runtime_custody_composition_for_test(
+        buyer._own_pool.as_ref().unwrap(),
+        buyer.runtime.path(),
+    );
+    let _ = buyer
+        .wallet
+        .provider
+        .complete_latest_transaction_approval()
+        .await;
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    let (_, complete) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(complete["status"], "ok", "{complete}");
+    assert_eq!(
+        complete["data"]["adoption"], "custody_elsewhere",
+        "{complete}"
+    );
+
+    let (_, again) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(again["status"], "ok", "{again}");
+    assert_eq!(again["data"]["adoption"], "custody_elsewhere", "{again}");
+    let (_, download) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({ "item": adoption_buy_offer_body(&package)["item"] }),
+    )
+    .await;
+    assert_eq!(download["code"], "custody_elsewhere", "{download}");
+    assert!(
+        crate::protected_content_runtime::load_runtime_custody_listing(
+            buyer.runtime.path(),
+            granted_test_mint_id(&package),
+        )
+        .unwrap()
+        .is_none()
+    );
+}
+
+/// The creator's published package is refused on a Home whose pool does not
+/// hold the item's keys, with the same answer, and nothing is pinned.
+#[tokio::test]
+async fn foreign_pool_import_answers_custody_elsewhere() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let mint_id = granted_test_mint_id(&package);
+    let listing_uri = crate::protected_content_runtime::load_runtime_custody_listing(
+        asset._runtime_a.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap()
+    .origin
+    .listing_uri()
+    .unwrap()
+    .to_string();
+    let buyer = adoption_buyer_with_own_pool(&asset).await;
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "import_runtime_custody",
+        json!({"listing_uri": listing_uri}),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(refused["code"], "custody_elsewhere", "{refused}");
+    assert!(
+        crate::protected_content_runtime::load_runtime_custody_listing(
+            buyer.runtime.path(),
+            mint_id
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(foreign_pool_ensures(&buyer, &package.content_cid), 0);
+}
+
+/// The buy guard fails closed: when the item's own document cannot be read,
+/// nothing says the keys are held here, so the buy is refused as
+/// unavailable -- before any Wallet request -- and the same Buy tries again.
+#[tokio::test]
+async fn market_buy_is_unavailable_while_custody_cannot_be_compared() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    set_mock_protected_content_purchase_access_denied();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer(&asset).await;
+    let metadata = asset
+        .shared_content
+        .lock()
+        .unwrap()
+        .get_mut(&package.metadata_cid)
+        .unwrap()
+        .remove("metadata.json")
+        .expect("the creator published its metadata document");
+    buyer.wallet.clear_requests().await;
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(
+        refused["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_UNAVAILABLE_MESSAGE,
+        "{refused}"
+    );
+    let raised = buyer.wallet.recorded_v2_operation_kinds().await;
+    assert!(
+        !raised.contains(&WalletOperationKind::RequestApproval),
+        "an unreadable document raised a Wallet request: {raised:?}"
+    );
+
+    // The document is back: the same Buy goes ahead.
+    asset
+        .shared_content
+        .lock()
+        .unwrap()
+        .get_mut(&package.metadata_cid)
+        .unwrap()
+        .insert("metadata.json".to_string(), metadata);
+    let (_, started) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(
+        started["buy_progress"]["stage"], "purchase_approval",
+        "{started}"
+    );
+}
+
+/// An earlier attempt whose first Wallet request was never raised is not yet
+/// a payment, so resuming it is guarded like a new one: an item another
+/// pool now holds is refused before the request is raised.
+#[tokio::test]
+async fn foreign_pool_resumed_unraised_attempt_is_refused_before_payment() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    set_mock_protected_content_purchase_access_denied();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let buyer = adoption_buyer_with_own_pool(&asset).await;
+    crate::protected_content_runtime::tests::install_runtime_custody_composition_for_test(
+        &asset.process_fixture,
+        buyer.runtime.path(),
+    );
+    let (_, pending) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(
+        pending["buy_progress"]["stage"], "purchase_approval",
+        "{pending}"
+    );
+    // The attempt as a Home holds it when its record was written and the
+    // Wallet request never raised: the stage names a request the Wallet has
+    // no record of.
+    let item = crate::protected_content_market::load_runtime_market_purchase_by_key(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+        &package.chain_namespace,
+        &package.ledger,
+        &package.token_id,
+    )
+    .unwrap()
+    .unwrap()
+    .item;
+    let mut attempt = crate::protected_content_market::load_runtime_market_purchase(
+        buyer.runtime.path(),
+        &buyer.buyer.principal_id,
+        &item,
+    )
+    .unwrap()
+    .unwrap();
+    attempt.acquisition_stage.approval_request_id =
+        "wallet-request:0123456789abcdef0123456789abcdef".to_string();
+    assert!(
+        crate::protected_content_market::update_runtime_market_purchase(
+            buyer.runtime.path(),
+            &attempt,
+        )
+        .unwrap()
+    );
+    crate::protected_content_runtime::tests::install_runtime_custody_composition_for_test(
+        buyer._own_pool.as_ref().unwrap(),
+        buyer.runtime.path(),
+    );
+    buyer.wallet.clear_requests().await;
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy_offer",
+        adoption_buy_offer_body(&package),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(refused["code"], "custody_elsewhere", "{refused}");
+    let raised = buyer.wallet.recorded_v2_operation_kinds().await;
+    assert!(
+        !raised.contains(&WalletOperationKind::RequestApproval),
+        "a refused resume raised a Wallet request: {raised:?}"
+    );
+}
+
+/// The listing-package `buy` of an item another pool holds is refused the
+/// same way, before any Wallet request.
+#[tokio::test]
+async fn foreign_pool_listing_package_buy_answers_custody_elsewhere() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let package = asset.package.clone();
+    let mint_id = granted_test_mint_id(&package);
+    let creator_record = crate::protected_content_runtime::load_runtime_custody_listing(
+        asset._runtime_a.path(),
+        mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    let crate::protected_content_runtime::RuntimeCustodyListingOrigin::LocalCreator {
+        listing_uri,
+        package_sha256,
+        ..
+    } = creator_record.origin.clone()
+    else {
+        panic!("the creator's own listing is LocalCreator");
+    };
+    let imported = crate::protected_content_runtime::RuntimeCustodyListingRecord {
+        origin: crate::protected_content_runtime::RuntimeCustodyListingOrigin::Imported {
+            listing_uri,
+            package_sha256,
+        },
+        ..creator_record
+    };
+    let buyer = adoption_buyer_with_own_pool(&asset).await;
+    crate::protected_content_runtime::persist_runtime_custody_listing(
+        buyer.runtime.path(),
+        &imported,
+    )
+    .unwrap();
+    buyer.wallet.clear_requests().await;
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.market_token,
+        "buy",
+        json!({"mint_id": package.mint_id}),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(refused["code"], "custody_elsewhere", "{refused}");
+    let raised = buyer.wallet.recorded_v2_operation_kinds().await;
+    assert!(
+        !raised.contains(&WalletOperationKind::RequestApproval),
+        "{raised:?}"
+    );
+}
+
+/// DASH v2 (T8b): a listing whose identity is a head lists with the media
+/// kind and the head's own pinned mime type and codecs.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_runtime_custody_lists_a_dash_v2_listing_with_its_pinned_declarations() {
+    use elastos_protected_content_provider_contracts::CencDashRenditionKindV2 as Kind;
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    enable_protected_content(dir.path());
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, _wallet) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let buyer = passkey_authority_with_profile_role_credential(
+        dir.path(),
+        "dash-lister",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-dash-lister",
+    );
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &buyer);
+    let app = gateway_router(state.clone());
+    for (kinds, counts, mime_type, codecs) in [
+        (
+            vec![Kind::Video, Kind::Audio],
+            vec![2usize, 2],
+            "video/mp4",
+            "avc1.640028,mp4a.40.2",
+        ),
+        (vec![Kind::Audio], vec![2], "audio/mp4", "mp4a.40.2"),
+    ] {
+        let listing = crate::protected_content_runtime::tests::seeded_media_dash_listing_for_test(
+            &kinds, &counts,
+        );
+        listing.validate().unwrap();
+        crate::protected_content_runtime::persist_runtime_custody_listing(dir.path(), &listing)
+            .unwrap();
+        let (_, listed) =
+            post_library(app.clone(), &token, "list_runtime_custody", json!({})).await;
+        assert_eq!(listed["status"], "ok", "{listed}");
+        let summary = listed["data"]["listings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["mint_id"] == listing.package.mint_id.as_str())
+            .expect("the v2 listing must be listed");
+        assert_eq!(summary["content_kind"], "media", "{summary}");
+        assert_eq!(summary["mime_type"], mime_type, "{summary}");
+        assert_eq!(summary["codecs"], codecs, "{summary}");
+        assert_eq!(summary["access_state"], "available", "{summary}");
+    }
+}
+
+/// DASH v2 (T8b): a v2 mint is media, so the reader capsule is refused it
+/// before any viewer record or provider effect.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_runtime_custody_open_denies_a_reader_launch_on_a_dash_v2_mint() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    enable_protected_content(dir.path());
+    crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
+    let (state, _wallet) = wallet_chain_test_state_with_observer(dir.path()).await;
+    let buyer = passkey_authority_with_profile_role_credential(
+        dir.path(),
+        "dash-reader",
+        crate::auth::RuntimePrincipalRole::Admin,
+        "gateway-test-passkey-dash-reader",
+    );
+    let mint_id_hex =
+        crate::protected_content_runtime::tests::seed_media_dash_purchase_for_gateway_test(
+            dir.path(),
+            &buyer.principal_id,
+        );
+    let mint_id = elastos_protected_content_contracts::Digest32::new(
+        hex::decode(&mint_id_hex).unwrap().try_into().unwrap(),
+    );
+    let app = gateway_router(state.clone());
+    let reader_token = projection_launch_token_for_authority_context(
+        dir.path(),
+        ELACITY_READER_CAPSULE_ID_FOR_TEST,
+        &buyer,
+    );
+    let (_, denied) = post_library(
+        app,
+        &reader_token,
+        "open_viewer",
+        json!({"mint_id": mint_id_hex}),
+    )
+    .await;
+    assert_eq!(denied["status"], "error", "{denied}");
+    assert!(
+        denied["message"]
+            .as_str()
+            .unwrap()
+            .contains(crate::protected_content_runtime::RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE),
+        "{denied}"
+    );
+    assert!(
+        !runtime_custody_viewer_record_path_for_test(dir.path(), &buyer.principal_id, mint_id)
+            .exists()
     );
 }
 
@@ -11835,3 +18481,6 @@ async fn a_publication_withdrawn_by_an_older_release_is_not_served_after_the_upd
     let (_, status) = post_library(app, &token, "status", json!({ "uri": uri })).await;
     assert_eq!(status["data"]["object"]["published"], false, "{status}");
 }
+
+#[cfg(unix)]
+mod public_metadata;

@@ -1960,6 +1960,12 @@ async fn start_carrier_node_with_network(
         bind_addr.is_none(),
     )
     .await?;
+    // Peers authenticate this endpoint by its key and read that as the Home's
+    // DID: its Profile endpoint and Runtime issuer. Custody consent derives
+    // the owner from it, so the bound endpoint must be exactly this DID.
+    if public_key_to_did(&endpoint.id())? != did {
+        anyhow::bail!("Carrier endpoint does not authenticate as the Runtime DID");
+    }
 
     // LAN discovery exchanges IP addresses for direct connections.
     // The endpoint's IP-only policy also filters the published addresses.
@@ -2767,7 +2773,7 @@ async fn bridge_browser_carrier_stream_to_relay(
 
 /// Who sends a provider invocation into [`carrier_provider_invoke_registry`].
 #[derive(Clone, Copy)]
-enum CarrierProviderCaller<'a> {
+pub(crate) enum CarrierProviderCaller<'a> {
     /// This Runtime, through its own loopback route.
     Loopback,
     /// A remote Carrier peer. `data_dir` holds the owner's peer grants;
@@ -2869,7 +2875,7 @@ pub(crate) async fn admit_carrier_peer_content_fetch(
 /// owner's `content.replica` grant; a seed accepts no replicas. Publish,
 /// unpublish and repair stay local. `Err` is the answer to send instead of
 /// dispatching.
-fn admit_carrier_peer_content_request(
+pub(crate) fn admit_carrier_peer_content_request(
     data_dir: &std::path::Path,
     peer_did: &str,
     operation: &str,
@@ -2917,7 +2923,7 @@ fn admit_carrier_peer_content_request(
     }
 }
 
-async fn carrier_provider_invoke_registry(
+pub(crate) async fn carrier_provider_invoke_registry(
     registry: &ProviderRegistry,
     data: &serde_json::Value,
     source_endpoint_id: &iroh::PublicKey,
@@ -3000,7 +3006,7 @@ async fn carrier_provider_invoke_registry(
         }
     }
 
-    let result = if target == "custody"
+    let result = if crate::custody_surface::is_runtime_provider_target(target)
         || target == crate::collaboration_history::HISTORY_PROVIDER
         || target == crate::collaboration_transport::SHARED_PROVIDER
     {
@@ -3044,22 +3050,20 @@ async fn carrier_provider_invoke_registry(
     }
 }
 
-fn carrier_provider_target_allowed(target: &str) -> bool {
-    matches!(
-        target,
-        "content"
-            | "model"
-            | "custody"
-            | "rights"
-            | "key"
-            | "decrypt"
-            | "drm"
-            | "collaboration"
-            | "collaboration-direct"
-            | "collaboration-profile"
-            | "collaboration.history"
-            | "collaboration.shared"
-    )
+/// Custody targets come from the custody surface; the other planes are
+/// listed here.
+pub(crate) fn carrier_provider_target_allowed(target: &str) -> bool {
+    crate::custody_surface::carrier_target_allowed(target)
+        || matches!(
+            target,
+            "content"
+                | "model"
+                | "collaboration"
+                | "collaboration-direct"
+                | "collaboration-profile"
+                | "collaboration.history"
+                | "collaboration.shared"
+        )
 }
 
 fn validate_carrier_provider_invocation(
@@ -4262,7 +4266,13 @@ impl CarrierAvailabilityProvider {
         let topic_name = content_availability_topic_name(cid);
         let topic_uri = content_availability_topic_uri(cid);
         let announced_at = now_secs();
+        // The lock and the join are timed apart. Both are on the publish
+        // critical path, and one global lock held across a topic join means a
+        // second publish waits for the first one's join as well as its own --
+        // a difference the total cannot show.
+        let lock_started = std::time::Instant::now();
         let mut state = self.state.lock().await;
+        let lock_wait_ms = lock_started.elapsed().as_millis();
 
         if !state.joined_topics.contains(&topic_name) {
             if state.joined_topics.len() >= MAX_TOPICS {
@@ -4271,12 +4281,29 @@ impl CarrierAvailabilityProvider {
                     "Carrier availability topic limit reached",
                 ));
             }
-            if let Err(err) = join_gossip_topic(&mut state, &topic_name).await {
+            let join_started = std::time::Instant::now();
+            let join_outcome = join_gossip_topic(&mut state, &topic_name).await;
+            tracing::debug!(
+                cid = %cid,
+                lock_wait_ms,
+                join_ms = join_started.elapsed().as_millis(),
+                already_joined = false,
+                "carrier: availability announce topic ready"
+            );
+            if let Err(err) = join_outcome {
                 return Ok(carrier_availability_error(
                     "join_failed",
                     format!("Carrier availability topic join failed: {err}"),
                 ));
             }
+        } else {
+            tracing::debug!(
+                cid = %cid,
+                lock_wait_ms,
+                join_ms = 0,
+                already_joined = true,
+                "carrier: availability announce topic ready"
+            );
         }
 
         let node_did = state
@@ -4468,17 +4495,37 @@ impl CarrierAvailabilityProvider {
                 .and_then(|registry| registry.upgrade())
             {
                 Some(registry) => {
+                    // Timed per candidate. This loop is sequential and carries
+                    // no overall deadline, so one unreachable peer delays every
+                    // candidate behind it and the whole publish with them --
+                    // and the total alone cannot say whether the time went to
+                    // one dead peer or was spread across all of them.
+                    let replication_started = std::time::Instant::now();
                     for candidate in remote_candidates {
                         if remote_proofs.len() >= remote_candidate_limit {
                             break;
                         }
                         attempted_remote_invocations =
                             attempted_remote_invocations.saturating_add(1);
-                        match ensure_content_via_carrier_provider_invocation(
+                        let candidate_started = std::time::Instant::now();
+                        let invocation = ensure_content_via_carrier_provider_invocation(
                             &registry, &candidate, cid, request,
                         )
-                        .await
-                        {
+                        .await;
+                        // The peer's identity is the point: "attempt 1 was
+                        // slow" says nothing if the ordering changes, and one
+                        // consistently slow peer that still SUCCEEDS keeps its
+                        // reputation and so keeps being tried first.
+                        tracing::debug!(
+                            cid = %cid,
+                            attempt = attempted_remote_invocations,
+                            node_did = %candidate.node_did,
+                            reached = invocation.is_ok(),
+                            candidate_ms = candidate_started.elapsed().as_millis(),
+                            replication_ms = replication_started.elapsed().as_millis(),
+                            "carrier: availability replication candidate settled"
+                        );
+                        match invocation {
                             Ok(proof) => {
                                 self.record_peer_reputation(&candidate.node_did, true).await;
                                 remote_proofs.push(proof)
@@ -4622,6 +4669,9 @@ impl CarrierAvailabilityProvider {
                         "Carrier availability topic limit reached",
                     ));
                 }
+                if let Some(data_dir) = self.data_dir.as_deref() {
+                    seed_known_pool_member_bootstrap_peers(&mut state, data_dir);
+                }
                 if let Err(err) = join_gossip_topic(&mut state, &topic_name).await {
                     tracing::debug!(
                         "Carrier availability topic join failed; announced holders are unavailable: {err}"
@@ -4641,12 +4691,23 @@ impl CarrierAvailabilityProvider {
             ));
         };
 
-        let deadline = tokio::time::Instant::now() + self.discovery_wait;
+        // A caller that asks only the holders known now waits for no holder
+        // to announce itself: the read ends once each known one has answered.
+        let known_holders_only =
+            request.get("known_holders_only") == Some(&serde_json::Value::Bool(true));
+        let deadline = tokio::time::Instant::now()
+            + if known_holders_only {
+                Duration::ZERO
+            } else {
+                self.discovery_wait
+            };
         let mut tried = HashSet::new();
         let mut errors = Vec::new();
         // Every holder failed in transit (deadline, connect, lost stream) and
         // none refused or answered badly: the caller may try the read again.
         let mut only_transit_failures = true;
+        // Every holder asked refused outright and none was left unasked.
+        let mut each_holder_refused = true;
         loop {
             let (messages, self_did) = {
                 let state = self.state.lock().await;
@@ -4675,12 +4736,24 @@ impl CarrierAvailabilityProvider {
                     &reputation,
                     now_secs(),
                 );
+                append_known_pool_member_replica_candidates(
+                    &mut replicas,
+                    data_dir,
+                    &self_did,
+                    &reputation,
+                    now_secs(),
+                );
             }
             let next = replicas
                 .into_iter()
                 .find(|replica| !tried.contains(&replica.node_did));
             if let Some(mut replica) = next {
                 if tried.len() >= MAX_CARRIER_REPLICATION_CANDIDATES {
+                    debug!(
+                        cid,
+                        "Carrier availability fetch left known holders unasked at its cap"
+                    );
+                    each_holder_refused = false;
                     break;
                 }
                 tried.insert(replica.node_did.clone());
@@ -4721,6 +4794,7 @@ impl CarrierAvailabilityProvider {
                         );
                         let mut final_err = err.to_string();
                         let mut in_transit = carrier_read_failed_in_transit(&err);
+                        let mut refused = carrier_read_refused(&err);
                         if let Some(data_dir) = self.data_dir.as_deref() {
                             match refresh_trusted_source_replica_ticket(
                                 data_dir,
@@ -4771,6 +4845,7 @@ impl CarrierAvailabilityProvider {
                                             // Any refusal for this holder keeps it permanent.
                                             in_transit &=
                                                 carrier_read_failed_in_transit(&retry_err);
+                                            refused |= carrier_read_refused(&retry_err);
                                         }
                                     }
                                 }
@@ -4786,6 +4861,7 @@ impl CarrierAvailabilityProvider {
                         }
                         self.record_peer_reputation(&replica.node_did, false).await;
                         only_transit_failures &= in_transit;
+                        each_holder_refused &= refused;
                         errors.push(final_err);
                         continue;
                     }
@@ -4798,16 +4874,23 @@ impl CarrierAvailabilityProvider {
         }
         if errors.is_empty() {
             return Ok(carrier_availability_error(
-                "carrier_fetch_unavailable",
+                CARRIER_FETCH_NO_HOLDER_CODE,
                 "no Carrier availability announcement with a fetch ticket is available for this CID",
             ));
         }
-
+        // Asked only the holders known now, one that failed for any other
+        // reason, or was not asked, may still serve: the answer is definite
+        // only when each one refused.
+        let retryable = if known_holders_only {
+            !each_holder_refused
+        } else {
+            only_transit_failures
+        };
         Ok(carrier_availability_error(
-            if only_transit_failures {
+            if retryable {
                 CARRIER_FETCH_IN_TRANSIT_CODE
             } else {
-                "carrier_fetch_failed"
+                CARRIER_FETCH_FAILED_CODE
             },
             format!("Carrier content fetch failed: {}", errors.join(" | ")),
         ))
@@ -4888,7 +4971,15 @@ impl BoundedContentRead {
 
 /// The availability error code for a read that every holder failed only in
 /// transit; Content reports it as a typed I/O error the caller may repeat.
+/// A read of the holders known now answers it unless each holder it asked
+/// refused outright and none was left unasked.
 pub(crate) const CARRIER_FETCH_IN_TRANSIT_CODE: &str = "carrier_fetch_in_transit";
+/// The availability error code for a read that holders refused or answered
+/// badly. A read of the holders known now answers it only when each of them
+/// refused outright.
+pub(crate) const CARRIER_FETCH_FAILED_CODE: &str = "carrier_fetch_failed";
+/// The availability error code for a read that found no holder to ask.
+pub(crate) const CARRIER_FETCH_NO_HOLDER_CODE: &str = "carrier_fetch_unavailable";
 
 /// A holder read failed on the way (answer deadline, connect failure, lost
 /// stream), not because the holder refused it or answered badly.
@@ -4896,6 +4987,23 @@ fn carrier_read_failed_in_transit(error: &anyhow::Error) -> bool {
     matches!(
         error.downcast_ref::<ProviderError>(),
         Some(ProviderError::Io(_))
+    )
+}
+
+/// The decisions with which a reachable holder refuses a read outright.
+const CARRIER_READ_REFUSALS: [&str; 2] = [CARRIER_PEER_REFUSED, CARRIER_CONTENT_TOO_LARGE];
+
+/// The holder answered the read with an explicit refusal. Both Carrier routes
+/// end such a failure with the holder's decision token. Any other failure,
+/// one not yet named included, is not a refusal.
+fn carrier_read_refused(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<ProviderError>(),
+        Some(ProviderError::Provider(message))
+            if message
+                .rsplit(' ')
+                .next()
+                .is_some_and(|code| CARRIER_READ_REFUSALS.contains(&code))
     )
 }
 
@@ -4935,10 +5043,21 @@ async fn fetch_content_via_carrier_provider_invocation(
             transfer: ProviderTransfer::Stream,
             range: None,
             progress: None,
-            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::ConnectTicket {
-                connect_ticket: ticket.to_string(),
-                peer_did: Some(holder_did.to_string()),
-                timeout_ms: Some(5_000),
+            // A holder with no ticket (a known pool's member) is reached by its
+            // peer DID through Carrier discovery, the existing route.
+            transport: ProviderInvocationTransport::Carrier(if ticket.trim().is_empty() {
+                ProviderCarrierRoute::PeerDid {
+                    peer_did: holder_did.to_string(),
+                    timeout_ms: Some(5_000),
+                    reply_wait_ms: None,
+                }
+            } else {
+                ProviderCarrierRoute::ConnectTicket {
+                    connect_ticket: ticket.to_string(),
+                    peer_did: Some(holder_did.to_string()),
+                    timeout_ms: Some(5_000),
+                    reply_wait_ms: None,
+                }
             }),
         })
         .await
@@ -4978,6 +5097,7 @@ async fn ensure_content_via_carrier_provider_invocation(
         connect_ticket: replica.connect_ticket.clone(),
         peer_did: Some(replica.node_did.clone()),
         timeout_ms: Some(5_000),
+        reply_wait_ms: None,
     };
     let admission =
         content_admission_via_carrier_provider_invocation(registry, &route, cid, source_request)
@@ -5763,7 +5883,7 @@ fn remote_content_provider_response_bytes(response: &serde_json::Value) -> Resul
         .map_err(|err| anyhow::anyhow!("remote content provider returned invalid base64: {err}"))
 }
 
-fn carrier_connect_ticket(endpoint: &Endpoint) -> String {
+pub(crate) fn carrier_connect_ticket(endpoint: &Endpoint) -> String {
     let mut watcher = endpoint.watch_addr();
     let addr = watcher.get();
     let ticket_json = serde_json::json!({
@@ -6273,8 +6393,9 @@ fn sort_replica_candidates(replicas: &mut [CarrierAvailabilityReplica]) {
 /// holders when the CID has no signed announcement yet. They rank below a
 /// signed announcement of the same CID (base score 40 vs 50) so an actual
 /// holder is always preferred, carry the local reputation adjustment like
-/// every other candidate, and are skipped when the DID is this node or is
-/// already in the pool. Ticket validity is not judged here: an unreachable
+/// every other candidate, and are skipped when the DID is this node, when the
+/// peer does not host the content plane, or when it is already in the pool.
+/// Ticket validity is not judged here: an unreachable
 /// peer fails its invocation, which is recorded as a replication error and
 /// a reputation failure, exactly like a stale announcement would.
 fn append_operator_peer_store_replica_candidates(
@@ -6293,8 +6414,14 @@ fn append_operator_peer_store_replica_candidates(
     };
     for peer in &config.peers {
         let connect_ticket = peer.connect_ticket.trim();
+        // `hosts_content_storage` is the role gate: a custody-only node has no
+        // content plane worth pinning to, and making it a replica would put
+        // content availability behind the key-custody nodes. A peer that has
+        // not declared any capability is left eligible, so deployments
+        // registered before `provides` existed keep their behaviour.
         if connect_ticket.is_empty()
             || peer.did == self_did
+            || !peer.hosts_content_storage()
             || pool.iter().any(|replica| replica.node_did == peer.did)
         {
             continue;
@@ -6430,6 +6557,63 @@ fn append_known_holder_replica_candidates(
 ) {
     append_operator_peer_store_replica_candidates(pool, data_dir, self_did, reputation, now);
     append_trusted_source_replica_candidates(pool, data_dir, self_did, reputation, now);
+}
+
+/// A buyer Home asks the members of the pools it uses for content too
+/// (`custody-known-pools.json`): a fresh buyer has no operator peers, so
+/// without them every listing read would wait out the discovery deadline.
+/// Only members of verified, current descriptors count, at most
+/// `MAX_KNOWN_POOL_CONTENT_HOLDERS`; they rank below operator peers and
+/// signed announcements, and are reached by peer DID (the descriptors carry
+/// no tickets). Fetched bytes are checked against their CIDs as for any
+/// holder.
+fn append_known_pool_member_replica_candidates(
+    pool: &mut Vec<CarrierAvailabilityReplica>,
+    data_dir: &std::path::Path,
+    self_did: &str,
+    reputation: &HashMap<String, CarrierPeerReputation>,
+    now: u64,
+) {
+    for did in crate::custody_pool_resolver::known_pool_member_peer_dids(data_dir, now) {
+        if did == self_did || pool.iter().any(|replica| replica.node_did == did) {
+            continue;
+        }
+        let (reputation_score, reputation_reason) = carrier_reputation_score(reputation.get(&did));
+        let mut score = 30_u32;
+        let mut reasons = vec!["known_pool_member"];
+        if reputation_score > 0 {
+            score = score.saturating_add(reputation_score as u32);
+            reasons.push("local_reputation_positive");
+        } else if reputation_score < 0 {
+            score = score.saturating_sub(reputation_score.unsigned_abs());
+            reasons.push("local_reputation_negative");
+        } else {
+            reasons.push("local_reputation_neutral");
+        }
+        pool.push(CarrierAvailabilityReplica {
+            node_did: did,
+            endpoint_id: None,
+            connect_ticket: String::new(),
+            announced_at: now,
+            score: score.min(100),
+            selection_reason: reasons.join("+"),
+            reputation_score,
+            reputation_reason,
+        });
+    }
+    sort_replica_candidates(pool);
+}
+
+/// Seeds the content topic's bootstrap peers with the members of the pools
+/// this Home uses, so its announcements reach a buyer with no operator peers.
+fn seed_known_pool_member_bootstrap_peers(state: &mut GossipState, data_dir: &std::path::Path) {
+    for did in crate::custody_pool_resolver::known_pool_member_peer_dids(data_dir, now_secs()) {
+        if let Some(endpoint_id) = did_to_public_key(&did) {
+            if !state.bootstrap_peers.contains(&endpoint_id) {
+                state.bootstrap_peers.push(endpoint_id);
+            }
+        }
+    }
 }
 
 fn ticket_holder_did(ticket: &str) -> Option<String> {
@@ -7878,6 +8062,14 @@ fn carrier_provider_public_invoke_error(index: usize, err: &anyhow::Error) -> St
         error = %format_args!("{err:#}"),
         "Carrier provider invocation failed"
     );
+    // A peer that stopped answering reads very differently from one that
+    // refused, so keep that distinction in the caller-visible summary.
+    if let Some(timeout) = err.downcast_ref::<CarrierProviderResponseTimeout>() {
+        return format!(
+            "ticket[{index}] invoke response timed out after {}s",
+            timeout.timeout_secs
+        );
+    }
     match err.downcast_ref::<CarrierProviderDecision>() {
         Some(decision) => format!("ticket[{index}] {}", decision.code),
         None => format!("ticket[{index}] invoke failed"),
@@ -7897,6 +8089,7 @@ impl ProviderCarrierInvoker for CarrierProviderInvoker {
             ProviderCarrierRoute::ConnectTicket {
                 connect_ticket,
                 peer_did,
+                reply_wait_ms,
                 ..
             } => {
                 let peer_endpoint = self.peer_endpoint.as_ref().ok_or_else(|| {
@@ -7962,6 +8155,25 @@ impl ProviderCarrierInvoker for CarrierProviderInvoker {
                                         transit_kind =
                                             transit_kind.map(|_| std::io::ErrorKind::TimedOut);
                                         continue;
+                                    }
+                                }
+                            } else if let Some(wait_ms) = reply_wait_ms {
+                                // The caller bounded its wait, as on peer-DID
+                                // routes (Plan B T4.3, S4-Q7). The call may have
+                                // acted, so it is not sent to another endpoint.
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_millis(*wait_ms),
+                                    invoke,
+                                )
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(_) => {
+                                        self.forget_peer(peer).await;
+                                        return Err(ProviderError::Io(std::io::Error::new(
+                                            std::io::ErrorKind::TimedOut,
+                                            "Carrier provider answer wait passed",
+                                        )));
                                     }
                                 }
                             } else {
@@ -8163,6 +8375,63 @@ fn bounded_content_fetch(invocation: &ProviderInvocation, request: &serde_json::
         && request.get("bounded_read") == Some(&serde_json::Value::Bool(true))
 }
 
+/// Upper bound on how long a Carrier provider invocation waits for the
+/// remote's response line.
+///
+/// `carrier_route_timeout_secs` bounds only the connect leg. Without a bound
+/// on the read leg a peer that accepts the stream and never answers blocks the
+/// caller for as long as the remote takes — per candidate, sequentially — so a
+/// single wedged peer stalls the whole fan-out indefinitely.
+///
+/// 360 s is chosen to sit clear of the remote ipfs-provider's own 300 s pin
+/// ceiling: a legitimately slow pin still gets to finish and only a peer that
+/// has stopped answering trips this, at which point the candidate fails and
+/// the fan-out moves on.
+const CARRIER_PROVIDER_RESPONSE_TIMEOUT_SECS: u64 = 360;
+
+/// Env override, following the same shape as the other Carrier env knobs in
+/// this file. A value that is not a positive integer is ignored rather than
+/// obeyed, so a typo cannot silently remove the bound.
+const CARRIER_PROVIDER_RESPONSE_TIMEOUT_ENV: &str =
+    "ELASTOS_CARRIER_PROVIDER_RESPONSE_TIMEOUT_SECS";
+
+fn carrier_provider_response_timeout() -> Duration {
+    carrier_provider_response_timeout_from(
+        std::env::var(CARRIER_PROVIDER_RESPONSE_TIMEOUT_ENV)
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn carrier_provider_response_timeout_from(value: Option<&str>) -> Duration {
+    let secs = value
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(CARRIER_PROVIDER_RESPONSE_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+/// A provider response that never arrived. Typed so the fan-out can report
+/// "timed out" apart from a transport failure without matching on message
+/// text.
+#[derive(Debug)]
+struct CarrierProviderResponseTimeout {
+    op: String,
+    timeout_secs: u64,
+}
+
+impl std::fmt::Display for CarrierProviderResponseTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Carrier provider response timed out after {}s (op {})",
+            self.timeout_secs, self.op
+        )
+    }
+}
+
+impl std::error::Error for CarrierProviderResponseTimeout {}
+
 fn carrier_endpoint_matches_peer(endpoint: &iroh::EndpointAddr, peer_did: &str) -> bool {
     did_to_public_key(peer_did).is_some_and(|public_key| endpoint.id == public_key)
 }
@@ -8209,6 +8478,27 @@ impl CarrierEndpointDrain {
         }
         task.take();
     }
+}
+
+/// One provider invocation as the request line a peer reads.
+///
+/// The peer drops a line past `CARRIER_PEER_REQUEST_MAX_BYTES`, so a larger
+/// request fails here, before a stream or any byte is spent on it.
+fn carrier_provider_invoke_line(
+    invocation: &ProviderInvocation,
+    request: serde_json::Value,
+) -> Result<Vec<u8>> {
+    let msg = carrier_provider_invoke_message(invocation, request);
+    let mut bytes = serde_json::to_vec(&msg)?;
+    bytes.push(b'\n');
+    if bytes.len() as u64 > CARRIER_PEER_REQUEST_MAX_BYTES {
+        anyhow::bail!(
+            "Carrier provider request of {} bytes exceeds the peer request limit of {} bytes",
+            bytes.len(),
+            CARRIER_PEER_REQUEST_MAX_BYTES
+        );
+    }
+    Ok(bytes)
 }
 
 fn carrier_provider_invoke_message(
@@ -8644,16 +8934,22 @@ impl CarrierClient {
         } else {
             None
         };
+        let bytes = carrier_provider_invoke_line(invocation, request)?;
         let (mut send, recv) = self.conn.open_bi().await.context(CarrierTransportFailure)?;
-        let msg = carrier_provider_invoke_message(invocation, request);
-        let mut bytes = serde_json::to_vec(&msg)?;
-        bytes.push(b'\n');
         send.write_all(&bytes)
             .await
             .context(CarrierTransportFailure)?;
         send.finish().context(CarrierTransportFailure)?;
 
         let mut reader = BufReader::new(recv);
+        // A peer that accepts the stream and never answers fails its candidate
+        // instead of stalling the fan-out. Model runs keep the hosted model
+        // stream ceiling.
+        let reply_wait = if invocation.target == "model" {
+            CARRIER_PROVIDER_REPLY_WAIT
+        } else {
+            carrier_provider_response_timeout()
+        };
         let reply_bound = if invocation.target == crate::collaboration_history::HISTORY_PROVIDER
             && invocation.op == "read"
             && invocation.transfer == ProviderTransfer::Json
@@ -8672,13 +8968,13 @@ impl CarrierClient {
             None
         };
         let (line, _budget) = if let Some(limit) = reply_bound {
-            let line = read_peer_line(&mut reader, limit, CARRIER_PROVIDER_REPLY_WAIT).await;
+            let line = read_peer_line(&mut reader, limit, reply_wait).await;
             (line, None)
         } else {
             match read_budgeted_reply(
                 &mut reader,
                 CARRIER_PROVIDER_REPLY_MAX_BYTES,
-                CARRIER_PROVIDER_REPLY_WAIT,
+                reply_wait,
                 &CARRIER_REPLY_BUDGET,
             )
             .await
@@ -8687,7 +8983,23 @@ impl CarrierClient {
                 Err(err) => (Err(err), None),
             }
         };
-        let line = line.map_err(carrier_answer_read_error)?;
+        let line = line.map_err(|error| {
+            let timed_out = error.kind() == std::io::ErrorKind::TimedOut;
+            let error = carrier_answer_read_error(error);
+            if !timed_out {
+                return error;
+            }
+            tracing::debug!(
+                peer = %self.conn.remote_id(),
+                op = %invocation.op,
+                timeout_secs = reply_wait.as_secs(),
+                "Carrier provider response read timed out"
+            );
+            error.context(CarrierProviderResponseTimeout {
+                op: invocation.op.clone(),
+                timeout_secs: reply_wait.as_secs(),
+            })
+        })?;
         if let Some(limit) = reply_bound {
             anyhow::ensure!(
                 line.ends_with('\n'),
@@ -9238,6 +9550,49 @@ pub(crate) mod tests {
         node.endpoint.close().await;
     }
 
+    /// One Home key, one identity: the long-lived Carrier endpoint a peer
+    /// authenticates is the device DID, which is also the Profile endpoint
+    /// and the Runtime issuer. Custody consent reads the owner from it.
+    #[tokio::test]
+    async fn the_long_lived_carrier_endpoint_authenticates_as_the_device_did() {
+        let dir = tempfile::tempdir().unwrap();
+        let device_key = elastos_identity::load_or_create_device_key(dir.path()).unwrap();
+        let (signing_key, did) = elastos_identity::derive_did(&device_key);
+        let node = start_carrier_node(&signing_key, &did, dir.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let carrier_did = public_key_to_did(&node.endpoint.id()).unwrap();
+        assert_eq!(carrier_did, did);
+        assert_eq!(
+            crate::collaboration_profile_authority::load_existing_device_did(dir.path())
+                .unwrap()
+                .as_deref(),
+            Some(carrier_did.as_str())
+        );
+        let issuer =
+            crate::protected_content_runtime::derive_protected_content_runtime_issuer(&device_key)
+                .unwrap();
+        let issuer_did = elastos_identity::encode_did_key(
+            &ed25519_dalek::VerifyingKey::from_bytes(issuer.as_bytes()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(issuer_did, carrier_did);
+        assert_eq!(
+            crate::crypto::encode_signing_key_did(&signing_key),
+            carrier_did
+        );
+        node.endpoint.close().await;
+
+        // A DID that is not the key's never starts an endpoint.
+        let (other_key, _) = elastos_identity::derive_did(&[74u8; 32]);
+        assert!(
+            start_carrier_node(&other_key, &did, dir.path().to_path_buf())
+                .await
+                .is_err()
+        );
+    }
+
     #[tokio::test]
     async fn test_carrier_gossip_leave_rejoin_and_shutdown_finish_receiver_tasks() {
         let dir = tempfile::tempdir().unwrap();
@@ -9622,6 +9977,8 @@ pub(crate) mod tests {
         fail_tickets: Vec<String>,
         /// Connect tickets whose bounded fetch fails in transit.
         transit_tickets: StdMutex<Vec<String>>,
+        /// Connect tickets whose holder refuses the fetch outright.
+        refuse_tickets: Vec<String>,
         reject_admission: bool,
         omit_admission_receipt: bool,
     }
@@ -9652,6 +10009,13 @@ pub(crate) mod tests {
             if invocation.transfer == ProviderTransfer::Stream {
                 if self.fail_tickets.iter().any(|dead| dead == ticket) {
                     return Err(ProviderError::Provider("mock remote fetch failed".into()));
+                }
+                if self
+                    .refuse_tickets
+                    .iter()
+                    .any(|refusing| refusing == ticket)
+                {
+                    return Err(ticket_route_failure(CARRIER_PEER_REFUSED));
                 }
                 if self
                     .transit_tickets
@@ -10076,6 +10440,178 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_carrier_provider_response_timeout_surfaces_as_a_candidate_failure() {
+        // Exercising a real wedged socket would mean holding a stream open for
+        // the whole timeout, so this covers the construction and mapping the
+        // read path uses: the fan-out must see a named, per-ticket failure and
+        // move on to the next candidate instead of blocking.
+        let err = anyhow::Error::new(CarrierProviderResponseTimeout {
+            op: "pin".to_string(),
+            timeout_secs: 360,
+        });
+
+        assert_eq!(
+            carrier_provider_public_invoke_error(1, &err),
+            "ticket[1] invoke response timed out after 360s"
+        );
+        assert_eq!(
+            err.to_string(),
+            "Carrier provider response timed out after 360s (op pin)"
+        );
+    }
+
+    #[test]
+    fn test_carrier_provider_response_timeout_default_clears_the_remote_pin_ceiling() {
+        // The remote ipfs-provider waits up to 300s on kubo, so the default
+        // must not cut a legitimate pin short.
+        assert_eq!(
+            carrier_provider_response_timeout_from(None),
+            Duration::from_secs(360)
+        );
+        assert!(carrier_provider_response_timeout_from(None) > Duration::from_secs(300));
+        assert_eq!(
+            carrier_provider_response_timeout_from(Some(" 30 ")),
+            Duration::from_secs(30)
+        );
+        // A typo must not remove the bound.
+        assert_eq!(
+            carrier_provider_response_timeout_from(Some("0")),
+            Duration::from_secs(360)
+        );
+        assert_eq!(
+            carrier_provider_response_timeout_from(Some("forever")),
+            Duration::from_secs(360)
+        );
+    }
+
+    /// A buyer Home with one known pool and no operator peers asks that
+    /// pool's members for content, by peer DID (no ticket), behind every
+    /// signed announcement; with no known pool nothing changes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn known_pool_members_are_content_holder_candidates() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let home = data_dir.path().join("home");
+        crate::protected_content_config::tests::owner_only_dir(&home);
+        let (_self_sk, self_did) = elastos_identity::derive_did(&[35u8; 32]);
+        let reputation = HashMap::new();
+        let now = crate::custody_pool_resolver::tests::FIXTURE_NOW;
+
+        // No known pool: no candidate, as before.
+        let mut pool = Vec::new();
+        append_known_pool_member_replica_candidates(&mut pool, &home, &self_did, &reputation, now);
+        assert!(pool.is_empty());
+        append_known_holder_replica_candidates(&mut pool, &home, &self_did, &reputation, now);
+        assert!(pool.is_empty(), "no operator peers either");
+
+        let members =
+            crate::custody_pool_resolver::tests::keep_fixture_known_pool_for_test(&home).await;
+        append_known_pool_member_replica_candidates(&mut pool, &home, &self_did, &reputation, now);
+        let mut listed: Vec<_> = pool
+            .iter()
+            .map(|replica| replica.node_did.clone())
+            .collect();
+        listed.sort();
+        let mut expected = members.clone();
+        expected.sort();
+        assert_eq!(listed, expected);
+        for replica in &pool {
+            assert!(
+                replica.connect_ticket.is_empty(),
+                "members are reached by peer DID"
+            );
+            assert!(replica.selection_reason.starts_with("known_pool_member"));
+        }
+        // Never this Home, never twice.
+        let mut again = pool.clone();
+        append_known_pool_member_replica_candidates(&mut again, &home, &self_did, &reputation, now);
+        assert_eq!(again.len(), pool.len());
+        let mut as_self = Vec::new();
+        append_known_pool_member_replica_candidates(
+            &mut as_self,
+            &home,
+            &members[0],
+            &reputation,
+            now,
+        );
+        assert!(as_self.iter().all(|replica| replica.node_did != members[0]));
+    }
+
+    /// The content fetch asks a holder with no ticket by its peer DID, through
+    /// the existing Carrier route, and seeds the content topic with the pool
+    /// members.
+    #[test]
+    fn content_fetch_reaches_a_ticketless_holder_by_peer_did() {
+        const SOURCE: &str = include_str!("carrier.rs");
+        let fetch = &SOURCE[SOURCE
+            .find("async fn fetch_content_via_carrier_provider_invocation(")
+            .unwrap()..];
+        let fetch = &fetch[..fetch.find("\n}\n").unwrap()];
+        assert!(fetch.contains("ProviderCarrierRoute::PeerDid {"));
+        let announced = &SOURCE[SOURCE
+            .find("async fn fetch_from_announced_carrier_peers(")
+            .unwrap()..];
+        let announced = &announced[..announced.find("\n    }\n").unwrap()];
+        assert!(announced.contains("append_known_pool_member_replica_candidates("));
+        assert!(announced.contains("seed_known_pool_member_bootstrap_peers("));
+    }
+
+    #[test]
+    fn test_operator_peer_store_replica_candidates_skip_custody_only_peers() {
+        // A custody node's only role is key-share custody and release. It must
+        // never be conscripted as a content replica, or key custody becomes a
+        // content-availability failure point.
+        let data_dir = tempfile::tempdir().unwrap();
+        let (_custody_sk, custody_did) = elastos_identity::derive_did(&[31u8; 32]);
+        let (_storage_sk, storage_did) = elastos_identity::derive_did(&[32u8; 32]);
+        let (_legacy_sk, legacy_did) = elastos_identity::derive_did(&[33u8; 32]);
+        let (_self_sk, self_did) = elastos_identity::derive_did(&[34u8; 32]);
+
+        for (did, label, provides) in [
+            (&custody_did, "custody-only", vec!["custody", "chain"]),
+            (
+                &storage_did,
+                "full-node",
+                vec!["custody", "ipfs", "availability", "chain"],
+            ),
+            (&legacy_did, "legacy", Vec::new()),
+        ] {
+            crate::operator_control::upsert_peer(
+                data_dir.path(),
+                crate::operator_control::OperatorPeer {
+                    did: did.clone(),
+                    label: label.to_string(),
+                    connect_ticket: "ticket-placeholder".to_string(),
+                    provides: provides.into_iter().map(str::to_string).collect(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+
+        let mut pool = Vec::new();
+        append_operator_peer_store_replica_candidates(
+            &mut pool,
+            data_dir.path(),
+            &self_did,
+            &HashMap::new(),
+            1_700_000_000,
+        );
+
+        let selected: Vec<&str> = pool
+            .iter()
+            .map(|replica| replica.node_did.as_str())
+            .collect();
+        assert!(!selected.contains(&custody_did.as_str()));
+        assert!(selected.contains(&storage_did.as_str()));
+        // Legacy record: capability unknown, so behaviour is unchanged.
+        assert!(selected.contains(&legacy_did.as_str()));
+        assert!(pool
+            .iter()
+            .all(|replica| replica.selection_reason.starts_with("operator_peer_store")));
+    }
+
+    #[test]
     fn test_content_availability_cid_validation_is_fail_closed() {
         assert!(validate_content_cid(
             "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
@@ -10229,6 +10765,32 @@ pub(crate) mod tests {
         assert_eq!(
             replicas[1].selection_reason,
             "signed_announcement+stale+local_reputation_neutral"
+        );
+    }
+
+    #[test]
+    fn test_carrier_provider_invoke_line_refuses_a_request_past_the_peer_limit() {
+        let invocation = ProviderInvocation {
+            source: "carrier-availability".to_string(),
+            target: "content".to_string(),
+            op: "import_object".to_string(),
+            request: serde_json::Value::Null,
+            transfer: ProviderTransfer::Json,
+            range: None,
+            progress: None,
+            transport: ProviderInvocationTransport::Local,
+        };
+        let fits = serde_json::json!({ "data": "a".repeat(1024) });
+        let line = carrier_provider_invoke_line(&invocation, fits).unwrap();
+        assert_eq!(line.last(), Some(&b'\n'));
+
+        let oversized = serde_json::json!({
+            "data": "a".repeat(CARRIER_PEER_REQUEST_MAX_BYTES as usize)
+        });
+        let err = carrier_provider_invoke_line(&invocation, oversized).unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds the peer request limit"),
+            "{err}"
         );
     }
 
@@ -10652,6 +11214,11 @@ pub(crate) mod tests {
     #[test]
     fn test_carrier_provider_target_admission_keeps_protected_runtime_targets_narrow() {
         assert!(carrier_provider_target_allowed("custody"));
+        // Plan B T3.4: pool members serve viewing sessions over Carrier.
+        assert!(carrier_provider_target_allowed("custody-pool"));
+        assert!(crate::custody_surface::is_runtime_provider_target(
+            "custody-pool"
+        ));
         assert!(carrier_provider_target_allowed("collaboration.shared"));
         assert!(!carrier_provider_target_allowed("availability"));
         assert!(!carrier_provider_target_allowed("protect"));
@@ -10659,6 +11226,14 @@ pub(crate) mod tests {
         assert!(!carrier_provider_target_allowed(
             "protected-content-decrypt"
         ));
+        // The provisional provider schemes were retired by the atomic cutover.
+        // A remote peer must not be able to invoke them over Carrier either.
+        for retired in ["drm", "rights", "key", "decrypt"] {
+            assert!(
+                !carrier_provider_target_allowed(retired),
+                "retired provider target {retired} must not be Carrier-invocable"
+            );
+        }
     }
 
     #[tokio::test]
@@ -12703,6 +13278,7 @@ pub(crate) mod tests {
                         connect_ticket: slow.ticket.clone(),
                         peer_did: Some(slow.did.clone()),
                         timeout_ms: Some(1_000),
+                        reply_wait_ms: None,
                     },
                 ),
             };
@@ -12786,6 +13362,94 @@ pub(crate) mod tests {
             cut_after >= std::time::Duration::from_secs(1)
                 && cut_after < std::time::Duration::from_millis(2_400),
             "peer-DID bounded fetch is cut at its budget: {cut_after:?}"
+        );
+
+        shutdown_test_carrier_node(slow.node).await;
+        shutdown_test_carrier_node(local_node).await;
+    }
+
+    /// Plan B T4.3 (S4-Q7): a ticket route with `reply_wait_ms` ends its
+    /// answer wait at that bound, as a peer-DID route does, instead of the
+    /// open-ended wait an effectful call otherwise keeps. A pool server that
+    /// stops answering no longer holds a buyer's call for minutes.
+    #[tokio::test]
+    async fn ticket_route_reply_wait_is_bounded() {
+        let local_dir = tempfile::tempdir().unwrap();
+        let local_registry = Arc::new(ProviderRegistry::new());
+        let (local_sk, local_did) = elastos_identity::derive_did(&[231u8; 32]);
+        let local_node = start_isolated_carrier_node_with_registry(
+            &local_sk,
+            &local_did,
+            local_dir.path().to_path_buf(),
+            Some(Arc::downgrade(&local_registry)),
+        )
+        .await
+        .unwrap();
+        local_registry
+            .set_carrier_invoker(Arc::new(
+                CarrierProviderInvoker::with_carrier_endpoint_and_registry(
+                    local_node.endpoint.clone(),
+                    Arc::downgrade(&local_registry),
+                ),
+            ))
+            .await;
+        let slow = start_holder_runtime(
+            232,
+            Arc::new(SlowContentProvider {
+                delay: std::time::Duration::from_millis(3_000),
+            }),
+            None,
+        )
+        .await;
+        grant_peer(slow._dir.path(), &local_did, &["content.replica"]);
+        let route = |reply_wait_ms: Option<u64>| ProviderInvocation {
+            source: "carrier-availability".into(),
+            target: "content".into(),
+            op: "import_exact".into(),
+            request: serde_json::json!({"op":"import_exact","cid":"bafyfixture"}),
+            transfer: ProviderTransfer::Json,
+            range: None,
+            progress: None,
+            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::ConnectTicket {
+                connect_ticket: slow.ticket.clone(),
+                peer_did: Some(slow.did.clone()),
+                timeout_ms: Some(1_000),
+                reply_wait_ms,
+            }),
+        };
+
+        // A zero bound is refused before any call, as on peer-DID routes.
+        let refused = local_registry
+            .invoke_provider(route(Some(0)))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("reply_wait_ms must be greater than zero"),
+            "{refused}"
+        );
+
+        let started = std::time::Instant::now();
+        let error = local_registry
+            .invoke_provider(route(Some(800)))
+            .await
+            .unwrap_err();
+        let cut_after = started.elapsed();
+        assert!(
+            matches!(&error, ProviderError::Io(io) if io.kind() == std::io::ErrorKind::TimedOut),
+            "{error}"
+        );
+        assert!(
+            cut_after >= std::time::Duration::from_millis(800)
+                && cut_after < std::time::Duration::from_millis(2_500),
+            "the answer wait ends at its bound, before the slow answer: {cut_after:?}"
+        );
+
+        // Without a bound the effectful call still waits for its receipt.
+        let response = local_registry.invoke_provider(route(None)).await.unwrap();
+        assert_eq!(
+            response["data"]["receipt"], "effect-completed",
+            "{response}"
         );
 
         shutdown_test_carrier_node(slow.node).await;
@@ -13054,6 +13718,7 @@ pub(crate) mod tests {
                 connect_ticket: encode_ticket_for(remote_addr),
                 peer_did: Some(remote_did.to_string()),
                 timeout_ms: Some(5_000),
+                reply_wait_ms: None,
             }),
         }
     }
@@ -14127,6 +14792,7 @@ pub(crate) mod tests {
                 label: String::new(),
                 connect_ticket: encode_ticket_for(remote_addr.clone()),
                 allow: Vec::new(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -15203,6 +15869,7 @@ pub(crate) mod tests {
             fail_ensure: false,
             fail_tickets: Vec::new(),
             transit_tickets: Default::default(),
+            refuse_tickets: Vec::new(),
             reject_admission: true,
             omit_admission_receipt: false,
         });
@@ -15262,6 +15929,7 @@ pub(crate) mod tests {
             fail_ensure: false,
             fail_tickets: Vec::new(),
             transit_tickets: Default::default(),
+            refuse_tickets: Vec::new(),
             reject_admission: false,
             omit_admission_receipt: true,
         });
@@ -15896,6 +16564,7 @@ pub(crate) mod tests {
                 label: "custody-a".to_string(),
                 connect_ticket: remote_ticket.clone(),
                 allow: Vec::new(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -15907,6 +16576,7 @@ pub(crate) mod tests {
                 label: "self".to_string(),
                 connect_ticket: remote_ticket.clone(),
                 allow: Vec::new(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -16011,6 +16681,8 @@ pub(crate) mod tests {
                 label: "holder-a".to_string(),
                 connect_ticket: remote_ticket.clone(),
                 allow: Vec::new(),
+                provides: Vec::new(),
+                ipfs_peer: None,
             },
         )
         .unwrap();
@@ -16021,6 +16693,8 @@ pub(crate) mod tests {
                 label: "self".to_string(),
                 connect_ticket: remote_ticket.clone(),
                 allow: Vec::new(),
+                provides: Vec::new(),
+                ipfs_peer: None,
             },
         )
         .unwrap();
@@ -16850,6 +17524,7 @@ pub(crate) mod tests {
                 label: "custody-c".to_string(),
                 connect_ticket: live_ticket.clone(),
                 allow: Vec::new(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -17865,6 +18540,498 @@ pub(crate) mod tests {
         }
     }
 
+    /// A provider whose topic for `cid` holds one signed announcement per
+    /// `(key seed, ticket)`, and that otherwise waits `discovery_wait` for
+    /// more.
+    async fn availability_provider_with_announced_holders<I: ProviderCarrierInvoker + 'static>(
+        local_seed: u8,
+        cid: &str,
+        holders: &[(u8, &str)],
+        invoker: I,
+    ) -> (
+        CarrierAvailabilityProvider,
+        Arc<I>,
+        Arc<ProviderRegistry>,
+        tempfile::TempDir,
+    ) {
+        let (local_sk, local_did) = elastos_identity::derive_did(&[local_seed; 32]);
+        let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
+            .secret_key(iroh::SecretKey::from_bytes(&local_sk.to_bytes()))
+            .bind()
+            .await
+            .unwrap();
+        let memory_lookup = MemoryLookup::new();
+        endpoint
+            .address_lookup()
+            .unwrap()
+            .add(memory_lookup.clone());
+        let gossip = spawn_carrier_gossip(&endpoint);
+        let state = Arc::new(Mutex::new(GossipState::new(
+            endpoint,
+            gossip,
+            memory_lookup,
+            Some(local_sk),
+            Some(local_did),
+        )));
+        let messages = holders.iter().map(|(seed, ticket)| {
+            signed_content_availability_message(cid, [*seed; 32], ticket, "", now_secs()).0
+        });
+        {
+            let topic_name = content_availability_topic_name(cid);
+            let mut guard = state.lock().await;
+            guard.joined_topics.insert(topic_name.clone());
+            guard
+                .buffers
+                .lock()
+                .await
+                .insert(topic_name, test_topic_buffer(messages, 0));
+        }
+        let data_dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(ProviderRegistry::new());
+        let invoker = Arc::new(invoker);
+        registry.set_carrier_invoker(invoker.clone()).await;
+        let provider = CarrierAvailabilityProvider::with_provider_registry_and_data_dir(
+            state,
+            Arc::downgrade(&registry),
+            data_dir.path().to_path_buf(),
+        )
+        .with_discovery_wait(Duration::from_secs(3));
+        (provider, invoker, registry, data_dir)
+    }
+
+    /// A read that asks only the holders known now ends as soon as each of
+    /// them has answered: every one refusing, or none being known, is a
+    /// definite answer at once, while a holder that failed on the way leaves
+    /// the read worth repeating. Without the flag the read still waits for
+    /// late announcements.
+    #[tokio::test]
+    async fn test_carrier_fetch_from_known_holders_only_ends_without_waiting_for_announcements() {
+        let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        let fetch = |known_holders_only: bool| {
+            let mut request =
+                serde_json::json!({ "op": "fetch", "cid": cid, "path": "metadata.json" });
+            if known_holders_only {
+                request["known_holders_only"] = serde_json::Value::Bool(true);
+            }
+            request
+        };
+        let refusing = || MockCarrierProviderPlaneInvoker {
+            refuse_tickets: vec!["ticket:a".to_string(), "ticket:b".to_string()],
+            ..Default::default()
+        };
+        // (case, announced holders, how they answer, expected code)
+        type Case<'a> = (
+            &'a str,
+            &'a [(u8, &'a str)],
+            MockCarrierProviderPlaneInvoker,
+            &'a str,
+        );
+        let cases: [Case; 4] = [
+            (
+                "no holder",
+                &[],
+                MockCarrierProviderPlaneInvoker::default(),
+                "carrier_fetch_unavailable",
+            ),
+            (
+                "every holder refuses",
+                &[(71, "ticket:a"), (72, "ticket:b")],
+                refusing(),
+                "carrier_fetch_failed",
+            ),
+            (
+                "one refuses, one fails on the way",
+                &[(73, "ticket:a"), (74, "ticket:b")],
+                MockCarrierProviderPlaneInvoker {
+                    refuse_tickets: vec!["ticket:a".to_string()],
+                    transit_tickets: StdMutex::new(vec!["ticket:b".to_string()]),
+                    ..Default::default()
+                },
+                CARRIER_FETCH_IN_TRANSIT_CODE,
+            ),
+            (
+                "every holder fails on the way",
+                &[(75, "ticket:a")],
+                MockCarrierProviderPlaneInvoker {
+                    transit_tickets: StdMutex::new(vec!["ticket:a".to_string()]),
+                    ..Default::default()
+                },
+                CARRIER_FETCH_IN_TRANSIT_CODE,
+            ),
+        ];
+        for (seed, (case, holders, invoker, expected)) in (130u8..).zip(cases) {
+            let (provider, invoker, _registry, _data_dir) =
+                availability_provider_with_announced_holders(seed, cid, holders, invoker).await;
+            let started = std::time::Instant::now();
+            let response = provider.send_raw(&fetch(true)).await.unwrap();
+            assert_eq!(response["code"], expected, "{case}: {response}");
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "{case}: answered after {:?}",
+                started.elapsed()
+            );
+            let asked = invoker.requests.lock().await.len();
+            assert_eq!(
+                asked,
+                holders.len(),
+                "{case}: every known holder is asked once"
+            );
+        }
+
+        // The default read keeps waiting for a holder to announce itself.
+        let (provider, _invoker, _registry, _data_dir) =
+            availability_provider_with_announced_holders(140, cid, &[(76, "ticket:a")], refusing())
+                .await;
+        let started = std::time::Instant::now();
+        let response = provider.send_raw(&fetch(false)).await.unwrap();
+        assert_eq!(response["code"], "carrier_fetch_failed", "{response}");
+        assert!(started.elapsed() >= Duration::from_secs(3));
+    }
+
+    /// A holder's failure as the Carrier invoker reports it on the ticket route.
+    fn ticket_route_failure(cause: &str) -> ProviderError {
+        ProviderError::Provider(format!(
+            "Carrier provider invocation failed: ticket[0] {cause}"
+        ))
+    }
+
+    /// A holder's failure as the Carrier invoker reports it on the peer-DID route.
+    fn peer_did_route_failure(cause: &str) -> ProviderError {
+        ProviderError::Provider(format!(
+            "Carrier provider invocation peer_did route failed: {cause}"
+        ))
+    }
+
+    /// Fails each holder read with the next scripted failure, then serves as
+    /// the mock does. Records the ticket of every holder it is asked to read.
+    #[derive(Default)]
+    struct ScriptedHolderInvoker {
+        failures: StdMutex<std::collections::VecDeque<ProviderError>>,
+        asked: StdMutex<Vec<String>>,
+        serves: MockCarrierProviderPlaneInvoker,
+    }
+
+    #[async_trait::async_trait]
+    impl ProviderCarrierInvoker for ScriptedHolderInvoker {
+        async fn invoke_carrier_provider(
+            &self,
+            route: &ProviderCarrierRoute,
+            invocation: &ProviderInvocation,
+            request: serde_json::Value,
+        ) -> std::result::Result<serde_json::Value, ProviderError> {
+            if let ProviderCarrierRoute::ConnectTicket { connect_ticket, .. } = route {
+                self.asked.lock().unwrap().push(connect_ticket.clone());
+            }
+            let failure = self.failures.lock().unwrap().pop_front();
+            match failure {
+                Some(failure) => Err(failure),
+                None => {
+                    self.serves
+                        .invoke_carrier_provider(route, invocation, request)
+                        .await
+                }
+            }
+        }
+    }
+
+    /// GUARD (MARKET C): a read of the holders known now is final only when
+    /// each holder explicitly refused it. The refusals are a fixed list, so
+    /// any other failure, a new one included, leaves the read retryable.
+    #[tokio::test]
+    async fn guard_known_holders_read_is_final_only_on_an_explicit_refusal() {
+        let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        let failed = CARRIER_FETCH_FAILED_CODE;
+        let retry = CARRIER_FETCH_IN_TRANSIT_CODE;
+        // (case, the one holder's failure, expected code)
+        let cases: Vec<(&str, ProviderError, &str)> = vec![
+            (
+                "peer route refusal",
+                peer_did_route_failure(CARRIER_PEER_REFUSED),
+                failed,
+            ),
+            (
+                "ticket route refusal",
+                ticket_route_failure(CARRIER_PEER_REFUSED),
+                failed,
+            ),
+            (
+                "peer route too large",
+                peer_did_route_failure(CARRIER_CONTENT_TOO_LARGE),
+                failed,
+            ),
+            (
+                "ticket route too large",
+                ticket_route_failure(CARRIER_CONTENT_TOO_LARGE),
+                failed,
+            ),
+            (
+                "no route to the peer",
+                ProviderError::Unavailable(
+                    "no verified Carrier route to the requested peer".into(),
+                ),
+                retry,
+            ),
+            (
+                "peer answer deadline",
+                peer_did_route_failure("failed"),
+                retry,
+            ),
+            (
+                "peer stream broke",
+                peer_did_route_failure(PEER_ROUTE_IN_TRANSIT),
+                retry,
+            ),
+            (
+                "ticket answer timeout",
+                ticket_route_failure("invoke response timed out after 5s"),
+                retry,
+            ),
+            (
+                "ticket invoke failed",
+                ticket_route_failure("invoke failed"),
+                retry,
+            ),
+            (
+                "another decision",
+                ticket_route_failure("rate_limited"),
+                retry,
+            ),
+            (
+                "answer deadline as I/O",
+                ProviderError::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "answer deadline passed",
+                )),
+                retry,
+            ),
+        ];
+        for (seed, (case, failure, expected)) in (160u8..).zip(cases) {
+            let invoker = ScriptedHolderInvoker::default();
+            invoker.failures.lock().unwrap().push_back(failure);
+            let (provider, invoker, _registry, _data_dir) =
+                availability_provider_with_announced_holders(
+                    seed,
+                    cid,
+                    &[(77, "ticket:a")],
+                    invoker,
+                )
+                .await;
+            let response = provider
+                .send_raw(&serde_json::json!({
+                    "op": "fetch", "cid": cid, "path": "metadata.json", "known_holders_only": true
+                }))
+                .await
+                .unwrap();
+            assert_eq!(response["code"], expected, "{case}: {response}");
+            assert_eq!(invoker.asked.lock().unwrap().len(), 1, "{case}");
+        }
+    }
+
+    /// The read asks at most `MAX_CARRIER_REPLICATION_CANDIDATES` holders.
+    /// When each of those refuses and a known holder is left unasked, the
+    /// answer is not final: a later read asks that holder first, and it serves.
+    #[tokio::test]
+    async fn known_holders_read_with_a_holder_left_past_the_cap_stays_retryable() {
+        let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        let tickets: Vec<String> = (1..=MAX_CARRIER_REPLICATION_CANDIDATES + 1)
+            .map(|n| format!("ticket:{n}"))
+            .collect();
+        let holders: Vec<(u8, &str)> = (180u8..)
+            .zip(&tickets)
+            .map(|(seed, ticket)| (seed, ticket.as_str()))
+            .collect();
+        let invoker = ScriptedHolderInvoker::default();
+        invoker.failures.lock().unwrap().extend(
+            (0..MAX_CARRIER_REPLICATION_CANDIDATES)
+                .map(|_| ticket_route_failure(CARRIER_PEER_REFUSED)),
+        );
+        let (provider, invoker, _registry, _data_dir) =
+            availability_provider_with_announced_holders(179, cid, &holders, invoker).await;
+        let read = serde_json::json!({
+            "op": "fetch", "cid": cid, "path": "metadata.json", "known_holders_only": true
+        });
+
+        let first = provider.send_raw(&read).await.unwrap();
+        assert_eq!(first["code"], CARRIER_FETCH_IN_TRANSIT_CODE, "{first}");
+        let asked = invoker.asked.lock().unwrap().clone();
+        assert_eq!(asked.len(), MAX_CARRIER_REPLICATION_CANDIDATES);
+        let unasked: Vec<&String> = tickets.iter().filter(|t| !asked.contains(t)).collect();
+        assert_eq!(unasked.len(), 1, "{asked:?}");
+
+        let second = provider.send_raw(&read).await.unwrap();
+        assert_eq!(second["status"], "ok", "{second}");
+        let asked = invoker.asked.lock().unwrap().clone();
+        assert_eq!(asked.len(), MAX_CARRIER_REPLICATION_CANDIDATES + 1);
+        assert_eq!(&asked[MAX_CARRIER_REPLICATION_CANDIDATES], unasked[0]);
+    }
+
+    /// Reaches the holder by peer DID through the real Carrier invoker: the
+    /// bounded route a known pool member's read takes. The announcement only
+    /// names a holder to the read.
+    struct PeerDidRouteInvoker {
+        invoker: CarrierProviderInvoker,
+        peer_did: String,
+    }
+
+    #[async_trait::async_trait]
+    impl ProviderCarrierInvoker for PeerDidRouteInvoker {
+        async fn invoke_carrier_provider(
+            &self,
+            _route: &ProviderCarrierRoute,
+            invocation: &ProviderInvocation,
+            request: serde_json::Value,
+        ) -> std::result::Result<serde_json::Value, ProviderError> {
+            let route = ProviderCarrierRoute::PeerDid {
+                peer_did: self.peer_did.clone(),
+                timeout_ms: Some(5_000),
+                reply_wait_ms: None,
+            };
+            let mut invocation = invocation.clone();
+            invocation.transport = ProviderInvocationTransport::Carrier(route.clone());
+            self.invoker
+                .invoke_carrier_provider(&route, &invocation, request)
+                .await
+        }
+    }
+
+    /// How a holder reached by peer DID answers a bounded read.
+    #[derive(Clone, Copy, Debug)]
+    enum PeerDidHolder {
+        Offline,
+        Silent,
+        BreaksStream,
+        Refuses,
+    }
+
+    /// The answer to a bounded read of the holders known now, whose one holder
+    /// is a Carrier endpoint reached by peer DID that answers as `holder`.
+    async fn known_holder_read_over_peer_did(
+        local_seed: u8,
+        holder: PeerDidHolder,
+    ) -> serde_json::Value {
+        let bind = || async {
+            Endpoint::builder(iroh::endpoint::presets::Minimal)
+                .clear_ip_transports()
+                .portmapper_config(iroh::endpoint::PortmapperConfig::Disabled)
+                .alpns(vec![CARRIER_ALPN.to_vec()])
+                .bind_addr("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+                .unwrap()
+                .bind()
+                .await
+                .unwrap()
+        };
+        let holder_endpoint = bind().await;
+        let consumer = bind().await;
+        let lookup = MemoryLookup::new();
+        consumer.address_lookup().unwrap().add(lookup.clone());
+        lookup.add_endpoint_info(wait_for_direct_endpoint_addr(&holder_endpoint).await);
+        let peer_did = public_key_to_did(&holder_endpoint.id()).unwrap();
+        let answering = holder_endpoint.clone();
+        let served = tokio::spawn(async move {
+            let Some(incoming) = answering.accept().await else {
+                return;
+            };
+            let Ok(conn) = incoming.await else {
+                return;
+            };
+            let (mut send, recv) = conn.accept_bi().await.unwrap();
+            let mut request = String::new();
+            BufReader::new(recv).read_line(&mut request).await.unwrap();
+            match holder {
+                PeerDidHolder::BreaksStream => {
+                    send.reset(iroh::endpoint::VarInt::from_u32(0)).unwrap();
+                }
+                PeerDidHolder::Refuses => {
+                    let refusal = serde_json::json!({
+                        "ok": false,
+                        "code": CARRIER_PEER_REFUSED,
+                        "error": "not shared with this peer",
+                    });
+                    send.write_all(format!("{refusal}\n").as_bytes())
+                        .await
+                        .unwrap();
+                    send.finish().unwrap();
+                }
+                PeerDidHolder::Offline | PeerDidHolder::Silent => {}
+            }
+            conn.closed().await;
+        });
+        if matches!(holder, PeerDidHolder::Offline) {
+            holder_endpoint.close().await;
+        }
+        let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        let (provider, _invoker, _registry, _data_dir) =
+            availability_provider_with_announced_holders(
+                local_seed,
+                cid,
+                &[(local_seed.wrapping_add(1), "ticket:peer")],
+                PeerDidRouteInvoker {
+                    invoker: CarrierProviderInvoker::with_carrier_endpoint(consumer.clone()),
+                    peer_did,
+                },
+            )
+            .await;
+        let response = provider
+            .send_raw(&serde_json::json!({
+                "op": "fetch",
+                "cid": cid,
+                "path": "metadata.json",
+                "bounded_read": true,
+                "range": {"start": 0, "end": 3},
+                "transfer": "stream",
+                "known_holders_only": true,
+            }))
+            .await
+            .unwrap();
+        served.abort();
+        if !matches!(holder, PeerDidHolder::Offline) {
+            holder_endpoint.close().await;
+        }
+        consumer.close().await;
+        response
+    }
+
+    /// MARKET C: a known holder reached by peer DID that cannot be connected
+    /// may come back, so the listing read stays retryable, not `no_holder`.
+    #[tokio::test]
+    async fn known_holder_over_peer_did_connect_failure_stays_retryable() {
+        let response = known_holder_read_over_peer_did(190, PeerDidHolder::Offline).await;
+        assert_eq!(
+            response["code"], CARRIER_FETCH_IN_TRANSIT_CODE,
+            "{response}"
+        );
+    }
+
+    /// MARKET C: a known holder reached by peer DID that misses the bounded
+    /// read's answer deadline leaves the listing read retryable.
+    #[tokio::test]
+    async fn known_holder_over_peer_did_response_deadline_stays_retryable() {
+        let response = known_holder_read_over_peer_did(192, PeerDidHolder::Silent).await;
+        assert_eq!(
+            response["code"], CARRIER_FETCH_IN_TRANSIT_CODE,
+            "{response}"
+        );
+    }
+
+    /// MARKET C: a known holder reached by peer DID whose answer stream
+    /// breaks leaves the listing read retryable.
+    #[tokio::test]
+    async fn known_holder_over_peer_did_broken_stream_stays_retryable() {
+        let response = known_holder_read_over_peer_did(194, PeerDidHolder::BreaksStream).await;
+        assert_eq!(
+            response["code"], CARRIER_FETCH_IN_TRANSIT_CODE,
+            "{response}"
+        );
+    }
+
+    /// MARKET C: a known holder reached by peer DID that refuses the read is
+    /// a final answer.
+    #[tokio::test]
+    async fn known_holder_over_peer_did_refusal_is_final() {
+        let response = known_holder_read_over_peer_did(196, PeerDidHolder::Refuses).await;
+        assert_eq!(response["code"], CARRIER_FETCH_FAILED_CODE, "{response}");
+    }
+
     /// An answer that is not valid UTF-8 is the holder's bad answer, not a
     /// failure in transit, so its bounded read is not repeated.
     #[tokio::test]
@@ -17900,6 +19067,7 @@ pub(crate) mod tests {
             connect_ticket: encode_ticket_for(address),
             peer_did: None,
             timeout_ms: Some(5_000),
+            reply_wait_ms: None,
         };
         let invocation = ProviderInvocation {
             source: "carrier-availability".into(),

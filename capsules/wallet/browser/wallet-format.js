@@ -236,7 +236,7 @@ export function cardNetworkLabel(account) {
   const namespace = readText(account?.chain_namespace);
   let chain = "";
   if (namespace.startsWith("eip155:")) {
-    chain = "EVM";
+    chain = account?.display_chain_namespace ? chainLabel(account.display_chain_namespace) : "EVM";
   } else if (namespace.startsWith("bip122:")) {
     chain = "BTC";
   } else if (namespace) {

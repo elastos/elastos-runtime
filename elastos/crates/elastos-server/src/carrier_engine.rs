@@ -422,6 +422,7 @@ pub(crate) async fn call(
                 } else {
                     5_000
                 }),
+                reply_wait_ms: None,
             }),
         })
         .await

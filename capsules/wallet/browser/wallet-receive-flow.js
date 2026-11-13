@@ -77,7 +77,7 @@ export function createWalletReceiveFlow({
       qrBox.innerHTML = qrForAccount(account);
       const address = textNode("div", account.address, "wallet-qr-address");
       const warningText = account.chain_namespace?.startsWith("eip155:")
-        ? "This EVM address can receive assets on supported EVM networks. Always choose the correct chain in the sending wallet."
+        ? `Receive on ${account.network}. This EVM address can receive assets on supported EVM networks. Always choose the correct chain in the sending wallet.`
         : `Send only ${account.network} assets to this address. Other assets may be lost.`;
       const warning = textNode(
         "p",

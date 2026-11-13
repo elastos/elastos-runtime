@@ -1,7 +1,7 @@
     import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js";
     import {
       createHomeClipboardClient,
-    } from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+    } from "/apps/home/home-clipboard-client.js?v=home-20261111a";
     import init from "./chat_room_ui.js?v=chat-room-ui-20261008a";
 
     const chatLaunchParams = new URLSearchParams(window.location.search);

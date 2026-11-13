@@ -412,6 +412,7 @@ const shellChrome = await import(`../capsules/home-gui/browser/shell-chrome.js?v
 const shellControlCentre = await import(`../capsules/home-gui/browser/shell-control-centre.js?v=${moduleVersion}`);
 const shellWindows = await import(`../capsules/home-gui/browser/shell-windows.js?v=${moduleVersion}`);
 const shellSurface = await import(`../capsules/home-gui/browser/shell-surface.js?v=${moduleVersion}`);
+const shellWalletRail = await import(`../capsules/home-gui/browser/shell-wallet-rail.js?v=${moduleVersion}`);
 const shellSpotlight = await import(`../capsules/home-gui/browser/shell-spotlight.js?v=${moduleVersion}`);
 const shellKeyboard = await import(`../capsules/home-gui/browser/shell-keyboard.js?v=${moduleVersion}`);
 
@@ -676,6 +677,16 @@ const controlCentreScript = readFileSync(
   new URL("../capsules/home-gui/browser/shell-control-centre.js", import.meta.url),
   "utf8",
 );
+const openHomeGuiTargetBlock = sourceBlock(
+  homeGuiScript,
+  "export function openHomeGuiTarget(target, options = {}) {",
+  "Home GUI connector open path",
+);
+const attachAuthorizedHomeGuiTargetBlock = sourceBlock(
+  homeGuiScript,
+  "export function attachAuthorizedHomeGuiTarget(launched) {",
+  "Home GUI authorized connector attach path",
+);
 const homeSetupSheetScript = readFileSync(
   new URL("../capsules/home-gui/browser/shell-setup-sheet.js", import.meta.url),
   "utf8",
@@ -706,6 +717,41 @@ const taskbarCloseIndex = homeGuiTemplate.indexOf("</footer>", taskbarPrimaryInd
 const launcherMarkup = launcherOpenIndex >= 0 && launcherCloseIndex > launcherOpenIndex
   ? homeGuiTemplate.slice(launcherOpenIndex, launcherCloseIndex)
   : "";
+
+// One workflow for a wallet connector: it opens as a window whether Wallet is
+// a window or the rail. The rail used to divert connectors into an in-rail
+// sheet whose markup never reached the GUI template, so every connector
+// opened from the rail launched and then silently vanished.
+assert(
+  openHomeGuiTargetBlock.includes("openTarget(target, options);") &&
+    !/ConnectorSheet|presentation/.test(openHomeGuiTargetBlock),
+  "Home GUI connector open path must not divert connectors away from the window workflow",
+  openHomeGuiTargetBlock,
+);
+assert(
+  attachAuthorizedHomeGuiTargetBlock.includes("return attachAuthorizedTarget(launched);") &&
+    !/ConnectorSheet|walletRailOpen/.test(attachAuthorizedHomeGuiTargetBlock),
+  "Home GUI authorized attach path must open every connector as a window, rail or not",
+  attachAuthorizedHomeGuiTargetBlock,
+);
+// A fixed element the Wallet rail looks up must exist in the real template.
+// This smoke's document invents an element for any selector, which is how a
+// rail lookup of markup that was never merged passed here for weeks.
+{
+  const walletRailScript = readFileSync(
+    new URL("../capsules/home-gui/browser/shell-wallet-rail.js", import.meta.url),
+    "utf8",
+  );
+  const templateIds = new Set([...homeGuiTemplate.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+  const missingRailIds = [...walletRailScript.matchAll(/document\.querySelector\("#([A-Za-z][\w-]*)"\)/g)]
+    .map((m) => m[1])
+    .filter((id) => !templateIds.has(id));
+  assert(
+    missingRailIds.length === 0,
+    "Wallet rail looks up elements that the Home GUI template does not contain",
+    missingRailIds,
+  );
+}
 
 assert(
   (homeGuiTemplate.match(/id="launcher"/g) || []).length === 1 &&
@@ -2000,6 +2046,17 @@ shellWindows.closeWindow(continuityWallet.id);
 shellCore.shellState.windows.clear();
 shellCore.shellState.activeWindowId = null;
 
+shellWalletRail.bindWalletRail();
+const walletRailNode = document.querySelector("#wallet-rail");
+walletRailNode.hidden = true;
+walletRailNode.inert = true;
+const boundWalletRailFrame = shellWalletRail.walletRailFrame();
+boundWalletRailFrame.hidden = true;
+boundWalletRailFrame.dataset.route =
+  "/apps/wallet/?home_origin=http%3A%2F%2Flocalhost%3A61180#home_token=wallet-rail-token";
+shellWalletRail.syncWalletRailAvailability(summary);
+shellWalletRail.showWalletRail();
+
 function sessionWindow(id, targetId, {
   x,
   y,
@@ -2650,17 +2707,17 @@ const inventory = readdirSync(new URL("../capsules/", import.meta.url)).flatMap(
   const path = new URL(`../capsules/${name}/capsule.json`, import.meta.url);
   return existsSync(path) ? [JSON.parse(readFileSync(path, "utf8"))] : [];
 });
-assert(inventory.length === 40, "Update the exact capsule role/policy inventory when membership changes");
-for (const [policy, count] of [["single", 10], ["hybrid", 6], ["multiple", 1]]) {
+assert(inventory.length === 39, "Update the exact capsule role/policy inventory when membership changes");
+for (const [policy, count] of [["single", 12], ["hybrid", 6], ["multiple", 2]]) {
   assert(inventory.filter((manifest) => manifest.window_policy === policy).length === count, `${policy} inventory drift`);
 }
-for (const [role, count] of [["provider", 18], ["content", 2], ["shell", 2]]) {
+for (const [role, count] of [["provider", 14], ["content", 2], ["shell", 2]]) {
   const owned = inventory.filter((manifest) => manifest.role === role);
   assert(owned.length === count && owned.every((manifest) => !manifest.window_policy), `${role} must retain its owned non-window role`);
 }
 assert(inventory.filter((manifest) => manifest.role === "app" && !manifest.window_policy).map((manifest) => manifest.name).sort().join(",") === "home",
   "Home alone owns the app host role without a window policy");
-console.log("[home-shell-regression] all40 roles, own menus and selected Player: PASS");
+console.log("[home-shell-regression] all39 roles, own menus and selected Player: PASS");
 
 // A verified in-app selection must replace only that window's
 // persisted presentation selector, then restore through a fresh Runtime launch.

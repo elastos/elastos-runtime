@@ -19,6 +19,21 @@ const ROOM_ACCESS_REQUEST_TTL_SECS: u64 = 10 * 60;
 const EXTERNAL_HTTP_REQUEST_KIND: &str = "external_http_request";
 const CONTACT_REQUEST_KIND: &str = "contact_request";
 const CONTACT_REQUEST_ID_PREFIX: &str = "contact-request:";
+const CUSTODY_NODE_REQUEST_KIND: &str = crate::custody_surface::INBOX_KIND_NODE_REQUEST;
+/// A request whose approval began and did not finish: only approving it
+/// again settles it, so it stays past its expiry.
+const CUSTODY_NODE_APPROVING_KIND: &str = crate::custody_surface::INBOX_KIND_NODE_APPROVING;
+/// A request whose approval began and set nothing up yet: Approve or
+/// Decline.
+const CUSTODY_NODE_RESUMABLE_KIND: &str = crate::custody_surface::INBOX_KIND_NODE_RESUMABLE;
+/// A request whose approval stopped part way and cannot finish.
+const CUSTODY_NODE_INCOMPLETE_KIND: &str = crate::custody_surface::INBOX_KIND_NODE_INCOMPLETE;
+/// A request whose approval began, on a Home that now serves another owner.
+const CUSTODY_NODE_TAKEN_KIND: &str = crate::custody_surface::INBOX_KIND_NODE_TAKEN;
+const CUSTODY_NODE_REQUEST_ID_PREFIX: &str = "custody-node-request:";
+/// This Home's node is in its owner's signed pool; informational.
+const CUSTODY_POOL_ACTIVE_KIND: &str = crate::custody_surface::INBOX_KIND_POOL_ACTIVE;
+const CUSTODY_POOL_ACTIVE_ID_PREFIX: &str = "custody-pool-active:";
 const DIRECT_MESSAGE_KIND: &str = "direct_message";
 const DIRECT_MESSAGE_ID_PREFIX: &str = "direct-message:";
 const COMMUNITY_MESSAGE_KIND: &str = "community_message";
@@ -54,6 +69,13 @@ pub struct NotificationEntryView {
     pub acted: bool,
     #[serde(default)]
     pub dismissed: bool,
+    /// Its action is approved with a passkey, over `step_up_request`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub passkey_approval: bool,
+    /// The exact request the entry's passkey approves, or the request a
+    /// decline-only card shows: the card reads its fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_up_request: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -140,6 +162,8 @@ impl NotificationEntryRecord {
             read: self.read,
             acted: self.acted,
             dismissed: self.dismissed,
+            passkey_approval: false,
+            step_up_request: None,
         }
     }
 }
@@ -346,6 +370,8 @@ pub fn project_contact_request_notifications(
             read: false,
             acted: false,
             dismissed: false,
+            passkey_approval: false,
+            step_up_request: None,
         });
     }
     summary.unread_count = summary.entries.iter().filter(|entry| !entry.read).count();
@@ -354,6 +380,468 @@ pub fn project_contact_request_notifications(
         .iter()
         .filter(|entry| entry.severity == NotificationSeverity::Attention)
         .count();
+}
+
+/// A custody request waiting for this Home's admin, projected from the
+/// node's own request records. This module never reads custody state itself.
+#[derive(Debug, Clone)]
+pub struct PendingCustodyRequestNotification {
+    pub request_id: String,
+    pub owner_name: String,
+    pub term_days: u16,
+    pub run_by: String,
+    pub location: String,
+    pub received_at: u64,
+    pub expires_at: u64,
+    pub stage: CustodyRequestStage,
+    /// What the admin's passkey approves; the Inbox card shows its fields.
+    pub step_up_request: serde_json::Value,
+}
+
+/// Where a custody request stands for its admin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustodyRequestStage {
+    /// Waiting for Approve or Decline, until it expires.
+    Waiting,
+    /// Approving began and did not finish: only approving again settles it,
+    /// past its expiry too.
+    Finishing,
+    /// Approving began and set nothing up yet: approving again finishes it,
+    /// and declining is still possible. It stays past its expiry too.
+    Resumable,
+    /// Approving began and cannot finish, because this Home's custody state is
+    /// incomplete: only declining settles it, past its expiry too.
+    Incomplete,
+    /// Approving began, and this Home now serves another owner: only declining
+    /// settles it, past its expiry too.
+    ServesAnother,
+}
+
+impl CustodyRequestStage {
+    /// Settled by Decline alone, with no passkey.
+    fn declines_only(self) -> bool {
+        matches!(self, Self::Incomplete | Self::ServesAnother)
+    }
+}
+
+/// Projects custody requests into one read response, as contact requests
+/// are: the request records stay the only truth, and a decided or expired
+/// request is simply gone from the next read. The caller passes requests
+/// only to an admin.
+pub fn project_custody_request_notifications(
+    summary: &mut NotificationSummary,
+    pending: &[PendingCustodyRequestNotification],
+) {
+    let now = now_ts();
+    summary.entries.retain(|entry| {
+        ![
+            CUSTODY_NODE_REQUEST_KIND,
+            CUSTODY_NODE_APPROVING_KIND,
+            CUSTODY_NODE_RESUMABLE_KIND,
+            CUSTODY_NODE_INCOMPLETE_KIND,
+            CUSTODY_NODE_TAKEN_KIND,
+        ]
+        .contains(&entry.kind.as_str())
+    });
+    let mut pending = pending
+        .iter()
+        .filter(|request| request.stage != CustodyRequestStage::Waiting || request.expires_at > now)
+        .collect::<Vec<_>>();
+    pending.sort_by(|left, right| {
+        left.received_at
+            .cmp(&right.received_at)
+            .then_with(|| left.request_id.cmp(&right.request_id))
+    });
+    for request in pending {
+        summary.entries.push(NotificationEntryView {
+            id: format!("{CUSTODY_NODE_REQUEST_ID_PREFIX}{}", request.request_id),
+            source_app: "custody".to_string(),
+            kind: match request.stage {
+                CustodyRequestStage::Waiting => CUSTODY_NODE_REQUEST_KIND,
+                CustodyRequestStage::Finishing => CUSTODY_NODE_APPROVING_KIND,
+                CustodyRequestStage::Resumable => CUSTODY_NODE_RESUMABLE_KIND,
+                CustodyRequestStage::Incomplete => CUSTODY_NODE_INCOMPLETE_KIND,
+                CustodyRequestStage::ServesAnother => CUSTODY_NODE_TAKEN_KIND,
+            }
+            .to_string(),
+            title: match request.stage {
+                CustodyRequestStage::Waiting => {
+                    format!("{} asks this Home to hold custody", request.owner_name)
+                }
+                CustodyRequestStage::Finishing | CustodyRequestStage::Resumable => {
+                    format!("Finish approving {}'s custody request", request.owner_name)
+                }
+                CustodyRequestStage::Incomplete => {
+                    format!(
+                        "Approving {}'s custody request could not finish",
+                        request.owner_name
+                    )
+                }
+                CustodyRequestStage::ServesAnother => {
+                    format!(
+                        "{}'s custody request can no longer be approved",
+                        request.owner_name
+                    )
+                }
+            },
+            body: match request.stage {
+                CustodyRequestStage::Waiting => format!(
+                    "{} asks this Home to be a node in their custody pool for {} days, \
+                     run by {} in {}. {} Approving needs your passkey.",
+                    request.owner_name,
+                    request.term_days,
+                    request.run_by,
+                    request.location,
+                    crate::custody_surface::NODE_REQUEST_DUTIES
+                ),
+                CustodyRequestStage::Resumable => format!(
+                    "Approving {}'s request did not finish, and nothing was set up yet. \
+                     {} Approve again to finish, or decline it.",
+                    request.owner_name,
+                    crate::custody_surface::NODE_REQUEST_DUTIES
+                ),
+                CustodyRequestStage::Finishing => format!(
+                    "Approving {}'s request did not finish. {} Approve again to finish \
+                     setting up this Home as their custody node.",
+                    request.owner_name,
+                    crate::custody_surface::NODE_REQUEST_DUTIES
+                ),
+                CustodyRequestStage::Incomplete => format!(
+                    "This Home's custody state is incomplete and needs repair. \
+                     Decline {}'s request to tell them.",
+                    request.owner_name
+                ),
+                CustodyRequestStage::ServesAnother => {
+                    "This Home serves another owner now. Decline this request.".to_string()
+                }
+            },
+            action_ref: Some(NotificationActionRef {
+                app: "inbox".to_string(),
+                action_id: format!(
+                    "{}:{}",
+                    if request.stage.declines_only() {
+                        crate::custody_surface::INBOX_ACTION_DECLINE_REQUEST
+                    } else {
+                        crate::custody_surface::INBOX_ACTION_APPROVE_REQUEST
+                    },
+                    request.request_id
+                ),
+            }),
+            created_at: request.received_at,
+            expires_at: Some(request.expires_at),
+            severity: NotificationSeverity::Attention,
+            read: false,
+            acted: false,
+            dismissed: false,
+            passkey_approval: !request.stage.declines_only(),
+            step_up_request: Some(request.step_up_request.clone()),
+        });
+    }
+    summary.unread_count = summary.entries.iter().filter(|entry| !entry.read).count();
+    summary.attention_count = summary
+        .entries
+        .iter()
+        .filter(|entry| entry.severity == NotificationSeverity::Attention)
+        .count();
+}
+
+/// The public metadata card's state (META-PUBLIC A4 §1.3), first match wins
+/// in the order of its variants. Built once per read from one snapshot that
+/// both the card and its Home events signature use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublicMetadataCard {
+    /// The withdrawal marker is present, or unreadable.
+    Stopping { stop_pending: Option<String> },
+    /// The consent record cannot be read.
+    ConsentUnreadable,
+    /// Enabled, and sharing is offered.
+    Sharing,
+    /// Enabled, and sharing is not offered now; `reason` names why.
+    Paused { reason: String },
+    /// No record or Disabled, and sharing is offered.
+    Offer { step_up_request: serde_json::Value },
+    /// No record or Disabled, and sharing is not offered: no card.
+    Hidden,
+}
+
+/// The public store's last definite reading (never a live provider read).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublicMetadataStoreReading {
+    pub running: bool,
+    pub ready: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicMetadataCardState {
+    pub card: PublicMetadataCard,
+    pub store: Option<PublicMetadataStoreReading>,
+    /// When the state it shows began (the marker's or the consent's time).
+    pub since: u64,
+}
+
+const PUBLIC_METADATA_CARD_ID: &str = "public-metadata";
+const PUBLIC_METADATA_KINDS: [&str; 5] = [
+    crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_CONSENT,
+    crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_SHARING,
+    crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_PAUSED,
+    crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_STOPPING,
+    crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_UNREADABLE,
+];
+
+impl PublicMetadataCardState {
+    fn kind(&self) -> Option<&'static str> {
+        Some(match self.card {
+            PublicMetadataCard::Stopping { .. } => {
+                crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_STOPPING
+            }
+            PublicMetadataCard::ConsentUnreadable => {
+                crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_UNREADABLE
+            }
+            PublicMetadataCard::Sharing => {
+                crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_SHARING
+            }
+            PublicMetadataCard::Paused { .. } => {
+                crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_PAUSED
+            }
+            PublicMetadataCard::Offer { .. } => {
+                crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_CONSENT
+            }
+            PublicMetadataCard::Hidden => return None,
+        })
+    }
+
+    /// The admin's Home events line (A45-F3):
+    /// `public-metadata:<card kind>:<liveness>:<ready>:<stop_pending sha256
+    /// prefix>`. No time and no peer count, so it moves only when the card
+    /// would.
+    pub fn realtime_signature(&self) -> String {
+        let liveness = match self.store {
+            Some(reading) if reading.running => "running",
+            Some(_) => "down",
+            None => "none",
+        };
+        let ready = self.store.is_some_and(|reading| reading.ready);
+        let stop_pending = match &self.card {
+            PublicMetadataCard::Stopping {
+                stop_pending: Some(reason),
+            } => hex::encode(Sha256::digest(reason.as_bytes()))[..16].to_string(),
+            _ => String::new(),
+        };
+        format!(
+            "public-metadata:{}:{liveness}:{ready}:{stop_pending}",
+            self.kind().unwrap_or("none")
+        )
+    }
+}
+
+fn public_metadata_entry(state: &PublicMetadataCardState) -> Option<NotificationEntryView> {
+    let kind = state.kind()?;
+    let stop = || NotificationActionRef {
+        app: "inbox".to_string(),
+        action_id: crate::custody_surface::INBOX_ACTION_PUBLIC_METADATA_STOP.to_string(),
+    };
+    let (title, body, action_ref, severity, read, step_up_request) = match &state.card {
+        PublicMetadataCard::Stopping { stop_pending } => (
+            "Stopping metadata sharing".to_string(),
+            match stop_pending {
+                None => "Stopping…".to_string(),
+                Some(reason) => format!("Still stopping: {reason}. Your Home keeps trying."),
+            },
+            stop(),
+            if stop_pending.is_some() {
+                NotificationSeverity::Attention
+            } else {
+                NotificationSeverity::Info
+            },
+            stop_pending.is_none(),
+            None,
+        ),
+        PublicMetadataCard::ConsentUnreadable => (
+            "Metadata sharing".to_string(),
+            "Metadata sharing state can't be read. Stop sharing to reset it.".to_string(),
+            stop(),
+            NotificationSeverity::Attention,
+            false,
+            None,
+        ),
+        PublicMetadataCard::Sharing => (
+            "Metadata sharing is on".to_string(),
+            format!(
+                "Your Home shares minted assets' metadata on public IPFS.{}",
+                match state.store {
+                    Some(reading) if reading.running && reading.ready => {
+                        " Its public IPFS node is ready."
+                    }
+                    Some(reading) if reading.running => " Its public IPFS node is starting.",
+                    Some(_) => " Its public IPFS node is not running.",
+                    None => "",
+                }
+            ),
+            stop(),
+            NotificationSeverity::Info,
+            true,
+            None,
+        ),
+        PublicMetadataCard::Paused { reason } => (
+            "Metadata sharing is paused".to_string(),
+            format!("Metadata sharing is paused on this Home ({reason}). Your consent is kept."),
+            stop(),
+            NotificationSeverity::Info,
+            true,
+            None,
+        ),
+        // A quiet standing card: info AND an explicit `read: true`, since an
+        // info entry alone still counts unread. It keeps no read or dismiss
+        // state of its own.
+        PublicMetadataCard::Offer { step_up_request } => (
+            "Share minted assets' metadata on public IPFS?".to_string(),
+            crate::public_metadata_consent::CONSENT_WORDING.to_string(),
+            NotificationActionRef {
+                app: "inbox".to_string(),
+                action_id: crate::custody_surface::INBOX_ACTION_PUBLIC_METADATA_ENABLE.to_string(),
+            },
+            NotificationSeverity::Info,
+            true,
+            Some(step_up_request.clone()),
+        ),
+        PublicMetadataCard::Hidden => return None,
+    };
+    Some(NotificationEntryView {
+        id: PUBLIC_METADATA_CARD_ID.to_string(),
+        source_app: "creator".to_string(),
+        kind: kind.to_string(),
+        title,
+        body,
+        action_ref: Some(action_ref),
+        created_at: state.since,
+        expires_at: None,
+        severity,
+        read,
+        acted: false,
+        dismissed: false,
+        passkey_approval: step_up_request.is_some(),
+        step_up_request,
+    })
+}
+
+/// Projects the public metadata card into one read response. Pure: the
+/// caller builds the snapshot (admin only), and this never reads state.
+pub fn project_public_metadata_notifications(
+    summary: &mut NotificationSummary,
+    state: &PublicMetadataCardState,
+) {
+    summary
+        .entries
+        .retain(|entry| !PUBLIC_METADATA_KINDS.contains(&entry.kind.as_str()));
+    if let Some(entry) = public_metadata_entry(state) {
+        summary.entries.push(entry);
+    }
+    summary.unread_count = summary.entries.iter().filter(|entry| !entry.read).count();
+    summary.attention_count = summary
+        .entries
+        .iter()
+        .filter(|entry| entry.severity == NotificationSeverity::Attention)
+        .count();
+}
+
+/// Records, once per pool, that this Home's node is in its owner's signed
+/// pool. The entry belongs to the admin Profile the owner told, and an older
+/// pool's entry gives way. The same pool again, even dismissed, changes
+/// nothing.
+pub(crate) fn upsert_custody_pool_active_notification(
+    data_dir: &Path,
+    owner_profile_did: &str,
+    fingerprint_full: &str,
+    // Plan B T2.2: the pools this node is in now; their entries stay.
+    kept_fingerprints: &[String],
+    title: &str,
+    body: &str,
+    created_at: u64,
+) -> anyhow::Result<()> {
+    let _store = lock_store(data_dir)?;
+    let id = custody_pool_active_id(owner_profile_did, fingerprint_full);
+    let path = notifications_path(data_dir)?;
+    let mut store = read_json_or_default::<NotificationStore>(&path)?;
+    if store.entries.iter().any(|entry| entry.id == id) {
+        return Ok(());
+    }
+    if store.schema.trim().is_empty() {
+        store.schema = NOTIFICATIONS_SCHEMA.to_string();
+    }
+    let kept: Vec<String> = kept_fingerprints
+        .iter()
+        .map(|print| custody_pool_active_id(owner_profile_did, print))
+        .collect();
+    store.entries.retain(|entry| {
+        entry.kind != CUSTODY_POOL_ACTIVE_KIND
+            || entry.owner_profile_did.as_deref() != Some(owner_profile_did)
+            || kept.contains(&entry.id)
+    });
+    store.entries.push(NotificationEntryRecord {
+        id: id.clone(),
+        source_app: "custody".to_string(),
+        kind: CUSTODY_POOL_ACTIVE_KIND.to_string(),
+        title: title.to_string(),
+        body: body.to_string(),
+        action_ref: None,
+        created_at,
+        expires_at: None,
+        severity: NotificationSeverity::Info,
+        read: false,
+        acted: false,
+        dismissed: false,
+        owner_profile_did: Some(owner_profile_did.to_string()),
+        message_seq: None,
+        dismissed_at: None,
+    });
+    record_event(
+        data_dir,
+        NotificationEventRecord {
+            id: format!("appeared:{id}"),
+            notification_id: id,
+            source_app: "custody".to_string(),
+            title: title.to_string(),
+            body: body.to_string(),
+            action_ref: None,
+            created_at,
+            disposition: NotificationEventDisposition::Appeared,
+            resolution: None,
+            owner_profile_did: Some(owner_profile_did.to_string()),
+        },
+    )?;
+    write_json_atomic(&path, &store)
+}
+
+/// Adds the admin's entry for the pool this node is in now: one for an
+/// older pool, or from an owner it no longer serves, is not shown. The
+/// caller passes an admin's Profile only.
+pub(crate) fn project_custody_pool_active_notifications(
+    summary: &mut NotificationSummary,
+    data_dir: &Path,
+    owner_profile_did: &str,
+    // Plan B T2.2: one per pool this node is in now.
+    current_fingerprints: &[String],
+) -> anyhow::Result<()> {
+    let current: Vec<String> = current_fingerprints
+        .iter()
+        .map(|print| custody_pool_active_id(owner_profile_did, print))
+        .collect();
+    summary
+        .entries
+        .retain(|entry| entry.kind != CUSTODY_POOL_ACTIVE_KIND);
+    summary.entries.extend(
+        live_entries(data_dir, Some(owner_profile_did))?
+            .into_iter()
+            .filter(|entry| entry.kind == CUSTODY_POOL_ACTIVE_KIND && current.contains(&entry.id)),
+    );
+    *summary = summary_from(std::mem::take(&mut summary.entries));
+    Ok(())
+}
+
+/// One entry per pool and per admin Profile told, so each admin keeps and
+/// dismisses its own.
+fn custody_pool_active_id(owner_profile_did: &str, fingerprint_full: &str) -> String {
+    format!("{CUSTODY_POOL_ACTIVE_ID_PREFIX}{owner_profile_did}:{fingerprint_full}")
 }
 
 fn contact_request_notification_title(display_name: &str, handle: Option<&str>) -> String {
@@ -1323,6 +1811,130 @@ mod tests {
     }
 
     #[test]
+    fn custody_request_notifications_carry_their_exact_step_up_request() {
+        let tmp = tempfile::tempdir().unwrap();
+        let now = now_ts();
+        let request =
+            |id: &str, received_at: u64, expires_at: u64| PendingCustodyRequestNotification {
+                request_id: id.to_string(),
+                owner_name: "Olivia".to_string(),
+                term_days: 365,
+                run_by: "Nadia".to_string(),
+                location: "Porto".to_string(),
+                received_at,
+                expires_at,
+                stage: CustodyRequestStage::Waiting,
+                step_up_request: serde_json::json!({ "request_id": id, "term_days": 365 }),
+            };
+        let pending = vec![
+            request("bb", now - 5, now + 600),
+            request("aa", now - 10, now + 600),
+            request("cc", now - 20, now),
+            // Its approval began: it stays past its end, to be finished.
+            PendingCustodyRequestNotification {
+                stage: CustodyRequestStage::Finishing,
+                ..request("dd", now - 30, now - 1)
+            },
+        ];
+        let mut summary = load_summary(tmp.path()).unwrap();
+        project_custody_request_notifications(&mut summary, &pending);
+        // The expired waiting one is gone; the rest are oldest first.
+        assert_eq!(
+            summary
+                .entries
+                .iter()
+                .map(|entry| (entry.id.as_str(), entry.kind.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("custody-node-request:dd", CUSTODY_NODE_APPROVING_KIND),
+                ("custody-node-request:aa", CUSTODY_NODE_REQUEST_KIND),
+                ("custody-node-request:bb", CUSTODY_NODE_REQUEST_KIND),
+            ]
+        );
+        assert_eq!(summary.attention_count, 3);
+        assert_eq!(summary.unread_count, 3);
+        let finishing = &summary.entries[0];
+        assert_eq!(finishing.title, "Finish approving Olivia's custody request");
+        assert_eq!(
+            finishing
+                .action_ref
+                .as_ref()
+                .map(|action| action.action_id.as_str()),
+            Some("custody-approve-request:dd")
+        );
+        assert_eq!(
+            finishing.step_up_request,
+            Some(serde_json::json!({ "request_id": "dd", "term_days": 365 }))
+        );
+        let entry = &summary.entries[1];
+        assert_eq!(entry.kind, CUSTODY_NODE_REQUEST_KIND);
+        assert_eq!(entry.source_app, "custody");
+        assert_eq!(entry.title, "Olivia asks this Home to hold custody");
+        // OPEN-LOOP F1 (ADV-14): the one consent names both duties.
+        for approvable in [entry, finishing] {
+            assert!(
+                approvable.body.contains(
+                    "This Home will hold a key share and keep a copy of this pool's files."
+                ),
+                "{}",
+                approvable.body
+            );
+        }
+        assert_eq!(
+            entry.action_ref,
+            Some(NotificationActionRef {
+                app: "inbox".to_string(),
+                action_id: "custody-approve-request:aa".to_string(),
+            })
+        );
+        assert_eq!(entry.created_at, now - 10);
+        assert_eq!(entry.expires_at, Some(now + 600));
+        assert_eq!(
+            entry.step_up_request,
+            Some(serde_json::json!({ "request_id": "aa", "term_days": 365 }))
+        );
+
+        project_custody_request_notifications(&mut summary, &pending);
+        assert_eq!(summary.entries.len(), 3);
+        project_custody_request_notifications(&mut summary, &[]);
+        assert!(summary.entries.is_empty());
+        assert!(!notifications_path(tmp.path()).unwrap().exists());
+    }
+
+    #[test]
+    fn an_approval_that_set_nothing_up_is_approved_or_declined_with_its_passkey_card() {
+        let now = now_ts();
+        let mut summary = NotificationSummary::default();
+        project_custody_request_notifications(
+            &mut summary,
+            &[PendingCustodyRequestNotification {
+                request_id: "ee".to_string(),
+                owner_name: "Olivia".to_string(),
+                term_days: 365,
+                run_by: "Nadia".to_string(),
+                location: "Porto".to_string(),
+                received_at: now - 30,
+                expires_at: now - 1,
+                stage: CustodyRequestStage::Resumable,
+                step_up_request: serde_json::json!({ "request_id": "ee" }),
+            }],
+        );
+        assert_eq!(summary.entries.len(), 1, "it stays past its end");
+        let entry = &summary.entries[0];
+        assert_eq!(entry.kind, CUSTODY_NODE_RESUMABLE_KIND);
+        assert_eq!(entry.title, "Finish approving Olivia's custody request");
+        assert!(entry.body.contains("or decline it"), "{}", entry.body);
+        assert!(entry.passkey_approval);
+        assert_eq!(
+            entry
+                .action_ref
+                .as_ref()
+                .map(|action| action.action_id.as_str()),
+            Some("custody-approve-request:ee")
+        );
+    }
+
+    #[test]
     fn direct_message_notification_resolves_on_read_and_resurfaces_on_new_mail() {
         let tmp = tempfile::tempdir().unwrap();
         let conversation = "direct:sha256:abc";
@@ -1448,5 +2060,221 @@ mod tests {
 
         assert!(dismiss_external_http_request(tmp.path(), "wallet-prices").unwrap());
         assert!(load_summary(tmp.path()).unwrap().entries.is_empty());
+    }
+
+    // ── META-PUBLIC A4 §1.3: the public metadata card, row by row ──────
+
+    fn public_state(card: PublicMetadataCard) -> PublicMetadataCardState {
+        PublicMetadataCardState {
+            card,
+            store: Some(PublicMetadataStoreReading {
+                running: true,
+                ready: true,
+            }),
+            since: 42,
+        }
+    }
+
+    fn public_entry(state: &PublicMetadataCardState) -> Option<NotificationEntryView> {
+        let mut summary = NotificationSummary::default();
+        project_public_metadata_notifications(&mut summary, state);
+        assert!(summary.entries.len() <= 1);
+        assert_eq!(
+            summary.unread_count,
+            summary.entries.iter().filter(|entry| !entry.read).count()
+        );
+        summary.entries.pop()
+    }
+
+    #[test]
+    fn public_card_stopping_row() {
+        let entry = public_entry(&public_state(PublicMetadataCard::Stopping {
+            stop_pending: None,
+        }))
+        .unwrap();
+        assert_eq!(
+            entry.kind,
+            crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_STOPPING
+        );
+        assert_eq!(entry.body, "Stopping…");
+        assert_eq!(
+            entry.action_ref.unwrap().action_id,
+            crate::custody_surface::INBOX_ACTION_PUBLIC_METADATA_STOP
+        );
+        assert!(!entry.passkey_approval);
+        let entry = public_entry(&public_state(PublicMetadataCard::Stopping {
+            stop_pending: Some("the repo lock is still held".into()),
+        }))
+        .unwrap();
+        assert_eq!(
+            entry.body,
+            "Still stopping: the repo lock is still held. Your Home keeps trying."
+        );
+    }
+
+    #[test]
+    fn public_card_unreadable_consent_row() {
+        let entry = public_entry(&public_state(PublicMetadataCard::ConsentUnreadable)).unwrap();
+        assert_eq!(
+            entry.kind,
+            crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_UNREADABLE
+        );
+        assert_eq!(
+            entry.body,
+            "Metadata sharing state can't be read. Stop sharing to reset it."
+        );
+        assert_eq!(
+            entry.action_ref.unwrap().action_id,
+            crate::custody_surface::INBOX_ACTION_PUBLIC_METADATA_STOP
+        );
+    }
+
+    #[test]
+    fn public_card_sharing_row_shows_the_last_known_store_state() {
+        for (store, sentence) in [
+            (
+                Some(PublicMetadataStoreReading {
+                    running: true,
+                    ready: true,
+                }),
+                " Its public IPFS node is ready.",
+            ),
+            (
+                Some(PublicMetadataStoreReading {
+                    running: true,
+                    ready: false,
+                }),
+                " Its public IPFS node is starting.",
+            ),
+            (
+                Some(PublicMetadataStoreReading {
+                    running: false,
+                    ready: false,
+                }),
+                " Its public IPFS node is not running.",
+            ),
+            (None, ""),
+        ] {
+            let entry = public_entry(&PublicMetadataCardState {
+                card: PublicMetadataCard::Sharing,
+                store,
+                since: 1,
+            })
+            .unwrap();
+            assert_eq!(
+                entry.kind,
+                crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_SHARING
+            );
+            assert_eq!(
+                entry.body,
+                format!("Your Home shares minted assets' metadata on public IPFS.{sentence}")
+            );
+            assert_eq!(
+                entry.action_ref.unwrap().action_id,
+                crate::custody_surface::INBOX_ACTION_PUBLIC_METADATA_STOP
+            );
+            assert!(entry.read);
+        }
+    }
+
+    #[test]
+    fn public_card_paused_row() {
+        let entry = public_entry(&public_state(PublicMetadataCard::Paused {
+            reason: "protected content is off".into(),
+        }))
+        .unwrap();
+        assert_eq!(
+            entry.kind,
+            crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_PAUSED
+        );
+        assert_eq!(
+            entry.body,
+            "Metadata sharing is paused on this Home (protected content is off). \
+             Your consent is kept."
+        );
+        assert_eq!(
+            entry.action_ref.unwrap().action_id,
+            crate::custody_surface::INBOX_ACTION_PUBLIC_METADATA_STOP
+        );
+    }
+
+    /// The offer is a quiet standing card: info AND an explicit `read: true`,
+    /// so it never counts unread; its passkey approves exactly the request.
+    #[test]
+    fn public_card_offer_row_is_quiet_and_exact() {
+        let request = serde_json::json!({ "wording_version": 1, "wording_sha256": "ab" });
+        let entry = public_entry(&public_state(PublicMetadataCard::Offer {
+            step_up_request: request.clone(),
+        }))
+        .unwrap();
+        assert_eq!(
+            entry.kind,
+            crate::custody_surface::INBOX_KIND_PUBLIC_METADATA_CONSENT
+        );
+        assert_eq!(entry.body, crate::public_metadata_consent::CONSENT_WORDING);
+        assert_eq!(entry.severity, NotificationSeverity::Info);
+        assert!(entry.read);
+        assert!(entry.passkey_approval);
+        assert_eq!(entry.step_up_request, Some(request));
+        assert_eq!(
+            entry.action_ref.unwrap().action_id,
+            crate::custody_surface::INBOX_ACTION_PUBLIC_METADATA_ENABLE
+        );
+    }
+
+    /// No card, and any card projected before is gone: the snapshot is the
+    /// only truth.
+    #[test]
+    fn public_card_hidden_row_projects_nothing() {
+        let mut summary = NotificationSummary::default();
+        project_public_metadata_notifications(
+            &mut summary,
+            &public_state(PublicMetadataCard::Sharing),
+        );
+        assert_eq!(summary.entries.len(), 1);
+        project_public_metadata_notifications(
+            &mut summary,
+            &public_state(PublicMetadataCard::Hidden),
+        );
+        assert!(summary.entries.is_empty());
+        assert_eq!(summary.unread_count, 0);
+    }
+
+    #[test]
+    fn public_card_signature_has_its_fields_and_nothing_else() {
+        let state = PublicMetadataCardState {
+            card: PublicMetadataCard::Stopping {
+                stop_pending: Some("x".into()),
+            },
+            store: Some(PublicMetadataStoreReading {
+                running: true,
+                ready: false,
+            }),
+            since: 1,
+        };
+        let signature = state.realtime_signature();
+        let prefix = &hex::encode(sha2::Sha256::digest(b"x"))[..16];
+        assert_eq!(
+            signature,
+            format!("public-metadata:public_metadata_stopping:running:false:{prefix}")
+        );
+        // The time is not part of it.
+        assert_eq!(
+            PublicMetadataCardState {
+                since: 99,
+                ..state.clone()
+            }
+            .realtime_signature(),
+            signature
+        );
+        let hidden = PublicMetadataCardState {
+            card: PublicMetadataCard::Hidden,
+            store: None,
+            since: 0,
+        };
+        assert_eq!(
+            hidden.realtime_signature(),
+            "public-metadata:none:none:false:"
+        );
     }
 }

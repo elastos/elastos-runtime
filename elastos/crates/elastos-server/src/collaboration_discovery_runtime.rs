@@ -143,6 +143,7 @@ pub struct CollaborationDiscoveryService {
     /// What the Community relay has accepted from this Home's Profile-contact
     /// outbox, so delivered items leave it and the rest rotate.
     profile_outbox: Arc<Mutex<ProfileContactOutbox>>,
+    custody_messages: crate::collaboration_custody_messages::CollaborationCustodyMessageService,
 }
 
 /// In-memory delivery record of the Profile-contact outbox. The store keeps
@@ -620,6 +621,13 @@ impl CollaborationDiscoveryService {
                 registry.clone(),
             )
             .await?;
+        let custody_messages =
+            crate::collaboration_custody_messages::CollaborationCustodyMessageService::new(
+                SigningKey::from_bytes(&signing_key.to_bytes()),
+                profile.clone(),
+                registry.clone(),
+            )
+            .await?;
         Ok(Self {
             community_membership: None,
             authority: Arc::new(CollaborationDiscoveryAuthority::new(
@@ -638,6 +646,7 @@ impl CollaborationDiscoveryService {
                 PROFILE_RELAY_SUPPORT_UNKNOWN,
             )),
             profile_outbox: Arc::new(Mutex::new(ProfileContactOutbox::default())),
+            custody_messages,
         })
     }
 
@@ -713,6 +722,13 @@ impl CollaborationDiscoveryService {
         self.direct_messages.clone()
     }
 
+    /// Custody consent sends and receives through this service.
+    pub(crate) fn custody_message_service(
+        &self,
+    ) -> crate::collaboration_custody_messages::CollaborationCustodyMessageService {
+        self.custody_messages.clone()
+    }
+
     #[cfg(test)]
     pub(crate) fn profile_update_service(
         &self,
@@ -739,29 +755,45 @@ impl CollaborationDiscoveryService {
             else {
                 continue;
             };
-            let registered_for_principal = (|| -> anyhow::Result<()> {
-                let store = Arc::new(CollaborationContactStore::new(
-                    data_dir,
-                    &principal.principal_id,
-                    &principal.localhost_root,
-                    self.network_profile(),
-                    &profile,
-                    &local_device_did,
-                )?);
-                self.direct_messages.register_runtime_owned_context(
-                    store.clone(),
-                    profile.clone(),
-                    &principal.proof_binding_id,
-                )?;
-                self.profile_updates.register_runtime_owned_context(
-                    store,
-                    profile,
-                    &principal.proof_binding_id,
-                )?;
-                Ok(())
-            })();
+            let registered_for_principal =
+                (|| -> anyhow::Result<Arc<CollaborationContactStore>> {
+                    let store = Arc::new(CollaborationContactStore::new(
+                        data_dir,
+                        &principal.principal_id,
+                        &principal.localhost_root,
+                        self.network_profile(),
+                        &profile,
+                        &local_device_did,
+                    )?);
+                    self.direct_messages.register_runtime_owned_context(
+                        store.clone(),
+                        profile.clone(),
+                        &principal.proof_binding_id,
+                    )?;
+                    self.profile_updates.register_runtime_owned_context(
+                        store.clone(),
+                        profile.clone(),
+                        &principal.proof_binding_id,
+                    )?;
+                    Ok(store)
+                })();
             match registered_for_principal {
-                Ok(()) => registered = registered.saturating_add(1),
+                Ok(store) => {
+                    registered = registered.saturating_add(1);
+                    // Custody is optional for a Profile: a failure here must
+                    // not take Chat and People down with it.
+                    if let Err(err) = self.custody_messages.register_runtime_owned_context(
+                        store,
+                        profile,
+                        &principal.proof_binding_id,
+                    ) {
+                        tracing::warn!(
+                            principal_id = %principal.principal_id,
+                            error = %err,
+                            "custody message registration skipped for this Profile"
+                        );
+                    }
+                }
                 Err(err) => {
                     tracing::warn!(
                         principal_id = %principal.principal_id,
@@ -1166,6 +1198,12 @@ impl CollaborationDiscoveryService {
                     now,
                 );
             }
+        }
+        // Custody deliveries are Runtime-owned like their receiving side: a
+        // node's decision reaches an owner who comes back online even when
+        // nobody on the node has a Home session open.
+        if let Err(err) = self.custody_messages.deliver_pending(now).await {
+            tracing::debug!(error = %format!("{err:#}"), "custody delivery pass incomplete");
         }
     }
 
@@ -2493,6 +2531,7 @@ impl CollaborationDiscoveryService {
                             connect_ticket: peer.connect_ticket.clone(),
                             peer_did: Some(peer_did),
                             timeout_ms: Some(DISCOVERY_PROVIDER_TIMEOUT_MS),
+                            reply_wait_ms: None,
                         },
                     ),
                 })
@@ -4414,7 +4453,7 @@ fn due_sync_contexts(
     .collect()
 }
 
-fn update_sync_schedule(
+pub(crate) fn update_sync_schedule(
     next_wake_at: &mut u64,
     failures: &mut u8,
     success: bool,
@@ -8475,6 +8514,12 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
+        local_registry
+            .unregister_sub_provider(
+                crate::collaboration_custody_messages::CUSTODY_MESSAGE_PROVIDER_SCHEME,
+            )
+            .await
+            .unwrap();
         let restarted_service = CollaborationDiscoveryService::new(
             SigningKey::from_bytes(&local_service.authority.signing_key.to_bytes()),
             local_service.network_profile(),
@@ -8969,6 +9014,7 @@ pub(crate) mod tests {
             }]),
             state: local_service.state.clone(),
             profile_updates: local_service.profile_updates.clone(),
+            custody_messages: local_service.custody_messages.clone(),
             sync_contexts: local_service.sync_contexts.clone(),
             sync_pass_lock: local_service.sync_pass_lock.clone(),
             intent_mutex: local_service.intent_mutex.clone(),
@@ -9187,6 +9233,7 @@ pub(crate) mod tests {
             }]),
             state: service.state.clone(),
             profile_updates: service.profile_updates.clone(),
+            custody_messages: service.custody_messages.clone(),
             sync_contexts: service.sync_contexts.clone(),
             sync_pass_lock: service.sync_pass_lock.clone(),
             intent_mutex: service.intent_mutex.clone(),

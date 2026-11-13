@@ -861,3 +861,94 @@ fn eip712_domain_chain_is_rechecked_before_managed_signing() {
         ApprovalStatus::Pending
     );
 }
+
+/// A Browser signature names its chain in the payload the person reviews. It
+/// must be the chain the approval was raised on, both when the request is
+/// recorded and again when the account signs.
+#[test]
+fn browser_signature_payload_chain_must_match_the_requested_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:signature-chain";
+    let (account_id, address) = managed_evm_account(&mut provider, principal_id);
+    let personal_sign = browser_personal_sign_payload(&account_id, &address, "Hello");
+    let typed_data = typed_data_payload(&account_id, &address, json!(20));
+    for (intent, payload, error_code) in [
+        (
+            "browser_personal_sign",
+            personal_sign,
+            "invalid_browser_personal_sign",
+        ),
+        (
+            "browser_typed_data_sign",
+            typed_data,
+            "invalid_browser_typed_data_sign",
+        ),
+    ] {
+        let operation = |chain_namespace: &str| WalletProviderOperationV2::RequestApproval {
+            account_id: account_id.clone(),
+            chain_namespace: chain_namespace.into(),
+            intent: intent.into(),
+            resource: format!("elastos://wallet/{chain_namespace}/sign/{intent}"),
+            reason: "Browser page requests a signature".into(),
+            payload: payload.clone(),
+            expires_at: now_ts().saturating_add(APPROVAL_REQUEST_TTL_SECS),
+        };
+
+        // The payload says Elastos Smart Chain; the approval says Base.
+        match invoke_wallet(
+            &mut provider,
+            principal_id,
+            "browser",
+            operation("eip155:8453"),
+        ) {
+            Response::Error { code, message } => {
+                assert_eq!(code, error_code);
+                assert!(message.contains("requested chain"), "{message}");
+            }
+            other => panic!("expected {intent} chain rejection at creation, got {other:?}"),
+        }
+
+        let request_id = match invoke_wallet(
+            &mut provider,
+            principal_id,
+            "browser",
+            operation("eip155:20"),
+        ) {
+            Response::Ok { data: Some(data) } => data["approval_request"]["request_id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            other => panic!("expected {intent} approval, got {other:?}"),
+        };
+        let stored = provider
+            .store
+            .approval_requests
+            .iter_mut()
+            .find(|request| request.request_id == request_id)
+            .unwrap();
+        stored.chain_namespace = "eip155:8453".to_string();
+
+        match invoke_wallet(
+            &mut provider,
+            principal_id,
+            "browser",
+            WalletProviderOperationV2::ApproveAndSignManaged {
+                request_id: request_id.clone(),
+                reason: "Approved".into(),
+            },
+        ) {
+            Response::Error { code, message } => {
+                assert_eq!(code, error_code);
+                assert!(message.contains("requested chain"), "{message}");
+            }
+            other => panic!("expected {intent} chain rejection at signing, got {other:?}"),
+        }
+        assert!(provider
+            .store
+            .approval_requests
+            .iter()
+            .any(|request| request.request_id == request_id
+                && request.status != ApprovalStatus::Completed));
+    }
+}

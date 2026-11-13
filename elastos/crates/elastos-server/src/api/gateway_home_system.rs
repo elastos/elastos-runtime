@@ -5279,6 +5279,8 @@ pub(super) fn append_home_service_access_notifications(
             severity: "attention".to_string(),
             read: false,
             created_at: request.created_at,
+            passkey_approval: false,
+            step_up_request: None,
         });
     }
     for request in grants {
@@ -5307,6 +5309,8 @@ pub(super) fn append_home_service_access_notifications(
             severity: "info".to_string(),
             read: true,
             created_at: request.updated_at,
+            passkey_approval: false,
+            step_up_request: None,
         });
     }
 }
@@ -5930,6 +5934,13 @@ async fn home_realtime_snapshot(
     }
     // Hosted access decisions are owner Inbox items (gateway_inbox::owner_hosted_routes);
     // a request, decision, End or expiry reaches Inbox and System as `inbox.changed`.
+    // The public metadata card changes detail without changing kind; its own
+    // line carries what the card shows (META-PUBLIC A45-F3). Admins only.
+    if let Some(public_metadata) =
+        super::gateway_public_ipfs::public_metadata_realtime_signature(state, context)
+    {
+        notification_signature.push(public_metadata);
+    }
     #[cfg(unix)]
     if ensure_admin_context(&state.data_dir, context).is_ok() {
         match crate::api::model_provider_egress_decision::realtime_signature(&state.data_dir) {
@@ -6790,11 +6801,11 @@ fn home_save_active_shell(
     })
 }
 
-fn home_browser_principal_id(context: &HomeLaunchTokenContext) -> String {
+pub(super) fn home_browser_principal_id(context: &HomeLaunchTokenContext) -> String {
     context.principal_id.clone()
 }
 
-fn home_browser_localhost_root(context: &HomeLaunchTokenContext) -> String {
+pub(super) fn home_browser_localhost_root(context: &HomeLaunchTokenContext) -> String {
     crate::auth::principal_localhost_root(&context.principal_id)
 }
 
@@ -8636,7 +8647,7 @@ fn update_profile_for_context(
 
 /// Refresh this Home's own delivery contexts after its Profile changed, so
 /// editing your name never stops your contacts from reaching you.
-fn refresh_runtime_owned_contexts_after_profile_change(
+pub(super) fn refresh_runtime_owned_contexts_after_profile_change(
     data_dir: &std::path::Path,
     discovery_service: Option<
         &crate::collaboration_discovery_runtime::CollaborationDiscoveryService,

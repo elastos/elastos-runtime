@@ -388,6 +388,21 @@ def run_smoke():
         ).is_file():
             raise AssertionError(f"missing Elacity Player icon asset {icon_file}")
 
+    reader_manifest = json.loads(
+        (ROOT / "capsules" / "elacity-reader" / "capsule.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if reader_manifest.get("name") != "elacity-reader":
+        raise AssertionError("Elacity Reader manifest name drifted")
+    if reader_manifest.get("icon") != "browser/icons":
+        raise AssertionError("Elacity Reader must keep capsule-owned icons")
+    for icon_file in ["icon-32.png", "icon-64.png", "icon-128.png", "icon-256.png"]:
+        if not (
+            ROOT / "capsules" / "elacity-reader" / "browser" / "icons" / icon_file
+        ).is_file():
+            raise AssertionError(f"missing Elacity Reader icon asset {icon_file}")
+
     source_components = json.loads((ROOT / "components.json").read_text(encoding="utf-8"))
     if (
         source_components["external"]["elacity-player"]["install_path"]
@@ -396,10 +411,18 @@ def run_smoke():
         raise AssertionError(
             "components.json must install Elacity Player from its capsule tree"
         )
+    if (
+        source_components["external"]["elacity-reader"]["install_path"]
+        != "capsules/elacity-reader"
+    ):
+        raise AssertionError(
+            "components.json must install Elacity Reader from its capsule tree"
+        )
     # Protected content ships after 0.8.0: a release Home installs the Player
-    # only with `setup --with`; a source Home may still carry it.
-    if "elacity-player" in source_components["profiles"]["home"]["components"]:
-        raise AssertionError("profile home must not include Elacity Player in 0.8.0")
+    # and the Reader only with `setup --with`; a source Home may still carry them.
+    for capsule, label in [("elacity-player", "Elacity Player"), ("elacity-reader", "Elacity Reader")]:
+        if capsule in source_components["profiles"]["home"]["components"]:
+            raise AssertionError(f"profile home must not include {label} in 0.8.0")
 
     with tempfile.TemporaryDirectory() as temp:
         temp_root = Path(temp)

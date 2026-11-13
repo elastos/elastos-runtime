@@ -395,6 +395,8 @@ pub(super) fn notification(
                     app: INBOX_CAPSULE_ID.into(),
                     action_id: format!("browser-internet-allow:{request_id}"),
                 }),
+                passkey_approval: false,
+                step_up_request: None,
             });
         }
         Consent::Granted { at, token_id, .. } => (
@@ -436,6 +438,8 @@ pub(super) fn notification(
             app: INBOX_CAPSULE_ID.into(),
             action_id,
         }),
+        passkey_approval: false,
+        step_up_request: None,
     })
 }
 

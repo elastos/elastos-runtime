@@ -1,8 +1,9 @@
 use elastos_protected_content_contracts::{
     AuthenticatedRuntimeCustodyProvisioningV1, AuthenticatedRuntimeReleaseOperationV1,
-    CanonicalContract, CustodyEnvelopeManifestV1, CustodyNodeIdentityV1,
-    CustodyNodeProvisioningRecordV1, KeyEnvelopeIdentityV1, NodePublicKey, NodeSetV1,
-    PqHybridSealedShareV1, RuntimeReleaseOperationError,
+    AuthenticatedRuntimeReleaseOperationV2, CanonicalContract, ContentAccessIdV1,
+    CustodyEnvelopeManifestV1, CustodyNodeIdentityV1, CustodyNodeProvisioningRecordV1,
+    KeyEnvelopeIdentityV1, NodePublicKey, NodeSetV1, PqHybridSealedShareV1,
+    RuntimeReleaseOperationError,
 };
 
 use crate::{secrets::NodeCustodySecretKeyV1, CustodyError};
@@ -20,6 +21,10 @@ pub struct NodeLocalStoredShareV1 {
     manifest: CustodyEnvelopeManifestV1,
     node_public_key: NodePublicKey,
     stored_share: PqHybridSealedShareV1,
+    /// S7-lite (ADV-02): the KID a pool-provisioned share is bound to, from
+    /// the minter's signed authorization stored with it. `None` for a V1
+    /// owner-provisioned share.
+    bound_content_access_id: Option<ContentAccessIdV1>,
 }
 
 impl std::fmt::Debug for NodeLocalStoredShareV1 {
@@ -30,6 +35,7 @@ impl std::fmt::Debug for NodeLocalStoredShareV1 {
             .field("manifest", &self.manifest)
             .field("node_public_key", &self.node_public_key)
             .field("stored_share", &"[redacted]")
+            .field("bound_content_access_id", &self.bound_content_access_id)
             .finish()
     }
 }
@@ -51,6 +57,7 @@ impl NodeLocalStoredShareV1 {
             manifest,
             node_public_key,
             stored_share,
+            bound_content_access_id: None,
         };
         value.validate()?;
         Ok(value)
@@ -85,9 +92,22 @@ impl NodeLocalStoredShareV1 {
             manifest: record.manifest().clone(),
             node_public_key: selected_node_public_key,
             stored_share: record.sealed_share().clone(),
+            bound_content_access_id: None,
         };
         value.validate()?;
         Ok(value)
+    }
+
+    /// S7-lite: the same share bound to the KID of the minter's
+    /// authorization (ADV-02).
+    pub(crate) fn bound_to(mut self, content_access_id: ContentAccessIdV1) -> Self {
+        self.bound_content_access_id = Some(content_access_id);
+        self
+    }
+
+    /// The KID a pool-provisioned share is bound to; `None` for V1.
+    pub const fn bound_content_access_id(&self) -> Option<ContentAccessIdV1> {
+        self.bound_content_access_id
     }
 
     pub fn key_envelope_identity(&self) -> &KeyEnvelopeIdentityV1 {
@@ -129,6 +149,10 @@ impl NodeLocalStoredShareV1 {
         now: u64,
     ) -> Result<(), CustodyError> {
         validate_operation_active_window(operation, now)?;
+        // ADV-02: a pool-provisioned share releases only through V2.
+        if self.bound_content_access_id.is_some() {
+            return Err(CustodyError::BindingMismatch("pool_provisioned_share"));
+        }
         if selected_node_public_key != self.node_public_key {
             return Err(CustodyError::BindingMismatch("custody_node"));
         }
@@ -137,6 +161,39 @@ impl NodeLocalStoredShareV1 {
         }
         if operation.custody_epoch_identity() != self.manifest.custody_epoch() {
             return Err(CustodyError::BindingMismatch("custody_epoch"));
+        }
+        self.node()?;
+        Ok(())
+    }
+
+    /// The V2 twin of [`Self::validate_release_claim_context`]: this share is
+    /// the one the operation's item names, for this node, in the operation's
+    /// committee, while the operation is active.
+    pub(crate) fn validate_pool_release_claim_context(
+        &self,
+        operation: &AuthenticatedRuntimeReleaseOperationV2,
+        selected_node_public_key: NodePublicKey,
+        now: u64,
+    ) -> Result<(), CustodyError> {
+        validate_active_window(
+            operation.statement().issued_at(),
+            operation.statement().expires_at(),
+            now,
+        )?;
+        if selected_node_public_key != self.node_public_key {
+            return Err(CustodyError::BindingMismatch("custody_node"));
+        }
+        if operation.binding().key_envelope() != &self.key_envelope_identity {
+            return Err(CustodyError::BindingMismatch("key_envelope"));
+        }
+        if operation.custody_epoch_identity() != self.manifest.custody_epoch() {
+            return Err(CustodyError::BindingMismatch("custody_epoch"));
+        }
+        // ADV-02: a pool-provisioned share releases only for its bound KID.
+        if let Some(bound) = self.bound_content_access_id {
+            if operation.statement().policy_body().content_access_id() != bound {
+                return Err(CustodyError::BindingMismatch("content_access_id"));
+            }
         }
         self.node()?;
         Ok(())
@@ -179,12 +236,16 @@ fn validate_operation_active_window(
     now: u64,
 ) -> Result<(), CustodyError> {
     let statement = operation.statement();
-    if now < statement.issued_at() {
+    validate_active_window(statement.issued_at(), statement.expires_at(), now)
+}
+
+fn validate_active_window(issued_at: u64, expires_at: u64, now: u64) -> Result<(), CustodyError> {
+    if now < issued_at {
         return Err(CustodyError::RuntimeReleaseOperation(
             RuntimeReleaseOperationError::NotYetValid,
         ));
     }
-    if now >= statement.expires_at() {
+    if now >= expires_at {
         return Err(CustodyError::RuntimeReleaseOperation(
             RuntimeReleaseOperationError::Expired,
         ));

@@ -40,7 +40,7 @@ import {
   createHomeClipboardHost,
   createHomeClipboardPrompt,
   homeClipboardTargetSupported,
-} from "./home-clipboard-host.js?v=home-20261017a";
+} from "./home-clipboard-host.js?v=home-20261111a";
 import { loadOrCreateHomeBrowserContextId } from "./home-browser-context.js?v=home-20260805a";
 import {
   FORM_FACTOR_MESSAGE,
@@ -93,11 +93,13 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   "archive-manager": new Set(["library"]),
   browser: new Set(["library", "inbox"]),
   "chat-room": new Set(["library", "people", "inbox"]),
+  // META-PUBLIC A4: consent and Stop sharing live in Inbox.
+  creator: new Set(["library", "inbox"]),
   "gba-emulator": new Set(["library"]),
   "home-cli": "visible-target",
   "home-gui": "visible-target",
   inbox: "visible-target",
-  library: new Set(["archive-manager", "documents", "gba-emulator", "library"]),
+  library: new Set(["archive-manager", "documents", "elacity-player", "elacity-reader", "gba-emulator", "library"]),
   marketplace: "runtime-target",
   people: new Set(["chat-room", "inbox", "system"]),
   system: "visible-target",
@@ -108,7 +110,7 @@ const SHELL_MESSAGE_DELIVER_TARGET_SOURCES = Object.freeze({
   documents: new Set(["chat-room"]),
   library: new Set(["archive-manager", "browser", "chat-room"]),
 });
-const PASSKEY_STEP_UP_TARGETS = new Set(["inbox", SYSTEM_APP_ID, "wallet"]);
+const PASSKEY_STEP_UP_TARGETS = new Set(["custody", "inbox", SYSTEM_APP_ID, "wallet"]);
 const launchedAppContexts = new Map();
 // Archive is launchable but not in the Home summary, so the GUI may launch it
 // only for the exact open its owner app (Library) just asked for.
@@ -1834,18 +1836,22 @@ window.addEventListener("message", (event) => {
   if (data.type === "home:launch-target") {
     const requestId = typeof data.requestId === "string" ? data.requestId.trim() : "";
     const target = typeof data.target === "string" ? data.target.trim() : "";
-    if (context.kind === "app-frame" && ["chat-room", "people", "documents", "assistant", "library"].includes(context.targetId)) {
+    if (context.kind === "app-frame" && ["chat-room", "people", "documents", "assistant", "library",
+      "creator", "custody", "marketplace", "elacity-player", "elacity-reader"].includes(context.targetId)) {
       const query = data.query;
       const keys = query && typeof query === "object" && !Array.isArray(query) ? Object.keys(query) : null;
       const allowedKeys = {
         "chat-room": ["conversation_id"], people: [], assistant: [],
         documents: ["doc", "objectUri"], library: ["uri", "pickerRequestId"],
+        creator: [], custody: [], marketplace: [],
+        "elacity-player": ["mint_id"], "elacity-reader": ["mint_id"],
       }[context.targetId];
       const picker = launchedAppContexts.get(context.homeToken)?.pickerOwner;
       const validQuery = keys && keys.length <= (context.targetId === "library" ? 2 : 1)
         && keys.every(key => allowedKeys.includes(key) && typeof query[key] === "string"
           && query[key].length > 0 && query[key].length <= 2048)
         && (context.targetId !== "chat-room" || !keys.length || /^[A-Za-z0-9:._-]{1,512}$/.test(query.conversation_id))
+        && (!keys.includes("mint_id") || /^[0-9a-f]{64}$/.test(query.mint_id))
         && (!keys.includes("pickerRequestId") || (currentLibraryPicker(picker)
           && picker.id === query.pickerRequestId && picker.pickerToken === context.homeToken
           && ["ready", "delivering"].includes(picker.phase)));

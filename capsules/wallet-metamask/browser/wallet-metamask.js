@@ -1,6 +1,6 @@
 import {
   createHomeClipboardClient,
-} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+} from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 
 const CONNECTOR_ID = "wallet-metamask";
 const HOST_EFFECT_TYPE = "home:wallet-connector-effect";

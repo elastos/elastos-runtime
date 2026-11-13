@@ -274,8 +274,90 @@ pub(crate) fn update_profile_authority(
         proof_binding_id,
         display_name,
         handle,
+        None,
         updated_at,
     )
+}
+
+/// Grants an opt-in signing `scope` to this Home's current endpoint signer in
+/// a new passkey-bound revision. A head that already grants exactly that is
+/// returned unchanged, so enabling twice announces nothing.
+pub(crate) fn grant_profile_signing_scope(
+    data_dir: &Path,
+    principal_id: &str,
+    localhost_root: &str,
+    proof_binding_id: &str,
+    scope: (&str, &[&str]),
+    updated_at: u64,
+) -> anyhow::Result<VerifiedCollaborationProfileDocument> {
+    let _guard = profile_authority_mutation_lock()
+        .lock()
+        .map_err(|_| anyhow!("profile authority mutation lock poisoned"))?;
+    require_profile_authority_passkey_binding(data_dir, principal_id, Some(proof_binding_id))?;
+    validate_extra_signing_scope(scope)?;
+    let existing = load_profile_authority(data_dir, principal_id, localhost_root)?
+        .ok_or_else(|| anyhow!("a Profile is required before a signing scope is granted"))?;
+    let local_device_did = load_existing_device_did(data_dir)?.ok_or_else(|| {
+        anyhow!("existing local device DID required before profile authority setup")
+    })?;
+    if grants_scope_to_sole_endpoint(&existing, scope, &local_device_did) {
+        return Ok(existing);
+    }
+    let document = existing.document();
+    write_profile_authority_update(
+        data_dir,
+        principal_id,
+        localhost_root,
+        proof_binding_id,
+        &document.display_name,
+        document.handle.as_deref(),
+        Some(scope),
+        updated_at,
+    )
+}
+
+/// An opt-in scope is never one of the defaults, which every revision
+/// rebuilds, and follows the Profile format's object-type rules.
+fn validate_extra_signing_scope((service, object_types): (&str, &[&str])) -> anyhow::Result<()> {
+    crate::collaboration_protocol::validate_service(service)?;
+    if DEFAULT_PROFILE_SIGNING_SCOPES
+        .iter()
+        .any(|(default, _)| *default == service)
+    {
+        anyhow::bail!("a default signing scope cannot be granted separately");
+    }
+    if object_types.is_empty()
+        || object_types.len() > MAX_PROFILE_SIGNING_OBJECT_TYPES
+        || object_types.windows(2).any(|pair| pair[0] >= pair[1])
+    {
+        anyhow::bail!("signing scope object types must be sorted, distinct and bounded");
+    }
+    for object_type in object_types {
+        crate::collaboration_protocol::validate_payload_type(object_type)?;
+    }
+    Ok(())
+}
+
+/// The head already binds this device as its only endpoint and grants it,
+/// and only it, exactly `scope`.
+fn grants_scope_to_sole_endpoint(
+    profile: &VerifiedCollaborationProfileDocument,
+    (service, object_types): (&str, &[&str]),
+    device_did: &str,
+) -> bool {
+    profile.sole_endpoint_did().ok() == Some(device_did)
+        && profile
+            .document()
+            .collaboration_signers
+            .iter()
+            .find(|authority| authority.service == service)
+            .is_some_and(|authority| match authority.delegations.as_slice() {
+                [delegation] => {
+                    delegation.signer_did == device_did
+                        && delegation.object_types.iter().eq(object_types.iter())
+                }
+                _ => false,
+            })
 }
 
 pub(crate) fn ensure_initial_profile_authority(
@@ -300,10 +382,14 @@ pub(crate) fn ensure_initial_profile_authority(
         proof_binding_id,
         display_name,
         None,
+        None,
         updated_at,
     )
 }
 
+/// Writes the next revision. `granted_scope`, when given, is delegated to
+/// this device alone, replacing whatever signers it named before.
+#[allow(clippy::too_many_arguments)]
 fn write_profile_authority_update(
     data_dir: &Path,
     principal_id: &str,
@@ -311,6 +397,7 @@ fn write_profile_authority_update(
     proof_binding_id: &str,
     display_name: &str,
     handle: Option<&str>,
+    granted_scope: Option<(&str, &[&str])>,
     updated_at: u64,
 ) -> anyhow::Result<VerifiedCollaborationProfileDocument> {
     require_profile_authority_passkey_binding(data_dir, principal_id, Some(proof_binding_id))?;
@@ -360,12 +447,22 @@ fn write_profile_authority_update(
         .as_ref()
         .map(|state| sha256_label_from_envelope(state.verified.signed_envelope()))
         .transpose()?;
-    let (collaboration_endpoint, collaboration_signers) = build_collaboration_authority(
-        existing.as_ref().map(|state| state.verified.document()),
+    let previous = existing.as_ref().map(|state| state.verified.document());
+    let (collaboration_endpoint, mut collaboration_signers) = build_collaboration_authority(
+        previous,
         vec![local_device_did.clone()],
-        vec![local_device_did],
+        vec![local_device_did.clone()],
         revision,
     )?;
+    if let Some(scope) = granted_scope {
+        grant_signing_scope(
+            previous,
+            &mut collaboration_signers,
+            scope,
+            &local_device_did,
+            revision,
+        )?;
+    }
     let document = CollaborationProfileDocument {
         schema: COLLABORATION_PROFILE_DOCUMENT_SCHEMA_V1.to_string(),
         profile_did,
@@ -794,6 +891,45 @@ fn build_collaboration_authority(
     Ok((endpoint, signers))
 }
 
+/// Replaces `service`'s delegations with one for `signer_did`. The
+/// generation moves exactly as for any other authority change.
+fn grant_signing_scope(
+    previous: Option<&CollaborationProfileDocument>,
+    signers: &mut Vec<CollaborationProfileSigningAuthority>,
+    (service, object_types): (&str, &[&str]),
+    signer_did: &str,
+    profile_revision: u64,
+) -> anyhow::Result<()> {
+    let delegations = vec![CollaborationProfileSigningDelegation {
+        object_types: object_types
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        profile_revision,
+        signer_did: signer_did.to_string(),
+    }];
+    let generation = match previous.and_then(|document| {
+        document
+            .collaboration_signers
+            .iter()
+            .find(|authority| authority.service == service)
+    }) {
+        None => 1,
+        Some(previous) => next_authority_generation(
+            previous.generation,
+            !same_signing_delegations(&previous.delegations, &delegations),
+        )?,
+    };
+    signers.retain(|authority| authority.service != service);
+    signers.push(CollaborationProfileSigningAuthority {
+        delegations,
+        generation,
+        service: service.to_string(),
+    });
+    signers.sort_by(|left, right| left.service.cmp(&right.service));
+    Ok(())
+}
+
 fn next_authority_generation(current: u64, changed: bool) -> anyhow::Result<u64> {
     if !changed {
         return Ok(current);
@@ -1028,6 +1164,45 @@ pub(crate) fn signed_profile_document_with_authority_for_test(
     verify_signed_profile_document(&signed)
 }
 
+/// `profile` re-signed with `scope` granted to every signer it already
+/// delegates to, as an opt-in scope outside the defaults is enabled.
+#[cfg(test)]
+pub(crate) fn with_signing_scope_for_test(
+    signing_key: &SigningKey,
+    profile: &VerifiedCollaborationProfileDocument,
+    scope: (&str, &[&str]),
+) -> anyhow::Result<VerifiedCollaborationProfileDocument> {
+    let (service, object_types) = scope;
+    let mut document = profile.document().clone();
+    let signer_dids: std::collections::BTreeSet<String> = document
+        .collaboration_signers
+        .iter()
+        .flat_map(|authority| &authority.delegations)
+        .map(|delegation| delegation.signer_did.clone())
+        .collect();
+    document
+        .collaboration_signers
+        .retain(|authority| authority.service != service);
+    document
+        .collaboration_signers
+        .push(CollaborationProfileSigningAuthority {
+            delegations: signer_dids
+                .into_iter()
+                .map(|signer_did| CollaborationProfileSigningDelegation {
+                    object_types: object_types.iter().map(|value| value.to_string()).collect(),
+                    profile_revision: document.revision,
+                    signer_did,
+                })
+                .collect(),
+            generation: 1,
+            service: service.to_string(),
+        });
+    document
+        .collaboration_signers
+        .sort_by(|left, right| left.service.cmp(&right.service));
+    verify_signed_profile_document(&sign_profile_document(signing_key, document)?)
+}
+
 struct LoadedBundleState {
     signing_key: SigningKey,
     previous_profiles: Vec<SignedCollaborationProfileDocument>,
@@ -1156,7 +1331,7 @@ fn is_device_label_placeholder(value: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use elastos_runtime::auth::{PasskeyWebAuthnBinding, ProofBinding};
 
@@ -1223,6 +1398,31 @@ mod tests {
         )
         .unwrap()
         .proof_binding_id
+    }
+
+    /// `principal_id`, an admin of this Home, signs a Profile named
+    /// `display_name`, as People does.
+    pub(crate) fn write_test_profile(data_dir: &Path, principal_id: &str, display_name: &str) {
+        if !data_dir.join("identity").join("device.key").exists() {
+            write_device_key(data_dir, 0x5a);
+        }
+        let proof_binding_id = store_passkey_principal(
+            data_dir,
+            principal_id,
+            &format!("credential-{principal_id}"),
+            None,
+        );
+        crate::auth::store_test_principal_root_protection(data_dir, principal_id);
+        update_profile_authority(
+            data_dir,
+            principal_id,
+            &crate::auth::principal_localhost_root(principal_id),
+            &proof_binding_id,
+            display_name,
+            None,
+            1_787_000_000,
+        )
+        .unwrap();
     }
 
     fn read_bundle_bytes(data_dir: &Path, principal_id: &str, localhost_root: &str) -> Vec<u8> {
@@ -1331,6 +1531,290 @@ mod tests {
             "elastos.people.contact-request/v1"
         ));
         assert!(!profile.authorizes_signer(&other_did, "chat", "elastos.chat.direct-message/v1"));
+    }
+
+    #[test]
+    fn custody_message_scope_is_opt_in_and_survives_a_rename() {
+        use crate::custody_consent_protocol::{CustodyMessageType, CUSTODY_SIGNING_SCOPE};
+        let profile_key = SigningKey::from_bytes(&[45u8; 32]);
+        let endpoint_did =
+            crate::crypto::encode_signing_key_did(&SigningKey::from_bytes(&[46u8; 32]));
+        let default = signed_profile_document_for_test(
+            &profile_key,
+            "Alice",
+            None,
+            1,
+            None,
+            1_785_900_000,
+            vec![endpoint_did.clone()],
+        )
+        .unwrap();
+        // A default Profile, and so any rename of one, never holds custody.
+        for kind in CustodyMessageType::ALL {
+            assert!(!default.authorizes_signer(&endpoint_did, "custody", kind.payload_type()));
+        }
+        let (_, renamed_default) = build_collaboration_authority(
+            Some(default.document()),
+            vec![endpoint_did.clone()],
+            vec![endpoint_did.clone()],
+            2,
+        )
+        .unwrap();
+        assert!(renamed_default
+            .iter()
+            .all(|authority| authority.service != "custody"));
+
+        let (service, object_types) = CUSTODY_SIGNING_SCOPE;
+        assert_eq!(service, "custody");
+        let mut expected: Vec<&str> = CustodyMessageType::ALL
+            .iter()
+            .map(|kind| kind.payload_type())
+            .collect();
+        expected.push("elastos.collaboration.acceptance-receipt/v1");
+        expected.sort_unstable();
+        assert_eq!(object_types, expected.as_slice());
+        assert!(object_types.len() <= MAX_PROFILE_SIGNING_OBJECT_TYPES);
+
+        let enabled =
+            with_signing_scope_for_test(&profile_key, &default, CUSTODY_SIGNING_SCOPE).unwrap();
+        for kind in CustodyMessageType::ALL {
+            assert!(enabled.authorizes_signer(&endpoint_did, "custody", kind.payload_type()));
+            assert!(!enabled.authorizes_signer(&endpoint_did, "people", kind.payload_type()));
+        }
+        assert!(!enabled.authorizes_signer(
+            &endpoint_did,
+            "custody",
+            "elastos.people.contact-request/v1"
+        ));
+
+        // A rename rebuilds the defaults and carries the enabled scope forward.
+        let mut renamed = enabled.document().clone();
+        renamed.revision = 2;
+        renamed.previous_profile_sha256 =
+            Some(sha256_label_from_envelope(enabled.signed_envelope()).unwrap());
+        renamed.updated_at += 1;
+        renamed.display_name = "Alice Renamed".to_string();
+        let (endpoint, signers) = build_collaboration_authority(
+            Some(enabled.document()),
+            vec![endpoint_did.clone()],
+            vec![endpoint_did.clone()],
+            renamed.revision,
+        )
+        .unwrap();
+        renamed.collaboration_endpoint = endpoint;
+        renamed.collaboration_signers = signers;
+        let renamed =
+            verify_signed_profile_document(&sign_profile_document(&profile_key, renamed).unwrap())
+                .unwrap();
+        validate_profile_authority_transition(enabled.document(), renamed.document()).unwrap();
+        for kind in CustodyMessageType::ALL {
+            assert!(renamed.authorizes_signer(&endpoint_did, "custody", kind.payload_type()));
+        }
+    }
+
+    #[test]
+    fn enabling_custody_messages_grants_the_current_endpoint_and_regrants_after_rotation() {
+        use crate::collaboration_custody_messages::ensure_custody_signing_scope;
+        use crate::custody_consent_protocol::CustodyMessageType;
+        let grants_custody = |profile: &VerifiedCollaborationProfileDocument, did: &str| {
+            CustodyMessageType::ALL
+                .iter()
+                .all(|kind| profile.authorizes_signer(did, "custody", kind.payload_type()))
+        };
+        let custody_generation = |profile: &VerifiedCollaborationProfileDocument| {
+            profile
+                .document()
+                .collaboration_signers
+                .iter()
+                .find(|authority| authority.service == "custody")
+                .map(|authority| authority.generation)
+        };
+        let dir = owner_only_tempdir();
+        let principal_id = "person:local:custody-scope";
+        let localhost_root = crate::auth::principal_localhost_root(principal_id);
+        let first_device = write_device_key(dir.path(), 0x31);
+        let proof_binding_id =
+            store_passkey_principal(dir.path(), principal_id, "credential-custody", None);
+        crate::auth::store_test_principal_root_protection(dir.path(), principal_id);
+
+        // There is no Profile to enable custody messages on yet.
+        assert!(ensure_custody_signing_scope(
+            dir.path(),
+            principal_id,
+            &localhost_root,
+            &proof_binding_id,
+            1_785_900_000,
+        )
+        .is_err());
+        let initial = update_profile_authority(
+            dir.path(),
+            principal_id,
+            &localhost_root,
+            &proof_binding_id,
+            "Alice",
+            None,
+            1_785_900_000,
+        )
+        .unwrap();
+        assert!(!grants_custody(&initial, &first_device));
+
+        // Only a passkey-bound session may enable it.
+        assert!(ensure_custody_signing_scope(
+            dir.path(),
+            principal_id,
+            &localhost_root,
+            "proof:session:not-a-passkey",
+            1_785_900_001,
+        )
+        .is_err());
+        let enabled = ensure_custody_signing_scope(
+            dir.path(),
+            principal_id,
+            &localhost_root,
+            &proof_binding_id,
+            1_785_900_001,
+        )
+        .unwrap();
+        assert_eq!(enabled.document().revision, 2);
+        assert_eq!(enabled.document().display_name, "Alice");
+        assert!(grants_custody(&enabled, &first_device));
+        assert_eq!(custody_generation(&enabled), Some(1));
+        validate_profile_authority_transition(initial.document(), enabled.document()).unwrap();
+        // The people and chat scopes are untouched.
+        assert!(enabled.authorizes_signer(
+            &first_device,
+            "people",
+            "elastos.people.profile-update/v1"
+        ));
+
+        // Enabling again changes nothing: no new revision to announce.
+        let again = ensure_custody_signing_scope(
+            dir.path(),
+            principal_id,
+            &localhost_root,
+            &proof_binding_id,
+            1_785_900_002,
+        )
+        .unwrap();
+        assert_eq!(again, enabled);
+
+        // A rename carries the scope forward.
+        let renamed = update_profile_authority(
+            dir.path(),
+            principal_id,
+            &localhost_root,
+            &proof_binding_id,
+            "Alice Renamed",
+            None,
+            1_785_900_003,
+        )
+        .unwrap();
+        assert!(grants_custody(&renamed, &first_device));
+        assert_eq!(custody_generation(&renamed), Some(1));
+
+        // The Profile moves to a fresh machine with a new device key, as a
+        // recovery does, and the rebind rotates the endpoint. The carried
+        // scope still names the old signer, so the new endpoint cannot sign
+        // custody messages yet.
+        let bundle =
+            export_profile_authority_bundle_for_recovery(dir.path(), principal_id, &localhost_root)
+                .unwrap()
+                .unwrap();
+        let fresh = owner_only_tempdir();
+        let second_device = write_device_key(fresh.path(), 0x32);
+        crate::auth::store_test_principal_root_protection(fresh.path(), principal_id);
+        let fresh_binding =
+            store_passkey_principal(fresh.path(), principal_id, "credential-custody-2", None);
+        restore_profile_authority_bundle_for_recovery(
+            fresh.path(),
+            principal_id,
+            &localhost_root,
+            &bundle,
+        )
+        .unwrap();
+        let rotated = update_profile_authority(
+            fresh.path(),
+            principal_id,
+            &localhost_root,
+            &fresh_binding,
+            "Alice Renamed",
+            None,
+            1_785_900_004,
+        )
+        .unwrap();
+        assert_eq!(rotated.sole_endpoint_did().unwrap(), second_device);
+        assert!(grants_custody(&rotated, &first_device));
+        assert!(!grants_custody(&rotated, &second_device));
+
+        // Enabling again re-grants it to the current endpoint alone.
+        let regranted = ensure_custody_signing_scope(
+            fresh.path(),
+            principal_id,
+            &localhost_root,
+            &fresh_binding,
+            1_785_900_005,
+        )
+        .unwrap();
+        assert_eq!(
+            regranted.document().revision,
+            rotated.document().revision + 1
+        );
+        assert_eq!(regranted.document().display_name, "Alice Renamed");
+        assert!(grants_custody(&regranted, &second_device));
+        assert!(!grants_custody(&regranted, &first_device));
+        assert_eq!(custody_generation(&regranted), Some(2));
+        validate_profile_authority_transition(rotated.document(), regranted.document()).unwrap();
+        assert_eq!(
+            load_profile_authority(fresh.path(), principal_id, &localhost_root)
+                .unwrap()
+                .unwrap(),
+            regranted
+        );
+    }
+
+    #[test]
+    fn a_default_scope_cannot_be_granted_as_an_extra_scope() {
+        let dir = owner_only_tempdir();
+        let principal_id = "person:local:default-scope";
+        let localhost_root = crate::auth::principal_localhost_root(principal_id);
+        write_device_key(dir.path(), 0x33);
+        let proof_binding_id =
+            store_passkey_principal(dir.path(), principal_id, "credential-default", None);
+        crate::auth::store_test_principal_root_protection(dir.path(), principal_id);
+        let initial = update_profile_authority(
+            dir.path(),
+            principal_id,
+            &localhost_root,
+            &proof_binding_id,
+            "Alice",
+            None,
+            1_785_900_000,
+        )
+        .unwrap();
+        for scope in [
+            ("people", &["elastos.people.profile-update/v1"][..]),
+            ("custody", &[][..]),
+            (
+                "custody",
+                &["elastos.custody.offer/v1", "elastos.custody.offer-query/v1"][..],
+            ),
+        ] {
+            assert!(grant_profile_signing_scope(
+                dir.path(),
+                principal_id,
+                &localhost_root,
+                &proof_binding_id,
+                scope,
+                1_785_900_001,
+            )
+            .is_err());
+        }
+        assert_eq!(
+            load_profile_authority(dir.path(), principal_id, &localhost_root)
+                .unwrap()
+                .unwrap(),
+            initial
+        );
     }
 
     #[test]

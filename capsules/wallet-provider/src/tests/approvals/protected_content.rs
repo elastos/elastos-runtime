@@ -2,12 +2,13 @@ use super::super::support::*;
 use super::super::*;
 use elastos_protected_content_contracts::{
     AtomicReplayClaimer, ContentAccessIdV1, CustodyCommitteeAuthorizationIdentityV1,
-    CustodyEpochIdentityV1, CustodyPoolIdentityV1, Digest32, EncryptedContentIdentityV1,
-    EvmContractAddressV1, EvmFunctionSelectorV1, EvmRightsMethodAbiV1, KeyEnvelopeIdentityV1,
-    ProfileIdentityV1, ProtectedContentBindingV1, RecipientKeyIdentityV1, ReplayClaimError,
-    ReplayClaimKeyV1, ReplayNonce16, RightsActionV1, RightsObservationFinalityV1,
-    RightsPolicyBodyV1, RightsSubjectSourceV1, RightsVerificationContextV1,
-    RuntimeSessionBindingV1, ThresholdV1, WalletAddress, WalletSignedRightsRequestV1,
+    CustodyEpochIdentityV1, CustodyPoolIdentityV1, DeliveryKeyIdentityV1, Digest32,
+    EncryptedContentIdentityV1, EvmContractAddressV1, EvmFunctionSelectorV1, EvmRightsMethodAbiV1,
+    KeyEnvelopeIdentityV1, ProfileIdentityV1, ProtectedContentBindingV1, RecipientKeyIdentityV1,
+    ReplayClaimError, ReplayClaimKeyV1, ReplayNonce16, RightsActionV1, RightsObservationFinalityV1,
+    RightsPolicyBodyV1, RightsRequestV2, RightsSubjectSourceV1, RightsVerificationContextV1,
+    RuntimeSessionBindingV1, ThresholdV1, WalletAddress, WalletSignedRightsRequestAnyV1,
+    WalletSignedRightsRequestV1, WalletSignedRightsRequestV2,
 };
 use elastos_wallet_contract::{
     ProtectedContentRightsSignatureResultV1, PROTECTED_CONTENT_RIGHTS_SIGNATURE_INTENT,
@@ -419,18 +420,28 @@ fn protected_content_rights_managed_and_external_sign_identical_canonical_result
     ) {
         Response::Ok { data: Some(data) } => {
             assert_eq!(data["handoff"]["signature_type"], "personal_sign");
+            // The readable message, not the canonical bytes hex-encoded. A
+            // wallet decodes 0x-prefixed input before showing it, which is how
+            // a nested identity graph used to reach the screen as two
+            // kilobytes of replacement characters. Pinned against the contract
+            // rather than a literal, so producer and verifier move together.
             assert_eq!(
                 data["handoff"]["message"],
-                format!(
-                    "0x{}",
-                    hex::encode(rights_request.canonical_bytes().unwrap())
-                )
+                rights_request.signing_message().unwrap()
             );
+            let shown = data["handoff"]["message"].as_str().unwrap();
+            assert!(shown.starts_with("ElastOS\n"), "{shown}");
+            assert!(shown.contains("Action:  View"), "{shown}");
+            assert!(!shown.contains("0x656c6173746f73"), "{shown}");
         }
         other => panic!("expected external protected-content handoff, got {other:?}"),
     }
-    let external_signature =
-        sign_message_bytes(&managed_key, &rights_request.canonical_bytes().unwrap());
+    // Signs what the wallet is shown, which is the readable message, not the
+    // canonical bytes the payload still carries for transport.
+    let external_signature = sign_message_bytes(
+        &managed_key,
+        rights_request.signing_message().unwrap().as_bytes(),
+    );
     let external_result = match invoke_wallet(
         &mut external_provider,
         principal_id,
@@ -782,7 +793,7 @@ fn protected_content_rights_external_rejects_wrong_signer_type_and_stored_shape(
                 payload_hash: payload_hash.clone(),
                 signature: Some(sign_message_bytes(
                     &signing_key,
-                    &request.canonical_bytes().unwrap(),
+                    request.signing_message().unwrap().as_bytes(),
                 )),
                 signature_type: Some("eth_sign".to_string()),
                 public_key: None,
@@ -803,7 +814,7 @@ fn protected_content_rights_external_rejects_wrong_signer_type_and_stored_shape(
                 payload_hash: payload_hash.clone(),
                 signature: Some(make_high_s_evm_signature(&sign_message_bytes(
                     &signing_key,
-                    &request.canonical_bytes().unwrap(),
+                    request.signing_message().unwrap().as_bytes(),
                 ))),
                 signature_type: Some("personal_sign".to_string()),
                 public_key: None,
@@ -824,7 +835,7 @@ fn protected_content_rights_external_rejects_wrong_signer_type_and_stored_shape(
                 payload_hash,
                 signature: Some(sign_message_bytes(
                     &wrong_key,
-                    &request.canonical_bytes().unwrap(),
+                    request.signing_message().unwrap().as_bytes(),
                 )),
                 signature_type: Some("personal_sign".to_string()),
                 public_key: None,
@@ -857,4 +868,398 @@ fn protected_content_rights_external_rejects_wrong_signer_type_and_stored_shape(
         serde_json::from_value::<ProtectedContentRightsSignatureResultV1>(Value::Object(extra))
             .is_err()
     );
+}
+
+// ---------------------------------------------------------------------------
+// Plan B T1.2: the Wallet signs a V2 rights request (pool session)
+// ---------------------------------------------------------------------------
+
+/// A V2 request on the same binding as the V1 fixture, naming two session
+/// recipients and the buyer's delivery key.
+fn rights_request_v2(
+    wallet: WalletAddress,
+    issued_at: u64,
+    expires_at: u64,
+    nonce: u8,
+) -> RightsRequestV2 {
+    let v1 = protected_content_rights_request(
+        wallet,
+        RightsActionV1::View,
+        issued_at,
+        expires_at,
+        nonce,
+    );
+    RightsRequestV2::new(
+        v1.binding().clone(),
+        RightsActionV1::View,
+        vec![
+            RecipientKeyIdentityV1::new("x25519-hkdf-sha256-hpke-v1", digest(0xa1)).unwrap(),
+            RecipientKeyIdentityV1::new("x25519-hkdf-sha256-hpke-v1", digest(0xa2)).unwrap(),
+        ],
+        DeliveryKeyIdentityV1::new(digest(0x5d)),
+        issued_at,
+        expires_at,
+        ReplayNonce16::new([nonce; 16]),
+        // The chain of the fixture policy (`RightsRequestFixture::build`).
+        20,
+    )
+    .unwrap()
+}
+
+fn operation_for_v2(account_id: &str, request: &RightsRequestV2) -> WalletProviderOperationV2 {
+    WalletProviderOperationV2::RequestProtectedContentRightsSignature {
+        account_id: account_id.to_string(),
+        canonical_rights_request_hex: hex::encode(request.canonical_bytes().unwrap()),
+        reason: "Review and sign the exact protected-content rights request".to_string(),
+    }
+}
+
+fn approval_ids(response: Response) -> (String, String) {
+    match response {
+        Response::Ok { data: Some(data) } => {
+            assert_eq!(data["requires_approval"], true);
+            (
+                data["approval_request"]["request_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+                data["approval_request"]["payload_hash"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            )
+        }
+        other => panic!("expected protected-content rights approval, got {other:?}"),
+    }
+}
+
+/// The stored result keeps schema `/v1`; its signed bytes carry the V2
+/// domain, and the signature recovers to the request's bound wallet.
+fn decode_v2_result(result: &Value, expected: &RightsRequestV2) -> WalletSignedRightsRequestV2 {
+    let result: ProtectedContentRightsSignatureResultV1 =
+        serde_json::from_value(result.clone()).expect("strict protected-content signed result");
+    result.validate().unwrap();
+    assert_eq!(
+        result.schema,
+        PROTECTED_CONTENT_RIGHTS_SIGNATURE_RESULT_SCHEMA
+    );
+    let signed_bytes = hex::decode(&result.wallet_signed_rights_request_hex).unwrap();
+    let signed = match WalletSignedRightsRequestAnyV1::from_canonical_bytes(&signed_bytes).unwrap()
+    {
+        WalletSignedRightsRequestAnyV1::V2(signed) => signed,
+        WalletSignedRightsRequestAnyV1::V1(_) => panic!("a V2 request came back as V1"),
+    };
+    assert_eq!(signed.request(), expected);
+    signed.verify_unclaimed_at(expected.issued_at()).unwrap();
+    signed
+}
+
+#[test]
+fn rights_v2_prompt_shows_the_v2_consent_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:protected-content-v2-prompt";
+    let signing_key = SigningKey::from_slice(&[0x46; 32]).unwrap();
+    let (account_id, address) =
+        link_external_evm_account(&mut provider, principal_id, &signing_key);
+    let v2 = rights_request_v2(
+        wallet_address(&address),
+        now_ts(),
+        now_ts().saturating_add(120),
+        0x91,
+    );
+    let (request_id, _) = approval_ids(invoke_wallet(
+        &mut provider,
+        principal_id,
+        "library",
+        operation_for_v2(&account_id, &v2),
+    ));
+    match invoke_wallet(
+        &mut provider,
+        principal_id,
+        "wallet-metamask",
+        WalletProviderOperationV2::ApproveConnectorHandoff {
+            request_id,
+            reason: "approved".to_string(),
+        },
+    ) {
+        Response::Ok { data: Some(data) } => {
+            assert_eq!(data["handoff"]["signature_type"], "personal_sign");
+            let shown = data["handoff"]["message"].as_str().unwrap();
+            assert_eq!(shown, v2.signing_message().unwrap());
+            // ADV-01: the v2 consent text, not the V1 layout.
+            assert_eq!(
+                shown.lines().next(),
+                Some(format!("ElastOS rights-request/v2 chain {}", v2.chain_id()).as_str())
+            );
+            let delivery = v2.delivery_key().unwrap();
+            assert!(
+                shown.contains(&format!(
+                    "\nDelivery key: 0x{}\n",
+                    hex::encode(&delivery.digest().as_bytes()[..8])
+                )),
+                "{shown}"
+            );
+            for recipient in v2.recipients() {
+                assert!(
+                    shown.contains(&format!(
+                        "\nServer:  0x{}\n",
+                        hex::encode(&recipient.key_id().as_bytes()[..8])
+                    )),
+                    "{shown}"
+                );
+            }
+            assert!(
+                shown.ends_with(&format!(
+                    "Request: 0x{}\n",
+                    hex::encode(v2.request_hash().unwrap().as_bytes())
+                )),
+                "{shown}"
+            );
+        }
+        other => panic!("expected external protected-content handoff, got {other:?}"),
+    }
+}
+
+#[test]
+fn rights_v2_signature_recovers_to_the_account() {
+    let managed_dir = tempfile::tempdir().unwrap();
+    let external_dir = tempfile::tempdir().unwrap();
+    let principal_id = "person:local:protected-content-v2";
+    let mut managed_provider = init_provider(managed_dir.path());
+    let mut external_provider = init_provider(external_dir.path());
+    let (managed_account_id, managed_address) =
+        create_managed_evm_account(&mut managed_provider, principal_id);
+    let managed_key = managed_provider
+        .managed_signing_key_for_account(&managed_provider.store.accounts[0])
+        .unwrap();
+    let (external_account_id, external_address) =
+        link_external_evm_account(&mut external_provider, principal_id, &managed_key);
+    assert_eq!(managed_address, external_address);
+    let v2 = rights_request_v2(
+        wallet_address(&managed_address),
+        now_ts(),
+        now_ts().saturating_add(120),
+        0x92,
+    );
+
+    let (managed_request_id, _) = approval_ids(invoke_wallet(
+        &mut managed_provider,
+        principal_id,
+        "library",
+        operation_for_v2(&managed_account_id, &v2),
+    ));
+    let managed_result = match invoke_wallet(
+        &mut managed_provider,
+        principal_id,
+        "library",
+        WalletProviderOperationV2::ApproveAndSignManaged {
+            request_id: managed_request_id,
+            reason: "approved".to_string(),
+        },
+    ) {
+        Response::Ok { data: Some(data) } => data["approval_request"]["signed_result"].clone(),
+        other => panic!("expected managed V2 signature, got {other:?}"),
+    };
+
+    let (external_request_id, external_payload_hash) = approval_ids(invoke_wallet(
+        &mut external_provider,
+        principal_id,
+        "library",
+        operation_for_v2(&external_account_id, &v2),
+    ));
+    match invoke_wallet(
+        &mut external_provider,
+        principal_id,
+        "wallet-metamask",
+        WalletProviderOperationV2::ApproveConnectorHandoff {
+            request_id: external_request_id.clone(),
+            reason: "approved".to_string(),
+        },
+    ) {
+        Response::Ok { .. } => {}
+        other => panic!("expected connector handoff, got {other:?}"),
+    }
+    let external_result = match invoke_wallet(
+        &mut external_provider,
+        principal_id,
+        "wallet-metamask",
+        WalletProviderOperationV2::CompleteConnectorHandoff {
+            request_id: external_request_id,
+            payload_hash: external_payload_hash,
+            signature: Some(sign_message_bytes(
+                &managed_key,
+                v2.signing_message().unwrap().as_bytes(),
+            )),
+            signature_type: Some("personal_sign".to_string()),
+            public_key: None,
+            signer: external_address,
+            transaction_hash: None,
+        },
+    ) {
+        Response::Ok { data: Some(data) } => data["approval_request"]["signed_result"].clone(),
+        other => panic!("expected external V2 completion, got {other:?}"),
+    };
+
+    assert_eq!(managed_result, external_result);
+    decode_v2_result(&managed_result, &v2);
+}
+
+#[test]
+fn guard_unknown_rights_domain_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:protected-content-unknown-domain";
+    let (account_id, address) = create_managed_evm_account(&mut provider, principal_id);
+    let v2 = rights_request_v2(
+        wallet_address(&address),
+        now_ts(),
+        now_ts().saturating_add(120),
+        0x93,
+    );
+    let mut bytes = v2.canonical_bytes().unwrap();
+    bytes[0] ^= 1;
+    let message = expect_error(
+        invoke_wallet(
+            &mut provider,
+            principal_id,
+            "library",
+            WalletProviderOperationV2::RequestProtectedContentRightsSignature {
+                account_id,
+                canonical_rights_request_hex: hex::encode(bytes),
+                reason: "Review and sign the exact protected-content rights request".to_string(),
+            },
+        ),
+        "invalid_request",
+    );
+    assert!(
+        message.contains("invalid protected-content rights request"),
+        "{message}"
+    );
+    assert!(provider.store.approval_requests.is_empty());
+}
+
+#[test]
+fn stored_v2_result_revalidates_on_approval_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:protected-content-v2-replay";
+    let (account_id, address) = create_managed_evm_account(&mut provider, principal_id);
+    let v2 = rights_request_v2(
+        wallet_address(&address),
+        now_ts(),
+        now_ts().saturating_add(120),
+        0x94,
+    );
+    let context = wallet_context(principal_id, "library");
+    let wallet_request = wallet_request(&context, operation_for_v2(&account_id, &v2));
+    let (approval_id, _) = approval_ids(invoke_wallet_request(&mut provider, &wallet_request));
+    let signed_result = match invoke_wallet(
+        &mut provider,
+        principal_id,
+        "library",
+        WalletProviderOperationV2::ApproveAndSignManaged {
+            request_id: approval_id,
+            reason: "approved".to_string(),
+        },
+    ) {
+        Response::Ok { data: Some(data) } => data["approval_request"]["signed_result"].clone(),
+        other => panic!("expected managed completion, got {other:?}"),
+    };
+
+    match invoke_wallet_request(&mut provider, &wallet_request) {
+        Response::Ok { data: Some(data) } => assert_eq!(data["signed_result"], signed_result),
+        other => panic!("expected exact signed replay, got {other:?}"),
+    }
+    decode_v2_result(&signed_result, &v2);
+
+    // The stored result now holds the same V2 request signed by another
+    // wallet. The replay re-validates it and refuses.
+    let other_key = SigningKey::from_slice(&[0x47; 32]).unwrap();
+    let (signature, recovery_id) = other_key
+        .sign_prehash_recoverable(&v2.signing_hash().unwrap())
+        .unwrap();
+    let mut signature_bytes = signature.to_bytes().to_vec();
+    signature_bytes.push(recovery_id.to_byte());
+    let forged = WalletSignedRightsRequestV2::new(v2.clone(), signature_bytes).unwrap();
+    let forged_result = ProtectedContentRightsSignatureResultV1::new(
+        account_id,
+        address,
+        hex::encode(forged.canonical_bytes().unwrap()),
+    )
+    .unwrap();
+    let stored = provider
+        .store
+        .approval_requests
+        .iter_mut()
+        .find(|request| request.request_id == wallet_request.request_id)
+        .unwrap();
+    stored.signed_result = Some(serde_json::to_value(forged_result).unwrap());
+    expect_error(
+        invoke_wallet_request(&mut provider, &wallet_request),
+        "signing_error",
+    );
+}
+
+/// ADV-01 R5: an approval stored before the alignment holds the
+/// pre-alignment V2 bytes. The Wallet refuses it with the typed
+/// `UnsupportedVersion` error and produces no signature.
+#[test]
+fn guard_wallet_refuses_a_stored_pre_alignment_v2_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:protected-content-v2-pre-alignment";
+    let (account_id, address) = create_managed_evm_account(&mut provider, principal_id);
+    let v2 = rights_request_v2(
+        wallet_address(&address),
+        now_ts(),
+        now_ts().saturating_add(120),
+        0x95,
+    );
+    let (request_id, _) = approval_ids(invoke_wallet(
+        &mut provider,
+        principal_id,
+        "library",
+        operation_for_v2(&account_id, &v2),
+    ));
+
+    // The 85966fd12 layout of the same request: no tag byte before the
+    // delivery key and no chain id after the nonce.
+    let aligned = v2.canonical_bytes().unwrap();
+    let tag_at = aligned.len() - (1 + 32 + 8 + 8 + 16 + 8);
+    assert_eq!(aligned[tag_at], 1);
+    let mut pre_alignment = aligned[..tag_at].to_vec();
+    pre_alignment.extend_from_slice(&aligned[tag_at + 1..aligned.len() - 8]);
+    let stored_payload = protected_content_rights_approval_payload(&hex::encode(&pre_alignment));
+    let stored = provider
+        .store
+        .approval_requests
+        .iter_mut()
+        .find(|request| request.request_id == request_id)
+        .unwrap();
+    stored.payload_hash = value_hash(&stored_payload);
+    stored.payload = stored_payload;
+
+    match invoke_wallet(
+        &mut provider,
+        principal_id,
+        "library",
+        WalletProviderOperationV2::ApproveAndSignManaged {
+            request_id: request_id.clone(),
+            reason: "approved".to_string(),
+        },
+    ) {
+        Response::Error { message, .. } => assert!(
+            message.contains("unsupported version: rights-request/v2 pre-alignment layout"),
+            "{message}"
+        ),
+        other => panic!("expected the pre-alignment approval to be refused, got {other:?}"),
+    }
+    let stored = provider
+        .store
+        .approval_requests
+        .iter()
+        .find(|request| request.request_id == request_id)
+        .unwrap();
+    assert!(stored.signed_result.is_none());
 }

@@ -326,9 +326,6 @@ Common branch gates include:
 - `wallet-product-safety-smoke.sh` for product Wallet release safety
 - `wallet-connector-transaction-smoke.mjs` for fake-DOM, fake-provider
   connector handoff source proof, not hosted Browser acceptance
-- `protected-content-provider-contract-smoke.sh` as the fail-closed retirement
-  guard for the provisional rights, key, decrypt, and DRM providers; it does not
-  verify the canonical v1 custody path
 - `protected-content-installed-e2e-proof.sh` drives the installed two-Runtime
   protected-content journey phase by phase (provision, preflight,
   chain-config-real, wallet-setup, mint, availability, buy, open,
@@ -339,6 +336,20 @@ Common branch gates include:
   `protected-content-installed-e2e-proof-smoke.sh` is its no-docker,
   no-live-gateway smoke: driver syntax, usage/phase coverage, and argument
   handling only, not the journey itself
+- `elacity-player-smoke.mjs` (`node --test`) drives the Elacity Player module
+  over a fake media source and a fake protected session: open, ordered part
+  reads, reassembly, which presentation a rendition gets, and close, for a
+  `video/mp4` rendition and for an `audio/mp4` one. No recipe runs it; run it
+  directly when the player, the media renditions, or the viewer session
+  contract change
+- `elacity-reader-smoke.mjs` runs Elacity Reader in a real engine, in the
+  child frame Home actually gives it, so the engine's own parser is exercised
+  rather than a stand-in: the whole chunked object session, a picture, text
+  spanning several parts, a document, a comic pager, a book whose chapters
+  carry the markup the rebuild must survive, the honest "no renderer" state
+  for a file it cannot show, and the refusal of a background thread at that
+  origin. It needs the pinned engine binary. `just product-ui-browser` runs
+  it, so `just verify-release` covers it; plain `just verify` does not
 - `people-conversations-local-smoke.sh` for profile, discovery, contacts, and
   Chat handoff
 - `capsule-inspector-act-check.sh` for Inspector scope and Inbox approval

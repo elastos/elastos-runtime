@@ -5,7 +5,9 @@
 > Current behavior has a first `content` provider seam that delegates to
 > `ipfs-provider` for local CID creation/pinning, blocks normal capsule
 > capability requests to `elastos://ipfs/*`, and records signed local
-> availability receipts with peer-selection/quota/repair-worker metadata. This
+> availability receipts with peer-selection/quota/repair-worker metadata. A
+> second, public IPFS store holds only the public metadata of minted assets
+> (see [Public Metadata Store](#public-metadata-store)). This
 > document defines where content addressing, IPLD, IPFS/Kubo, Carrier, and
 > future replication providers belong as the SmartWeb content plane matures.
 
@@ -40,7 +42,7 @@ Clean placement:
 | Carrier | endpoint-authenticated peer discovery, coordination, and object/message/stream transport |
 | Content provider | publish/fetch/status/replicate/repair policy and receipts |
 | IPLD | content-addressed object graph and manifest data model |
-| IPFS/Kubo | first block/CID backend for local add, pin, cat, and fetch |
+| IPFS/Kubo | first block/CID backend: the private store (offline) for local add, pin, cat, and fetch; the public store for minted assets' public metadata only |
 | Elacity/supernodes/volunteers | first availability and replication targets |
 | dDRM/key provider | rights verification and decryption capability release |
 | Blockchain | DID, provenance anchors, payment/licensing hooks, optional storage incentives |
@@ -688,17 +690,13 @@ target request.
 
 Availability stores bytes. Rights decide who may use them.
 
-Protected content should be encrypted before it is published. IPFS, Elacity,
-supernodes, and volunteers can store encrypted blocks. In the intended open
-path, Runtime will own the operation. It will verify the authenticated request,
-ask `rights-provider` for typed policy evidence, select custody providers for
-recipient-encrypted contributions, and create a scoped `decrypt-provider`
-session. Carrier will transport only Runtime-selected endpoint traffic.
-
-The current Library path still uses the provisional
-`drm-provider -> rights-provider -> key-provider -> decrypt-provider` sequence.
-Those providers remain fail closed without configured backends. They do not
-implement or verify the intended custody path.
+Protected content is encrypted before it is published. IPFS, Elacity,
+supernodes, and volunteers can store encrypted blocks. Runtime owns the open: it
+verifies the authenticated request, acquires typed Chain rights evidence through
+its own `protected_content_rights_evidence` operation, selects custody providers
+for recipient-encrypted contributions, and opens a scoped session on the
+Runtime-only decrypt target. Carrier transports only Runtime-selected endpoint
+traffic. See [Protected content](PROTECTED_CONTENT.md).
 
 That keeps the core invariant simple:
 
@@ -707,6 +705,79 @@ public CID can expose encrypted bytes
 	valid rights holder gets scoped output
 	unauthorized opener gets no decrypt session
 ```
+
+## Public Metadata Store
+
+A Home has two IPFS stores. Each store is a separate Kubo instance with its
+own repository, coordination file, lock and mode marker.
+
+- The **private store** holds the Home's own objects, including protected
+  ciphertext. It runs offline: it does not announce, route or fetch on the
+  IPFS network. Carrier and the availability provider move these objects
+  between Homes.
+- The **public store** holds only the public metadata of the assets this Home
+  mints: the listing metadata folder and its cover. It joins the IPFS network
+  as a DHT client and announces the roots it holds.
+
+**What enters the public store, and when.** Before the Runtime raises the
+wallet approval for a new mint, it publishes that mint's metadata folder and
+cover. For each root, it exports a CAR from the private store, validates it,
+and then imports, pins and announces it. The validation accepts one root of
+the expected kind, at most 4 MiB, that reaches no block of the protected
+content. The Runtime raises the approval only after the publication succeeds.
+If a step fails, the Creator shows the "Publish metadata on IPFS" stage as
+failed, no approval exists, and the creator can try again. An approval that
+already exists settles as before. On a Home that offers sharing, the Inbox
+approval card states that the asset's metadata is public on IPFS. An approval
+made in an external wallet does not show this line.
+
+**Off by default.** A Home offers metadata sharing only when protected content
+is on and `config.toml` sets `public_metadata = true`. Sharing stays off by
+default until the release that opens it. While a Home does not offer sharing,
+new mints work as they did before the public store existed: the Runtime
+publishes nothing and raises the approval, the Creator opens without a sharing
+gate, and the Runtime stops any public store it still runs. A recorded consent
+is kept for when sharing is offered again.
+
+**Consent and Stop in Inbox.** On a Home that offers sharing, the public store
+runs only while the Home admin agrees to it. Inbox shows the admin the
+consent text as a standing card, and the admin agrees with a passkey. The
+Runtime records the consent with the version and SHA-256 of that text, so a
+changed text asks again. The Creator only reads the status: without consent
+it keeps new mints locked and opens Inbox for the admin, while unfinished
+mints stay available. "Stop sharing metadata" in Inbox first writes a durable
+withdrawal record. The Runtime then disables the consent, stops the public
+Kubo and removes the record. A withdrawal continues after a restart, and Stop
+works whether or not sharing is offered. New mints wait until the admin agrees
+again. Stop ends this Home's sharing. Copies that other IPFS nodes keep stay
+public.
+
+**Boundaries.** The Runtime is the only client of the public store. The store
+is the Runtime-only provider target `public-ipfs`, which capsules and Carrier
+peers cannot address. It has no HTTP gateway, and its only write path is the
+validated import. Every publication phase checks the consent and the
+withdrawal record before it starts, and each dispatch to the target holds the
+Runtime's dispatch fence. Stop unregisters the target and stops its process
+even while publication work runs. The Runtime owns the public Kubo process:
+cleanup stops only a process whose mode marker and repository identity match,
+and the private store never opens the public paths.
+
+**Peers.** `config.toml` sets the public store's network, over compiled-in
+defaults:
+
+| Key | Default | Use |
+|---|---|---|
+| `public_ipfs_bootstrap` | Kubo's own bootstrap list | first contacts on the IPFS network |
+| `public_ipfs_peers` | Elacity's node, `/ip4/34.77.31.164/udp/4001/quic-v1/p2p/12D3KooWNieM3HRBJdVqaQucZEJdqA3oWKrKf3Gx3hp2cmtR9GNK` | preferred peers the store keeps connected |
+| `public_ipfs_swarm_port` | `4001` | the swarm port, TCP and QUIC |
+
+Each address ends in `/p2p/<peer ID>`. A list in `config.toml` replaces its
+default. The bootstrap list can be empty only when the peer list is not. When
+the swarm port is in use, the store reads as not ready and names the port.
+
+**Availability.** The public store serves the metadata only while the Home is
+on. While the Home is offline, the metadata is available only from IPFS nodes
+that kept a copy. Durable availability from other nodes is a later phase.
 
 ## Default SmartWeb Sync
 
@@ -731,6 +802,7 @@ fetch, or replication underneath.
 
 - Do not make Carrier responsible for license policy or decryption.
 - Do not expose raw Kubo, IPFS Cluster, Elacity SDK, or gateway APIs to normal capsules.
+- Keep the public IPFS store to validated mint metadata folders and covers, reached by the Runtime only.
 - Do not treat a CID as an availability guarantee.
 - Do not call a single pinning service decentralized storage.
 - Do not rely on CID secrecy for private content.

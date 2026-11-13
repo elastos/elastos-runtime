@@ -5,7 +5,6 @@ use rand10::{rngs::StdRng as ShamirStdRng, SeedableRng as _};
 use sha2::Digest as _;
 use sha3::Keccak256;
 
-use elastos_auth::ethereum_signed_message_hash;
 use elastos_protected_content_contracts::{
     AtomicReplayClaimer, AuthenticatedRuntimeReleaseOperationV1, CanonicalContract,
     ContentAccessIdV1, CustodyApprovedSuitesV1, CustodyCommitteeAuthorizationIdentityV1,
@@ -376,9 +375,7 @@ fn signed_rights_request_with_suite_for_envelope(
     .unwrap();
     let key = WalletSigningKey::from_slice(&[7; 32]).unwrap();
     let (signature, recovery_id) = key
-        .sign_prehash_recoverable(&ethereum_signed_message_hash(
-            &request.canonical_bytes().unwrap(),
-        ))
+        .sign_prehash_recoverable(&request.signing_hash().unwrap())
         .unwrap();
     let mut signature_bytes = signature.to_bytes().to_vec();
     signature_bytes.push(recovery_id.to_byte());
@@ -520,4 +517,83 @@ pub(crate) fn provisioned_envelope() -> CustodyEnvelopeV1 {
         &mut ShamirStdRng::from_seed([0x42; 32]),
     )
     .unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Plan B T1.4: a V2 pool release over a real custody envelope
+// ---------------------------------------------------------------------------
+
+/// The X-Wing public key whose secret is `[seed; 32]`, as every custody and
+/// recipient secret in these tests.
+pub(crate) fn xwing_public_key_from_seed(
+    seed: u8,
+) -> [u8; elastos_protected_content_contracts::PQ_HYBRID_WRAP_PUBLIC_KEY_BYTES] {
+    crate::pq_hybrid::session_public_bytes_from_secret_bytes([seed; 32])
+}
+
+/// The custody secret of pool node `node_seed` in the shared fixture.
+pub(crate) fn pool_node_custody_secret(node_seed: u8) -> NodeCustodySecretKeyV1 {
+    NodeCustodySecretKeyV1::from_test_bytes(
+        [elastos_protected_content_contracts::test_fixtures::CUSTODY_KEY_SEED_BASE + node_seed; 32],
+    )
+}
+
+pub(crate) struct PoolReleaseTestV1 {
+    pub(crate) fixture: elastos_protected_content_contracts::test_fixtures::PoolReleaseFixtureV1,
+    pub(crate) envelope: CustodyEnvelopeV1,
+}
+
+/// A V2 release whose item envelope the fixture pool committee holds.
+/// `recipients` pairs each recipient key seed with its serving node seed.
+pub(crate) fn pool_release_test(
+    recipients: Vec<(u8, u8)>,
+    max_servers_per_session: u8,
+    runtime_seed: u8,
+) -> PoolReleaseTestV1 {
+    pool_release_test_with(recipients, max_servers_per_session, runtime_seed, |_| {})
+}
+
+/// [`pool_release_test`] with a last edit to the fixture spec (another
+/// nonce or audit id).
+pub(crate) fn pool_release_test_with(
+    recipients: Vec<(u8, u8)>,
+    max_servers_per_session: u8,
+    runtime_seed: u8,
+    edit: impl FnOnce(&mut elastos_protected_content_contracts::test_fixtures::PoolReleaseSpecV1),
+) -> PoolReleaseTestV1 {
+    use elastos_protected_content_contracts::test_fixtures::{
+        pool_authority, pool_bundle, pool_release_fixture, PoolReleaseSpecV1,
+    };
+    let policy = policy_body();
+    let bundle = pool_bundle(xwing_public_key_from_seed, NOW);
+    let committee = elastos_protected_content_contracts::validate_custody_epoch_against_pool_at(
+        pool_authority(),
+        bundle
+            .signed_committee_authorization()
+            .authorization_identity()
+            .unwrap(),
+        bundle.signed_pool(),
+        bundle.signed_epoch(),
+        bundle.signed_committee_authorization(),
+        NOW,
+    )
+    .unwrap();
+    let envelope = provision_custody_envelope_with_rng(
+        policy.encrypted_content().clone(),
+        &content_key(),
+        &committee,
+        &mut HpkeStdRng::from_seed([0x43; 32]),
+        &mut ShamirStdRng::from_seed([0x44; 32]),
+    )
+    .unwrap();
+    let mut spec = PoolReleaseSpecV1::new(xwing_public_key_from_seed, policy, NOW);
+    spec.recipients = recipients;
+    spec.max_servers_per_session = max_servers_per_session;
+    spec.runtime_seed = runtime_seed;
+    spec.key_envelope = Some(envelope.key_envelope_identity().unwrap());
+    edit(&mut spec);
+    PoolReleaseTestV1 {
+        fixture: pool_release_fixture(&spec),
+        envelope,
+    }
 }

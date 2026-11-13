@@ -13,8 +13,9 @@ use elastos_auth::{
 };
 use elastos_protected_content_contracts::{
     AtomicReplayClaimer, CanonicalContract as ProtectedContentCanonicalContract, ReplayClaimError,
-    ReplayClaimKeyV1, RightsRequestV1, RightsVerificationContextV1, WalletAddress,
-    WalletSignedRightsRequestV1, RIGHTS_CLOCK_SKEW_SECS,
+    ReplayClaimKeyV1, RightsRequestAnyV1, RightsRequestV1, RightsRequestV2,
+    RightsVerificationContextV1, WalletAddress, WalletSignedRightsRequestAnyV1,
+    WalletSignedRightsRequestV1, WalletSignedRightsRequestV2, RIGHTS_CLOCK_SKEW_SECS,
 };
 use elastos_wallet_contract::{
     ManagedRecoveryKeyEntryV1, ManagedRecoverySetV1, ProtectedContentRightsSignatureResultV1,
@@ -903,7 +904,11 @@ impl WalletProvider {
             .active_account(&input.principal_id, &input.account_id)
             .cloned()
             .ok_or_else(|| Response::error("not_found", "active linked account not found"))?;
-        if !chain_namespaces_compatible(&account.chain_namespace, &input.chain_namespace) {
+        if !account_serves_chain_namespace(
+            &account.chain_namespace,
+            &account.proof_type,
+            &input.chain_namespace,
+        ) {
             return Err(Response::error(
                 "invalid_request",
                 "wallet account does not match requested chain_namespace",

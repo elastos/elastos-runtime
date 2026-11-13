@@ -1753,6 +1753,8 @@ pub(super) fn home_notifications_summary(
                 severity: home_notification_severity(entry.severity).to_string(),
                 read: entry.read,
                 created_at: entry.created_at,
+                passkey_approval: entry.passkey_approval,
+                step_up_request: entry.step_up_request,
             })
             .collect(),
     }

@@ -3066,6 +3066,55 @@ fn resolve_model_catalog_source(manifest_path: &Path, dest: &Path) -> anyhow::Re
     );
 }
 
+/// #388 A1: whether this host is WCI-operated, as the operator sets it with
+/// `elastos setup --host-trust`. It takes effect at the next clean start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostTrustChoice {
+    Everyday,
+    WciOperated,
+}
+
+/// Records the operator's host trust choice for this Home's data dir. A
+/// WCI-operated host also records its storage maximum (Plan B POOL-MINT).
+pub fn choose_host_trust(
+    choice: HostTrustChoice,
+    max_storage_bytes: Option<u64>,
+) -> anyhow::Result<()> {
+    let mode = match choice {
+        HostTrustChoice::Everyday => crate::host_trust::HostTrustModeV1::Everyday,
+        HostTrustChoice::WciOperated => crate::host_trust::HostTrustModeV1::WciOperated,
+    };
+    choose_host_trust_mode(&data_dir()?, mode, max_storage_bytes)?;
+    println!(
+        "Host trust set to {}. It takes effect when this Home next starts.",
+        match choice {
+            HostTrustChoice::Everyday => "everyday",
+            HostTrustChoice::WciOperated => "wci-operated",
+        }
+    );
+    Ok(())
+}
+
+/// The writer behind [`choose_host_trust`]: atomic and owner-only. A
+/// WCI-operated host needs a storage maximum above zero; an everyday host
+/// keeps none.
+pub(crate) fn choose_host_trust_mode(
+    data_dir: &Path,
+    mode: crate::host_trust::HostTrustModeV1,
+    max_storage_bytes: Option<u64>,
+) -> anyhow::Result<()> {
+    let max_storage_bytes = match mode {
+        crate::host_trust::HostTrustModeV1::WciOperated => match max_storage_bytes {
+            Some(max) if max > 0 => Some(max),
+            _ => anyhow::bail!(
+                "a WCI-operated host needs a storage maximum: add --max-storage-bytes <bytes>"
+            ),
+        },
+        crate::host_trust::HostTrustModeV1::Everyday => None,
+    };
+    crate::host_trust::write_host_trust(data_dir, mode, max_storage_bytes)
+}
+
 /// Records the person's choice to keep this Home out of the shared
 /// Community room. Setup then leaves the release network uninstalled.
 pub fn choose_isolated_collaboration() -> anyhow::Result<()> {
@@ -5915,6 +5964,9 @@ pub(crate) mod tests {
             "protected-content-decrypt-provider",
             "media-provider",
             "media-tools",
+            "creator",
+            "custody",
+            "elacity-reader",
         ];
         for name in hidden {
             assert!(
@@ -5925,15 +5977,9 @@ pub(crate) mod tests {
         let with = hidden.map(str::to_string);
         let on_request = resolve_components(&manifest, None, &with, &[]).unwrap();
         assert_eq!(on_request, hidden);
-        // Chain/wallet/DRM development providers stay out of Home and remain
+        // Chain/wallet development providers stay out of Home and remain
         // reachable only as an explicit developer `--with`.
-        let developer_providers = [
-            "custody-provider",
-            "drm-provider",
-            "rights-provider",
-            "key-provider",
-            "decrypt-provider",
-        ];
+        let developer_providers = ["custody-provider"];
         for provider in developer_providers {
             assert!(
                 !manifest.profiles["home"]
@@ -5946,6 +5992,35 @@ pub(crate) mod tests {
         let with = developer_providers.map(str::to_string);
         let developer = resolve_components(&manifest, None, &with, &[]).unwrap();
         assert_eq!(developer, developer_providers);
+        // Protected content replaced the provisional DRM providers; none of
+        // them may be installed or remain resolvable.
+        let retired_providers = [
+            "drm-provider",
+            "rights-provider",
+            "key-provider",
+            "decrypt-provider",
+        ];
+        for (profile_name, profile) in &manifest.profiles {
+            for retired in retired_providers {
+                assert!(
+                    !profile
+                        .components
+                        .iter()
+                        .any(|component| component.as_str() == retired),
+                    "{profile_name} profile must not install the retired provisional {retired}"
+                );
+            }
+        }
+        for retired in retired_providers {
+            assert!(
+                !manifest.capsules.contains_key(retired),
+                "retired provisional {retired} must not remain in the capsule inventory"
+            );
+            assert!(
+                !manifest.external.contains_key(retired),
+                "retired provisional {retired} must not remain in external components"
+            );
+        }
     }
 
     #[test]
@@ -6208,6 +6283,143 @@ pub(crate) mod tests {
                 .iter()
                 .any(|value| value == "elacity-player"),
             "home must not install the Elacity Player capsule in 0.8.0"
+        );
+    }
+
+    #[test]
+    fn elacity_reader_capsule_is_packaged_with_a_capsule_owned_icon() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../");
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &fs::read(root.join("capsules/elacity-reader/capsule.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest["schema"], "elastos.capsule/v1");
+        assert_eq!(manifest["name"], "elacity-reader");
+        assert_eq!(manifest["icon"], "browser/icons");
+        assert_eq!(manifest["entrypoint"], "browser/index.html");
+
+        for file in ["icon-32.png", "icon-64.png", "icon-128.png", "icon-256.png"] {
+            assert!(
+                root.join("capsules/elacity-reader/browser/icons")
+                    .join(file)
+                    .is_file(),
+                "missing Elacity Reader icon asset {file}"
+            );
+        }
+
+        // The two libraries the reader draws with are carried in its own tree,
+        // pinned file by file in their notes, so an installed reader never
+        // reaches for either of them at open time.
+        for file in [
+            "vendor/pdfjs/pdf.min.mjs",
+            "vendor/pdfjs/pdf.worker.min.mjs",
+            "vendor/pdfjs/LICENSE",
+            "vendor/pdfjs/README.md",
+            "vendor/three/three.module.js",
+            "vendor/three/controls/OrbitControls.js",
+            "vendor/three/loaders/GLTFLoader.js",
+            "vendor/three/loaders/OBJLoader.js",
+            "vendor/three/loaders/STLLoader.js",
+            "vendor/three/utils/BufferGeometryUtils.js",
+            "vendor/three/LICENSE",
+            "vendor/three/README.md",
+        ] {
+            assert!(
+                root.join("capsules/elacity-reader/browser")
+                    .join(file)
+                    .is_file(),
+                "missing Elacity Reader carried library file {file}"
+            );
+        }
+
+        let components: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("components.json")).unwrap()).unwrap();
+        assert_eq!(
+            components["external"]["elacity-reader"]["install_path"],
+            "capsules/elacity-reader"
+        );
+        // Protected content ships after 0.8.0: the Reader installs only with `--with`.
+        assert!(
+            !components["profiles"]["home"]["components"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "elacity-reader"),
+            "home must not install the Elacity Reader capsule in 0.8.0"
+        );
+    }
+
+    #[test]
+    fn creator_capsule_is_packaged_with_a_capsule_owned_icon() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../");
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("capsules/creator/capsule.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["schema"], "elastos.capsule/v1");
+        assert_eq!(manifest["name"], "creator");
+        assert_eq!(manifest["icon"], "browser/icons");
+        assert_eq!(manifest["entrypoint"], "browser/index.html");
+
+        for file in ["icon-32.png", "icon-64.png", "icon-128.png", "icon-256.png"] {
+            assert!(
+                root.join("capsules/creator/browser/icons")
+                    .join(file)
+                    .is_file(),
+                "missing Creator icon asset {file}"
+            );
+        }
+
+        let components: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("components.json")).unwrap()).unwrap();
+        assert_eq!(
+            components["external"]["creator"]["install_path"],
+            "capsules/creator"
+        );
+        // Protected content ships after 0.8.0: Creator installs only with `--with`.
+        assert!(
+            !components["profiles"]["home"]["components"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "creator"),
+            "home must not install the Creator capsule in 0.8.0"
+        );
+    }
+
+    #[test]
+    fn custody_capsule_is_packaged_with_a_capsule_owned_icon() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../");
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("capsules/custody/capsule.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["schema"], "elastos.capsule/v1");
+        assert_eq!(manifest["name"], "custody");
+        assert_eq!(manifest["icon"], "browser/icons");
+        assert_eq!(manifest["entrypoint"], "browser/index.html");
+
+        for file in ["icon-32.png", "icon-64.png", "icon-128.png", "icon-256.png"] {
+            assert!(
+                root.join("capsules/custody/browser/icons")
+                    .join(file)
+                    .is_file(),
+                "missing Custody icon asset {file}"
+            );
+        }
+
+        let components: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("components.json")).unwrap()).unwrap();
+        assert_eq!(
+            components["external"]["custody"]["install_path"],
+            "capsules/custody"
+        );
+        // Protected content ships after 0.8.0: Custody installs only with `--with`.
+        assert!(
+            !components["profiles"]["home"]["components"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "custody"),
+            "home must not install the Custody capsule in 0.8.0"
         );
     }
 

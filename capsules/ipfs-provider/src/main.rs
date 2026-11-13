@@ -16,6 +16,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 // Only Runtime's typed local Registry methods dispatch the private operations.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod directory_hash;
+mod public_store;
+
+use public_store::{PublicInit, PublicStore, StoreMode};
 
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const KUBO_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
@@ -47,6 +50,7 @@ const MAX_BOUNDED_READ_BYTES: u64 = 64 * 1024;
 const LOCAL_WHOLE_READ_TIMEOUT: Duration = Duration::from_secs(60);
 const LOCAL_WHOLE_READ_KUBO_TIMEOUT: &str = "60s";
 const MAX_CAPACITY_REQUIRED_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+const CAR_EXPORT_TIMEOUT: Duration = Duration::from_secs(20);
 
 // The upload reads one opened file. A short read or changed file cannot
 // silently replace missing payload bytes with the multipart footer.
@@ -312,9 +316,31 @@ enum Request {
         #[serde(default, rename = "_runtime_invocation")]
         _runtime_invocation: Option<serde_json::Value>,
     },
+    EnsureStarted {
+        #[serde(default, rename = "_runtime_invocation")]
+        _runtime_invocation: Option<serde_json::Value>,
+    },
     Health,
     Status,
     Shutdown,
+    /// Private store: one DAG as a CAR, read from this repo only.
+    RuntimeExportCar {
+        cid: String,
+        max_bytes: u64,
+    },
+    /// Public store: imports a Runtime-validated CAR whose header names `root`.
+    RuntimePublicImportCar {
+        root: String,
+        car_base64: String,
+    },
+    RuntimePublicPin {
+        cid: String,
+    },
+    RuntimePublicProvide {
+        cid: String,
+        timeout_secs: u64,
+    },
+    RuntimePublicPeers {},
 }
 
 #[derive(Debug, Deserialize)]
@@ -451,6 +477,11 @@ fn parse_request(line: &str) -> Result<Request, Response> {
                             | "runtime_hash_staged_directory"
                             | "runtime_check_capacity"
                             | "runtime_add_local_object"
+                            | "runtime_export_car"
+                            | "runtime_public_import_car"
+                            | "runtime_public_pin"
+                            | "runtime_public_provide"
+                            | "runtime_public_peers"
                     )
                 })
             })
@@ -571,6 +602,8 @@ struct IpfsProvider {
     kubo_child: Option<Child>,
     data_dir: PathBuf,
     repo_dir: PathBuf,
+    /// Set by a public Init: this instance is then the public store.
+    public: Option<PublicStore>,
 }
 
 impl IpfsProvider {
@@ -587,7 +620,14 @@ impl IpfsProvider {
             kubo_child: None,
             data_dir,
             repo_dir,
+            public: None,
         }
+    }
+
+    /// Whether `main` starts the idle watcher: only for a ready private store
+    /// of a user Home. The public store never idles out.
+    fn wants_idle_watcher(&self) -> bool {
+        self.state == KuboState::Ready && self.host_role == HostRole::User && self.public.is_none()
     }
 
     fn api_url(&self) -> String {
@@ -698,6 +738,15 @@ impl IpfsProvider {
     }
 
     fn handle(&mut self, req: Request) -> Response {
+        if self.public.is_some() {
+            return self.handle_public(req);
+        }
+        if public_store::public_only_op(&req) {
+            return Response::error(
+                "private_store_op_refused",
+                "This operation belongs to the public IPFS store",
+            );
+        }
         match req {
             Request::RuntimePrepareBackend {} => {
                 if !cfg!(any(target_os = "linux", target_os = "macos")) {
@@ -845,9 +894,15 @@ impl IpfsProvider {
             Request::Pin { cid, .. } => self.pin(&cid),
             Request::Unpin { cid, .. } => self.unpin(&cid),
             Request::PinStatus { cid, .. } => self.pin_status(&cid),
+            Request::EnsureStarted { .. } => self.ensure_started(),
             Request::Health => self.health(),
             Request::Status => self.status(),
             Request::Shutdown => self.shutdown(),
+            Request::RuntimeExportCar { cid, max_bytes } => self.export_car(&cid, max_bytes),
+            Request::RuntimePublicImportCar { .. }
+            | Request::RuntimePublicPin { .. }
+            | Request::RuntimePublicProvide { .. }
+            | Request::RuntimePublicPeers {} => public_store::public_op_refused(),
         }
     }
 
@@ -856,6 +911,22 @@ impl IpfsProvider {
     fn init(&mut self, config: serde_json::Value) -> Response {
         let Ok(host_role) = HostRole::from_init(&config) else {
             return Response::error("invalid_config", "Invalid Runtime IPFS host role");
+        };
+        let Ok(store_mode) = StoreMode::from_init(&config) else {
+            return Response::error("invalid_config", "Invalid Runtime IPFS store mode");
+        };
+        let public = match store_mode {
+            StoreMode::Public => match PublicInit::from_init(&config) {
+                Ok(settings) => Some(settings),
+                Err(error) => return Response::error("invalid_config", &error),
+            },
+            StoreMode::Private if PublicInit::requested(&config) => {
+                return Response::error(
+                    "invalid_config",
+                    "Public IPFS settings need the public store mode",
+                );
+            }
+            StoreMode::Private => None,
         };
         let extra = config.get("extra").unwrap_or(&config);
         let selected_root = if let Some(base_path) = config
@@ -882,6 +953,16 @@ impl IpfsProvider {
                 "Runtime IPFS role and data root are fixed at Init",
             );
         }
+        if self.initialized && self.public.as_ref().map(|store| &store.settings) != public.as_ref()
+        {
+            return Response::error(
+                "invalid_config",
+                "Runtime IPFS store mode and public settings are fixed at Init",
+            );
+        }
+        if let Some(settings) = public {
+            return self.init_public(host_role, selected_root, settings);
+        }
         if self.initialized {
             return Response::ok(
                 serde_json::json!({"provider":"ipfs-provider", "state":self.state,
@@ -892,6 +973,11 @@ impl IpfsProvider {
         self.data_dir = selected_root;
         self.repo_dir = self.data_dir.join("ipfs-repo");
 
+        // Kubo runs offline as a local content store: it keeps no swarm, so
+        // there is no connection to peer.
+        if extra.get("peering").is_some() {
+            eprintln!("ipfs-provider: ignoring peering; provider is local-IPFS only");
+        }
         if extra.get("gateways").is_some() {
             eprintln!("ipfs-provider: ignoring gateway override; provider is local-IPFS only");
         }
@@ -948,8 +1034,45 @@ impl IpfsProvider {
         }))
     }
 
+    /// A public Init: the instance owns only the public paths, so the private
+    /// coord, migration and idle stop never apply to it.
+    fn init_public(
+        &mut self,
+        host_role: HostRole,
+        selected_root: PathBuf,
+        settings: PublicInit,
+    ) -> Response {
+        if !self.initialized {
+            self.host_role = host_role;
+            self.data_dir = selected_root;
+            self.repo_dir = self.data_dir.join(public_store::PUBLIC_REPO_DIR);
+            tracing::info!(
+                swarm_port = settings.swarm_port,
+                peers = settings.peers.len(),
+                bootstrap = settings.bootstrap.len(),
+                "public IPFS store selected"
+            );
+            self.public = Some(PublicStore::new(settings));
+            self.kubo_binary = find_kubo_binary(&self.data_dir);
+            if self.kubo_binary.is_none() {
+                tracing::warn!("kubo not found. Run: elastos setup --with kubo");
+            }
+            self.initialized = true;
+        }
+        Response::ok(serde_json::json!({
+            "provider": "ipfs-provider",
+            "state": self.state,
+            "runtime_host_role": self.host_role,
+            "runtime_store_mode": "public",
+        }))
+    }
+
     // ── Ensure Kubo is running ──────────────────────────────────────
 
+    /// Every Kubo use goes through here, never past it on `state == Ready`:
+    /// the idle watcher stops Kubo from another thread and only removes the
+    /// coord file, so `Ready` can outlive the daemon. The liveness check
+    /// below is what notices that and starts Kubo again.
     fn ensure_kubo(&mut self) -> Result<(), String> {
         // Reap an owned daemon after the idle watcher or a crash stops it.
         if self
@@ -1601,7 +1724,17 @@ impl IpfsProvider {
     /// Whether this node pins `cid` recursively. Kubo answers from the local
     /// pin set offline, so the question never fetches the CID.
     fn pin_status(&mut self, cid: &str) -> Response {
-        if let Err(e) = self.ensure_kubo() {
+        // The public store answers from its running daemon and never starts it.
+        let ready = if self.public.is_some() {
+            if self.public_running() && self.state == KuboState::Ready {
+                Ok(())
+            } else {
+                Err("The public IPFS store is not started".to_string())
+            }
+        } else {
+            self.ensure_kubo()
+        };
+        if let Err(e) = ready {
             return Response::error("kubo_unavailable", &e);
         }
         let url = kubo_rpc_url(
@@ -1666,7 +1799,64 @@ impl IpfsProvider {
         }
     }
 
+    /// Peer id + addresses of the running daemon, which a node card names.
+    /// Returns None rather than starting kubo: status is a supported cold call.
+    fn kubo_identity(&self) -> Option<(String, Vec<String>)> {
+        if self.state != KuboState::Ready || self.api_port == 0 {
+            return None;
+        }
+
+        let url = format!("{}/api/v0/id", self.api_url());
+        let resp = ureq::post(&url)
+            .timeout(Duration::from_secs(5))
+            .call()
+            .ok()?;
+        if resp.status() != 200 {
+            return None;
+        }
+        let json: serde_json::Value = resp.into_json().ok()?;
+        let id = json.get("ID")?.as_str()?.to_string();
+        let addrs = json
+            .get("Addresses")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some((id, addrs))
+    }
+
+    /// Force the daemon up (or adopt a running one) and report its identity.
+    ///
+    /// The provider host calls this at startup so the node's identity is known
+    /// before a node card names it. Unlike `status`, which must stay
+    /// cold-safe, this deliberately starts kubo.
+    fn ensure_started(&mut self) -> Response {
+        if let Err(e) = self.ensure_kubo() {
+            return Response::error("kubo_unavailable", &e);
+        }
+
+        match self.kubo_identity() {
+            Some((peer_id, swarm_addrs)) => Response::ok(serde_json::json!({
+                "state": self.state,
+                "peer_id": peer_id,
+                "swarm_addrs": swarm_addrs,
+            })),
+            // Reporting success with null identity would let the caller write a
+            // readiness receipt no other node can peer with.
+            None => Response::error(
+                "kubo_unavailable",
+                "kubo is running but /api/v0/id returned no peer identity",
+            ),
+        }
+    }
+
     fn status(&self) -> Response {
+        let identity = self.kubo_identity();
         Response::ok(serde_json::json!({
             "version": PROVIDER_VERSION,
             "state": self.state,
@@ -1677,14 +1867,57 @@ impl IpfsProvider {
                 None::<String>
             },
             "kubo_pid": read_coord_file(&self.data_dir).map(|c| c.kubo_pid),
+            "peer_id": identity.as_ref().map(|(id, _)| id.clone()),
+            "swarm_addrs": identity.as_ref().map(|(_, addrs)| addrs.clone()),
         }))
     }
 
     fn shutdown(&mut self) -> Response {
+        if self.public.is_some() {
+            return self.public_shutdown();
+        }
         // DON'T kill shared Kubo — just update last_used
         update_coord_last_used(&self.data_dir);
         self.state = KuboState::Cold;
         Response::ok(serde_json::json!({"message": "ipfs-provider shutting down"}))
+    }
+
+    /// One DAG of this private repo as a CAR, read offline, refused once it
+    /// passes `max_bytes`. Runtime validates it before the public import.
+    fn export_car(&mut self, cid: &str, max_bytes: u64) -> Response {
+        let failed = |message: &str| Response::error("export_failed", message);
+        if !public_store::valid_cid_arg(cid)
+            || !(1..=public_store::MAX_PUBLIC_CAR_BYTES).contains(&max_bytes)
+        {
+            return failed("Invalid CAR export request");
+        }
+        if let Err(error) = self.ensure_kubo() {
+            return failed(&format!("local content backend is not ready: {error}"));
+        }
+        let url = kubo_rpc_url(
+            self.api_port,
+            "dag/export",
+            &[("arg", cid), ("offline", "true")],
+        );
+        let agent = ureq::AgentBuilder::new()
+            .redirects(0)
+            .try_proxy_from_env(false)
+            .build();
+        match agent.post(&url).timeout(CAR_EXPORT_TIMEOUT).call() {
+            Ok(resp) if resp.status() == 200 => {
+                let mut car = Vec::new();
+                if let Err(error) = resp.into_reader().take(max_bytes + 1).read_to_end(&mut car) {
+                    return failed(&format!("kubo dag/export -> {error}"));
+                }
+                if car.len() as u64 > max_bytes {
+                    return failed(&format!("CAR export exceeds {max_bytes} bytes"));
+                }
+                update_coord_last_used(&self.data_dir);
+                Response::ok(serde_json::json!({ "car_base64": BASE64.encode(car) }))
+            }
+            Ok(resp) => failed(&format!("kubo dag/export -> HTTP {}", resp.status())),
+            Err(error) => failed(&format!("kubo dag/export -> {error}")),
+        }
     }
 
     // ── Internal: Kubo API helpers ──────────────────────────────────
@@ -2159,11 +2392,22 @@ fn kubo_config_entry<'a>(
 /// Rewrites `repo/config` with `apply_local_store_config`, keeping it
 /// owner-only (it holds the node key). Runs with no daemon on the repo.
 fn write_local_store_config(repo_dir: &Path, gateway_port: u16) -> Result<(), String> {
+    rewrite_kubo_config(repo_dir, |config| {
+        apply_local_store_config(config, gateway_port)
+    })
+}
+
+/// Rewrites `repo/config` through `apply`, keeping it owner-only (it holds
+/// the node key). Runs with no daemon on the repo.
+fn rewrite_kubo_config(
+    repo_dir: &Path,
+    apply: impl FnOnce(&mut serde_json::Value) -> Result<(), String>,
+) -> Result<(), String> {
     let path = repo_dir.join("config");
     let bytes = fs::read(&path).map_err(|e| format!("Failed to read Kubo config: {e}"))?;
     let mut config: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|e| format!("Invalid Kubo config: {e}"))?;
-    apply_local_store_config(&mut config, gateway_port)?;
+    apply(&mut config)?;
     let body =
         serde_json::to_vec_pretty(&config).map_err(|e| format!("Kubo config encode: {e}"))?;
     let tmp = repo_dir.join("config.elastos-tmp");
@@ -2656,14 +2900,18 @@ fn main() {
     eprintln!("ipfs-provider: starting v{}", PROVIDER_VERSION);
 
     let mut provider = IpfsProvider::new();
+    serve(&mut provider, io::stdin().lock(), &mut io::stdout());
+    eprintln!("ipfs-provider: exiting");
+}
 
+/// The wire loop: one JSON request per line, one JSON response per line.
+/// At a protocol `shutdown` or stdin EOF the provider shuts down; the public
+/// store then stops and reaps its Kubo before the process exits.
+fn serve(provider: &mut IpfsProvider, input: impl BufRead, stdout: &mut impl Write) {
     let activity = Arc::new(Mutex::new(()));
     let mut idle_watcher_started = false;
 
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-
-    for line in stdin.lock().lines() {
+    for line in input.lines() {
         let line = match line {
             Ok(l) => l,
             Err(e) => {
@@ -2678,8 +2926,10 @@ fn main() {
         let request: Request = match parse_request(&line) {
             Ok(req) => req,
             Err(response) => {
-                writeln!(stdout, "{}", serde_json::to_string(&response).unwrap()).unwrap();
-                stdout.flush().unwrap();
+                if let Err(error) = write_response(stdout, &response) {
+                    tracing::warn!(%error, "response pipe closed; shutting down");
+                    break;
+                }
                 continue;
             }
         };
@@ -2687,10 +2937,7 @@ fn main() {
         let is_shutdown = matches!(request, Request::Shutdown);
         let _activity = activity.lock().unwrap();
         let response = provider.handle(request);
-        if !idle_watcher_started
-            && provider.state == KuboState::Ready
-            && provider.host_role == HostRole::User
-        {
+        if !idle_watcher_started && provider.wants_idle_watcher() {
             // Init has selected the data root before this daemon becomes ready.
             spawn_idle_watcher(
                 provider.data_dir.clone(),
@@ -2700,18 +2947,28 @@ fn main() {
             idle_watcher_started = true;
         }
 
-        let json = serde_json::to_string(&response).unwrap();
-        writeln!(stdout, "{}", json).unwrap();
-        stdout.flush().unwrap();
+        if let Err(error) = write_response(stdout, &response) {
+            // The reader is gone; leave through the shared shutdown below.
+            tracing::warn!(%error, "response pipe closed; shutting down");
+            break;
+        }
 
         if is_shutdown {
             break;
         }
     }
 
-    // Shutdown: update last_used but don't kill shared Kubo
+    // Shutdown: the private store updates last_used but keeps shared Kubo;
+    // the public store stops and reaps its own Kubo. A closed response pipe
+    // also ends here, so the owned Kubo never outlives the provider.
     provider.shutdown();
-    eprintln!("ipfs-provider: exiting");
+}
+
+/// Writes one response as one JSON line and flushes it.
+fn write_response(stdout: &mut impl Write, response: &Response) -> io::Result<()> {
+    let json = serde_json::to_string(response).map_err(io::Error::other)?;
+    writeln!(stdout, "{json}")?;
+    stdout.flush()
 }
 
 #[cfg(test)]
@@ -3109,6 +3366,7 @@ mod tests {
             kubo_child: None,
             data_dir: root.path().join("absent"),
             repo_dir: root.path().join("absent-repo"),
+            public: None,
         };
         for (pointer, value) in [
             ("/directory/root", serde_json::json!("relative")),
@@ -3266,6 +3524,7 @@ mod tests {
             kubo_child: None,
             data_dir: root.to_path_buf(),
             repo_dir: root.join("unused-repo"),
+            public: None,
         }
     }
 
@@ -3550,19 +3809,30 @@ mod tests {
     }
 
     /// A Kubo stand-in: `init` writes a config with an identity, `daemon`
-    /// records its arguments and API address, then sleeps; others succeed.
+    /// records its arguments, PID and API address, then sleeps; others succeed.
     #[cfg(unix)]
     fn kubo_fixture(root: &Path) -> PathBuf {
+        kubo_fixture_with(root, "")
+    }
+
+    /// `kubo_fixture` whose daemon ignores SIGTERM: only SIGKILL stops it.
+    #[cfg(unix)]
+    fn kubo_fixture_ignoring_term(root: &Path) -> PathBuf {
+        kubo_fixture_with(root, "trap '' TERM; ")
+    }
+
+    #[cfg(unix)]
+    fn kubo_fixture_with(root: &Path, daemon_prefix: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         // At `<data>/bin/kubo`, where Init finds the managed Kubo.
         fs::create_dir_all(root.join("bin")).unwrap();
         let kubo = root.join("bin/kubo");
         fs::write(
             &kubo,
-            "#!/bin/sh\ncase \"$1\" in\n\
-             init) mkdir -p \"$IPFS_PATH\" && printf '%s' '{\"Identity\":{\"PeerID\":\"fixture-peer\"},\"Bootstrap\":[\"auto\"],\"DNS\":{\"Resolvers\":{\".\":\"auto\",\"eth.\":\"https://dns.example/dns-query\"}}}' > \"$IPFS_PATH/config\";;\n\
-             daemon) printf '%s' \"$*\" > \"$IPFS_PATH.args\"; printf '%s' \"$4\" > \"$IPFS_PATH.started\"; sleep 60 & wait;;\n\
-             *) exit 0;;\nesac\n",
+            format!("#!/bin/sh\ncase \"$1\" in\n\
+             init) mkdir -p \"$IPFS_PATH\" && printf '%s' '{{\"Identity\":{{\"PeerID\":\"fixture-peer\"}},\"Bootstrap\":[\"auto\"],\"DNS\":{{\"Resolvers\":{{\".\":\"auto\",\"eth.\":\"https://dns.example/dns-query\"}}}}}}' > \"$IPFS_PATH/config\";;\n\
+             daemon) printf '%s' \"$*\" > \"$IPFS_PATH.args\"; printf '%s' \"$$\" > \"$IPFS_PATH.pid\"; api=; prev=; for arg in \"$@\"; do [ \"$prev\" = --api ] && api=$arg; prev=$arg; done; printf '%s' \"$api\" > \"$IPFS_PATH.started\"; {daemon_prefix}exec sleep 60;;\n\
+             *) exit 0;;\nesac\n"),
         )
         .unwrap();
         fs::set_permissions(&kubo, fs::Permissions::from_mode(0o700)).unwrap();
@@ -5053,6 +5323,37 @@ mod tests {
     }
 
     #[test]
+    fn test_ensure_started_request_deserialization() {
+        let json = r#"{"op":"ensure_started"}"#;
+        let req: Request = serde_json::from_str(json).expect("Should parse ensure_started");
+        assert!(matches!(req, Request::EnsureStarted { .. }));
+
+        let with_metadata = r#"{"op":"ensure_started","_runtime_invocation":{"caller":"host"}}"#;
+        let req: Request =
+            serde_json::from_str(with_metadata).expect("Should parse runtime envelope");
+        assert!(matches!(req, Request::EnsureStarted { .. }));
+    }
+
+    #[test]
+    fn test_ensure_started_rejects_unknown_fields() {
+        let json = r#"{"op":"ensure_started","admin":true}"#;
+        let err = serde_json::from_str::<Request>(json).expect_err("Should reject unknown fields");
+        assert!(err.to_string().contains("unknown field `admin`"));
+    }
+
+    #[test]
+    fn test_init_ignores_peering_for_the_offline_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut provider = IpfsProvider::new();
+        let response = provider.init(serde_json::json!({
+            "base_path": tmp.path().to_string_lossy(),
+            "extra": {"peering": [{"id": "12D3KooWAlpha", "addrs": []}]}
+        }));
+        assert!(matches!(response, Response::Ok { .. }), "{response:?}");
+        assert!(provider.initialized);
+    }
+
+    #[test]
     fn test_find_kubo_binary_uses_managed_runtime_bin_dir() {
         let data_dir = tempfile::tempdir().unwrap();
         let shared_bin = tempfile::tempdir().unwrap();
@@ -5614,5 +5915,1661 @@ mod tests {
             paths.len() * 2,
             failures.join("\n")
         );
+    }
+
+    // ── Public store ────────────────────────────────────────────────
+
+    use public_store::{
+        apply_public_store_config, car_header_roots, public_coord_path, public_daemon_args,
+        PublicCoord, MAX_PUBLIC_CAR_BYTES, PUBLIC_COORD_FILE, PUBLIC_LOCK_FILE, PUBLIC_REPO_DIR,
+        PUBLIC_SHUTDOWN_BOUND, PUBLIC_START_DEADLINE, PUBLIC_TERM_WAIT, STORE_MODE_MARKER,
+    };
+
+    const PUBLIC_TEST_BOOTSTRAP: &str =
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN";
+    const PUBLIC_TEST_PEER: &str =
+        "/ip4/198.51.100.7/tcp/4001/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8";
+
+    // CIDs and CARv1 headers as Kubo 0.40.1 writes them (`kubo add`, then
+    // `kubo dag export`, of the bytes `elastos public car fixture`).
+    const CAR_V1_ROOT: &str = "bafkreiapyat3eabmkxkzoe6xn46wg5iupsz2xgumhbpbrzoroxyclri4ai";
+    const CAR_V1_ROOT_HEX: &str =
+        "015512200fc027b2002c55d59713d76f3d6375147cb3ab9a8c385e18e5d175f025c51c02";
+    const CAR_V1_HEADER_HEX: &str = "3aa265726f6f747381d82a58250001551220\
+        0fc027b2002c55d59713d76f3d6375147cb3ab9a8c385e18e5d175f025c51c026776657273696f6e01";
+    const CAR_V0_ROOT: &str = "QmaSMKUBGHvkcGDrA38ivLTpphqD2ufTwag38ABiNdKJWr";
+    const CAR_V0_ROOT_HEX: &str =
+        "1220b3c21090165020010eca7a50f6fa2f43812d335314eea1349c28c91aafeeb197";
+
+    fn hex(text: &str) -> Vec<u8> {
+        let text: String = text.split_whitespace().collect();
+        (0..text.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// A CARv1 in Kubo's header encoding for `roots`, followed by `blocks`.
+    fn car_with_roots(roots: &[Vec<u8>], blocks: &[u8]) -> Vec<u8> {
+        let mut header = vec![0xa2, 0x65];
+        header.extend_from_slice(b"roots");
+        header.push(0x80 | roots.len() as u8);
+        for cid in roots {
+            header.extend_from_slice(&[0xd8, 0x2a, 0x58, cid.len() as u8 + 1, 0x00]);
+            header.extend_from_slice(cid);
+        }
+        header.push(0x67);
+        header.extend_from_slice(b"version");
+        header.push(0x01);
+        let mut car = vec![header.len() as u8];
+        car.extend_from_slice(&header);
+        car.extend_from_slice(blocks);
+        car
+    }
+
+    fn public_config_with(
+        root: &Path,
+        swarm_port: u16,
+        bootstrap: &[&str],
+        peers: &[&str],
+    ) -> serde_json::Value {
+        serde_json::json!({"base_path": root, "extra": {
+            "runtime_store_mode": "public", "public_swarm_port": swarm_port,
+            "public_peers": peers, "public_bootstrap": bootstrap}})
+    }
+
+    fn public_config(root: &Path, swarm_port: u16) -> serde_json::Value {
+        public_config_with(root, swarm_port, &[PUBLIC_TEST_BOOTSTRAP], &[])
+    }
+
+    fn free_swarm_port() -> u16 {
+        std::net::TcpListener::bind("0.0.0.0:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    fn request(json: serde_json::Value) -> Request {
+        parse_request(&json.to_string()).unwrap()
+    }
+
+    fn error_code(response: &Response) -> &str {
+        match response {
+            Response::Error { code, .. } => code,
+            Response::Ok { .. } => "ok",
+        }
+    }
+
+    fn error_message(response: &Response) -> &str {
+        match response {
+            Response::Error { message, .. } => message,
+            Response::Ok { .. } => "",
+        }
+    }
+
+    /// A public provider on `root` whose Kubo is the `kubo_fixture` stand-in.
+    #[cfg(unix)]
+    fn public_fixture_provider(root: &Path) -> IpfsProvider {
+        let mut provider = IpfsProvider::new();
+        let response = provider.init(public_config(root, free_swarm_port()));
+        assert!(matches!(response, Response::Ok { .. }), "{response:?}");
+        provider.kubo_binary = Some(kubo_fixture(root));
+        provider
+    }
+
+    /// A public provider that owns a running stand-in child and is Ready on
+    /// the Kubo double at `port`.
+    #[cfg(unix)]
+    fn public_ready_provider(root: &Path, port: u16) -> IpfsProvider {
+        let mut provider = IpfsProvider::new();
+        let response = provider.init(public_config(root, free_swarm_port()));
+        assert!(matches!(response, Response::Ok { .. }), "{response:?}");
+        provider.kubo_child = Some(Command::new("sleep").arg("60").spawn().unwrap());
+        provider.state = KuboState::Ready;
+        provider.api_port = port;
+        provider
+    }
+
+    fn fixture_pid(repo_dir: &Path) -> u32 {
+        fs::read_to_string(repo_dir.with_extension("pid"))
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    /// The API of the daemon `kubo_fixture` starts for `repo_dir`: every call
+    /// answers with the fixture peer identity. With `hang`, every call after
+    /// the first is held open unanswered. Collects the request lines.
+    struct FixtureApi {
+        stop: Arc<std::sync::atomic::AtomicBool>,
+        serving: std::thread::JoinHandle<Vec<String>>,
+    }
+
+    impl FixtureApi {
+        fn finish(self) -> Vec<String> {
+            self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.serving.join().unwrap()
+        }
+    }
+
+    fn serve_fixture_api(repo_dir: PathBuf, hang: bool) -> FixtureApi {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping = Arc::clone(&stop);
+        let serving = std::thread::spawn(move || {
+            let started_path = repo_dir.with_extension("started");
+            let port = loop {
+                if let Some(port) = fs::read_to_string(&started_path)
+                    .ok()
+                    .and_then(|address| address.rsplit('/').next()?.parse::<u16>().ok())
+                {
+                    break port;
+                }
+                if stopping.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Vec::new();
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let (mut requests, mut held) = (Vec::new(), Vec::new());
+            while !stopping.load(std::sync::atomic::Ordering::SeqCst) {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                };
+                let Some(headers) = read_fixture_request(&mut socket) else {
+                    continue;
+                };
+                requests.push(headers.lines().next().unwrap_or_default().to_string());
+                if hang && requests.len() > 1 {
+                    held.push(socket);
+                    continue;
+                }
+                let body = r#"{"ID":"fixture-peer","Addresses":["/ip4/127.0.0.1/tcp/4001"]}"#;
+                let _ = socket.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+            requests
+        });
+        FixtureApi { stop, serving }
+    }
+
+    /// A Kubo RPC double. `answer` gets each request line and returns the
+    /// delay and the whole HTTP answer, or `None` to hold the call open.
+    /// Collects each request line with its body.
+    struct CannedKubo {
+        port: u16,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+        serving: std::thread::JoinHandle<Vec<(String, Vec<u8>)>>,
+    }
+
+    impl CannedKubo {
+        fn finish(self) -> Vec<(String, Vec<u8>)> {
+            self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.serving.join().unwrap()
+        }
+    }
+
+    fn canned_kubo<F>(answer: F) -> CannedKubo
+    where
+        F: Fn(&str) -> Option<(Duration, Vec<u8>)> + Send + Sync + 'static,
+    {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping = Arc::clone(&stop);
+        let answer = Arc::new(answer);
+        let serving = std::thread::spawn(move || {
+            let records = Arc::new(Mutex::new(Vec::new()));
+            let mut calls = Vec::new();
+            while !stopping.load(std::sync::atomic::Ordering::SeqCst) {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                let (answer, records, stopping) = (
+                    Arc::clone(&answer),
+                    Arc::clone(&records),
+                    Arc::clone(&stopping),
+                );
+                calls.push(std::thread::spawn(move || {
+                    let Some(headers) = read_fixture_request(&mut socket) else {
+                        return;
+                    };
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|value| value.trim().parse().unwrap())
+                        })
+                        .unwrap_or(0);
+                    let mut body = vec![0; length];
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    socket.read_exact(&mut body).unwrap();
+                    let line = headers.lines().next().unwrap_or_default().to_string();
+                    records.lock().unwrap().push((line.clone(), body));
+                    let reply = answer(&line);
+                    let until = Instant::now() + reply.as_ref().map_or(Duration::MAX / 4, |r| r.0);
+                    while Instant::now() < until
+                        && !stopping.load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    if let Some((_, bytes)) = reply {
+                        let _ = socket.write_all(&bytes);
+                    }
+                }));
+            }
+            for call in calls {
+                call.join().unwrap();
+            }
+            let records = records.lock().unwrap().clone();
+            records
+        });
+        CannedKubo {
+            port,
+            stop,
+            serving,
+        }
+    }
+
+    fn http_answer(status: &str, body: &str) -> Vec<u8> {
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    }
+
+    fn now_answer(status: &str, body: &str) -> Option<(Duration, Vec<u8>)> {
+        Some((Duration::ZERO, http_answer(status, body)))
+    }
+
+    #[test]
+    fn car_header_roots_read_kubo_headers_and_refuse_others() {
+        let v1 = hex(CAR_V1_ROOT_HEX);
+        let v0 = hex(CAR_V0_ROOT_HEX);
+        // The test encoder writes exactly Kubo's header bytes.
+        assert_eq!(
+            car_with_roots(std::slice::from_ref(&v1), b""),
+            hex(CAR_V1_HEADER_HEX)
+        );
+        assert_eq!(
+            car_header_roots(&car_with_roots(std::slice::from_ref(&v1), b"blocks")).unwrap(),
+            [CAR_V1_ROOT]
+        );
+        assert_eq!(
+            car_header_roots(&car_with_roots(std::slice::from_ref(&v0), b"")).unwrap(),
+            [CAR_V0_ROOT]
+        );
+        assert_eq!(
+            car_header_roots(&car_with_roots(&[v0.clone(), v1.clone()], b"")).unwrap(),
+            [CAR_V0_ROOT, CAR_V1_ROOT]
+        );
+        let good = car_with_roots(std::slice::from_ref(&v1), b"");
+        let mut version_two = good.clone();
+        *version_two.last_mut().unwrap() = 0x02;
+        let mut not_a_cid = good.clone();
+        not_a_cid[10] = 0x2b; // tag 43
+        let mut no_prefix = good.clone();
+        no_prefix[13] = 0x01;
+        for (case, car) in [
+            ("empty", Vec::new()),
+            ("truncated", good[..good.len() - 1].to_vec()),
+            ("version 2", version_two),
+            ("tag 43", not_a_cid),
+            ("no multibase prefix", no_prefix),
+            ("no roots", car_with_roots(&[], b"")),
+            ("short cid", car_with_roots(&[v1[..10].to_vec()], b"")),
+        ] {
+            assert!(car_header_roots(&car).is_err(), "{case}");
+        }
+    }
+
+    #[test]
+    fn public_daemon_runs_online_on_a_loopback_api() {
+        assert_eq!(
+            public_daemon_args(5001),
+            ["daemon", "--api", "/ip4/127.0.0.1/tcp/5001"]
+        );
+    }
+
+    #[test]
+    fn public_init_settings_are_validated_and_fixed_at_init() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path();
+        let mut invalid = vec![
+            serde_json::json!({"base_path": path, "runtime_store_mode": "public"}),
+            serde_json::json!({"base_path": path, "extra": {"runtime_store_mode": "Public"}}),
+            serde_json::json!({"base_path": path, "extra": {"runtime_store_mode": true}}),
+            // Public settings without the public mode.
+            serde_json::json!({"base_path": path, "extra": {"public_swarm_port": 4001}}),
+            serde_json::json!({"base_path": path, "public_bootstrap": [PUBLIC_TEST_BOOTSTRAP]}),
+            // Public mode without a port, with no lists, or with a bad address.
+            serde_json::json!({"base_path": path, "extra": {"runtime_store_mode": "public",
+                "public_bootstrap": [PUBLIC_TEST_BOOTSTRAP]}}),
+            public_config_with(path, 4001, &[], &[]),
+            public_config_with(path, 4001, &["/ip4/1.2.3.4/tcp/4001"], &[]),
+            public_config_with(path, 4001, &["/p2p/not base58!"], &[]),
+        ];
+        let mut port_zero = public_config(path, 4001);
+        port_zero["extra"]["public_swarm_port"] = serde_json::json!(0);
+        invalid.push(port_zero);
+        for config in invalid {
+            let mut provider = IpfsProvider::new();
+            let response = provider.init(config.clone());
+            assert_eq!(error_code(&response), "invalid_config", "{config}");
+            assert!(
+                !provider.initialized && provider.public.is_none(),
+                "{config}"
+            );
+        }
+
+        let mut provider = IpfsProvider::new();
+        let config = public_config_with(path, 4001, &[], &[PUBLIC_TEST_PEER]);
+        let Response::Ok { data: Some(data) } = provider.init(config.clone()) else {
+            panic!("public Init failed");
+        };
+        assert_eq!(data["runtime_store_mode"], "public");
+        assert_eq!(provider.repo_dir, path.join(PUBLIC_REPO_DIR));
+        assert!(matches!(provider.init(config), Response::Ok { .. }));
+        for change in [
+            public_config(path, 4002),
+            serde_json::json!({"base_path": path}),
+        ] {
+            assert_eq!(error_code(&provider.init(change)), "invalid_config");
+            assert_eq!(provider.public.as_ref().unwrap().settings.swarm_port, 4001);
+        }
+        // A private Init stays private.
+        let mut private = IpfsProvider::new();
+        assert!(matches!(
+            private.init(serde_json::json!({"base_path": path})),
+            Response::Ok { .. }
+        ));
+        assert_eq!(
+            error_code(&private.init(public_config(path, 4001))),
+            "invalid_config"
+        );
+        assert!(private.public.is_none());
+    }
+
+    #[test]
+    fn public_ops_parse_failures_are_sanitized() {
+        for op in [
+            "runtime_export_car",
+            "runtime_public_import_car",
+            "runtime_public_pin",
+            "runtime_public_provide",
+            "runtime_public_peers",
+        ] {
+            let line = serde_json::json!({"op": op, "secret": "descriptor-value"}).to_string();
+            let response = parse_request(&line).unwrap_err();
+            assert_eq!(
+                serde_json::to_value(&response).unwrap(),
+                serde_json::to_value(private_preparation_error()).unwrap(),
+                "{op}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_mode_uses_its_own_files() {
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_fixture_provider(root.path());
+        let repo = root.path().join(PUBLIC_REPO_DIR);
+        let api = serve_fixture_api(repo.clone(), false);
+        let response = provider.handle(request(serde_json::json!({"op": "ensure_started"})));
+        let api_port = provider.api_port;
+        let args = fs::read_to_string(repo.with_extension("args"));
+        let coord = fs::read(root.path().join(PUBLIC_COORD_FILE));
+        let shutdown = provider.handle(Request::Shutdown);
+        api.finish();
+        let Response::Ok { data: Some(data) } = response else {
+            panic!("public start failed: {response:?}");
+        };
+        assert_eq!(data["peer_id"], "fixture-peer");
+        assert_eq!(
+            args.unwrap(),
+            format!("daemon --api /ip4/127.0.0.1/tcp/{api_port}")
+        );
+        let coord: PublicCoord = serde_json::from_slice(&coord.unwrap()).unwrap();
+        assert_eq!(coord.mode, "public");
+        assert_eq!(
+            fs::read_to_string(repo.join(STORE_MODE_MARKER)).unwrap(),
+            "public"
+        );
+        assert_eq!(
+            fs::read_to_string(root.path().join(PUBLIC_LOCK_FILE)).unwrap(),
+            "public"
+        );
+        assert!(repo.join("config").is_file());
+        for private in ["ipfs-repo", "ipfs-coords.json", "ipfs-startup.lock"] {
+            assert!(!root.path().join(private).exists(), "{private}");
+        }
+        assert!(matches!(shutdown, Response::Ok { .. }));
+    }
+
+    #[test]
+    fn public_config_sets_the_public_keys_and_drops_auto() {
+        // As `kubo init` 0.40.1 writes it, with its AutoConf placeholders.
+        let mut config = serde_json::json!({
+            "Identity": {"PeerID": "12D3KooWfixture", "PrivKey": "secret"},
+            "Addresses": {"API": "/ip4/127.0.0.1/tcp/5001", "Gateway": "/ip4/127.0.0.1/tcp/8080",
+                "Swarm": ["/ip4/0.0.0.0/tcp/4001", "/ip4/0.0.0.0/udp/4001/webrtc-direct"]},
+            "Bootstrap": ["auto"],
+            "DNS": {"Resolvers": {".": "auto", "eth.": "https://dns.example/dns-query"}},
+            "Ipns": {"DelegatedPublishers": ["auto"], "ResolveCacheSize": 128},
+            "Routing": {"DelegatedRouters": ["auto"]},
+            "Provide": {"DHT": {}},
+            "Gateway": {"NoFetch": false, "NoDNSLink": false, "PublicGateways": null},
+            "Peering": {"Peers": null},
+            "Swarm": {"ConnMgr": {}},
+            "Discovery": {"MDNS": {"Enabled": true}},
+            "AutoConf": {},
+            "Plugins": {"Plugins": null},
+        });
+        let settings = PublicInit {
+            swarm_port: 4123,
+            peers: vec![
+                PUBLIC_TEST_PEER.into(),
+                "/ip6/2001:db8::7/udp/4001/quic-v1/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8".into(),
+                "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ".into(),
+            ],
+            bootstrap: vec![PUBLIC_TEST_BOOTSTRAP.into()],
+        };
+        apply_public_store_config(&mut config, &settings, 5123).unwrap();
+        let expected = serde_json::json!({
+            "Identity": {"PeerID": "12D3KooWfixture", "PrivKey": "secret"},
+            "Addresses": {"API": "/ip4/127.0.0.1/tcp/5123", "Gateway": [],
+                "Swarm": ["/ip4/0.0.0.0/tcp/4123", "/ip6/::/tcp/4123",
+                    "/ip4/0.0.0.0/udp/4123/quic-v1", "/ip6/::/udp/4123/quic-v1"]},
+            "Bootstrap": [PUBLIC_TEST_BOOTSTRAP],
+            "DNS": {"Resolvers": {"eth.": "https://dns.example/dns-query"}},
+            "Ipns": {"DelegatedPublishers": [], "ResolveCacheSize": 128},
+            "Routing": {"DelegatedRouters": [], "Type": "dhtclient"},
+            "Provide": {"DHT": {"SweepEnabled": false}, "Enabled": true, "Strategy": "roots"},
+            "Gateway": {"NoFetch": true, "NoDNSLink": true, "PublicGateways": {}},
+            "Peering": {"Peers": [
+                {"ID": "12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8",
+                 "Addrs": ["/ip4/198.51.100.7/tcp/4001", "/ip6/2001:db8::7/udp/4001/quic-v1"]},
+                {"ID": "QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", "Addrs": []},
+            ]},
+            "Swarm": {"ConnMgr": {"Type": "basic", "LowWater": 20, "HighWater": 40,
+                "GracePeriod": "30s"}},
+            "Discovery": {"MDNS": {"Enabled": false}},
+            "AutoConf": {"Enabled": false},
+            "Plugins": {"Plugins": {"telemetry": {"Config": {"Mode": "off"}}}},
+        });
+        assert_eq!(config, expected);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_config_has_no_gateway_and_does_not_fetch() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_fixture_provider(root.path());
+        let swarm_port = provider.public.as_ref().unwrap().settings.swarm_port;
+        let repo = root.path().join(PUBLIC_REPO_DIR);
+        let api = serve_fixture_api(repo.clone(), false);
+        let started = provider.public_start(Instant::now() + Duration::from_secs(15));
+        let api_port = provider.api_port;
+        provider.handle(Request::Shutdown);
+        api.finish();
+        started.unwrap();
+        let config: serde_json::Value =
+            serde_json::from_slice(&fs::read(repo.join("config")).unwrap()).unwrap();
+        assert_eq!(config["Identity"]["PeerID"], "fixture-peer");
+        assert_eq!(config["Addresses"]["Gateway"], serde_json::json!([]));
+        assert_eq!(config["Gateway"]["NoFetch"], true);
+        assert_eq!(config["Gateway"]["NoDNSLink"], true);
+        assert_eq!(config["Routing"]["Type"], "dhtclient");
+        assert_eq!(config["Provide"]["DHT"]["SweepEnabled"], false);
+        assert_eq!(config["Provide"]["Strategy"], "roots");
+        assert_eq!(
+            config["Bootstrap"],
+            serde_json::json!([PUBLIC_TEST_BOOTSTRAP])
+        );
+        assert_eq!(
+            config["Addresses"]["API"],
+            format!("/ip4/127.0.0.1/tcp/{api_port}")
+        );
+        assert_eq!(
+            config["Addresses"]["Swarm"][0],
+            format!("/ip4/0.0.0.0/tcp/{swarm_port}")
+        );
+        assert_eq!(config["DNS"]["Resolvers"].get("."), None);
+        assert_eq!(
+            fs::metadata(repo.join("config"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(&repo).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_mode_refuses_every_other_op() {
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_fixture_provider(root.path());
+        provider.kubo_binary = Some(root.path().join("must-not-execute"));
+        let cid = CAR_V1_ROOT;
+        for op in [
+            serde_json::json!({"op": "add_bytes", "data": "aGk="}),
+            serde_json::json!({"op": "add_path", "path": "/tmp/file"}),
+            serde_json::json!({"op": "add_directory", "files": []}),
+            serde_json::json!({"op": "cat", "cid": cid}),
+            serde_json::json!({"op": "cat_to_path", "cid": cid, "dest": "/tmp/out"}),
+            serde_json::json!({"op": "get_bytes", "cid": cid}),
+            serde_json::json!({"op": "ls", "cid": cid}),
+            serde_json::json!({"op": "download_directory", "cid": cid, "dest": "/tmp/out"}),
+            serde_json::json!({"op": "pin", "cid": cid}),
+            serde_json::json!({"op": "unpin", "cid": cid}),
+            serde_json::json!({"op": "runtime_export_car", "cid": cid, "max_bytes": 1}),
+            serde_json::json!({"op": "runtime_add_local_object", "object": {"root": "/data/object",
+                "files": [{"path": "_elastos_object.json", "size": 1}]}}),
+            serde_json::json!({"op": "runtime_prepare_backend"}),
+            serde_json::json!({"op": "runtime_check_capacity", "required_bytes": 1}),
+            private_hash_fixture_request(),
+        ] {
+            let response = provider.handle(request(op.clone()));
+            assert_eq!(error_code(&response), "public_store_op_refused", "{op}");
+        }
+        assert_eq!(provider.state, KuboState::Cold);
+        assert!(provider.kubo_child.is_none());
+        assert!(!root.path().join(PUBLIC_REPO_DIR).exists());
+        assert!(!root.path().join(PUBLIC_COORD_FILE).exists());
+    }
+
+    #[test]
+    fn private_mode_refuses_public_ops() {
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = cold_fixture_provider(root.path());
+        provider.kubo_binary = Some(root.path().join("must-not-execute"));
+        for op in [
+            serde_json::json!({"op": "runtime_public_import_car", "root": CAR_V1_ROOT,
+                "car_base64": BASE64.encode(car_with_roots(&[hex(CAR_V1_ROOT_HEX)], b""))}),
+            serde_json::json!({"op": "runtime_public_pin", "cid": CAR_V1_ROOT}),
+            serde_json::json!({"op": "runtime_public_provide", "cid": CAR_V1_ROOT,
+                "timeout_secs": 1}),
+            serde_json::json!({"op": "runtime_public_peers"}),
+        ] {
+            let response = provider.handle(request(op.clone()));
+            assert_eq!(error_code(&response), "private_store_op_refused", "{op}");
+        }
+        assert_eq!(provider.state, KuboState::Cold);
+        assert!(provider.kubo_child.is_none());
+        assert!(!provider.repo_dir.exists());
+    }
+
+    /// Runs the wire loop on its own thread over a pipe; returns the writer
+    /// and the thread, which returns the provider and its output at EOF.
+    #[allow(clippy::type_complexity)]
+    fn serve_over_pipe(
+        mut provider: IpfsProvider,
+    ) -> (
+        io::PipeWriter,
+        std::thread::JoinHandle<(IpfsProvider, Vec<u8>)>,
+    ) {
+        let (reader, writer) = io::pipe().unwrap();
+        let serving = std::thread::spawn(move || {
+            let mut output = Vec::new();
+            serve(&mut provider, io::BufReader::new(reader), &mut output);
+            (provider, output)
+        });
+        (writer, serving)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_mode_never_idles_out() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join(PUBLIC_REPO_DIR);
+        kubo_fixture(root.path());
+        let api = serve_fixture_api(repo.clone(), false);
+        let (mut input, serving) = serve_over_pipe(IpfsProvider::new());
+        let init = serde_json::json!({"op": "init", "config": public_config(root.path(), free_swarm_port())});
+        writeln!(input, "{init}\n{{\"op\":\"ensure_started\"}}").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !public_coord_path(root.path()).exists() || !repo.with_extension("started").exists() {
+            assert!(Instant::now() < deadline, "public Kubo did not start");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let coord = fs::read(public_coord_path(root.path())).unwrap();
+        // Past the idle stop (and its check interval) of a user Home.
+        std::thread::sleep(Duration::from_secs(IDLE_TIMEOUT_SECS + 1) + IDLE_CHECK_INTERVAL * 2);
+        let pid = fixture_pid(&repo);
+        let running = is_pid_alive(pid);
+        let coord_after = fs::read(public_coord_path(root.path())).ok();
+        drop(input);
+        let (provider, output) = serving.join().unwrap();
+        api.finish();
+        let output = String::from_utf8(output).unwrap();
+        assert!(
+            output
+                .lines()
+                .all(|line| line.contains("\"status\":\"ok\"")),
+            "{output}"
+        );
+        assert!(running, "the public Kubo was idle-stopped");
+        assert_eq!(coord_after, Some(coord));
+        assert!(!provider.wants_idle_watcher());
+        // The private store of a user Home keeps its idle stop.
+        let private = bounded_cat_fixture_provider(root.path(), 1);
+        assert!(private.wants_idle_watcher());
+        assert!(private.host_role.idle_stop_due(0, IDLE_TIMEOUT_SECS + 1));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_stdin_eof_kills_child() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join(PUBLIC_REPO_DIR);
+        kubo_fixture(root.path());
+        let api = serve_fixture_api(repo.clone(), false);
+        let init = serde_json::json!({"op": "init", "config": public_config(root.path(), free_swarm_port())});
+        let input = format!("{init}\n{{\"op\":\"ensure_started\"}}\n");
+        let mut provider = IpfsProvider::new();
+        let mut output = Vec::new();
+        let started = Instant::now();
+        serve(&mut provider, io::Cursor::new(input), &mut output);
+        let elapsed = started.elapsed();
+        api.finish();
+        let output = String::from_utf8(output).unwrap();
+        assert_eq!(output.lines().count(), 2, "{output}");
+        assert!(
+            output
+                .lines()
+                .all(|line| line.contains("\"status\":\"ok\"")),
+            "{output}"
+        );
+        let pid = fixture_pid(&repo);
+        assert!(!is_pid_alive(pid), "the public Kubo outlived stdin EOF");
+        assert!(provider.kubo_child.is_none());
+        assert!(!public_coord_path(root.path()).exists());
+        assert!(elapsed < Duration::from_secs(15), "{elapsed:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn private_migration_ignores_public_coord() {
+        let root = tempfile::tempdir().unwrap();
+        let mut public = public_fixture_provider(root.path());
+        let repo = root.path().join(PUBLIC_REPO_DIR);
+        let api = serve_fixture_api(repo.clone(), false);
+        public
+            .public_start(Instant::now() + Duration::from_secs(15))
+            .unwrap();
+        let coord = fs::read(public_coord_path(root.path())).unwrap();
+
+        let mut private = cold_fixture_provider(root.path());
+        private.initialized = false;
+        let init = private.init(serde_json::json!({"base_path": root.path()}));
+        private.kubo_binary = Some(kubo_fixture(root.path()));
+        let health = answer_fixture_health(private.repo_dir.clone());
+        let started = private.ensure_kubo();
+        stop_fixture_daemon(&mut private);
+        health.join().unwrap();
+        let public_running = public.public_running();
+        let coord_after = fs::read(public_coord_path(root.path())).unwrap();
+        public.handle(Request::Shutdown);
+        api.finish();
+        assert!(matches!(init, Response::Ok { .. }));
+        started.unwrap();
+        assert!(public_running, "a private start stopped the public Kubo");
+        assert_eq!(coord_after, coord);
+        assert!(read_coord_file(root.path()).unwrap().offline);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_mode_refuses_private_coord() {
+        let root = tempfile::tempdir().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let private_port = listener.local_addr().unwrap().port();
+        let mut private_daemon = Command::new("sleep").arg("60").spawn().unwrap();
+        write_coord_file(
+            root.path(),
+            &CoordFile {
+                kubo_pid: private_daemon.id(),
+                api_port: private_port,
+                gateway_port: private_port,
+                started_at: 1,
+                last_used: 1,
+                offline: true,
+            },
+        );
+        let private_coord = fs::read(coord_file_path(root.path())).unwrap();
+        let mut provider = public_fixture_provider(root.path());
+        let repo = root.path().join(PUBLIC_REPO_DIR);
+        let api = serve_fixture_api(repo.clone(), false);
+        let response = provider.handle(request(serde_json::json!({"op": "ensure_started"})));
+        let api_port = provider.api_port;
+        provider.handle(Request::Shutdown);
+        api.finish();
+        let private_running = private_daemon.try_wait().unwrap().is_none();
+        let _ = private_daemon.kill();
+        private_daemon.wait().unwrap();
+        assert!(matches!(response, Response::Ok { .. }), "{response:?}");
+        assert_ne!(api_port, private_port);
+        assert!(repo.with_extension("args").exists());
+        assert!(private_running);
+        assert_eq!(
+            fs::read(coord_file_path(root.path())).unwrap(),
+            private_coord
+        );
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == io::ErrorKind::WouldBlock));
+    }
+
+    /// Starts a public provider on `root`, which must refuse with
+    /// `not_ready` naming `expected`, and checks nothing started.
+    #[cfg(unix)]
+    fn assert_public_start_refused(root: &Path, expected: &str) {
+        let mut provider = public_fixture_provider(root);
+        let response = provider.handle(request(serde_json::json!({"op": "ensure_started"})));
+        let repo = root.join(PUBLIC_REPO_DIR);
+        let spawned = repo.with_extension("args").exists();
+        stop_fixture_daemon(&mut provider);
+        assert_eq!(error_code(&response), "not_ready", "{response:?}");
+        assert!(
+            error_message(&response).contains(expected),
+            "{}",
+            error_message(&response)
+        );
+        assert!(!spawned, "a Kubo started");
+        assert!(provider.kubo_child.is_none());
+        assert_eq!(provider.state, KuboState::Cold);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_repo_without_marker_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join(PUBLIC_REPO_DIR);
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join("config"), br#"{"Identity":{"PeerID":"other"}}"#).unwrap();
+        assert_public_start_refused(root.path(), "no store-mode marker");
+        assert_eq!(
+            fs::read(repo.join("config")).unwrap(),
+            br#"{"Identity":{"PeerID":"other"}}"#
+        );
+        assert!(!repo.join(STORE_MODE_MARKER).exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_repo_marked_private_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join(PUBLIC_REPO_DIR);
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join(STORE_MODE_MARKER), "private").unwrap();
+        assert_public_start_refused(root.path(), "marked for another store");
+        assert_eq!(
+            fs::read_to_string(repo.join(STORE_MODE_MARKER)).unwrap(),
+            "private"
+        );
+        assert!(!repo.join("config").exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_coord_without_mode_is_not_adopted() {
+        let root = tempfile::tempdir().unwrap();
+        let mut other = Command::new("sleep").arg("60").spawn().unwrap();
+        let identity = public_store_process_identity(other.id());
+        let coord =
+            serde_json::to_vec(&serde_json::json!({"pid": other.id(), "identity": identity}))
+                .unwrap();
+        fs::write(root.path().join(PUBLIC_COORD_FILE), &coord).unwrap();
+        assert_public_start_refused(root.path(), "not a public store coord");
+        let running = other.try_wait().unwrap().is_none();
+        let _ = other.kill();
+        other.wait().unwrap();
+        assert!(running, "the coord's process was signalled");
+        assert_eq!(
+            fs::read(root.path().join(PUBLIC_COORD_FILE)).unwrap(),
+            coord
+        );
+    }
+
+    #[cfg(unix)]
+    fn public_store_process_identity(pid: u32) -> String {
+        elastos_common::process_identity::process_identity(pid)
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_coord_for_other_repo_is_not_adopted() {
+        let root = tempfile::tempdir().unwrap();
+        // Another repo's daemon: a live process whose API answers with
+        // another peer identity.
+        let other_api =
+            canned_kubo(|_| now_answer("200 OK", r#"{"ID":"12D3KooWsomeoneElse","Addresses":[]}"#));
+        let mut other = Command::new("sleep").arg("60").spawn().unwrap();
+        let coord = serde_json::to_vec(&serde_json::json!({
+            "mode": "public", "pid": other.id(),
+            "identity": public_store_process_identity(other.id()),
+        }))
+        .unwrap();
+        fs::write(root.path().join(PUBLIC_COORD_FILE), &coord).unwrap();
+        assert_public_start_refused(root.path(), "still runs");
+        let running = other.try_wait().unwrap().is_none();
+        let _ = other.kill();
+        other.wait().unwrap();
+        let requests = other_api.finish();
+        assert!(running, "the coord's process was signalled");
+        assert!(requests.is_empty(), "{requests:?}");
+        assert_eq!(
+            fs::read(root.path().join(PUBLIC_COORD_FILE)).unwrap(),
+            coord
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_stale_coord_is_replaced_by_the_new_child() {
+        let root = tempfile::tempdir().unwrap();
+        let mut gone = Command::new("true").spawn().unwrap();
+        let gone_pid = gone.id();
+        let identity = public_store_process_identity(gone_pid);
+        gone.wait().unwrap();
+        fs::write(
+            root.path().join(PUBLIC_COORD_FILE),
+            serde_json::to_vec(&serde_json::json!({
+                "mode": "public", "pid": gone_pid, "identity": identity,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut provider = public_fixture_provider(root.path());
+        let api = serve_fixture_api(root.path().join(PUBLIC_REPO_DIR), false);
+        let started = provider.public_start(Instant::now() + Duration::from_secs(15));
+        let coord: PublicCoord =
+            serde_json::from_slice(&fs::read(root.path().join(PUBLIC_COORD_FILE)).unwrap())
+                .unwrap();
+        let child_pid = provider.kubo_child.as_ref().map(Child::id);
+        provider.handle(Request::Shutdown);
+        api.finish();
+        started.unwrap();
+        assert_eq!(Some(coord.pid), child_pid);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_lock_stamped_otherwise_is_refused() {
+        // Any non-empty lock without exactly the `public` marker.
+        for marker in ["private", "public\n", " ", "publicx"] {
+            let root = tempfile::tempdir().unwrap();
+            fs::write(root.path().join(PUBLIC_LOCK_FILE), marker).unwrap();
+            assert_public_start_refused(root.path(), "lock belongs to another store");
+            assert_eq!(
+                fs::read_to_string(root.path().join(PUBLIC_LOCK_FILE)).unwrap(),
+                marker
+            );
+            assert!(!root.path().join(PUBLIC_REPO_DIR).exists(), "{marker:?}");
+        }
+    }
+
+    /// A zero-length lock is an interrupted creation of the public lock: it
+    /// is stamped `public` and the start goes on.
+    #[test]
+    #[cfg(unix)]
+    fn public_empty_startup_lock_is_stamped() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join(PUBLIC_LOCK_FILE), b"").unwrap();
+        let mut provider = public_fixture_provider(root.path());
+        let api = serve_fixture_api(root.path().join(PUBLIC_REPO_DIR), false);
+        let started = provider.public_start(Instant::now() + Duration::from_secs(15));
+        let marker = fs::read_to_string(root.path().join(PUBLIC_LOCK_FILE)).unwrap();
+        provider.handle(Request::Shutdown);
+        api.finish();
+        started.unwrap();
+        assert_eq!(marker, "public");
+    }
+
+    /// A response pipe that the reader closed: every write fails, or only
+    /// the flush does.
+    struct ClosedOutput {
+        fail_write: bool,
+    }
+
+    impl Write for ClosedOutput {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            if self.fail_write {
+                Err(io::Error::from(io::ErrorKind::BrokenPipe))
+            } else {
+                Ok(buffer.len())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::BrokenPipe))
+        }
+    }
+
+    /// The Runtime can close the response pipe while a public request runs.
+    /// The wire loop then still leaves through the shared shutdown, so the
+    /// owned Kubo is stopped and reaped and its coord removed.
+    #[test]
+    #[cfg(unix)]
+    fn public_child_cleanup_survives_a_closed_response_pipe() {
+        for (case, input, fail_write) in [
+            ("response write", "{\"op\":\"status\"}\n", true),
+            ("response flush", "{\"op\":\"status\"}\n", false),
+            ("parse error write", "not json\n", true),
+            ("parse error flush", "not json\n", false),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let mut provider = public_fixture_provider(root.path());
+            let api = serve_fixture_api(root.path().join(PUBLIC_REPO_DIR), false);
+            provider
+                .public_start(Instant::now() + Duration::from_secs(15))
+                .unwrap();
+            let pid = provider.kubo_child.as_ref().unwrap().id();
+            let mut output = ClosedOutput { fail_write };
+            let served = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                serve(&mut provider, io::Cursor::new(input), &mut output)
+            }));
+            let running = is_pid_alive(pid);
+            let coord = public_coord_path(root.path()).exists();
+            stop_fixture_daemon(&mut provider);
+            api.finish();
+            assert!(served.is_ok(), "{case}: the wire loop panicked");
+            assert!(!running, "{case}: the public Kubo outlived the closed pipe");
+            assert!(!coord, "{case}: the public coord was kept");
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_start_refuses_when_repo_lock_held() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join(PUBLIC_REPO_DIR);
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join(STORE_MODE_MARKER), "public").unwrap();
+        fs::write(repo.join("config"), br#"{"Identity":{"PeerID":"held"}}"#).unwrap();
+        let holder = hold_repo_lock_in_another_process(&repo.join("repo.lock"));
+        assert_public_start_refused(root.path(), "locked by another process");
+        use rustix::process::{kill_process, waitpid, Pid, Signal, WaitOptions};
+        let holder = Pid::from_raw(holder).unwrap();
+        let holder_running = matches!(waitpid(Some(holder), WaitOptions::NOHANG), Ok(None));
+        let _ = kill_process(holder, Signal::KILL);
+        let _ = waitpid(Some(holder), WaitOptions::empty());
+        assert!(holder_running, "the lock holder was signalled");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_swarm_port_in_use_is_not_ready() {
+        let root = tempfile::tempdir().unwrap();
+        let held = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+        let port = held.local_addr().unwrap().port();
+        let mut provider = IpfsProvider::new();
+        assert!(matches!(
+            provider.init(public_config(root.path(), port)),
+            Response::Ok { .. }
+        ));
+        provider.kubo_binary = Some(kubo_fixture(root.path()));
+        let started = Instant::now();
+        let response = provider.handle(request(serde_json::json!({"op": "ensure_started"})));
+        let elapsed = started.elapsed();
+        stop_fixture_daemon(&mut provider);
+        drop(held);
+        assert_eq!(error_code(&response), "not_ready");
+        assert!(
+            error_message(&response).contains(&port.to_string()),
+            "{response:?}"
+        );
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+        assert!(!root
+            .path()
+            .join(PUBLIC_REPO_DIR)
+            .with_extension("args")
+            .exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_daemon_exit_during_start_reports_its_stderr() {
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_fixture_provider(root.path());
+        provider.kubo_binary = Some(kubo_fixture_with(
+            root.path(),
+            "echo 'listen udp4 0.0.0.0:4123: bind: address already in use' >&2; exit 1; ",
+        ));
+        let started = Instant::now();
+        let response = provider.handle(request(serde_json::json!({"op": "ensure_started"})));
+        let elapsed = started.elapsed();
+        assert_eq!(error_code(&response), "not_ready");
+        assert!(
+            error_message(&response).contains("0.0.0.0:4123: bind: address already in use"),
+            "{response:?}"
+        );
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+        assert!(provider.kubo_child.is_none());
+        assert!(!public_coord_path(root.path()).exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_coord_written_at_spawn_before_health() {
+        assert_eq!(PUBLIC_START_DEADLINE, Duration::from_secs(50));
+        let root = tempfile::tempdir().unwrap();
+        // The stand-in never answers health: no API listens.
+        let mut provider = public_fixture_provider(root.path());
+        let coord_path = root.path().join(PUBLIC_COORD_FILE);
+        let observer = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(coord) = fs::read(&coord_path)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<PublicCoord>(&bytes).ok())
+                {
+                    let live = elastos_common::process_identity::process_identity(coord.pid)
+                        .ok()
+                        .flatten();
+                    return Some((coord, live));
+                }
+                if Instant::now() > deadline {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let started = Instant::now();
+        let result = provider.public_start(started + Duration::from_secs(4));
+        let elapsed = started.elapsed();
+        let (coord, live) = observer.join().unwrap().expect("no coord during startup");
+        let error = result.unwrap_err();
+        assert!(error.contains("not ready within"), "{error}");
+        assert_eq!(coord.mode, "public");
+        assert_eq!(live.as_deref(), Some(coord.identity.as_str()));
+        assert_eq!(coord.pid, fixture_pid(&root.path().join(PUBLIC_REPO_DIR)));
+        assert!(elapsed >= Duration::from_secs(2), "{elapsed:?}");
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+        assert!(provider.kubo_child.is_none());
+        assert!(!is_pid_alive(coord.pid), "the child was not reaped");
+        assert!(!root.path().join(PUBLIC_COORD_FILE).exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_shutdown_stops_kubo() {
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_fixture_provider(root.path());
+        let api = serve_fixture_api(root.path().join(PUBLIC_REPO_DIR), false);
+        provider
+            .public_start(Instant::now() + Duration::from_secs(15))
+            .unwrap();
+        let pid = provider.kubo_child.as_ref().unwrap().id();
+        assert!(public_coord_path(root.path()).exists());
+        let started = Instant::now();
+        let response = provider.handle(Request::Shutdown);
+        let elapsed = started.elapsed();
+        let requests = api.finish();
+        assert!(matches!(response, Response::Ok { .. }), "{response:?}");
+        assert!(
+            elapsed < PUBLIC_TERM_WAIT,
+            "SIGTERM was not sent: {elapsed:?}"
+        );
+        assert!(provider.kubo_child.is_none());
+        assert!(!is_pid_alive(pid));
+        assert!(!public_coord_path(root.path()).exists());
+        assert!(
+            requests
+                .iter()
+                .all(|line| line.starts_with("POST /api/v0/id")),
+            "{requests:?}"
+        );
+        assert_eq!(provider.state, KuboState::Cold);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_shutdown_kills_and_reaps_child_within_bridge_timeout() {
+        assert!(PUBLIC_SHUTDOWN_BOUND < Duration::from_millis(4500));
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_fixture_provider(root.path());
+        provider.kubo_binary = Some(kubo_fixture_ignoring_term(root.path()));
+        let api = serve_fixture_api(root.path().join(PUBLIC_REPO_DIR), true);
+        provider
+            .public_start(Instant::now() + Duration::from_secs(15))
+            .unwrap();
+        let pid = provider.kubo_child.as_ref().unwrap().id();
+        let started = Instant::now();
+        let response = provider.handle(Request::Shutdown);
+        let elapsed = started.elapsed();
+        let requests = api.finish();
+        assert!(matches!(response, Response::Ok { .. }), "{response:?}");
+        assert!(elapsed >= PUBLIC_TERM_WAIT, "{elapsed:?}");
+        assert!(elapsed < Duration::from_millis(4500), "{elapsed:?}");
+        assert!(!is_pid_alive(pid));
+        assert!(!public_coord_path(root.path()).exists());
+        assert_eq!(requests.len(), 1, "{requests:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_op_uses_one_whole_deadline() {
+        let kubo = canned_kubo(|line| {
+            if line.starts_with("POST /api/v0/pin/add") {
+                Some((
+                    Duration::from_secs(15),
+                    http_answer("200 OK", &format!(r#"{{"Pins":["{CAR_V1_ROOT}"]}}"#)),
+                ))
+            } else {
+                None
+            }
+        });
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_ready_provider(root.path(), kubo.port);
+        let started = Instant::now();
+        let response = provider.handle(request(
+            serde_json::json!({"op": "runtime_public_pin", "cid": CAR_V1_ROOT}),
+        ));
+        let elapsed = started.elapsed();
+        stop_fixture_daemon(&mut provider);
+        let requests = kubo.finish();
+        assert_eq!(error_code(&response), "pin_failed", "{response:?}");
+        assert!(elapsed >= Duration::from_secs(19), "{elapsed:?}");
+        assert!(elapsed < Duration::from_millis(20_500), "{elapsed:?}");
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        assert!(requests[1].0.starts_with("POST /api/v0/pin/ls"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn import_refuses_wrong_header_root_before_any_rpc() {
+        let kubo = canned_kubo(|_| now_answer("200 OK", ""));
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_ready_provider(root.path(), kubo.port);
+        let v0 = hex(CAR_V0_ROOT_HEX);
+        let v1 = hex(CAR_V1_ROOT_HEX);
+        let oversized = vec![0u8; MAX_PUBLIC_CAR_BYTES as usize + 1];
+        let mut responses = Vec::new();
+        for (root_cid, car) in [
+            (
+                CAR_V0_ROOT,
+                car_with_roots(std::slice::from_ref(&v1), b"block"),
+            ),
+            (
+                CAR_V0_ROOT,
+                car_with_roots(&[v0.clone(), v1.clone()], b"block"),
+            ),
+            (CAR_V0_ROOT, b"not a car".to_vec()),
+            (CAR_V0_ROOT, oversized),
+            (
+                "../escape",
+                car_with_roots(std::slice::from_ref(&v0), b"block"),
+            ),
+        ] {
+            responses.push(provider.handle(request(serde_json::json!({
+                "op": "runtime_public_import_car", "root": root_cid,
+                "car_base64": BASE64.encode(car),
+            }))));
+        }
+        stop_fixture_daemon(&mut provider);
+        let requests = kubo.finish();
+        for response in &responses {
+            assert_eq!(error_code(response), "invalid_car", "{response:?}");
+        }
+        assert!(requests.is_empty(), "{requests:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn import_empty_success_stream_is_ok() {
+        let kubo = canned_kubo(|_| now_answer("200 OK", ""));
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_ready_provider(root.path(), kubo.port);
+        let car = car_with_roots(&[hex(CAR_V1_ROOT_HEX)], b"block bytes");
+        let response = provider.handle(request(serde_json::json!({
+            "op": "runtime_public_import_car", "root": CAR_V1_ROOT,
+            "car_base64": BASE64.encode(&car),
+        })));
+        stop_fixture_daemon(&mut provider);
+        let requests = kubo.finish();
+        let Response::Ok { data: Some(data) } = response else {
+            panic!("import failed: {response:?}");
+        };
+        assert_eq!(data, serde_json::json!({"imported": true}));
+        assert_eq!(requests.len(), 1);
+        let (line, body) = &requests[0];
+        assert!(line.starts_with("POST /api/v0/dag/import?"), "{line}");
+        for pair in [
+            "pin-roots=false",
+            "fast-provide-root=false",
+            "allow-big-block=false",
+            "stats=false",
+        ] {
+            assert!(line.contains(pair), "{line}");
+        }
+        assert!(body
+            .windows(car.len())
+            .any(|window| window == car.as_slice()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn import_error_event_is_an_error() {
+        for body in [
+            r#"{"Message":"block is over 2MiB","Code":0,"Type":"error"}"#.to_string(),
+            format!(
+                r#"{{"Root":{{"Cid":{{"/":"{CAR_V1_ROOT}"}},"PinErrorMsg":"blocks missing"}}}}"#
+            ),
+            "not json".to_string(),
+        ] {
+            let answer = body.clone();
+            let kubo = canned_kubo(move |_| now_answer("200 OK", &format!("{answer}\n")));
+            let root = tempfile::tempdir().unwrap();
+            let mut provider = public_ready_provider(root.path(), kubo.port);
+            let response = provider.handle(request(serde_json::json!({
+                "op": "runtime_public_import_car", "root": CAR_V1_ROOT,
+                "car_base64": BASE64.encode(car_with_roots(&[hex(CAR_V1_ROOT_HEX)], b"")),
+            })));
+            stop_fixture_daemon(&mut provider);
+            kubo.finish();
+            assert_eq!(
+                error_code(&response),
+                "import_failed",
+                "{body}: {response:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn pin_checks_recursive_listing() {
+        let other = CAR_V0_ROOT;
+        for (keys, pinned) in [
+            (
+                format!(r#"{{"{CAR_V1_ROOT}":{{"Type":"recursive"}}}}"#),
+                true,
+            ),
+            (
+                format!(r#"{{"{CAR_V1_ROOT}":{{"Type":"indirect"}}}}"#),
+                false,
+            ),
+            (format!(r#"{{"{other}":{{"Type":"recursive"}}}}"#), false),
+            (
+                format!(
+                    r#"{{"{CAR_V1_ROOT}":{{"Type":"recursive"}},"{other}":{{"Type":"recursive"}}}}"#
+                ),
+                false,
+            ),
+            ("{}".to_string(), false),
+        ] {
+            let listing = format!(r#"{{"Keys":{keys}}}"#);
+            let kubo = canned_kubo(move |line| {
+                if line.starts_with("POST /api/v0/pin/add") {
+                    now_answer("200 OK", &format!(r#"{{"Pins":["{CAR_V1_ROOT}"]}}"#))
+                } else {
+                    now_answer("200 OK", &listing)
+                }
+            });
+            let root = tempfile::tempdir().unwrap();
+            let mut provider = public_ready_provider(root.path(), kubo.port);
+            let response = provider.handle(request(
+                serde_json::json!({"op": "runtime_public_pin", "cid": CAR_V1_ROOT}),
+            ));
+            stop_fixture_daemon(&mut provider);
+            let requests = kubo.finish();
+            if pinned {
+                let Response::Ok { data: Some(data) } = response else {
+                    panic!("{keys}: {response:?}");
+                };
+                assert_eq!(
+                    data,
+                    serde_json::json!({"cid": CAR_V1_ROOT, "pinned": true})
+                );
+            } else {
+                assert_eq!(error_code(&response), "pin_failed", "{keys}");
+            }
+            assert!(requests[0].0.starts_with(&format!(
+                "POST /api/v0/pin/add?arg={CAR_V1_ROOT}&recursive=true&offline=true"
+            )));
+            assert!(requests[1].0.starts_with(&format!(
+                "POST /api/v0/pin/ls?arg={CAR_V1_ROOT}&type=recursive&offline=true"
+            )));
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn provide_error_event_is_an_error() {
+        let events = r#"{"Extra":"","ID":"","Responses":null,"Type":3}"#;
+        for (status, body, provided) in [
+            ("200 OK", format!("{events}\n{events}\n"), true),
+            ("200 OK", String::new(), true),
+            (
+                "200 OK",
+                format!("{events}\n{{\"Message\":\"failed to provide\",\"Code\":0,\"Type\":\"error\"}}\n"),
+                false,
+            ),
+            (
+                "500 Internal Server Error",
+                r#"{"Message":"cannot provide, no connected peers","Code":0,"Type":"error"}"#
+                    .to_string(),
+                false,
+            ),
+        ] {
+            let answer = body.clone();
+            let kubo = canned_kubo(move |_| now_answer(status, &answer));
+            let root = tempfile::tempdir().unwrap();
+            let mut provider = public_ready_provider(root.path(), kubo.port);
+            let response = provider.handle(request(serde_json::json!({
+                "op": "runtime_public_provide", "cid": CAR_V1_ROOT, "timeout_secs": 10,
+            })));
+            stop_fixture_daemon(&mut provider);
+            let requests = kubo.finish();
+            assert!(requests[0]
+                .0
+                .starts_with(&format!("POST /api/v0/routing/provide?arg={CAR_V1_ROOT} ")));
+            if provided {
+                let Response::Ok { data: Some(data) } = response else {
+                    panic!("{body}: {response:?}");
+                };
+                assert_eq!(data, serde_json::json!({"cid": CAR_V1_ROOT, "provided": true}));
+            } else {
+                assert_eq!(error_code(&response), "announce_failed", "{body}");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn provide_timeout_is_an_error() {
+        let kubo = canned_kubo(|_| None);
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_ready_provider(root.path(), kubo.port);
+        let started = Instant::now();
+        let response = provider.handle(request(serde_json::json!({
+            "op": "runtime_public_provide", "cid": CAR_V1_ROOT, "timeout_secs": 1,
+        })));
+        let elapsed = started.elapsed();
+        let refused = provider.handle(request(serde_json::json!({
+            "op": "runtime_public_provide", "cid": CAR_V1_ROOT, "timeout_secs": 121,
+        })));
+        stop_fixture_daemon(&mut provider);
+        kubo.finish();
+        assert_eq!(error_code(&response), "announce_failed", "{response:?}");
+        assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
+        assert_eq!(error_code(&refused), "announce_failed");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_ops_need_a_started_store() {
+        let kubo = canned_kubo(|_| now_answer("200 OK", "{}"));
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_ready_provider(root.path(), kubo.port);
+        stop_fixture_daemon(&mut provider);
+        for op in [
+            serde_json::json!({"op": "runtime_public_pin", "cid": CAR_V1_ROOT}),
+            serde_json::json!({"op": "runtime_public_provide", "cid": CAR_V1_ROOT, "timeout_secs": 1}),
+            serde_json::json!({"op": "runtime_public_peers"}),
+        ] {
+            assert_eq!(
+                error_code(&provider.handle(request(op.clone()))),
+                "not_ready",
+                "{op}"
+            );
+        }
+        assert!(kubo.finish().is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_peers_counts_swarm_peers() {
+        let kubo =
+            canned_kubo(|_| now_answer("200 OK", r#"{"Peers":[{"Peer":"a"},{"Peer":"b"}]}"#));
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = public_ready_provider(root.path(), kubo.port);
+        let response = provider.handle(request(serde_json::json!({"op": "runtime_public_peers"})));
+        stop_fixture_daemon(&mut provider);
+        let requests = kubo.finish();
+        let Response::Ok { data: Some(data) } = response else {
+            panic!("{response:?}");
+        };
+        assert_eq!(data, serde_json::json!({"peers": 2}));
+        assert!(requests[0].0.starts_with("POST /api/v0/swarm/peers"));
+    }
+
+    #[test]
+    fn export_car_refuses_oversize() {
+        let car = vec![7u8; 100];
+        let answer = car.clone();
+        let kubo = canned_kubo(move |_| {
+            let mut reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                answer.len()
+            )
+            .into_bytes();
+            reply.extend_from_slice(&answer);
+            Some((Duration::ZERO, reply))
+        });
+        let root = tempfile::tempdir().unwrap();
+        let mut provider = bounded_cat_fixture_provider(root.path(), kubo.port);
+        let export = |provider: &mut IpfsProvider, max_bytes: u64| {
+            provider.handle(request(serde_json::json!({
+                "op": "runtime_export_car", "cid": CAR_V1_ROOT, "max_bytes": max_bytes,
+            })))
+        };
+        let over = export(&mut provider, 99);
+        let exact = export(&mut provider, 100);
+        let zero = export(&mut provider, 0);
+        let above_bound = export(&mut provider, MAX_PUBLIC_CAR_BYTES + 1);
+        let requests = kubo.finish();
+        assert_eq!(error_code(&over), "export_failed");
+        assert!(
+            error_message(&over).contains("exceeds 99 bytes"),
+            "{over:?}"
+        );
+        let Response::Ok { data: Some(data) } = exact else {
+            panic!("{exact:?}");
+        };
+        assert_eq!(
+            BASE64.decode(data["car_base64"].as_str().unwrap()).unwrap(),
+            car
+        );
+        assert_eq!(error_code(&zero), "export_failed");
+        assert_eq!(error_code(&above_bound), "export_failed");
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        for (line, _) in &requests {
+            assert!(
+                line.starts_with(&format!(
+                    "POST /api/v0/dag/export?arg={CAR_V1_ROOT}&offline=true "
+                )),
+                "{line}"
+            );
+        }
+    }
+
+    /// Kubo 0.40.1's own default bootstrap list: its built-in AutoConf
+    /// fallback, which `kubo init` writes as `auto`.
+    const KUBO_DEFAULT_BOOTSTRAP: [&str; 7] = [
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+        "/dnsaddr/va1.bootstrap.libp2p.io/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8",
+        "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+        "/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+    ];
+
+    /// Keeps a real online Kubo off the public network: it dials no address
+    /// outside 127.0.0.0/8 and resolves no DNS name.
+    fn confine_kubo_to_loopback(config: &mut serde_json::Value) {
+        config["Swarm"]["AddrFilters"] = serde_json::json!([
+            "/ip4/0.0.0.0/ipcidr/2",
+            "/ip4/64.0.0.0/ipcidr/3",
+            "/ip4/96.0.0.0/ipcidr/4",
+            "/ip4/112.0.0.0/ipcidr/5",
+            "/ip4/120.0.0.0/ipcidr/6",
+            "/ip4/124.0.0.0/ipcidr/7",
+            "/ip4/126.0.0.0/ipcidr/8",
+            "/ip4/128.0.0.0/ipcidr/1",
+            "/ip6/::/ipcidr/0",
+        ]);
+        config["DNS"]["Resolvers"] = serde_json::json!({".": "https://127.0.0.1:9/dns-query"});
+        config["Swarm"]["DisableNatPortMap"] = serde_json::json!(true);
+        config["AutoTLS"]["Enabled"] = serde_json::json!(false);
+    }
+
+    /// The shipped Kubo in both modes on one data root. Needs
+    /// `ELASTOS_TEST_KUBO=<kubo 0.40.1 binary>`; the public daemon is kept
+    /// on loopback by `confine_kubo_to_loopback`.
+    #[test]
+    #[ignore = "needs ELASTOS_TEST_KUBO"]
+    #[cfg(unix)]
+    fn public_mode_real_kubo() {
+        let kubo = PathBuf::from(std::env::var("ELASTOS_TEST_KUBO").expect("ELASTOS_TEST_KUBO"));
+        let root = tempfile::tempdir().unwrap();
+        // The private store holds the metadata and exports its CAR.
+        let mut private = cold_fixture_provider(root.path());
+        private.kubo_binary = Some(kubo.clone());
+        let mut public = IpfsProvider::new();
+        let init = public.init(public_config_with(
+            root.path(),
+            free_swarm_port(),
+            &KUBO_DEFAULT_BOOTSTRAP,
+            &[],
+        ));
+        public.kubo_binary = Some(kubo);
+        public.public.as_mut().unwrap().config_hook = Some(confine_kubo_to_loopback);
+        let refs_local = |provider: &IpfsProvider| -> Result<Vec<String>, String> {
+            let response = ureq::post(&kubo_rpc_url(provider.api_port, "refs/local", &[]))
+                .timeout(Duration::from_secs(10))
+                .call()
+                .map_err(|e| e.to_string())?;
+            let mut refs: Vec<String> = response
+                .into_string()
+                .map_err(|e| e.to_string())?
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter_map(|line| line["Ref"].as_str().map(str::to_owned))
+                .collect();
+            refs.sort();
+            Ok(refs)
+        };
+        let checks = (|| -> Result<(), String> {
+            if !matches!(init, Response::Ok { .. }) {
+                return Err(format!("public init: {init:?}"));
+            }
+            let added = private.add_bytes(
+                &BASE64.encode(br#"{"name":"public metadata fixture"}"#),
+                "metadata.json",
+                true,
+            );
+            let Response::Ok { data: Some(added) } = added else {
+                return Err(format!("private add: {added:?}"));
+            };
+            let cid = added["cid"].as_str().ok_or("no cid")?.to_string();
+            let exported = private.handle(request(serde_json::json!({
+                "op": "runtime_export_car", "cid": cid, "max_bytes": 1024 * 1024,
+            })));
+            let Response::Ok {
+                data: Some(exported),
+            } = exported
+            else {
+                return Err(format!("export: {exported:?}"));
+            };
+            let car_base64 = exported["car_base64"].as_str().ok_or("no car")?.to_string();
+            let car = BASE64.decode(&car_base64).map_err(|e| e.to_string())?;
+            if car_header_roots(&car)? != [cid.as_str()] {
+                return Err("exported CAR header does not name the root".into());
+            }
+
+            let started = public.handle(request(serde_json::json!({"op": "ensure_started"})));
+            if !matches!(started, Response::Ok { .. }) {
+                return Err(format!("public start: {started:?}"));
+            }
+            let repo = root.path().join(PUBLIC_REPO_DIR);
+            let config: serde_json::Value =
+                serde_json::from_slice(&fs::read(repo.join("config")).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            if config["Bootstrap"] != serde_json::json!(KUBO_DEFAULT_BOOTSTRAP) {
+                return Err(format!("Bootstrap: {}", config["Bootstrap"]));
+            }
+            let shown: serde_json::Value =
+                ureq::post(&kubo_rpc_url(public.api_port, "config/show", &[]))
+                    .call()
+                    .map_err(|e| e.to_string())?
+                    .into_json()
+                    .map_err(|e| e.to_string())?;
+            if shown["Addresses"]["Gateway"] != serde_json::json!([]) {
+                return Err(format!("gateway: {}", shown["Addresses"]["Gateway"]));
+            }
+            let pid = public.kubo_child.as_ref().ok_or("no child")?.id();
+
+            // A CAR whose header root differs is refused before any RPC.
+            let before = refs_local(&public)?;
+            let header_length = car[0] as usize;
+            let wrong = car_with_roots(&[hex(CAR_V1_ROOT_HEX)], &car[1 + header_length..]);
+            let refused = public.handle(request(serde_json::json!({
+                "op": "runtime_public_import_car", "root": cid,
+                "car_base64": BASE64.encode(wrong),
+            })));
+            if error_code(&refused) != "invalid_car" || refs_local(&public)? != before {
+                return Err(format!("wrong-root CAR: {refused:?}"));
+            }
+            let imported = public.handle(request(serde_json::json!({
+                "op": "runtime_public_import_car", "root": cid, "car_base64": car_base64,
+            })));
+            if !matches!(imported, Response::Ok { .. }) {
+                return Err(format!("import: {imported:?}"));
+            }
+            let pinned = public.handle(request(
+                serde_json::json!({"op": "runtime_public_pin", "cid": cid}),
+            ));
+            if !matches!(pinned, Response::Ok { .. }) {
+                return Err(format!("pin: {pinned:?}"));
+            }
+            let status =
+                public.handle(request(serde_json::json!({"op": "pin_status", "cid": cid})));
+            if !matches!(&status, Response::Ok { data: Some(data) } if data["pinned"] == true) {
+                return Err(format!("pin status: {status:?}"));
+            }
+            // The daemon holds no connection outside loopback.
+            if let Ok(out) = Command::new("lsof")
+                .args(["-a", "-n", "-P", "-i", "-p", &pid.to_string()])
+                .output()
+            {
+                let remote: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter(|line| line.contains("->") && !line.contains("->127.0.0.1:"))
+                    .map(str::to_owned)
+                    .collect();
+                if !remote.is_empty() {
+                    return Err(format!("non-loopback connections: {remote:?}"));
+                }
+            }
+            Ok(())
+        })();
+        let shutdown = public.handle(Request::Shutdown);
+        stop_fixture_daemon(&mut private);
+        checks.unwrap();
+        assert!(matches!(shutdown, Response::Ok { .. }), "{shutdown:?}");
+        assert!(!public_coord_path(root.path()).exists());
     }
 }

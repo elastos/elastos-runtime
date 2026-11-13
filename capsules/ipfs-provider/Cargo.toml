@@ -12,9 +12,12 @@ serde_json = "1.0"
 ureq = { version = "2", features = ["json"] }
 base64 = "0.22"
 url = "2"
+tracing = "=0.1.44"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# Safe signal and wait calls (ADV-04); exact pin at the locked version (rust-dkms rule 4).
+rustix = { version = "=1.1.4", features = ["process"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,0 +1,124 @@
+{
+  "about": "OPEN-LOOP F3: the viewer replies Runtime sends and the Reader and Player parse. Runtime builds each entry with its real builder and matches its keys, value types and contract constants; the Reader and Player tests parse every entry of their kind. Change both sides together.",
+  "open": [
+    {
+      "name": "object",
+      "kind": "object",
+      "reply": {
+        "schema": "elastos.library.runtime-custody-viewer/v1",
+        "content_kind": "object",
+        "mint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "viewer_session_handle": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expires_at": 1756293600,
+        "content_type": "application/pdf",
+        "plaintext_bytes": 5,
+        "chunk_count": 1,
+        "chunk_plaintext_bytes": 1048576
+      }
+    },
+    {
+      "name": "object from the pool",
+      "kind": "object",
+      "reply": {
+        "schema": "elastos.library.runtime-custody-viewer/v1",
+        "content_kind": "object",
+        "mint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "viewer_session_handle": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expires_at": 1756293600,
+        "content_type": "application/pdf",
+        "plaintext_bytes": 5,
+        "chunk_count": 1,
+        "chunk_plaintext_bytes": 1048576,
+        "read_ahead_segments": 6
+      }
+    },
+    {
+      "name": "media v1",
+      "kind": "media",
+      "reply": {
+        "schema": "elastos.library.runtime-custody-viewer/v1",
+        "content_kind": "media",
+        "mint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "viewer_session_handle": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expires_at": 1756293600,
+        "mime_type": "video/mp4",
+        "codecs": "avc1.640028,mp4a.40.2",
+        "has_init_segment": true,
+        "segment_count": 3
+      }
+    },
+    {
+      "name": "media v1 from the pool",
+      "kind": "media",
+      "reply": {
+        "schema": "elastos.library.runtime-custody-viewer/v1",
+        "content_kind": "media",
+        "mint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "viewer_session_handle": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expires_at": 1756293600,
+        "mime_type": "video/mp4",
+        "codecs": "avc1.640028,mp4a.40.2",
+        "has_init_segment": true,
+        "segment_count": 3,
+        "read_ahead_segments": 6
+      }
+    },
+    {
+      "name": "dash v2",
+      "kind": "dash",
+      "reply": {
+        "schema": "elastos.library.runtime-custody-viewer/v2",
+        "content_kind": "media",
+        "mint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "viewer_session_handle": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expires_at": 1756293600,
+        "renditions": [
+          { "rendition": "video", "mime_type": "video/mp4", "codecs": "avc1.640028", "segment_count": 3 },
+          { "rendition": "audio", "mime_type": "audio/mp4", "codecs": "mp4a.40.2", "segment_count": 2 }
+        ]
+      }
+    },
+    {
+      "name": "dash v2 from the pool",
+      "kind": "dash",
+      "reply": {
+        "schema": "elastos.library.runtime-custody-viewer/v2",
+        "content_kind": "media",
+        "mint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "viewer_session_handle": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expires_at": 1756293600,
+        "renditions": [
+          { "rendition": "video", "mime_type": "video/mp4", "codecs": "avc1.640028", "segment_count": 3 },
+          { "rendition": "audio", "mime_type": "audio/mp4", "codecs": "mp4a.40.2", "segment_count": 2 }
+        ],
+        "read_ahead_segments": 6
+      }
+    }
+  ],
+  "part": [
+    {
+      "name": "object chunk",
+      "kind": "object",
+      "reply": {
+        "schema": "elastos.library.runtime-custody-viewer-part/v1",
+        "content_kind": "object",
+        "mint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "viewer_session_handle": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "chunk_index": 0,
+        "encoding": "base64",
+        "data": "aGVsbG8="
+      }
+    },
+    {
+      "name": "media part",
+      "kind": "media",
+      "reply": {
+        "schema": "elastos.library.runtime-custody-viewer-part/v1",
+        "mint_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "viewer_session_handle": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "encoding": "base64",
+        "data": "aW5pdA=="
+      }
+    }
+  ]
+}

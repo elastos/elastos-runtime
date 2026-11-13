@@ -1454,10 +1454,10 @@ mod tests {
         let expected = manifest_names
             .intersection(&active_names)
             .copied()
-            // Protected content ships after 0.8.0, so its viewer stays out of Home.
+            // Protected content ships after 0.8.0, so its apps stay out of Home.
             .filter(|name| {
                 crate::protected_content_runtime::protected_content_enabled(data_dir.path())
-                    || *name != crate::protected_content_runtime::ELACITY_PLAYER_CAPSULE_ID
+                    || !crate::protected_content_runtime::is_protected_content_capsule(name)
             })
             // WalletConnect stays out until an operator pins its config.
             .filter(|name| *name != WALLET_WALLETCONNECT_CAPSULE_ID)

@@ -105,7 +105,17 @@ pub(super) fn browser_projected_evm_accounts(
     let mut seen = HashSet::new();
     let mut projected = Vec::new();
     for account in accounts {
-        for namespace in BROWSER_SUPPORTED_EVM_CHAIN_NAMESPACES {
+        // A contract account is offered only on the chain it was deployed to.
+        for namespace in BROWSER_SUPPORTED_EVM_CHAIN_NAMESPACES
+            .iter()
+            .filter(|namespace| {
+                elastos_wallet_contract::account_serves_chain_namespace(
+                    &account.chain_namespace,
+                    &account.proof_type,
+                    namespace,
+                )
+            })
+        {
             let key = format!("{}:{}", namespace, account.address.to_ascii_lowercase());
             if !seen.insert(key) {
                 continue;
@@ -143,7 +153,13 @@ pub(super) fn browser_account_access_account(
             return Some(account.clone());
         }
         if let Some(account) = summary.accounts.iter().find(|account| {
-            account.account_id == default_id && browser_wallet_account_is_selectable_evm(account)
+            account.account_id == default_id
+                && browser_wallet_account_is_selectable_evm(account)
+                && elastos_wallet_contract::account_serves_chain_namespace(
+                    &account.chain_namespace,
+                    &account.proof_type,
+                    chain_namespace,
+                )
         }) {
             let mut projected_account = account.clone();
             projected_account.chain_namespace = chain_namespace.to_string();
@@ -541,5 +557,47 @@ mod browser_wallet_bridge_tests {
             browser_default_account_id(&summary).as_deref(),
             Some("wallet:eip155:20:0x333")
         );
+    }
+
+    /// A contract account exists only on the chain it was deployed to, so
+    /// Browser offers it there and nowhere else, even as the default.
+    #[test]
+    fn browser_never_projects_a_contract_account_onto_another_chain() {
+        let managed = account("eip155:20", "wallet:eip155:20:0x111");
+        let contract = SystemWalletAccountSummary {
+            proof_type: "siwe_erc1271".to_string(),
+            ..connector_account("eip155:20", "wallet:eip155:20:0x333")
+        };
+        let summary = SystemWalletAccountsSummary {
+            available: true,
+            linked_count: 2,
+            accounts: vec![managed.clone(), contract.clone()],
+            default_accounts: vec![default_account(
+                "eip155:20",
+                "wallet:eip155:20:0x333",
+                "browser_connect",
+            )],
+            note: None,
+        };
+
+        let projected = browser_projected_evm_accounts(&summary);
+        assert!(projected
+            .iter()
+            .any(|account| account.account_id == contract.account_id
+                && account.chain_namespace == "eip155:20"));
+        assert!(!projected
+            .iter()
+            .any(|account| account.account_id == contract.account_id
+                && account.chain_namespace == "eip155:8453"));
+        assert_eq!(
+            browser_account_access_account(&summary, "eip155:20")
+                .expect("the contract serves its own chain")
+                .account_id,
+            contract.account_id
+        );
+        let base = browser_account_access_account(&summary, "eip155:8453")
+            .expect("an externally owned account serves Base");
+        assert_eq!(base.account_id, managed.account_id);
+        assert_eq!(base.chain_namespace, "eip155:8453");
     }
 }
