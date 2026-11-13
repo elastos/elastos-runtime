@@ -534,7 +534,7 @@ async function run() {
           await recoveryPage.goto(`${server.baseUrl}/fixture?connector=${connector.id}&mode=recovery`);
           const recoveryFrame = await waitForConnectorFrame(recoveryPage);
           await recoveryFrame.getByText('Check your phone wallet.',{exact:false}).waitFor();
-          assert.equal(await recoveryFrame.locator('[data-wallet-request-sign]').count(),0,'unfinished transaction offers recovery without another send');
+          assert(await recoveryFrame.locator('[data-wallet-request-sign]').count() === 0,'unfinished transaction offers recovery without another send');
           screenshots.push(await saveScreenshot(recoveryPage,`walletconnect-recovery-${width}.png`));
           await recoveryPage.close();
         }
