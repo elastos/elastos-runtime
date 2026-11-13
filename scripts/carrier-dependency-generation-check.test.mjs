@@ -12,9 +12,8 @@ function compatibleGraph() {
     ["iroh-base", "1.4.1"],
     ["iroh-dns", "1.4.1"],
     ["iroh-relay", "1.4.1"],
-    ["iroh-gossip", "0.101.0"],
+    ["iroh-gossip", "0.102.0"],
     ["iroh-mdns-address-lookup", "0.4.0"],
-    ["distributed-topic-tracker", "0.3.5"],
     ["hickory-proto", "0.26.2"],
     ["n0-dns-resolver", "0.1.0"],
     ["ed25519-dalek", "2.2.0"],
@@ -25,16 +24,16 @@ function compatibleGraph() {
     ["quick-xml", "0.41.0"],
     ["bincode", "1.3.3"],
     ["elastos-identity", "2.0.1"],
+    ["x25519-dalek", "2.0.1"],
   ];
   const packages = entries.map(([name, version]) => ({ name, version, id: `${name}@${version}` }));
   const edges = new Map([
-    ["distributed-topic-tracker@0.3.5", ["iroh@1.4.1", "iroh-gossip@0.101.0"]],
     ["iroh@1.4.1", ["ed25519-dalek@3.0.0-rc.0"]],
     ["elastos-identity@2.0.1", ["ed25519-dalek@2.2.0"]],
   ]);
   return {
     packages,
-    resolve: { nodes: packages.map(({ id }) => ({ id, deps: (edges.get(id) || []).map(pkg => ({ pkg })) })) },
+    resolve: { nodes: packages.map(({ id }) => ({ id, features: id === "x25519-dalek@2.0.1" ? ["static_secrets", "zeroize"] : [], deps: (edges.get(id) || []).map(pkg => ({ pkg })) })) },
   };
 }
 
@@ -76,7 +75,7 @@ for (const linked of [false, true]) {
   });
 }
 
-test("accepts iroh 1.4.1 with the retained gossip and tracker", () => {
+test("accepts iroh 1.4.1 with gossip and no topic tracker", () => {
   assert.deepEqual(inspectMetadata(compatibleGraph(), "fixture").iroh, ["1.4.1"]);
 });
 
@@ -87,7 +86,6 @@ for (const name of [
   "iroh-relay",
   "iroh-gossip",
   "iroh-mdns-address-lookup",
-  "distributed-topic-tracker",
   "hickory-proto",
   "n0-dns-resolver",
 ]) {
@@ -110,10 +108,24 @@ test("rejects the retired DNS resolver", () => {
   assert.throws(() => inspectMetadata(graph, "fixture"), /resolves hickory-resolver as/);
 });
 
-for (const source of ["distributed-topic-tracker@0.3.5", "elastos-identity@2.0.1", "iroh@1.4.1"]) {
+for (const source of ["elastos-identity@2.0.1", "iroh@1.4.1"]) {
   test(`rejects a disconnected ${source}`, () => {
     const graph = compatibleGraph();
     graph.resolve.nodes.find(node => node.id === source).deps = [];
     assert.throws(() => inspectMetadata(graph, "fixture"), /does not connect/);
   });
 }
+
+for (const version of ["0.3.5", "0.4.0"]) {
+  test(`rejects retired distributed-topic-tracker ${version}`, () => {
+    const graph = compatibleGraph();
+    graph.packages.push({ name: "distributed-topic-tracker", version, id: `distributed-topic-tracker@${version}` });
+    assert.throws(() => inspectMetadata(graph, "fixture"), /resolves distributed-topic-tracker as/);
+  });
+}
+
+test("rejects HPKE private keys without zeroization", () => {
+  const graph = compatibleGraph();
+  graph.resolve.nodes.find(node => node.id === "x25519-dalek@2.0.1").features = ["static_secrets"];
+  assert.throws(() => inspectMetadata(graph, "fixture"), /X25519 2.x private keys must enable zeroize/);
+});
