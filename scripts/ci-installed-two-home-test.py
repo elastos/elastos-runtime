@@ -4,6 +4,8 @@ import copy
 import json
 from pathlib import Path
 import runpy
+import os
+import stat
 import tempfile
 import unittest
 from unittest import mock
@@ -13,6 +15,23 @@ JOURNEY = runpy.run_path(str(ROOT / 'scripts/ci-installed-journeys.py'))
 
 
 class TwoHomeReceiptTests(unittest.TestCase):
+    def test_fresh_home_and_data_are_private_with_the_operator_umask(self):
+        fresh = JOURNEY['fresh_fixture']
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)/'source'
+            data = home/'.local/share/elastos'
+            data.mkdir(parents=True)
+            (data/'components.json').write_text('{}')
+            prior = os.umask(0o022)
+            try:
+                with mock.patch.dict(fresh.__globals__, {'engine_paths':lambda _: (None,None,None,data/'missing-engine')}):
+                    destination = Path(temporary)/'fresh'
+                    copied = fresh(home,data,destination,include_engine=False)
+                self.assertEqual(stat.S_IMODE(destination.stat().st_mode),0o700)
+                self.assertEqual(stat.S_IMODE(copied.stat().st_mode),0o700)
+            finally:
+                os.umask(prior)
+
     def test_source_home_jobs_run_and_require_the_message_receipt(self):
         source = (ROOT/'.github/workflows/ci.yml').read_text()
         for job in ('source-home-linux', 'source-home-macos'):
@@ -33,6 +52,8 @@ class TwoHomeReceiptTests(unittest.TestCase):
                          for name in ('a','b','community')],
                 'process_cleanup':[{'status':'passed', 'after':{'runtime':0}} for _ in range(5)],
                 'transport':{'carrier_network':'direct','mdns':False},
+                'browser_cross_home_http_requests':0,
+                'direct_endpoint_observations':[{'relay_endpoints':0} for _ in range(5)],
                 'results':{name:'passed' for name in ('community_post','direct_received','sender_delivered',
                                                      'offline_pending','restart_delivery')},
                 'negative_controls':{name:{'assertion_rejected':True, 'api_state':'pending', 'ui_detail':'Sending'}
@@ -46,7 +67,8 @@ class TwoHomeReceiptTests(unittest.TestCase):
             changed = copy.deepcopy(valid)
             changed[key] = 'stale'
             self.assertFalse(check(changed, self.identity()), key)
-        for key, value in [('fixture_removed',False), ('homes',[]), ('process_cleanup',[])]:
+        for key, value in [('fixture_removed',False), ('homes',[]), ('process_cleanup',[]),
+                           ('browser_cross_home_http_requests',1), ('direct_endpoint_observations',[])]:
             changed = copy.deepcopy(valid)
             changed[key] = value
             self.assertFalse(check(changed, self.identity()), key)

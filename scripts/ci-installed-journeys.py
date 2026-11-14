@@ -1695,9 +1695,9 @@ def fresh_fixture(home, data, destination, include_engine=True):
     needed = sum(path.stat().st_size for name in immutable for path in (data / name).rglob("*")
                  if path.is_file() and not path.is_symlink() and not any(parent in excluded for parent in (path, *path.parents)))
     require_disk_space(data, needed)
-    destination.mkdir(parents=True, exist_ok=False)
+    destination.mkdir(mode=0o700, parents=True, exist_ok=False)
     target = destination / data.relative_to(home)
-    target.mkdir(parents=True)
+    target.mkdir(mode=0o700, parents=True)
     for name in immutable:
         if (data / name).exists():
             shutil.copytree(data / name, target / name, symlinks=True, ignore=ignore)
@@ -1759,6 +1759,9 @@ def two_home_receipt_valid(row, identity):
                                          and sum(item["after"].values()) == 0 for item in cleanup)
             and row.get("transport", {}).get("carrier_network") == "direct"
             and row.get("transport", {}).get("mdns") is False
+            and row.get("browser_cross_home_http_requests") == 0
+            and len(row.get("direct_endpoint_observations", [])) == 5
+            and all(item.get("relay_endpoints") == 0 for item in row["direct_endpoint_observations"])
             and all(row.get("results", {}).get(name) == "passed" for name in (
                 "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
             and all(row.get("negative_controls", {}).get(name, {}).get("assertion_rejected") is True
@@ -1779,7 +1782,8 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     control = root / "control"
     control.mkdir(mode=0o700)
-    record = dict(identity, network_arrangement=network, results={}, homes=[], negative_controls={})
+    record = dict(identity, network_arrangement=network, results={}, homes=[], negative_controls={},
+                  direct_endpoint_observations=[])
     receipt_path = evidence / "installed-journeys.json"
     children, fixtures, browser = {}, {}, None
     cleanup = []
@@ -1802,6 +1806,20 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
                                      env=environment(owner), stdout=log, stderr=log, start_new_session=True)
         children[name] = child
         wait_healthy(child, owner[2], "two-Home " + name)
+        coordinates = json.loads(bounded_text(owner[1] / "gateway-runtime-coords.json"))
+        api = coordinates["api_url"].rstrip("/")
+        token = post_json(api + "/api/auth/attach", {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
+        ticket = post_json(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
+        assert len(ticket) <= 16384
+        decoded = json.loads(base64.b32decode(ticket.upper() + "=" * (-len(ticket) % 8)))
+        def relay(value):
+            if isinstance(value, dict):
+                return any("relay" in key.lower() or relay(item) for key, item in value.items())
+            if isinstance(value, list):
+                return any(map(relay, value))
+            return isinstance(value, str) and value.startswith(("http://", "https://", "ws://", "wss://"))
+        assert decoded["endpoints"] and not relay(decoded), "direct-only fixture advertised a relay route"
+        record["direct_endpoint_observations"].append({"home": name, "relay_endpoints": 0})
     def stop(name):
         child = children.pop(name)
         row = cleanup_runtime(child, fixtures[name][1])

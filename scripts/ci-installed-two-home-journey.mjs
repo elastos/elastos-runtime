@@ -24,7 +24,7 @@ async function run() {
   const [baseA, baseB, evidence, control] = process.argv.slice(2);
   const bases = [baseA, baseB];
   assert(bases.every(base => new URL(base).hostname === 'localhost'), 'installed journey uses localhost for passkeys');
-  const result = {stage:'sign_in', results:{}, negative_controls:{}};
+  const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], browser_cross_home_http_requests:0};
   let sequence = 0;
   async function runtime(action) {
     const id = ++sequence;
@@ -49,7 +49,15 @@ async function run() {
     browser = await chromium.launch({headless:true});
     const homes=[];
     for(const [i,base] of bases.entries()) {
-      const context=await browser.newContext({timezoneId:'UTC', viewport:{width:1440,height:900}});
+      const context=await browser.newContext({timezoneId:'UTC', serviceWorkers:'block', viewport:{width:1440,height:900}});
+      await context.route('**/*', route => {
+        const url = new URL(route.request().url());
+        if (['http:', 'https:'].includes(url.protocol) && url.origin !== base) {
+          result.browser_cross_home_http_requests++;
+          return route.abort();
+        }
+        return route.continue();
+      });
       const page=await context.newPage();
       const cdp=await context.newCDPSession(page);
       await cdp.send('WebAuthn.enable');
@@ -61,7 +69,9 @@ async function run() {
       result.stage='passkey_registration_'+i;
       const registered=page.waitForResponse(r=>r.url().endsWith('/api/auth/passkey/register/complete'));
       await page.locator('#home-unlock-primary').click();
-      assert((await registered).ok(),'passkey registration');
+      const registration = await registered;
+      result.registration_http_status = registration.status();
+      if (!registration.ok()) throw new Error('passkey registration HTTP '+registration.status()+' '+await registration.text());
       result.stage='home_ready_'+i;
       await page.waitForFunction(()=>document.body.dataset.homeStatus==='ready'&&document.body.dataset.homeAuthority==='signed',null,{timeout:60000});
       async function app(target,query={}) {
@@ -201,6 +211,7 @@ async function run() {
     await direct.screenshot({path:join(evidence,'direct-a-desktop.png'),fullPage:true});
     await direct.setViewportSize({width:390,height:844});
     await direct.screenshot({path:join(evidence,'direct-a-phone.png'),fullPage:true});
+    assert.equal(result.browser_cross_home_http_requests,0,'browser calls only its own Home; peer delivery belongs to Carrier');
     result.status='passed';
   } catch(error) {
     result.status='failed';
