@@ -4,7 +4,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
-use n0_future::{SinkExt, StreamExt, time};
+use n0_future::{SinkExt, StreamExt, time as async_time};
 use rand::RngExt;
 use time::{Date, OffsetDateTime};
 use tokio::{
@@ -383,7 +383,7 @@ where
 
         let mut rate_limit_notified = false;
         let mut pending_frame = None;
-        let mut budget_wait = Box::pin(time::sleep(Duration::ZERO));
+        let mut budget_wait = Box::pin(async_time::sleep(Duration::ZERO));
 
         loop {
             tokio::select! {
