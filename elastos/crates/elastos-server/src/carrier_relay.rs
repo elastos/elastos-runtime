@@ -89,6 +89,106 @@ pub(super) async fn configured_server(
 mod tests {
     use super::*;
 
+    async fn real_relay() -> (iroh_relay::server::Server, url::Url) {
+        let mut config = iroh_relay::server::ServerConfig::default();
+        config.relay = Some(iroh_relay::server::RelayConfig::new(
+            "127.0.0.1:0".parse().unwrap(),
+        ));
+        let server = iroh_relay::server::Server::spawn(config).await.unwrap();
+        let url = format!("http://{}/", server.http_addr().unwrap())
+            .parse()
+            .unwrap();
+        (server, url)
+    }
+
+    #[tokio::test]
+    async fn pin_policy_rejects_foreign_explicit_dials() {
+        let (pinned, pin) = real_relay().await;
+        let (foreign, other) = real_relay().await;
+        let endpoint = super::super::short_lived_endpoint_builder(
+            iroh::SecretKey::from_bytes(&[210; 32]),
+            super::super::CarrierNodeNetwork::Public,
+            Some(&pin),
+        )
+        .unwrap()
+        .bind()
+        .await
+        .unwrap();
+        let peer = iroh::SecretKey::from_bytes(&[211; 32]).public();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            endpoint.connect(
+                iroh::EndpointAddr::new(peer).with_relay_url(other.as_str().parse().unwrap()),
+                b"elastos/test",
+            ),
+        )
+        .await;
+        endpoint.close().await;
+        foreign.shutdown().await.unwrap();
+        pinned.shutdown().await.unwrap();
+        assert!(
+            result.is_ok_and(|result| result
+                .is_err_and(|error| format!("{error:#}").contains("rejected locally"))),
+            "a foreign relay must be rejected before a transport dial"
+        );
+    }
+
+    #[tokio::test]
+    async fn pin_policy_filters_memory_and_restores_after_gossip_rebuild() {
+        let (pinned, pin) = real_relay().await;
+        let (foreign, other) = real_relay().await;
+        let directory = tempfile::tempdir().unwrap();
+        let (key, did) = elastos_identity::derive_did(&[212; 32]);
+        let node = super::super::start_carrier_node_with_network(
+            &key,
+            &did,
+            directory.path().to_path_buf(),
+            None,
+            super::super::CarrierNetworkPolicy {
+                network: super::super::CarrierNodeNetwork::Public,
+                relay: Some(pin.clone()),
+            },
+            Some("127.0.0.1:0".parse().unwrap()),
+            &[],
+        )
+        .await
+        .unwrap();
+        let peer = iroh::SecretKey::from_bytes(&[213; 32]).public();
+        node.memory_lookup.add_endpoint_info(
+            iroh::EndpointAddr::new(peer).with_relay_url(other.as_str().parse().unwrap()),
+        );
+        let mut foreign_seen = false;
+        for rebuild in [false, true] {
+            if rebuild {
+                super::super::rebuild_carrier_gossip(&mut *node.gossip_state.lock().await)
+                    .await
+                    .unwrap();
+            }
+            let services = node.endpoint.address_lookup().unwrap();
+            let found = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                services.resolve(peer).take(2).collect::<Vec<_>>(),
+            )
+            .await
+            .unwrap();
+            foreign_seen |= found
+                .into_iter()
+                .filter_map(|item| item.ok().and_then(Result::ok))
+                .any(|item| {
+                    item.into_endpoint_addr()
+                        .relay_urls()
+                        .any(|relay| relay.as_str() != pin.as_str())
+                });
+        }
+        node.shutdown().await;
+        foreign.shutdown().await.unwrap();
+        pinned.shutdown().await.unwrap();
+        assert!(
+            !foreign_seen,
+            "memory and rebuilt gossip must retain only the Home's pinned relay"
+        );
+    }
+
     #[test]
     fn relay_configuration_requires_an_origin() {
         for raw in [

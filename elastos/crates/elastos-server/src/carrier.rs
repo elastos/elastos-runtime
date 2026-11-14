@@ -1900,7 +1900,10 @@ pub async fn start_carrier_node_with_registry_bound(
         did,
         data_dir,
         provider_registry,
-        network,
+        CarrierNetworkPolicy {
+            network,
+            relay: approved,
+        },
         bind_addr,
         community_bootstrap_node_ids,
     )
@@ -1919,11 +1922,19 @@ pub(crate) async fn start_isolated_carrier_node_with_registry(
         did,
         data_dir,
         provider_registry,
-        CarrierNodeNetwork::Isolated,
+        CarrierNetworkPolicy {
+            network: CarrierNodeNetwork::Isolated,
+            relay: None,
+        },
         Some("0.0.0.0:0".parse()?),
         &[],
     )
     .await
+}
+
+struct CarrierNetworkPolicy {
+    network: CarrierNodeNetwork,
+    relay: Option<url::Url>,
 }
 
 async fn start_carrier_node_with_network(
@@ -1931,10 +1942,14 @@ async fn start_carrier_node_with_network(
     did: &str,
     data_dir: PathBuf,
     provider_registry: Option<Weak<ProviderRegistry>>,
-    network: CarrierNodeNetwork,
+    policy: CarrierNetworkPolicy,
     bind_addr: Option<std::net::SocketAddr>,
     community_bootstrap_node_ids: &[String],
 ) -> Result<CarrierNode> {
+    let CarrierNetworkPolicy {
+        network,
+        relay: approved,
+    } = policy;
     let expected_did = crate::crypto::encode_signing_key_did(signing_key);
     let decoded_did =
         decode_did_key(did).context("Carrier DID must be one canonical Ed25519 did:key")?;
@@ -1943,7 +1958,6 @@ async fn start_carrier_node_with_network(
     }
     let secret_key = SecretKey::from_bytes(&signing_key.to_bytes());
 
-    let approved = parse_elastos_relay_url(std::env::var("ELASTOS_RELAY_URL").ok().as_deref())?;
     let requested_bind_addr = bind_addr.unwrap_or(
         DEFAULT_CARRIER_BIND_ADDR
             .parse::<std::net::SocketAddr>()
@@ -18460,7 +18474,10 @@ pub(crate) mod tests {
             &did,
             hub_dir.path().to_path_buf(),
             None,
-            CarrierNodeNetwork::Isolated,
+            CarrierNetworkPolicy {
+                network: CarrierNodeNetwork::Isolated,
+                relay: None,
+            },
             Some("127.0.0.1:0".parse().unwrap()),
             &[hub_id],
         )
