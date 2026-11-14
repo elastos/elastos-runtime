@@ -1932,6 +1932,10 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host"):
                 row.get("visible_failure", {}).get("reason") == "peer_unreachable" and
                 row.get("visible_failure", {}).get("ui_detail") == "Unconfirmed" and
                 row.get("visible_failure", {}).get("retry_same_message") is True and
+                row.get("visible_failure", {}).get("b_alive") is True and
+                row.get("visible_failure", {}).get("b_health") == 200 and
+                row.get("visible_failure", {}).get("dropped_packets", 0) > 0 and
+                row.get("results", {}).get("network_recovery") == "passed" and
                 0 < row.get("visible_failure", {}).get("elapsed_ms", 0) < 110000))
             and all(row.get("results", {}).get(name) == "passed" for name in (
                 "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
@@ -2111,21 +2115,26 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
                 if request.exists():
                     value = private_json(request)
                     if value["id"] > last:
-                        assert value["id"] == last + 1 and value["action"] in {"stop_b", "start_b", "promote"}
+                        assert value["id"] == last + 1 and value["action"] in {"stop_b", "start_b", "promote", "block_paths", "observe_blocked", "unblock_paths"}
                         if value["action"] == "promote":
                             assert network == "relay-to-direct"
                             promote()
                         elif value["action"] == "stop_b":
                             stop("b")
-                            if topology:
-                                topology.block_paths(True)
-                                record["all_carrier_paths_blocked"] = True
-                        else:
-                            if topology:
-                                topology.block_paths(False)
+                        elif value["action"] == "start_b":
                             launch("b")
+                        elif value["action"] == "observe_blocked":
+                            assert topology and children["b"].poll() is None
+                            observation = {"b_alive":True, "b_health":topology.http_json("b", f"http://{fixtures['b'][2]}/healthz", health=True),
+                                           "dropped_packets":topology.blocked_packets()}
+                            assert observation["b_health"] == 200 and observation["dropped_packets"] > 0
+                            record["all_carrier_paths_blocked"] = True
+                        else:
+                            assert topology
+                            topology.block_paths(value["action"] == "block_paths")
                         last = value["id"]
-                        private_json(control / "response.json", {"id": last, "status": "passed"})
+                        private_json(control / "response.json", {"id": last, "status": "passed",
+                            "observation": observation if value["action"] == "observe_blocked" else None})
                 time.sleep(.1)
             observed = json.loads((evidence / "two-home-ui.json").read_text())
             record.update(observed)

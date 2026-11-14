@@ -50,12 +50,12 @@ async function run() {
     const id = ++sequence;
     writeFileSync(join(control, 'request.json.next'), JSON.stringify({id, action}), {flag:'wx', mode:0o600});
     renameSync(join(control, 'request.json.next'), join(control, 'request.json'));
-    await until('owned Runtime action', async () => {
+    return (await until('owned Runtime action', async () => {
       let reply;
       try {reply = JSON.parse(readFileSync(join(control, 'response.json'), 'utf8'));}
       catch (error) {if (error.code !== 'ENOENT') throw error;}
-      return reply?.id === id && reply.status === 'passed';
-    }, 120000);
+      return reply?.id === id && reply.status === 'passed' && reply;
+    }, 120000)).observation;
   }
   const sleep = ms => new Promise(resolve=>setTimeout(resolve,ms));
   async function until(label, fn, ms=150000) {
@@ -192,6 +192,46 @@ async function run() {
     result.results.sender_delivered='passed';
     result.direct={text,recipient_state:received.delivery_state,sender_state:settled.delivery_state,sender_detail:senderDetail};
     if (process.env.ELASTOS_TWO_HOME_PROMOTION === '1') await runtime('promote');
+    if (process.env.ELASTOS_TWO_HOME_FAILURE_CHECK === '1') {
+      result.stage='visible_failure';
+      await runtime('block_paths');
+      const started=Date.now();
+      const blockedText='Two Home blocked network '+crypto.randomUUID();
+      const blockedSend=await api(ac,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text:blockedText});
+      assert.equal(blockedSend.status,'pending');
+      assert(Date.now()-started<15000,'failed attempt returns within its dial and receipt budgets');
+      const reason=await until('bounded visible delivery failure',async()=>{
+        const message=await senderMessage(blockedText);
+        return message?.delivery_issue==='peer_unreachable' && await detail(blockedText)==='Unconfirmed' && message;
+      },85000);
+      const row=direct.locator('#message-list li.message.self-message').filter({has:direct.locator('.message-body').filter({hasText:blockedText})});
+      assert.match(await row.innerText(),/Your Home cannot reach this contact/);
+      const observation=await runtime('observe_blocked');
+      assert.equal(observation.b_alive,true);
+      assert.equal(observation.b_health,200);
+      assert(observation.dropped_packets>0,'real Carrier packets hit the owned block');
+      await row.getByRole('button',{name:'Retry',exact:true}).click();
+      await until('manual retry returns',async()=>await row.getByRole('button',{name:'Retry',exact:true}).isEnabled(),20000);
+      assert.equal((await senderMessage(blockedText)).message_id,reason.message_id);
+      result.visible_failure={reason:reason.delivery_issue,ui_detail:await detail(blockedText),elapsed_ms:Date.now()-started,retry_same_message:true,...observation};
+      result.results.visible_failure='passed';
+      await runtime('unblock_paths');
+      const recovered=await until('same running B receives after network recovery',async()=> {
+        const messages=(await api(bc,path)).messages;
+        return messages.find(message=>message.text===blockedText&&message.direction==='incoming');
+      });
+      assertReceivedDirect([recovered],reason.message_id,blockedText);
+      const settled=await until('network recovery settles original receipt',async()=> {
+        const message=await senderMessage(blockedText);
+        return message?.delivery_state==='receipt_settled' && message;
+      });
+      const time=await until('network recovery replaces failure with time',async()=> {
+        const value=await detail(blockedText);
+        return /^\d{2}:\d{2}$/.test(value) && value;
+      });
+      assertSenderDelivery(settled,time);
+      result.results.network_recovery='passed';
+    }
     result.stage='offline_pending';
     // Close B's projections before stopping its owned Runtime; retain only its passkey context.
     for(const page of b.context.pages()) if(page!==b.page) await page.close();
@@ -216,21 +256,6 @@ async function run() {
     }
     result.negative_controls.sender_delivered={assertion_rejected:true,broken_input:'B stopped before send',...pendingObservations.at(-1),samples:pendingObservations.length,observations:pendingObservations};
     result.results.offline_pending='passed';
-    if (process.env.ELASTOS_TWO_HOME_FAILURE_CHECK === '1') {
-      result.stage='visible_failure';
-      const started=Date.now();
-      const reason=await until('bounded visible delivery failure',async()=>{
-        const message=await senderMessage(offlineText);
-        return message?.delivery_issue==='peer_unreachable' && await detail(offlineText)==='Unconfirmed' && message;
-      },85000);
-      const row=direct.locator('#message-list li.message.self-message').filter({has:direct.locator('.message-body').filter({hasText:offlineText})});
-      assert.match(await row.innerText(),/Your Home cannot reach this contact/);
-      await row.getByRole('button',{name:'Retry',exact:true}).click();
-      await until('manual retry returns',async()=>await row.getByRole('button',{name:'Retry',exact:true}).isEnabled(),20000);
-      assert.equal((await senderMessage(offlineText)).message_id,reason.message_id);
-      result.visible_failure={reason:reason.delivery_issue,ui_detail:await detail(offlineText),elapsed_ms:Date.now()-started,retry_same_message:true};
-      result.results.visible_failure='passed';
-    }
     result.stage='restart_delivery';
     await runtime('start_b');
     await b.page.reload({waitUntil:'domcontentloaded'});

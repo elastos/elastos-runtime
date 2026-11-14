@@ -80,6 +80,16 @@ class MessageNetwork:
             self.run("nat-" + side, "iptables", "-I" if blocked else "-D", "FORWARD",
                      *( ["1"] if blocked else [] ), "-j", "DROP")
 
+    def blocked_packets(self):
+        packets = 0
+        for side in ("a", "b"):
+            output = subprocess.run([*self.prefix("nat-" + side), "iptables", "-nvxL", "FORWARD"],
+                check=True, capture_output=True, text=True, timeout=15).stdout
+            rows = [line.split() for line in output.splitlines() if line.split() and line.split()[0].isdigit()]
+            assert rows and rows[0][2] == "DROP", "the owned block must be first"
+            packets += int(rows[0][0])
+        return packets
+
     def promote(self, fixtures):
         # Simulate a router opening a public UDP mapping after relay fallback.
         # Carrier receives operator-owned route hints; the apps still use DIDs.

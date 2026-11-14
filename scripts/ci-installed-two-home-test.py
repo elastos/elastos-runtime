@@ -123,8 +123,9 @@ class TwoHomeReceiptTests(unittest.TestCase):
         row.update(route_observations=['relay', 'direct'], all_carrier_paths_blocked=True,
                    delivery_warning_count=2,
                    visible_failure={'reason':'peer_unreachable', 'ui_detail':'Unconfirmed',
-                                    'elapsed_ms':65000, 'retry_same_message':True})
+                                    'elapsed_ms':65000, 'retry_same_message':True, 'b_alive':True, 'b_health':200, 'dropped_packets':12})
         row['results']['visible_failure'] = 'passed'
+        row['results']['network_recovery'] = 'passed'
         check = JOURNEY['two_home_receipt_valid']
         self.assertTrue(check(row, self.identity(), 'relay-to-direct'))
         for routes in (['relay'], ['direct'], ['direct', 'relay']):
