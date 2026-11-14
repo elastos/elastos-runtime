@@ -573,13 +573,14 @@ def run_missing_renderer_and_repair_case() -> None:
 def run_repeated_action_case() -> None:
     # Two actions in a row must keep Home open (the second one used to quit
     # with "provider localhost/delete failed [403 Forbidden]").
+    home_tab = "\x1b[30;46;1m Home \x1b[0m"
     master, proc = launch_pty()
     try:
-        read_until("repeat", master, lambda text: "ElastOS Home" in text, 10.0)
+        read_until("repeat", master, lambda text: home_tab in text and "Keys:" in text, 10.0)
         for attempt in (1, 2):
             send(master, b"r", 0.5)
-            screen = read_until("repeat", master, lambda text: "ElastOS Home" in text, 8.0)
-            if proc.poll() is not None or "ElastOS Home" not in screen or "Error:" in screen:
+            screen = read_until("repeat", master, lambda text: home_tab in text and "Keys:" in text, 8.0)
+            if proc.poll() is not None or home_tab not in screen or "Error:" in screen:
                 raise SystemExit(f"repeat: Home did not stay open after action {attempt}:\n{screen}")
     finally:
         shutdown(master, proc)
