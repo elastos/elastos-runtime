@@ -409,6 +409,15 @@ browser_capsules = {
 for name, capsule_dir in browser_capsules.items():
     write_capsule_archive(name, capsule_dir)
 
+# Keep this fixture aligned with the actual default profile, without a second list.
+for name in manifest["profiles"]["home"]["components"]:
+    info = platform_info(name)
+    archive = artifacts_dir / info["release_path"]
+    if not archive.is_file() or info.get("size", 0) != archive.stat().st_size:
+        raise SystemExit(f"default Home fixture artifact missing or stale: {name}")
+    if info.get("checksum") != "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest():
+        raise SystemExit(f"default Home fixture checksum differs: {name}")
+
 components_dest.parent.mkdir(parents=True, exist_ok=True)
 components_dest.write_text(json.dumps(manifest, indent=2) + "\n")
 PY

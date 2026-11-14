@@ -31,6 +31,7 @@ SOURCE_WALLET_METAMASK_DIR="$ROOT/capsules/wallet-metamask"
 SOURCE_WALLET_UNISAT_DIR="$ROOT/capsules/wallet-unisat"
 SOURCE_WALLET_WALLETCONNECT_DIR="$ROOT/capsules/wallet-walletconnect"
 SOURCE_COMPONENTS_MANIFEST="$ROOT/components.json"
+BOOTSTRAP_HOME_DIR="${HOME_DIR}/bootstrap-install"
 SOURCE_RUNTIME_HOME="${HOME_DIR}/source-runtime"
 SOURCE_RUNTIME_XDG="${SOURCE_RUNTIME_HOME}/xdg-data"
 SOURCE_RUNTIME_DATA_DIR="${SOURCE_RUNTIME_XDG}/elastos"
@@ -140,6 +141,8 @@ cargo build --manifest-path "$ROOT/capsules/did-provider/Cargo.toml" --release >
 cargo build --manifest-path "$ROOT/capsules/chain-provider/Cargo.toml" --release >/dev/null
 cargo build --manifest-path "$ROOT/capsules/net-provider/Cargo.toml" --release >/dev/null
 cargo build --manifest-path "$ROOT/capsules/exit-provider/Cargo.toml" --release >/dev/null
+cargo build --manifest-path "$ROOT/capsules/ipfs-provider/Cargo.toml" --release >/dev/null
+cargo build --manifest-path "$ROOT/capsules/model-provider/Cargo.toml" --release >/dev/null
 cargo build --manifest-path "$ROOT/capsules/browser-engine-adapter/Cargo.toml" --release >/dev/null
 cargo build --manifest-path "$ROOT/elastos/tools/browser-local-exit/Cargo.toml" --release >/dev/null
 cargo build --manifest-path "$ROOT/capsules/webspace-provider/Cargo.toml" --release >/dev/null
@@ -172,6 +175,8 @@ for capsule in \
     home-cli \
     home-gui \
     archive-manager \
+    assistant \
+    chat-room \
     browser \
     system \
     services \
@@ -192,9 +197,12 @@ echo "[home-frontdoor] stage source-local trusted source"
 SOURCE_API_PORT="$(free_port)"
 SETUP_PLATFORM="$(host_platform)"
 mkdir -p "$SOURCE_RUNTIME_DATA_DIR/bin"
+export KUBO_CACHE_DIR="${KUBO_CACHE_DIR:-${HOME_DIR}/kubo-cache}"
+"$ROOT/scripts/seed-kubo-cache.sh" "$KUBO_CACHE_DIR" "$SOURCE_RUNTIME_DATA_DIR" "$SETUP_PLATFORM"
+install -m 600 "$ROOT/model-catalog.json" "$SOURCE_RUNTIME_DATA_DIR/model-catalog.json"
 install -m 755     "$ROOT/elastos/target/release/localhost-provider"     "$SOURCE_RUNTIME_DATA_DIR/bin/localhost-provider"
 
-COMPONENTS_SRC="$SOURCE_COMPONENTS_MANIFEST" COMPONENTS_DEST="$SOURCE_RUNTIME_DATA_DIR/components.json" DATA_DIR="$SOURCE_RUNTIME_DATA_DIR" PUBLISHER_ROOT="$SOURCE_RUNTIME_DATA_DIR/ElastOS/SystemServices/Publisher" SETUP_PLATFORM="$SETUP_PLATFORM" SHELL_BIN="$ROOT/elastos/target/release/shell" LOCALHOST_PROVIDER_BIN="$ROOT/elastos/target/release/localhost-provider" DID_PROVIDER_BIN="$ROOT/capsules/did-provider/target/release/did-provider" CHAIN_PROVIDER_BIN="$ROOT/capsules/chain-provider/target/release/chain-provider" NET_PROVIDER_BIN="$ROOT/capsules/net-provider/target/release/net-provider" EXIT_PROVIDER_BIN="$ROOT/capsules/exit-provider/target/release/exit-provider" BROWSER_ENGINE_ADAPTER_BIN="$ROOT/capsules/browser-engine-adapter/target/release/browser-engine-adapter" BROWSER_LOCAL_EXIT_BIN="$ROOT/elastos/tools/browser-local-exit/target/release/browser-local-exit" WEBSPACE_PROVIDER_BIN="$ROOT/capsules/webspace-provider/target/release/webspace-provider" WALLET_PROVIDER_BIN="$ROOT/capsules/wallet-provider/target/release/wallet-provider" OBJECT_PROVIDER_BIN="$ROOT/capsules/object-provider/target/release/object-provider" CONTENT_BLOCK_GRAPH_PROVIDER_BIN="$ROOT/capsules/content-block-graph-provider/target/release/content-block-graph-provider" HOME_CLI_DIR="$SOURCE_HOME_CLI_DIR" HOME_CAPSULE_DIR="$SOURCE_HOME_DIR" HOME_GUI_CAPSULE_DIR="$SOURCE_HOME_GUI_DIR" SYSTEM_CAPSULE_DIR="$SOURCE_SYSTEM_DIR" SERVICES_CAPSULE_DIR="$SOURCE_SERVICES_DIR" PEOPLE_CAPSULE_DIR="$SOURCE_PEOPLE_DIR" BROWSER_CAPSULE_DIR="$SOURCE_BROWSER_DIR" DOCUMENTS_CAPSULE_DIR="$SOURCE_DOCUMENTS_DIR" LIBRARY_CAPSULE_DIR="$SOURCE_LIBRARY_DIR" MARKETPLACE_CAPSULE_DIR="$SOURCE_MARKETPLACE_DIR" ARCHIVE_MANAGER_CAPSULE_DIR="$SOURCE_ARCHIVE_MANAGER_DIR" INBOX_CAPSULE_DIR="$SOURCE_INBOX_DIR" WALLET_CAPSULE_DIR="$SOURCE_WALLET_DIR" WALLET_METAMASK_CAPSULE_DIR="$SOURCE_WALLET_METAMASK_DIR" WALLET_UNISAT_CAPSULE_DIR="$SOURCE_WALLET_UNISAT_DIR" WALLET_WALLETCONNECT_CAPSULE_DIR="$SOURCE_WALLET_WALLETCONNECT_DIR" python3 - <<'PY2'
+COMPONENTS_SRC="$SOURCE_COMPONENTS_MANIFEST" COMPONENTS_DEST="$SOURCE_RUNTIME_DATA_DIR/components.json" DATA_DIR="$SOURCE_RUNTIME_DATA_DIR" PUBLISHER_ROOT="$SOURCE_RUNTIME_DATA_DIR/ElastOS/SystemServices/Publisher" SETUP_PLATFORM="$SETUP_PLATFORM" SHELL_BIN="$ROOT/elastos/target/release/shell" LOCALHOST_PROVIDER_BIN="$ROOT/elastos/target/release/localhost-provider" DID_PROVIDER_BIN="$ROOT/capsules/did-provider/target/release/did-provider" CHAIN_PROVIDER_BIN="$ROOT/capsules/chain-provider/target/release/chain-provider" NET_PROVIDER_BIN="$ROOT/capsules/net-provider/target/release/net-provider" EXIT_PROVIDER_BIN="$ROOT/capsules/exit-provider/target/release/exit-provider" IPFS_PROVIDER_BIN="$ROOT/capsules/ipfs-provider/target/release/ipfs-provider" MODEL_PROVIDER_BIN="$ROOT/capsules/model-provider/target/release/model-provider" BROWSER_ENGINE_ADAPTER_BIN="$ROOT/capsules/browser-engine-adapter/target/release/browser-engine-adapter" BROWSER_LOCAL_EXIT_BIN="$ROOT/elastos/tools/browser-local-exit/target/release/browser-local-exit" WEBSPACE_PROVIDER_BIN="$ROOT/capsules/webspace-provider/target/release/webspace-provider" WALLET_PROVIDER_BIN="$ROOT/capsules/wallet-provider/target/release/wallet-provider" OBJECT_PROVIDER_BIN="$ROOT/capsules/object-provider/target/release/object-provider" CONTENT_BLOCK_GRAPH_PROVIDER_BIN="$ROOT/capsules/content-block-graph-provider/target/release/content-block-graph-provider" HOME_CLI_DIR="$SOURCE_HOME_CLI_DIR" HOME_CAPSULE_DIR="$SOURCE_HOME_DIR" HOME_GUI_CAPSULE_DIR="$SOURCE_HOME_GUI_DIR" SYSTEM_CAPSULE_DIR="$SOURCE_SYSTEM_DIR" SERVICES_CAPSULE_DIR="$SOURCE_SERVICES_DIR" PEOPLE_CAPSULE_DIR="$SOURCE_PEOPLE_DIR" BROWSER_CAPSULE_DIR="$SOURCE_BROWSER_DIR" DOCUMENTS_CAPSULE_DIR="$SOURCE_DOCUMENTS_DIR" LIBRARY_CAPSULE_DIR="$SOURCE_LIBRARY_DIR" MARKETPLACE_CAPSULE_DIR="$SOURCE_MARKETPLACE_DIR" ARCHIVE_MANAGER_CAPSULE_DIR="$SOURCE_ARCHIVE_MANAGER_DIR" INBOX_CAPSULE_DIR="$SOURCE_INBOX_DIR" WALLET_CAPSULE_DIR="$SOURCE_WALLET_DIR" WALLET_METAMASK_CAPSULE_DIR="$SOURCE_WALLET_METAMASK_DIR" WALLET_UNISAT_CAPSULE_DIR="$SOURCE_WALLET_UNISAT_DIR" WALLET_WALLETCONNECT_CAPSULE_DIR="$SOURCE_WALLET_WALLETCONNECT_DIR" python3 - <<'PY2'
 import hashlib
 import json
 import os
@@ -208,6 +216,7 @@ publisher_root = pathlib.Path(os.environ["PUBLISHER_ROOT"])
 artifacts_dir = publisher_root / "artifacts"
 artifacts_dir.mkdir(parents=True, exist_ok=True)
 platform = os.environ["SETUP_PLATFORM"]
+data_dir = pathlib.Path(os.environ["DATA_DIR"])
 
 manifest = json.loads(components_src.read_text())
 
@@ -225,6 +234,8 @@ mapping = {
     "chain-provider": pathlib.Path(os.environ["CHAIN_PROVIDER_BIN"]),
     "net-provider": pathlib.Path(os.environ["NET_PROVIDER_BIN"]),
     "exit-provider": pathlib.Path(os.environ["EXIT_PROVIDER_BIN"]),
+    "ipfs-provider": pathlib.Path(os.environ["IPFS_PROVIDER_BIN"]),
+    "model-provider": pathlib.Path(os.environ["MODEL_PROVIDER_BIN"]),
     "browser-engine-adapter": pathlib.Path(os.environ["BROWSER_ENGINE_ADAPTER_BIN"]),
     "browser-local-exit": pathlib.Path(os.environ["BROWSER_LOCAL_EXIT_BIN"]),
     "webspace-provider": pathlib.Path(os.environ["WEBSPACE_PROVIDER_BIN"]),
@@ -251,6 +262,20 @@ media_archive = artifacts_dir / media_info["release_path"]
 shutil.copyfile(os.environ["MEDIA_TOOLS_ARCHIVE"], media_archive)
 media_info["checksum"] = "sha256:" + hashlib.sha256(media_archive.read_bytes()).hexdigest()
 media_info["size"] = media_archive.stat().st_size
+
+# Use the same licensed Kubo capsule as the Carrier-only setup fixture.
+cache = pathlib.Path(os.environ["KUBO_CACHE_DIR"])
+receipt = json.loads((data_dir / "receipts/kubo-build.json").read_bytes())
+kubo_archive = artifacts_dir / receipt["release_path"]
+shutil.copyfile(cache / "capsules" / receipt["release_path"], kubo_archive)
+if "sha256:" + hashlib.sha256(kubo_archive.read_bytes()).hexdigest() != receipt["checksum"]:
+    raise SystemExit("Kubo capsule differs from its build receipt")
+kubo_info = platform_info("kubo")
+kubo_info.update({key: receipt[key] for key in ("checksum", "size", "release_path", "extract_path", "install_path")})
+kubo_info.pop("strategy", None)
+manifest["external"]["kubo"]["capsule_metadata"] = {
+    "role": "content", "type": "data", "install_path": "capsules/kubo",
+    "platforms": {platform: receipt["capsule_metadata"]}}
 
 def write_capsule_archive(name, capsule_dir):
     capsule_manifest = json.loads((capsule_dir / "capsule.json").read_text())
@@ -297,6 +322,8 @@ browser_capsules = {
     "library": pathlib.Path(os.environ["LIBRARY_CAPSULE_DIR"]),
     "marketplace": pathlib.Path(os.environ["MARKETPLACE_CAPSULE_DIR"]),
     "archive-manager": pathlib.Path(os.environ["ARCHIVE_MANAGER_CAPSULE_DIR"]),
+    "assistant": components_src.parent / "capsules/assistant",
+    "chat-room": components_src.parent / "capsules/chat-room",
     "wallet": pathlib.Path(os.environ["WALLET_CAPSULE_DIR"]),
     "wallet-metamask": pathlib.Path(os.environ["WALLET_METAMASK_CAPSULE_DIR"]),
     "wallet-unisat": pathlib.Path(os.environ["WALLET_UNISAT_CAPSULE_DIR"]),
@@ -304,6 +331,15 @@ browser_capsules = {
 }
 for name, capsule_dir in browser_capsules.items():
     write_capsule_archive(name, capsule_dir)
+
+# Keep this fixture aligned with the actual default profile, without a second list.
+for name in manifest["profiles"]["home"]["components"]:
+    info = platform_info(name)
+    archive = artifacts_dir / info["release_path"]
+    if not archive.is_file() or info.get("size", 0) != archive.stat().st_size:
+        raise SystemExit(f"default Home fixture artifact missing or stale: {name}")
+    if info.get("checksum") != "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest():
+        raise SystemExit(f"default Home fixture checksum differs: {name}")
 
 components_dest.parent.mkdir(parents=True, exist_ok=True)
 components_dest.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -340,7 +376,28 @@ if [[ -z "$SOURCE_CONNECT_TICKET" || -z "$SOURCE_NODE_ID" ]]; then
     exit 1
 fi
 
-HOME="$HOME_DIR" XDG_DATA_HOME="$HOME_DIR/xdg-data" ELASTOS_PUBLISHER_GATEWAY="$PUBLISHER_GATEWAY" ELASTOS_MAINTAINER_DID="$MAINTAINER_DID" ELASTOS_SOURCE_CONNECT_TICKET="$SOURCE_CONNECT_TICKET" ELASTOS_PUBLISHER_NODE_ID="$SOURCE_NODE_ID" bash "$ROOT/scripts/install.sh" >/tmp/elastos-home-frontdoor-install.log
+# Keep the published signed bootstrap separate from the current unsigned source
+# fixture. Runtime admits each with its own existing installation rules.
+mkdir -p "$BOOTSTRAP_HOME_DIR"
+HOME="$BOOTSTRAP_HOME_DIR" XDG_DATA_HOME="$BOOTSTRAP_HOME_DIR/xdg-data" ELASTOS_PUBLISHER_GATEWAY="$PUBLISHER_GATEWAY" ELASTOS_MAINTAINER_DID="$MAINTAINER_DID" bash "$ROOT/scripts/install.sh" >"$HOME_DIR/bootstrap-install.log"
+
+mkdir -p "$HOME_DIR/xdg-data/elastos/bin"
+install -m 700 "$ROOT/elastos/target/release/localhost-provider" "$HOME_DIR/xdg-data/elastos/bin/localhost-provider"
+install -m 600 "$ROOT/model-catalog.json" "$HOME_DIR/xdg-data/elastos/model-catalog.json"
+SOURCE_CONNECT_TICKET="$SOURCE_CONNECT_TICKET" SOURCE_NODE_ID="$SOURCE_NODE_ID" SOURCE_DATA="$HOME_DIR/xdg-data/elastos" python3 - <<'PY2'
+import json
+import os
+from pathlib import Path
+# Source-checkout setup has no installed signed release or consumed installation.
+# The Carrier-only smoke uses the same explicit trusted-source contract.
+source = {"name": "default", "publisher_dids": ["did:key:home-frontdoor-fixture"],
+          "channel": "stable", "discovery_uri": "elastos://source/stable/home-frontdoor-fixture",
+          "connect_ticket": os.environ["SOURCE_CONNECT_TICKET"],
+          "publisher_node_id": os.environ["SOURCE_NODE_ID"], "ipns_name": "", "gateways": [],
+          "install_path": "", "installed_version": "", "head_cid": ""}
+(Path(os.environ["SOURCE_DATA"]) / "sources.json").write_text(json.dumps({
+    "schema": "elastos.trusted-sources/v1", "default_source": "default", "sources": [source]}) + "\n")
+PY2
 
 if [[ ! -f "$SOURCE_COMPONENTS_MANIFEST" ]]; then
     echo "[home-frontdoor] source components manifest missing: $SOURCE_COMPONENTS_MANIFEST" >&2
@@ -351,7 +408,7 @@ echo "[home-frontdoor] setup home profile"
 cp "$SOURCE_RUNTIME_DATA_DIR/components.json" "$HOME_DIR/xdg-data/elastos/components.json"
 # A source-manifest setup manages collaboration itself: a pinned release network in
 # components.json is neither required beside the manifest nor joined (live Community).
-HOME="$HOME_DIR" XDG_DATA_HOME="$HOME_DIR/xdg-data" ELASTOS_COLLABORATION_STARTUP_MODE=isolated ELASTOS_COMPONENTS_MANIFEST="$SOURCE_RUNTIME_DATA_DIR/components.json" "$ROOT/elastos/target/debug/elastos" setup --profile home >/tmp/elastos-home-frontdoor-setup.log
+HOME="$HOME_DIR" XDG_DATA_HOME="$HOME_DIR/xdg-data" ELASTOS_COLLABORATION_STARTUP_MODE=isolated ELASTOS_COMPONENTS_MANIFEST="$SOURCE_RUNTIME_DATA_DIR/components.json" "$ROOT/elastos/target/debug/elastos" setup --profile home 2>&1 | tee "$HOME_DIR/setup.log"
 
 INSTALLED_HOME_CLI_DIR="$HOME_DIR/xdg-data/elastos/capsules/home-cli"
 if [[ ! -d "$INSTALLED_HOME_CLI_DIR" ]]; then
