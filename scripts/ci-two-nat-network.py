@@ -2,17 +2,16 @@
 """Linux namespace setup for the existing installed two-Home assertions.
 
 Run in a fresh user/mount/network namespace. All network changes belong to that
-namespace. HTTP management crosses explicit TCP forwards; Carrier UDP crosses
-two independent MASQUERADE routers. The fixture owns every process and namespace.
+namespace. Browsers and HTTP management run inside their Home's namespace;
+only Carrier crosses the MASQUERADE routers. The fixture owns the namespaces.
 """
 import os
 from pathlib import Path
+import json
 import secrets
-import signal
-import socket
 import subprocess
-import time
-import urllib.parse
+import sys
+import urllib.request
 
 
 def command(*args):
@@ -26,7 +25,6 @@ class MessageNetwork:
             raise RuntimeError("two-NAT journey requires an isolated Linux user/network namespace")
         self.names = {name: "carrier-" + secrets.token_hex(4) for name in ("nat-a", "nat-b", "a", "b")}
         self.created = []
-        self.proxies = []
         self.home_ips = {"community": "203.0.113.1", "a": "10.0.1.2", "b": "10.0.2.2"}
         self.router_ips = {"a": "203.0.113.11", "b": "203.0.113.12"}
         try:
@@ -75,50 +73,39 @@ class MessageNetwork:
     def run(self, name, *args):
         return command(*self.prefix(name), *args)
 
-    def free_port(self):
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            return probe.getsockname()[1]
-
-    def proxy(self, prefix, listen_host, port, target_host, target_port):
-        child = subprocess.Popen(prefix + ["socat", f"TCP-LISTEN:{port},bind={listen_host},reuseaddr,fork",
-                                           f"TCP:{target_host}:{target_port}"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        self.proxies.append(child)
-        time.sleep(.05)
-        if child.poll() is not None:
-            raise RuntimeError("namespace HTTP management proxy failed")
-
-    def forward(self, side, port, loopback=False):
-        if side == "community":
-            return port
-        home_port = port
-        if loopback:
-            home_port = self.free_port()
-            self.proxy(self.prefix(side), self.home_ips[side], home_port, "127.0.0.1", port)
-        nat = "nat-" + side
-        self.run(nat, "iptables", "-t", "nat", "-A", "PREROUTING", "-p", "tcp", "--dport", str(home_port),
-                 "-j", "DNAT", "--to-destination", f"{self.home_ips[side]}:{home_port}")
-        self.run(nat, "iptables", "-I", "FORWARD", "-p", "tcp", "--dport", str(home_port),
-                 "-d", self.home_ips[side], "-j", "ACCEPT")
-        public_port = self.free_port() if loopback else port
-        self.proxy([], "127.0.0.1", public_port, self.router_ips[side], home_port)
-        return public_port
-
-    def api_url(self, side, api):
-        parsed = urllib.parse.urlsplit(api)
-        return f"http://127.0.0.1:{self.forward(side, parsed.port, loopback=True)}"
+    def http_json(self, name, url, body=None, token=None, health=False):
+        # Secret input stays on stdin. The HTTP socket belongs to this Home's
+        # network namespace, like the browser's socket, with no TCP forwards.
+        value = {"url": url, "body": body, "token": token, "health": health}
+        result = subprocess.run([*self.prefix(name), sys.executable, str(Path(__file__).resolve()), "--http"],
+                                input=json.dumps(value), capture_output=True, text=True, check=True,
+                                timeout=3 if health else 65)
+        return json.loads(result.stdout)
 
     def close(self):
-        for child in reversed(self.proxies):
-            if child.poll() is None:
-                os.killpg(child.pid, signal.SIGTERM)
-                try:
-                    child.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    os.killpg(child.pid, signal.SIGKILL)
-                    child.wait(timeout=3)
-        self.proxies.clear()
         for namespace in reversed(self.created):
             command("ip", "netns", "delete", namespace)
         self.created.clear()
+
+
+def namespace_http():
+    encoded = sys.stdin.buffer.read(65537)
+    if len(encoded) > 65536:
+        raise RuntimeError("fixture HTTP input exceeds its bound")
+    value = json.loads(encoded)
+    headers = {"Content-Type": "application/json"}
+    if value["token"]:
+        headers["Authorization"] = "Bearer " + value["token"]
+    body = json.dumps(value["body"]).encode() if value["body"] is not None else None
+    request = urllib.request.Request(value["url"], body, headers)
+    with urllib.request.urlopen(request, timeout=1 if value["health"] else 60) as response:
+        encoded = response.read(1024 * 1024 + 1)
+        if len(encoded) > 1024 * 1024:
+            raise RuntimeError("fixture HTTP response exceeds its bound")
+        print(json.dumps(response.status if value["health"] else json.loads(encoded)))
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] != ["--http"]:
+        raise SystemExit("fixture helper expects --http")
+    namespace_http()

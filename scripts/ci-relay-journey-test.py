@@ -11,13 +11,27 @@ import runpy
 import stat
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = runpy.run_path(str(ROOT / "scripts/ci-relay-journey.py"))
 INSTALL = runpy.run_path(str(ROOT / "scripts/install-source-home-runtime.py"))
+NETWORK = runpy.run_path(str(ROOT / "scripts/ci-two-nat-network.py"))
 
 
 class FixtureManifestTests(unittest.TestCase):
+    def test_management_socket_is_opened_inside_the_home_namespace_with_secret_on_stdin(self):
+        topology = NETWORK["MessageNetwork"].__new__(NETWORK["MessageNetwork"])
+        topology.names = {"a": "fixture-home-a"}
+        with mock.patch.object(NETWORK["subprocess"], "run", return_value=mock.Mock(stdout='{"token":"fixture"}')) as run:
+            self.assertEqual(topology.http_json("a", "http://localhost/api/auth/attach",
+                                                {"secret":"disposable-fixture-input"}), {"token":"fixture"})
+        arguments, = run.call_args.args
+        self.assertEqual(arguments[:4], ["ip", "netns", "exec", "fixture-home-a"])
+        self.assertNotIn("disposable-fixture-input", " ".join(arguments))
+        self.assertEqual(json.loads(run.call_args.kwargs["input"])["body"], {"secret":"disposable-fixture-input"})
+        self.assertEqual(run.call_args.kwargs["timeout"], 65)
+
     def test_runtime_input_preserves_bytes_and_passes_the_single_link_artifact_gate(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

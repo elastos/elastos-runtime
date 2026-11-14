@@ -27,11 +27,22 @@ export async function registrationRefusal(response, home) {
   return {home, method:response.request().method(), path, status:response.status(),
     reason:(await response.text()).slice(0,512)};
 }
+export function browserOptions(chromium, namespace, control, environment=process.env) {
+  const options = {headless:true, args:['--two-home-fixture='+control]};
+  if (namespace) {
+    options.executablePath = fileURLToPath(new URL('./ci-two-home-browser.sh', import.meta.url));
+    options.env = {...environment, ELASTOS_BROWSER_NAMESPACE:namespace,
+      ELASTOS_BROWSER_EXECUTABLE:chromium.executablePath()};
+  }
+  return options;
+}
 async function run() {
   const require = createRequire(import.meta.url);
   const {chromium} = require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE || '../elastos/tools/browser-playwright-engine/node_modules/playwright');
   const [baseA, baseB, evidence, control, browserHost] = process.argv.slice(2);
   const bases = [baseA, baseB];
+  const namespaces = JSON.parse(process.env.ELASTOS_TWO_HOME_NAMESPACES || '[]');
+  assert(namespaces.length===0 || namespaces.length===2, 'one browser namespace per Home');
   assertMessageOrigins(bases, browserHost);
   const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], registration_refusals:[], browser_cross_home_http_requests:0};
   let sequence = 0;
@@ -52,12 +63,14 @@ async function run() {
     while(Date.now()<end) {const value=await fn(); if(value) return value; await sleep(500);}
     throw new Error(label+' deadline');
   }
-  let browser;
+  const browsers=[];
   try {
     result.stage='browser_launch';
-    browser = await chromium.launch({headless:true, args:['--two-home-fixture='+control]});
+    if (!namespaces.length) browsers.push(await chromium.launch(browserOptions(chromium,null,control)));
     const homes=[];
     for(const [i,base] of bases.entries()) {
+      const browser = namespaces.length ? await chromium.launch(browserOptions(chromium,namespaces[i],control)) : browsers[0];
+      if (namespaces.length) browsers.push(browser);
       const context=await browser.newContext({timezoneId:'UTC', serviceWorkers:'block', viewport:{width:1440,height:900}});
       await context.route('**/*', route => {
         const url = new URL(route.request().url());
@@ -233,7 +246,7 @@ async function run() {
     writeFileSync(join(control,'error.private.txt'),String(error.stack),{mode:0o600});
     process.exitCode=1;
   } finally {
-    if(browser) await browser.close();
+    await Promise.all(browsers.map(browser=>browser.close()));
     writeFileSync(join(evidence,'two-home-ui.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});
     console.log(JSON.stringify({stage:result.stage,status:result.status}));
   }

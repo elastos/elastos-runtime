@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {assertCommunityMessage, assertReceivedDirect, assertSenderDelivery, assertMessageOrigins, registrationRefusal} from './ci-installed-two-home-journey.mjs';
+import {assertCommunityMessage, assertReceivedDirect, assertSenderDelivery, assertMessageOrigins, registrationRefusal, browserOptions} from './ci-installed-two-home-journey.mjs';
+
+test('Each namespace browser keeps Playwright control on its pipe and reaches its own loopback', () => {
+  const chromium = {executablePath:()=> '/fixture/chromium'};
+  const a = browserOptions(chromium,'namespace-a','fixture', {PATH:'/fixture/bin'});
+  const b = browserOptions(chromium,'namespace-b','fixture', {PATH:'/fixture/bin'});
+  assert(a.executablePath.endsWith('/ci-two-home-browser.sh'));
+  assert.equal(a.env.ELASTOS_BROWSER_NAMESPACE,'namespace-a');
+  assert.equal(b.env.ELASTOS_BROWSER_NAMESPACE,'namespace-b');
+  assert.equal(a.env.ELASTOS_BROWSER_EXECUTABLE,'/fixture/chromium');
+  assert.deepEqual(browserOptions(chromium,null,'fixture'),{headless:true,args:['--two-home-fixture=fixture']});
+});
 
 test('Registration refusal retains a plain-text reason within the receipt bound', async () => {
   const response = {url:()=> 'http://localhost/api/auth/passkey/register/begin', ok:()=>false,

@@ -3,7 +3,7 @@ set -euo pipefail
 umask 022
 cd "$(dirname "$0")/.."
 [[ "$(uname -s)" == Linux ]] || { echo "two-NAT journey needs Linux" >&2; exit 1; }
-for tool in ip iptables ping socat unshare mount node python3; do
+for tool in ip iptables ping unshare mount node python3; do
     command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 1; }
 done
 python3 - <<'PY'

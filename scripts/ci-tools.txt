@@ -2,4 +2,3 @@
 ip iproute2
 iptables iptables
 ping iputils-ping
-socat socat

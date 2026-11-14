@@ -1161,15 +1161,19 @@ def free_port(kind=socket.SOCK_STREAM):
         return probe.getsockname()[1]
 
 
-def wait_healthy(child, address, label, stop=None):
+def wait_healthy(child, address, label, stop=None, probe=None):
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline and not (stop and stop.is_set()):
         assert child.poll() is None, f"installed {label} exited before health" + failure_suffix(getattr(child, "failure", None))
         try:
+            if probe:
+                if probe() == 200:
+                    return
+                continue
             with urllib.request.urlopen(f"http://{address}/healthz", timeout=1) as response:
                 if response.status == 200:
                     return
-        except OSError:
+        except (OSError, subprocess.SubprocessError):
             time.sleep(0.25)
     raise RuntimeError(f"installed {label} health deadline")
 
@@ -1954,17 +1958,16 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         owner = fixtures[name]
         with (owner[0] / "runtime.private.log").open("ab") as log:
             prefix = topology.prefix(name) if topology else []
-            address = "0.0.0.0:" + owner[2].rsplit(":", 1)[1] if topology and name != "community" else owner[2]
-            child = subprocess.Popen([*prefix, str(owner[1] / "bin/elastos"), "gateway", "--addr", address],
+            child = subprocess.Popen([*prefix, str(owner[1] / "bin/elastos"), "gateway", "--addr", owner[2]],
                                      env=environment(owner), stdout=log, stderr=log, start_new_session=True)
         children[name] = child
-        wait_healthy(child, owner[2], "two-Home " + name)
+        probe = (lambda: topology.http_json(name, f"http://{owner[2]}/healthz", health=True)) if topology else None
+        wait_healthy(child, owner[2], "two-Home " + name, probe=probe)
         coordinates = json.loads(bounded_text(owner[1] / "gateway-runtime-coords.json"))
         api = coordinates["api_url"].rstrip("/")
-        if topology:
-            api = topology.api_url(name, api)
-        token = post_json(api + "/api/auth/attach", {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
-        ticket = post_json(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
+        post = (lambda url, body, token=None: topology.http_json(name, url, body, token)) if topology else post_json
+        token = post(api + "/api/auth/attach", {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
+        ticket = post(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
         assert len(ticket) <= 16384
         decoded = json.loads(base64.b32decode(ticket.upper() + "=" * (-len(ticket) % 8)))
         endpoints = decoded["endpoints"]
@@ -2004,8 +2007,6 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
                         config.write('gateway_public_publisher_bootstrap = true\n')
                         config.write(f'carrier_relay_bind_addr = "203.0.113.1:{urllib.parse.urlsplit(relay_url).port}"\n')
                 port = free_port()
-                if topology:
-                    topology.forward(name, port)
                 fixtures[name] = (destination, copied, f"127.0.0.1:{port}", carrier)
                 record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos"),
                                         "carrier_bind_address": carrier})
@@ -2024,9 +2025,13 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
             for name in fixtures:
                 launch(name)
             bases = [f"http://{settings['browser_host']}:" + fixtures[name][2].rsplit(":", 1)[1] for name in ("a", "b")]
+            browser_environment = dict(os.environ)
+            if topology:
+                browser_environment["ELASTOS_TWO_HOME_NAMESPACES"] = json.dumps([topology.names[name] for name in ("a", "b")])
             with (root / "browser.private.log").open("wb") as log:
                 browser = subprocess.Popen(["node", "scripts/ci-installed-two-home-journey.mjs", *bases,
-                                            str(evidence), str(control), settings["browser_host"]], stdout=log, stderr=log, start_new_session=True)
+                                            str(evidence), str(control), settings["browser_host"]], env=browser_environment,
+                                           stdout=log, stderr=log, start_new_session=True)
             last, next_census = 0, 0
             while browser.poll() is None:
                 if time.monotonic() >= next_census:
