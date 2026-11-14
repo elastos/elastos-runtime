@@ -264,7 +264,8 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains)
     const transactionHash = requireProviderResult(await provider.request({
       method: "eth_sendTransaction",
       params: [handoff.transaction],
-    }), 512, "Wallet returned an invalid transaction hash.");
+    }), 66, "Wallet returned an invalid transaction hash.");
+    if (!/^0x[0-9a-fA-F]{64}$/.test(transactionHash)) throw new Error('Wallet returned an invalid transaction hash. Check your wallet before sending again.');
     const completed = await runtimePost(path, connectorBody(METAMASK_CONNECTOR_ID, connectorToken, {
       payload_hash: handoff.payload_hash,
       signer: currentSigner,

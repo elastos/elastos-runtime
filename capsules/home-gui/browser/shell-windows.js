@@ -386,6 +386,7 @@ export function supportsMenuNewWindow(targetId) {
 const WALLET_CONNECTOR_TARGETS = new Set([
   "wallet-metamask",
   "wallet-unisat",
+  "wallet-walletconnect",
 ]);
 const NON_RESTORABLE_SESSION_TARGETS = new Set(WALLET_CONNECTOR_TARGETS);
 const WALLET_CONNECTOR_WINDOW_WIDTH = 480;

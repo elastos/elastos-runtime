@@ -155,9 +155,18 @@ jobs:
           retention-days: 7
       - name: build N, then N+1 with N's support, each in fresh Cargo directories
         timeout-minutes: 240
+        env:
+          REOWN_PROJECT_ID: ${{ secrets.REOWN_PROJECT_ID }}
         run: |
           set -euo pipefail
           umask 077
+          if [[ -n "${REOWN_PROJECT_ID:-}" ]]; then
+            export ELASTOS_WALLETCONNECT_PROJECT_FILE
+            ELASTOS_WALLETCONNECT_PROJECT_FILE=$(mktemp "$RUNNER_TEMP/wc-project.XXXXXX")
+            trap 'rm -f -- "$ELASTOS_WALLETCONNECT_PROJECT_FILE"' EXIT
+            python3 -I -S -c 'import os; p=os.environ["ELASTOS_WALLETCONNECT_PROJECT_FILE"]; f=open(p,"w"); os.fchmod(f.fileno(),0o600); f.write(os.environ["REOWN_PROJECT_ID"]); f.close()'
+          fi
+          unset REOWN_PROJECT_ID
           export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
           inputs="$RELEASE_ROOT/inputs"
           # Fresh Cargo directories for each version; removed after each build.
@@ -428,9 +437,18 @@ jobs:
           path: ${{ runner.temp }}/llama-arm64-bundle
       - name: build N, then N+1 with N's support, each in fresh Cargo directories
         timeout-minutes: 240
+        env:
+          REOWN_PROJECT_ID: ${{ secrets.REOWN_PROJECT_ID }}
         run: |
           set -euo pipefail
           umask 077
+          if [[ -n "${REOWN_PROJECT_ID:-}" ]]; then
+            export ELASTOS_WALLETCONNECT_PROJECT_FILE
+            ELASTOS_WALLETCONNECT_PROJECT_FILE=$(mktemp "$RUNNER_TEMP/wc-project.XXXXXX")
+            trap 'rm -f -- "$ELASTOS_WALLETCONNECT_PROJECT_FILE"' EXIT
+            python3 -I -S -c 'import os; p=os.environ["ELASTOS_WALLETCONNECT_PROJECT_FILE"]; f=open(p,"w"); os.fchmod(f.fileno(),0o600); f.write(os.environ["REOWN_PROJECT_ID"]); f.close()'
+          fi
+          unset REOWN_PROJECT_ID
           export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
           export ELASTOS_LLAMA_AMD64_BUNDLE="$RUNNER_TEMP/llama-amd64-bundle/llama-b10516-bin-ubuntu22.04-amd64-cpu.tar.gz"
           export ELASTOS_LLAMA_ARM64_BUNDLE="$RUNNER_TEMP/llama-arm64-bundle/llama-b10516-bin-ubuntu22.04-arm64-cpu.tar.gz"

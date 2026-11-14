@@ -220,8 +220,7 @@ function eventHarness() {
   };
 }
 
-async function runMetaMaskHostBridgeSmoke() {
-  const connectorId = "wallet-metamask";
+async function runHostedConnectorSmoke(connectorId = "wallet-metamask") {
   const document = new FakeDocument();
   const provider = createFakeProvider();
   const events = eventHarness();
@@ -408,7 +407,7 @@ async function runMetaMaskHostBridgeSmoke() {
   };
 
   await importConnectorFixture(
-    "capsules/wallet-metamask/browser/wallet-metamask.js",
+    `capsules/${connectorId}/browser/${connectorId}.js`,
   );
   await new Promise((resolveTick) => setImmediate(resolveTick));
   const requestRoot = document.querySelector("#wallet-requests");
@@ -452,95 +451,14 @@ async function runMetaMaskHostBridgeSmoke() {
 }
 
 async function runWalletConnectSmoke() {
-  const connectorId = "wallet-walletconnect";
-  const document = new FakeDocument();
-  const provider = createFakeProvider();
-  const fetchCalls = [];
-  const completionBodies = [];
-  const sdkModule = `data:text/javascript,${encodeURIComponent(`
-    export async function connectWalletConnectEvm() {
-      return globalThis.__walletConnectProvider;
-    }
-  `)}`;
-  const top = { postMessage() {} };
-  globalThis.document = document;
-  globalThis.__walletConnectProvider = provider;
-  globalThis.window = {
-    location: {
-      search: `?home_origin=${encodeURIComponent(HOME_ORIGIN)}`,
-      hash: `#home_token=${CONNECTOR_TOKEN}`,
-      origin: "null",
-    },
-    top,
-    parent: top,
-    addEventListener() {},
-    dispatchEvent() {},
-  };
-  globalThis.window.window = globalThis.window;
-  globalThis.fetch = async (url, init = {}) => {
-    fetchCalls.push({ url: String(url), init });
-    if (init.headers?.["x-elastos-home-token"] !== CONNECTOR_TOKEN) {
-      throw new Error(`WalletConnect lost its fragment launch token for ${url}`);
-    }
-    if (String(url).endsWith("/wallet/config")) {
-      return response({
-        evm_chains: handoffEnvelope(connectorId).evm_chains,
-        walletconnect: {
-          sdk_asset_path: sdkModule,
-          project_id: "runtime-test-project",
-        },
-      });
-    }
-    if (String(url).endsWith("/wallet/accounts")) {
-      return response({
-        accounts: [{
-          account_id: `wallet:eip155:20:${ADDRESS}`,
-          chain_namespace: "eip155:20",
-          address: ADDRESS,
-          proof_type: "siwe",
-          connector_id: connectorId,
-        }],
-      });
-    }
-    if (String(url).endsWith("/wallet/approvals")) {
-      return response({ approval_requests: [approvalRequest(connectorId)] });
-    }
-    if (String(url).endsWith("/approve")) {
-      return response({ handoff: handoffEnvelope(connectorId).handoff });
-    }
-    if (String(url).endsWith("/complete")) {
-      completionBodies.push(JSON.parse(init.body || "{}"));
-      return response({ ok: true });
-    }
-    throw new Error(`unexpected Runtime endpoint: ${url}`);
-  };
-  await importConnectorFixture(
-    "capsules/wallet-walletconnect/browser/wallet-walletconnect.js",
-  );
-  await new Promise((resolveTick) => setImmediate(resolveTick));
-  const requestRoot = document.querySelector("#wallet-requests");
-  const review = findReviewButton(requestRoot);
-  await requestRoot.listeners.get("click")({ target: review });
-  const methods = provider.calls.map((call) => call.method);
-  if (
-    !methods.includes("eth_sendTransaction")
-    || completionBodies.length !== 1
-    || completionBodies[0].transaction_hash !== TX_HASH
-    || globalThis.window.location.search.includes("home_token")
-  ) {
-    throw new Error("WalletConnect configured path or fragment authority regressed");
-  }
-  return {
-    connectorId,
-    providerMethods: methods,
-    runtimeEndpoints: fetchCalls.map((call) => call.url),
-    authorityTransport: "fragment",
-    effectOwner: "walletconnect-configured-path",
-  };
+  const {exerciseWalletConnect} = await import('./lib/walletconnect-capsule-fixture.mjs');
+  const result = await exerciseWalletConnect();
+  if (result.error) throw new Error(result.error);
+  return {connectorId:'wallet-walletconnect',effectOwner:'capsule',result:result.result};
 }
 
 const results = [
-  await runMetaMaskHostBridgeSmoke(),
+  await runHostedConnectorSmoke(),
   await runWalletConnectSmoke(),
 ];
 

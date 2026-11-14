@@ -1460,3 +1460,47 @@ fn managed_recovery_set_save_failure_rolls_back_and_leaves_lifecycle_retryable()
         1
     );
 }
+
+#[test]
+fn walletconnect_revocation_counts_only_the_owners_remaining_connector_accounts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    for (principal, chain, connector) in [
+        ("person:owner", "eip155:1", "wallet-walletconnect"),
+        ("person:owner", "eip155:20", "wallet-walletconnect"),
+        ("person:other", "eip155:1", "wallet-walletconnect"),
+        ("person:owner", "eip155:8453", "wallet-metamask"),
+    ] {
+        assert!(matches!(
+            invoke_wallet(
+                &mut provider,
+                principal,
+                connector,
+                WalletProviderOperationV2::LinkVerifiedAccount {
+                    proof_binding_id: "proof:fixture".into(),
+                    chain_namespace: chain.into(),
+                    address: "0xabc".into(),
+                    proof_type: "siwe".into(),
+                    label: None,
+                }
+            ),
+            Response::Ok { .. }
+        ));
+    }
+    for (chain, remaining) in [("eip155:1", 1), ("eip155:20", 0)] {
+        match invoke_wallet(
+            &mut provider,
+            "person:owner",
+            "wallet",
+            WalletProviderOperationV2::RevokeAccount {
+                account_id: format!("wallet:{chain}:0xabc"),
+            },
+        ) {
+            Response::Ok { data: Some(data) } => {
+                assert_eq!(data["account"]["principal_id"], "person:owner");
+                assert_eq!(data["connector_accounts_remaining"], remaining);
+            }
+            other => panic!("expected revocation, got {other:?}"),
+        }
+    }
+}

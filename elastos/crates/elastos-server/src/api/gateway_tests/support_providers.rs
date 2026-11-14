@@ -5737,9 +5737,15 @@ impl MockWalletProvider {
                     }));
                 };
                 account["revoked_at"] = json!(crate::auth::now_ts());
+                let account = account.clone();
+                let remaining = accounts.iter().filter(|candidate| {
+                    candidate["principal_id"] == account["principal_id"]
+                        && candidate["connector_id"] == account["connector_id"]
+                        && candidate["revoked_at"].is_null()
+                }).count();
                 Ok(json!({
                     "status": "ok",
-                    "data": { "account": account.clone() }
+                    "data": { "account": account, "connector_accounts_remaining":remaining }
                 }))
             }
             Some("rename_account") => {

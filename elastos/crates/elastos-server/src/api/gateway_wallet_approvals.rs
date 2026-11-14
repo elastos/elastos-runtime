@@ -248,6 +248,12 @@ pub(in crate::api::gateway) async fn approve_external_wallet_request(
     capsule_id: &str,
 ) -> anyhow::Result<WalletApprovalReviewOutcome> {
     let request = pending_wallet_approval_request(state, authority, request_id).await?;
+    if capsule_id == WALLET_WALLETCONNECT_CAPSULE_ID {
+        anyhow::ensure!(
+            request.status == "pending" && request.expires_at > now_ts(),
+            "WalletConnect request changed or expired"
+        );
+    }
     if is_managed_wallet_proof_type(&request.proof_type) {
         anyhow::bail!("Use System to approve built-in wallet requests");
     }
@@ -282,7 +288,7 @@ pub(in crate::api::gateway) async fn approve_external_wallet_request(
             wallet_connector_label(capsule_id)
         ),
         handoff,
-        approval_request: None,
+        approval_request: data.get("approval_request").cloned(),
     })
 }
 
@@ -508,6 +514,11 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
         reason: value.get("reason")?.as_str()?.to_string(),
         account_id: value.get("account_id")?.as_str()?.to_string(),
         address: value.get("address")?.as_str()?.to_string(),
+        chain_namespace: value
+            .get("chain_namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
         proof_type: value
             .get("proof_type")
             .and_then(|value| value.as_str())

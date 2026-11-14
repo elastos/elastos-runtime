@@ -17,6 +17,10 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fmt;
 
+/// Time to retain an approved WalletConnect send receipt after its request expires.
+/// The phone can finish a send after expiry; an abandoned prompt releases its quota afterward.
+pub const WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS: u64 = 24 * 60 * 60;
+
 pub const WALLET_PROTOCOL_VERSION: &str = "2.3";
 pub const WALLET_BUS_OPERATION: &str = "wallet_contract";
 pub const WALLET_REQUEST_SCHEMA: &str = "elastos.wallet.provider-request/v2";

@@ -244,33 +244,91 @@ storage, and signed runtime audit scaffolding. An approval that expires before
 managed signing or external handoff completion fails closed instead of becoming
 a stale signing authority.
 
-WalletConnect is a dedicated connector capsule (`wallet-walletconnect`), not a
-wallet-provider SDK backend and not app-owned session state. `wallet-provider`
-owns proof verification, linked accounts, approval state, receipts, and audit;
-the connector owns only Reown/AppKit browser UX plus the operator-pinned local
-adapter. Mode A is the first target: ElastOS acts as the dApp and external
-wallets sign Runtime challenges or requests. Mode B, where external dApps treat
-ElastOS as a WalletConnect wallet, is a later security milestone. Internal
-capsules do not use WalletConnect or generic Wallet provider calls; their
-product routes enter the private typed Wallet Bus through verified Runtime
-authority.
+WalletConnect is a dedicated connector capsule (`wallet-walletconnect`). The
+reviewed Reown SDK and its bundled QR renderer run only in that capsule's opaque
+sandboxed frame. `wallet-provider` owns proof verification, linked accounts,
+approval state and receipts. Runtime accepts the connector's own live launch
+capability, bound to its principal, session and launch instance, for storage,
+relay admission, linking and signing handoffs. Each route checks the selected
+connector resource and proof binding. Config reads, linking, approval, completion
+and storage deletion accept an older storage revision with these launch checks.
+A connector can load the current revision, retain a returned result or retry
+cleanup. Relay use and storage writes require
+the current revision. Home owns window orchestration.
 
-`wallet-walletconnect` remains invisible unless the runtime finds
-`elastos.walletconnect.connector/v1` config plus a local hashed Reown/AppKit SDK
-asset. A configured launch can read only the narrow
-`/api/apps/wallet-walletconnect/wallet/config` contract for its project ID and
-local SDK asset path. The dormant connector UI imports only that pinned local
-asset and expects a stable adapter export named `connectWalletConnectEvm`, which
-returns an EIP-1193 provider to the connector capsule.
-`scripts/vendor-walletconnect-adapter.sh` builds that adapter from exact package
-versions, and `scripts/configure-walletconnect-connector.mjs` pins a reviewed
-local adapter by sha256. Until a real Reown project ID and reviewed adapter are
-installed into the runtime data dir, the connector remains hidden and
-unroutable. Do not commit a bundled default Reown Project ID; official
-deployments and independent operators pin their own runtime config. Essentials
-and ELA signing should start from that connector contract because the Essentials
-DID toolkit is WalletConnect-backed;
-do not add a visible Essentials surface until the pinned connector exists.
+Mode A connects a phone wallet to sign Runtime challenges and approved requests.
+Mode B, where external dApps use ElastOS as a WalletConnect wallet, requires its
+own security decision. The phone holds signing keys and confirms each request.
+Isolation protects Home. A compromised SDK still holds its pairing session and
+could ask the phone to sign a different request; the phone's confirmation is the
+last guard. Signup and sign-in remain candidates for the separate first-run
+authority decision.
+
+Runtime supplies the exact principal, requesting actor, account, chain, payload
+hash and expiry. It checks pending state before handing off once, and checks the
+approved request and hash before completion. A closed connector window leaves an
+approved, unfinished transaction visible with "Check your phone wallet". Opening
+it again supplies recovery instructions and keeps the send control disabled.
+A returned transaction hash is passed to Runtime once even if the account,
+network or expiry changed during the phone prompt. An approved WalletConnect
+transaction can complete once within 24 hours after expiry. An unfinished prompt
+then expires and releases its approval slot; other connectors keep their normal TTL.
+Runtime checks the returned
+transaction hash's format only. The phone wallet confirms the transaction;
+the hash alone does not prove that it matches the approved payload. A completion error keeps the
+hash visible for checking before another send. Unused signatures and ownership
+proofs stop when their account, network or expiry changes. Typed-data requests
+stay pending because this connector's reviewed bundle does not support that method.
+
+The capsule installs `walletconnect-storage.mjs` before importing the pinned SDK.
+Browser Storage holds UI preferences in memory and resets on reload. Protocol
+and keychain names raise `SecurityError` there. Runtime's private key/value store
+holds pairings, sessions and cryptographic keys, selected by the verified
+principal. The SDK uses the constant context `wallet-walletconnect`; Runtime's
+principal boundary separates each person's files. The connector supplies no
+session migration. Disconnect clears session storage and the memory shim while
+linked accounts stay in Wallet. Revocation clears session files; linked
+account removal clears the account owner's file after the last active WalletConnect
+account is removed. Other linked accounts keep their pairing. Principal removal
+clears that principal's file.
+A cleanup failure after account or principal removal leaves that change saved
+and records an operator-retry warning. Successful cleanup advances a Runtime
+storage revision that fences late writes and relay use from an old SDK
+instance after cleanup. Reopening the connector starts a fresh instance.
+
+Inbox owns internet consent through one request and the owner's passkey. Allow
+returns focus to the connector; the same Inbox entry offers Turn Off. Runtime
+admits only the opaque connector's single-use relay ticket, caps waiting sockets,
+rechecks the launch and owner on each heartbeat and outbound frame, authenticates
+relay TLS, and limits frames and sockets. It reaches only
+`relay.walletconnect.org` and `relay.walletconnect.com` on TLS port 443 through
+a local Exit backend and its separate adapter and relay sockets. Existing Browser
+backends keep first match. Runtime validates the merged configuration with
+exit-provider's parser and keeps the existing Exit configuration if the addition
+is refused. Turn Off cancels handshakes and open sockets. Hosted Carrier Exit
+selection remains a separate integration.
+
+The native-Storage comparison and deterministic sandbox test cover Chromium and
+WebKit. The opt-in real-relay test, selected with
+`ELASTOS_WALLETCONNECT_PROJECT_FILE`, separately checks pairing, page reload and
+a fresh source-gateway process restart. Installed desktop acceptance and a real
+phone wallet require their own evidence.
+
+The connector is installed with Home and stays hidden and unroutable until
+`elastos.walletconnect.connector/v1` configuration and the matching hashed local
+SDK asset exist. `scripts/vendor-walletconnect-adapter.sh` uses `npm ci` with the
+complete dependency lock in `scripts/walletconnect/package-lock.json`. It builds
+the `connectWalletConnectEvm` adapter inside the capsule's `vendor` directory;
+release packaging includes those bytes in the verified capsule archive.
+
+The release workflow reads the operator's `REOWN_PROJECT_ID` secret. Independent
+operators can supply `ELASTOS_WALLETCONNECT_PROJECT_FILE` during release preparation or source-home
+setup. Staging checks the reviewed adapter hash and includes `vendor/connector.json`
+before the capsule is hashed. An existing operator configuration in
+`ElastOS/SystemServices/WalletConnect/config.json` takes precedence. Source uses
+fixture IDs in tests and carries each operator's project ID only in that
+operator's release or installed configuration. A person using Home presses
+Connect and scans the QR code. Essentials and ELA signing build on this boundary.
 Essentials, ELA, EID, BTC BIP-322, and UniversalX should reuse the same
 proof-binding shape.
 UniSat is the first dedicated browser Bitcoin connector because its injected API

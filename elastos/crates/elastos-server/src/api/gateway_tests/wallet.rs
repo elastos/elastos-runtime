@@ -7,3 +7,5 @@ mod inbox;
 mod managed_approvals;
 mod prices;
 mod send;
+#[cfg(unix)]
+mod walletconnect;

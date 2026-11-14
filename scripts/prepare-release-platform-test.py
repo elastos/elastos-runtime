@@ -154,7 +154,7 @@ class PrepareWorkerTest(unittest.TestCase):
             "publish-release.sh", "prepare-release-platform.sh", "release-platform-input.py",
             "components-release-integrity-check.py", "release-platforms.json", "release-signer.py", "check-versioning.sh", "build-media-tools.sh",
             "release-upstream-assets.py", "release-upstream-input.py", "browser-host-release.py",
-            "verify-linux-engine.py",
+            "verify-linux-engine.py", "stage-walletconnect-release.mjs",
             "browser-vm-image-inputs.py", "browser-image-cid-input.py",
         ):
             (scripts / name).write_bytes((SOURCE / "scripts" / name).read_bytes())
@@ -358,6 +358,16 @@ class PrepareWorkerTest(unittest.TestCase):
                     "MOCK_AUDIT_LOG": str(self.root / "audit.log"),
                     "ELASTOS_LLAMA_ARM64_BUNDLE": str(self.arm64_engine),
                     "ELASTOS_LLAMA_AMD64_BUNDLE": str(self.amd64_engine)}
+        self.env.pop("ELASTOS_WALLETCONNECT_PROJECT_ID", None)
+        self.env.pop("ELASTOS_WALLETCONNECT_PROJECT_FILE", None)
+        wc_vendor = self.repo / "capsules/wallet-walletconnect/vendor"
+        wc_vendor.mkdir(parents=True, exist_ok=True)
+        wc_sdk = b"export const fixture = true;"
+        (wc_vendor / "reown-appkit.js").write_bytes(wc_sdk)
+        (wc_vendor / "adapter.json").write_text(json.dumps({
+            "sdk_package": "@walletconnect/ethereum-provider", "sdk_version": "2.23.9",
+            "sdk_sha256": hashlib.sha256(wc_sdk).hexdigest(),
+        }))
         self.commit("fixture", init=True)
         (self.repo / "capsules/home/browser/secret.txt").write_text("ignored private input")
 
@@ -745,6 +755,21 @@ class PrepareWorkerTest(unittest.TestCase):
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("Output already exists", refused.stderr)
         self.assertEqual((output / "platform-input.json").read_bytes(), before)
+
+    def test_walletconnect_operator_config_and_bundle_enter_the_verified_release(self):
+        project = self.root / "operator-project"
+        project.write_text("fixture-project-id")
+        project.chmod(0o600)
+        output, result = self.prepare(env={**self.env, "ELASTOS_WALLETCONNECT_PROJECT_FILE": str(project)})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with tarfile.open(output / "artifacts/wallet-walletconnect.tar.gz") as archive:
+            sdk = archive.extractfile("wallet-walletconnect/vendor/reown-appkit.js").read()
+            config = json.loads(archive.extractfile("wallet-walletconnect/vendor/connector.json").read())
+            self.assertEqual(archive.getmember("wallet-walletconnect/vendor/connector.json").mode & 0o777, 0o600)
+        self.assertEqual(config["project_id"], "fixture-project-id")
+        self.assertEqual(config["sdk_sha256"], hashlib.sha256(sdk).hexdigest())
+        result = self.command("python3", "scripts/release-platform-input.py", "verify", str(output))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_packaging_refuses_a_projection_with_microvm_type(self):
         path = self.repo / "capsules/home-cli/capsule.json"

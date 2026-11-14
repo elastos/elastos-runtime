@@ -79,7 +79,7 @@ const connectors = Object.freeze([
   {
     id: "wallet-walletconnect",
     title: "WalletConnect",
-    lockedStatus: "Open from Wallet to add an approval method.",
+    lockedStatus: "Open from Wallet to review approval requests.",
     token: "wallet-walletconnect-layout-token",
     accountSummary: {
       accounts: [
@@ -139,6 +139,7 @@ function contentType(path) {
     ".css": "text/css; charset=utf-8",
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
     ".png": "image/png",
     ".svg": "image/svg+xml",
     ".woff2": "font/woff2",
@@ -166,7 +167,7 @@ function staticPath(pathname) {
 }
 
 function fixtureHtml(baseUrl, connector, mode) {
-  const hasToken = mode === "verified";
+  const hasToken = mode !== "locked";
   const query = new URLSearchParams({ home_origin: baseUrl });
   const src = `${baseUrl}/apps/${connector.id}/?${query.toString()}${
     hasToken ? `#home_token=${encodeURIComponent(connector.token)}` : ""
@@ -227,6 +228,7 @@ function fixtureHtml(baseUrl, connector, mode) {
 }
 
 function startServer() {
+  let recovery = false;
   const traces = new Map();
   for (const connector of connectors) {
     traces.set(connector.id, {
@@ -256,7 +258,8 @@ function startServer() {
         const connector = connectors.find((entry) => entry.id === url.searchParams.get("connector"));
         const mode = url.searchParams.get("mode");
         assert(connector, "unknown connector fixture");
-        assert(mode === "locked" || mode === "verified", "unknown connector mode");
+        assert(["locked","verified","recovery"].includes(mode), "unknown connector mode");
+        recovery = mode === 'recovery';
         const body = Buffer.from(fixtureHtml(baseUrl(server), connector, mode));
         response.writeHead(200, {
           "cache-control": "no-store",
@@ -290,7 +293,9 @@ function startServer() {
           json(response, 401, { error: "invalid token" });
           return;
         }
-        json(response, 200, matchedConnector.requestSummary);
+        const summary = structuredClone(matchedConnector.requestSummary);
+        if (recovery) summary.approval_requests[0].status = 'approved';
+        json(response, 200, summary);
         return;
       }
       const asset = staticPath(url.pathname);
@@ -523,6 +528,17 @@ async function run() {
       assert(consoleErrors.length === 0, `${connector.title} page had console errors`, consoleErrors);
       assert(requestFailures.length === 0, `${connector.title} page had request failures`, requestFailures);
       await page.close();
+      if (connector.id === 'wallet-walletconnect') {
+        for (const width of [1280,390]) {
+          const recoveryPage = await browser.newPage({viewport:{width,height:900}});
+          await recoveryPage.goto(`${server.baseUrl}/fixture?connector=${connector.id}&mode=recovery`);
+          const recoveryFrame = await waitForConnectorFrame(recoveryPage);
+          await recoveryFrame.getByText('Check your phone wallet.',{exact:false}).waitFor();
+          assert(await recoveryFrame.locator('[data-wallet-request-sign]').count() === 0,'unfinished transaction offers recovery without another send');
+          screenshots.push(await saveScreenshot(recoveryPage,`walletconnect-recovery-${width}.png`));
+          await recoveryPage.close();
+        }
+      }
     }
   } finally {
     await browser.close();

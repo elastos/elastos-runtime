@@ -5,13 +5,14 @@ pub(in crate::api::gateway) async fn wallet_connector_config(
     Path(wallet_connector): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(err) = require_wallet_connector_launch_context(
+    let context = match require_wallet_connector_launch_context(
         &state.data_dir,
         &headers,
         wallet_connector.as_str(),
     ) {
-        return system_error_response(err);
-    }
+        Ok(context) => context,
+        Err(err) => return system_error_response(err),
+    };
 
     let mut payload = serde_json::json!({
         "schema": "elastos.wallet.connector.config/v1",
@@ -25,8 +26,16 @@ pub(in crate::api::gateway) async fn wallet_connector_config(
             Ok(config)
         }) {
             Ok(config) => {
+                let revision = match gateway_walletconnect::storage_revision(
+                    &state.data_dir,
+                    &context.principal_id,
+                ) {
+                    Ok(revision) => revision,
+                    Err(err) => return system_error_response(err),
+                };
                 payload["walletconnect"] = serde_json::json!({
                     "project_id": config.project_id,
+                    "storage_revision": revision,
                     "sdk_package": config.sdk_package,
                     "sdk_version": config.sdk_version,
                     "sdk_asset_path": "/apps/wallet-walletconnect/vendor/reown-appkit.js",
@@ -74,12 +83,23 @@ pub(in crate::api::gateway) async fn wallet_connector_approvals(
         Ok(authority) => authority,
         Err(err) => return system_error_response(err),
     };
-    let mut summary = system_wallet_approvals_summary(&state, &authority, false).await;
+    let mut summary = system_wallet_approvals_summary(
+        &state,
+        &authority,
+        wallet_connector == WALLET_WALLETCONNECT_CAPSULE_ID,
+    )
+    .await;
     summary.approval_requests.retain(|request| {
         !is_managed_wallet_proof_type(&request.proof_type)
             && request.connector_id.as_deref() == Some(wallet_connector.as_str())
+            && (request.status == "pending"
+                || (request.status == "approved" && request.intent == "transaction_intent"))
     });
-    summary.pending_count = summary.approval_requests.len();
+    summary.pending_count = summary
+        .approval_requests
+        .iter()
+        .filter(|r| r.status == "pending")
+        .count();
     Json(summary).into_response()
 }
 
@@ -101,6 +121,14 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_approve(
         Err(err) => return system_error_response(err),
     };
     let context = authority.home_launch_context();
+    let binding = if wallet_connector == WALLET_WALLETCONNECT_CAPSULE_ID {
+        match walletconnect_request_binding(&state, &authority, &request_id, "pending").await {
+            Ok(binding) => Some(binding),
+            Err(err) => return system_error_response(err),
+        }
+    } else {
+        None
+    };
     let connector_label = wallet_connector_label(wallet_connector.as_str());
     let reason = input
         .reason
@@ -120,7 +148,19 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_approve(
             let mut summary = system_wallet_approvals_summary(&state, &authority, false).await;
             summary.note = Some(format!("Approved. Continue in {connector_label}."));
             summary.handoff = outcome.handoff;
-            Json(summary).into_response()
+            let mut response = serde_json::to_value(summary).expect("wallet summary serialization");
+            if let Some(binding) = binding {
+                if let Err(err) = validate_walletconnect_handoff(
+                    &request_id,
+                    &binding,
+                    &outcome.approval_request,
+                    &response["handoff"],
+                ) {
+                    return system_error_response(err);
+                }
+                response["binding"] = binding;
+            }
+            Json(response).into_response()
         }
         Err(err) => system_error_response(err),
     }
@@ -144,6 +184,36 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_complete(
         Err(err) => return system_error_response(err),
     };
     let context = authority.home_launch_context();
+    if wallet_connector == WALLET_WALLETCONNECT_CAPSULE_ID {
+        let binding = match walletconnect_request_binding(
+            &state,
+            &authority,
+            &request_id,
+            "approved",
+        )
+        .await
+        {
+            Ok(binding) => binding,
+            Err(err) => return system_error_response(err),
+        };
+        if binding["payload_hash"].as_str() != Some(input.payload_hash.as_str())
+            || !binding["address"]
+                .as_str()
+                .is_some_and(|address| address.eq_ignore_ascii_case(&input.signer))
+            || input
+                .transaction_hash
+                .as_deref()
+                .is_some_and(|hash| !walletconnect_hash(hash))
+            || (binding["intent"] == "transaction_intent"
+                && (input.transaction_hash.is_none() || input.signature.is_some()))
+            || (binding["intent"] != "transaction_intent"
+                && (input.signature.is_none() || input.transaction_hash.is_some()))
+        {
+            return system_error_response(anyhow::anyhow!(
+                "WalletConnect completion binding or transaction hash is invalid"
+            ));
+        }
+    }
     let connector_label = wallet_connector_label(wallet_connector.as_str());
     match complete_external_wallet_approval(
         &state,
@@ -168,7 +238,7 @@ fn require_capsule_owned_connector_effects(connector_id: &str) -> anyhow::Result
     if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
         return Ok(());
     }
-    if connector_id == WALLET_METAMASK_CAPSULE_ID || connector_id == WALLET_UNISAT_CAPSULE_ID {
+    if is_wallet_connector_capsule_id(connector_id) {
         anyhow::bail!(
             "wallet connector injected-wallet effects require the trusted Home host bridge"
         );
@@ -185,7 +255,14 @@ pub(in crate::api::gateway) fn require_wallet_connector_launch_context(
         anyhow::bail!("unknown wallet connector capsule");
     }
     ensure_wallet_connector_configured(data_dir, connector_id)?;
-    require_home_launch_token_context(data_dir, headers, connector_id)
+    if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
+        Ok(
+            gateway_walletconnect::connector_launch_authority(data_dir, headers)?
+                .home_launch_context(),
+        )
+    } else {
+        require_home_launch_token_context(data_dir, headers, connector_id)
+    }
 }
 
 pub(in crate::api::gateway) fn require_wallet_connector_launch_authority(
@@ -197,7 +274,11 @@ pub(in crate::api::gateway) fn require_wallet_connector_launch_authority(
         anyhow::bail!("unknown wallet connector capsule");
     }
     ensure_wallet_connector_configured(data_dir, connector_id)?;
-    require_runtime_wallet_authority(data_dir, headers, &[connector_id])
+    if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
+        gateway_walletconnect::connector_launch_authority(data_dir, headers)
+    } else {
+        require_runtime_wallet_authority(data_dir, headers, &[connector_id])
+    }
 }
 
 pub(in crate::api::gateway) fn require_wallet_app_launch_authority(
@@ -218,11 +299,10 @@ pub(crate) fn ensure_wallet_connector_configured(
     validate_walletconnect_connector_config(&config)?;
 
     let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
-    let bytes = std::fs::read(&sdk_path).map_err(|err| {
-        anyhow::anyhow!(
-            "WalletConnect connector is not configured: pinned SDK asset missing ({err})"
-        )
-    })?;
+    let bytes =
+        gateway_walletconnect::read_bytes(&sdk_path, 8 * 1024 * 1024)?.ok_or_else(|| {
+            anyhow::anyhow!("WalletConnect connector is not configured: pinned SDK asset missing")
+        })?;
     let digest = format!("{:x}", Sha256::digest(&bytes));
     if !digest.eq_ignore_ascii_case(config.sdk_sha256.trim()) {
         anyhow::bail!("WalletConnect connector is not configured: pinned SDK hash mismatch");
@@ -233,9 +313,14 @@ pub(crate) fn ensure_wallet_connector_configured(
 pub(in crate::api::gateway) fn load_walletconnect_connector_config(
     data_dir: &FsPath,
 ) -> anyhow::Result<WalletConnectConnectorConfig> {
-    let path = data_dir.join(WALLETCONNECT_CONFIG_PATH);
-    let bytes = std::fs::read(&path).map_err(|err| {
-        anyhow::anyhow!("WalletConnect connector is not configured: pinned config missing ({err})")
+    let operator = data_dir.join(WALLETCONNECT_CONFIG_PATH);
+    let path = if operator.try_exists()? {
+        operator
+    } else {
+        data_dir.join("capsules/wallet-walletconnect/vendor/connector.json")
+    };
+    let bytes = gateway_walletconnect::read_bytes(&path, 8192)?.ok_or_else(|| {
+        anyhow::anyhow!("WalletConnect connector is not configured: pinned config missing")
     })?;
     serde_json::from_slice(&bytes).map_err(|err| {
         anyhow::anyhow!("WalletConnect connector is not configured: invalid pinned config ({err})")
@@ -273,5 +358,78 @@ pub(in crate::api::gateway) fn validate_walletconnect_connector_config(
     if digest.len() != 64 || !digest.chars().all(|ch| ch.is_ascii_hexdigit()) {
         anyhow::bail!("WalletConnect connector is not configured: invalid SDK hash");
     }
+    Ok(())
+}
+
+fn walletconnect_hash(value: &str) -> bool {
+    value.len() == 66
+        && value.starts_with("0x")
+        && value[2..].bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+async fn walletconnect_request_binding(
+    state: &GatewayState,
+    authority: &RuntimeWalletAuthority,
+    request_id: &str,
+    status: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let data = runtime_wallet_data(
+        state,
+        authority,
+        elastos_wallet_contract::WalletProviderOperationV2::ListApprovals {
+            include_resolved: true,
+        },
+    )
+    .await?;
+    let request = data["approval_requests"]
+        .as_array()
+        .and_then(|requests| requests.iter().find(|r| r["request_id"] == request_id))
+        .ok_or_else(|| anyhow::anyhow!("WalletConnect approval request not found"))?;
+    anyhow::ensure!(
+        request["principal_id"].as_str() == Some(authority.verified_context().principal_id())
+            && request["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
+            && request["status"] == status
+            && (request["expires_at"].as_u64().is_some_and(|expiry| expiry > now_ts())
+                // The phone can return a sent transaction after the approval TTL.
+                // Approved state still binds its one completion to the same payload.
+                || status == "approved" && request["intent"] == "transaction_intent"
+                    && request["expires_at"].as_u64().is_some_and(|expiry| expiry.saturating_add(elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS) > now_ts()))
+            && request["payload_hash"]
+                .as_str()
+                .is_some_and(walletconnect_hash),
+        "WalletConnect request binding changed or expired"
+    );
+    Ok(request.clone())
+}
+
+fn validate_walletconnect_handoff(
+    request_id: &str,
+    binding: &serde_json::Value,
+    approved: &Option<serde_json::Value>,
+    handoff: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let approved = approved
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("WalletConnect approval binding is missing"))?;
+    for field in [
+        "principal_id",
+        "requested_by_actor",
+        "account_id",
+        "chain_namespace",
+        "payload_hash",
+        "expires_at",
+    ] {
+        anyhow::ensure!(
+            !binding[field].is_null() && approved[field] == binding[field],
+            "WalletConnect approval binding mismatch"
+        );
+    }
+    anyhow::ensure!(
+        handoff["request_id"] == request_id
+            && handoff["payload_hash"] == binding["payload_hash"]
+            && handoff["intent"] == binding["intent"]
+            && handoff["signer"] == binding["address"],
+        "WalletConnect handoff binding mismatch"
+    );
     Ok(())
 }

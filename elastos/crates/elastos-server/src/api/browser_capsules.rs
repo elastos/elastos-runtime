@@ -248,8 +248,31 @@ async fn serve_browser_capsule_asset(
         return (StatusCode::NOT_FOUND, "File not found").into_response();
     }
 
-    let asset_path = match tokio::fs::canonicalize(capsule_root.join(relative_path)).await {
-        Ok(path) if path.starts_with(&capsule_root) => path,
+    // The connector's locked SDK is a sibling of browser/. This one asset has
+    // a browser route; the rest of the executable capsule stays private.
+    let asset_root = if app == super::gateway::WALLET_WALLETCONNECT_CAPSULE_ID
+        && relative_path == "vendor/reown-appkit.js"
+        && capsule.root.ends_with("browser")
+    {
+        let Some(root) = capsule.root.parent() else {
+            return (StatusCode::NOT_FOUND, "File not found").into_response();
+        };
+        let root = match tokio::fs::canonicalize(root).await {
+            Ok(path) if path.starts_with(&installed_root) => path,
+            _ => return (StatusCode::NOT_FOUND, "File not found").into_response(),
+        };
+        if strict_declared_content_icon_path(&root, relative_path)
+            .await
+            .is_err()
+        {
+            return (StatusCode::NOT_FOUND, "File not found").into_response();
+        }
+        root
+    } else {
+        capsule_root.clone()
+    };
+    let asset_path = match tokio::fs::canonicalize(asset_root.join(relative_path)).await {
+        Ok(path) if path.starts_with(&asset_root) => path,
         _ => return (StatusCode::NOT_FOUND, "File not found").into_response(),
     };
     let Ok(bytes) = tokio::fs::read(&asset_path).await else {
@@ -383,10 +406,10 @@ fn shell_content_security_policy(
             format!("{home_source} 'unsafe-inline'"),
         )
     };
-    let connect_source = if !is_home_host {
-        format!("{default_source} {}", home_websocket_origin(&home_source)?)
-    } else {
+    let connect_source = if is_home_host {
         default_source.clone()
+    } else {
+        format!("{default_source} {}", home_websocket_origin(&home_source)?)
     };
     // No allow-popups: a new window escapes connect-src and frame-src. Home
     // opens web links for its apps (`home:open-external`).
@@ -1539,6 +1562,121 @@ mod tests {
         )
         .await;
         assert_eq!(escape_file_response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn walletconnect_serves_exact_pinned_sdk_without_exposing_capsule_root() {
+        use super::super::gateway::{
+            WALLETCONNECT_CONFIG_PATH, WALLETCONNECT_CONFIG_SCHEMA, WALLETCONNECT_SDK_PACKAGE,
+        };
+        let data_dir = tempfile::tempdir().unwrap();
+        write_test_wasm_browser_capsule(
+            data_dir.path(),
+            WALLET_WALLETCONNECT_CAPSULE_ID,
+            "WalletConnect",
+            "app",
+        );
+        let capsule = data_dir.path().join("capsules/wallet-walletconnect");
+        let sdk = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../capsules/wallet-walletconnect/vendor/reown-appkit.js"
+        ));
+        let hash = hex::encode(Sha256::digest(sdk));
+        assert_eq!(
+            hash,
+            "6cff318e63fa0b8c9cc7ee95ce92d5a5470df6cd742a8ad8c2033ce829bb1895"
+        );
+        fs::create_dir_all(capsule.join("vendor")).unwrap();
+        fs::write(capsule.join("vendor/reown-appkit.js"), sdk).unwrap();
+        fs::write(capsule.join("vendor/adapter.json"), "private provenance").unwrap();
+        fs::write(capsule.join("vendor/package-lock.json"), "private lock").unwrap();
+        fs::write(
+            capsule.join("wallet-walletconnect.wasm"),
+            "private executable",
+        )
+        .unwrap();
+        let config = data_dir.path().join(WALLETCONNECT_CONFIG_PATH);
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(
+            config,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": WALLETCONNECT_CONFIG_SCHEMA,
+                "project_id": "fixture-project",
+                "sdk_package": WALLETCONNECT_SDK_PACKAGE,
+                "sdk_version": "2.23.9",
+                "sdk_sha256": hash,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let response = serve_browser_capsule_path(
+            data_dir.path(),
+            &test_request_headers(),
+            WALLET_WALLETCONNECT_CAPSULE_ID,
+            Some("vendor/reown-appkit.js"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["access-control-allow-origin"], "null");
+        assert_eq!(response.headers()["content-type"], "application/javascript");
+        let bytes = axum::body::to_bytes(response.into_body(), sdk.len())
+            .await
+            .unwrap();
+        assert_eq!(hex::encode(Sha256::digest(&bytes)), hash);
+        assert_eq!(bytes.as_ref(), sdk);
+        for path in [
+            "capsule.json",
+            "wallet-walletconnect.wasm",
+            "vendor/adapter.json",
+            "vendor/package-lock.json",
+            "vendor/../capsule.json",
+            "../wallet/wallet.wasm",
+        ] {
+            let response = serve_browser_capsule_path(
+                data_dir.path(),
+                &test_request_headers(),
+                WALLET_WALLETCONNECT_CAPSULE_ID,
+                Some(path),
+            )
+            .await;
+            assert!(
+                matches!(
+                    response.status(),
+                    StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
+                ),
+                "capsule path was exposed: {path}"
+            );
+        }
+
+        write_test_wasm_browser_capsule(data_dir.path(), "other-app", "Other app", "app");
+        let other = data_dir.path().join("capsules/other-app/vendor");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("reown-appkit.js"), sdk).unwrap();
+        let response = serve_browser_capsule_path(
+            data_dir.path(),
+            &test_request_headers(),
+            "other-app",
+            Some("vendor/reown-appkit.js"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        #[cfg(unix)]
+        {
+            // A directory link must be refused even when its bytes match the pin.
+            fs::rename(capsule.join("vendor"), capsule.join("private-vendor")).unwrap();
+            std::os::unix::fs::symlink(capsule.join("private-vendor"), capsule.join("vendor"))
+                .unwrap();
+            let response = serve_browser_capsule_path(
+                data_dir.path(),
+                &test_request_headers(),
+                WALLET_WALLETCONNECT_CAPSULE_ID,
+                Some("vendor/reown-appkit.js"),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
     }
 
     #[tokio::test]

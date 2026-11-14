@@ -109,6 +109,11 @@ pub(super) async fn append_inbox_requests(
         notifications.attention_count += usize::from(card.severity == "attention");
         notifications.entries.push(card);
     }
+    if let Some(card) = gateway_walletconnect::notification(state, context) {
+        notifications.unread_count += usize::from(!card.read);
+        notifications.attention_count += usize::from(card.severity == "attention");
+        notifications.entries.push(card);
+    }
     append_wallet_approval_notifications(notifications, wallet_approvals);
     // Runtime capability requests are the admin's to answer.
     if ensure_admin_context(&state.data_dir, context).is_ok() {
@@ -383,6 +388,15 @@ async fn dispatch_inbox_action(
     let action_id = action.action_id.as_str();
     if action_id.starts_with("browser-internet-") {
         return gateway_browser_internet::answer(
+            state,
+            launch,
+            action_id,
+            action.step_up_token.as_deref(),
+        )
+        .await;
+    }
+    if action_id.starts_with("walletconnect-internet-") {
+        return gateway_walletconnect::answer(
             state,
             launch,
             action_id,

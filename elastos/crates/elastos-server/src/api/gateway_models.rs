@@ -641,6 +641,7 @@ struct SystemWalletApprovalSummary {
     resource: String,
     reason: String,
     account_id: String,
+    chain_namespace: String,
     address: String,
     proof_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]

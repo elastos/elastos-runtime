@@ -467,7 +467,20 @@ impl WalletProvider {
         if let Err(err) = self.save() {
             return Response::error("storage_error", err);
         }
-        Response::ok(json!({ "account": account }))
+        // Runtime can retire the owner's pairing after its last connector account.
+        let connector_accounts_remaining = self
+            .store
+            .accounts
+            .iter()
+            .filter(|candidate| {
+                candidate.principal_id == account.principal_id
+                    && candidate.connector_id == account.connector_id
+                    && candidate.revoked_at.is_none()
+            })
+            .count();
+        Response::ok(
+            json!({ "account": account, "connector_accounts_remaining": connector_accounts_remaining }),
+        )
     }
 
     pub(super) fn rename_account(
