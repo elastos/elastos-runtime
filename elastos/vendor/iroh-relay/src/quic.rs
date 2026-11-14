@@ -26,42 +26,6 @@ pub(crate) mod server {
 
     use super::*;
 
-    #[tokio::test]
-    #[cfg(feature = "test-utils")]
-    async fn discovery_per_ip_refuses_a_ninth_connection() {
-        let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
-        let server = server::QuicServer::spawn((Ipv4Addr::LOCALHOST,0).into(), tls, Default::default()).unwrap();
-        let endpoint = noq::Endpoint::client((Ipv4Addr::LOCALHOST,0).into()).unwrap();
-        let client = QuicClient::new(endpoint.clone(), crate::tls::make_dangerous_client_config());
-        let mut held = Vec::new();
-        for _ in 0..8 {
-            held.push(tokio::time::timeout(Duration::from_secs(3), client.connect(server.bind_addr(), "localhost")).await.unwrap().unwrap());
-        }
-        let ninth = tokio::time::timeout(Duration::from_secs(3), client.connect(server.bind_addr(), "localhost")).await;
-        endpoint.close(0u32.into(), b"fixture ended");
-        server.shutdown().await;
-        assert!(matches!(ninth, Ok(Err(_))), "discovery must refuse the ninth live connection from one source IP");
-    }
-
-    #[tokio::test]
-    #[cfg(feature = "test-utils")]
-    async fn failed_discovery_start_releases_http_before_returning() {
-        let tcp = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST,0)).unwrap();
-        let http = tcp.local_addr().unwrap();
-        drop(tcp);
-        let udp = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST,0)).unwrap();
-        let qad = udp.local_addr().unwrap();
-        let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
-        let mut config = crate::server::ServerConfig::default();
-        config.relay = Some(crate::server::RelayConfig::new(http));
-        config.quic = Some(crate::server::QuicConfig {bind_addr:qad,server_config:Some(tls)});
-        assert!(crate::server::Server::spawn(config).await.is_err());
-        let released_http = std::net::TcpListener::bind(http);
-        drop(udp);
-        let released_qad = std::net::UdpSocket::bind(qad);
-        assert!(released_http.is_ok(), "failed discovery startup retained the HTTP listener");
-        assert!(released_qad.is_ok(), "the failed start retained the discovery port");
-    }
     use crate::server::Metrics;
 
     pub(crate) struct QuicServer {
@@ -418,6 +382,44 @@ mod tests {
     use webpki_types::PrivatePkcs8KeyDer;
 
     use super::*;
+
+    #[tokio::test]
+    #[cfg(feature = "test-utils")]
+    async fn discovery_per_ip_refuses_a_ninth_connection() {
+        let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
+        let server = server::QuicServer::spawn((Ipv4Addr::LOCALHOST,0).into(), tls, Default::default()).unwrap();
+        let endpoint = noq::Endpoint::client((Ipv4Addr::LOCALHOST,0).into()).unwrap();
+        let client = QuicClient::new(endpoint.clone(), crate::tls::make_dangerous_client_config());
+        let connect = || client.ep.connect_with(client.client_config.clone(), server.bind_addr(), "localhost").unwrap();
+        let mut held = Vec::new();
+        for _ in 0..8 {
+            held.push(tokio::time::timeout(Duration::from_secs(3), connect()).await.unwrap().unwrap());
+        }
+        let ninth = tokio::time::timeout(Duration::from_secs(3), connect()).await;
+        endpoint.close(0u32.into(), b"fixture ended");
+        server.shutdown().await;
+        assert!(matches!(ninth, Ok(Err(_))), "discovery must refuse the ninth live connection from one source IP");
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "test-utils")]
+    async fn failed_discovery_start_releases_http_before_returning() {
+        let tcp = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST,0)).unwrap();
+        let http = tcp.local_addr().unwrap();
+        drop(tcp);
+        let udp = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST,0)).unwrap();
+        let qad = udp.local_addr().unwrap();
+        let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
+        let mut config = crate::server::ServerConfig::default();
+        config.relay = Some(crate::server::RelayConfig::new(http));
+        config.quic = Some(crate::server::QuicConfig {bind_addr:qad,server_config:Some(tls)});
+        assert!(crate::server::Server::spawn(config).await.is_err());
+        let released_http = std::net::TcpListener::bind(http);
+        drop(udp);
+        let released_qad = std::net::UdpSocket::bind(qad);
+        assert!(released_http.is_ok(), "failed discovery startup retained the HTTP listener");
+        assert!(released_qad.is_ok(), "the failed start retained the discovery port");
+    }
 
     #[tokio::test]
     #[traced_test]
