@@ -65,6 +65,11 @@ def stage_home(build, root, carrier_address):
     """One disposable data root that the Runtime's own checksum check accepts."""
     data = root / ".local/share/elastos"
     (data / "bin").mkdir(mode=0o700, parents=True)
+    # The shared process census owns a Runtime by its data-root path, so each
+    # Home runs its own copy of the binary from its own bin directory.
+    runtime = data / "bin/elastos"
+    shutil.copy2(build.runtime, runtime)
+    runtime.chmod(0o700)
     manifest = json.loads(build.manifest.read_text())
     for provider in STAGED_PROVIDERS:
         staged = data / "bin" / provider
@@ -93,6 +98,7 @@ class Home:
         self.carrier_address = f"{bind_host}:{free_port(socket.SOCK_DGRAM)}"
         self.api_address = f"{bind_host}:{free_port()}"
         self.data = stage_home(build, root, self.carrier_address)
+        self.runtime = self.data / "bin/elastos"
         self.child = None
 
     def environment(self):
@@ -107,7 +113,7 @@ class Home:
         assert self.child is None, "Home already has a Runtime"
         with self.log.open("ab") as log:
             self.child = subprocess.Popen(
-                [str(self.build.runtime), "gateway", "--addr", self.api_address],
+                [str(self.runtime), "gateway", "--addr", self.api_address],
                 env=self.environment(),
                 stdout=log,
                 stderr=log,
@@ -125,7 +131,7 @@ class Home:
     def configure(self, *arguments):
         with (self.root / "configuration.private.log").open("ab") as log:
             subprocess.run(
-                [str(self.build.runtime), "collaboration-config", *map(str, arguments)],
+                [str(self.runtime), "collaboration-config", *map(str, arguments)],
                 env=self.environment(),
                 stdout=log,
                 stderr=log,
@@ -222,8 +228,15 @@ def run_arrangement(node_build, home_build, root, bind_host, settle):
         for home in homes.values():
             try:
                 record["process_cleanup"].append(home.stop())
-            except (OSError, RuntimeError, AssertionError) as error:
-                record["process_cleanup"].append({"status": "failed", "error": str(error)[:200]})
+            except Exception as error:  # a stuck cleanup still leaves a result
+                record["process_cleanup"].append(
+                    {"status": "failed", "error": f"{type(error).__name__}: {error}"[:200]}
+                )
+        if record.get("status") != "passed":
+            # The fixture tree goes away, so a failure keeps its own last words.
+            record["log_tails"] = {
+                home.name: home.lines("")[-12:] for home in homes.values()
+            }
         shutil.rmtree(root, ignore_errors=True)
     return record
 
@@ -263,6 +276,9 @@ def main():
     for row in receipt["arrangements"]:
         print(f"node={row['node_build']:<9} homes={row['home_build']:<9} {row['status']}"
               + (f"  {row['failure']}" if "failure" in row else ""))
+        for name, tail in row.get("log_tails", {}).items():
+            for line in tail:
+                print(f"  [{name}] {line[:200]}")
         for observation in row["observations"]:
             print(
                 f"  {observation['home']} joined={observation['joined']} "
