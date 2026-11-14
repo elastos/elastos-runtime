@@ -501,6 +501,8 @@ try {
   await homeGui.locator('#launcher-grid [data-target="wallet"]').click();
   await waitFor(() => frameFor(page, "wallet"), 15_000, "real Wallet frame");
   const wallet = frameFor(page, "wallet");
+  // The static Settings button can exist before Wallet's module binds handlers.
+  await wallet.waitForLoadState("domcontentloaded", { timeout: 15_000 });
   await wallet.waitForSelector("#wallet-settings-open", { timeout: 15_000 });
   const connectorLabels = Object.freeze({
     "wallet-metamask": "Connect wallet",
@@ -519,15 +521,13 @@ try {
   assert(walletUiBeforeConnectors.settingsOpen === false, "Wallet fixture opened settings early");
 
   for (const [target, connectLabel] of Object.entries(connectorLabels)) {
-    await wallet.evaluate(({ connectorTarget }) => {
-      const drawer = document.querySelector("#wallet-settings-drawer");
-      if (drawer?.hidden !== false) {
-        document.querySelector("#wallet-settings-open")?.click();
-      }
-      document
-        .querySelector(`[data-wallet-open-method="${connectorTarget}"]`)
-        ?.click();
-    }, { connectorTarget: target });
+    if (await wallet.locator("#wallet-settings-drawer").isHidden()) {
+      await wallet.locator("#wallet-settings-open").click({ timeout: 15_000 });
+    }
+    // Connector controls arrive with the summary; wait for an actionable button.
+    await wallet.locator(`[data-wallet-open-method="${target}"]`).click({
+      timeout: 15_000,
+    });
     await waitFor(() => frameFor(page, target), 15_000, `${target} connector UI`);
     const connector = frameFor(page, target);
     await connector.waitForSelector("#wallet-connect", { timeout: 15_000 });
