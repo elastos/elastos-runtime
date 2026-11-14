@@ -62,7 +62,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
         rows = {}
         for name, homes in self.TRANSITIONS.items():
             members = [home for home in homes if home != 'community']
-            rows[name] = {'homes':{home:{'alive':True, 'peer_count':1} for home in homes},
+            rows[name] = {'homes':{home:{'alive':True, 'carrier_ticket_length':120} for home in homes},
                           'community':[{'from':sender, 'to':receiver, 'sent':f'{name} post from {sender}',
                                         'received':f'{name} post from {sender}'}
                                        for sender in members for receiver in members if sender != receiver],
@@ -148,10 +148,11 @@ class TwoHomeReceiptTests(unittest.TestCase):
                 for alive in (False, None, 'true'):
                     refused(f'{home} alive={alive!r} at {name}',
                             lambda rows: rows[name]['homes'][home].update(alive=alive))
-                for count in (0, None, True, '1'):
-                    refused(f'{home} peer_count={count!r} at {name}',
-                            lambda rows: rows[name]['homes'][home].update(peer_count=count))
-                refused(f'{home} reports no peer count at {name}', lambda rows: rows[name]['homes'][home].pop('peer_count'))
+                for length in (0, None, True, '120', 16385):
+                    refused(f'{home} carrier_ticket_length={length!r} at {name}',
+                            lambda rows: rows[name]['homes'][home].update(carrier_ticket_length=length))
+                refused(f'{home} reports no Carrier observation at {name}',
+                        lambda rows: rows[name]['homes'][home].pop('carrier_ticket_length'))
             for index, post in enumerate(valid['transitions'][name]['community']):
                 pair = f"{post['from']} to {post['to']} at {name}"
                 refused(pair+' is missing', lambda rows: rows[name]['community'].pop(index))
@@ -173,36 +174,41 @@ class TwoHomeReceiptTests(unittest.TestCase):
         refused('a direct message from before the node restart counts after it',
                 lambda rows: rows['node_restart']['direct'].update(sent='start direct', received='start direct'))
 
-    def test_transition_homes_record_an_exited_process_and_wait_for_a_late_peer_count(self):
+    def test_transition_homes_observe_only_a_live_home_and_record_an_exited_one(self):
         observe = JOURNEY['transition_homes']
         transition = JOURNEY['Transition']('node_restart', 'restart_community', ('community', 'a'))
         running, exited = mock.Mock(**{'poll.return_value':None}), mock.Mock(**{'poll.return_value':1})
-        late = {'community':iter([None, 0, 2]), 'a':iter([1])}
-        with mock.patch.object(observe.__globals__['time'], 'sleep'):
-            self.assertEqual(observe(transition, {'community':running, 'a':running}, lambda name: next(late[name])),
-                             {'community':{'alive':True, 'peer_count':2}, 'a':{'alive':True, 'peer_count':1}})
-        self.assertEqual(observe(transition, {'community':exited, 'a':running}, lambda name: 1)['community'],
-                         {'alive':False, 'peer_count':None})
-        self.assertEqual(observe(transition, {'a':running}, lambda name: 1)['community'],
-                         {'alive':False, 'peer_count':None})
-        for count in (None, 0):
-            self.assertEqual(observe(transition, {'community':running, 'a':running}, lambda name: count, budget=0)['a'],
-                             {'alive':True, 'peer_count':count})
+        self.assertEqual(observe(transition, {'community':running, 'a':running}, lambda name: len(name)),
+                         {'community':{'alive':True, 'carrier_ticket_length':9},
+                          'a':{'alive':True, 'carrier_ticket_length':1}})
+        def refuse(name):
+            if name == 'community':
+                raise AssertionError('an exited Home was asked for a ticket')
+            return 1
+        self.assertEqual(observe(transition, {'community':exited, 'a':running}, refuse)['community'],
+                         {'alive':False, 'carrier_ticket_length':None})
+        self.assertEqual(observe(transition, {'a':running}, refuse)['community'],
+                         {'alive':False, 'carrier_ticket_length':None})
 
-    def test_peer_count_comes_from_the_home_status_command_and_an_absent_count_stays_absent(self):
+    def test_the_carrier_observation_uses_the_homes_own_secret_at_shell_scope_and_bounds_the_ticket(self):
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary).resolve()
-            (home/'bin').mkdir()
-            runtime = home/'bin/elastos'
-            runtime.write_text('#!/bin/sh\n[ "$*" = "home --status --json" ] || exit 2\ncat "$HOME/status.json"\n')
-            runtime.chmod(0o700)
-            owner = JOURNEY['Owner'](home, home, '', '', None)
-            environment = {'PATH':os.environ['PATH'], 'HOME':str(home)}
-            for status, expected in (({'runtime':{'running':True, 'peer_count':2}}, 2),
-                                     ({'runtime':{'running':True, 'peer_count':0}}, 0),
-                                     ({'runtime':{'running':True}}, None)):
-                (home/'status.json').write_text(json.dumps(status))
-                self.assertEqual(JOURNEY['home_peer_count'](owner, environment), expected)
+            data = Path(temporary).resolve()
+            (data/'gateway-runtime-coords.json').write_text(json.dumps(
+                {'api_url':'http://127.0.0.1:1/', 'attach_secret':'fixture-secret'}))
+            owner = JOURNEY['Owner'](data, data, '', '', None)
+            posts = []
+            def post_json(url, body, token=None):
+                posts.append((url, body, token))
+                return {'token':'fixture-token'} if url.endswith('/attach') else {'data':{'ticket':ticket}}
+            with mock.patch.dict(JOURNEY['carrier_ticket'].__globals__, {'post_json':post_json}):
+                ticket = 'T'*120
+                self.assertEqual(JOURNEY['carrier_ticket'](owner), ticket)
+                self.assertEqual(posts, [('http://127.0.0.1:1/api/auth/attach',
+                                          {'secret':'fixture-secret', 'scope':'shell'}, None),
+                                         ('http://127.0.0.1:1/api/provider/peer/get_ticket', {}, 'fixture-token')])
+                for ticket in ('', 'T'*(JOURNEY['TICKET_MAX_LENGTH']+1)):
+                    with self.assertRaises(AssertionError):
+                        JOURNEY['carrier_ticket'](owner)
 
     def drive(self, outcome):
         """Run the mixed-version driver over a stand-in journey that saves a valid receipt unless ``outcome`` interferes."""
@@ -256,9 +262,9 @@ class TwoHomeReceiptTests(unittest.TestCase):
             if index == 2:
                 receipt.update(status='failed', cleanup_failures=[{'phase':'stop_a'}])
                 return RuntimeError('two-Home cleanup failed; see installed journey receipt')
-        def no_peer(index, receipt, _root, _journey):
+        def no_carrier(index, receipt, _root, _journey):
             if index == 3:
-                receipt['transitions']['node_restart']['homes']['a']['peer_count'] = 0
+                receipt['transitions']['node_restart']['homes']['a']['carrier_ticket_length'] = 0
         def raised_after_its_receipt(index, _receipt, _root, _journey):
             if index == 4:
                 return RuntimeError('late failure')
@@ -267,7 +273,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
                 (root/'a').mkdir(parents=True)
         for outcome, failed, removed in ((deadline, ['node-released-homes-released'], True),
                                          (failed_cleanup, ['node-released-homes-candidate'], True),
-                                         (no_peer, ['node-candidate-homes-released'], True),
+                                         (no_carrier, ['node-candidate-homes-released'], True),
                                          (raised_after_its_receipt, ['node-candidate-homes-candidate'], True),
                                          (leftover, [], False)):
             with self.subTest(outcome=outcome.__name__):

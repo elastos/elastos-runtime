@@ -70,8 +70,9 @@ def main(argv=None):
         failure = row.get("failure") or row["journey"].get("failure") or {}
         print(f"{row['arrangement']}: {row['status']}" + (f"  {failure['message']}" if failure else ""))
         for name, transition in row["journey"].get("transitions", {}).items():
-            peers = ", ".join(f"{home}={state['peer_count']}" for home, state in transition.get("homes", {}).items())
-            print(f"  {name}: peers {peers}; Community posts read {len(transition.get('community', []))}; "
+            homes = ", ".join(f"{home}={'carrier' if state['carrier_ticket_length'] else 'silent'}"
+                              for home, state in transition.get("homes", {}).items())
+            print(f"  {name}: {homes}; Community posts read {len(transition.get('community', []))}; "
                   f"direct {'read' if 'direct' in transition else 'missing'}")
     print("mixed-version status:", receipt["status"])
     raise SystemExit(0 if receipt["status"] == "passed" else 1)

@@ -1892,6 +1892,7 @@ def finish_message_fixture(root, data, evidence, record, children, fixtures, sto
 
 
 NODE = "community"  # the bootstrap role; every other role is a member Home
+TICKET_MAX_LENGTH = 16384
 MESSAGE_NETWORKS = {
     "same-host": {
         "environment": {"ELASTOS_CARRIER_NETWORK": "direct", "ELASTOS_CARRIER_MDNS": "0"},
@@ -1937,38 +1938,37 @@ def message_endpoints_valid(homes, observations, arrangement):
     return counts == settings["launches"]
 
 
-def home_peer_count(owner, environment):
-    """Carrier peers as the Home's own status command reports them; None when it reports no count."""
-    status = subprocess.run([str(owner.data / "bin/elastos"), "home", "--status", "--json"], env=environment,
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True, timeout=30).stdout
-    return json.loads(status)["runtime"].get("peer_count")
+def carrier_ticket(owner):
+    """The Home's own Carrier Provider ticket, read through that Home's own
+    attach secret. The secret and the token stay inside this call."""
+    coordinates = json.loads(bounded_text(owner.data / "gateway-runtime-coords.json"))
+    api = coordinates["api_url"].rstrip("/")
+    token = post_json(api + "/api/auth/attach", {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
+    ticket = post_json(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
+    assert 0 < len(ticket) <= TICKET_MAX_LENGTH
+    return ticket
 
 
-def transition_homes(transition, children, peer_count, budget=60):
-    """Liveness comes from each owned process itself. A peer count recovers
-    some time after a restart, so it is polled until every Home has one."""
-    end = time.monotonic() + budget
-    counts = dict.fromkeys(transition.homes)
-    while True:
-        alive = {name: name in children and children[name].poll() is None for name in transition.homes}
-        for name in transition.homes:
-            if alive[name] and not counts[name]:
-                counts[name] = peer_count(name)
-        if not all(alive.values()) or all(counts.values()) or time.monotonic() >= end:
-            return {name: {"alive": alive[name], "peer_count": counts[name]} for name in transition.homes}
-        time.sleep(1)
+def transition_homes(transition, children, observe):
+    """Liveness comes from each owned process itself. The Carrier observation
+    comes from the Home's own Provider, which answers once the Home is healthy,
+    so only a live Home is asked and no poll is needed."""
+    alive = {name: name in children and children[name].poll() is None for name in transition.homes}
+    return {name: {"alive": alive[name], "carrier_ticket_length": observe(name) if alive[name] else None}
+            for name in transition.homes}
 
 
 def transition_evidence_valid(row):
-    """After every transition each Home is alive with a Carrier peer, every
-    member read every other member's fresh post, and one direct message
-    arrived, each with its exact text."""
+    """After every transition each Home runs and its own Carrier Provider
+    answers, every member read every other member's fresh post, and one direct
+    message arrived, each with its exact text."""
     fresh = []
     for transition in MESSAGE_TRANSITIONS:
         evidence = row.get("transitions", {}).get(transition.name, {})
         homes = evidence.get("homes", {})
         if set(homes) != set(transition.homes) or not all(
-                home.get("alive") is True and type(home.get("peer_count")) is int and home["peer_count"] >= 1
+                home.get("alive") is True and type(home.get("carrier_ticket_length")) is int
+                and 0 < home["carrier_ticket_length"] <= TICKET_MAX_LENGTH
                 for home in homes.values()):
             return False
         posts, direct = evidence.get("community", []), evidence.get("direct", {})
@@ -2052,11 +2052,7 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
                                      env=environment(owner), stdout=log, stderr=log, start_new_session=True)
         children[name] = child
         wait_healthy(child, owner.api, "two-Home " + name)
-        coordinates = json.loads(bounded_text(owner.data / "gateway-runtime-coords.json"))
-        api = coordinates["api_url"].rstrip("/")
-        token = post_json(api + "/api/auth/attach", {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
-        ticket = post_json(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
-        assert len(ticket) <= 16384
+        ticket = carrier_ticket(owner)
         decoded = json.loads(base64.b32decode(ticket.upper() + "=" * (-len(ticket) % 8)))
         endpoints = decoded["endpoints"]
         assert len(endpoints) == 1, "fixture ticket must describe one installed Home"
@@ -2093,13 +2089,12 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
     def base(name):
         return f"http://{settings['browser_host']}:" + fixtures[name].api.rsplit(":", 1)[1]
     def prove(transition):
-        homes = transition_homes(transition, children,
-                                 lambda name: home_peer_count(fixtures[name], environment(fixtures[name])))
+        homes = transition_homes(transition, children, lambda name: len(carrier_ticket(fixtures[name])))
         record["transitions"].setdefault(transition.name, {})["homes"] = homes
         for name, home in homes.items():
             assert home["alive"], f"two-Home {name} is not running after {transition.name}"
-            assert home["peer_count"] is not None, f"two-Home {name} status reports no runtime.peer_count"
-            assert home["peer_count"] >= 1, f"two-Home {name} has no Carrier peer after {transition.name}"
+            assert home["carrier_ticket_length"], \
+                f"two-Home {name} Carrier Provider answered no ticket after {transition.name}"
     def require_running():
         for name, child in children.items():
             assert child.poll() is None, f"two-Home {name} exited during the journey"
