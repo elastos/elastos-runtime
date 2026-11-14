@@ -1355,16 +1355,16 @@ mod tests {
     #[test]
     fn source_budgets_canonicalize_mapped_ipv4_and_group_ipv6_by_64() {
         assert_eq!(
-            source_network("::ffff:192.0.2.8".parse().unwrap()),
+            super::source_network("::ffff:192.0.2.8".parse().unwrap()),
             "192.0.2.8".parse::<std::net::IpAddr>().unwrap()
         );
         assert_eq!(
-            source_network("2001:db8:1234:5::1".parse().unwrap()),
-            source_network("2001:db8:1234:5::ffff".parse().unwrap())
+            super::source_network("2001:db8:1234:5::1".parse().unwrap()),
+            super::source_network("2001:db8:1234:5::ffff".parse().unwrap())
         );
         assert_ne!(
-            source_network("2001:db8:1234:5::1".parse().unwrap()),
-            source_network("2001:db8:1234:6::1".parse().unwrap())
+            super::source_network("2001:db8:1234:5::1".parse().unwrap()),
+            super::source_network("2001:db8:1234:6::1".parse().unwrap())
         );
     }
 

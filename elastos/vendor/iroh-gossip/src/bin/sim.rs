@@ -414,3 +414,22 @@ fn fmt_diff_round(label: &str, round: &RoundStatsDiff) -> Vec<String> {
 fn fmt_percent(diff: f32) -> String {
     format!("{:>+10.2}%", diff * 100.)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scenario_input_defaults_rounds_and_refuses_unknown_simulation_names() {
+        let config: SimConfig = serde_json::from_value(serde_json::json!({
+            "seeds":[1], "scenario":[{"sim":"GossipSingle", "nodes":8}]
+        }))
+        .unwrap();
+        assert_eq!(config.scenario[0].rounds, 30);
+        assert_eq!(config.scenario[0].label(), "GossipSingle-n8-r30");
+        assert!(serde_json::from_value::<SimConfig>(serde_json::json!({
+            "seeds":[1], "scenario":[{"sim":"unknown", "nodes":8}]
+        }))
+        .is_err());
+    }
+}
