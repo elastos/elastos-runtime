@@ -1285,6 +1285,27 @@ mod tests {
         .await
     }
 
+    #[tokio::test]
+    async fn idle_tcp_connections_are_capped_before_authentication() {
+        use tokio::io::AsyncReadExt as _;
+        let server = spawn_local_relay().await.unwrap();
+        let address = server.http_addr().unwrap();
+        let mut sockets = Vec::new();
+        for _ in 0..9 {
+            sockets.push(tokio::net::TcpStream::connect(address).await.unwrap());
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let mut byte = [0];
+        let refused =
+            tokio::time::timeout(Duration::from_millis(500), sockets[8].read(&mut byte)).await;
+        server.shutdown().await.unwrap();
+        drop(sockets);
+        assert!(
+            matches!(refused, Ok(Ok(0))),
+            "ninth idle socket must be refused before authentication: {refused:?}"
+        );
+    }
+
     #[instrument]
     async fn try_send_recv(
         client_a: &mut crate::client::Client,

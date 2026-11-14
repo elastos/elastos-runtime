@@ -664,6 +664,57 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "test-utils")]
+    async fn discovery_unvalidated_initials_never_hold_admission() {
+        let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
+        let server = server::QuicServer::spawn(
+            (Ipv4Addr::LOCALHOST, 0).into(),
+            tls,
+            Arc::new(crate::server::Metrics::default()),
+        )
+        .unwrap();
+        let proxy = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let endpoint = noq::Endpoint::client((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+        let client = QuicClient::new(endpoint.clone(), crate::tls::make_dangerous_client_config());
+        let attempt = client
+            .ep
+            .connect_with(
+                client.client_config.clone(),
+                proxy.local_addr().unwrap(),
+                "localhost",
+            )
+            .unwrap();
+        let mut packet = [0; 65536];
+        let (length, _) =
+            tokio::time::timeout(Duration::from_secs(1), proxy.recv_from(&mut packet))
+                .await
+                .unwrap()
+                .unwrap();
+        proxy
+            .send_to(&packet[..length], server.bind_addr())
+            .await
+            .unwrap();
+        // Discard the Retry response. A peer that cannot receive it has not
+        // proved ownership of its claimed source address.
+        let _ = tokio::time::timeout(Duration::from_secs(1), proxy.recv_from(&mut packet))
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let counts = server.admission_counts();
+        endpoint.close(0u32.into(), b"fixture ended");
+        drop(attempt);
+        server.shutdown().await;
+        assert_eq!(
+            counts,
+            (0, 0, 0),
+            "unvalidated Initial consumed application admission"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "test-utils")]
     async fn discovery_held_handshakes_obey_total_and_per_ip_caps_and_deadlines() {
         for (pending, per_ip) in [(2, 8), (8, 2)] {
             let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
