@@ -92,7 +92,7 @@ mod tests {
     async fn real_relay() -> (iroh_relay::server::Server, url::Url) {
         let mut config = iroh_relay::server::ServerConfig::default();
         config.relay = Some(iroh_relay::server::RelayConfig::new(
-            "127.0.0.1:0".parse().unwrap(),
+            "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
         ));
         let server = iroh_relay::server::Server::spawn(config).await.unwrap();
         let url = format!("http://{}/", server.http_addr().unwrap())
