@@ -190,6 +190,42 @@ mod tests {
     }
 
     #[test]
+    fn exported_tickets_without_a_public_ip_keep_only_the_relay() {
+        let peer = iroh::SecretKey::from_bytes(&[214; 32]).public();
+        let relay: RelayUrl = "https://relay.example/".parse().unwrap();
+        let private = [
+            "127.0.0.1",
+            "10.0.0.1",
+            "100.64.0.1",
+            "169.254.0.1",
+            "::1",
+            "fc00::1",
+            "fe80::1",
+        ];
+        let address = iroh::EndpointAddr::new(peer).with_addrs(
+            private
+                .into_iter()
+                .map(|ip| {
+                    iroh::TransportAddr::Ip(std::net::SocketAddr::new(ip.parse().unwrap(), 0))
+                })
+                .chain([iroh::TransportAddr::Relay(relay.clone())]),
+        );
+        let exported = super::super::exported_endpoint_addr(address.clone());
+        assert_eq!(exported.id, peer);
+        assert_eq!(
+            exported.addrs.into_iter().collect::<Vec<_>>(),
+            vec![iroh::TransportAddr::Relay(relay)]
+        );
+        assert_eq!(
+            super::super::published_direct_endpoint_addr(address)
+                .addrs
+                .len(),
+            private.len(),
+            "local shell tickets retain local IP reachability"
+        );
+    }
+
+    #[test]
     fn relay_configuration_requires_an_origin() {
         for raw in [
             "ftp://relay.example/",
