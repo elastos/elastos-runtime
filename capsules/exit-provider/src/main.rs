@@ -1179,7 +1179,11 @@ mod tests {
                 json!({"op":"refresh_config","request_id":"refresh-bad","config":config}),
             )
             .unwrap();
-            assert!(matches!(provider.handle(request), Response::Error { .. }));
+            let response = provider.handle(request);
+            assert!(matches!(&response, Response::Error { .. }));
+            if mutation == "invalid" {
+                assert_eq!(error_code(response), "invalid_config");
+            }
             assert_eq!(
                 serde_json::to_value(provider.status(Some("person:alice".into()))).unwrap(),
                 before
@@ -1243,6 +1247,10 @@ mod tests {
 
         assert_eq!(response["status"], "ok");
         assert_eq!(response["data"]["backend_count"], 0);
+        assert_eq!(
+            error_code(provider.init(json!({"timeout_secs": 0}))),
+            "invalid_config"
+        );
     }
 
     #[test]
