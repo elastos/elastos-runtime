@@ -1747,7 +1747,39 @@ def remove_message_fixture(root):
     shutil.rmtree(root)
 
 
-def two_home_receipt_valid(row, identity):
+MESSAGE_NETWORKS = {
+    "same-host": {
+        "environment": {"ELASTOS_CARRIER_NETWORK": "direct", "ELASTOS_CARRIER_MDNS": "0"},
+        "bind_host": "127.0.0.1", "browser_host": "localhost", "ticket_transport": "Ip",
+        "launches": {"community": 2, "a": 1, "b": 2},
+    },
+}
+
+
+def message_endpoints_valid(homes, observations, arrangement):
+    settings = MESSAGE_NETWORKS.get(arrangement)
+    if settings is None:
+        return False
+    addresses = {home.get("home"): home.get("carrier_bind_address", "") for home in homes}
+    if set(addresses) != set(settings["launches"]):
+        return False
+    for address in addresses.values():
+        host, _, port = address.rpartition(":")
+        if host != settings["bind_host"] or not port.isdecimal() or not 0 < int(port) < 65536:
+            return False
+    counts = dict.fromkeys(settings["launches"], 0)
+    for observation in observations:
+        name = observation.get("home")
+        if name not in addresses or observation.get("ticket_addresses") != [
+                {settings["ticket_transport"]: addresses[name]}]:
+            return False
+        counts[name] += 1
+    return counts == settings["launches"]
+
+
+def two_home_receipt_valid(row, identity, network_arrangement="same-host"):
+    if row.get("network_arrangement") != network_arrangement or network_arrangement not in MESSAGE_NETWORKS:
+        return False
     if any(row.get(key) != value for key, value in identity.items()):
         return False
     homes = row.get("homes", [])
@@ -1758,11 +1790,8 @@ def two_home_receipt_valid(row, identity):
             and all(home.get("installed_runtime_sha256") == identity["installed_runtime_sha256"] for home in homes)
             and len(cleanup) == 5 and all(item.get("status") == "passed" and item.get("after")
                                          and sum(item["after"].values()) == 0 for item in cleanup)
-            and row.get("transport", {}).get("carrier_network") == "direct"
-            and row.get("transport", {}).get("mdns") is False
             and row.get("browser_cross_home_http_requests") == 0
-            and len(row.get("direct_endpoint_observations", [])) == 5
-            and all(item.get("relay_endpoints") == 0 for item in row["direct_endpoint_observations"])
+            and message_endpoints_valid(homes, row.get("direct_endpoint_observations", []), network_arrangement)
             and all(row.get("results", {}).get(name) == "passed" for name in (
                 "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
             and all(row.get("negative_controls", {}).get(name, {}).get("assertion_rejected") is True
@@ -1773,8 +1802,9 @@ def two_home_receipt_valid(row, identity):
 
 def two_home_messages(home, data, evidence, network="same-host", fixture_root=None):
     """Installed Community and Direct journey. Topology belongs to setup, not assertions."""
-    if network != "same-host":
+    if network not in MESSAGE_NETWORKS:
         raise RuntimeError("unsupported two-Home network arrangement")
+    settings = MESSAGE_NETWORKS[network]
     identity = installed_message_identity(data)
     evidence.mkdir(parents=True, exist_ok=False)
     root = fixture_root or home.parent / "two-home-message-fixture"
@@ -1792,8 +1822,7 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
     # Explicit environment excludes ambient relay, public-network and provider overrides.
     def environment(owner):
         return {"PATH": os.environ["PATH"], "HOME": str(owner[0]), "XDG_DATA_HOME": str(owner[1].parent),
-                "ELASTOS_CARRIER_NETWORK": "direct", "ELASTOS_CARRIER_MDNS": "0",
-                "ELASTOS_QUIET_RUNTIME_NOTICES": "1"}
+                **settings["environment"], "ELASTOS_QUIET_RUNTIME_NOTICES": "1"}
     def launch(name):
         owner = fixtures[name]
         with (owner[0] / "runtime.private.log").open("ab") as log:
@@ -1807,14 +1836,11 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         ticket = post_json(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
         assert len(ticket) <= 16384
         decoded = json.loads(base64.b32decode(ticket.upper() + "=" * (-len(ticket) % 8)))
-        def relay(value):
-            if isinstance(value, dict):
-                return any("relay" in key.lower() or relay(item) for key, item in value.items())
-            if isinstance(value, list):
-                return any(map(relay, value))
-            return isinstance(value, str) and value.startswith(("http://", "https://", "ws://", "wss://"))
-        assert decoded["endpoints"] and not relay(decoded), "direct-only fixture advertised a relay route"
-        record["direct_endpoint_observations"].append({"home": name, "relay_endpoints": 0})
+        endpoints = decoded["endpoints"]
+        assert len(endpoints) == 1, "fixture ticket must describe one installed Home"
+        observed = endpoints[0]["addrs"]
+        assert observed == [{settings["ticket_transport"]: owner[3]}], "ticket differs from configured Carrier address"
+        record["direct_endpoint_observations"].append({"home": name, "ticket_addresses": observed})
     def stop(name):
         child = children.pop(name)
         row = cleanup_runtime(child, fixtures[name][1])
@@ -1830,10 +1856,12 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
             destination = root / name
             copied = fresh_fixture(home, data, destination, include_engine=False)
             assert installed_message_identity(copied) == identity
+            carrier = f"{settings['bind_host']}:{free_port(socket.SOCK_DGRAM)}"
             with (copied / "config.toml").open("a") as config:
-                config.write(f'carrier_bind_addr = "127.0.0.1:{free_port(socket.SOCK_DGRAM)}"\n')
-            fixtures[name] = (destination, copied, f"127.0.0.1:{free_port()}")
-            record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos")})
+                config.write(f'carrier_bind_addr = "{carrier}"\n')
+            fixtures[name] = (destination, copied, f"{settings['bind_host']}:{free_port()}", carrier)
+            record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos"),
+                                    "carrier_bind_address": carrier})
         launch("community")
         configure("create-authority-key", "--key", root / "authority.key")
         configure("export-local-bootstrap-receipt", "--data-root", fixtures["community"][1],
@@ -1848,10 +1876,7 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
             target.chmod(0o600)
         for name in fixtures:
             launch(name)
-        record["transport"] = {"carrier_network": "direct", "mdns": False,
-                               "bootstrap": "disposable local Community",
-                               "peer_route": "Carrier PeerDid; fixture supplies no HTTP peer routes"}
-        bases = ["http://localhost:" + fixtures[name][2].rsplit(":", 1)[1] for name in ("a", "b")]
+        bases = [f"http://{settings['browser_host']}:" + fixtures[name][2].rsplit(":", 1)[1] for name in ("a", "b")]
         with (root / "browser.private.log").open("wb") as log:
             browser = subprocess.Popen(["node", "scripts/ci-installed-two-home-journey.mjs", *bases,
                                         str(evidence), str(control)], stdout=log, stderr=log, start_new_session=True)

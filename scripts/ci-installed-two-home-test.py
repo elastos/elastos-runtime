@@ -47,13 +47,14 @@ class TwoHomeReceiptTests(unittest.TestCase):
 
     def receipt(self):
         identity = self.identity()
-        return {**identity, 'status':'passed', 'fixture_removed':True,
-                'homes':[{'home':name, 'installed_runtime_sha256':identity['installed_runtime_sha256']}
-                         for name in ('a','b','community')],
+        return {**identity, 'status':'passed', 'fixture_removed':True, 'network_arrangement':'same-host',
+                'homes':[{'home':name, 'installed_runtime_sha256':identity['installed_runtime_sha256'],
+                          'carrier_bind_address':f'127.0.0.1:{1025+index}'}
+                         for index,name in enumerate(('a','b','community'))],
                 'process_cleanup':[{'status':'passed', 'after':{'runtime':0}} for _ in range(5)],
-                'transport':{'carrier_network':'direct','mdns':False},
                 'browser_cross_home_http_requests':0,
-                'direct_endpoint_observations':[{'relay_endpoints':0} for _ in range(5)],
+                'direct_endpoint_observations':[{'home':name,'ticket_addresses':[{'Ip':f'127.0.0.1:{1025+index}'}]}
+                    for index,name in ((2,'community'),(2,'community'),(0,'a'),(1,'b'),(1,'b'))],
                 'results':{name:'passed' for name in ('community_post','direct_received','sender_delivered',
                                                      'offline_pending','restart_delivery')},
                 'negative_controls':{name:{'assertion_rejected':True, 'api_state':'pending', 'ui_detail':'Sending'}
@@ -86,6 +87,22 @@ class TwoHomeReceiptTests(unittest.TestCase):
         self.assertFalse(check(changed, self.identity()))
         changed = copy.deepcopy(valid)
         changed['homes'][1]['home'] = 'a'
+        self.assertFalse(check(changed, self.identity()))
+
+    def test_network_arrangement_and_each_observed_ticket_must_match_configuration(self):
+        check = JOURNEY['two_home_receipt_valid']
+        valid = self.receipt()
+        changed = copy.deepcopy(valid)
+        changed['network_arrangement'] = 'two-nat'
+        self.assertFalse(check(changed, self.identity()))
+        self.assertFalse(check(valid, self.identity(), 'two-nat'))
+        for index in range(5):
+            for address in ({'Relay':'https://relay.invalid'}, {'Ip':'192.0.2.1:1234'}, {'Ip':'127.0.0.1:1234'}):
+                changed = copy.deepcopy(valid)
+                changed['direct_endpoint_observations'][index]['ticket_addresses'] = [address]
+                self.assertFalse(check(changed, self.identity()), (index, address))
+        changed = copy.deepcopy(valid)
+        changed['homes'][0]['carrier_bind_address'] = '192.0.2.1:1234'
         self.assertFalse(check(changed, self.identity()))
 
     def test_source_identity_rejects_changed_runtime_and_browser_asset_before_launch(self):
