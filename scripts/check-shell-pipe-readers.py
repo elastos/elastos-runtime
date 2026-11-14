@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 
@@ -20,20 +21,28 @@ EARLY_READER = re.compile(
     r")"
 )
 failures = []
-for directory in (ROOT / "scripts", ROOT / ".githooks"):
-    for path in sorted(directory.rglob("*")):
-        if not path.is_file() or path.suffix not in (".sh", ".mjs", ".py", ""):
-            continue
-        source = path.read_text()
-        # Sourced shell files inherit pipefail from their caller.
-        if path.suffix in (".mjs", ".py") and "pipefail" not in source:
-            continue
-        # Keep line positions while removing full-line comments from the scan.
-        source = "\n".join("" if line.lstrip().startswith("#") else line
-                           for line in source.splitlines())
-        for match in EARLY_READER.finditer(source):
-            number = source.count("\n", 0, match.start()) + 1
-            failures.append(f"{path.relative_to(ROOT)}:{number}: {match.group().strip()}")
+tracked = subprocess.check_output(
+    ["git", "ls-files", "-z", "--", "scripts", ".githooks"], cwd=ROOT, text=True,
+)
+tracked = sorted(set(tracked.split("\0")))
+if Path(__file__).resolve().relative_to(ROOT).as_posix() not in tracked:
+    sys.exit("Shell pipeline reader scanner is missing from the Git file list")
+for relative in tracked:
+    if not relative:
+        continue
+    path = ROOT / relative
+    if not path.is_file() or path.suffix not in (".sh", ".mjs", ".py", ""):
+        continue
+    source = path.read_text()
+    # Sourced shell files inherit pipefail from their caller.
+    if path.suffix in (".mjs", ".py") and "pipefail" not in source:
+        continue
+    # Keep line positions while removing full-line comments from the scan.
+    source = "\n".join("" if line.lstrip().startswith("#") else line
+                       for line in source.splitlines())
+    for match in EARLY_READER.finditer(source):
+        number = source.count("\n", 0, match.start()) + 1
+        failures.append(f"{path.relative_to(ROOT)}:{number}: {match.group().strip()}")
 
 if failures:
     print("Pipeline readers must consume the full input under pipefail:", file=sys.stderr)
