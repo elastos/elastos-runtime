@@ -398,7 +398,10 @@ where
                 _ = async { tokio::select! { _ = done.cancelled() => {}, _ = server_shutdown.cancelled() => {} } } => {
                     trace!("actor loop cancelled, exiting");
                     // final flush
-                    self.stream.flush().await.map_err(|_| e!(RunError::Flush))?;
+                    tokio::time::timeout(self.timeout, self.stream.flush())
+                        .await
+                        .map_err(|_| e!(RunError::Flush))?
+                        .map_err(|_| e!(RunError::Flush))?;
                     break;
                 }
                 limited = rate_limited_signal(&mut self.rate_limited), if !rate_limit_notified => {
