@@ -882,7 +882,7 @@ fn library_post_view(post: &LibraryPost) -> LibraryPostView {
     match &post.phase {
         LibraryPostPhase::Confirm => LibraryPostView {
             title: format!("Post \"{}\" in Community?", post.file_name),
-            lines: vec![file, POST_PUBLICLY_BODY.to_string()],
+            lines: vec![POST_PUBLICLY_BODY.to_string()],
             actions: &[Cancel, Post],
             retry_label: "Retry post",
         },
@@ -8797,17 +8797,12 @@ mod tests {
             (1_048_576, "1.0 MB"),
             (1_073_741_824, "1.0 GB"),
         ] {
-            for phase in [
-                super::LibraryPostPhase::Confirm,
-                super::LibraryPostPhase::Posted {
-                    link: "elastos://file".into(),
-                },
-            ] {
-                let mut post = library_post_fixture(phase);
-                post.size_bytes = bytes;
-                let view = super::library_post_view(&post);
-                assert_eq!(view.lines[0], format!("notes.txt · {size}"));
-            }
+            let mut post = library_post_fixture(super::LibraryPostPhase::Posted {
+                link: "elastos://file".into(),
+            });
+            post.size_bytes = bytes;
+            let view = super::library_post_view(&post);
+            assert_eq!(view.lines[0], format!("notes.txt · {size}"));
         }
     }
 
@@ -8819,10 +8814,7 @@ mod tests {
         assert_eq!(confirm.title, "Post \"notes.txt\" in Community?");
         assert_eq!(
             confirm.lines,
-            vec![
-                "notes.txt · 30 bytes".to_string(),
-                "Your contacts can get it from the post while your Home is open.".to_string()
-            ]
+            vec!["Your contacts can get it from the post while your Home is open.".to_string()]
         );
         assert_eq!(confirm.actions, &[Cancel, Post]);
         assert!(super::library_post_view(&library_post_fixture(Working))
