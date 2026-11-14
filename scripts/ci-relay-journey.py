@@ -17,6 +17,16 @@ import tempfile
 CAPSULES = ("home", "home-gui", "people", "inbox", "chat-room", "system")
 
 
+def stage_runtime_input(source, destination):
+    # Cargo's uplifted Linux executable has a deps/ hardlink. Match the source
+    # installer's private-copy procedure while keeping its single-link gate.
+    shutil.copyfile(source, destination)
+    destination.chmod(0o700)
+    digest = runpy.run_path(str(Path(__file__).with_name("ci-installed-journeys.py")))["digest"]
+    assert digest(source) == digest(destination), "Runtime input copy changed its bytes"
+    return destination
+
+
 def prepare_assets(root, data, binary):
     journey = runpy.run_path(str(root / "scripts/ci-installed-journeys.py"))
     names = CAPSULES
@@ -53,8 +63,9 @@ def main():
     (data / "receipts").mkdir(mode=0o700)
     try:
         prepare_assets(root, data, root / "elastos/target/release/localhost-provider")
+        runtime_input = stage_runtime_input(root / "elastos/target/release/elastos", work / "runtime-input")
         subprocess.run(["python3", "scripts/install-source-home-runtime.py", "--source-root", str(root), "--data-dir", str(data),
-                        "--built-runtime", str(root / "elastos/target/release/elastos"), "--platform", "linux-amd64"], check=True, timeout=60)
+                        "--built-runtime", str(runtime_input), "--platform", "linux-amd64"], check=True, timeout=60)
         # All changes to links, routers and packet filters stay inside these
         # namespaces. Their lifetime ends with this one subprocess.
         setup = 'set -eu; mount --make-rprivate /; mount -t tmpfs tmpfs /run; mkdir /run/netns; exec "$@"'
