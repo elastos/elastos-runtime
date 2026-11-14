@@ -11,8 +11,7 @@ import os
 s = os.statvfs('.')
 assert s.f_bavail * s.f_frsize >= 12 * 1024 ** 3, 'build needs 10 GiB plus 2 GiB reserve'
 PY
-cargo build --locked --manifest-path elastos/Cargo.toml --release -p elastos-server
-cargo build --locked --manifest-path capsules/localhost-provider/Cargo.toml --release
+(cd elastos && cargo build --locked --release -p elastos-server -p localhost-provider)
 scripts/test-behaviour.sh inputs
 export NODE_PATH="${BEHAVIOUR_INPUTS:-${HOME}/.cache/elastos-runtime/behaviour}/browser/node_modules"
 export BROWSER_OPERATOR_PLAYWRIGHT_CORE="${BEHAVIOUR_INPUTS:-${HOME}/.cache/elastos-runtime/behaviour}/core/node_modules/playwright-core"

@@ -31,7 +31,7 @@ def main():
     names = ("home", "home-gui", "people", "inbox", "chat-room", "system")
     try:
         manifest = json.loads((root / "components.json").read_text())
-        binary = root / "capsules/localhost-provider/target/release/localhost-provider"
+        binary = root / "elastos/target/release/localhost-provider"
         shutil.copy2(binary, data / "bin/localhost-provider")
         native = manifest["external"]["localhost-provider"]["platforms"]["linux-amd64"]
         native["checksum"] = "sha256:" + journey["digest"](binary)
