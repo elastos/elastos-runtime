@@ -3,8 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -30,8 +29,8 @@ const env = { ...process.env, HOME: home, XDG_DATA_HOME: dirname(data), ELASTOS_
   ELASTOS_COMPONENTS_MANIFEST: join(data, "components.json") };
 delete env.ELASTOS_WALLETCONNECT_PROJECT_FILE;
 delete env.ELASTOS_WALLETCONNECT_PROJECT_ID;
-const log = createWriteStream(join(home, "walletconnect-installed-policy.log"), { mode: 0o600 });
-const runtime = spawn(binary, ["serve", "--addr", `127.0.0.1:${port}`], { env, stdio: ["ignore", log, log] });
+const log = await open(join(home, "walletconnect-installed-policy.log"), "w", 0o600);
+const runtime = spawn(binary, ["serve", "--addr", `127.0.0.1:${port}`], { env, stdio: ["ignore", log.fd, log.fd] });
 const stopped = new Promise(resolve => runtime.once("exit", resolve));
 let browser;
 const project = join(home, "walletconnect-test-project");
@@ -127,7 +126,7 @@ try {
   await browser?.close();
   runtime.kill("SIGTERM");
   const timeout = setTimeout(() => runtime.kill("SIGKILL"), 10000);
-  await stopped; clearTimeout(timeout); log.end();
+  await stopped; clearTimeout(timeout); await log.close();
   await rm(project, { force: true });
   await rm(config, { force: true });
 }
