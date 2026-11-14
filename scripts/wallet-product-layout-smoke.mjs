@@ -866,7 +866,7 @@ async function run() {
     server.state.approvals = [{ ...railFixtureState.approvals[0], request_id: "approved-send",
       status: "approved", intent: "transaction_intent", connector_id: "wallet-walletconnect",
       expires_at: Math.floor(Date.now() / 1000) - 1 }];
-    await railPage.reload({ waitUntil: "networkidle" });
+    await railPage.goto(`${server.baseUrl}/fixture-host.html?mode=window`, { waitUntil: "networkidle" });
     const dismissFrame = await walletFrame(railPage);
     await dismissFrame.locator(".wallet-account").waitFor({ state: "visible" });
     await dismissFrame.locator("#wallet-activity-open").click();
