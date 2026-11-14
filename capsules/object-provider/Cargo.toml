@@ -21,3 +21,7 @@ opt-level = "s"
 lto = true
 
 [workspace]
+
+[patch.crates-io]
+iroh-relay = { path = "../../elastos/vendor/iroh-relay" }
+iroh-gossip = { path = "../../elastos/vendor/iroh-gossip" }

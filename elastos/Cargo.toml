@@ -47,3 +47,6 @@ debug = "line-tables-only"
 # Address-discovery connections use no QUIC datagrams.
 # See vendor/iroh-relay/ELASTOS-PATCH.md.
 iroh-relay = { path = "vendor/iroh-relay" }
+
+# Preserve gossip discovery behind Runtime's received-address pin filter.
+iroh-gossip = { path = "vendor/iroh-gossip" }
