@@ -25,19 +25,18 @@ async function run() {
   const require = createRequire(import.meta.url);
   const {chromium} = require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE || '../elastos/tools/browser-playwright-engine/node_modules/playwright');
   const [baseA, baseB, evidence, control, browserHost] = process.argv.slice(2);
-  const bases = [baseA, baseB];
-  assertMessageOrigins(bases, browserHost);
-  const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], browser_cross_home_http_requests:0};
+  assertMessageOrigins([baseA, baseB], browserHost);
+  const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], exchanges:{}, browser_cross_home_http_requests:0};
   let sequence = 0;
   async function runtime(action) {
     const id = ++sequence;
     writeFileSync(join(control, 'request.json.next'), JSON.stringify({id, action}), {flag:'wx', mode:0o600});
     renameSync(join(control, 'request.json.next'), join(control, 'request.json'));
-    await until('owned Runtime action', async () => {
+    return until('owned Runtime action', async () => {
       let reply;
       try {reply = JSON.parse(readFileSync(join(control, 'response.json'), 'utf8'));}
       catch (error) {if (error.code !== 'ENOENT') throw error;}
-      return reply?.id === id && reply.status === 'passed';
+      return reply?.id === id && reply.status === 'passed' && reply;
     }, 120000);
   }
   const sleep = ms => new Promise(resolve=>setTimeout(resolve,ms));
@@ -51,7 +50,8 @@ async function run() {
     result.stage='browser_launch';
     browser = await chromium.launch({headless:true, args:['--two-home-fixture='+control]});
     const homes=[];
-    for(const [i,base] of bases.entries()) {
+    async function signIn(base) {
+      const i=homes.length, name='abc'[i];
       const context=await browser.newContext({timezoneId:'UTC', serviceWorkers:'block', viewport:{width:1440,height:900}});
       await context.route('**/*', route => {
         const url = new URL(route.request().url());
@@ -68,7 +68,7 @@ async function run() {
       result.stage='home_frontdoor_'+i;
       await page.goto(base+'/home/',{waitUntil:'domcontentloaded'});
       result.stage='home_name_'+i;
-      await page.locator('#home-unlock-name').fill('Two Home '+(i?'B':'A'),{timeout:60000});
+      await page.locator('#home-unlock-name').fill('Two Home '+name.toUpperCase(),{timeout:60000});
       result.stage='passkey_registration_'+i;
       const registered=page.waitForResponse(r=>r.url().endsWith('/api/auth/passkey/register/complete'));
       await page.locator('#home-unlock-primary').click();
@@ -87,9 +87,11 @@ async function run() {
         return tab;
       }
       result.stage='people_launch_'+i;
-      const people=await app('people');
-      homes.push({context,page,people,app,base});
+      const home={name,context,page,people:await app('people'),app,base};
+      homes.push(home);
+      return home;
     }
+    const a=await signIn(baseA), b=await signIn(baseB);
     async function api(page,path,body) {
       return page.evaluate(async ({path,body})=>{
         const token=new URLSearchParams(location.hash.slice(1)).get('home_token');
@@ -98,12 +100,14 @@ async function run() {
         return r.json();
       },{path,body});
     }
-    const [a,b]=homes;
-    const communityA=await a.app('chat-room'), communityB=await b.app('chat-room');
+    async function joinCommunity(home) {
+      await api(home.community, '/api/apps/chat-room/session/start', {});
+      await home.community.locator('#message-input:enabled').waitFor({timeout:60000});
+    }
+    const communityA=a.community=await a.app('chat-room'), communityB=b.community=await b.app('chat-room');
     result.stage='community_post';
     await communityA.locator('#message-input:enabled').waitFor({timeout:90000});
-    await api(communityB, '/api/apps/chat-room/session/start', {});
-    await communityB.locator('#message-input:enabled').waitFor({timeout:60000});
+    await joinCommunity(b);
     const postText='Two Home Community '+crypto.randomUUID();
     const posted=await api(communityA, '/api/apps/chat-room/objects/send', {request_id:'two-home:'+crypto.randomUUID(),body:postText});
     let communityPoll;
@@ -168,6 +172,43 @@ async function run() {
     assertSenderDelivery(settled,senderDetail);
     result.results.sender_delivered='passed';
     result.direct={text,recipient_state:received.delivery_state,sender_state:settled.delivery_state,sender_detail:senderDetail};
+    // One round after a transition: every Home posts, every other Home reads
+    // that exact text, and one direct message crosses the accepted contact.
+    async function exchange(transition) {
+      result.stage='exchange_'+transition;
+      const round={community:[]};
+      for(const sender of homes) {
+        const sent=`Two Home ${transition} ${sender.name} ${crypto.randomUUID()}`;
+        const post=await api(sender.community,'/api/apps/chat-room/objects/send',{request_id:'two-home:'+crypto.randomUUID(),body:sent});
+        for(const receiver of homes.filter(home=>home!==sender)) {
+          let poll;
+          await until(`Community ${transition} from ${sender.name} at ${receiver.name}`,async()=>{
+            poll=await api(receiver.community,'/api/apps/chat-room/poll',{since:0,mark_read:false});
+            return poll.objects.some(row=>row.message_id===post.message_id&&row.body===sent);
+          });
+          round.community.push({from:sender.name,to:receiver.name,sent,received:assertCommunityMessage(poll,post.message_id,sent).body});
+        }
+      }
+      const sent=`Two Home ${transition} direct ${crypto.randomUUID()}`;
+      await api(a.community,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text:sent});
+      let messages;
+      const arrived=await until(`direct ${transition} at b`,async()=>{
+        messages=(await api(b.community,path)).messages;
+        return messages.find(m=>m.text===sent&&m.direction==='incoming'&&m.delivery_state==='received');
+      });
+      round.direct={from:a.name,to:b.name,sent,received:assertReceivedDirect(messages,arrived.message_id,sent).text};
+      return round;
+    }
+    result.exchanges.start=await exchange('start');
+    await runtime('restart_community');
+    result.exchanges.node_restart=await exchange('node_restart');
+    const fresh=await runtime('start_c');
+    assertMessageOrigins([fresh.base], browserHost);
+    const c=await signIn(fresh.base);
+    result.stage='fresh_home_community';
+    c.community=await c.app('chat-room');
+    await joinCommunity(c);
+    result.exchanges.fresh_home=await exchange('fresh_home');
     result.stage='offline_pending';
     // Close B's projections before stopping its owned Runtime; retain only its passkey context.
     for(const page of b.context.pages()) if(page!==b.page) await page.close();
@@ -212,6 +253,9 @@ async function run() {
     assertSenderDelivery(settledAfterRestart,recoveredDetail);
     result.recovery={text:offlineText,recipient_state:recovered.delivery_state,sender_state:settledAfterRestart.delivery_state,sender_detail:recoveredDetail};
     result.results.restart_delivery='passed';
+    b.community=await b.app('chat-room');
+    await joinCommunity(b);
+    result.exchanges.restart_b=await exchange('restart_b');
     await direct.screenshot({path:join(evidence,'direct-a-desktop.png'),fullPage:true});
     await direct.setViewportSize({width:390,height:844});
     await direct.screenshot({path:join(evidence,'direct-a-phone.png'),fullPage:true});

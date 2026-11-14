@@ -52,17 +52,33 @@ class TwoHomeReceiptTests(unittest.TestCase):
         return {'candidate':'c'*40, 'source_tree':'d'*40, 'installed_runtime_sha256':'a'*64,
                 'source_components_sha256':'b'*64, 'installation_receipt_sha256':'e'*64}
 
+    # The journey's contract, spelled out here so a changed table cannot move the test with it.
+    TRANSITIONS = {'start':('community','a','b'), 'node_restart':('community','a','b'),
+                   'fresh_home':('community','a','b','c'), 'restart_b':('community','a','b','c')}
+
+    def transitions(self):
+        rows = {}
+        for name, homes in self.TRANSITIONS.items():
+            members = [home for home in homes if home != 'community']
+            rows[name] = {'homes':{home:{'alive':True, 'peer_count':1} for home in homes},
+                          'community':[{'from':sender, 'to':receiver, 'sent':f'{name} post from {sender}',
+                                        'received':f'{name} post from {sender}'}
+                                       for sender in members for receiver in members if sender != receiver],
+                          'direct':{'from':'a', 'to':'b', 'sent':name+' direct', 'received':name+' direct'}}
+        return rows
+
     def receipt(self):
         identity = self.identity()
         return {**identity, 'node_identity':identity, 'status':'passed', 'fixture_removed':True,
                 'network_arrangement':'same-host',
                 'homes':[{'home':name, 'installed_runtime_sha256':identity['installed_runtime_sha256'],
                           'carrier_bind_address':f'127.0.0.1:{1025+index}'}
-                         for index,name in enumerate(('a','b','community'))],
-                'process_cleanup':[{'status':'passed', 'after':{'runtime':0}} for _ in range(5)],
+                         for index,name in enumerate(('a','b','c','community'))],
+                'process_cleanup':[{'status':'passed', 'after':{'runtime':0}} for _ in range(7)],
                 'browser_cross_home_http_requests':0,
                 'direct_endpoint_observations':[{'home':name,'ticket_addresses':[{'Ip':f'127.0.0.1:{1025+index}'}]}
-                    for index,name in ((2,'community'),(2,'community'),(0,'a'),(1,'b'),(1,'b'))],
+                    for index,name in ((3,'community'),(3,'community'),(0,'a'),(1,'b'),(3,'community'),(2,'c'),(1,'b'))],
+                'transitions':self.transitions(),
                 'results':{name:'passed' for name in ('community_post','direct_received','sender_delivered',
                                                      'offline_pending','restart_delivery')},
                 'negative_controls':{name:{'assertion_rejected':True, 'api_state':'pending', 'ui_detail':'Sending'}
@@ -78,7 +94,8 @@ class TwoHomeReceiptTests(unittest.TestCase):
             self.assertFalse(check(changed, self.identity()), key)
         for key, value in [('status','failed'), ('failure',{'phase':'late failure'}), ('browser_failure','failed'),
                            ('fixture_removed',False), ('homes',[]), ('process_cleanup',[]),
-                           ('browser_cross_home_http_requests',1), ('direct_endpoint_observations',[])]:
+                           ('browser_cross_home_http_requests',1), ('direct_endpoint_observations',[]),
+                           ('transitions',{})]:
             changed = copy.deepcopy(valid)
             changed[key] = value
             self.assertFalse(check(changed, self.identity()), key)
@@ -115,6 +132,76 @@ class TwoHomeReceiptTests(unittest.TestCase):
         del changed['node_identity']
         self.assertFalse(check(changed, homes))
 
+    def test_acceptance_requires_positive_evidence_after_every_transition(self):
+        check = JOURNEY['two_home_receipt_valid']
+        valid = self.receipt()
+        def refused(label, change):
+            changed = copy.deepcopy(valid)
+            change(changed['transitions'])
+            self.assertFalse(check(changed, self.identity()), label)
+        for name, homes in self.TRANSITIONS.items():
+            refused(name+' is missing', lambda rows: rows.pop(name))
+            for home in homes:
+                refused(f'{home} is missing at {name}', lambda rows: rows[name]['homes'].pop(home))
+                for alive in (False, None, 'true'):
+                    refused(f'{home} alive={alive!r} at {name}',
+                            lambda rows: rows[name]['homes'][home].update(alive=alive))
+                for count in (0, None, True, '1'):
+                    refused(f'{home} peer_count={count!r} at {name}',
+                            lambda rows: rows[name]['homes'][home].update(peer_count=count))
+                refused(f'{home} reports no peer count at {name}', lambda rows: rows[name]['homes'][home].pop('peer_count'))
+            for index, post in enumerate(valid['transitions'][name]['community']):
+                pair = f"{post['from']} to {post['to']} at {name}"
+                refused(pair+' is missing', lambda rows: rows[name]['community'].pop(index))
+                refused(pair+' arrived as a prefix',
+                        lambda rows: rows[name]['community'][index].update(received=post['sent'][:-1]))
+                refused(pair+' has no text', lambda rows: rows[name]['community'][index].update(sent='', received=''))
+                if len(homes) > 3:
+                    refused(pair+' is a second post from its sender', lambda rows: rows[name]['community'][index].update(
+                        sent='second post', received='second post'))
+            refused('a post is counted twice at '+name,
+                    lambda rows: rows[name]['community'].__setitem__(1, rows[name]['community'][0]))
+            refused('direct is missing at '+name, lambda rows: rows[name].pop('direct'))
+            refused('direct arrived as a prefix at '+name, lambda rows: rows[name]['direct'].update(received=name+' direc'))
+            refused('direct has no recipient at '+name, lambda rows: rows[name]['direct'].update(to='a'))
+        def repost(rows):
+            for post in rows['node_restart']['community']:
+                post['sent'] = post['received'] = 'start post from '+post['from']
+        refused('a post from before the node restart counts after it', repost)
+        refused('a direct message from before the node restart counts after it',
+                lambda rows: rows['node_restart']['direct'].update(sent='start direct', received='start direct'))
+
+    def test_transition_homes_record_an_exited_process_and_wait_for_a_late_peer_count(self):
+        observe = JOURNEY['transition_homes']
+        transition = JOURNEY['Transition']('node_restart', 'restart_community', ('community', 'a'))
+        running, exited = mock.Mock(**{'poll.return_value':None}), mock.Mock(**{'poll.return_value':1})
+        late = {'community':iter([None, 0, 2]), 'a':iter([1])}
+        with mock.patch.object(observe.__globals__['time'], 'sleep'):
+            self.assertEqual(observe(transition, {'community':running, 'a':running}, lambda name: next(late[name])),
+                             {'community':{'alive':True, 'peer_count':2}, 'a':{'alive':True, 'peer_count':1}})
+        self.assertEqual(observe(transition, {'community':exited, 'a':running}, lambda name: 1)['community'],
+                         {'alive':False, 'peer_count':None})
+        self.assertEqual(observe(transition, {'a':running}, lambda name: 1)['community'],
+                         {'alive':False, 'peer_count':None})
+        for count in (None, 0):
+            self.assertEqual(observe(transition, {'community':running, 'a':running}, lambda name: count, budget=0)['a'],
+                             {'alive':True, 'peer_count':count})
+
+    def test_peer_count_comes_from_the_home_status_command_and_an_absent_count_stays_absent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary).resolve()
+            (home/'bin').mkdir()
+            runtime = home/'bin/elastos'
+            runtime.write_text('#!/bin/sh\n[ "$*" = "home --status --json" ] || exit 2\ncat "$HOME/status.json"\n')
+            runtime.chmod(0o700)
+            owner = JOURNEY['Owner'](home, home, '', '', None)
+            environment = {'PATH':os.environ['PATH'], 'HOME':str(home)}
+            for status, expected in (({'runtime':{'running':True, 'peer_count':2}}, 2),
+                                     ({'runtime':{'running':True, 'peer_count':0}}, 0),
+                                     ({'runtime':{'running':True}}, None)):
+                (home/'status.json').write_text(json.dumps(status))
+                self.assertEqual(JOURNEY['home_peer_count'](owner, environment), expected)
+
     def test_network_arrangement_and_each_observed_ticket_must_match_configuration(self):
         check = JOURNEY['two_home_receipt_valid']
         valid = self.receipt()
@@ -122,7 +209,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
         changed['network_arrangement'] = 'two-nat'
         self.assertFalse(check(changed, self.identity()))
         self.assertFalse(check(valid, self.identity(), 'two-nat'))
-        for index in range(5):
+        for index in range(len(valid['direct_endpoint_observations'])):
             for address in ({'Relay':'https://relay.invalid'}, {'Ip':'192.0.2.1:1234'}, {'Ip':'127.0.0.1:1234'}):
                 changed = copy.deepcopy(valid)
                 changed['direct_endpoint_observations'][index]['ticket_addresses'] = [address]
