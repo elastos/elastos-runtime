@@ -70,7 +70,7 @@ async fn production_exit(data: &std::path::Path) -> Arc<dyn Provider> {
     let bridge = ProviderBridge::spawn(
         std::path::Path::new(&binary),
         BridgeProviderConfig {
-            extra: crate::setup::walletconnect::exit_config(Value::Null, Some(&config)),
+            extra: crate::setup::walletconnect::exit_config(Value::Null, Some(&config), false),
             ..Default::default()
         },
     )

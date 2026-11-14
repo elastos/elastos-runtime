@@ -27,6 +27,7 @@ pub fn local_exit(data: &Path, platform: &str) -> Option<(serde_json::Value, ser
 pub fn merge_exit_config(
     mut existing: serde_json::Value,
     walletconnect: Option<&serde_json::Value>,
+    browser_helper_running: bool,
 ) -> anyhow::Result<serde_json::Value> {
     let Some(walletconnect) = walletconnect else {
         return Ok(existing);
@@ -43,15 +44,20 @@ pub fn merge_exit_config(
         .as_array_mut()
         .ok_or_else(|| anyhow::anyhow!("Exit backends must be a list"))?;
     let managed = &walletconnect["backends"][0];
-    if let Some(previous) = backends.iter().find(|b| b["id"] == managed["id"]) {
+    if let Some(index) = backends.iter().position(|b| b["id"] == managed["id"]) {
         anyhow::ensure!(
-            previous == managed,
+            &backends[index] == managed,
             "WalletConnect Exit backend has a conflicting route"
         );
-    } else {
-        // Exit matches local backends in list order. Browser keeps first match;
-        // WalletConnect supplies a route only when earlier backends do not match.
+        backends.remove(index);
+    }
+    // Exit matches in list order. A running Browser helper keeps first match.
+    // Without it, the relay-only route precedes retained Browser wildcards;
+    // every other backend retains its order and its matching policy.
+    if browser_helper_running {
         backends.push(managed.clone());
+    } else {
+        backends.insert(0, managed.clone());
     }
     exit_provider::parse_config(existing.clone()).map_err(anyhow::Error::msg)?;
     Ok(existing)
@@ -61,11 +67,12 @@ pub fn merge_exit_config(
 pub fn exit_config(
     existing: serde_json::Value,
     walletconnect: Option<&serde_json::Value>,
+    browser_helper_running: bool,
 ) -> serde_json::Value {
-    match merge_exit_config(existing.clone(), walletconnect) {
+    match merge_exit_config(existing.clone(), walletconnect, browser_helper_running) {
         Ok(config) => config,
-        Err(_) => {
-            tracing::warn!("WalletConnect Exit configuration was refused; starting the existing Exit configuration");
+        Err(error) => {
+            tracing::warn!(%error, "WalletConnect Exit configuration was refused; starting the existing Exit configuration");
             existing
         }
     }
@@ -132,24 +139,27 @@ mod tests {
     fn walletconnect_keeps_existing_remote_and_local_exit_configuration() {
         let remote = serde_json::json!({"backends":[], "timeout_secs":12});
         let wc = serde_json::json!({"backends":[{"id":"walletconnect-local-exit", "kind":"stream_relay", "allowed_hosts":["relay.walletconnect.org"]}]});
-        let merged = merge_exit_config(remote.clone(), Some(&wc)).unwrap();
+        let merged = merge_exit_config(remote.clone(), Some(&wc), true).unwrap();
         assert_eq!(merged["timeout_secs"], remote["timeout_secs"]);
         assert_eq!(merged["backends"], wc["backends"]);
         let local = serde_json::json!({"backends":[{"id":"owner-local", "kind":"stream_relay", "allowed_hosts":["*"]}]});
-        let merged = merge_exit_config(local.clone(), Some(&wc)).unwrap();
+        let merged = merge_exit_config(local.clone(), Some(&wc), true).unwrap();
         assert_eq!(merged["backends"][0], local["backends"][0]);
-        assert_eq!(merge_exit_config(remote.clone(), None).unwrap(), remote);
-        assert!(merge_exit_config(serde_json::json!({"backends":false}), Some(&wc)).is_err());
+        assert_eq!(
+            merge_exit_config(remote.clone(), None, true).unwrap(),
+            remote
+        );
+        assert!(merge_exit_config(serde_json::json!({"backends":false}), Some(&wc), true).is_err());
     }
     #[test]
     fn walletconnect_refused_merge_preserves_browser_exit_and_matching_order() {
         let browser = serde_json::json!({"backends":[{"id":"browser", "kind":"stream_relay", "allowed_hosts":["*"]}]});
         let bad = serde_json::json!({"backends":[{"id":"walletconnect-local-exit", "kind":"stream_relay", "allowed_hosts":["relay.walletconnect.org"],
             "adapter_ipc":{"kind":"unix_socket","path":"/tmp/same.sock"}, "relay_ipc":{"kind":"unix_socket","path":"/tmp/same.sock"}}]});
-        assert!(merge_exit_config(browser.clone(), Some(&bad)).is_err());
-        assert_eq!(exit_config(browser.clone(), Some(&bad)), browser);
+        assert!(merge_exit_config(browser.clone(), Some(&bad), true).is_err());
+        assert_eq!(exit_config(browser.clone(), Some(&bad), true), browser);
         let good = serde_json::json!({"backends":[{"id":"walletconnect-local-exit", "kind":"stream_relay", "allowed_hosts":["relay.walletconnect.org"]}]});
-        let merged = exit_config(browser, Some(&good));
+        let merged = exit_config(browser, Some(&good), true);
         let parsed = exit_provider::parse_config(merged).unwrap();
         for host in [
             "relay.walletconnect.org",
@@ -167,5 +177,121 @@ mod tests {
                 "browser"
             );
         }
+    }
+
+    #[test]
+    fn retained_linux_browser_wildcard_uses_walletconnect_when_helper_is_stopped() {
+        let platform = "linux-amd64";
+        assert!(!super::super::browser_available(platform));
+        let data = tempfile::tempdir().unwrap();
+        let browser = serde_json::json!({"backends":[{
+            "id":"source-home-browser-exit", "kind":"stream_relay",
+            "allowed_hosts":["*"], "allowed_schemes":["tcp","tls"],
+            "allowed_ports":[80,443],
+            "adapter_ipc":{"kind":"unix_socket","path":super::super::browser_config::runtime_socket_path(data.path(), platform, "adapter")},
+            "relay_ipc":{"kind":"unix_socket","path":super::super::browser_config::runtime_socket_path(data.path(), platform, "relay")}
+        }]});
+        let wc = serde_json::json!({"backends":[{
+            "id":"walletconnect-local-exit", "kind":"stream_relay",
+            "allowed_hosts":["relay.walletconnect.org","relay.walletconnect.com"],
+            "allowed_schemes":["tls"], "allowed_ports":[443],
+            "adapter_ipc":{"kind":"unix_socket","path":super::super::browser_config::runtime_socket_path(data.path(), platform, "wc-adapter")},
+            "relay_ipc":{"kind":"unix_socket","path":super::super::browser_config::runtime_socket_path(data.path(), platform, "wc-relay")}
+        }]});
+        for running in [false, true] {
+            let merged = merge_exit_config(browser.clone(), Some(&wc), running).unwrap();
+            assert_eq!(
+                merged["backends"][usize::from(!running)],
+                browser["backends"][0]
+            );
+            let parsed = exit_provider::parse_config(merged.clone()).unwrap();
+            for (target, expected) in [
+                (
+                    "tls://relay.walletconnect.org:443",
+                    if running {
+                        "source-home-browser-exit"
+                    } else {
+                        "walletconnect-local-exit"
+                    },
+                ),
+                (
+                    "tls://relay.walletconnect.com:443",
+                    if running {
+                        "source-home-browser-exit"
+                    } else {
+                        "walletconnect-local-exit"
+                    },
+                ),
+                ("tls://example.org:443", "source-home-browser-exit"),
+                ("tcp://example.org:80", "source-home-browser-exit"),
+                (
+                    "tcp://relay.walletconnect.org:443",
+                    "source-home-browser-exit",
+                ),
+                (
+                    "tls://relay.walletconnect.org:80",
+                    "source-home-browser-exit",
+                ),
+            ] {
+                let target = url::Url::parse(target).unwrap();
+                assert_eq!(
+                    parsed
+                        .backends
+                        .iter()
+                        .find(|b| b.allows_target(&target))
+                        .unwrap()
+                        .id,
+                    expected
+                );
+            }
+            // Restarting with the other helper state normalises the managed route once.
+            let reordered = merge_exit_config(merged, Some(&wc), !running).unwrap();
+            assert_eq!(reordered["backends"].as_array().unwrap().len(), 2);
+            assert_eq!(
+                reordered["backends"][usize::from(running)],
+                browser["backends"][0]
+            );
+        }
+    }
+
+    #[test]
+    fn refused_merge_logs_parser_error_without_dumping_configuration() {
+        #[derive(Clone)]
+        struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Capture {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = Capture(bytes.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let existing = serde_json::json!({"backends":[]});
+        let bad = serde_json::json!({"backends":[{
+            "id":"walletconnect-local-exit", "kind":"stream_relay",
+            "allowed_hosts":["relay.walletconnect.org"],
+            "private_test_payload":"not-to-log"
+        }]});
+        let error = merge_exit_config(existing.clone(), Some(&bad), false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown field"));
+        tracing::subscriber::with_default(subscriber, || {
+            assert_eq!(exit_config(existing.clone(), Some(&bad), false), existing);
+        });
+        let output = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+        assert!(output.contains(&error), "parser refusal is logged");
+        assert!(
+            !output.contains("not-to-log"),
+            "configuration values remain private"
+        );
     }
 }

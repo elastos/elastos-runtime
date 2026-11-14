@@ -1203,6 +1203,7 @@ async fn setup_server_infrastructure_impl(
     let browser_exit = browser_available
         .then(|| browser_local_exit_config_from_env(&data_dir))
         .flatten();
+    let mut browser_exit_running = false;
     for (name, config) in [
         ("browser-local-exit", browser_exit),
         (
@@ -1224,6 +1225,9 @@ async fn setup_server_infrastructure_impl(
             } else {
                 match spawn_browser_local_exit(&path, &local_exit_config) {
                     Ok(child) => {
+                        if name == "browser-local-exit" {
+                            browser_exit_running = true;
+                        }
                         tracing::info!("{name} helper from {}", path.display());
                         managed_host_processes.push(api::server::HostHelperProcess { name, child });
                     }
@@ -1244,6 +1248,7 @@ async fn setup_server_infrastructure_impl(
             let extra = elastos_server::setup::walletconnect::exit_config(
                 existing_exit,
                 walletconnect_exit.as_ref().map(|(_, provider)| provider),
+                browser_exit_running,
             );
             let exit_config = provider::BridgeProviderConfig {
                 extra,
