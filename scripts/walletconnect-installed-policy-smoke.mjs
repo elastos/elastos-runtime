@@ -38,7 +38,8 @@ try {
   const deadline = Date.now() + 60000;
   for (;;) {
     assert(runtime.exitCode === null, "owned Runtime remains running");
-    try { if ((await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1000) })).ok) break; } catch {}
+    // The Home gateway exposes /healthz; /api/health belongs to serve.
+    try { if ((await fetch(`${base}/healthz`, { signal: AbortSignal.timeout(1000) })).ok) break; } catch {}
     assert(Date.now() < deadline, "owned Runtime reaches health readiness");
     await delay(100);
   }
