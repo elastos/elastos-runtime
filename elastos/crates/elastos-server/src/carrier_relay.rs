@@ -496,7 +496,7 @@ mod tests {
 
     #[tokio::test]
     async fn admission_full_capacity_counts_held_handshakes_and_replacements() {
-        use futures::SinkExt as _;
+        use futures_util::SinkExt as _;
         let held_key = iroh::SecretKey::from_bytes(&[224; 32]);
         let held = Arc::new(HeldAdmission {
             home: held_key.public(),
@@ -585,7 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn home_byte_budget_survives_replacement_and_closed_connection_bursts() {
-        use futures::SinkExt as _;
+        use futures_util::SinkExt as _;
         use iroh_relay::protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg};
         const RATE: u32 = 1024;
         const BURST: u32 = 4096;
