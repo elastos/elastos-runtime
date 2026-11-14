@@ -2,8 +2,13 @@
 
 use anyhow::{Context, Result};
 use futures_lite::StreamExt as _;
-use iroh::address_lookup::{AddressLookup, EndpointInfo, Item};
+use iroh::address_lookup::{AddrFilter, AddressLookup, EndpointData, EndpointInfo, Item};
+use iroh::endpoint::{BeforeConnectOutcome, EndpointHooks};
+use iroh::tls::CaTlsConfig;
 use iroh::RelayUrl;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use std::sync::Arc;
 
 /// Shared by every endpoint. The system resolver owns DNS; failure stays local
 /// to that policy. Irzhy reviews this choice before discovery is enabled.
@@ -30,11 +35,183 @@ pub(super) fn apply_relay(
     );
     let relay = RelayUrl::from(relay.clone());
     let quic = (relay.scheme() == "https").then(Default::default);
-    Ok(builder
+    Ok(endpoint_policy(builder, Some(&relay))
         .relay_mode(iroh::RelayMode::Custom(iroh::RelayMap::from_iter([
             iroh::RelayConfig::new(relay.clone(), quic),
         ])))
+        .ca_tls_config(pinned_relay_tls(&relay, CaTlsConfig::embedded()))
         .address_lookup(PinnedRelayLookup(relay)))
+}
+
+pub(super) fn endpoint_policy(
+    builder: iroh::endpoint::Builder,
+    relay: Option<&RelayUrl>,
+) -> iroh::endpoint::Builder {
+    builder
+        .addr_filter(AddrFilter::ip_only())
+        .hooks(PinnedRelayHook {
+            relay: relay.cloned(),
+        })
+}
+
+#[derive(Debug)]
+struct PinnedRelayHook {
+    relay: Option<RelayUrl>,
+}
+
+impl EndpointHooks for PinnedRelayHook {
+    async fn before_connect<'a>(
+        &'a self,
+        remote: &'a iroh::EndpointAddr,
+        _alpn: &'a [u8],
+    ) -> BeforeConnectOutcome {
+        if remote.addrs.iter().all(|transport| match transport {
+            iroh::TransportAddr::Ip(_) => true,
+            iroh::TransportAddr::Relay(url) => Some(url) == self.relay.as_ref(),
+            _ => false,
+        }) {
+            BeforeConnectOutcome::Accept
+        } else {
+            BeforeConnectOutcome::Reject
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PinnedLookup<T> {
+    relay: Option<RelayUrl>,
+    inner: T,
+}
+
+impl<T: AddressLookup> AddressLookup for PinnedLookup<T> {
+    fn publish(&self, data: &EndpointData) {
+        self.inner.publish(data);
+    }
+    fn resolve(
+        &self,
+        id: iroh::EndpointId,
+    ) -> Option<futures_lite::stream::Boxed<Result<Item, iroh::address_lookup::Error>>> {
+        let relay = self.relay.clone();
+        Some(
+            self.inner
+                .resolve(id)?
+                .map(move |item| {
+                    item.map(|item| {
+                        let provenance = item.provenance();
+                        let addr = item.into_endpoint_addr();
+                        let addrs: Vec<_> = addr
+                            .addrs
+                            .into_iter()
+                            .filter(|transport| match transport {
+                                iroh::TransportAddr::Ip(_) => true,
+                                iroh::TransportAddr::Relay(url) => Some(url) == relay.as_ref(),
+                                _ => false,
+                            })
+                            .collect();
+                        Item::new(
+                            EndpointInfo::from_parts(addr.id, EndpointData::new(addrs)),
+                            provenance,
+                            None,
+                        )
+                    })
+                })
+                .boxed(),
+        )
+    }
+}
+
+/// Runtime retains this complete policy across every gossip actor replacement.
+/// Gossip's unfiltered peer lookup is replaced by the pinned DID route, memory
+/// and mDNS, each of which passes through the same relay filter.
+#[derive(Debug, Clone)]
+pub(super) struct LookupPolicy {
+    pub relay: Option<RelayUrl>,
+    pub memory: iroh::address_lookup::memory::MemoryLookup,
+    pub mdns: Option<iroh_mdns_address_lookup::MdnsAddressLookup>,
+}
+
+impl LookupPolicy {
+    pub fn install(&self, endpoint: &iroh::Endpoint) -> Result<()> {
+        let services = endpoint
+            .address_lookup()
+            .context("Carrier closed before relay lookup policy setup")?;
+        services.clear();
+        if let Some(relay) = &self.relay {
+            services.add(PinnedRelayLookup(relay.clone()));
+        }
+        services.add(PinnedLookup {
+            relay: self.relay.clone(),
+            inner: self.memory.clone(),
+        });
+        if let Some(mdns) = &self.mdns {
+            services.add(PinnedLookup {
+                relay: self.relay.clone(),
+                inner: mdns.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+fn pinned_relay_tls(relay: &RelayUrl, roots: CaTlsConfig) -> CaTlsConfig {
+    let host = match relay.host() {
+        Some(url::Host::Domain(name)) => name.to_string(),
+        Some(url::Host::Ipv4(ip)) => ip.to_string(),
+        Some(url::Host::Ipv6(ip)) => ip.to_string(),
+        None => String::new(),
+    };
+    CaTlsConfig::custom_server_cert_verifier(Arc::new(move |provider| {
+        let host = ServerName::try_from(host.clone())
+            .map_err(std::io::Error::other)?
+            .to_owned();
+        Ok(Arc::new(PinnedRelayHost {
+            host,
+            inner: roots.server_cert_verifier(provider)?,
+        }) as Arc<dyn ServerCertVerifier>)
+    }))
+}
+
+#[derive(Debug)]
+struct PinnedRelayHost {
+    host: ServerName<'static>,
+    inner: Arc<dyn ServerCertVerifier>,
+}
+
+impl ServerCertVerifier for PinnedRelayHost {
+    fn verify_server_cert(
+        &self,
+        cert: &CertificateDer<'_>,
+        chain: &[CertificateDer<'_>],
+        name: &ServerName<'_>,
+        ocsp: &[u8],
+        now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        if *name != self.host {
+            return Err(rustls::Error::General(
+                "not the pinned Carrier relay".into(),
+            ));
+        }
+        self.inner.verify_server_cert(cert, chain, name, ocsp, now)
+    }
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        signature: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, signature)
+    }
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        signature: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, signature)
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +342,13 @@ mod tests {
                     .unwrap();
             }
             let services = node.endpoint.address_lookup().unwrap();
+            if let Some(policy) = &node.gossip_state.lock().await.relay_lookups {
+                assert_eq!(
+                    services.len(),
+                    2 + usize::from(policy.mdns.is_some()),
+                    "the gossip actor must not retain its unfiltered peer lookup"
+                );
+            }
             let found = tokio::time::timeout(
                 std::time::Duration::from_secs(3),
                 services.resolve(peer).take(2).collect::<Vec<_>>(),
@@ -223,6 +407,85 @@ mod tests {
             private.len(),
             "local shell tickets retain local IP reachability"
         );
+    }
+
+    #[test]
+    fn pin_policy_https_identity_requires_the_pinned_name_and_trusted_certificate() {
+        let (certs, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+        let (foreign_certs, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+        let relay: RelayUrl = "https://localhost/".parse().unwrap();
+        let verifier = pinned_relay_tls(&relay, CaTlsConfig::custom_roots(certs.clone()))
+            .server_cert_verifier(Arc::new(rustls::crypto::ring::default_provider()))
+            .unwrap();
+        let verify = |cert: &CertificateDer<'_>, name: &str| {
+            verifier.verify_server_cert(
+                cert,
+                &[],
+                &ServerName::try_from(name.to_string()).unwrap(),
+                &[],
+                UnixTime::now(),
+            )
+        };
+        assert!(verify(&certs[0], "localhost").is_ok());
+        assert!(
+            verify(&certs[0], "127.0.0.1").is_err(),
+            "a CA-valid alternate SAN is still a different pinned name"
+        );
+        assert!(
+            verify(&foreign_certs[0], "localhost").is_err(),
+            "a self-consistent foreign identity grants no trust"
+        );
+        for (url, name) in [
+            ("https://127.0.0.1/", "127.0.0.1"),
+            ("https://[::1]/", "::1"),
+        ] {
+            let verifier = pinned_relay_tls(
+                &url.parse().unwrap(),
+                CaTlsConfig::custom_roots(certs.clone()),
+            )
+            .server_cert_verifier(Arc::new(rustls::crypto::ring::default_provider()))
+            .unwrap();
+            assert!(verifier
+                .verify_server_cert(
+                    &certs[0],
+                    &[],
+                    &ServerName::try_from(name.to_string()).unwrap(),
+                    &[],
+                    UnixTime::now()
+                )
+                .is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn pin_policy_one_lookup_filter_covers_mdns_and_memory_answers() {
+        let id = iroh::SecretKey::from_bytes(&[215; 32]).public();
+        let pin: RelayUrl = "https://relay.example/".parse().unwrap();
+        let foreign: RelayUrl = "https://foreign.example/".parse().unwrap();
+        // Both Runtime lookup ingresses use this generic wrapper; this source
+        // supplies the same hostile answer without requiring a multicast LAN.
+        let source = iroh::address_lookup::memory::MemoryLookup::new();
+        source.add_endpoint_info(iroh::EndpointAddr::new(id).with_addrs([
+            iroh::TransportAddr::Ip("127.0.0.1:0".parse().unwrap()),
+            iroh::TransportAddr::Relay(pin.clone()),
+            iroh::TransportAddr::Relay(foreign),
+        ]));
+        for relay in [None, Some(pin.clone())] {
+            let filter = PinnedLookup {
+                relay: relay.clone(),
+                inner: source.clone(),
+            };
+            let item = filter
+                .resolve(id)
+                .unwrap()
+                .next()
+                .await
+                .unwrap()
+                .unwrap()
+                .into_endpoint_addr();
+            assert_eq!(item.ip_addrs().count(), 1);
+            assert!(item.relay_urls().all(|found| Some(found) == relay.as_ref()));
+        }
     }
 
     #[test]

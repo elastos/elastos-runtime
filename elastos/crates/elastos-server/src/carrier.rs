@@ -27,8 +27,6 @@ use anyhow::{Context, Result};
 use base64::Engine as _;
 use futures_lite::StreamExt;
 use iroh::address_lookup::memory::MemoryLookup;
-use iroh::address_lookup::AddrFilter;
-use iroh::endpoint::{BeforeConnectOutcome, EndpointHooks};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, SecretKey, Watcher};
 use iroh_gossip::net::Gossip;
@@ -747,6 +745,7 @@ pub struct GossipState {
     topic_joins: HashMap<String, TopicJoin>,
     closed: bool,
     memory_lookup: MemoryLookup,
+    relay_lookups: Option<relay::LookupPolicy>,
     signing_key: Option<ed25519_dalek::SigningKey>,
     joined_topics: std::collections::HashSet<String>,
     bootstrap_peers: Vec<iroh::EndpointId>,
@@ -785,6 +784,7 @@ impl GossipState {
             topic_joins: HashMap::new(),
             closed: false,
             memory_lookup,
+            relay_lookups: None,
             signing_key,
             joined_topics: std::collections::HashSet::new(),
             bootstrap_peers: Vec::new(),
@@ -1299,6 +1299,9 @@ async fn rebuild_carrier_gossip(state: &mut GossipState) -> Result<usize> {
         warn!("carrier: gossip actor did not shut down for the rebuild; dropping it");
     }
     let replacement = spawn_carrier_gossip_for(&state.endpoint, state.community_hub);
+    if let Some(policy) = &state.relay_lookups {
+        policy.install(&state.endpoint)?;
+    }
     state.gossip = replacement.clone();
     drop(state.gossip_handler.replace(replacement));
     drop(previous);
@@ -1648,31 +1651,8 @@ fn direct_only_relay_only_error(endpoints: &[iroh::EndpointAddr]) -> Option<serd
     }
 }
 
-#[derive(Debug)]
-struct RejectForeignRelayHook;
-
-impl EndpointHooks for RejectForeignRelayHook {
-    async fn before_connect<'a>(
-        &'a self,
-        remote_addr: &'a iroh::EndpointAddr,
-        _alpn: &'a [u8],
-    ) -> BeforeConnectOutcome {
-        if remote_addr
-            .addrs
-            .iter()
-            .any(|transport| transport.is_relay())
-        {
-            BeforeConnectOutcome::Reject
-        } else {
-            BeforeConnectOutcome::Accept
-        }
-    }
-}
-
 fn apply_isolated_endpoint_policy(builder: iroh::endpoint::Builder) -> iroh::endpoint::Builder {
-    builder
-        .addr_filter(AddrFilter::ip_only())
-        .hooks(RejectForeignRelayHook)
+    relay::endpoint_policy(builder, None)
 }
 
 fn short_lived_endpoint_builder(
@@ -1975,23 +1955,15 @@ async fn start_carrier_node_with_network(
 
     // LAN discovery exchanges IP addresses for direct connections.
     // The endpoint's IP-only policy also filters the published addresses.
-    if carrier_mdns_enabled() {
-        if let Ok(mdns) = MdnsAddressLookup::builder().build(endpoint.id()) {
-            endpoint
-                .address_lookup()
-                .context("Carrier endpoint closed before mDNS setup")?
-                .add(mdns);
-        }
+    let mdns = if carrier_mdns_enabled() {
+        MdnsAddressLookup::builder().build(endpoint.id()).ok()
     } else {
         info!("carrier: mDNS discovery disabled by ELASTOS_CARRIER_MDNS");
-    }
+        None
+    };
 
     // Add MemoryLookup for explicit peer addresses (--connect tickets)
     let memory_lookup = MemoryLookup::new();
-    endpoint
-        .address_lookup()
-        .context("Carrier endpoint closed before address lookup setup")?
-        .add(memory_lookup.clone());
 
     // Seed the address book from tickets stored by `elastos node peer add`
     // so a peer-DID custody dial can resolve without a live discovery
@@ -2021,6 +1993,13 @@ async fn start_carrier_node_with_network(
         state.bootstrap_peers = bootstrap_peers;
         state.direct_only = network == CarrierNodeNetwork::Isolated;
         state.community_hub = community_hub;
+        let policy = relay::LookupPolicy {
+            relay: approved.clone().map(iroh::RelayUrl::from),
+            memory: memory_lookup.clone(),
+            mdns,
+        };
+        policy.install(&endpoint)?;
+        state.relay_lookups = Some(policy);
         state.gossip_handler.clone()
     };
 
