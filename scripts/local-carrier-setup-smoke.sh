@@ -372,6 +372,9 @@ def write_capsule_archive(name, capsule_dir):
         browser_dir = capsule_dir / "browser"
         if browser_dir.is_dir():
             tar.add(browser_dir, arcname=f"{name}/browser")
+        if name == "wallet-walletconnect":
+            # Match the release capsule: its pinned SDK lives beside browser/.
+            tar.add(capsule_dir / "vendor", arcname=f"{name}/vendor")
         if name == "home-cli":
             renderer = pathlib.Path(os.environ["HOME_CLI_RENDERER"])
             if not renderer.is_file() or renderer.is_symlink() or not os.access(renderer, os.X_OK):
