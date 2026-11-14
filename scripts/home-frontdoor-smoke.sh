@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+# This fixture proves the default unconfigured installation independently of operator inputs.
+unset ELASTOS_WALLETCONNECT_PROJECT_FILE ELASTOS_WALLETCONNECT_PROJECT_ID
+
 
 # This fixture owns setup, launch, and cleanup after bootstrap.
 export ELASTOS_INSTALL_ONLY=1
@@ -375,6 +378,7 @@ for installed in \
     "$HOME_DIR/xdg-data/elastos/capsules/archive-manager/browser/index.html" \
     "$HOME_DIR/xdg-data/elastos/capsules/wallet/browser/index.html" \
     "$HOME_DIR/xdg-data/elastos/capsules/wallet-metamask/browser/index.html" \
+    "$HOME_DIR/xdg-data/elastos/capsules/wallet-walletconnect/browser/index.html" \
     "$HOME_DIR/xdg-data/elastos/capsules/wallet-unisat/browser/index.html" \
     "$HOME_DIR/xdg-data/elastos/bin/net-provider" \
     "$HOME_DIR/xdg-data/elastos/bin/chain-provider" \
@@ -389,10 +393,9 @@ do
         exit 1
     fi
 done
-# Hidden in 0.8.0: the Home profile leaves them out; `setup --with` adds them.
+# Optional components are installed through `setup --with`.
 for absent in \
     "$HOME_DIR/xdg-data/elastos/capsules/services" \
-    "$HOME_DIR/xdg-data/elastos/capsules/wallet-walletconnect" \
     "$HOME_DIR/xdg-data/elastos/capsules/elacity-player" \
     "$HOME_DIR/xdg-data/elastos/bin/content-block-graph-provider" \
     "$HOME_DIR/xdg-data/elastos/bin/media-provider" \
@@ -538,4 +541,6 @@ run_repeated_action_case()
 PY
 test -x "$INSTALLED_HOME_CLI_DIR/bin/home-cli"
 cmp "$HOME_CLI_RENDERER" "$INSTALLED_HOME_CLI_DIR/bin/home-cli"
+node "${ROOT}/scripts/walletconnect-installed-policy-smoke.mjs" "$ROOT/elastos/target/debug/elastos" "$HOME_DIR/xdg-data/elastos" "$HOME_DIR"
+
 echo "[home-frontdoor] OK"

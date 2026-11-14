@@ -5,6 +5,9 @@ set -euo pipefail
 # tree world-readable and setup fails with "Runtime data root must be
 # owner-only".
 umask 077
+# This fixture proves the default unconfigured installation independently of operator inputs.
+unset ELASTOS_WALLETCONNECT_PROJECT_FILE ELASTOS_WALLETCONNECT_PROJECT_ID
+
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ELASTOS_ROOT="${REPO_ROOT}/elastos"
@@ -619,6 +622,7 @@ for installed in \
     "${DATA_DIR}/capsules/assistant/browser/index.html" \
     "${DATA_DIR}/capsules/wallet/browser/index.html" \
     "${DATA_DIR}/capsules/wallet-metamask/browser/index.html" \
+    "${DATA_DIR}/capsules/wallet-walletconnect/browser/index.html" \
     "${DATA_DIR}/capsules/wallet-unisat/browser/index.html"
 do
     if [[ ! -f "${installed}" ]]; then
@@ -626,7 +630,7 @@ do
         exit 1
     fi
 done
-# Hidden in 0.8.0: the Home profile leaves them out; `setup --with` adds them.
+# Optional components are installed through `setup --with`.
 for absent in \
     "${DATA_DIR}/bin/content-block-graph-provider" \
     "${DATA_DIR}/bin/media-provider" \
@@ -634,8 +638,7 @@ for absent in \
     "${DATA_DIR}/bin/protected-content-decrypt-provider" \
     "${DATA_DIR}/tools/media-tools" \
     "${DATA_DIR}/capsules/services" \
-    "${DATA_DIR}/capsules/elacity-player" \
-    "${DATA_DIR}/capsules/wallet-walletconnect"
+    "${DATA_DIR}/capsules/elacity-player"
 do
     if [[ -e "${absent}" ]]; then
         echo "hidden component installed by the Home profile: ${absent}" >&2
@@ -666,6 +669,8 @@ grep -q "Home CLI /" "${HOME_OUT}" || {
     echo "expected home output missing from ${HOME_OUT}" >&2
     exit 1
 }
+
+node "${REPO_ROOT}/scripts/walletconnect-installed-policy-smoke.mjs" "${ELASTOS_BIN}" "${DATA_DIR}" "${TEST_ROOT}"
 
 echo "[local-carrier-setup] OK"
 echo "[local-carrier-setup] temp data dir: ${DATA_DIR}"

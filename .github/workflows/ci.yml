@@ -905,14 +905,6 @@ jobs:
           scripts/setup-source-home.sh 2>&1 | tee "${RUNNER_TEMP}/source-home-logs/setup-source-home.log"
           ELASTOS_DATA_DIR="${XDG_DATA_HOME}/elastos" \
             scripts/installed-provider-verify.sh 2>&1 | tee "${RUNNER_TEMP}/source-home-logs/installed-provider-verify.log"
-      - name: local-carrier setup smoke
-        env:
-          ELASTOS_LLAMA_AMD64_BUNDLE: ${{ runner.temp }}/llama-amd64-bundle/llama-b10516-bin-ubuntu22.04-amd64-cpu.tar.gz
-          ELASTOS_LLAMA_ARM64_BUNDLE: ${{ runner.temp }}/llama-arm64-bundle/llama-b10516-bin-ubuntu22.04-arm64-cpu.tar.gz
-        run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/source-home-logs"
-          scripts/local-carrier-setup-smoke.sh 2>&1 | tee "${RUNNER_TEMP}/source-home-logs/local-carrier-setup-smoke.log"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
@@ -926,6 +918,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '26'
+      - name: local-carrier setup smoke
+        env:
+          ELASTOS_LLAMA_AMD64_BUNDLE: ${{ runner.temp }}/llama-amd64-bundle/llama-b10516-bin-ubuntu22.04-amd64-cpu.tar.gz
+          ELASTOS_LLAMA_ARM64_BUNDLE: ${{ runner.temp }}/llama-arm64-bundle/llama-b10516-bin-ubuntu22.04-arm64-cpu.tar.gz
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/source-home-logs"
+          scripts/local-carrier-setup-smoke.sh 2>&1 | tee "${RUNNER_TEMP}/source-home-logs/local-carrier-setup-smoke.log"
       - name: prepare signed SmolLM2 fixture
         timeout-minutes: 20
         env:
