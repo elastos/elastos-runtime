@@ -206,7 +206,7 @@ try {
       assert.equal(await frame.locator("#store-sections .store-section-head").count(), 0, "Models omits group headings like every category");
       // A model is a standard store row: the row opens the detail and carries its facts, with no extra pill.
       const row = frame.locator(`.store-row[data-action="model-detail"][data-app="model:${cid}"]`);
-      assert.equal(await row.locator(".store-row-sub").innerText(), "1.02 KB · Fits this device");
+      assert.equal(await row.locator(".store-row-sub").innerText(), "1.0 KB · Fits this device");
       assert.equal(await row.locator(".store-pill").count(), 0, "a model row has no Details pill");
       await row.click();
     }
@@ -223,7 +223,7 @@ try {
       assert.equal(await frame.locator("[data-model-management] .model-hint").count(), 0, "compact detail carries no cache or memory hints");
       assert.equal(await frame.locator('[data-model-control="refresh"]').count(), 0, "Refresh shows only after a failed read");
       assert.equal(await frame.locator('.modal-footer-actions [data-model-control="use"]').count(), 1, "Get sits next to Close");
-      assert.equal(await frame.locator("[data-model-management] li", { hasText: "Download size: 1.02 KB" }).count(), 1, "the size is a Status row");
+      assert.equal(await frame.locator("[data-model-management] li", { hasText: "Download size: 1.0 KB" }).count(), 1, "the size is a Status row");
       assert.equal(await frame.locator(".technical-details li", { hasText: /^Publisher: did:key:zFixturePublisher$/ }).count(), 1);
       assert.equal(await frame.getByText("Not on this device yet", { exact: true }).count(), 1);
       assert.equal(await frame.getByRole("button", { name: "Get", exact: true }).isEnabled(), true);
@@ -263,7 +263,7 @@ try {
     }
     preparationFailure = null; phase = "capacity_pending";
     await refreshModels();
-    await frame.getByText("Waiting for free space. This model needs 1.02 KB on this Home, plus 2 GB kept free. Free some space and it continues.", { exact: true }).waitFor();
+    await frame.getByText("Waiting for free space. This model needs 1.0 KB on this Home, plus 2 GB kept free. Free some space and it continues.", { exact: true }).waitFor();
     assert.equal(await frame.getByRole("button", { name: stop, exact: true }).count(), 1);
     assert.equal(calls.filter(c => c.method === "content.use").length, 0, "pending status never starts another Use");
     phase = "reclaimed";

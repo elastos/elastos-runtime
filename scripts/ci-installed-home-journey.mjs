@@ -300,7 +300,7 @@ async function repairJourney(assistant, offer) {
   subcheck = "partial_get";
   await clickModelUse(marketplace, other.cid, "Get");
   await marketplace.waitForFunction(() => {
-    const progress = document.querySelector('progress[aria-label="Preparation progress"]');
+    const progress = document.querySelector('progress[aria-label="Model download progress"]');
     return progress && progress.value > 0 && progress.value < progress.max;
   }, null, { timeout: 60000 });
   await page.screenshot({ path: join(evidence, "repair-partial-get.png"), fullPage: true });
@@ -329,7 +329,7 @@ async function repairJourney(assistant, offer) {
   const retry = await clickModelUse(marketplace, other.cid, "Retry");
   modelRepair.retry_operation_id = retry.output.operation_id;
   await marketplace.waitForFunction(kept => {
-    const progress = document.querySelector('progress[aria-label="Preparation progress"]');
+    const progress = document.querySelector('progress[aria-label="Model download progress"]');
     return progress?.value >= kept || Boolean(document.querySelector('[data-model-control="open-assistant"]'));
   }, restarted.weights_bytes, { timeout: 60000 });
   await page.screenshot({ path: join(evidence, "repair-resumed-get.png"), fullPage: true });

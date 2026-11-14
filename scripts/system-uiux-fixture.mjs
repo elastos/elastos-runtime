@@ -14,7 +14,7 @@ export const { chromium } = requireProductSmokePlaywright();
 export const CORS_HEADERS = Object.freeze({
   "access-control-allow-origin": "null",
   "access-control-allow-headers": "content-type,x-elastos-home-token",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
 });
 
 export function assert(condition, message, details = undefined) {

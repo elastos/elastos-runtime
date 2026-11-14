@@ -18,7 +18,7 @@ import {
   publishedCid,
   visibilityContract,
   viewerOptions,
-} from "./model.js";
+} from "./model.js?v=download-progress-20261112";
 
 export function createLibraryDialog({
   allVisible,
@@ -48,7 +48,7 @@ export function createLibraryDialog({
     if (file) {
       const viewers = viewerOptions(object).map((viewer) => viewer.label || viewer.id);
       generalRows.push(["Opens with", viewers.join(", ") || "No installed app"]);
-      generalRows.push(["Size", Number(object.size) > 0 ? formatBytes(object.size) : "0 B"]);
+      generalRows.push(["Size", formatBytes(object.size)]);
     }
     if (object.modified_at) generalRows.push(["Modified", formatTime(object.modified_at)]);
     if (object.created_at) generalRows.push(["Created", formatTime(object.created_at)]);

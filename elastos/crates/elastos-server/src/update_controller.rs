@@ -31,6 +31,7 @@ use crate::sources::{load_trusted_sources, TrustedSource};
 const DIRECTORY: &str = "update-controller";
 const RECEIPT: &str = "receipt.json";
 const STATUS: &str = "status.json";
+const DOWNLOAD_PROGRESS: &str = "download-progress.json";
 const REQUEST: &str = "request.json";
 const ACTIVE_REQUEST: &str = "active-request.json";
 const REFUSED: &str = "refused-releases.json";
@@ -362,6 +363,87 @@ pub struct UpdateStatus {
     pub controller_start: String,
     pub host_pid: Option<u32>,
     pub generation: String,
+    // status.json keeps the legacy wire shape: retained older controllers and
+    // restored older Homes both read it with deny_unknown_fields.
+    #[serde(default, skip_serializing)]
+    pub completed_bytes: u64,
+    #[serde(default, skip_serializing)]
+    pub total_bytes: Option<u64>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct DownloadProgress {
+    id: String,
+    controller_start: String,
+    completed_bytes: u64,
+    total_bytes: Option<u64>,
+}
+
+/// Exact counters stay in memory across files. The disk record is advisory and
+/// follows the UI's one-second polling interval, including file boundaries.
+#[derive(Default)]
+struct DownloadMeter {
+    progress: Option<DownloadProgress>,
+    last_write: Option<std::time::Instant>,
+    paused: bool,
+}
+
+impl DownloadMeter {
+    fn flush(&mut self, path: &Path) {
+        if self
+            .last_write
+            .is_some_and(|last| last.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        if let Some(progress) = &self.progress {
+            // A full disk or damaged progress record cannot stop an update.
+            let _ = write_advisory_progress(path, progress);
+            self.last_write = Some(std::time::Instant::now());
+        }
+    }
+}
+
+/// Transport progress is scoped to one controller fetch. Metadata fetches hold
+/// the last payload position; their bytes have no signed size in the plan.
+async fn track_update_fetch(
+    directory: &Path,
+    id: &str,
+    meter: &Arc<std::sync::Mutex<DownloadMeter>>,
+    future: impl std::future::Future<Output = Result<Vec<u8>>>,
+) -> Result<Vec<u8>> {
+    let path = directory.join(DOWNLOAD_PROGRESS);
+    let base = {
+        let state = meter.lock().unwrap_or_else(|error| error.into_inner());
+        state
+            .progress
+            .as_ref()
+            .filter(|progress| !state.paused && progress.id == id)
+            .map(|progress| progress.completed_bytes)
+    };
+    let Some(base) = base else {
+        return future.await;
+    };
+    let captured = meter.clone();
+    let sink: crate::carrier::ReplyProgress = Arc::new(move |read, _declared| {
+        // Carrier reports zero at the reply header. Save the next write slot
+        // for body bytes, which can advance the displayed count.
+        if read == 0 {
+            return;
+        }
+        let mut state = captured.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(progress) = &mut state.progress {
+            let next = base.saturating_add(read);
+            let next = progress.total_bytes.map_or(next, |total| next.min(total));
+            progress.completed_bytes = progress.completed_bytes.max(next);
+        }
+        state.flush(&path);
+    });
+    let result = crate::carrier::with_reply_progress(sink.clone(), future).await;
+    if let Ok(bytes) = &result {
+        sink(bytes.len() as u64, bytes.len() as u64);
+    }
+    result
 }
 
 #[derive(Serialize, Deserialize)]
@@ -803,6 +885,8 @@ pub async fn run(receipt_path: PathBuf) -> Result<()> {
         "controller receipt path differs from its data root"
     );
     let _lease = inherited_or_new_lease(&directory)?;
+    // The lease excludes every live progress writer. Cleanup is advisory too.
+    let _ = remove_stale_download_progress(&directory);
     validate_receipt(&receipt)?;
     let mut controller = Controller {
         receipt,
@@ -815,6 +899,7 @@ pub async fn run(receipt_path: PathBuf) -> Result<()> {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         #[cfg(test)]
         test_readiness: None,
     };
@@ -839,9 +924,21 @@ pub fn status(data_dir: &Path) -> Result<Option<UpdateStatus>> {
     if !path_present(&path)? {
         return Ok(None);
     }
-    let status: UpdateStatus = read_private_json(&path)?;
+    let mut status: UpdateStatus = read_private_json(&path)?;
     if process_start(status.controller_pid).as_deref() != Some(status.controller_start.as_str()) {
         return Ok(None);
+    }
+    let progress_path = data_dir.join(DIRECTORY).join(DOWNLOAD_PROGRESS);
+    if let (true, Ok(progress)) = (
+        matches!(status.phase.as_str(), "downloading" | "verifying"),
+        read_private_json::<DownloadProgress>(&progress_path),
+    ) {
+        if status.id.as_deref() == Some(progress.id.as_str())
+            && status.controller_start == progress.controller_start
+        {
+            status.completed_bytes = progress.completed_bytes;
+            status.total_bytes = progress.total_bytes;
+        }
     }
     Ok(Some(status))
 }
@@ -948,6 +1045,7 @@ struct Controller {
     host_ready: bool,
     carrier: Option<Arc<crate::carrier::CarrierClient>>,
     carrier_close: Option<tokio::task::JoinHandle<()>>,
+    download_meter: Arc<std::sync::Mutex<DownloadMeter>>,
     /// Test fixture: shortens the claimed candidate's readiness budget. A fixture Home
     /// binds an ephemeral port and reports it in `readiness-port`.
     #[cfg(test)]
@@ -1188,6 +1286,19 @@ impl Controller {
     }
 
     fn publish(&self, phase: &str, message: &str) -> Result<()> {
+        {
+            let mut meter = self
+                .download_meter
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            meter.paused = phase != "downloading";
+            if phase == "verifying" {
+                // Publish the exact final count before leaving the download phase,
+                // even when its last bytes arrived inside the coalescing interval.
+                meter.last_write = None;
+                meter.flush(&self.directory.join(DOWNLOAD_PROGRESS));
+            }
+        }
         let source = installed_source(&self.receipt.data_dir)?;
         write_private(
             &self.directory.join(STATUS),
@@ -1205,8 +1316,22 @@ impl Controller {
                     .context("controller identity unavailable")?,
                 host_pid: self.child.as_ref().map(|child| child.pid()),
                 generation: self.generation.clone(),
+                completed_bytes: 0,
+                total_bytes: None,
             },
-        )
+        )?;
+        // Readers see the terminal phase before its advisory progress is removed.
+        if matches!(
+            phase,
+            "updated" | "failed" | "restored" | "recovery_required" | "idle"
+        ) {
+            *self
+                .download_meter
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = DownloadMeter::default();
+            let _ = fs::remove_file(self.directory.join(DOWNLOAD_PROGRESS));
+        }
+        Ok(())
     }
 
     fn publish_apply_result(&self, result: &Result<()>) -> Result<()> {
@@ -1299,17 +1424,24 @@ impl Controller {
         let fetch_client = client.clone();
         let choice = request.clone();
         let trusted = source.clone();
+        let progress_directory = self.directory.clone();
+        let progress_meter = self.download_meter.clone();
         let fetch: crate::update::FetchFn = Box::new(move |cid| {
             let client = fetch_client.clone();
             let choice = choice.clone();
             let trusted = trusted.clone();
+            let directory = progress_directory.clone();
+            let meter = progress_meter.clone();
             Box::pin(async move {
-                let bytes = if let Some(path) = cid.strip_prefix("release-path:") {
-                    client.fetch_file(path).await
-                } else {
-                    client.fetch_content(&cid, None).await
-                }
-                .context(crate::update::UpdateSourceUnavailable)?;
+                let bytes = track_update_fetch(&directory, &choice.id, &meter, async {
+                    if let Some(path) = cid.strip_prefix("release-path:") {
+                        client.fetch_file(path).await
+                    } else {
+                        client.fetch_content(&cid, None).await
+                    }
+                    .context(crate::update::UpdateSourceUnavailable)
+                })
+                .await?;
                 if cid == choice.head_cid {
                     // Bytes that differ from the chosen CID may be transport damage: retryable.
                     crate::update::mismatched(crate::update::verify_release_metadata_cid(
@@ -1496,6 +1628,25 @@ async fn note_while_starting<T>(
 }
 
 impl crate::update::RestartOwner for Controller {
+    fn download_plan(&self, completed: u64, total: Option<u64>) -> Result<()> {
+        let Some(request) = &self.request else {
+            return Ok(());
+        };
+        let mut meter = self
+            .download_meter
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        meter.progress = Some(DownloadProgress {
+            id: request.id.clone(),
+            controller_start: process_start(std::process::id())
+                .context("controller identity unavailable")?,
+            completed_bytes: completed,
+            total_bytes: total,
+        });
+        meter.flush(&self.directory.join(DOWNLOAD_PROGRESS));
+        Ok(())
+    }
+
     fn progress(&self, phase: &str, message: &str) -> Result<()> {
         self.publish(phase, message)
     }
@@ -2091,6 +2242,70 @@ fn write_new_private(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
     file.write_all(bytes)?;
     file.sync_all()?;
     Ok(())
+}
+
+fn remove_stale_download_progress(directory: &Path) -> Result<()> {
+    check_controller_directory(directory)?;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(random) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("download-progress."))
+            .and_then(|name| name.strip_suffix(".tmp"))
+        else {
+            continue;
+        };
+        if random.len() != 32 || !random.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            continue;
+        }
+        let path = entry.path();
+        let before = fs::symlink_metadata(&path)?;
+        if !before.is_file() || before.file_type().is_symlink() {
+            continue;
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)?;
+        if check_private_file(&file).is_err() {
+            continue;
+        }
+        let opened = file.metadata()?;
+        let current = fs::symlink_metadata(&path)?;
+        if before.dev() == opened.dev()
+            && before.ino() == opened.ino()
+            && current.dev() == opened.dev()
+            && current.ino() == opened.ino()
+        {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_advisory_progress(path: &Path, progress: &DownloadProgress) -> Result<()> {
+    let temporary = path.with_extension(format!("{}.tmp", hex::encode(rand::random::<[u8; 16]>())));
+    let result = (|| {
+        let bytes = serde_json::to_vec(progress)?;
+        anyhow::ensure!(
+            bytes.len() as u64 <= MAX_PRIVATE_JSON,
+            "progress record is too large"
+        );
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&temporary)?;
+        file.write_all(&bytes)?;
+        fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
 fn write_private(path: &Path, value: &impl Serialize) -> Result<()> {

@@ -20,7 +20,7 @@ import {
   publishFailureText,
   publishedLink,
   viewerOptions,
-} from "./model.js";
+} from "./model.js?v=download-progress-20261112";
 
 export function createLibraryActions({
   clearSelection,
@@ -211,7 +211,10 @@ export function createLibraryActions({
       id: `${batch}:${index}`,
       name: file.name,
       progress: 0,
+      completed_bytes: 0,
+      total_bytes: file.size,
       status: "Queued",
+      confirmed: false,
     }));
     // A new selection replaces old results while active batches keep their rows.
     state.uploads = state.uploads.filter((upload) => activeUploads.has(upload)).concat(uploads);
@@ -223,23 +226,25 @@ export function createLibraryActions({
         const upload = uploads[index];
         try {
           setStatus(`Uploading ${file.name}...`);
-          setUploadProgress(upload.id, { status: "Preparing", progress: 4 });
+          setUploadProgress(upload.id, { status: "Preparing", progress: 0 });
           await uploadObject({
             uri: childUri(destinationUri, file.name),
             file,
             mime: file.type || "application/octet-stream",
             onProgress: (fraction) => {
               setUploadProgress(upload.id, {
-                status: "Uploading",
-                progress: Math.max(4, Math.round(fraction * 96)),
+                status: fraction >= 1 ? "Saving" : "Uploading",
+                progress: Math.floor(Math.max(0, Math.min(1, fraction)) * 100),
+                completed_bytes: Math.floor(Math.max(0, Math.min(1, fraction)) * file.size),
               });
             },
           });
           setUploadProgress(upload.id, {
             status: "Saving",
-            progress: 98,
+            progress: 100,
+            completed_bytes: file.size,
           });
-          setUploadProgress(upload.id, { status: "Complete", progress: 100 });
+          setUploadProgress(upload.id, { status: "Complete", progress: 100, confirmed: true });
         } catch (error) {
           setUploadProgress(upload.id, {
             status: "Upload not confirmed. Check the destination before retrying.",
@@ -260,7 +265,7 @@ export function createLibraryActions({
     } finally {
       for (const upload of uploads) activeUploads.delete(upload);
       window.setTimeout(() => {
-        if (uploads.every((upload) => upload.progress >= 100)) {
+        if (uploads.every((upload) => upload.confirmed)) {
           const completedIds = new Set(uploads.map((upload) => upload.id));
           state.uploads = state.uploads.filter((upload) => !completedIds.has(upload.id));
           renderUploads();

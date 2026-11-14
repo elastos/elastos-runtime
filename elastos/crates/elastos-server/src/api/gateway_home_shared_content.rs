@@ -253,7 +253,7 @@ fn stated_post_size(body: &str, uri: &str) -> Option<u64> {
     (value.is_finite() && value >= 0.0).then_some((value * scale) as u64)
 }
 
-/// The size format Chat shows (`format_bytes` in the Chat app).
+/// The stable size format carried in Chat file posts, independent of UI formatting.
 pub(super) fn format_shared_file_size(size_bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;

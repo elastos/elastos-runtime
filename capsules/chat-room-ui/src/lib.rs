@@ -878,7 +878,7 @@ fn library_post_outcome(http_status: u16, body: &serde_json::Value) -> LibraryPo
 
 fn library_post_view(post: &LibraryPost) -> LibraryPostView {
     use LibraryPostAction::{Cancel, Close, OpenLibrary, Post, Retry};
-    let file = format!("{} · {}", post.file_name, format_bytes(post.size_bytes));
+    let file = format!("{} · {}", post.file_name, format_post_size(post.size_bytes));
     match &post.phase {
         LibraryPostPhase::Confirm => LibraryPostView {
             title: format!("Post \"{}\" in Community?", post.file_name),
@@ -6083,7 +6083,8 @@ fn shared_file_post_name(text: &str, uri: &str) -> Option<String> {
     let stated_size = match size.strip_suffix(" bytes") {
         Some(bytes) => !bytes.is_empty() && bytes.bytes().all(|byte| byte.is_ascii_digit()),
         None => size.split_once(' ').is_some_and(|(number, unit)| {
-            ["KB", "MB", "GB"].contains(&unit) && number.parse::<f64>().is_ok_and(f64::is_finite)
+            ["B", "KB", "MB", "GB", "TB"].contains(&unit)
+                && number.parse::<f64>().is_ok_and(f64::is_finite)
         }),
     };
     if !stated_size {
@@ -6976,6 +6977,26 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn decimal_file_sizes_match_the_shared_capsule_rule() {
+        for (bytes, expected) in [
+            (999, "999 B"),
+            (1000, "1.0 KB"),
+            (1050, "1.1 KB"),
+            (999900, "999.9 KB"),
+            (999949, "999.9 KB"),
+            (999950, "1.0 MB"),
+            (999999, "1.0 MB"),
+            (1000000, "1.0 MB"),
+            (1000000000, "1.00 GB"),
+            (999950000, "1.00 GB"),
+            (1234567890, "1.23 GB"),
+            (1000000000000, "1.0 TB"),
+        ] {
+            assert_eq!(super::format_bytes(bytes), expected);
+        }
+    }
+
     use super::direct::{
         DirectConversationView, DirectMessageList, DirectMessageView, DirectUiState,
         PendingDirectSend,
@@ -8418,6 +8439,18 @@ mod tests {
     }
 
     #[test]
+    fn shared_file_posts_keep_their_name_in_every_decimal_unit() {
+        let uri = "elastos://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3w2pz3hftb5xg3mh5g4xq7y5u";
+        for bytes in [30, 1_000, 1_000_000, 1_000_000_000, 1_000_000_000_000] {
+            let post = format!("notes.txt · {} · {uri}", super::format_bytes(bytes));
+            assert_eq!(
+                super::shared_file_post_name(&post, uri).as_deref(),
+                Some("notes.txt")
+            );
+        }
+    }
+
+    #[test]
     fn shared_file_post_link_carries_only_the_cid_and_the_stated_name() {
         let uri = "elastos://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3w2pz3hftb5xg3mh5g4xq7y5u";
         let post = format!("report.pdf · 1.0 MB · {uri}");
@@ -8754,6 +8787,23 @@ mod tests {
             super::library_post_outcome(504, &serde_json::json!({ "error": "gateway timeout" })),
             Unknown { link: None }
         );
+    }
+
+    #[test]
+    fn library_post_preview_keeps_the_post_message_size_format() {
+        for (bytes, size) in [
+            (4, "4 bytes"),
+            (1_000_000, "976.6 KB"),
+            (1_048_576, "1.0 MB"),
+            (1_073_741_824, "1.0 GB"),
+        ] {
+            let mut post = library_post_fixture(super::LibraryPostPhase::Posted {
+                link: "elastos://file".into(),
+            });
+            post.size_bytes = bytes;
+            let view = super::library_post_view(&post);
+            assert_eq!(view.lines[0], format!("notes.txt · {size}"));
+        }
     }
 
     #[test]
@@ -10445,7 +10495,8 @@ fn local_date_text(timestamp_secs: u64, same_year: bool) -> String {
         .unwrap_or_default()
 }
 
-fn format_bytes(size_bytes: u64) -> String {
+// The size carried in Community messages, matching Runtime's post builder.
+fn format_post_size(size_bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;
@@ -10457,7 +10508,32 @@ fn format_bytes(size_bytes: u64) -> String {
     } else if size >= KB {
         format!("{:.1} KB", size / KB)
     } else {
-        format!("{} bytes", size_bytes)
+        format!("{size_bytes} bytes")
+    }
+}
+
+fn format_bytes(size_bytes: u64) -> String {
+    let mut scale = 1_u128;
+    let mut unit = 0;
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    while unit < units.len() - 1
+        && (if unit == 0 {
+            size_bytes as u128 >= scale * 1000
+        } else {
+            (size_bytes as u128 * 10 + scale / 2) / scale >= 10_000
+        })
+    {
+        scale *= 1000;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{size_bytes} B")
+    } else if unit == 3 {
+        let hundredths = (size_bytes as u128 * 100 + scale / 2) / scale;
+        format!("{}.{:02} GB", hundredths / 100, hundredths % 100)
+    } else {
+        let tenths = (size_bytes as u128 * 10 + scale / 2) / scale;
+        format!("{}.{} {}", tenths / 10, tenths % 10, units[unit])
     }
 }
 

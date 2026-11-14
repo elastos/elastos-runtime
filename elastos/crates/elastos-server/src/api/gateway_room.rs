@@ -2267,6 +2267,30 @@ pub(super) async fn room_service_upload_finish(
 #[cfg(test)]
 mod community_file_post_tests {
     #[test]
+    fn file_post_sizes_keep_the_develop_message_format() {
+        let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        // These are message bytes delivered to other Homes, including the
+        // original binary scales and one-decimal GB precision.
+        for (bytes, size) in [
+            (0, "0 bytes"),
+            (4, "4 bytes"),
+            (1023, "1023 bytes"),
+            (1024, "1.0 KB"),
+            (1536, "1.5 KB"),
+            (1_000_000, "976.6 KB"),
+            (1_048_576, "1.0 MB"),
+            (3_565_158, "3.4 MB"),
+            (1_000_000_000, "953.7 MB"),
+            (1_073_741_824, "1.0 GB"),
+            (1_610_612_736, "1.5 GB"),
+        ] {
+            let (body, name) = super::community_file_post("notes.txt", bytes, cid);
+            assert_eq!(body, format!("notes.txt · {size} · elastos://{cid}"));
+            assert_eq!(name, "notes.txt");
+        }
+    }
+
+    #[test]
     fn a_file_post_is_one_exact_line_within_the_body_limit() {
         let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
         let (body, name) = super::community_file_post("a\nb\tc.txt", 30, cid);

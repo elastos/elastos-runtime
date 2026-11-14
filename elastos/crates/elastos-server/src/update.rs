@@ -290,18 +290,27 @@ fn append_varint(target: &mut Vec<u8>, mut value: usize) {
 }
 
 pub fn format_bytes(bytes: usize) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = 1024.0 * 1024.0;
-    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-    let b = bytes as f64;
-    if b >= GB {
-        format!("{:.1} GB", b / GB)
-    } else if b >= MB {
-        format!("{:.1} MB", b / MB)
-    } else if b >= KB {
-        format!("{:.1} KB", b / KB)
+    let mut scale = 1_u128;
+    let mut unit = 0;
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    while unit < units.len() - 1
+        && (if unit == 0 {
+            bytes as u128 >= scale * 1000
+        } else {
+            (bytes as u128 * 10 + scale / 2) / scale >= 10_000
+        })
+    {
+        scale *= 1000;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else if unit == 3 {
+        let hundredths = (bytes as u128 * 100 + scale / 2) / scale;
+        format!("{}.{:02} GB", hundredths / 100, hundredths % 100)
     } else {
-        format!("{} B", bytes)
+        let tenths = (bytes as u128 * 10 + scale / 2) / scale;
+        format!("{}.{} {}", tenths / 10, tenths % 10, units[unit])
     }
 }
 
@@ -840,15 +849,13 @@ pub(crate) fn installer_required<T>(
     }))
 }
 
-pub(crate) fn download_message(size: Option<u64>) -> String {
-    let size = size
-        .map(|bytes| format!(" ({})", format_bytes(bytes as usize)))
-        .unwrap_or_default();
-    format!("Downloading the update{size}. Home restarts when the update is ready.")
-}
+pub(crate) const DOWNLOAD_MESSAGE: &str =
+    "Downloading the update. Home restarts when the update is ready.";
 
 pub(crate) trait RestartOwner: Send {
     fn progress(&self, phase: &str, message: &str) -> anyhow::Result<()>;
+    /// The signed payload count and its fixed total, when known.
+    fn download_plan(&self, completed: u64, total: Option<u64>) -> anyhow::Result<()>;
 
     fn plan(
         &self,
@@ -1203,6 +1210,60 @@ async fn run_upgrade_from_head(
     .await
 }
 
+/// Fetch and admit Runtime bytes before component payloads are requested.
+async fn fetch_verified_update_binary(
+    fetch_fn: &FetchFn,
+    binary_info: &serde_json::Value,
+    release_platform: &str,
+    restart_owner: Option<&mut dyn RestartOwner>,
+) -> anyhow::Result<Vec<u8>> {
+    let binary_cid = binary_info["cid"].as_str().context("Binary CID missing")?;
+    let binary_sha256 = binary_info["sha256"]
+        .as_str()
+        .context("Binary SHA-256 missing")?;
+    let binary_size = binary_info["size"].as_u64();
+    println!(
+        "  Downloading binary ({}){}...",
+        release_platform,
+        binary_size
+            .map(|n| format!(" [{}]", format_bytes(n as usize)))
+            .unwrap_or_default()
+    );
+    if let Some(owner) = restart_owner.as_ref() {
+        owner.progress("downloading", DOWNLOAD_MESSAGE)?;
+    }
+    let binary_data = fetch_fn(binary_cid.to_string()).await?;
+    if let Some(owner) = restart_owner.as_ref() {
+        owner.progress(
+            "verifying",
+            "Verifying the update. Home restarts when the update is ready.",
+        )?;
+    }
+    println!("  Downloaded binary: {}", format_bytes(binary_data.len()));
+
+    // Verify SHA-256
+    {
+        use sha2::Digest;
+        let hash = sha2::Sha256::digest(&binary_data);
+        let actual = hex::encode(hash);
+        if actual != binary_sha256 {
+            return mismatched(Err(anyhow::anyhow!(
+                "Binary SHA-256 mismatch!\n  Expected: {}\n  Got:      {}",
+                binary_sha256,
+                actual
+            )));
+        }
+    }
+    println!("  Binary verified (SHA-256 ✓)");
+
+    mismatched(crate::installed_release::admit_descriptor(
+        binary_info,
+        binary_sha256,
+        binary_data.len() as u64,
+    ))?;
+    Ok(binary_data)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_upgrade_with_restart(
     fetch_fn: &FetchFn,
@@ -1372,47 +1433,20 @@ async fn run_upgrade_with_restart(
     let release_platform = detect_release_platform();
     let component_platform = crate::setup::detect_platform();
     let binary_info = &release["payload"]["platforms"][release_platform]["binary"];
-    let binary_cid = binary_info["cid"]
+    binary_info["cid"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No binary CID for platform {}", release_platform))?;
-    let binary_sha256 = binary_info["sha256"]
+    binary_info["sha256"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No binary SHA-256 for platform {}", release_platform))?;
     let binary_size = binary_info["size"].as_u64();
 
-    println!(
-        "  Downloading binary ({}){}...",
-        release_platform,
-        binary_size
-            .map(|n| format!(" [{}]", format_bytes(n as usize)))
-            .unwrap_or_default()
-    );
-    if let Some(owner) = restart_owner.as_ref() {
-        owner.progress("downloading", &download_message(binary_size))?;
-    }
-    let binary_data = fetch_fn(binary_cid.to_string()).await?;
-    if let Some(owner) = restart_owner.as_ref() {
-        owner.progress(
-            "verifying",
-            "Verifying the update. Home restarts when the update is ready.",
-        )?;
-    }
-    println!("  Downloaded binary: {}", format_bytes(binary_data.len()));
-
-    // Verify SHA-256
-    {
-        use sha2::Digest;
-        let hash = sha2::Sha256::digest(&binary_data);
-        let actual = hex::encode(hash);
-        if actual != binary_sha256 {
-            return mismatched(Err(anyhow::anyhow!(
-                "Binary SHA-256 mismatch!\n  Expected: {}\n  Got:      {}",
-                binary_sha256,
-                actual
-            )));
-        }
-    }
-    println!("  Binary verified (SHA-256 ✓)");
+    // Terminal verifies the Runtime before fetching component metadata.
+    let terminal_binary = if restart_owner.is_none() {
+        Some(fetch_verified_update_binary(fetch_fn, binary_info, release_platform, None).await?)
+    } else {
+        None
+    };
 
     // 9. Download components.json
     let comp_info = &release["payload"]["platforms"][release_platform]["components"];
@@ -1425,13 +1459,21 @@ async fn run_upgrade_with_restart(
     let comp_size = comp_info["size"].as_u64();
 
     println!(
-        "  Downloading components.json{}...",
+        "  {} components.json{}...",
+        if restart_owner.is_some() {
+            "Reading"
+        } else {
+            "Downloading"
+        },
         comp_size
             .map(|n| format!(" [{}]", format_bytes(n as usize)))
             .unwrap_or_default()
     );
     if let Some(owner) = restart_owner.as_ref() {
-        owner.progress("downloading", &download_message(comp_size))?;
+        owner.progress(
+            "downloading",
+            "Checking the update files. Home restarts when the update is ready.",
+        )?;
     }
     let comp_data = fetch_fn(comp_cid.to_string()).await?;
     if let Some(owner) = restart_owner.as_ref() {
@@ -1458,14 +1500,11 @@ async fn run_upgrade_with_restart(
         }
     }
     println!("  Components verified (SHA-256 ✓)");
-    mismatched((|| {
-        crate::installed_release::admit_descriptor(
-            binary_info,
-            binary_sha256,
-            binary_data.len() as u64,
-        )?;
-        crate::installed_release::admit_descriptor(comp_info, comp_sha256, comp_data.len() as u64)
-    })())?;
+    mismatched(crate::installed_release::admit_descriptor(
+        comp_info,
+        comp_sha256,
+        comp_data.len() as u64,
+    ))?;
     // These bytes already match the signed digest, so a refusal here is the publisher's.
     let value: serde_json::Value = refused((|| {
         anyhow::ensure!(
@@ -1530,6 +1569,73 @@ async fn run_upgrade_with_restart(
         },
     )?;
 
+    let mut next_admission = Some(next_admission);
+    let (support_plan, download_total) = if let Some(owner) = restart_owner.as_ref() {
+        let bin_path = if source.install_path.is_empty() {
+            default_install_path()
+        } else {
+            PathBuf::from(&source.install_path)
+        };
+        // The controller refuses requests while recovery is pending, so this
+        // read-only support plan can precede the installation writer lock.
+        let bin_path = std::fs::canonicalize(&bin_path)?;
+        let previous = crate::installed_release::read_without_migration_for_update(
+            data_dir,
+            &bin_path,
+            source,
+            repair_version,
+        )?;
+        let records = crate::capsule_record::UpdateRecords::new(
+            &previous.release,
+            next_admission
+                .take()
+                .context("update release admission missing")?,
+            &source.publisher_dids,
+        );
+        let old_components = std::fs::read(data_dir.join("components.json"))?;
+        let plan = crate::setup::plan_update_support_stage(
+            data_dir,
+            &old_components,
+            &comp_data,
+            &component_platform,
+            &records,
+        )?;
+        let total = binary_size
+            .zip(comp_size)
+            .zip(plan.download_size())
+            .and_then(|((binary, components), support)| {
+                binary.checked_add(components)?.checked_add(support)
+            });
+        owner.download_plan(comp_data.len() as u64, total)?;
+        (Some(plan), total)
+    } else {
+        (None, None)
+    };
+
+    let binary_data = match terminal_binary {
+        Some(binary) => binary,
+        None => {
+            fetch_verified_update_binary(
+                fetch_fn,
+                binary_info,
+                release_platform,
+                restart_owner
+                    .as_mut()
+                    .map(|owner| &mut **owner as &mut dyn RestartOwner),
+            )
+            .await?
+        }
+    };
+
+    // Metadata has no signed size. Hold the payload count while checking it;
+    // the controller pauses transport counting during verification.
+    if let Some(owner) = restart_owner.as_ref() {
+        owner.progress(
+            "verifying",
+            "Checking update metadata. Home restarts when the update is ready.",
+        )?;
+    }
+
     // 9b. Fetch and verify the release-pinned Community network while Home
     // still runs and before the binary changes.
     let joins_network = joins_release_network(apply_mode, restart_owner.is_some());
@@ -1577,7 +1683,9 @@ async fn run_upgrade_with_restart(
         let old_components = std::fs::read(data_dir.join("components.json")).ok();
         let records = crate::capsule_record::UpdateRecords::new(
             &previous.release,
-            next_admission,
+            next_admission
+                .take()
+                .context("update release admission missing")?,
             &source.publisher_dids,
         );
         let changed_capsules =
@@ -1776,20 +1884,19 @@ async fn run_upgrade_with_restart(
         println!("  {line}");
     }
     let old_components = std::fs::read(data_dir.join("components.json"))?;
-    let records = crate::capsule_record::UpdateRecords::new(
-        &previous.release,
-        next_admission,
-        &source.publisher_dids,
-    );
     let staged_support = if let Some(owner) = restart_owner.as_mut() {
+        owner.download_plan(
+            (comp_data.len() as u64).saturating_add(binary_data.len() as u64),
+            download_total,
+        )?;
+        owner.progress("downloading", DOWNLOAD_MESSAGE)?;
+        let support_plan = support_plan.context("update support plan missing")?;
         Some(
             on_heap(|| {
-                crate::setup::stage_update_support(
+                crate::setup::stage_planned_update_support(
                     data_dir,
-                    &old_components,
-                    &comp_data,
+                    support_plan,
                     &component_platform,
-                    &records,
                     fetch_fn,
                     *owner,
                 )
@@ -2246,6 +2353,26 @@ fn optional_release_object_cid(head: &serde_json::Value) -> anyhow::Result<Optio
 mod tests {
     use super::*;
     use crate::sources::save_trusted_sources;
+
+    #[test]
+    fn decimal_file_sizes_match_capsule_boundaries() {
+        for (bytes, expected) in [
+            (999, "999 B"),
+            (1000, "1.0 KB"),
+            (1050, "1.1 KB"),
+            (999900, "999.9 KB"),
+            (999949, "999.9 KB"),
+            (999950, "1.0 MB"),
+            (999999, "1.0 MB"),
+            (1000000, "1.0 MB"),
+            (1000000000, "1.00 GB"),
+            (999950000, "1.00 GB"),
+            (1234567890, "1.23 GB"),
+            (1000000000000, "1.0 TB"),
+        ] {
+            assert_eq!(format_bytes(bytes), expected);
+        }
+    }
 
     #[test]
     fn home_stopped_line_names_the_installed_binary() {
@@ -3237,12 +3364,17 @@ mod tests {
 
     #[tokio::test]
     async fn wrong_signed_artifact_content_stops_before_install() {
+        use sha2::Digest as _;
+        let components =
+            br#"{"schema":"elastos.components/v1","external":{},"capsules":{},"profiles":{}}"#
+                .to_vec();
+        let components_cid = raw_cid(&components);
         let release = binding_envelope(
             serde_json::json!({
                 "schema": "elastos.release/v1", "version": "0.7.1", "channel": "stable",
                 "platforms": {(detect_release_platform()): {
                     "binary": {"cid": "binary-a", "sha256": "a".repeat(64)},
-                    "components": {"cid": "components-a", "sha256": "b".repeat(64)}
+                    "components": {"cid": components_cid, "sha256": hex::encode(sha2::Sha256::digest(&components)), "size": components.len()}
                 }}
             }),
             "elastos.release.v1",
@@ -3260,6 +3392,8 @@ mod tests {
         let fetch: FetchFn = Box::new(move |cid| {
             let bytes = if cid == requested_release_cid {
                 release.clone()
+            } else if cid == components_cid {
+                components.clone()
             } else if cid == "binary-a" {
                 b"wrong binary".to_vec()
             } else {
@@ -3696,6 +3830,148 @@ mod tests {
         save_trusted_sources(&data, &sources).unwrap();
         publish_installed_fixture(&data, &binary, &source, components);
         (fixture, data, binary, source)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tampered_binary_precedes_other_downloads_on_terminal_and_system_paths() {
+        use sha2::Digest;
+
+        struct Owner;
+        impl RestartOwner for Owner {
+            fn progress(&self, _: &str, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn download_plan(&self, _: u64, _: Option<u64>) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn plan(&self, _: String, _: &str, _: &str) -> anyhow::Result<RestartPlan> {
+                panic!("a refused binary cannot plan a restart")
+            }
+            fn start<'a>(
+                &'a mut self,
+                _: &'a InstallTransaction,
+                _: RestartRecord,
+            ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
+                panic!("a refused binary cannot start Home")
+            }
+            fn stop<'a>(
+                &'a mut self,
+            ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
+                panic!("a refused binary cannot stop Home")
+            }
+        }
+
+        let previous_components =
+            br#"{"schema":"elastos.components/v1","external":{},"profiles":{},"capsules":{}}"#;
+        let payload = b"component archive";
+        let payload_cid = raw_cid(payload);
+        let payload_sha = hex::encode(sha2::Sha256::digest(payload));
+        let components = serde_json::to_vec(&serde_json::json!({
+            "schema":"elastos.components/v1", "capsules":{},
+            "profiles":{"home":{"components":["fixture"]}},
+            "external":{"fixture":{"install_path":"tools/fixture","platforms":{"*":{
+                "release_path":"fixture.tar.gz", "cid":payload_cid,
+                "checksum":format!("sha256:{payload_sha}"), "size":payload.len()
+            }}}}
+        }))
+        .unwrap();
+        let key = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        let record = crate::capsule_record::signed_record(
+            &key,
+            serde_json::json!({
+                "schema":"elastos.capsule.record/v1", "name":"fixture", "platform":"*",
+                "capsule_version":null, "sha256":payload_sha, "size":payload.len(),
+                "cid":payload_cid, "release_path":"fixture.tar.gz",
+                "signer_did":crate::crypto::encode_signing_key_did(&key)
+            }),
+        );
+        let executable = b"#!/bin/sh\nprintf 'elastos 0.7.1\\n'\n";
+        let descriptor = |bytes: &[u8]| {
+            serde_json::json!({
+                "cid": raw_cid(bytes), "sha256": hex::encode(sha2::Sha256::digest(bytes)), "size": bytes.len()
+            })
+        };
+        let release = binding_envelope(
+            serde_json::json!({
+                "schema":"elastos.release/v1", "version":"0.7.1", "channel":"stable",
+                "capsule_records":[record],
+                "platforms":{(detect_release_platform()):{
+                    "binary":descriptor(executable), "components":descriptor(&components)
+                }}
+            }),
+            "elastos.release.v1",
+        );
+        let release_cid = raw_cid(&release);
+        let binary_cid = raw_cid(executable);
+        let components_cid = raw_cid(&components);
+        let mut head = binding_head(&release);
+        head["version"] = serde_json::json!("0.7.1");
+        let head_bytes = binding_envelope(head, "elastos.release.head.v1");
+        let head: serde_json::Value = serde_json::from_slice(&head_bytes).unwrap();
+        for system in [false, true] {
+            let (_fixture, data, binary, source) = default_apply_fixture(previous_components);
+            let before = std::fs::read(&binary).unwrap();
+            let fetched = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let calls = fetched.clone();
+            let artifacts = std::collections::HashMap::from([
+                (release_cid.clone(), release.clone()),
+                (components_cid.clone(), components.to_vec()),
+                (binary_cid.clone(), b"tampered runtime".to_vec()),
+                (payload_cid.clone(), payload.to_vec()),
+            ]);
+            let fetch: FetchFn = Box::new(move |cid| {
+                calls.lock().unwrap().push(cid.clone());
+                let bytes = artifacts
+                    .get(&cid)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("unexpected payload fetch: {cid}"));
+                Box::pin(async move { bytes })
+            });
+            let mut owner = Owner;
+            let error = run_upgrade_with_restart(
+                &fetch,
+                &head,
+                &head_bytes,
+                None,
+                "0.7.1",
+                &release_cid,
+                None,
+                "0.7.0",
+                &source,
+                &data,
+                false,
+                true,
+                false,
+                false,
+                "fixture",
+                crate::setup::FirstPartyCarrierContext::Setup,
+                ApplyMode::FrozenOffline,
+                if system { Some(&mut owner) } else { None },
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                format!("{error:#}").contains("Binary SHA-256 mismatch"),
+                "{error:#}"
+            );
+            let expected = if system {
+                vec![
+                    release_cid.clone(),
+                    components_cid.clone(),
+                    binary_cid.clone(),
+                ]
+            } else {
+                vec![release_cid.clone(), binary_cid.clone()]
+            };
+            assert_eq!(
+                *fetched.lock().unwrap(),
+                expected,
+                "system={system}: only signed planning metadata may precede binary verification"
+            );
+            assert_eq!(std::fs::read(&binary).unwrap(), before);
+            assert!(!InstallTransaction::has_pending_recovery(&binary));
+        }
     }
 
     #[cfg(unix)]
