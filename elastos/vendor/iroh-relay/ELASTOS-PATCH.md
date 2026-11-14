@@ -60,3 +60,5 @@ independent lock graph cannot replace Home dependencies in the shared cache.
 
 The final actor flush uses the existing write deadline, including during owned
 shutdown. A peer that leaves a real output buffer full cannot hold shutdown open.
+
+The test-only self_signed_tls_pem helper supplies disposable certificate material for Runtime failed-start fixtures.

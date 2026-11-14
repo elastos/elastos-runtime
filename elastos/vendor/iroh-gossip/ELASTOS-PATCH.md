@@ -14,3 +14,5 @@ One existing optional-writer condition uses `is_none_or` for the pinned toolchai
 
 The standalone workspace keeps intermediates in its own target directory. Its
 independent lock graph cannot replace Home dependencies in the shared cache.
+
+The added [workspace] table gives the packaged crate an independent test workspace.
