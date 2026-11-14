@@ -268,6 +268,33 @@ class TwoHomeReceiptTests(unittest.TestCase):
                 self.assertEqual(len(receipt['cleanup_failures']), 2 if disk_fails else 1)
                 self.assertNotIn('disposable test key', json.dumps(receipt))
 
+    def test_sigterm_during_the_journey_reaches_its_cleanup_and_restores_the_handler(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home, root, evidence = (Path(temporary).resolve()/name for name in ('home', 'fixture', 'evidence'))
+            (home/'data').mkdir(parents=True)
+            build = JOURNEY['InstalledBuild']('home', home, home/'data', home, self.identity())
+            def terminated_while_staging(*_arguments, **_options):
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(1)
+                raise RuntimeError('SIGTERM did not interrupt the journey')
+            ignored = []
+            operator = lambda *_: ignored.append(True)
+            previous = signal.signal(signal.SIGTERM, operator)
+            try:
+                with mock.patch.dict(JOURNEY['finish_message_fixture'].__globals__, {
+                        'fresh_fixture':terminated_while_staging, 'require_disk_space':lambda *_: {}}):
+                    with self.assertRaises(JOURNEY['MessageTermination']):
+                        JOURNEY['two_home_messages'](build, evidence, fixture_root=root)
+                self.assertIs(signal.getsignal(signal.SIGTERM), operator)
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+            self.assertFalse(ignored)
+            self.assertFalse(root.exists())
+            receipt = json.loads((evidence/'installed-journeys.json').read_text())
+            self.assertTrue(receipt['fixture_removed'])
+            self.assertEqual(receipt['failure']['phase'], 'two_home_messages')
+            self.assertFalse(JOURNEY['two_home_receipt_valid'](receipt, self.identity()))
+
     def test_work_deadline_interrupts_a_hung_phase_and_restores_the_timer(self):
         before = signal.getsignal(signal.SIGALRM)
         with self.assertRaises(JOURNEY['MessageDeadline']):

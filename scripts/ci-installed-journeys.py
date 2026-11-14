@@ -1796,6 +1796,21 @@ def message_timeout(seconds):
             signal.setitimer(signal.ITIMER_REAL, max(.001, timer[0] - (time.monotonic() - started)), timer[1])
 
 
+class MessageTermination(BaseException):
+    """SIGTERM enters the same clean-up as Ctrl-C."""
+
+
+@contextmanager
+def message_termination():
+    def terminated(_signum, _frame):
+        raise MessageTermination("two-Home journey received SIGTERM")
+    previous = signal.signal(signal.SIGTERM, terminated)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def remember_message_processes(child, known, marker=None):
     rows = {pid: row for pid, row in process_rows().items()
             if not row["command"].endswith(" <defunct>")}
@@ -2001,6 +2016,7 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host", node_
             and transition_evidence_valid(row))
 
 
+@message_termination()
 def two_home_messages(home_build, evidence, network="same-host", fixture_root=None, node_build=None):
     """Installed Community and Direct journey. Topology belongs to setup, not assertions.
 
