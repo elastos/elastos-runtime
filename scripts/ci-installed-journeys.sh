@@ -39,6 +39,9 @@ PY
     model-repair)
         python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/model-repair" --model-repair
         ;;
+    two-home-messages)
+        python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/two-home-messages" --two-home-messages
+        ;;
     home)
         python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/engine-absent-home" --home-only
         if [[ "${CI_FINITE_MEMORY:-false}" == true ]]; then
@@ -83,6 +86,9 @@ except (OSError, ValueError, AssertionError, KeyError, RuntimeError):
 carrier = os.environ.get("CI_CARRIER_GET") == "true"
 finite = os.environ.get("CI_FINITE_MEMORY") == "true"
 repair = os.environ.get("CI_MODEL_REPAIR_JOURNEY") == "true"
+messages_path = root / "two-home-messages/installed-journeys.json"
+messages = json.loads(messages_path.read_text()) if messages_path.exists() else {}
+messages_required = os.environ.get("CI_TWO_HOME_MESSAGES") == "true"
 results = {name: "failed or not run" for name in (
     "home_screenshots", "model_package_admission", *(["carrier_get"] if carrier else []),
     "installed_runtime_reply", "model_timing_observer", "process_cleanup", "disk_reserve")}
@@ -127,6 +133,14 @@ results["engine_absent_home"] = ("passed" if current(absence) and absence.get("e
                                         ("engine_absent_home", "engine_absent_refusal", "home_screenshots", "process_cleanup", "disk_reserve"))
                                 else "failed or not run")
 elapsed += absence.get("elapsed_seconds", 0) + absence.get("fixture_preparation_seconds", 0)
+if messages_required:
+    try:
+        message_current = journey["two_home_receipt_valid"](messages, journey["installed_message_identity"](data))
+    except (OSError, ValueError, KeyError, AssertionError):
+        message_current = False
+    for name in ("community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"):
+        results["two_home_" + name] = "passed" if message_current else "failed or not run"
+elapsed += messages.get("elapsed_seconds", 0)
 repair_path = root / "model-repair/installed-journeys.json"
 repair_record = json.loads(repair_path.read_text()) if repair and repair_path.exists() else {}
 if repair:
@@ -145,6 +159,7 @@ if repair:
     "fixture_policy": "fresh Home state and engine process per run; verified source engine prerequisite; same host with potentially warm OS file cache"
                       + ("; reply package only on a separate holder Home, fetched over Carrier" if carrier else ""),
     "engine_absent_home": absence,
+    "two_home_messages": messages,
     **({"finite_memory_refusal": memory} if finite else {}),
     **({"model_repair": repair_record} if repair else {}),
 }, indent=2) + "\n")
@@ -176,5 +191,5 @@ if spread["status"] == "incomplete" or any(result != "passed" for result in resu
     raise SystemExit("installed journey acceptance is incomplete")
 PY
         ;;
-    *) echo "Usage: $0 prepare|home|home-repeat|model-repair|summary" >&2; exit 2 ;;
+    *) echo "Usage: $0 prepare|home|home-repeat|model-repair|two-home-messages|summary" >&2; exit 2 ;;
 esac

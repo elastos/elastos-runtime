@@ -13,6 +13,15 @@ JOURNEY = runpy.run_path(str(ROOT / 'scripts/ci-installed-journeys.py'))
 
 
 class TwoHomeReceiptTests(unittest.TestCase):
+    def test_source_home_jobs_run_and_require_the_message_receipt(self):
+        source = (ROOT/'.github/workflows/ci.yml').read_text()
+        for job in ('source-home-linux', 'source-home-macos'):
+            block = source.split('\n  '+job+':\n', 1)[1].split('\n  source-home-', 1)[0]
+            self.assertIn('run: scripts/ci-installed-journeys.sh two-home-messages', block)
+            summary = block.split('name: summarize installed model journey', 1)[1]
+            self.assertIn("CI_TWO_HOME_MESSAGES: 'true'", summary)
+            self.assertNotIn('continue-on-error:', block.split('name: installed two-Home Community',1)[1].split('      - name:',1)[0])
+
     def identity(self):
         return {'candidate':'c'*40, 'source_tree':'d'*40, 'installed_runtime_sha256':'a'*64,
                 'source_components_sha256':'b'*64, 'installation_receipt_sha256':'e'*64}

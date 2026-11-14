@@ -926,6 +926,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '26'
+      - name: installed two-Home Community and direct messages
+        timeout-minutes: 10
+        env:
+          CI_SOURCE_HOME: ${{ runner.temp }}/elastos-source-home
+        run: scripts/ci-installed-journeys.sh two-home-messages
       - name: prepare signed SmolLM2 fixture
         timeout-minutes: 20
         env:
@@ -950,6 +955,7 @@ jobs:
       - name: summarize installed model journey
         if: always()
         env:
+          CI_TWO_HOME_MESSAGES: 'true'
           CI_SOURCE_HOME: ${{ runner.temp }}/elastos-source-home
           CI_CARRIER_GET: ${{ matrix.os == 'ubuntu-24.04' }}
           CI_FINITE_MEMORY: ${{ matrix.os == 'ubuntu-24.04' }}
@@ -1193,9 +1199,15 @@ jobs:
         env:
           CI_SOURCE_HOME: ${{ runner.temp }}/elastos-mac-test-home
         run: scripts/ci-installed-journeys.sh home-repeat
+      - name: installed two-Home Community and direct messages
+        timeout-minutes: 10
+        env:
+          CI_SOURCE_HOME: ${{ runner.temp }}/elastos-mac-test-home
+        run: scripts/ci-installed-journeys.sh two-home-messages
       - name: summarize installed model journey
         if: always()
         env:
+          CI_TWO_HOME_MESSAGES: 'true'
           CI_SOURCE_HOME: ${{ runner.temp }}/elastos-mac-test-home
         run: scripts/ci-installed-journeys.sh summary
       - name: upload installed model journey
