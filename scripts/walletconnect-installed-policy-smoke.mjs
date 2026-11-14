@@ -26,7 +26,8 @@ const port = listener.address().port;
 await new Promise(resolve => listener.close(resolve));
 const base = `http://localhost:${port}`;
 const env = { ...process.env, HOME: home, XDG_DATA_HOME: dirname(data), ELASTOS_DATA_DIR: data,
-  ELASTOS_COLLABORATION_STARTUP_MODE: "isolated" };
+  ELASTOS_COLLABORATION_STARTUP_MODE: "isolated",
+  ELASTOS_COMPONENTS_MANIFEST: join(data, "components.json") };
 delete env.ELASTOS_WALLETCONNECT_PROJECT_FILE;
 delete env.ELASTOS_WALLETCONNECT_PROJECT_ID;
 const log = createWriteStream(join(home, "walletconnect-installed-policy.log"), { mode: 0o600 });
