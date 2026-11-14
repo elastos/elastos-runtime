@@ -22,7 +22,7 @@ def main():
     journey = runpy.run_path(str(root / "scripts/ci-installed-journeys.py"))
     journey["require_disk_space"](root, 4 * 1024 ** 3)
     # Fresh stable storage outside the checkout; no existing Home is consulted.
-    work = Path(tempfile.mkdtemp(prefix="carrier-journey-", dir=root.parent))
+    work = Path(tempfile.mkdtemp(prefix="carrier-journey-", dir=Path.home()))
     home = work / "source"
     data = home / ".local/share/elastos"
     data.mkdir(parents=True, mode=0o700)
