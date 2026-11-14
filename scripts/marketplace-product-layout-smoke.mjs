@@ -487,7 +487,8 @@ function startServer() {
         const token = String(request.headers["x-elastos-home-token"] || "");
         const body = await readJsonBody(request);
         requestLog.push({ path: url.pathname, token, method: request.method, body });
-        if (body?.method === "content.status" && modelRuntime.preparation) {
+        // A poll in flight when the detail closes still gets its operation back.
+        if (body?.method === "content.status") {
           json(response, {
             schema: "elastos.capsules.invoke-result/v1",
             status: "ok",
@@ -495,7 +496,7 @@ function startServer() {
             interface: body.interface,
             method: body.method,
             request_id: body.request_id,
-            output: { admitted: modelRuntime.admitted, kept: modelRuntime.kept, dispatch_ready: modelRuntime.dispatch_ready,
+            output: { kept: modelRuntime.kept, dispatch_ready: modelRuntime.dispatch_ready,
               dispatch_unavailable_reason: modelRuntime.dispatch_unavailable_reason, offer_id: modelRuntime.offer_id, ...modelDownload },
           });
           return;
@@ -804,6 +805,7 @@ async function assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle })
     const regions = [...document.querySelectorAll(".transfer-announcement")];
     return {
       count: regions.length,
+      inDialog: regions.filter((node) => document.querySelector("#detail-modal").contains(node)).length,
       inSections: regions.filter((node) => document.querySelector("#detail-content").contains(node)).length,
       role: regions[0]?.getAttribute("role"),
       live: regions[0]?.getAttribute("aria-live"),
@@ -812,7 +814,7 @@ async function assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle })
   });
   assert(
     JSON.stringify(announcement) === JSON.stringify({
-      count: 1, inSections: 0, role: "status", live: "polite", text: "Model download: 0.53 GB of 1.32 GB, 40%.",
+      count: 1, inDialog: 1, inSections: 0, role: "status", live: "polite", text: "Model download: 0.53 GB of 1.32 GB, 40%.",
     }),
     "A running model download must announce politely from one live region outside the detail sections",
     announcement,

@@ -158,6 +158,9 @@ import { createTransferProgress, announceTransferProgress } from "./transfer-pro
       // The full view brings its own styles; compact rows use the host's list styles.
       if (!compact) root.classList.add("model-management");
       root.tabIndex = -1;
+      // A screen reader reads a live region that already exists when its text
+      // changes, so this view opens the region empty.
+      announceTransferProgress(announceRoot, null, null);
       const show = () => visible && !closed && !document.hidden;
       function stopRead() { clearTimeout(timer); reader?.abort(); reader = null; }
       async function request(path, body, signal) {
