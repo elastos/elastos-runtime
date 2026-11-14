@@ -208,6 +208,7 @@ class PrepushTests(unittest.TestCase):
                 if "--list" in args:
                     empty = (os.environ.get("PREPUSH_NO_TESTS") or
                              os.environ.get("PREPUSH_EMPTY_PACKAGE") == args[args.index("-p") + 1] or
+                             ("--bin" in args and os.environ.get("PREPUSH_EMPTY_TARGET") == args[args.index("--bin") + 1]) or
                              (os.environ.get("PREPUSH_EMPTY_BIN") and "--bin" in args))
                     listed = os.environ.get("PREPUSH_TESTS", "release_cmd::tests::updates: test")
                     if "--lib" in args:
@@ -398,6 +399,21 @@ class PrepushTests(unittest.TestCase):
         self.assertTrue(any("--nocapture" in call for call in calls))
         for call in calls:
             self.assertEqual(call[call.index("--features") + 1], "server,tls-ring")
+
+    def test_empty_feature_gated_binary_cannot_use_other_targets_as_proof(self):
+        self.write("elastos/crates/server/src/feature_bin.rs", "// feature target fixture\n")
+        self.commit()
+        target = {"name": "feature-bin", "kind": ["bin"], "test": True,
+                  "src_path": str(self.root / "elastos/crates/server/src/feature_bin.rs"),
+                  "required-features": ["server", "tls-ring"]}
+        result = self.invoke(extra={"PREPUSH_LOCAL_TARGETS": json.dumps([target]), "PREPUSH_EMPTY_TARGET": "feature-bin"})
+        self.assert_stopped(result, "zero unit tests on this host: --bin feature-bin")
+        calls = [c["args"] for c in self.commands()
+                 if c["args"][:5] == ["test", "-p", "server", "--bin", "feature-bin"]]
+        self.assertEqual(len(calls), 1, calls)
+        self.assertIn("--list", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--features") + 1], "server,tls-ring")
+        self.assertFalse(any("--nocapture" in call for call in calls))
 
     def test_large_file_in_history_stops_before_any_check(self):
         large = self.root / "output/model.gguf"
