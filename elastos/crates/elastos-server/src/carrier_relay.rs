@@ -979,6 +979,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gossip_wire_routes_keep_direct_ips_and_filter_foreign_relays_after_rebuild() {
+        use iroh::Watcher as _;
+        let (pinned_server, pin) = real_relay().await;
+        let (foreign_server, foreign) = real_relay().await;
+        let dir = tempfile::tempdir().unwrap();
+        let (key, did) = elastos_identity::derive_did(&[232; 32]);
+        let node = super::super::start_carrier_node_with_network(
+            &key,
+            &did,
+            dir.path().to_path_buf(),
+            None,
+            super::super::CarrierNetworkPolicy {
+                network: super::super::CarrierNodeNetwork::Public,
+                relay: Some(pin),
+            },
+            Some("127.0.0.1:0".parse().unwrap()),
+            &[],
+        )
+        .await
+        .unwrap();
+        // This peer publishes its foreign relay through the real gossip wire.
+        let peer = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .secret_key(iroh::SecretKey::from_bytes(&[233; 32]))
+            .addr_filter(AddrFilter::unfiltered())
+            .relay_mode(iroh::RelayMode::Custom(iroh::RelayMap::from_iter([
+                iroh::RelayConfig::new(foreign.as_str().parse().unwrap(), None),
+            ])))
+            .bind_addr("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+            .unwrap()
+            .bind()
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), peer.online())
+            .await
+            .unwrap();
+        let peer_gossip = iroh_gossip::Gossip::builder().spawn(peer.clone());
+        let router = iroh::protocol::Router::builder(peer.clone())
+            .accept(iroh_gossip::ALPN, peer_gossip.clone())
+            .spawn();
+        let topic = super::super::topic_hash("relay-pin-wire");
+        let peer_topic = peer_gossip
+            .subscribe_with_opts(topic, iroh_gossip::api::JoinOptions::with_bootstrap(vec![]))
+            .await
+            .unwrap();
+        node.memory_lookup
+            .add_endpoint_info(peer.watch_addr().get());
+        for rebuild in [false, true] {
+            if rebuild {
+                super::super::rebuild_carrier_gossip(&mut *node.gossip_state.lock().await)
+                    .await
+                    .unwrap();
+            }
+            let gossip = node.gossip_state.lock().await.gossip.clone();
+            let joined = tokio::time::timeout(
+                Duration::from_secs(10),
+                gossip.subscribe_and_join(topic, vec![peer.id()]),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let observed = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let mut resolved = node.endpoint.address_lookup().unwrap().resolve(peer.id());
+                    while let Some(item) = resolved.next().await {
+                        if let Ok(Ok(item)) = item {
+                            if item.provenance() == "gossip" {
+                                return item.into_endpoint_addr();
+                            }
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(
+                observed.addrs.iter().any(iroh::TransportAddr::is_ip),
+                "gossip still discovers useful direct routes"
+            );
+            assert!(
+                observed.addrs.iter().all(|addr| !addr.is_relay()),
+                "foreign relay crossed the gossip wire policy"
+            );
+            drop(joined);
+        }
+        drop(peer_topic);
+        router.shutdown().await.unwrap();
+        node.shutdown().await;
+        foreign_server.shutdown().await.unwrap();
+        pinned_server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn pin_policy_filters_memory_and_restores_after_gossip_rebuild() {
         let (pinned, pin) = real_relay().await;
         let (foreign, other) = real_relay().await;
