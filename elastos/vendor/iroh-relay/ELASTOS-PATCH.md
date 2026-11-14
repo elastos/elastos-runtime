@@ -22,5 +22,11 @@ against that release. `carrier_relay_paths_and_address_discovery_still_work`
 checks observed addresses, relay traffic, forced relay-only payloads and direct
 path promotion with Carrier's transport config.
 
-Compare this directory with the registry package, excluding the two registry
-marker files and this file: the only source change is the three lines above.
+The QAD server also owns bounded pending handshakes (256), established sessions
+(4096), and separate per-IP caps (8 for each phase). Handshakes expire after five
+seconds and sessions after sixty seconds. Admission guards release counts on
+failure and cancellation; the owned task set is drained at shutdown. Application
+streams and datagrams are disabled, and incoming packet buffers are bounded.
+The discovery tests exercise real held handshakes, capacity, expiry and shutdown.
+Retire these changes when upstream enforces the same limits and these tests pass
+against the replacement source.

@@ -20,6 +20,7 @@ pub(crate) mod server {
         ApplicationClose, ConnectionError,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     };
+    use std::{collections::HashMap, net::IpAddr, sync::Mutex};
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, debug, info, info_span};
@@ -28,10 +29,116 @@ pub(crate) mod server {
 
     use crate::server::Metrics;
 
+    #[derive(Debug, Clone, Copy)]
+    pub(crate) struct DiscoveryLimits {
+        pub pending: usize,
+        pub established: usize,
+        pub per_ip: usize,
+        pub handshake_timeout: Duration,
+        pub lifetime: Duration,
+    }
+
+    impl Default for DiscoveryLimits {
+        fn default() -> Self {
+            Self {
+                pending: 256,
+                established: 4096,
+                per_ip: 8,
+                handshake_timeout: Duration::from_secs(5),
+                lifetime: Duration::from_secs(60),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct Counts {
+        pending: usize,
+        established: usize,
+        ips: HashMap<IpAddr, (usize, usize)>,
+    }
+
+    struct Permit {
+        counts: Arc<Mutex<Counts>>,
+        ip: IpAddr,
+        established: bool,
+    }
+
+    impl Permit {
+        fn acquire(
+            counts: &Arc<Mutex<Counts>>,
+            ip: IpAddr,
+            limits: DiscoveryLimits,
+        ) -> Option<Self> {
+            let mut state = counts.lock().expect("discovery accounting");
+            if state.pending >= limits.pending
+                || state.established >= limits.established
+                || state.ips.get(&ip).is_some_and(|(pending, established)| {
+                    *pending >= limits.per_ip || *established >= limits.per_ip
+                })
+            {
+                return None;
+            }
+            state.pending += 1;
+            state.ips.entry(ip).or_default().0 += 1;
+            Some(Self {
+                counts: counts.clone(),
+                ip,
+                established: false,
+            })
+        }
+
+        fn establish(&mut self, limits: DiscoveryLimits) -> bool {
+            let mut state = self.counts.lock().expect("discovery accounting");
+            if state.established >= limits.established
+                || state
+                    .ips
+                    .get(&self.ip)
+                    .is_some_and(|(_, established)| *established >= limits.per_ip)
+            {
+                return false;
+            }
+            state.pending -= 1;
+            state.established += 1;
+            let counts = state
+                .ips
+                .get_mut(&self.ip)
+                .expect("owned discovery admission");
+            counts.0 -= 1;
+            counts.1 += 1;
+            self.established = true;
+            true
+        }
+    }
+
+    impl Drop for Permit {
+        fn drop(&mut self) {
+            let mut state = self.counts.lock().expect("discovery accounting");
+            if self.established {
+                state.established -= 1;
+            } else {
+                state.pending -= 1;
+            }
+            let counts = state
+                .ips
+                .get_mut(&self.ip)
+                .expect("owned discovery admission");
+            if self.established {
+                counts.1 -= 1;
+            } else {
+                counts.0 -= 1;
+            }
+            if *counts == (0, 0) {
+                state.ips.remove(&self.ip);
+            }
+        }
+    }
+
     pub(crate) struct QuicServer {
         bind_addr: SocketAddr,
         cancel: CancellationToken,
         handle: AbortOnDropHandle<()>,
+        #[cfg(all(test, feature = "test-utils"))]
+        counts: Arc<Mutex<Counts>>,
     }
 
     /// Server spawn errors
@@ -59,6 +166,11 @@ pub(crate) mod server {
     }
 
     impl QuicServer {
+        #[cfg(all(test, feature = "test-utils"))]
+        pub(super) fn admission_counts(&self) -> (usize, usize, usize) {
+            let counts = self.counts.lock().expect("discovery accounting");
+            (counts.pending, counts.established, counts.ips.len())
+        }
         /// Returns a handle for this server.
         ///
         /// The server runs in the background as several async tasks.  This allows controlling
@@ -97,17 +209,36 @@ pub(crate) mod server {
         ///  warning.
         pub(crate) fn spawn(
             bind_addr: SocketAddr,
+            server_config: rustls::ServerConfig,
+            metrics: Arc<Metrics>,
+        ) -> Result<Self, QuicSpawnError> {
+            Self::spawn_with_limits(
+                bind_addr,
+                server_config,
+                metrics,
+                DiscoveryLimits::default(),
+            )
+        }
+
+        pub(crate) fn spawn_with_limits(
+            bind_addr: SocketAddr,
             mut server_config: rustls::ServerConfig,
             metrics: Arc<Metrics>,
+            limits: DiscoveryLimits,
         ) -> Result<Self, QuicSpawnError> {
             server_config.alpn_protocols = vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
             let server_config = QuicServerConfig::try_from(server_config)?;
             let mut server_config = noq::ServerConfig::with_crypto(Arc::new(server_config));
+            server_config
+                .max_incoming(limits.pending)
+                .incoming_buffer_size(64 * 1024)
+                .incoming_buffer_size_total(4 * 1024 * 1024);
             let transport_config =
                 Arc::get_mut(&mut server_config.transport).expect("not used yet");
             transport_config
                 .max_concurrent_uni_streams(0_u8.into())
                 .max_concurrent_bidi_streams(0_u8.into())
+                .datagram_receive_buffer_size(None)
                 // enable sending quic address discovery frames
                 .send_observed_address_reports(true);
 
@@ -121,6 +252,8 @@ pub(crate) mod server {
 
             let cancel = CancellationToken::new();
             let cancel_accept_loop = cancel.clone();
+            let counts = Arc::new(Mutex::new(Counts::default()));
+            let admissions = counts.clone();
 
             let task = tokio::task::spawn(
                 async move {
@@ -144,8 +277,13 @@ pub(crate) mod server {
                             res = endpoint.accept() => match res {
                                 Some(incoming) => {
                                      let remote_addr = incoming.remote_address();
+                                     let Some(permit) = Permit::acquire(&admissions, remote_addr.ip().to_canonical(), limits) else {
+                                         metrics.qad_incoming_error.inc();
+                                         incoming.refuse();
+                                         continue;
+                                     };
                                      set.spawn(
-                                         handle_connection(incoming, metrics.clone()).instrument(info_span!("qad-conn", %remote_addr))
+                                         handle_connection(incoming, metrics.clone(), permit, limits).instrument(info_span!("qad-conn", %remote_addr))
                                      );                                }
                                 None => {
                                     debug!("endpoint closed");
@@ -174,6 +312,8 @@ pub(crate) mod server {
                 bind_addr,
                 cancel,
                 handle: AbortOnDropHandle::new(task),
+                #[cfg(all(test, feature = "test-utils"))]
+                counts,
             })
         }
 
@@ -208,21 +348,40 @@ pub(crate) mod server {
     async fn handle_connection(
         incoming: noq::Incoming,
         metrics: Arc<Metrics>,
+        mut permit: Permit,
+        limits: DiscoveryLimits,
     ) -> Result<(), ConnectionError> {
         metrics.qad_incoming.inc();
         debug!("incoming");
-        let connection = match incoming.await {
-            Ok(conn) => conn,
-            Err(e) => {
+        let connection = match tokio::time::timeout(limits.handshake_timeout, incoming).await {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(e)) => {
                 debug!("establishing failed: {e:#}");
                 metrics.qad_incoming_error.inc();
                 return Err(e);
             }
+            Err(_) => {
+                metrics.qad_incoming_error.inc();
+                return Err(ConnectionError::TimedOut);
+            }
         };
+        if !permit.establish(limits) {
+            metrics.qad_incoming_error.inc();
+            connection.close(QUIC_ADDR_DISC_CLOSE_CODE, b"discovery capacity reached");
+            return Ok(());
+        }
         metrics.qad_connections.inc();
         debug!("established");
         // wait for the client to close the connection
-        let connection_err = connection.closed().await;
+        let connection_err = match tokio::time::timeout(limits.lifetime, connection.closed()).await
+        {
+            Ok(error) => error,
+            Err(_) => {
+                connection.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                metrics.qad_connections_closed.inc();
+                return Ok(());
+            }
+        };
         metrics.qad_connections_closed.inc();
         match connection_err {
             noq::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
@@ -383,42 +542,222 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "test-utils")]
+    async fn wait_discovery_counts(
+        server: &server::QuicServer,
+        pending: usize,
+        established: usize,
+    ) {
+        tokio::time::timeout(Duration::from_secs(4), async {
+            loop {
+                let counts = server.admission_counts();
+                if counts.0 == pending && counts.1 == established {
+                    if pending + established == 0 {
+                        assert_eq!(counts.2, 0);
+                    }
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("discovery admission deadline");
+    }
+
     #[tokio::test]
     #[cfg(feature = "test-utils")]
     async fn discovery_per_ip_refuses_a_ninth_connection() {
         let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
-        let server = server::QuicServer::spawn((Ipv4Addr::LOCALHOST,0).into(), tls, Default::default()).unwrap();
-        let endpoint = noq::Endpoint::client((Ipv4Addr::LOCALHOST,0).into()).unwrap();
+        let server =
+            server::QuicServer::spawn((Ipv4Addr::LOCALHOST, 0).into(), tls, Default::default())
+                .unwrap();
+        let endpoint = noq::Endpoint::client((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let client = QuicClient::new(endpoint.clone(), crate::tls::make_dangerous_client_config());
-        let connect = || client.ep.connect_with(client.client_config.clone(), server.bind_addr(), "localhost").unwrap();
+        let connect = || {
+            client
+                .ep
+                .connect_with(
+                    client.client_config.clone(),
+                    server.bind_addr(),
+                    "localhost",
+                )
+                .unwrap()
+        };
         let mut held = Vec::new();
         for _ in 0..8 {
-            held.push(tokio::time::timeout(Duration::from_secs(3), connect()).await.unwrap().unwrap());
+            held.push(
+                tokio::time::timeout(Duration::from_secs(3), connect())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            );
         }
+        wait_discovery_counts(&server, 0, 8).await;
         let ninth = tokio::time::timeout(Duration::from_secs(3), connect()).await;
         endpoint.close(0u32.into(), b"fixture ended");
         server.shutdown().await;
-        assert!(matches!(ninth, Ok(Err(_))), "discovery must refuse the ninth live connection from one source IP");
+        assert!(
+            matches!(ninth, Ok(Err(_))),
+            "discovery must refuse the ninth live connection from one source IP"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "test-utils")]
+    async fn discovery_total_cap_lifetime_and_owned_shutdown() {
+        let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
+        let server = server::QuicServer::spawn_with_limits(
+            (Ipv4Addr::LOCALHOST, 0).into(),
+            tls,
+            Default::default(),
+            server::DiscoveryLimits {
+                established: 1,
+                lifetime: Duration::from_secs(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let address = server.bind_addr();
+        let endpoint = noq::Endpoint::client((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+        let client = QuicClient::new(endpoint.clone(), crate::tls::make_dangerous_client_config());
+        let connect = || {
+            client
+                .ep
+                .connect_with(client.client_config.clone(), address, "localhost")
+                .unwrap()
+        };
+        let first = tokio::time::timeout(Duration::from_secs(3), connect())
+            .await
+            .unwrap()
+            .unwrap();
+        wait_discovery_counts(&server, 0, 1).await;
+        assert_eq!(
+            first.max_datagram_size(),
+            None,
+            "QAD has no application datagram receive surface"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), connect())
+                .await
+                .unwrap()
+                .is_err(),
+            "total cap applies below the per-IP cap"
+        );
+        tokio::time::timeout(Duration::from_secs(3), first.closed())
+            .await
+            .expect("connection lifetime");
+        wait_discovery_counts(&server, 0, 0).await;
+        let replacement = tokio::time::timeout(Duration::from_secs(3), connect())
+            .await
+            .unwrap()
+            .unwrap();
+        server.shutdown().await;
+        tokio::time::timeout(Duration::from_secs(3), replacement.closed())
+            .await
+            .expect("owned shutdown closes sessions");
+        assert!(
+            std::net::UdpSocket::bind(address).is_ok(),
+            "shutdown releases its UDP listener"
+        );
+        endpoint.close(0u32.into(), b"fixture ended");
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "test-utils")]
+    async fn discovery_held_handshakes_obey_total_and_per_ip_caps_and_deadlines() {
+        for (pending, per_ip) in [(2, 8), (8, 2)] {
+            let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
+            let metrics = Arc::new(crate::server::Metrics::default());
+            let server = server::QuicServer::spawn_with_limits(
+                (Ipv4Addr::LOCALHOST, 0).into(),
+                tls,
+                metrics.clone(),
+                server::DiscoveryLimits {
+                    pending,
+                    per_ip,
+                    handshake_timeout: Duration::from_secs(2),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let proxy = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .unwrap();
+            let proxy_address = proxy.local_addr().unwrap();
+            let mut connecting = Vec::new();
+            let mut packet = [0; 65536];
+            for index in 0..3 {
+                let endpoint = noq::Endpoint::client((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+                let client =
+                    QuicClient::new(endpoint.clone(), crate::tls::make_dangerous_client_config());
+                let source_address = endpoint.local_addr().unwrap();
+                let attempt = client
+                    .ep
+                    .connect_with(client.client_config.clone(), proxy_address, "localhost")
+                    .unwrap();
+                connecting.push((endpoint, attempt));
+                let length = tokio::time::timeout(Duration::from_secs(1), async {
+                    loop {
+                        let (length, source) = proxy.recv_from(&mut packet).await.unwrap();
+                        if source == source_address {
+                            break length;
+                        }
+                    }
+                })
+                .await
+                .expect("real client Initial packet");
+                proxy
+                    .send_to(&packet[..length], server.bind_addr())
+                    .await
+                    .unwrap();
+                if index < 2 {
+                    wait_discovery_counts(&server, index + 1, 0).await;
+                }
+            }
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while metrics.qad_incoming_error.get() == 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("excess incomplete handshake refused");
+            assert_eq!(server.admission_counts().0, 2);
+            wait_discovery_counts(&server, 0, 0).await;
+            for (endpoint, _) in &connecting {
+                endpoint.close(0u32.into(), b"fixture ended");
+            }
+            drop(connecting);
+            server.shutdown().await;
+        }
     }
 
     #[tokio::test]
     #[cfg(feature = "test-utils")]
     async fn failed_discovery_start_releases_http_before_returning() {
-        let tcp = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST,0)).unwrap();
+        let tcp = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let http = tcp.local_addr().unwrap();
         drop(tcp);
-        let udp = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST,0)).unwrap();
+        let udp = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let qad = udp.local_addr().unwrap();
         let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
         let mut config = crate::server::ServerConfig::default();
         config.relay = Some(crate::server::RelayConfig::new(http));
-        config.quic = Some(crate::server::QuicConfig {bind_addr:qad,server_config:Some(tls)});
+        config.quic = Some(crate::server::QuicConfig {
+            bind_addr: qad,
+            server_config: Some(tls),
+        });
         assert!(crate::server::Server::spawn(config).await.is_err());
         let released_http = std::net::TcpListener::bind(http);
         drop(udp);
         let released_qad = std::net::UdpSocket::bind(qad);
-        assert!(released_http.is_ok(), "failed discovery startup retained the HTTP listener");
-        assert!(released_qad.is_ok(), "the failed start retained the discovery port");
+        assert!(
+            released_http.is_ok(),
+            "failed discovery startup retained the HTTP listener"
+        );
+        assert!(
+            released_qad.is_ok(),
+            "the failed start retained the discovery port"
+        );
     }
 
     #[tokio::test]
