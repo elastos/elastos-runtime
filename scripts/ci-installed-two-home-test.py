@@ -54,7 +54,8 @@ class TwoHomeReceiptTests(unittest.TestCase):
 
     def receipt(self):
         identity = self.identity()
-        return {**identity, 'status':'passed', 'fixture_removed':True, 'network_arrangement':'same-host',
+        return {**identity, 'node_identity':identity, 'status':'passed', 'fixture_removed':True,
+                'network_arrangement':'same-host',
                 'homes':[{'home':name, 'installed_runtime_sha256':identity['installed_runtime_sha256'],
                           'carrier_bind_address':f'127.0.0.1:{1025+index}'}
                          for index,name in enumerate(('a','b','community'))],
@@ -95,6 +96,24 @@ class TwoHomeReceiptTests(unittest.TestCase):
         changed = copy.deepcopy(valid)
         changed['homes'][1]['home'] = 'a'
         self.assertFalse(check(changed, self.identity()))
+
+    def test_acceptance_binds_the_node_and_each_home_to_its_own_build(self):
+        check = JOURNEY['two_home_receipt_valid']
+        homes, node = self.identity(), {**self.identity(), 'candidate':'f'*40, 'installed_runtime_sha256':'9'*64}
+        mixed = self.receipt()
+        mixed['node_identity'] = node
+        next(home for home in mixed['homes'] if home['home'] == 'community')['installed_runtime_sha256'] = '9'*64
+        self.assertTrue(check(mixed, homes, node_identity=node))
+        self.assertFalse(check(mixed, homes), 'a same-version acceptance refuses another node build')
+        self.assertFalse(check(self.receipt(), homes, node_identity=node), 'the named node build did not run')
+        for name in ('community', 'a'):
+            changed = copy.deepcopy(mixed)
+            row = next(home for home in changed['homes'] if home['home'] == name)
+            row['installed_runtime_sha256'] = ('a' if name == 'community' else '9')*64
+            self.assertFalse(check(changed, homes, node_identity=node), name+' ran the other build')
+        changed = self.receipt()
+        del changed['node_identity']
+        self.assertFalse(check(changed, homes))
 
     def test_network_arrangement_and_each_observed_ticket_must_match_configuration(self):
         check = JOURNEY['two_home_receipt_valid']
@@ -151,7 +170,8 @@ class TwoHomeReceiptTests(unittest.TestCase):
                         'stop_message_processes':fallback, 'require_disk_space':disk}):
                     with self.assertRaisesRegex(RuntimeError, 'cleanup failed'):
                         finish(root, root, evidence, {'status':'passed'}, children,
-                               {name:(root,root) for name in children}, stop, None, {}, time.monotonic())
+                               {name:JOURNEY['Owner'](root, root, '', '', None) for name in children},
+                               stop, None, {}, time.monotonic())
                 self.assertEqual(stopped, ['a','b','community'])
                 fallback.assert_called_once()
                 self.assertFalse(root.exists())
@@ -227,30 +247,49 @@ class TwoHomeReceiptTests(unittest.TestCase):
                     parent.kill()
                 parent.wait()
 
+    def installed_data(self, data, commit, tree):
+        (data/'bin').mkdir(parents=True)
+        (data/'receipts').mkdir()
+        runtime = data/'bin/elastos'
+        runtime.write_bytes(b'fixture runtime')
+        manifest = {'capsules':{}}
+        for name in ('home','home-gui','people','inbox','chat-room'):
+            directory = data/'capsules'/name
+            directory.mkdir(parents=True)
+            (directory/'index.html').write_text('fixture page')
+            manifest['capsules'][name] = {'entrypoint':'index.html',
+                'entrypoint_sha256':'sha256:'+JOURNEY['digest'](directory/'index.html'),
+                'browser_assets':[{'path':'index.html','sha256':'sha256:'+JOURNEY['digest'](directory/'index.html')}]}
+        (data/'components.json').write_text(json.dumps(manifest))
+        (data/'receipts/source-home-capsules.json').write_text('{}')
+        sha = 'sha256:'+JOURNEY['digest'](runtime)
+        receipt = {'source':{'commit':commit,'tree':tree,'clean':True},
+                   'runtime':{'built_sha256':sha,'installed_sha256':sha,'parity':True},
+                   'components_sha256':'sha256:'+JOURNEY['digest'](data/'components.json'),
+                   'source_home_capsule_metadata_receipt_sha256':'sha256:'+JOURNEY['digest'](data/'receipts/source-home-capsules.json')}
+        (data/'receipts/source-home-installation.json').write_text(json.dumps(receipt))
+        return runtime
+
+    def test_an_installed_build_is_bound_to_its_own_checkout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo, home = Path(temporary).resolve()/'released', Path(temporary).resolve()/'home'
+            repo.mkdir()
+            git = lambda *arguments: subprocess.check_output(['git', *arguments], cwd=repo, text=True).strip()
+            git('init', '--quiet')
+            git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
+                'commit', '--quiet', '--allow-empty', '--message', 'released fixture')
+            self.installed_data(home/'data', git('rev-parse', 'HEAD'), git('rev-parse', 'HEAD^{tree}'))
+            build = JOURNEY['installed_build']('released', home, home/'data', repo)
+            self.assertEqual((build.name, build.home, build.data, build.repo), ('released', home, home/'data', repo))
+            self.assertEqual(build.identity['candidate'], git('rev-parse', 'HEAD'))
+            with self.assertRaises(AssertionError):
+                JOURNEY['installed_build']('candidate', home, home/'data')
+
     def test_source_identity_rejects_changed_runtime_and_browser_asset_before_launch(self):
         identify = JOURNEY['installed_message_identity']
         with tempfile.TemporaryDirectory() as temporary:
-            data = Path(temporary).resolve()
-            (data/'bin').mkdir()
-            (data/'receipts').mkdir()
-            runtime = data/'bin/elastos'
-            runtime.write_bytes(b'fixture runtime')
-            manifest = {'capsules':{}}
-            for name in ('home','home-gui','people','inbox','chat-room'):
-                directory = data/'capsules'/name
-                directory.mkdir(parents=True)
-                (directory/'index.html').write_text('fixture page')
-                manifest['capsules'][name] = {'entrypoint':'index.html',
-                    'entrypoint_sha256':'sha256:'+JOURNEY['digest'](directory/'index.html'),
-                    'browser_assets':[{'path':'index.html','sha256':'sha256:'+JOURNEY['digest'](directory/'index.html')}]}
-            (data/'components.json').write_text(json.dumps(manifest))
-            (data/'receipts/source-home-capsules.json').write_text('{}')
-            sha = 'sha256:'+JOURNEY['digest'](runtime)
-            receipt = {'source':{'commit':'c'*40,'tree':'d'*40,'clean':True},
-                       'runtime':{'built_sha256':sha,'installed_sha256':sha,'parity':True},
-                       'components_sha256':'sha256:'+JOURNEY['digest'](data/'components.json'),
-                       'source_home_capsule_metadata_receipt_sha256':'sha256:'+JOURNEY['digest'](data/'receipts/source-home-capsules.json')}
-            (data/'receipts/source-home-installation.json').write_text(json.dumps(receipt))
+            data = Path(temporary).resolve()/'data'
+            runtime = self.installed_data(data, 'c'*40, 'd'*40)
             def observe():
                 with mock.patch.object(identify.__globals__['subprocess'], 'check_output', side_effect=['c'*40,'d'*40]):
                     return identify(data)

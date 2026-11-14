@@ -20,6 +20,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+from typing import NamedTuple
 
 TIMING = runpy.run_path(str(Path(__file__).with_name("ci-installed-model-timing.py")))
 UPSTREAM = runpy.run_path(str(Path(__file__).with_name("release-upstream-input.py")))
@@ -1713,11 +1714,11 @@ def fresh_fixture(home, data, destination, include_engine=True):
     return target
 
 
-def installed_message_identity(data):
+def installed_message_identity(data, repo=None):
     """Use the same source/installed byte boundary as the other installed journeys."""
     receipt = json.loads((data / "receipts/source-home-installation.json").read_text())
-    candidate = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
+    candidate = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, cwd=repo).strip()
+    tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True, cwd=repo).strip()
     runtime = digest(data / "bin/elastos")
     assert receipt["source"]["commit"] == candidate and receipt["source"]["tree"] == tree
     assert receipt["source"]["clean"] is True and receipt["runtime"]["parity"] is True
@@ -1735,6 +1736,30 @@ def installed_message_identity(data):
     return {"candidate": candidate, "source_tree": tree, "installed_runtime_sha256": runtime,
             "source_components_sha256": digest(data / "components.json"),
             "installation_receipt_sha256": digest(data / "receipts/source-home-installation.json")}
+
+
+class InstalledBuild(NamedTuple):
+    """One installed source Home that fixtures are copied from."""
+    name: str
+    home: Path
+    data: Path
+    repo: Path
+    identity: dict
+
+
+def installed_build(name, home, data, repo="."):
+    """Bind an installed Home to the checkout its installation receipt names."""
+    home, data, repo = (Path(path).resolve() for path in (home, data, repo))
+    return InstalledBuild(name, home, data, repo, installed_message_identity(data, repo))
+
+
+class Owner(NamedTuple):
+    """One running Home in an arrangement: a private copy of its build."""
+    home: Path
+    data: Path
+    api: str
+    carrier: str
+    build: InstalledBuild
 
 
 def remove_message_fixture(root):
@@ -1833,7 +1858,7 @@ def finish_message_fixture(root, data, evidence, record, children, fixtures, sto
             # A failed Runtime census/stop still gets an independent PID-bound
             # attempt, then the next Home is stopped regardless of its result.
             attempt("fallback_" + name, lambda: stop_message_processes(
-                child, owned_processes(process_rows(), child.pid, fixtures[name][1])), 10)
+                child, owned_processes(process_rows(), child.pid, fixtures[name].data)), 10)
     def remove_and_measure():
         attempt("disk_reserve", lambda: record.update(disk_after=require_disk_space(data)), 5)
         if attempt("fixture_removal", lambda: remove_message_fixture(root), 20):
@@ -1849,6 +1874,7 @@ def finish_message_fixture(root, data, evidence, record, children, fixtures, sto
         raise RuntimeError("two-Home cleanup failed; see installed journey receipt")
 
 
+NODE = "community"  # the bootstrap role; every other role is a member Home
 MESSAGE_NETWORKS = {
     "same-host": {
         "environment": {"ELASTOS_CARRIER_NETWORK": "direct", "ELASTOS_CARRIER_MDNS": "0"},
@@ -1879,17 +1905,20 @@ def message_endpoints_valid(homes, observations, arrangement):
     return counts == settings["launches"]
 
 
-def two_home_receipt_valid(row, identity, network_arrangement="same-host"):
+def two_home_receipt_valid(row, identity, network_arrangement="same-host", node_identity=None):
+    """``identity`` is the Home build; the node build is the same one unless named."""
+    node_identity = node_identity or identity
     if row.get("network_arrangement") != network_arrangement or network_arrangement not in MESSAGE_NETWORKS:
         return False
-    if any(row.get(key) != value for key, value in identity.items()):
+    if any(row.get(key) != value for key, value in identity.items()) or row.get("node_identity") != node_identity:
         return False
     homes = row.get("homes", [])
     cleanup = row.get("process_cleanup", [])
     return (row.get("status") == "passed" and "failure" not in row and "browser_failure" not in row
             and row.get("fixture_removed") is True and len(homes) == 3
             and {home.get("home") for home in homes} == {"a", "b", "community"}
-            and all(home.get("installed_runtime_sha256") == identity["installed_runtime_sha256"] for home in homes)
+            and all(home.get("installed_runtime_sha256") == (node_identity if home.get("home") == NODE else identity)[
+                "installed_runtime_sha256"] for home in homes)
             and len(cleanup) == 5 and all(item.get("status") == "passed" and item.get("after")
                                          and sum(item["after"].values()) == 0 for item in cleanup)
             and row.get("browser_cross_home_http_requests") == 0
@@ -1902,38 +1931,43 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host"):
             and row["negative_controls"]["sender_delivered"].get("ui_detail") == "Sending")
 
 
-def two_home_messages(home, data, evidence, network="same-host", fixture_root=None):
-    """Installed Community and Direct journey. Topology belongs to setup, not assertions."""
+def two_home_messages(home_build, evidence, network="same-host", fixture_root=None, node_build=None):
+    """Installed Community and Direct journey. Topology belongs to setup, not assertions.
+
+    The Community node runs ``node_build`` and every other Home runs
+    ``home_build``; one build serves both unless a mixed-version run names two.
+    """
     if network not in MESSAGE_NETWORKS:
         raise RuntimeError("unsupported two-Home network arrangement")
     settings = MESSAGE_NETWORKS[network]
-    identity = installed_message_identity(data)
+    node_build = node_build or home_build
+    data = home_build.data
     evidence.mkdir(parents=True, exist_ok=False)
-    root = fixture_root or home.parent / "two-home-message-fixture"
+    root = fixture_root or home_build.home.parent / "two-home-message-fixture"
     # Three fresh immutable copies; source fixtures never copy identity or user data.
     require_disk_space(data)
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     control = root / "control"
     control.mkdir(mode=0o700)
-    record = dict(identity, network_arrangement=network, results={}, homes=[], negative_controls={},
-                  direct_endpoint_observations=[])
+    record = dict(home_build.identity, node_identity=node_build.identity, network_arrangement=network, results={},
+                  homes=[], negative_controls={}, direct_endpoint_observations=[])
     children, fixtures, browser = {}, {}, None
     browser_processes = {}
     cleanup = []
     started = time.monotonic()
     # Explicit environment excludes ambient relay, public-network and provider overrides.
     def environment(owner):
-        return {"PATH": os.environ["PATH"], "HOME": str(owner[0]), "XDG_DATA_HOME": str(owner[1].parent),
+        return {"PATH": os.environ["PATH"], "HOME": str(owner.home), "XDG_DATA_HOME": str(owner.data.parent),
                 **settings["environment"], "ELASTOS_QUIET_RUNTIME_NOTICES": "1"}
     def launch(name):
         assert name not in children, "Home already has an owned Runtime"
         owner = fixtures[name]
-        with (owner[0] / "runtime.private.log").open("ab") as log:
-            child = subprocess.Popen([str(owner[1] / "bin/elastos"), "gateway", "--addr", owner[2]],
+        with (owner.home / "runtime.private.log").open("ab") as log:
+            child = subprocess.Popen([str(owner.data / "bin/elastos"), "gateway", "--addr", owner.api],
                                      env=environment(owner), stdout=log, stderr=log, start_new_session=True)
         children[name] = child
-        wait_healthy(child, owner[2], "two-Home " + name)
-        coordinates = json.loads(bounded_text(owner[1] / "gateway-runtime-coords.json"))
+        wait_healthy(child, owner.api, "two-Home " + name)
+        coordinates = json.loads(bounded_text(owner.data / "gateway-runtime-coords.json"))
         api = coordinates["api_url"].rstrip("/")
         token = post_json(api + "/api/auth/attach", {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
         ticket = post_json(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
@@ -1942,49 +1976,50 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         endpoints = decoded["endpoints"]
         assert len(endpoints) == 1, "fixture ticket must describe one installed Home"
         observed = endpoints[0]["addrs"]
-        assert observed == [{settings["ticket_transport"]: owner[3]}], "ticket differs from configured Carrier address"
+        assert observed == [{settings["ticket_transport"]: owner.carrier}], "ticket differs from configured Carrier address"
         record["direct_endpoint_observations"].append({"home": name, "ticket_addresses": observed})
     def stop(name):
         child = children[name]
         with message_timeout(35):
-            row = cleanup_runtime(child, fixtures[name][1])
+            row = cleanup_runtime(child, fixtures[name].data)
         cleanup.append(dict(row, home=name))
         assert row["status"] == "passed", "two-Home process cleanup failed"
         del children[name]
     def configure(*arguments):
-        owner = fixtures["community"]
+        owner = fixtures[NODE]
         with (root / "configuration.private.log").open("ab") as log:
-            subprocess.run([str(owner[1] / "bin/elastos"), "collaboration-config", *map(str, arguments)],
+            subprocess.run([str(owner.data / "bin/elastos"), "collaboration-config", *map(str, arguments)],
                            env=environment(owner), stdout=log, stderr=log, check=True, timeout=60)
     try:
         with message_timeout(360):
-            for name in ("community", "a", "b"):
+            for name in (NODE, "a", "b"):
+                build = node_build if name == NODE else home_build
                 destination = root / name
-                copied = fresh_fixture(home, data, destination, include_engine=False)
-                assert installed_message_identity(copied) == identity
+                copied = fresh_fixture(build.home, build.data, destination, include_engine=False)
+                assert installed_message_identity(copied, build.repo) == build.identity
                 carrier = f"{settings['bind_host']}:{free_port(socket.SOCK_DGRAM)}"
                 with (copied / "config.toml").open("a") as config:
                     config.write(f'carrier_bind_addr = "{carrier}"\n')
-                fixtures[name] = (destination, copied, f"{settings['bind_host']}:{free_port()}", carrier)
+                fixtures[name] = Owner(destination, copied, f"{settings['bind_host']}:{free_port()}", carrier, build)
                 record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos"),
                                         "carrier_bind_address": carrier})
-            launch("community")
+            launch(NODE)
             configure("create-authority-key", "--key", root / "authority.key")
-            configure("export-local-bootstrap-receipt", "--data-root", fixtures["community"][1],
+            configure("export-local-bootstrap-receipt", "--data-root", fixtures[NODE].data,
                       "--runtime-kind", "gateway", "--output", root / "bootstrap.json")
             configure("generate-initial", "--authority-key", root / "authority.key", "--network-id", "ci.two-home",
                       "--conversation-id", "community", "--bootstrap-peer", root / "bootstrap.json", "--output", root / "network.json")
             configure("verify", "--input", root / "network.json")
-            stop("community")
+            stop(NODE)
             for owner in fixtures.values():
-                target = owner[1] / "collaboration-network-v1.json"
+                target = owner.data / "collaboration-network-v1.json"
                 shutil.copy2(root / "network.json", target)
                 target.chmod(0o600)
             for name in fixtures:
                 launch(name)
-            bases = [f"http://{settings['browser_host']}:" + fixtures[name][2].rsplit(":", 1)[1] for name in ("a", "b")]
+            bases = [f"http://{settings['browser_host']}:" + fixtures[name].api.rsplit(":", 1)[1] for name in ("a", "b")]
             with (root / "browser.private.log").open("wb") as log:
-                browser = subprocess.Popen(["node", "scripts/ci-installed-two-home-journey.mjs", *bases,
+                browser = subprocess.Popen(["node", str(Path(__file__).with_name("ci-installed-two-home-journey.mjs")), *bases,
                                             str(evidence), str(control), settings["browser_host"]], stdout=log, stderr=log, start_new_session=True)
             last, next_census = 0, 0
             while browser.poll() is None:
@@ -2010,7 +2045,7 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
             assert all(record["negative_controls"].get(name, {}).get("assertion_rejected") is True
                        for name in ("sender_delivered",))
     except BaseException as error:
-        record["failure"] = observer_failure("two_home_messages", error, [str(root), str(home)])
+        record["failure"] = observer_failure("two_home_messages", error, [str(root), str(home_build.home), str(node_build.home)])
         raise
     finally:
         record["process_cleanup"] = cleanup
@@ -2055,12 +2090,20 @@ if __name__ == "__main__":
     parser.add_argument("--two-home-messages", action="store_true")
     parser.add_argument("--network-arrangement", choices=MESSAGE_NETWORKS.keys(), default="same-host")
     parser.add_argument("--two-home-root", type=Path, help="fresh disposable fixture path")
+    # A mixed-version run names a second installed Home for the Community node.
+    parser.add_argument("--node-home", type=Path)
+    parser.add_argument("--node-data", type=Path)
+    parser.add_argument("--node-repo", type=Path, help="checkout the node Home was installed from")
     args = parser.parse_args()
     if args.two_home_messages:
         if args.repeat or args.home_only or args.carrier_get or args.finite_memory or args.model_repair:
             parser.error("two-Home messages is a separate installed journey")
-        two_home_messages(args.home.resolve(), args.data.resolve(), args.evidence.resolve(),
-                          args.network_arrangement, args.two_home_root)
+        node = (args.node_home, args.node_data, args.node_repo)
+        if any(node) and not all(node):
+            parser.error("a node build needs --node-home, --node-data and --node-repo")
+        two_home_messages(installed_build("home", args.home, args.data), args.evidence.resolve(),
+                          args.network_arrangement, args.two_home_root,
+                          installed_build("node", *node) if all(node) else None)
         raise SystemExit(0)
     if args.model_repair and (sys.platform != "linux" or args.home_only or args.repeat or args.finite_memory):
         parser.error("--model-repair proves one production Linux Home with two signed models")
