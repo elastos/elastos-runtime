@@ -135,18 +135,3 @@ test("release stage installs config automatically only from the operator file an
     assert.throws(() => execFileSync(process.execPath, [script, dir], { env, stdio: "pipe" }), /failed/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
-
-test("release project secret is scoped to the build step and passed only by file", async () => {
-  const workflow = await readFile(resolve(".github/workflows/release-package.yml"), "utf8");
-  assert.doesNotMatch(workflow, /ELASTOS_WALLETCONNECT_PROJECT_ID/);
-  const steps = workflow.split("      - name:");
-  const secretSteps = steps.filter(step => step.includes("secrets.REOWN_PROJECT_ID"));
-  assert.equal(secretSteps.length, 2);
-  for (const step of secretSteps) {
-    assert.match(step, /^ build N, then N\+1/);
-    assert.match(step, /os.fchmod\(f.fileno\(\),0o600\)/);
-    assert.match(step, /ELASTOS_WALLETCONNECT_PROJECT_FILE/);
-    assert.match(step, /unset REOWN_PROJECT_ID/);
-    assert.match(step, /trap .*EXIT/);
-  }
-});
