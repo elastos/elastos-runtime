@@ -397,7 +397,14 @@ impl WalletProvider {
         }) else {
             return Response::error("not_found", "wallet approval request not found");
         };
-        if request.session_id != session_id {
+        let approved_connector_transaction = request.status == ApprovalStatus::Approved
+            && request.intent == "transaction_intent"
+            && request.connector_id.is_some();
+        // Dismissal grants no signing authority. The request's person may clear
+        // an approved external send from an owner surface after signing in again.
+        let owner_dismissal =
+            approved_connector_transaction && matches!(actor, "wallet" | "system" | "inbox");
+        if request.session_id != session_id && !owner_dismissal {
             return Response::error(
                 "invalid_request",
                 "wallet approval request belongs to a different Runtime session",
@@ -409,9 +416,6 @@ impl WalletProvider {
                 "wallet approval request belongs to a different connector",
             );
         }
-        let approved_connector_transaction = request.status == ApprovalStatus::Approved
-            && request.intent == "transaction_intent"
-            && request.connector_id.is_some();
         if request.status != ApprovalStatus::Pending && !approved_connector_transaction {
             return Response::error(
                 "invalid_request",

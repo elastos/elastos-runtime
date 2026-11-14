@@ -349,10 +349,20 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss_actor: Opti
     };
     if let Some(actor) = dismiss_actor {
         let context = wallet_context_in_session(principal_id, actor, "session:replacement");
-        assert!(matches!(invoke_wallet_with_context(&mut provider, &context,
-            WalletProviderOperationV2::RejectApproval {
-                request_id: request_id.clone(), reason: "Pending request in another session".into(),
-            }), Response::Error { .. }), "pending requests keep their original session binding");
+        assert!(
+            matches!(
+                invoke_wallet_with_context(
+                    &mut provider,
+                    &context,
+                    WalletProviderOperationV2::RejectApproval {
+                        request_id: request_id.clone(),
+                        reason: "Pending request in another session".into(),
+                    }
+                ),
+                Response::Error { .. }
+            ),
+            "pending requests keep their original session binding"
+        );
     }
     let transaction = match invoke_wallet(
         &mut provider,
@@ -436,13 +446,27 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss_actor: Opti
                 Response::Error { .. }
             ));
         }
-        let connector_context = wallet_context_in_session(principal_id, connector, "session:replacement");
-        assert!(matches!(invoke_wallet_with_context(&mut provider, &connector_context,
-            WalletProviderOperationV2::CompleteConnectorHandoff {
-                request_id: request_id.clone(), payload_hash: payload_hash.clone(),
-                signature: None, signature_type: None, public_key: None,
-                signer: external_address.into(), transaction_hash: Some(format!("0x{}", "a".repeat(64))),
-            }), Response::Error { .. }), "completion keeps its original session binding");
+        let connector_context =
+            wallet_context_in_session(principal_id, connector, "session:replacement");
+        assert!(
+            matches!(
+                invoke_wallet_with_context(
+                    &mut provider,
+                    &connector_context,
+                    WalletProviderOperationV2::CompleteConnectorHandoff {
+                        request_id: request_id.clone(),
+                        payload_hash: payload_hash.clone(),
+                        signature: None,
+                        signature_type: None,
+                        public_key: None,
+                        signer: external_address.into(),
+                        transaction_hash: Some(format!("0x{}", "a".repeat(64))),
+                    }
+                ),
+                Response::Error { .. }
+            ),
+            "completion keeps its original session binding"
+        );
         // Fill the quota from an actual approved handoff; rejecting one must permit
         // a new request through the provider's real admission path.
         for index in 1..MAX_ACTIVE_APPROVAL_REQUESTS_PER_PRINCIPAL {
