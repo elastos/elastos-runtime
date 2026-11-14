@@ -266,6 +266,16 @@ pub(super) async fn configured_server(
     };
     let config: toml::Table = contents.parse().context("invalid Runtime configuration")?;
     let Some(bind) = config.get("carrier_relay_bind_addr") else {
+        anyhow::ensure!(
+            [
+                "carrier_relay_discovery_bind_addr",
+                "carrier_relay_tls_cert",
+                "carrier_relay_tls_key"
+            ]
+            .iter()
+            .all(|key| !config.contains_key(*key)),
+            "Carrier discovery configuration requires the explicit relay role"
+        );
         return Ok(None);
     };
     anyhow::ensure!(
@@ -604,6 +614,21 @@ mod tests {
     #[ignore = "requires the owned blocked-network fixture; scripts/carrier-dns-policy-test.py"]
     async fn dns_probe_system_only() {
         blocked_dns_probe(system_dns()).await;
+        let relay = url::Url::parse("http://carrier-dns-test.example/").unwrap();
+        let endpoint = apply_relay(
+            iroh::Endpoint::builder(iroh::endpoint::presets::Minimal).clear_ip_transports(),
+            &relay,
+        )
+        .unwrap()
+        .dns_resolver(system_dns())
+        .bind()
+        .await
+        .unwrap();
+        let reason = tokio::time::timeout(Duration::from_secs(3), failed_route_reason(&endpoint))
+            .await
+            .expect("the owner's DNS diagnosis is bounded");
+        assert_eq!(reason, "carrier_system_dns_unavailable");
+        endpoint.close().await;
     }
 
     #[cfg(target_os = "linux")]
@@ -616,6 +641,19 @@ mod tests {
                 .build(),
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn discovery_requires_complete_explicit_role_configuration() {
+        for contents in [
+            "carrier_relay_tls_cert = 'fixture.pem'",
+            "gateway_public_publisher_bootstrap = true\ncarrier_relay_bind_addr = '127.0.0.1:0'\ncarrier_relay_tls_key = 'fixture.pem'",
+            "gateway_public_publisher_bootstrap = true\ncarrier_relay_bind_addr = '127.0.0.1:0'\ncarrier_relay_discovery_bind_addr = '127.0.0.1:0'",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("config.toml"), contents).unwrap();
+            assert!(configured_server(dir.path()).await.is_err());
+        }
     }
 
     fn admission_connection(home: EndpointId) -> ConnectionId {
