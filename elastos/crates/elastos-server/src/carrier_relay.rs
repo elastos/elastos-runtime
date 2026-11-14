@@ -32,14 +32,14 @@ pub(super) async fn failed_route_reason(endpoint: &iroh::Endpoint) -> &'static s
     use iroh::Watcher as _;
     if let Ok(resolver) = endpoint.dns_resolver() {
         for status in endpoint.home_relay_status().get() {
-            if !status.is_connected() && matches!(status.url().host(), Some(url::Host::Domain(_))) {
-                if resolver
+            if !status.is_connected()
+                && matches!(status.url().host(), Some(url::Host::Domain(_)))
+                && resolver
                     .resolve_host(status.url(), false, Duration::from_secs(1))
                     .await
                     .is_err()
-                {
-                    return "carrier_system_dns_unavailable";
-                }
+            {
+                return "carrier_system_dns_unavailable";
             }
         }
     }
