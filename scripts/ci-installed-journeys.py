@@ -1748,10 +1748,14 @@ def remove_message_fixture(root):
 
 # The 10-minute CI step reserves 360 s for work, 150 s for process cleanup,
 # and 30 s for disk/removal/receipt operations: 540 s, with 60 s runner margin.
+class MessageDeadline(BaseException):
+    """A phase deadline survives recoverable OS/network error handlers."""
+
+
 @contextmanager
 def message_timeout(seconds):
     def expired(_signum, _frame):
-        raise TimeoutError("two-Home phase deadline")
+        raise MessageDeadline("two-Home phase deadline")
     started = time.monotonic()
     previous = signal.signal(signal.SIGALRM, expired)
     timer = signal.setitimer(signal.ITIMER_REAL, 0)
@@ -1791,8 +1795,9 @@ def stop_message_processes(child, known, marker=None, grace=5, killed=3):
     """Bounded TERM/KILL census, retaining detached children across reparenting."""
     remaining = remember_message_processes(child, known, marker)
     for action, seconds in ((signal.SIGTERM, grace), (signal.SIGKILL, killed)):
+        current = process_rows()
         for pid, row in remaining.items():
-            latest = process_rows().get(pid)
+            latest = current.get(pid)
             if latest and all(latest[key] == row[key] for key in ("start", "command")):
                 try:
                     os.kill(pid, action)
@@ -1801,7 +1806,7 @@ def stop_message_processes(child, known, marker=None, grace=5, killed=3):
         end = time.monotonic() + seconds
         while remaining and time.monotonic() < end:
             child.poll()  # Reap our child before checking the census.
-            time.sleep(.05)
+            time.sleep(min(1, max(0, end - time.monotonic())))
             remaining = remember_message_processes(child, known, marker)
         if not remaining:
             break
@@ -1980,10 +1985,12 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
             bases = [f"http://{settings['browser_host']}:" + fixtures[name][2].rsplit(":", 1)[1] for name in ("a", "b")]
             with (root / "browser.private.log").open("wb") as log:
                 browser = subprocess.Popen(["node", "scripts/ci-installed-two-home-journey.mjs", *bases,
-                                            str(evidence), str(control)], stdout=log, stderr=log, start_new_session=True)
-            last = 0
+                                            str(evidence), str(control), settings["browser_host"]], stdout=log, stderr=log, start_new_session=True)
+            last, next_census = 0, 0
             while browser.poll() is None:
-                remember_message_processes(browser, browser_processes, "--two-home-fixture=" + str(control))
+                if time.monotonic() >= next_census:
+                    remember_message_processes(browser, browser_processes, "--two-home-fixture=" + str(control))
+                    next_census = time.monotonic() + 1
                 request = control / "request.json"
                 if request.exists():
                     value = private_json(request)
@@ -2046,7 +2053,7 @@ if __name__ == "__main__":
     parser.add_argument("--finite-memory", type=int, choices=[1, 4])
     parser.add_argument("--model-repair", action="store_true", help="real Stop, Get different model and interrupted Get/Home restart/Retry")
     parser.add_argument("--two-home-messages", action="store_true")
-    parser.add_argument("--network-arrangement", choices=["same-host"], default="same-host")
+    parser.add_argument("--network-arrangement", choices=MESSAGE_NETWORKS.keys(), default="same-host")
     parser.add_argument("--two-home-root", type=Path, help="fresh disposable fixture path")
     args = parser.parse_args()
     if args.two_home_messages:

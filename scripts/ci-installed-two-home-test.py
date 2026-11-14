@@ -163,11 +163,36 @@ class TwoHomeReceiptTests(unittest.TestCase):
 
     def test_work_deadline_interrupts_a_hung_phase_and_restores_the_timer(self):
         before = signal.getsignal(signal.SIGALRM)
-        with self.assertRaises(TimeoutError):
+        with self.assertRaises(JOURNEY['MessageDeadline']):
             with JOURNEY['message_timeout'](.05):
                 time.sleep(1)
         self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0,0))
         self.assertEqual(signal.getsignal(signal.SIGALRM), before)
+
+    def test_deadline_cannot_be_swallowed_by_an_oserror_handler(self):
+        swallowed = []
+        with self.assertRaises(BaseException) as raised:
+            with JOURNEY['message_timeout'](.05):
+                try:
+                    time.sleep(.2)
+                except OSError:
+                    swallowed.append(True)
+        self.assertFalse(swallowed)
+        self.assertNotIsInstance(raised.exception, OSError)
+
+    def test_signal_census_cost_does_not_grow_with_process_count(self):
+        stop = JOURNEY['stop_message_processes']
+        counts = []
+        for count in (2,20):
+            rows = {pid:{'ppid':0,'start':'fixture birth','command':'fixture child'}
+                    for pid in range(100,100+count)}
+            census = mock.Mock(return_value=rows)
+            with mock.patch.dict(stop.__globals__, {'process_rows':census}), mock.patch.object(os,'kill'):
+                with self.assertRaises(AssertionError):
+                    stop(mock.Mock(pid=100), rows.copy(), grace=0, killed=0)
+            counts.append(census.call_count)
+        self.assertEqual(counts[0], counts[1])
+        self.assertLessEqual(counts[0], 4)
 
     def test_sigkill_fallback_stops_a_detached_browser_after_node_exits(self):
         stop = JOURNEY['stop_message_processes']
