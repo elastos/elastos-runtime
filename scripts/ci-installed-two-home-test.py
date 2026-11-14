@@ -112,6 +112,31 @@ class TwoHomeReceiptTests(unittest.TestCase):
         changed['homes'][0]['carrier_bind_address'] = '192.0.2.1:1234'
         self.assertFalse(check(changed, self.identity()))
 
+    def test_promotion_receipt_needs_observed_relay_then_direct_and_failure_proof(self):
+        row = self.receipt()
+        row['network_arrangement'] = 'relay-to-direct'
+        for home in row['homes']:
+            host = {'community':'203.0.113.1', 'a':'10.0.1.2', 'b':'10.0.2.2'}[home['home']]
+            home['carrier_bind_address'] = host + ':' + home['carrier_bind_address'].rsplit(':', 1)[1]
+        for observed in row['direct_endpoint_observations']:
+            observed['ticket_addresses'] = [{'Relay':'http://relay.invalid/'}]
+        row.update(route_observations=['relay', 'direct'], all_carrier_paths_blocked=True,
+                   delivery_warning_count=2,
+                   visible_failure={'reason':'peer_unreachable', 'ui_detail':'Unconfirmed',
+                                    'elapsed_ms':65000, 'retry_same_message':True})
+        row['results']['visible_failure'] = 'passed'
+        check = JOURNEY['two_home_receipt_valid']
+        self.assertTrue(check(row, self.identity(), 'relay-to-direct'))
+        for routes in (['relay'], ['direct'], ['direct', 'relay']):
+            changed = copy.deepcopy(row)
+            changed['route_observations'] = routes
+            self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
+        for key, value in [('all_carrier_paths_blocked',False), ('delivery_warning_count',0),
+                           ('delivery_warning_count',3), ('visible_failure',{})]:
+            changed = copy.deepcopy(row)
+            changed[key] = value
+            self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
+
     def test_fixture_removal_refuses_nested_home_process(self):
         remove = JOURNEY['remove_message_fixture']
         with tempfile.TemporaryDirectory() as temporary:

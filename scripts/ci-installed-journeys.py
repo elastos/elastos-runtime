@@ -1925,6 +1925,14 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host"):
                  all(route in {"direct", "relay"} for route in row["route_observations"]) and
                  (network_arrangement != "forced-relay" or set(row["route_observations"]) == {"relay"}) and
                  (network_arrangement != "relay-to-direct" or row["route_observations"][0] == "relay" and "direct" in row["route_observations"][1:]))
+            and (network_arrangement == "same-host" or (
+                row.get("all_carrier_paths_blocked") is True and
+                row.get("results", {}).get("visible_failure") == "passed" and
+                row.get("delivery_warning_count") in (1, 2) and
+                row.get("visible_failure", {}).get("reason") == "peer_unreachable" and
+                row.get("visible_failure", {}).get("ui_detail") == "Unconfirmed" and
+                row.get("visible_failure", {}).get("retry_same_message") is True and
+                0 < row.get("visible_failure", {}).get("elapsed_ms", 0) < 110000))
             and all(row.get("results", {}).get(name) == "passed" for name in (
                 "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
             and all(row.get("negative_controls", {}).get(name, {}).get("assertion_rejected") is True
