@@ -8730,17 +8730,14 @@ impl CarrierClient {
             .context(CarrierTransportFailure)?;
         send.finish().context(CarrierTransportFailure)?;
 
-        // Observe this request's selected path, rather than infer it from the
-        // relay configuration. The private journey log retains this evidence.
-        if let Some(path) = self.conn.paths().iter().find(|path| path.is_selected()) {
-            tracing::debug!(
-                target: "elastos_carrier_path",
-                route = if path.is_relay() { "relay" } else { "direct" },
-                operation = %invocation.op,
-                provider = %invocation.target,
-                "Carrier provider request path"
-            );
-        }
+        // Keep the path observed after this request was written. Publish it
+        // only after a valid reply so failed attempts cannot prove a journey.
+        let request_used_relay = self
+            .conn
+            .paths()
+            .iter()
+            .find(|path| path.is_selected())
+            .map(|path| path.is_relay());
 
         let mut reader = BufReader::new(recv);
         let reply_bound = if invocation.target == crate::collaboration_history::HISTORY_PROVIDER
@@ -8784,7 +8781,17 @@ impl CarrierClient {
             );
         }
         let response: serde_json::Value = serde_json::from_str(line.trim())?;
-        carrier_provider_invoke_result(response)
+        let result = carrier_provider_invoke_result(response)?;
+        if let Some(relay) = request_used_relay {
+            tracing::debug!(
+                target: "elastos_carrier_path",
+                route = if relay { "relay" } else { "direct" },
+                operation = %invocation.op,
+                provider = %invocation.target,
+                "Carrier provider request completed"
+            );
+        }
+        Ok(result)
     }
 
     pub async fn open_browser_exit_stream(
