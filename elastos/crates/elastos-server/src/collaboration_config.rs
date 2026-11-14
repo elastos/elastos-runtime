@@ -201,7 +201,7 @@ fn write_local_bootstrap_receipt(
     validate_private_output_target(output_path)?;
     let peer = CollaborationBootstrapPeer {
         node_id,
-        connect_ticket,
+        connect_ticket: crate::carrier::export_connect_ticket(&connect_ticket)?,
     };
     validate_collaboration_bootstrap_peer(&peer)?;
     let bytes = serde_json::to_vec(&serde_json::to_value(&peer)?)?;

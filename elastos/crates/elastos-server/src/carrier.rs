@@ -1541,21 +1541,54 @@ fn published_direct_endpoint_addr(addr: iroh::EndpointAddr) -> iroh::EndpointAdd
 }
 
 /// The address a ticket shared beyond this host carries (#336). When the
-/// endpoint has a public address, loopback, link-local, container bridge, LAN
-/// and CGNAT addresses are dropped: they reach nobody else, and LAN peers find
-/// each other through mDNS. A host with no public address (a LAN or a test)
-/// keeps its addresses. The shell-scope `get_ticket` keeps every address.
-fn exported_endpoint_addr(addr: iroh::EndpointAddr) -> iroh::EndpointAddr {
+/// ticket contains public IP hints only. LAN peers use mDNS; Runtime owns the
+/// relay pin. A Home without a public address exports its node identity alone.
+/// The shell-scope `get_ticket` retains local routes.
+pub(crate) fn exported_endpoint_addr(addr: iroh::EndpointAddr) -> iroh::EndpointAddr {
     let public = |transport: &iroh::TransportAddr| match transport {
         iroh::TransportAddr::Ip(addr) => is_public_ip(addr.ip()),
         _ => false,
     };
     let mut next = addr;
-    if next.addrs.iter().any(public) {
-        next.addrs
-            .retain(|transport| !transport.is_ip() || public(transport));
-    }
+    next.addrs.retain(public);
     next
+}
+
+pub(crate) fn export_connect_ticket(ticket: &str) -> Result<String> {
+    anyhow::ensure!(
+        ticket.len() <= crate::collaboration_network::MAX_CONNECT_TICKET_BYTES,
+        "Carrier ticket exceeds its bound"
+    );
+    let bytes = data_encoding::BASE32_NOPAD
+        .decode(ticket.to_ascii_uppercase().as_bytes())
+        .context("invalid Carrier ticket")?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).context("invalid Carrier ticket")?;
+    anyhow::ensure!(
+        value.get("topic").is_none_or(serde_json::Value::is_null),
+        "Carrier export requires a transport ticket"
+    );
+    let endpoints: Vec<iroh::EndpointAddr> = serde_json::from_value(
+        value
+            .get("endpoints")
+            .context("Carrier ticket has no endpoints")?
+            .clone(),
+    )?;
+    anyhow::ensure!(
+        !endpoints.is_empty()
+            && endpoints.len() <= crate::collaboration_network::MAX_ENDPOINTS_PER_TICKET,
+        "Carrier ticket endpoint count exceeds its bound"
+    );
+    let endpoints: Vec<_> = endpoints.into_iter().map(exported_endpoint_addr).collect();
+    let bytes = serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":endpoints}))?;
+    let encoded = data_encoding::BASE32_NOPAD
+        .encode(&bytes)
+        .to_ascii_lowercase();
+    anyhow::ensure!(
+        encoded.len() <= crate::collaboration_network::MAX_CONNECT_TICKET_BYTES,
+        "Carrier export exceeds its bound"
+    );
+    Ok(encoded)
 }
 
 /// Global unicast, excluding the IANA special-use ranges.
@@ -4345,7 +4378,7 @@ impl CarrierAvailabilityProvider {
             Some(serde_json::json!({
                 "transport": "carrier-file",
                 "endpoint_id": state.endpoint.id().to_string(),
-                "connect_ticket": carrier_connect_ticket(&state.endpoint),
+                "connect_ticket": carrier_connect_ticket(&state.endpoint).map_err(|error| ProviderError::Provider(format!("Carrier ticket export failed: {error}")))?,
             }))
         } else {
             None
@@ -5764,7 +5797,12 @@ fn remote_content_provider_response_bytes(response: &serde_json::Value) -> Resul
         .map_err(|err| anyhow::anyhow!("remote content provider returned invalid base64: {err}"))
 }
 
-fn carrier_connect_ticket(endpoint: &Endpoint) -> String {
+fn carrier_connect_ticket(endpoint: &Endpoint) -> Result<String> {
+    export_connect_ticket(&local_carrier_connect_ticket(endpoint))
+}
+
+// Local shell and named isolated fixtures retain local reachability.
+pub(crate) fn local_carrier_connect_ticket(endpoint: &Endpoint) -> String {
     let mut watcher = endpoint.watch_addr();
     let addr = watcher.get();
     let ticket_json = serde_json::json!({
@@ -14931,7 +14969,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let ticket = carrier_connect_ticket(&remote_node.endpoint);
+        let ticket = local_carrier_connect_ticket(&remote_node.endpoint);
         let request = BrowserCarrierStreamRequest {
             connect_ticket: ticket,
             peer_did: Some(remote_did),
@@ -16066,7 +16104,7 @@ pub(crate) mod tests {
             .unwrap()
             .add(memory_lookup.clone());
         let gossip = spawn_carrier_gossip(&endpoint);
-        let remote_ticket = carrier_connect_ticket(&endpoint);
+        let remote_ticket = local_carrier_connect_ticket(&endpoint);
         let state = Arc::new(Mutex::new(GossipState::new(
             endpoint.clone(),
             gossip,
@@ -16181,7 +16219,7 @@ pub(crate) mod tests {
             .unwrap()
             .add(memory_lookup.clone());
         let gossip = spawn_carrier_gossip(&endpoint);
-        let remote_ticket = carrier_connect_ticket(&endpoint);
+        let remote_ticket = local_carrier_connect_ticket(&endpoint);
         let state = Arc::new(Mutex::new(GossipState::new(
             endpoint.clone(),
             gossip,
@@ -16384,7 +16422,7 @@ pub(crate) mod tests {
             .unwrap()
             .add(memory_lookup.clone());
         let gossip = spawn_carrier_gossip(&endpoint);
-        let holder_ticket = carrier_connect_ticket(&endpoint);
+        let holder_ticket = local_carrier_connect_ticket(&endpoint);
         let state = Arc::new(Mutex::new(GossipState::new(
             endpoint.clone(),
             gossip,
@@ -16463,7 +16501,7 @@ pub(crate) mod tests {
             .unwrap()
             .add(memory_lookup.clone());
         let gossip = spawn_carrier_gossip(&endpoint);
-        let holder_ticket = carrier_connect_ticket(&endpoint);
+        let holder_ticket = local_carrier_connect_ticket(&endpoint);
         let state = Arc::new(Mutex::new(GossipState::new(
             endpoint.clone(),
             gossip,
@@ -16544,7 +16582,7 @@ pub(crate) mod tests {
             .unwrap()
             .add(memory_lookup.clone());
         let gossip = spawn_carrier_gossip(&endpoint);
-        let live_ticket = carrier_connect_ticket(&endpoint);
+        let live_ticket = local_carrier_connect_ticket(&endpoint);
         let (stale_message, _) = signed_content_availability_message(
             cid,
             [34u8; 32],
@@ -17020,7 +17058,7 @@ pub(crate) mod tests {
             .unwrap()
             .add(memory_lookup.clone());
         let gossip = spawn_carrier_gossip(&endpoint);
-        let live_ticket = carrier_connect_ticket(&endpoint);
+        let live_ticket = local_carrier_connect_ticket(&endpoint);
         let state = Arc::new(Mutex::new(GossipState::new(
             endpoint.clone(),
             gossip,
@@ -17511,18 +17549,18 @@ pub(crate) mod tests {
             mixed,
             ["[::ffff:77.42.19.31]:4433", "[2a01:4f9:c013:e725::1]:4433"]
         );
-        // A host with only private and special-use addresses keeps them (a LAN).
+        // A host with no public address exports only its node identity.
         assert_eq!(
             ips(&["192.168.1.20:4433", "198.18.0.1:4433", "127.0.0.1:4433"]).len(),
-            3
+            0
         );
-        // Each IPv6 special-use range counts as private, so a LAN keeps its route.
+        // IPv6 special-use ranges are filtered with the same policy.
         assert_eq!(
             ips(&["192.168.1.20:4433", "[2001:2::1]:4433", "[3fff::1]:4433"]).len(),
-            3
+            0
         );
-        // IPv4-compatible is never public, so a LAN beside it keeps its route.
-        assert_eq!(ips(&["192.168.1.20:4433", "[::77.42.19.31]:4433"]).len(), 2);
+        // IPv4-compatible addresses are also local-only hints.
+        assert_eq!(ips(&["192.168.1.20:4433", "[::77.42.19.31]:4433"]).len(), 0);
         // Globally reachable: 6to4 of a public IPv4, AMT, and 2001:4860 (outside 2001::/23).
         assert_eq!(
             ips(&[
@@ -17619,17 +17657,12 @@ pub(crate) mod tests {
             ips.iter().all(|ip| ip.is_ipv4() == (ip.port() == port)),
             "the ticket lists IPv4 on the fixed port and IPv6 on its own: {ips:?}"
         );
-        // The ticket lists exactly the snapshot's public addresses, or all of
-        // them on a host with none, so any IPv6 the host advertises stays.
-        let expected: Vec<_> = if snapshot.iter().any(|ip| is_public_ip(ip.ip())) {
-            snapshot
-                .iter()
-                .copied()
-                .filter(|ip| is_public_ip(ip.ip()))
-                .collect()
-        } else {
-            snapshot.clone()
-        };
+        // The ticket lists exactly the snapshot's public addresses.
+        let expected: Vec<_> = snapshot
+            .iter()
+            .copied()
+            .filter(|ip| is_public_ip(ip.ip()))
+            .collect();
         assert_eq!(ips, expected, "snapshot {snapshot:?}");
     }
 

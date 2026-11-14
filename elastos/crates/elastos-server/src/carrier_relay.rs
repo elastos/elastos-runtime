@@ -410,6 +410,46 @@ mod tests {
     }
 
     #[test]
+    fn ticket_export_codec_filters_every_endpoint_and_enforces_protocol_bounds() {
+        let peer = iroh::SecretKey::from_bytes(&[216; 32]).public();
+        let address = iroh::EndpointAddr::new(peer).with_addrs([
+            iroh::TransportAddr::Ip("127.0.0.1:0".parse().unwrap()),
+            iroh::TransportAddr::Ip("1.1.1.1:0".parse().unwrap()),
+            iroh::TransportAddr::Relay("https://relay.example/".parse().unwrap()),
+        ]);
+        let encode = |endpoints: Vec<iroh::EndpointAddr>| {
+            data_encoding::BASE32_NOPAD
+                .encode(
+                    &serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":endpoints}))
+                        .unwrap(),
+                )
+                .to_ascii_lowercase()
+        };
+        let exported =
+            super::super::export_connect_ticket(&encode(vec![address.clone(), address.clone()]))
+                .unwrap();
+        let decoded = super::super::decode_ticket_endpoints(&exported);
+        assert_eq!(decoded.len(), 2);
+        for endpoint in decoded {
+            assert_eq!(
+                endpoint.addrs.into_iter().collect::<Vec<_>>(),
+                vec![iroh::TransportAddr::Ip("1.1.1.1:0".parse().unwrap())]
+            );
+        }
+        assert!(super::super::export_connect_ticket(&encode(vec![])).is_err());
+        assert!(super::super::export_connect_ticket(&encode(vec![
+            address;
+            crate::collaboration_network::MAX_ENDPOINTS_PER_TICKET
+                + 1
+        ]))
+        .is_err());
+        assert!(super::super::export_connect_ticket(
+            &"a".repeat(crate::collaboration_network::MAX_CONNECT_TICKET_BYTES + 1)
+        )
+        .is_err());
+    }
+
+    #[test]
     fn pin_policy_https_identity_requires_the_pinned_name_and_trusted_certificate() {
         let (certs, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
         let (foreign_certs, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
