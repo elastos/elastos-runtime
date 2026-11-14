@@ -78,7 +78,7 @@ def main():
             record = json.loads(receipt_path.read_text())
             print(json.dumps({key: record.get(key) for key in (
                 "candidate", "source_tree", "installed_runtime_sha256", "network_arrangement", "results",
-                "route_observations", "status", "failure", "browser_failure", "process_cleanup", "fixture_removed")}), flush=True)
+                "route_observations", "status", "failure", "browser_failure", "registration_refusals", "process_cleanup", "fixture_removed")}), flush=True)
         if result.returncode:
             raise RuntimeError("real two-NAT installed journey failed")
         print("two-NAT installed message journey: PASS", flush=True)

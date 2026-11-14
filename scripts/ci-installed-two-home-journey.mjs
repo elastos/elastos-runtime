@@ -27,7 +27,7 @@ async function run() {
   const [baseA, baseB, evidence, control, browserHost] = process.argv.slice(2);
   const bases = [baseA, baseB];
   assertMessageOrigins(bases, browserHost);
-  const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], browser_cross_home_http_requests:0};
+  const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], registration_refusals:[], browser_cross_home_http_requests:0};
   let sequence = 0;
   async function runtime(action) {
     const id = ++sequence;
@@ -62,6 +62,18 @@ async function run() {
         return route.continue();
       });
       const page=await context.newPage();
+      page.on('response', async response => {
+        const path = new URL(response.url()).pathname;
+        if (!path.startsWith('/api/auth/passkey/register/') || response.ok()) return;
+        const refusal = {home:i, method:response.request().method(), path, status:response.status()};
+        try {
+          const body = await response.json();
+          for (const key of ['error','message','reason','code']) {
+            if (typeof body[key] === 'string') refusal[key] = body[key].slice(0,512);
+          }
+        } catch { refusal.reason = 'non-JSON registration refusal'; }
+        result.registration_refusals.push(refusal);
+      });
       const cdp=await context.newCDPSession(page);
       await cdp.send('WebAuthn.enable');
       await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
