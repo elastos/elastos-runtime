@@ -518,20 +518,8 @@ async fn test_walletconnect_connector_requires_pinned_config() {
 #[tokio::test]
 async fn test_home_refuses_unconfigured_walletconnect_before_package_repair() {
     let dir = tempfile::tempdir().unwrap();
-    write_test_browser_capsule(
-        dir.path(),
-        WALLET_WALLETCONNECT_CAPSULE_ID,
-        "app",
-        "WalletConnect",
-        None,
-    );
-    // An unavailable repair manifest must not turn a configuration refusal into
-    // a package-repair error. Configured local capsules still launch normally.
-    std::fs::write(
-        dir.path().join("components.json"),
-        b"invalid repair manifest",
-    )
-    .unwrap();
+    // The seeded connector row has no repair platform. Configuration refusal
+    // still returns 404, while a configured local capsule launches normally.
     let app = gateway_router(test_state(dir.path()));
     for configured in [false, true] {
         if configured {

@@ -38,8 +38,8 @@ pub(super) async fn home_launch(
         ));
     }
 
-    // Configuration owns connector availability. Refuse a hidden connector before
-    // package repair, which cannot make an unconfigured connector launchable.
+    // Configuration owns connector availability. Refuse a hidden connector
+    // before package repair.
     ensure_wallet_connector_configured(&state.data_dir, target).map_err(|_| {
         (
             StatusCode::NOT_FOUND,
