@@ -884,6 +884,15 @@ class PrepushTests(unittest.TestCase):
         self.assertEqual(self.invoke().returncode, 0)
         self.assertEqual(lock.stat().st_ino, inode)
 
+    def test_vendored_workspace_keeps_its_independent_lock_graph_out_of_shared_intermediates(self):
+        workspace = self.root / "elastos/vendor/dependency"
+        workspace.mkdir(parents=True)
+        shared = str(self.tmp / "shared")
+        with mock.patch.dict(os.environ, {**self.env, "CARGO_BUILD_BUILD_DIR": shared}, clear=True):
+            GATE.run(["cargo", "fmt"], workspace, capture=True)
+        self.assertEqual(self.commands()[-1]["build_dir"], str(workspace / "target"))
+        self.assertEqual(self.commands()[-1]["args"], ["fmt"])
+
     def test_explicit_shared_build_dir_is_preserved(self):
         cache = str(self.tmp / "shared")
         self.assertEqual(self.invoke(extra={"CARGO_BUILD_BUILD_DIR": cache}).returncode, 0)
