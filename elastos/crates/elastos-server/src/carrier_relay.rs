@@ -77,6 +77,26 @@ pub(super) fn apply_relay(
         .address_lookup(PinnedRelayLookup(relay)))
 }
 
+fn transport_allowed(transport: &iroh::TransportAddr, relay: Option<&RelayUrl>) -> bool {
+    match transport {
+        iroh::TransportAddr::Ip(_) => true,
+        iroh::TransportAddr::Relay(url) => Some(url) == relay,
+        _ => false,
+    }
+}
+
+pub(super) fn lookup_filter(relay: Option<RelayUrl>) -> AddrFilter {
+    AddrFilter::new(move |addrs| {
+        std::borrow::Cow::Owned(
+            addrs
+                .iter()
+                .filter(|transport| transport_allowed(transport, relay.as_ref()))
+                .cloned()
+                .collect(),
+        )
+    })
+}
+
 pub(super) fn endpoint_policy(
     builder: iroh::endpoint::Builder,
     relay: Option<&RelayUrl>,
@@ -99,11 +119,11 @@ impl EndpointHooks for PinnedRelayHook {
         remote: &'a iroh::EndpointAddr,
         _alpn: &'a [u8],
     ) -> BeforeConnectOutcome {
-        if remote.addrs.iter().all(|transport| match transport {
-            iroh::TransportAddr::Ip(_) => true,
-            iroh::TransportAddr::Relay(url) => Some(url) == self.relay.as_ref(),
-            _ => false,
-        }) {
+        if remote
+            .addrs
+            .iter()
+            .all(|transport| transport_allowed(transport, self.relay.as_ref()))
+        {
             BeforeConnectOutcome::Accept
         } else {
             BeforeConnectOutcome::Reject
@@ -136,11 +156,7 @@ impl<T: AddressLookup> AddressLookup for PinnedLookup<T> {
                         let addrs: Vec<_> = addr
                             .addrs
                             .into_iter()
-                            .filter(|transport| match transport {
-                                iroh::TransportAddr::Ip(_) => true,
-                                iroh::TransportAddr::Relay(url) => Some(url) == relay.as_ref(),
-                                _ => false,
-                            })
+                            .filter(|transport| transport_allowed(transport, relay.as_ref()))
                             .collect();
                         Item::new(
                             EndpointInfo::from_parts(addr.id, EndpointData::new(addrs)),
@@ -155,8 +171,8 @@ impl<T: AddressLookup> AddressLookup for PinnedLookup<T> {
 }
 
 /// Runtime retains this complete policy across every gossip actor replacement.
-/// Gossip's unfiltered peer lookup is replaced by the pinned DID route, memory
-/// and mDNS, each of which passes through the same relay filter.
+/// The actor installs its filtered gossip lookup after this base policy, so
+/// direct route discovery stays available after every rebuild.
 #[derive(Debug, Clone)]
 pub(super) struct LookupPolicy {
     pub relay: Option<RelayUrl>,
@@ -997,8 +1013,8 @@ mod tests {
             if let Some(policy) = &node.gossip_state.lock().await.relay_lookups {
                 assert_eq!(
                     services.len(),
-                    2 + usize::from(policy.mdns.is_some()),
-                    "the gossip actor must not retain its unfiltered peer lookup"
+                    3 + usize::from(policy.mdns.is_some()),
+                    "retain filtered gossip, pinned DID, memory and optional mDNS"
                 );
             }
             let found = tokio::time::timeout(

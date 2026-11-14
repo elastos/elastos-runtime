@@ -613,8 +613,13 @@ fn carrier_gossip_membership(community_hub: bool) -> iroh_gossip::proto::Hyparvi
     membership
 }
 
-fn spawn_carrier_gossip_for(endpoint: &Endpoint, community_hub: bool) -> Gossip {
+fn spawn_carrier_gossip_for(
+    endpoint: &Endpoint,
+    community_hub: bool,
+    approved_relay: Option<iroh::RelayUrl>,
+) -> Gossip {
     Gossip::builder()
+        .received_addr_filter(relay::lookup_filter(approved_relay))
         .max_message_size(GOSSIP_WIRE_MESSAGE_MAX_BYTES)
         .membership_config(carrier_gossip_membership(community_hub))
         .spawn(endpoint.clone())
@@ -622,7 +627,7 @@ fn spawn_carrier_gossip_for(endpoint: &Endpoint, community_hub: bool) -> Gossip 
 
 #[cfg(test)]
 fn spawn_carrier_gossip(endpoint: &Endpoint) -> Gossip {
-    spawn_carrier_gossip_for(endpoint, false)
+    spawn_carrier_gossip_for(endpoint, false, None)
 }
 
 fn now_secs() -> u64 {
@@ -1298,10 +1303,14 @@ async fn rebuild_carrier_gossip(state: &mut GossipState) -> Result<usize> {
     {
         warn!("carrier: gossip actor did not shut down for the rebuild; dropping it");
     }
-    let replacement = spawn_carrier_gossip_for(&state.endpoint, state.community_hub);
-    if let Some(policy) = &state.relay_lookups {
+    let approved_relay = if let Some(policy) = &state.relay_lookups {
         policy.install(&state.endpoint)?;
-    }
+        policy.relay.clone()
+    } else {
+        None
+    };
+    let replacement =
+        spawn_carrier_gossip_for(&state.endpoint, state.community_hub, approved_relay);
     state.gossip = replacement.clone();
     drop(state.gossip_handler.replace(replacement));
     drop(previous);
@@ -2023,9 +2032,21 @@ async fn start_carrier_node_with_network(
             "carrier: this node is a Community bootstrap node; gossip runs as the hub"
         );
     }
+    let policy = relay::LookupPolicy {
+        relay: approved.clone().map(iroh::RelayUrl::from),
+        memory: memory_lookup.clone(),
+        mdns,
+    };
+    if let Err(error) = policy.install(&endpoint) {
+        endpoint.close().await;
+        if let Some(server) = relay_server {
+            let _ = server.shutdown().await;
+        }
+        return Err(error);
+    }
     let gossip_state = Arc::new(Mutex::new(GossipState::new(
         endpoint.clone(),
-        spawn_carrier_gossip_for(&endpoint, community_hub),
+        spawn_carrier_gossip_for(&endpoint, community_hub, policy.relay.clone()),
         memory_lookup.clone(),
         Some(signing_key.clone()),
         Some(did.to_string()),
@@ -2035,19 +2056,6 @@ async fn start_carrier_node_with_network(
         state.bootstrap_peers = bootstrap_peers;
         state.direct_only = network == CarrierNodeNetwork::Isolated;
         state.community_hub = community_hub;
-        let policy = relay::LookupPolicy {
-            relay: approved.clone().map(iroh::RelayUrl::from),
-            memory: memory_lookup.clone(),
-            mdns,
-        };
-        if let Err(error) = policy.install(&endpoint) {
-            let _ = state.gossip.shutdown().await;
-            endpoint.close().await;
-            if let Some(server) = relay_server {
-                let _ = server.shutdown().await;
-            }
-            return Err(error);
-        }
         state.relay_lookups = Some(policy);
         state.gossip_handler.clone()
     };
@@ -20451,8 +20459,8 @@ pub(crate) mod tests {
         }
         assert_eq!(
             node.endpoint.address_lookup().unwrap().len(),
-            if carrier_mdns_enabled() { 2 } else { 1 },
-            "direct startup owns filtered memory and optional LAN mDNS lookups"
+            if carrier_mdns_enabled() { 3 } else { 2 },
+            "direct startup owns filtered gossip, memory and optional LAN mDNS"
         );
         assert!(node.endpoint.addr().relay_urls().next().is_none());
         tokio::time::timeout(Duration::from_secs(5), shutdown_test_carrier_node(node))

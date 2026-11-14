@@ -109,6 +109,7 @@ impl GossipAddressLookup {
     pub(crate) fn add(&self, endpoint_info: impl Into<EndpointInfo>) {
         let last_updated = SystemTime::now();
         let EndpointInfo { endpoint_id, data } = endpoint_info.into();
+        let data = data.apply_filter(&self.received_addr_filter);
         let mut guard = self.endpoints.write().expect("poisoned");
         let stored = guard
             .entry(endpoint_id)
