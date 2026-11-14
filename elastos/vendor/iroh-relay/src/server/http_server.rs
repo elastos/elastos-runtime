@@ -309,6 +309,8 @@ pub enum AcceptError {
     Handshake { source: handshake::Error },
     #[error("rate limiting misconfigured")]
     RateLimitingMisconfigured { source: InvalidBucketConfig },
+    #[error("relay Home byte-budget state is full")]
+    HomeBudgetCapacity,
 }
 
 /// Server connection errors, includes errors that can happen on `accept`.
@@ -348,6 +350,7 @@ pub(super) struct ServerBuilder {
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
     client_rx_ratelimit: Option<ClientRateLimit>,
+    home_rx_ratelimit: Option<super::HomeRateLimit>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
     /// Access control for endpoints.
@@ -365,6 +368,7 @@ impl ServerBuilder {
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
+            home_rx_ratelimit: None,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: Arc::new(AllowAll),
             metrics: None,
@@ -413,6 +417,11 @@ impl ServerBuilder {
         self
     }
 
+    pub(super) fn home_rx_ratelimit(mut self, config: Option<super::HomeRateLimit>) -> Self {
+        self.home_rx_ratelimit = config;
+        self
+    }
+
     /// Adds a custom handler for a specific Method & URI.
     pub(super) fn request_handler(
         mut self,
@@ -451,6 +460,7 @@ impl ServerBuilder {
             self.metrics.unwrap_or_default(),
         );
 
+        let service = service.with_home_rate_limit(self.home_rx_ratelimit);
         let addr = self.addr;
         let tls_config = self.tls_config;
 
@@ -533,6 +543,7 @@ struct Inner {
     clients: Clients,
     write_timeout: Duration,
     rate_limit: watch::Sender<Option<ClientRateLimit>>,
+    home_budgets: Option<super::streams::HomeBuckets>,
     key_cache: KeyCache,
     access: Arc<dyn DynAccessControl>,
     metrics: Arc<Metrics>,
@@ -889,6 +900,15 @@ impl Inner {
         let mut client_conn_builder = Config::new(guard, io, protocol_version);
         client_conn_builder.write_timeout = self.write_timeout;
         client_conn_builder.rate_limited = Some(limited_watcher);
+        client_conn_builder.home_budget = self
+            .home_budgets
+            .as_ref()
+            .map(|budgets| {
+                budgets
+                    .get(request.endpoint_id())
+                    .ok_or_else(|| e!(AcceptError::HomeBudgetCapacity))
+            })
+            .transpose()?;
         trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
@@ -927,6 +947,7 @@ impl RelayService {
             clients: Clients::default(),
             write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit: watch::Sender::new(rate_limit),
+            home_budgets: None,
             key_cache,
             access,
             metrics,
@@ -939,6 +960,13 @@ impl RelayService {
     /// Passing `None` will remove rate limiting from all connections.
     pub fn set_client_rate_limit(&self, rate_limit: Option<ClientRateLimit>) {
         self.0.rate_limit.send_replace(rate_limit);
+    }
+
+    fn with_home_rate_limit(mut self, config: Option<super::HomeRateLimit>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("new relay service has one owner")
+            .home_budgets = config.map(super::streams::HomeBuckets::new);
+        self
     }
 
     /// Shuts down the relay service, disconnecting all clients.

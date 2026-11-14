@@ -1,8 +1,9 @@
 //! Streams used in the server-side implementation of iroh relays.
 
 use std::{
+    collections::HashMap,
     pin::Pin,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, Mutex, atomic::AtomicBool},
     task::{Context, Poll},
 };
 
@@ -14,7 +15,7 @@ use tokio::{
 };
 use tracing::{instrument, warn};
 
-use super::{ClientRateLimit, Metrics};
+use super::{ClientRateLimit, HomeRateLimit, Metrics};
 use crate::{
     ExportKeyingMaterial, KeyCache, MAX_PACKET_SIZE,
     protos::{
@@ -419,7 +420,9 @@ impl Bucket {
         })
     }
 
-    fn from_config(cfg: Option<ClientRateLimit>) -> Result<Option<Self>, InvalidBucketConfig> {
+    pub(super) fn from_config(
+        cfg: Option<ClientRateLimit>,
+    ) -> Result<Option<Self>, InvalidBucketConfig> {
         match cfg {
             Some(cfg) => {
                 let bytes_per_second = u32::from(cfg.bytes_per_second);
@@ -451,6 +454,13 @@ impl Bucket {
         self.last_fill += self.refill_period * refill_periods;
     }
 
+    fn full_at(&mut self) -> time::Instant {
+        self.update_state();
+        let missing = self.max.saturating_sub(self.fill);
+        let periods = missing.saturating_add(self.refill - 1) / self.refill;
+        self.last_fill + self.refill_period * u32::try_from(periods).unwrap_or(u32::MAX)
+    }
+
     /// Attempts to consume `bytes` tokens from the bucket.
     ///
     /// Returns `Ok(())` if enough tokens were available.
@@ -475,6 +485,45 @@ impl Bucket {
         let periods_needed = u32::try_from(periods_needed).unwrap_or(u32::MAX);
 
         Err(self.last_fill + periods_needed * self.refill_period)
+    }
+}
+
+pub(crate) type HomeBucket = Arc<Mutex<Bucket>>;
+
+#[derive(Debug)]
+pub(super) struct HomeBuckets {
+    config: HomeRateLimit,
+    entries: Mutex<HashMap<iroh_base::EndpointId, HomeBucket>>,
+}
+
+impl HomeBuckets {
+    pub fn new(config: HomeRateLimit) -> Self {
+        Self {
+            config,
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn get(&self, endpoint: iroh_base::EndpointId) -> Option<HomeBucket> {
+        let mut entries = self.entries.lock().expect("Home byte budget map");
+        let now = time::Instant::now();
+        entries.retain(|_, bucket| {
+            Arc::strong_count(bucket) > 1
+                || bucket.lock().expect("Home byte bucket").full_at() > now
+        });
+        if let Some(bucket) = entries.get(&endpoint) {
+            return Some(bucket.clone());
+        }
+        if entries.len() >= self.config.max_homes.get() as usize {
+            return None;
+        }
+        let bucket = Arc::new(Mutex::new(
+            Bucket::from_config(Some(self.config.rate))
+                .expect("validated Home byte limit")
+                .expect("configured Home byte limit"),
+        ));
+        entries.insert(endpoint, bucket.clone());
+        Some(bucket)
     }
 }
 
@@ -652,6 +701,74 @@ mod tests {
 
     use super::Bucket;
     use crate::server::{Metrics, streams::RateLimited};
+
+    #[tokio::test(start_paused = true)]
+    async fn home_buckets_share_debt_across_connections_and_keep_other_homes_independent() {
+        let mut rate =
+            crate::server::ClientRateLimit::new(std::num::NonZeroU32::new(1024).unwrap());
+        rate.max_burst_bytes = std::num::NonZeroU32::new(1024);
+        let buckets = super::HomeBuckets::new(
+            crate::server::HomeRateLimit::new(rate, std::num::NonZeroU32::new(2).unwrap()).unwrap(),
+        );
+        let home = iroh_base::SecretKey::from_bytes(&[30; 32]).public();
+        let other = iroh_base::SecretKey::from_bytes(&[31; 32]).public();
+        let first = buckets.get(home).unwrap();
+        assert!(first.lock().unwrap().consume(1023).is_ok());
+        let replacement = buckets.get(home).unwrap();
+        assert!(replacement.lock().unwrap().consume(2).is_err());
+        assert!(
+            buckets
+                .get(other)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .consume(1023)
+                .is_ok()
+        );
+        drop(first);
+        drop(replacement);
+        assert!(
+            buckets
+                .get(home)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .consume(1)
+                .is_err(),
+            "reconnect retains spent quota"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn home_bucket_states_are_bounded_and_idle_debt_expires_only_after_full_refill() {
+        let mut rate =
+            crate::server::ClientRateLimit::new(std::num::NonZeroU32::new(1024).unwrap());
+        rate.max_burst_bytes = std::num::NonZeroU32::new(1024);
+        let buckets = super::HomeBuckets::new(
+            crate::server::HomeRateLimit::new(rate, std::num::NonZeroU32::new(1).unwrap()).unwrap(),
+        );
+        let home = iroh_base::SecretKey::from_bytes(&[32; 32]).public();
+        let other = iroh_base::SecretKey::from_bytes(&[33; 32]).public();
+        let bucket = buckets.get(home).unwrap();
+        assert!(bucket.lock().unwrap().consume(2048).is_err());
+        drop(bucket);
+        assert!(buckets.get(other).is_none());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(
+            buckets.get(other).is_none(),
+            "a depleted connection cannot reset its bucket by closing"
+        );
+        tokio::time::advance(Duration::from_secs(4)).await;
+        let active = buckets.get(other).unwrap();
+        tokio::time::advance(Duration::from_secs(4)).await;
+        assert!(
+            buckets.get(home).is_none(),
+            "live Home state retains its capacity slot"
+        );
+        drop(active);
+        assert!(buckets.get(home).is_some());
+        assert_eq!(buckets.entries.lock().unwrap().len(), 1);
+    }
 
     #[tokio::test(start_paused = true)]
     #[traced_test]

@@ -4,7 +4,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
-use n0_future::{SinkExt, StreamExt};
+use n0_future::{SinkExt, StreamExt, time};
 use rand::RngExt;
 use time::{Date, OffsetDateTime};
 use tokio::{
@@ -69,6 +69,7 @@ pub struct Config<S> {
     /// [`Status::RateLimited`] message when the rate-limited counter first
     /// becomes non-zero.
     pub(crate) rate_limited: Option<watch::Receiver<u64>>,
+    pub(crate) home_budget: Option<super::streams::HomeBucket>,
 }
 
 impl<S> Config<S> {
@@ -87,6 +88,7 @@ impl<S> Config<S> {
             write_timeout: SERVER_WRITE_TIMEOUT,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             rate_limited: None,
+            home_budget: None,
         }
     }
 }
@@ -132,6 +134,7 @@ impl Client {
             channel_capacity,
             protocol_version,
             rate_limited,
+            home_budget,
         } = config;
         let endpoint_id = guard.endpoint_id;
         let connection_id = guard.connection_id;
@@ -151,6 +154,7 @@ impl Client {
             ping_tracker: PingTracker::default(),
             protocol_version,
             rate_limited,
+            home_budget,
             metrics,
         };
 
@@ -336,6 +340,7 @@ struct Actor<S> {
     protocol_version: ProtocolVersion,
     /// Optional signal counting how often the connection has been rate-limited.
     rate_limited: Option<watch::Receiver<u64>>,
+    home_budget: Option<super::streams::HomeBucket>,
     metrics: Arc<Metrics>,
 }
 
@@ -377,6 +382,8 @@ where
         ping_interval.tick().await;
 
         let mut rate_limit_notified = false;
+        let mut pending_frame = None;
+        let mut budget_wait = Box::pin(time::sleep(Duration::ZERO));
 
         loop {
             tokio::select! {
@@ -399,10 +406,27 @@ where
                             .map_err(|err| e!(RunError::WriteFrame, err))?;
                     }
                 }
-                maybe_frame = self.stream.next() => {
-                    self
-                        .handle_frame(maybe_frame)
-                        .await?;
+                _ = &mut budget_wait, if pending_frame.is_some() => {
+                    self.handle_frame(Some(Ok(pending_frame.take().expect("owned budgeted frame")))).await?;
+                    ping_interval.reset();
+                }
+                maybe_frame = self.stream.next(), if pending_frame.is_none() => {
+                    match maybe_frame {
+                        Some(Ok(frame)) => {
+                            let deadline = self.home_budget.as_ref().and_then(|budget| budget.lock()
+                                .expect("Home byte bucket").consume(frame.encoded_len()).err());
+                            if let Some(deadline) = deadline {
+                                pending_frame = Some(frame);
+                                budget_wait.as_mut().reset(deadline);
+                                if !rate_limit_notified && self.protocol_version == ProtocolVersion::V2 {
+                                    self.write_frame(RelayToClientMsg::Status(Status::RateLimited)).await
+                                        .map_err(|error| e!(RunError::WriteFrame,error))?;
+                                    rate_limit_notified = true;
+                                }
+                            } else { self.handle_frame(Some(Ok(frame))).await?; }
+                        }
+                        other => self.handle_frame(other).await?,
+                    }
                     // reset the ping interval, we just received a message
                     ping_interval.reset();
                 }
@@ -649,6 +673,7 @@ mod tests {
             ping_tracker: PingTracker::default(),
             protocol_version: ProtocolVersion::V2,
             rate_limited: None,
+            home_budget: None,
             metrics,
         };
 

@@ -490,6 +490,9 @@ impl TlsConfig {
 pub struct Limits {
     /// Rate limits for incoming traffic from a client connection.
     pub client_rx: Option<ClientRateLimit>,
+    /// Shared authenticated-endpoint budget for encoded relay frames. Retained
+    /// across replacements and reconnects until its full burst has refilled.
+    pub home_rx: Option<HomeRateLimit>,
     /// Rate limit for accepting new connections. Unlimited if not set.
     ///
     /// Not currently implemented, setting this has no effect.
@@ -519,6 +522,27 @@ impl ClientRateLimit {
             bytes_per_second,
             max_burst_bytes: None,
         }
+    }
+}
+
+/// A bounded set of per-endpoint byte buckets, independent of socket lifetime.
+#[derive(Debug, Copy, Clone)]
+pub struct HomeRateLimit {
+    rate: ClientRateLimit,
+    max_homes: NonZeroU32,
+}
+
+impl HomeRateLimit {
+    /// Validates the rate and bounds retained endpoint states.
+    ///
+    /// # Errors
+    /// Returns an error if the bucket cannot refill at least one byte per tick.
+    pub fn new(
+        rate: ClientRateLimit,
+        max_homes: NonZeroU32,
+    ) -> Result<Self, streams::InvalidBucketConfig> {
+        streams::Bucket::from_config(Some(rate))?;
+        Ok(Self { rate, max_homes })
     }
 }
 
@@ -742,6 +766,7 @@ impl Server {
                 if let Some(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
+                builder = builder.home_rx_ratelimit(relay_config.limits.home_rx);
                 let (http_addr, tls_config) = match relay_config.tls {
                     Some(tls_config) => {
                         let server_tls_config = match tls_config.cert {
