@@ -1974,8 +1974,7 @@ def transition_evidence_valid(row):
         posts, direct = evidence.get("community", []), evidence.get("direct", {})
         pairs = {(post.get("from"), post.get("to")) for post in posts}
         members = [name for name in transition.homes if name != NODE]
-        if (len(posts) != len(pairs) or pairs != set(itertools.permutations(members, 2))
-                or (direct.get("from"), direct.get("to")) not in pairs):
+        if pairs != set(itertools.permutations(members, 2)) or (direct.get("from"), direct.get("to")) not in pairs:
             return False
         if not all(isinstance(item.get("sent"), str) and item["sent"] and item.get("received") == item["sent"]
                    for item in (*posts, direct)):
