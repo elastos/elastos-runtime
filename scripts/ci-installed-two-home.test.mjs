@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {assertCommunityMessage, assertReceivedDirect, assertSenderDelivery} from './ci-installed-two-home-journey.mjs';
+import {assertCommunityMessage, assertReceivedDirect, assertSenderDelivery, assertMessageOrigins} from './ci-installed-two-home-journey.mjs';
 
 test('Community proof rejects wrong text, wrong identity and the receiving Home own post', () => {
   const message = {message_id:'post:one', body:'fresh post', from_current_session:false};
@@ -27,4 +27,11 @@ test('Sender delivered requires both the settled API state and the exact message
   for (const state of ['pending','expired','received']) {
     assert.throws(() => assertSenderDelivery({...message,delivery_state:state}, '00:00'), assert.AssertionError);
   }
+});
+
+test('Home origins use the arrangement browser host and reject a mismatch', () => {
+  assertMessageOrigins(['http://localhost/','http://localhost/'], 'localhost');
+  assertMessageOrigins(['http://127.0.0.1/','http://127.0.0.1/'], '127.0.0.1');
+  assert.throws(()=>assertMessageOrigins(['http://localhost/','http://127.0.0.1/'], 'localhost'), assert.AssertionError);
+  assert.throws(()=>assertMessageOrigins(['http://localhost/'], undefined), assert.AssertionError);
 });

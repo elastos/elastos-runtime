@@ -18,12 +18,15 @@ export function assertSenderDelivery(message, detail) {
   const time = new Date(message.created_at * 1000).toISOString().slice(11, 16);
   assert.equal(detail, time, 'sender shows the message time, with neither Sending nor Expired');
 }
+export function assertMessageOrigins(bases, browserHost) {
+  assert(browserHost && bases.every(base => new URL(base).hostname === browserHost), 'Home origins match the network arrangement browser host');
+}
 async function run() {
   const require = createRequire(import.meta.url);
   const {chromium} = require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE || '../elastos/tools/browser-playwright-engine/node_modules/playwright');
-  const [baseA, baseB, evidence, control] = process.argv.slice(2);
+  const [baseA, baseB, evidence, control, browserHost] = process.argv.slice(2);
   const bases = [baseA, baseB];
-  assert(bases.every(base => new URL(base).hostname === 'localhost'), 'installed journey uses localhost for passkeys');
+  assertMessageOrigins(bases, browserHost);
   const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], browser_cross_home_http_requests:0};
   let sequence = 0;
   async function runtime(action) {
@@ -177,15 +180,17 @@ async function run() {
       pending=await senderMessage(offlineText);
       return pending?.delivery_state==='pending' && await detail(offlineText)==='Sending';
     });
+    const pendingObservations=[];
     for(let sample=0;sample<3;sample++) {
       pending=await senderMessage(offlineText);
       const value=await detail(offlineText);
       assert.equal(pending.delivery_state,'pending');
       assert.equal(value,'Sending');
       assert.throws(()=>assertSenderDelivery(pending,value),{name:'AssertionError'});
+      pendingObservations.push({api_state:pending.delivery_state,ui_detail:value});
       await sleep(500);
     }
-    result.negative_controls.sender_delivered={assertion_rejected:true,broken_input:'B stopped before send',api_state:'pending',ui_detail:'Sending',samples:3};
+    result.negative_controls.sender_delivered={assertion_rejected:true,broken_input:'B stopped before send',...pendingObservations.at(-1),samples:pendingObservations.length,observations:pendingObservations};
     result.results.offline_pending='passed';
     result.stage='restart_delivery';
     await runtime('start_b');
