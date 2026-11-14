@@ -18486,6 +18486,79 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn failed_carrier_start_releases_both_relay_ports_and_restarts_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cert, key) = iroh_relay::server::testing::self_signed_tls_pem();
+        let cert_path = dir.path().join("certificate.pem");
+        let key_path = dir.path().join("private-key.pem");
+        std::fs::write(&cert_path, cert).unwrap();
+        std::fs::write(&key_path, key).unwrap();
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let http = tcp.local_addr().unwrap();
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let discovery = udp.local_addr().unwrap();
+        let occupied = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let carrier_bind = occupied.local_addr().unwrap();
+        let config = toml::toml! {
+            gateway_public_publisher_bootstrap = true
+            carrier_relay_bind_addr = http.to_string()
+            carrier_relay_discovery_bind_addr = discovery.to_string()
+            carrier_relay_tls_cert = cert_path.to_str().unwrap()
+            carrier_relay_tls_key = key_path.to_str().unwrap()
+        };
+        std::fs::write(dir.path().join("config.toml"), config.to_string()).unwrap();
+        drop(tcp);
+        drop(udp);
+        let (sk, did) = elastos_identity::derive_did(&[230u8; 32]);
+        let result = start_carrier_node_with_network(
+            &sk,
+            &did,
+            dir.path().to_path_buf(),
+            None,
+            CarrierNetworkPolicy {
+                network: CarrierNodeNetwork::Isolated,
+                relay: None,
+            },
+            Some(carrier_bind),
+            &[],
+        )
+        .await;
+        assert!(result.is_err(), "occupied Carrier port must fail startup");
+        // Both service ports must be free when the error is returned. No sleep
+        // and no retry can conceal a detached startup task.
+        let tcp = std::net::TcpListener::bind(http).expect("HTTP released before error");
+        let udp = std::net::UdpSocket::bind(discovery).expect("QAD released before error");
+        drop(tcp);
+        drop(udp);
+        drop(occupied);
+        let restarted = start_carrier_node_with_network(
+            &sk,
+            &did,
+            dir.path().to_path_buf(),
+            None,
+            CarrierNetworkPolicy {
+                network: CarrierNodeNetwork::Isolated,
+                relay: None,
+            },
+            Some(carrier_bind),
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            restarted.relay_server.as_ref().unwrap().http_addr(),
+            Some(http)
+        );
+        assert_eq!(
+            restarted.relay_server.as_ref().unwrap().quic_addr(),
+            Some(discovery)
+        );
+        restarted.shutdown().await;
+        std::net::TcpListener::bind(http).expect("HTTP released after shutdown");
+        std::net::UdpSocket::bind(discovery).expect("QAD released after shutdown");
+    }
+
+    #[tokio::test]
     async fn test_community_hub_bootstraps_native_chat_discovery_without_publisher() {
         let hub_dir = tempfile::tempdir().unwrap();
         let (sk, did) = elastos_identity::derive_did(&[93u8; 32]);

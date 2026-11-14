@@ -262,7 +262,47 @@ pub(super) async fn configured_server(
         .context("carrier_relay_bind_addr must be a socket address")?
         .parse()
         .context("invalid carrier_relay_bind_addr")?;
+    // Discovery is a separate, explicit role. Its certificate belongs to the
+    // pinned relay origin; HTTP may stay behind the operator's TLS proxy.
+    let discovery = config.get("carrier_relay_discovery_bind_addr");
+    let cert = config.get("carrier_relay_tls_cert");
+    let key = config.get("carrier_relay_tls_key");
+    let quic = match (discovery, cert, key) {
+        (None, None, None) => None,
+        (Some(bind), Some(cert), Some(key)) => {
+            let bind: std::net::SocketAddr = bind
+                .as_str()
+                .context("carrier_relay_discovery_bind_addr must be a socket address")?
+                .parse()?;
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            let resolver = iroh_relay::server::reloading_resolver(
+                &provider,
+                cert.as_str()
+                    .context("carrier_relay_tls_cert must be a PEM path")?
+                    .into(),
+                key.as_str()
+                    .context("carrier_relay_tls_key must be a PEM path")?
+                    .into(),
+                iroh_relay::server::DEFAULT_CERT_RELOAD_INTERVAL,
+            )
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("Carrier discovery TLS configuration failed: {error:#}")
+            })?;
+            let tls = rustls::ServerConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()?
+                .with_no_client_auth()
+                .with_cert_resolver(resolver);
+            let mut quic = iroh_relay::server::QuicConfig::new(bind);
+            quic.server_config = Some(tls);
+            Some(quic)
+        }
+        _ => anyhow::bail!(
+            "Carrier discovery needs its bind address and both TLS certificate and key"
+        ),
+    };
     let mut config = iroh_relay::server::ServerConfig::default();
+    config.quic = quic;
     let mut relay = iroh_relay::server::RelayConfig::new(bind);
     apply_byte_limits(&mut relay, 8 * 1024 * 1024, 1024 * 1024);
     let admission = Arc::new(RelayAdmission::default());

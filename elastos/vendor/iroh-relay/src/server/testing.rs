@@ -85,3 +85,11 @@ pub fn server_config() -> ServerConfig {
         metrics_addr: None,
     }
 }
+
+/// Disposable PEM material for a named isolated fixture. The caller owns its
+/// private key and removes it when that fixture ends.
+pub fn self_signed_tls_pem() -> (String, String) {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])
+        .expect("valid test certificate");
+    (cert.cert.pem(), cert.signing_key.serialize_pem())
+}
