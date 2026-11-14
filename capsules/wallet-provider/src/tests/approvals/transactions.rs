@@ -234,11 +234,18 @@ fn validated_chain_outcome_projection_is_exact_and_idempotent() {
 #[test]
 fn transaction_intent_validates_payload_and_allows_external_handoff() {
     for connector in ["wallet-metamask", "wallet-walletconnect"] {
-        external_transaction_handoff_with_expiry(connector);
+        external_transaction_handoff_with_expiry(connector, false);
     }
 }
 
-fn external_transaction_handoff_with_expiry(connector: &str) {
+#[test]
+fn approved_connector_transaction_can_be_rejected_and_releases_its_slot() {
+    for connector in ["wallet-metamask", "wallet-walletconnect"] {
+        external_transaction_handoff_with_expiry(connector, true);
+    }
+}
+
+fn external_transaction_handoff_with_expiry(connector: &str, dismiss: bool) {
     let dir = tempfile::tempdir().unwrap();
     let mut provider = init_provider(dir.path());
     let principal_id = "person:local:alice";
@@ -403,6 +410,78 @@ fn external_transaction_handoff_with_expiry(connector: &str) {
                 .status,
             ApprovalStatus::Approved
         );
+    }
+    if dismiss {
+        let reject = || WalletProviderOperationV2::RejectApproval {
+            request_id: request_id.clone(),
+            reason: "Dismiss abandoned send".into(),
+        };
+        for context in [
+            wallet_context_in_session(principal_id, "wallet", "session:other"),
+            wallet_context("person:local:bob", "wallet"),
+            wallet_context(principal_id, "wallet-unisat"),
+        ] {
+            assert!(matches!(
+                invoke_wallet_with_context(&mut provider, &context, reject()),
+                Response::Error { .. }
+            ));
+        }
+        // Fill the quota from an actual approved handoff; rejecting one must permit
+        // a new request through the provider's real admission path.
+        for index in 1..MAX_ACTIVE_APPROVAL_REQUESTS_PER_PRINCIPAL {
+            let mut other = approved.clone();
+            other.request_id = format!("quota:{index}");
+            provider.store.approval_requests.push(other);
+        }
+        let next = || WalletProviderOperationV2::RequestApproval {
+            account_id: external_account_id.clone(),
+            chain_namespace: "eip155:20".into(),
+            intent: "transaction_intent".into(),
+            resource: "elastos://chain/esc-mainnet/broadcast_transaction".into(),
+            reason: "Another transaction".into(),
+            payload: transaction_intent_payload(external_address),
+            expires_at: now_ts().saturating_add(APPROVAL_REQUEST_TTL_SECS),
+        };
+        assert!(
+            matches!(invoke_wallet(&mut provider, principal_id, "system", next()),
+            Response::Error { ref code, .. } if code == "approval_limit_reached")
+        );
+        let response = invoke_wallet(&mut provider, principal_id, "wallet", reject());
+        assert!(matches!(response, Response::Ok { .. }), "{response:?}");
+        let rejected = provider
+            .store
+            .approval_requests
+            .iter()
+            .find(|r| r.request_id == request_id)
+            .unwrap();
+        assert_eq!(rejected.status, ApprovalStatus::Rejected);
+        assert!(!approval_authority_is_active(rejected, now_ts()));
+        assert!(matches!(
+            invoke_wallet(&mut provider, principal_id, "system", next()),
+            Response::Ok { .. }
+        ));
+        assert!(matches!(
+            invoke_wallet(&mut provider, principal_id, "wallet", reject()),
+            Response::Error { .. }
+        ));
+        assert!(matches!(
+            invoke_wallet(
+                &mut provider,
+                principal_id,
+                connector,
+                WalletProviderOperationV2::CompleteConnectorHandoff {
+                    request_id,
+                    payload_hash,
+                    signature: None,
+                    signature_type: None,
+                    public_key: None,
+                    signer: external_address.into(),
+                    transaction_hash: Some(format!("0x{}", "a".repeat(64))),
+                }
+            ),
+            Response::Error { .. }
+        ));
+        return;
     }
     let transaction_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let context = wallet_context(principal_id, connector);

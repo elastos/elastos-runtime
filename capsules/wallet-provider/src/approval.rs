@@ -409,8 +409,14 @@ impl WalletProvider {
                 "wallet approval request belongs to a different connector",
             );
         }
-        if request.status != ApprovalStatus::Pending {
-            return Response::error("invalid_request", "wallet approval request is not pending");
+        let approved_connector_transaction = request.status == ApprovalStatus::Approved
+            && request.intent == "transaction_intent"
+            && request.connector_id.is_some();
+        if request.status != ApprovalStatus::Pending && !approved_connector_transaction {
+            return Response::error(
+                "invalid_request",
+                "wallet approval request cannot be rejected",
+            );
         }
         request.status = ApprovalStatus::Rejected;
         request.resolved_at = Some(now);

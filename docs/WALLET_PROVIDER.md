@@ -271,8 +271,10 @@ approved, unfinished transaction visible with "Check your phone wallet". Opening
 it again supplies recovery instructions and keeps the send control disabled.
 A returned transaction hash is passed to Runtime once even if the account,
 network or expiry changed during the phone prompt. An approved WalletConnect
-transaction can complete once within 24 hours after expiry. An unfinished prompt
-then expires and releases its approval slot; other connectors keep their normal TTL.
+transaction can complete once within 24 hours after expiry, in the same Runtime
+session. Reject dismisses an approved connector transaction and releases its
+approval slot. It does not cancel a transaction on the phone wallet. An unfinished
+prompt expires after the grace period; other connectors keep their normal TTL.
 Runtime checks the returned
 transaction hash's format only. The phone wallet confirms the transaction;
 the hash alone does not prove that it matches the approved payload. A completion error keeps the
@@ -302,8 +304,13 @@ admits only the opaque connector's single-use relay ticket, caps waiting sockets
 rechecks the launch and owner on each heartbeat and outbound frame, authenticates
 relay TLS, and limits frames and sockets. It reaches only
 `relay.walletconnect.org` and `relay.walletconnect.com` on TLS port 443 through
-a local Exit backend and its separate adapter and relay sockets. Existing Browser
-backends keep first match. Runtime validates the merged configuration with
+a local Exit backend and its separate adapter and relay sockets. When Browser's
+local Exit helper starts successfully, Browser's existing backends keep first
+match and its wildcard backend carries the relay. When that helper stays stopped
+or fails to start, WalletConnect's own relay-only backend takes first match for
+these two TLS hosts. Retained Browser backends keep their order and matching for
+other traffic, including on older linux-amd64 Homes with a wildcard Browser config.
+Runtime validates the merged configuration with
 exit-provider's parser and keeps the existing Exit configuration if the addition
 is refused. Turn Off cancels handshakes and open sockets. Hosted Carrier Exit
 selection remains a separate integration.
