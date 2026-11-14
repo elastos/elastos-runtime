@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import runpy
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -158,12 +159,19 @@ def observe(home, started):
     }
 
 
-def run_arrangement(node_build, home_build, root, bind_host, settle):
-    """One node version against one Home version, with a fresh join after restart."""
+def run_arrangement(node_build, home_build, root, bind_host, settle, wedge=False):
+    """One node version against one Home version, with a fresh join after restart.
+
+    With ``wedge`` the arrangement instead stops one joined Home from reading
+    its gossip stream while its connection stays up, and then asks a fresh
+    Home to join. That is the field symptom this release gate is about, so the
+    arrangement reports what it saw rather than a verdict.
+    """
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     homes, record = {}, {
         "node_build": node_build.name,
         "home_build": home_build.name,
+        "shape": "wedge" if wedge else "restart",
         "node_runtime_sha256": node_build.runtime_sha256,
         "home_runtime_sha256": home_build.runtime_sha256,
         "observations": [],
@@ -205,9 +213,16 @@ def run_arrangement(node_build, home_build, root, bind_host, settle):
         time.sleep(settle)
         record["observations"] += [observe(homes[name], started) for name in ("a", "b")]
 
-        # The node restarts, as an updated node does; the Homes keep running.
-        record["process_cleanup"].append(homes["community"].stop())
-        homes["community"].start()
+        if wedge:
+            # SIGSTOP leaves the connection up and the peer unable to read, so
+            # the node keeps a neighbour that never takes another frame.
+            wedged = homes["b"].child.pid
+            os.kill(wedged, signal.SIGSTOP)
+            record["wedged_pid_stopped"] = True
+        else:
+            # The node restarts, as an updated node does; the Homes keep running.
+            record["process_cleanup"].append(homes["community"].stop())
+            homes["community"].start()
         fresh = Home("c", home_build, root / "c", bind_host)
         homes["c"] = fresh
         admit(fresh)
@@ -215,12 +230,17 @@ def run_arrangement(node_build, home_build, root, bind_host, settle):
         fresh.start()
         time.sleep(settle)
         record["observations"].append(observe(fresh, fresh_started))
-        record["observations"] += [observe(homes[name], started) for name in ("a", "b")]
-        record["status"] = (
-            "passed"
-            if all(row["joined"] and row["link_dead"] == 0 for row in record["observations"])
-            else "failed"
-        )
+        record["observations"] += [observe(homes[name], started) for name in ("a",)]
+        if wedge:
+            os.kill(wedged, signal.SIGCONT)
+            record["status"] = "observed"
+        else:
+            record["observations"] += [observe(homes["b"], started)]
+            record["status"] = (
+                "passed"
+                if all(row["joined"] and row["link_dead"] == 0 for row in record["observations"])
+                else "failed"
+            )
     except Exception as error:
         record["status"] = "failed"
         record["failure"] = f"{type(error).__name__}: {error}"[:300]
@@ -233,9 +253,13 @@ def run_arrangement(node_build, home_build, root, bind_host, settle):
                     {"status": "failed", "error": f"{type(error).__name__}: {error}"[:200]}
                 )
         if record.get("status") != "passed":
-            # The fixture tree goes away, so a failure keeps its own last words.
+            # The fixture tree goes away, so a result keeps its own last words.
             record["log_tails"] = {
-                home.name: home.lines("")[-12:] for home in homes.values()
+                home.name: [
+                    line for line in home.lines("")
+                    if any(needle in line for needle in (JOIN_LINE, DEAD_LINE, REBUILD_LINE))
+                ][-6:] or home.lines("")[-6:]
+                for home in homes.values()
             }
         shutil.rmtree(root, ignore_errors=True)
     return record
@@ -251,30 +275,36 @@ def main():
     parser.add_argument("--bind-host", default="127.0.0.1")
     parser.add_argument("--settle-seconds", type=int, default=DEFAULT_SETTLE_SECONDS)
     parser.add_argument("--receipt", type=Path)
+    parser.add_argument("--wedge", action="store_true",
+                        help="also probe a Home that stops reading its gossip stream")
     arguments = parser.parse_args()
     builds = {
         "released": Build("released", arguments.released_source, arguments.released_target),
         "develop": Build("develop", arguments.develop_source, arguments.develop_target),
     }
     receipt = {"platform": platform_key(), "arrangements": []}
-    for node in ("released", "develop"):
-        for home in ("released", "develop"):
-            root = arguments.fixture_root / f"node-{node}-homes-{home}"
-            receipt["arrangements"].append(
-                run_arrangement(
-                    builds[node], builds[home], root,
-                    arguments.bind_host, arguments.settle_seconds,
-                )
+    shapes = [(node, home, False) for node in ("released", "develop")
+              for home in ("released", "develop")]
+    if arguments.wedge:
+        shapes += [(node, node, True) for node in ("released", "develop")]
+    for node, home, wedge in shapes:
+        name = f"node-{node}-homes-{home}" + ("-wedge" if wedge else "")
+        receipt["arrangements"].append(
+            run_arrangement(
+                builds[node], builds[home], arguments.fixture_root / name,
+                arguments.bind_host, arguments.settle_seconds, wedge,
             )
+        )
     receipt["status"] = (
         "passed"
-        if all(row["status"] == "passed" for row in receipt["arrangements"])
+        if all(row["status"] in ("passed", "observed") for row in receipt["arrangements"])
         else "failed"
     )
     if arguments.receipt:
         arguments.receipt.write_text(json.dumps(receipt, indent=2) + "\n")
     for row in receipt["arrangements"]:
-        print(f"node={row['node_build']:<9} homes={row['home_build']:<9} {row['status']}"
+        print(f"node={row['node_build']:<9} homes={row['home_build']:<9} "
+              f"{row['shape']:<7} {row['status']}"
               + (f"  {row['failure']}" if "failure" in row else ""))
         for name, tail in row.get("log_tails", {}).items():
             for line in tail:
