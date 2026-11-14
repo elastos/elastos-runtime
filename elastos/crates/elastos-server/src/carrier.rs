@@ -20352,8 +20352,8 @@ pub(crate) mod tests {
         }
         assert_eq!(
             node.endpoint.address_lookup().unwrap().len(),
-            if carrier_mdns_enabled() { 3 } else { 2 },
-            "direct startup registers LAN mDNS alongside memory and gossip lookups unless opted out"
+            if carrier_mdns_enabled() { 2 } else { 1 },
+            "direct startup owns filtered memory and optional LAN mDNS lookups"
         );
         assert!(node.endpoint.addr().relay_urls().next().is_none());
         tokio::time::timeout(Duration::from_secs(5), shutdown_test_carrier_node(node))
