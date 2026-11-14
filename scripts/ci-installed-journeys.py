@@ -1869,6 +1869,11 @@ MESSAGE_NETWORKS = {
         "bind_host": None, "browser_host": "localhost", "ticket_transport": "Relay",
         "launches": {"community": 2, "a": 1, "b": 2},
     },
+    "relay-to-direct": {
+        "environment": {"ELASTOS_CARRIER_NETWORK": "relay", "ELASTOS_CARRIER_MDNS": "0"},
+        "bind_host": None, "browser_host": "localhost", "ticket_transport": "Relay",
+        "launches": {"community": 2, "a": 1, "b": 2},
+    },
 }
 
 
@@ -1918,7 +1923,8 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host"):
             and (network_arrangement == "same-host" or
                  bool(row.get("route_observations")) and
                  all(route in {"direct", "relay"} for route in row["route_observations"]) and
-                 (network_arrangement != "forced-relay" or set(row["route_observations"]) == {"relay"}))
+                 (network_arrangement != "forced-relay" or set(row["route_observations"]) == {"relay"}) and
+                 (network_arrangement != "relay-to-direct" or row["route_observations"][0] == "relay" and "direct" in row["route_observations"][1:]))
             and all(row.get("results", {}).get(name) == "passed" for name in (
                 "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
             and all(row.get("negative_controls", {}).get(name, {}).get("assertion_rejected") is True
@@ -1978,6 +1984,31 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         else:
             assert observed == [{settings["ticket_transport"]: owner[3]}], "ticket differs from configured Carrier address"
         record["direct_endpoint_observations"].append({"home": name, "ticket_addresses": observed})
+    def promote():
+        topology.promote(fixtures)
+        for name, peer in (("a", "b"), ("b", "a")):
+            owner = fixtures[name]
+            coordinates = json.loads(bounded_text(owner[1] / "gateway-runtime-coords.json"))
+            api = coordinates["api_url"].rstrip("/")
+            token = topology.http_json(name, api + "/api/auth/attach",
+                {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
+            cap = topology.http_json(name, api + "/api/capability/request",
+                {"resource": "elastos://peer/*", "action": "execute"}, token)["token"]
+            # Read the actual endpoint ID through this peer's local control.
+            peer_owner = fixtures[peer]
+            peer_coords = json.loads(bounded_text(peer_owner[1] / "gateway-runtime-coords.json"))
+            peer_api = peer_coords["api_url"].rstrip("/")
+            peer_token = topology.http_json(peer, peer_api + "/api/auth/attach",
+                {"secret": peer_coords["attach_secret"], "scope": "shell"})["token"]
+            ticket = topology.http_json(peer, peer_api + "/api/provider/peer/get_ticket", {}, peer_token)["data"]["ticket"]
+            decoded = json.loads(base64.b32decode(ticket.upper() + "=" * (-len(ticket) % 8)))
+            port = peer_owner[3].rsplit(":", 1)[1]
+            decoded["endpoints"][0]["addrs"] = [{"Ip": topology.router_ips[peer] + ":" + port}]
+            direct_ticket = base64.b32encode(json.dumps(decoded).encode()).decode().rstrip("=").lower()
+            response = topology.http_json(name, api + "/api/provider/peer/connect", {"ticket": direct_ticket}, token, capability=cap)
+            assert response["status"] == "ok", "Carrier refused the operator direct route hint"
+        record["promotion_setup"] = "opened UDP NAT mappings and supplied local operator route hints"
+
     def stop(name):
         child = children[name]
         with message_timeout(35):
@@ -1991,7 +2022,7 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
             subprocess.run([str(owner[1] / "bin/elastos"), "collaboration-config", *map(str, arguments)],
                            env=environment(owner), stdout=log, stderr=log, check=True, timeout=60)
     try:
-        with message_timeout(360):
+        with message_timeout(540):
             if network != "same-host":
                 topology = runpy.run_path(str(Path(__file__).with_name("ci-two-nat-network.py")))["MessageNetwork"](network)
                 relay_url = f"http://203.0.113.1:{free_port()}/"
@@ -2028,6 +2059,9 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
             browser_environment = dict(os.environ)
             if topology:
                 browser_environment["ELASTOS_TWO_HOME_NAMESPACES"] = json.dumps([topology.names[name] for name in ("a", "b")])
+                browser_environment["ELASTOS_TWO_HOME_FAILURE_CHECK"] = "1"
+                if network == "relay-to-direct":
+                    browser_environment["ELASTOS_TWO_HOME_PROMOTION"] = "1"
             with (root / "browser.private.log").open("wb") as log:
                 browser = subprocess.Popen(["node", "scripts/ci-installed-two-home-journey.mjs", *bases,
                                             str(evidence), str(control), settings["browser_host"]], env=browser_environment,
@@ -2041,8 +2075,19 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
                 if request.exists():
                     value = private_json(request)
                     if value["id"] > last:
-                        assert value["id"] == last + 1 and value["action"] in {"stop_b", "start_b"}
-                        stop("b") if value["action"] == "stop_b" else launch("b")
+                        assert value["id"] == last + 1 and value["action"] in {"stop_b", "start_b", "promote"}
+                        if value["action"] == "promote":
+                            assert network == "relay-to-direct"
+                            promote()
+                        elif value["action"] == "stop_b":
+                            stop("b")
+                            if topology:
+                                topology.block_paths(True)
+                                record["all_carrier_paths_blocked"] = True
+                        else:
+                            if topology:
+                                topology.block_paths(False)
+                            launch("b")
                         last = value["id"]
                         private_json(control / "response.json", {"id": last, "status": "passed"})
                 time.sleep(.1)
@@ -2065,6 +2110,12 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
                 assert record["route_observations"], "signed-DM selected-path observation is missing"
                 if network == "forced-relay":
                     assert set(record["route_observations"]) == {"relay"}, "forced relay used a direct path"
+                if network == "relay-to-direct":
+                    assert record["route_observations"][0] == "relay" and "direct" in record["route_observations"][1:], "Carrier did not promote the actual DM route"
+                assert record["results"].get("visible_failure") == "passed"
+                warnings = re.findall(r'direct delivery is unconfirmed; Home will retry', log)
+                assert 1 <= len(warnings) <= 2, "blocked interval warn log must be present and rate limited"
+                record["delivery_warning_count"] = len(warnings)
     except BaseException as error:
         record["failure"] = observer_failure("two_home_messages", error, [str(root), str(home)])
         raise

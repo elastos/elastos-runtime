@@ -163,7 +163,7 @@ async function run() {
     result.stage='direct_send';
     const sent=await api(ac,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text});
     result.observations.push({step:'direct_send',status:sent.status,text});
-    const path='/api/apps/chat-room/direct/conversations/'+encodeURIComponent(conversation.conversation_id)+'/messages';
+    const path='/api/apps/chat-room/direct/conversations/'+encodeURIComponent(conversation.conversation_id)+'/messages?retry_details=true';
     result.stage='direct_receive';
     let receivedMessages;
     const received=await until('B direct exact text',async()=> {
@@ -191,6 +191,7 @@ async function run() {
     assertSenderDelivery(settled,senderDetail);
     result.results.sender_delivered='passed';
     result.direct={text,recipient_state:received.delivery_state,sender_state:settled.delivery_state,sender_detail:senderDetail};
+    if (process.env.ELASTOS_TWO_HOME_PROMOTION === '1') await runtime('promote');
     result.stage='offline_pending';
     // Close B's projections before stopping its owned Runtime; retain only its passkey context.
     for(const page of b.context.pages()) if(page!==b.page) await page.close();
@@ -215,6 +216,21 @@ async function run() {
     }
     result.negative_controls.sender_delivered={assertion_rejected:true,broken_input:'B stopped before send',...pendingObservations.at(-1),samples:pendingObservations.length,observations:pendingObservations};
     result.results.offline_pending='passed';
+    if (process.env.ELASTOS_TWO_HOME_FAILURE_CHECK === '1') {
+      result.stage='visible_failure';
+      const started=Date.now();
+      const reason=await until('bounded visible delivery failure',async()=>{
+        const message=await senderMessage(offlineText);
+        return message?.delivery_issue==='peer_unreachable' && await detail(offlineText)==='Unconfirmed' && message;
+      },85000);
+      const row=direct.locator('#message-list li.message.self-message').filter({has:direct.locator('.message-body').filter({hasText:offlineText})});
+      assert.match(await row.innerText(),/Your Home cannot reach this contact/);
+      await row.getByRole('button',{name:'Retry',exact:true}).click();
+      await until('manual retry returns',async()=>await row.getByRole('button',{name:'Retry',exact:true}).isEnabled(),20000);
+      assert.equal((await senderMessage(offlineText)).message_id,reason.message_id);
+      result.visible_failure={reason:reason.delivery_issue,ui_detail:await detail(offlineText),elapsed_ms:Date.now()-started,retry_same_message:true};
+      result.results.visible_failure='passed';
+    }
     result.stage='restart_delivery';
     await runtime('start_b');
     await b.page.reload({waitUntil:'domcontentloaded'});

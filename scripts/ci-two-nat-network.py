@@ -21,7 +21,7 @@ def command(*args):
 
 class MessageNetwork:
     def __init__(self, arrangement):
-        if arrangement not in ("two-nat", "forced-relay") or os.geteuid() != 0:
+        if arrangement not in ("two-nat", "forced-relay", "relay-to-direct") or os.geteuid() != 0:
             raise RuntimeError("two-NAT journey requires an isolated Linux user/network namespace")
         self.names = {name: "carrier-" + secrets.token_hex(4) for name in ("nat-a", "nat-b", "a", "b")}
         self.created = []
@@ -53,7 +53,7 @@ class MessageNetwork:
                 self.run(nat, "iptables", "-P", "FORWARD", "DROP")
                 self.run(nat, "iptables", "-P", "INPUT", "DROP")
                 self.run(nat, "iptables", "-A", "INPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
-                if arrangement == "forced-relay":
+                if arrangement in ("forced-relay", "relay-to-direct"):
                     self.run(nat, "iptables", "-A", "FORWARD", "-p", "udp", "-j", "DROP")
                 self.run(nat, "iptables", "-A", "FORWARD", "-i", "lan", "-o", "wan0", "-j", "ACCEPT")
                 self.run(nat, "iptables", "-A", "FORWARD", "-i", "wan0", "-o", "lan", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
@@ -73,10 +73,32 @@ class MessageNetwork:
     def run(self, name, *args):
         return command(*self.prefix(name), *args)
 
-    def http_json(self, name, url, body=None, token=None, health=False):
+    def block_paths(self, blocked):
+        # This rule affects Carrier across the owned NAT only. The browser and
+        # gateway share loopback and stay available throughout the failure.
+        for side in ("a", "b"):
+            self.run("nat-" + side, "iptables", "-I" if blocked else "-D", "FORWARD",
+                     *( ["1"] if blocked else [] ), "-j", "DROP")
+
+    def promote(self, fixtures):
+        # Simulate a router opening a public UDP mapping after relay fallback.
+        # Carrier receives operator-owned route hints; the apps still use DIDs.
+        for side in ("a", "b"):
+            port = fixtures[side][3].rsplit(":", 1)[1]
+            nat = "nat-" + side
+            self.run(nat, "iptables", "-D", "FORWARD", "-p", "udp", "-j", "DROP")
+            self.run(nat, "iptables", "-I", "FORWARD", "1", "-p", "udp", "-d", self.home_ips[side],
+                     "--dport", port, "-j", "ACCEPT")
+            self.run(nat, "iptables", "-t", "nat", "-A", "PREROUTING", "-i", "wan0", "-p", "udp",
+                     "--dport", port, "-j", "DNAT", "--to-destination", fixtures[side][3])
+            self.run(nat, "iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-o", "wan0", "-p", "udp",
+                     "-s", self.home_ips[side], "--sport", port, "-j", "SNAT",
+                     "--to-source", self.router_ips[side] + ":" + port)
+
+    def http_json(self, name, url, body=None, token=None, health=False, capability=None):
         # Secret input stays on stdin. The HTTP socket belongs to this Home's
         # network namespace, like the browser's socket, with no TCP forwards.
-        value = {"url": url, "body": body, "token": token, "health": health}
+        value = {"url": url, "body": body, "token": token, "health": health, "capability": capability}
         result = subprocess.run([*self.prefix(name), sys.executable, str(Path(__file__).resolve()), "--http"],
                                 input=json.dumps(value), capture_output=True, text=True, check=True,
                                 timeout=3 if health else 65)
@@ -94,6 +116,8 @@ def namespace_http():
         raise RuntimeError("fixture HTTP input exceeds its bound")
     value = json.loads(encoded)
     headers = {"Content-Type": "application/json"}
+    if value.get("capability"):
+        headers["X-Capability-Token"] = value["capability"]
     if value["token"]:
         headers["Authorization"] = "Bearer " + value["token"]
     body = json.dumps(value["body"]).encode() if value["body"] is not None else None
