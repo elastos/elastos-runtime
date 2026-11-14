@@ -442,6 +442,19 @@ pub(in crate::api::gateway) async fn expire_admissions_for_test(state: &GatewayS
         *expiry = 0;
     }
 }
+#[cfg(test)]
+pub(in crate::api::gateway) async fn admission_pending_for_test(
+    state: &GatewayState,
+    ticket: &str,
+) -> bool {
+    state
+        .walletconnect
+        .inner
+        .lock()
+        .await
+        .admissions
+        .contains_key(ticket)
+}
 pub(super) async fn admission(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
     let result = async {
         let authority = connector_authority(&state, &headers)?;

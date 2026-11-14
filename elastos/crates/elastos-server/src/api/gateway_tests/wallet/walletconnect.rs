@@ -497,6 +497,7 @@ async fn walletconnect_refused_remote_exit_closes_its_reservation() {
 #[tokio::test]
 async fn walletconnect_webkit_fetch_metadata_upgrades_only_the_exact_ticketed_socket() {
     let f = Fixture::new().await;
+    f.allow().await;
     for dest in ["websocket", "empty", "document", "iframe", "script"] {
         for origin in ["null", "https://other.example"] {
             let mut request = format!("ws://{}/api/apps/wallet-walletconnect/relay", f.addr)
@@ -514,9 +515,20 @@ async fn walletconnect_webkit_fetch_metadata_upgrades_only_the_exact_ticketed_so
             if origin == "null" && matches!(dest, "websocket" | "empty") {
                 let (mut socket, response) = result.expect("WebKit connection upgrades");
                 assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+                let (status, admission) = f
+                    .route(
+                        &f.connector,
+                        "/api/apps/wallet-walletconnect/relay-admission",
+                        Some(json!({})),
+                    )
+                    .await;
+                assert_eq!(status, StatusCode::OK);
+                let ticket = admission["token"].as_str().unwrap();
+                gateway_walletconnect::expire_admissions_for_test(&f.state).await;
+                assert!(gateway_walletconnect::admission_pending_for_test(&f.state, ticket).await);
                 socket
                     .send(Message::Text(
-                        json!({"token":"refused","url":RELAY}).to_string(),
+                        json!({"token":ticket,"relay":RELAY}).to_string(),
                     ))
                     .await
                     .unwrap();
@@ -524,6 +536,11 @@ async fn walletconnect_webkit_fetch_metadata_upgrades_only_the_exact_ticketed_so
                     socket.next().await,
                     Some(Ok(Message::Close(_))) | None
                 ));
+                assert!(
+                    !gateway_walletconnect::admission_pending_for_test(&f.state, ticket).await,
+                    "the real RelayHello reached and consumed its expired single-use ticket"
+                );
+                assert_eq!(f.calls.load(Ordering::SeqCst), 0);
             } else {
                 assert!(
                     matches!(result, Err(tokio_tungstenite::tungstenite::Error::Http(ref response)) if response.status() == StatusCode::FORBIDDEN),
