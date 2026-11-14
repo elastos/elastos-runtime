@@ -1103,18 +1103,6 @@ mod tests {
     }
 
     #[test]
-    fn services_installed_legacy_config_parses_without_accepting_unknown_schema() {
-        let mut config = services_exit_config_for_test();
-        config["schema"] = json!("elastos.browser.local-exit.config/v1");
-        assert!(
-            parse_config(config.clone()).is_ok(),
-            "released Services config must parse"
-        );
-        config["schema"] = json!("elastos.exit.unrecognized/v1");
-        assert!(parse_config(config).is_err());
-    }
-
-    #[test]
     fn refresh_config_preserves_live_stream_quota_and_close_owner() {
         let mut provider = ExitProvider::new();
         let config = services_exit_config_for_test();
@@ -1458,85 +1446,6 @@ mod tests {
         .to_string();
 
         assert!(err.contains("unknown field"));
-    }
-
-    #[test]
-    fn backend_config_rejects_invalid_adapter_ipc() {
-        let mut provider = ExitProvider::new();
-        assert_eq!(
-            error_code(provider.init(json!({
-                "backends": [{
-                    "id": "bad-http-ipc",
-                    "kind": "http_fetch",
-                    "allowed_hosts": ["glidefinance.io"],
-                    "adapter_ipc": {
-                        "kind": "unix_socket",
-                        "path": "/tmp/elastos-browser-stream.sock"
-                    }
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "backends": [{
-                    "id": "bad-http-relay",
-                    "kind": "http_fetch",
-                    "allowed_hosts": ["glidefinance.io"],
-                    "relay_ipc": {
-                        "kind": "unix_socket",
-                        "path": "/tmp/elastos-exit-relay.sock"
-                    }
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "backends": [{
-                    "id": "bad-relay-without-adapter",
-                    "kind": "stream_relay",
-                    "allowed_hosts": ["glidefinance.io"],
-                    "relay_ipc": {
-                        "kind": "unix_socket",
-                        "path": "/tmp/elastos-exit-relay.sock"
-                    }
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "backends": [{
-                    "id": "bad-shared-ipc",
-                    "kind": "stream_relay",
-                    "allowed_hosts": ["glidefinance.io"],
-                    "adapter_ipc": {
-                        "kind": "unix_socket",
-                        "path": "/tmp/elastos-browser-stream.sock"
-                    },
-                    "relay_ipc": {
-                        "kind": "unix_socket",
-                        "path": "/tmp/elastos-browser-stream.sock"
-                    }
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "backends": [{
-                    "id": "bad-relative-ipc",
-                    "kind": "stream_relay",
-                    "allowed_hosts": ["glidefinance.io"],
-                    "adapter_ipc": {
-                        "kind": "unix_socket",
-                        "path": "relative.sock"
-                    }
-                }]
-            }))),
-            "invalid_config"
-        );
     }
 
     #[test]
@@ -2267,113 +2176,6 @@ mod tests {
     }
 
     #[test]
-    fn remote_carrier_exit_config_rejects_missing_permission_and_hidden_fields() {
-        let mut provider = ExitProvider::new();
-        assert_eq!(
-            error_code(provider.init(json!({
-                "remote_carrier_exits": [{
-                    "id": "server-exit",
-                    "peer_did": "did:elastos:server",
-                    "allowed_principals": ["person:local:alice"],
-                    "allowed_hosts": ["example.com"]
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "remote_carrier_exits": [{
-                    "id": "server-exit",
-                    "grant_id": "operator-grant:server-exit:alice",
-                    "peer_did": "did:elastos:server",
-                    "allowed_hosts": ["example.com"]
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "remote_carrier_exits": [{
-                    "id": "server-exit",
-                    "grant_id": "operator-grant:server-exit:alice",
-                    "peer_did": "did:elastos:server",
-                    "allowed_principals": ["person:local:alice"],
-                    "allowed_hosts": ["example.com"]
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "remote_carrier_exits": [{
-                    "id": "server-exit",
-                    "grant_id": "operator-grant:server-exit:alice",
-                    "peer_did": "did:elastos:server",
-                    "connect_ticket": "carrier-ticket-server-exit-alice",
-                    "allowed_principals": ["person:local:alice"],
-                    "allowed_hosts": ["example.com"],
-                    "raw_socket": true
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "remote_carrier_exits": [{
-                    "id": "server-exit",
-                    "grant_id": "operator-grant:server-exit:alice",
-                    "peer_did": "did:elastos:server",
-                    "allowed_principals": ["person:local:alice"],
-                    "allowed_hosts": ["example.com"],
-                    "connect_ticket": " ticket-with-padding"
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "remote_carrier_exits": [{
-                    "id": "server-exit",
-                    "grant_id": "operator-grant:server-exit:alice",
-                    "peer_did": "did:elastos:server",
-                    "allowed_principals": ["person:local:alice"],
-                    "allowed_hosts": ["example.com"],
-                    "max_active_streams": 2,
-                    "max_active_streams_per_principal": 0
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "remote_carrier_exits": [{
-                    "id": "server-exit",
-                    "grant_id": "operator-grant:server-exit:alice",
-                    "peer_did": "did:elastos:server",
-                    "allowed_principals": ["person:local:alice"],
-                    "allowed_hosts": ["example.com"],
-                    "max_active_streams": 2,
-                    "max_active_streams_per_principal": 3
-                }]
-            }))),
-            "invalid_config"
-        );
-        assert_eq!(
-            error_code(provider.init(json!({
-                "remote_carrier_exits": [{
-                    "id": "server-exit",
-                    "grant_id": "operator-grant:server-exit:alice",
-                    "peer_did": "did:elastos:server",
-                    "allowed_principals": ["person:local:alice"],
-                    "allowed_hosts": ["example.com"],
-                    "expires_at": 0
-                }]
-            }))),
-            "invalid_config"
-        );
-    }
-
-    #[test]
     fn stream_backend_can_limit_schemes_and_ports() {
         let mut provider = ExitProvider::new();
         let init = provider.init(json!({
@@ -2403,20 +2205,5 @@ mod tests {
             error_code(provider.open_stream("tls://example.com:8443", None, None)),
             "exit_policy_blocked"
         );
-    }
-
-    #[test]
-    fn backend_config_rejects_hidden_fields() {
-        let mut provider = ExitProvider::new();
-        let response = provider.init(json!({
-            "backends": [{
-                "id": "bad",
-                "kind": "http_fetch",
-                "allowed_hosts": ["example.com"],
-                "raw_socket": true
-            }]
-        }));
-
-        assert_eq!(error_code(response), "invalid_config");
     }
 }

@@ -622,3 +622,147 @@ pub fn default_max_active_remote_streams() -> u64 {
 pub fn default_remote_carrier_service() -> String {
     DEFAULT_REMOTE_CARRIER_EXIT_SERVICE.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn services_installed_legacy_config_parses_without_accepting_unknown_schema() {
+        let mut config = json!({"remote_carrier_exits":[{
+            "id":"services-bob", "grant_id":"services-grant-bob", "peer_did":"did:elastos:bob",
+            "connect_ticket":"private-ticket", "allowed_principals":["person:alice"],
+            "allowed_hosts":["*"], "allowed_schemes":["tcp","tls"], "allowed_ports":[80,443],
+            "max_active_streams":1, "max_active_streams_per_principal":1
+        }]});
+        config["schema"] = json!("elastos.browser.local-exit.config/v1");
+        assert!(
+            parse_config(config.clone()).is_ok(),
+            "released Services config must parse"
+        );
+        config["schema"] = json!("elastos.exit.unrecognized/v1");
+        assert!(parse_config(config).is_err());
+    }
+
+    #[test]
+    fn backend_config_rejects_invalid_adapter_ipc() {
+        assert!(parse_config(json!({
+            "backends": [{
+                "id": "bad-http-ipc",
+                "kind": "http_fetch",
+                "allowed_hosts": ["glidefinance.io"],
+                "adapter_ipc": {
+                    "kind": "unix_socket",
+                    "path": "/tmp/elastos-browser-stream.sock"
+                }
+            }]
+        }))
+        .is_err());
+        assert!(parse_config(json!({
+            "backends": [{
+                "id": "bad-http-relay",
+                "kind": "http_fetch",
+                "allowed_hosts": ["glidefinance.io"],
+                "relay_ipc": {
+                    "kind": "unix_socket",
+                    "path": "/tmp/elastos-exit-relay.sock"
+                }
+            }]
+        }))
+        .is_err());
+        assert!(parse_config(json!({
+            "backends": [{
+                "id": "bad-relay-without-adapter",
+                "kind": "stream_relay",
+                "allowed_hosts": ["glidefinance.io"],
+                "relay_ipc": {
+                    "kind": "unix_socket",
+                    "path": "/tmp/elastos-exit-relay.sock"
+                }
+            }]
+        }))
+        .is_err());
+        assert!(parse_config(json!({
+            "backends": [{
+                "id": "bad-shared-ipc",
+                "kind": "stream_relay",
+                "allowed_hosts": ["glidefinance.io"],
+                "adapter_ipc": {
+                    "kind": "unix_socket",
+                    "path": "/tmp/elastos-browser-stream.sock"
+                },
+                "relay_ipc": {
+                    "kind": "unix_socket",
+                    "path": "/tmp/elastos-browser-stream.sock"
+                }
+            }]
+        }))
+        .is_err());
+        assert!(parse_config(json!({
+            "backends": [{
+                "id": "bad-relative-ipc",
+                "kind": "stream_relay",
+                "allowed_hosts": ["glidefinance.io"],
+                "adapter_ipc": {
+                    "kind": "unix_socket",
+                    "path": "relative.sock"
+                }
+            }]
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn remote_carrier_exit_config_rejects_missing_permission_and_hidden_fields() {
+        let valid = json!({"remote_carrier_exits": [{
+            "id": "server-exit",
+            "grant_id": "operator-grant:server-exit:alice",
+            "peer_did": "did:elastos:server",
+            "connect_ticket": "carrier-ticket-server-exit-alice",
+            "allowed_principals": ["person:local:alice"],
+            "allowed_hosts": ["example.com"],
+            "max_active_streams": 2
+        }]});
+        assert!(parse_config(valid.clone()).is_ok());
+        for field in ["grant_id", "allowed_principals", "connect_ticket"] {
+            let mut config = valid.clone();
+            config["remote_carrier_exits"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert!(parse_config(config).unwrap_err().contains(field));
+        }
+        for (field, value, expected) in [
+            ("raw_socket", json!(true), "unknown field"),
+            ("connect_ticket", json!(" ticket-with-padding"), "padded"),
+            (
+                "max_active_streams_per_principal",
+                json!(0),
+                "max_active_streams_per_principal",
+            ),
+            (
+                "max_active_streams_per_principal",
+                json!(3),
+                "max_active_streams_per_principal",
+            ),
+            ("expires_at", json!(0), "expires_at"),
+        ] {
+            let mut config = valid.clone();
+            config["remote_carrier_exits"][0][field] = value;
+            assert!(parse_config(config).unwrap_err().contains(expected));
+        }
+    }
+
+    #[test]
+    fn backend_config_rejects_hidden_fields() {
+        let response = parse_config(json!({
+            "backends": [{
+                "id": "bad",
+                "kind": "http_fetch",
+                "allowed_hosts": ["example.com"],
+                "raw_socket": true
+            }]
+        }));
+        assert!(response.unwrap_err().contains("unknown field"));
+    }
+}
