@@ -9,3 +9,5 @@ third-party/selkies/patches/*.patch -whitespace
 scripts/build/crosvm-lifecycle-fds.patch whitespace=-blank-at-eol
 # Minified upstream template literals retain meaningful whitespace in the bundle.
 capsules/wallet-walletconnect/vendor/reown-appkit.js -whitespace linguist-generated=true
+# This file keeps upstream licence bytes verbatim.
+capsules/wallet-walletconnect/vendor/LICENSES.txt -whitespace conflict-marker-size=32
