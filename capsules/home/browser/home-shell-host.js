@@ -55,7 +55,7 @@ import {
   EXTERNAL_LINK_REQUEST_SCHEMA,
   HOME_OPEN_EXTERNAL_TYPE,
   MAX_EXTERNAL_LINK_LENGTH,
-} from "./home-external-link.js?v=home-links-20261101a";
+} from "./home-external-link.js?v=download-progress-20261112";
 
 const SUMMARY_REFRESH_DEBOUNCE_MS = 150;
 const SUMMARY_REFRESH_RETRY_MS = 700;

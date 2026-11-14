@@ -1471,7 +1471,11 @@ test("the open model menu follows each read, keeps focus on its action, and clos
       appendChild(child) { this.append(child); return child; },
       replaceChildren(...nodes) { this.children = []; this.append(...nodes); },
       all() { return this.children.flatMap(child => [child, ...child.all()]); },
-      querySelector(selector) { return this.all().find(child => child.className.split(" ").includes(selector.slice(1))) ?? null; },
+      querySelector(selector) {
+        const direct = selector.startsWith(":scope > ");
+        const className = (direct ? selector.slice(9) : selector).slice(1);
+        return (direct ? this.children : this.all()).find(child => child.className.split(" ").includes(className)) ?? null;
+      },
       contains(other) { return other === this || this.all().includes(other); },
       closest(selector) { for (let n = this; n; n = n.parent) if (selector === `#${n.id}`) return n; return null; },
       focus() { document.activeElement = this; },
@@ -1489,6 +1493,7 @@ test("the open model menu follows each read, keeps focus on its action, and clos
     querySelector: selector => ({ "[data-model-menu-list]": list, "#agent-harness": room })[selector] ?? null,
     querySelectorAll: () => [], getElementById: id => body.all().find(node => node.id === id) ?? null,
     addEventListener() {}, removeEventListener() {} };
+  body.ownerDocument = globalThis.document;
   const cid = `bafybei${"d".repeat(51)}a`;
   const localId = `model:${"d".repeat(64)}`;
   const text = { operation: "text", input_modalities: ["text/plain"], output_modalities: ["text/plain"] };

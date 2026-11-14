@@ -1,4 +1,4 @@
-import { sharedModelOffers, REMOTE_MODEL_ID } from "./model-services.js";
+import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from "./model-services.js?v=download-progress-20261112";
 
 (function () {
   const params = new URLSearchParams(window.location.search);
@@ -65,7 +65,6 @@ import { sharedModelOffers, REMOTE_MODEL_ID } from "./model-services.js";
 
   // Every model row and detail, local or shared, uses the content icon.
   const MODEL_ICON = { icon: "document", gradient: "gradient-green", iconRoute: "" };
-  const MODEL_FIT_LABELS = { fits: "Fits this device", insufficient: "Needs more memory", unavailable: "Memory not checked" };
 
   const icons = {
     package: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16.5 9.4l-9-5.19M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>',
@@ -894,24 +893,6 @@ import { sharedModelOffers, REMOTE_MODEL_ID } from "./model-services.js";
     els.installedBadge.classList.toggle("hidden", count === 0);
   }
 
-  function modelSizeLabel(bytes) {
-    const units = ["B", "KB", "MB", "GB", "TB"];
-    const rank = bytes ? Math.min(4, Math.floor(Math.log(bytes) / Math.log(1000))) : 0;
-    return `${(bytes / 1000 ** rank).toLocaleString(undefined, { maximumFractionDigits: rank ? 2 : 0 })} ${units[rank]}`;
-  }
-
-  // Only a Runtime-verified signer gives a publisher line; there is no other.
-  function detailPublisher(app) {
-    return app.developer ? "Verified publisher" : "";
-  }
-
-  // A model row shows its download size and whether it fits this device.
-  function rowSubtitle(app) {
-    if (!app.modelCid) return detailPublisher(app);
-    const fit = Object.hasOwn(MODEL_FIT_LABELS, app.modelFit) ? MODEL_FIT_LABELS[app.modelFit] : "";
-    return [modelSizeLabel(app.contentBytes), fit].filter(Boolean).join(" · ");
-  }
-
   function renderAppRow(app) {
     return `
       <article class="store-row" data-action="${app.modelCid ? "model-detail" : "detail"}" data-app="${escapeAttr(app.id)}" tabindex="0">
@@ -1088,6 +1069,9 @@ import { sharedModelOffers, REMOTE_MODEL_ID } from "./model-services.js";
         buttonClass: "modal-btn secondary", primaryButtonClass: "modal-btn primary", cid: app.modelCid, compact: true, itemMarker,
         onReadyOpen: openReadyModelInAssistant,
         actionsRoot: els.detailContent.querySelector("[data-model-actions]"),
+        // The dialog holds the download announcement: it stays in the modal a
+        // screen reader reads, and a model detail keeps the app detail's sections.
+        announceRoot: els.detailModal,
       });
       detailModels.setVisible(true);
     }

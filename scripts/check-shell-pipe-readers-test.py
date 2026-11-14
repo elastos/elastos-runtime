@@ -2,6 +2,7 @@
 """Exercise the real source guard against isolated repository fixtures."""
 
 from pathlib import Path
+import os
 import shutil
 import shlex
 import subprocess
@@ -14,8 +15,29 @@ GUARD = Path(__file__).with_name("check-shell-pipe-readers.py")
 PIPE = " | "
 
 
+def fixture_environment(cwd):
+    names = subprocess.check_output(
+        ["git", "rev-parse", "--local-env-vars"], cwd=cwd, text=True, timeout=10,
+    ).splitlines()
+    environment = {key: value for key, value in os.environ.items() if key not in names}
+    environment.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+    return environment
+
+
 class PipeReadersTest(unittest.TestCase):
-    def check_source(self, relative, source):
+    def test_rejects_untracked_guard(self):
+        with tempfile.TemporaryDirectory(prefix="pipe-readers-test-") as scratch:
+            root = Path(scratch)
+            (root / "scripts").mkdir()
+            guard = root / "scripts" / GUARD.name
+            shutil.copyfile(GUARD, guard)
+            environment = fixture_environment(root)
+            subprocess.run(["git", "init", "-q"], cwd=root, env=environment, check=True, timeout=10)
+            result = subprocess.run([sys.executable, str(guard)], env=environment, capture_output=True, text=True, timeout=10)
+            self.assertNotIn("Shell pipeline readers consume full input", result.stdout)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def check_source(self, relative, source, untracked=None):
         with tempfile.TemporaryDirectory(prefix="pipe-readers-test-") as scratch:
             root = Path(scratch)
             (root / "scripts").mkdir()
@@ -24,20 +46,29 @@ class PipeReadersTest(unittest.TestCase):
             shutil.copyfile(GUARD, guard)
             fixture = root / relative
             fixture.parent.mkdir(parents=True, exist_ok=True)
-            if isinstance(source, bytes):
-                fixture.write_bytes(source)
-            else:
-                fixture.write_text(source)
-            return subprocess.run([sys.executable, str(guard)], capture_output=True, text=True, timeout=10)
+            fixture.write_text(source)
+            environment = fixture_environment(root)
+            subprocess.run(["git", "init", "-q"], cwd=root, env=environment, check=True, timeout=10)
+            subprocess.run(["git", "add", "scripts", ".githooks"], cwd=root, env=environment, check=True, timeout=10)
+            for name, content in (untracked or {}).items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            return subprocess.run([sys.executable, str(guard)], env=environment, capture_output=True, text=True, timeout=10)
 
-    def test_generated_node_dependencies_are_outside_the_project_source_scan(self):
-        for relative, source in (
-            ("scripts/walletconnect/node_modules/@esbuild/linux-x64/bin/esbuild", b"\x7fELF\x00\xa0"),
-            ("scripts/tool/node_modules/dependency/setup.sh", "set -euo pipefail\nproducer" + PIPE + "grep -q match\n"),
+    def test_only_checks_tracked_files(self):
+        forbidden = "set -euo pipefail\nproducer" + PIPE + "grep -q match\n"
+        for untracked in (
+            {"scripts/stray": b"\x7fELF\xa0"},
+            {".gitignore": b"scripts/ignored\n", "scripts/ignored": b"\x7fELF\xa0"},
+            {"scripts/untracked.sh": forbidden.encode()},
         ):
-            with self.subTest(relative=relative):
-                result = self.check_source(relative, source)
+            with self.subTest(files=list(untracked)):
+                result = self.check_source("scripts/tracked.sh", "set -euo pipefail\n", untracked)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                result = self.check_source("scripts/tracked.sh", forbidden, untracked)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("scripts/tracked.sh:2:", result.stderr)
 
     def test_rejects_early_readers(self):
         readers = (

@@ -29,7 +29,7 @@ import {
   isAuthoritySessionError,
   isMissingRuntimePageError,
   requestedDisplayMode,
-} from "./browser-status.js?v=browser-20261110b";
+} from "./browser-status.js?v=download-progress-20261112";
 import { createBrowserRemoteDisplay } from "./browser-remote-display.js?v=browser-20261101d";
 import { engineChoiceHidden, renderServiceSelection } from "./browser-service-selection.js?v=browser-20261015a";
 

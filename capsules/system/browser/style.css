@@ -418,6 +418,14 @@ code {
   line-height: 1.35;
 }
 
+#runtime-update-apply {
+  margin-top: 12px;
+}
+
+#runtime-update-progress {
+  margin-top: 10px;
+}
+
 .runtime-update-fields {
   margin: 12px 0 0;
 }
@@ -437,6 +445,7 @@ code {
 .runtime-update-fields dd {
   margin: 0;
   font-size: 12px;
+  text-align: right;
   overflow-wrap: anywhere;
 }
 

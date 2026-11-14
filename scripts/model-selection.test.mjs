@@ -69,3 +69,12 @@ test("a running preparation reports whole-percent download progress until the mo
   assert.equal(downloadingModel(catalogModels(catalog([cancelling]))), null);
   assert.equal(downloadingModel(catalogModels(catalog([row]))), null);
 });
+
+test("Assistant keeps an unknown-size model preparation visible without a percentage", () => {
+  const preparing = { ...row, model_runtime: { admitted: false, dispatch_ready: false, offer_id: null,
+    preparation: { state: "preparing", cancel_requested: false, completed_bytes: 1500, total_bytes: 0 } } };
+  const models = catalogModels(catalog([preparing]));
+  assert.equal(downloadingModel(models), models[0]);
+  assert.equal(models[0].downloadPercent, null);
+  assert.deepEqual(models[0].download, { completed: 1500, total: 0 });
+});

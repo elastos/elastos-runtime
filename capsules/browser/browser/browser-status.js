@@ -1,3 +1,4 @@
+import { formatBytes } from "./byte-format.js?v=download-progress-20261112";
 export const BROWSER_ONE_WINDOW_MESSAGE =
   "Only one Browser window can be open at a time. Close the other one first.";
 
@@ -78,9 +79,9 @@ export function friendlyOpenError(error) {
     Number.isSafeInteger(refusal.required_bytes) && Number.isSafeInteger(refusal.available_bytes) &&
     refusal.available_bytes >= 0 && refusal.available_bytes < refusal.required_bytes
   ) {
-    const required = (Math.ceil(refusal.required_bytes / 100_000_000) / 10).toFixed(1);
-    const available = (Math.floor(refusal.available_bytes / 100_000_000) / 10).toFixed(1);
-    return `Browser needs ${required} GB free on this computer to open; ${available} GB are free. Free some space, then open Browser again.`;
+    const required = formatBytes(refusal.required_bytes, Math.ceil);
+    const available = formatBytes(refusal.available_bytes, Math.floor);
+    return `Browser needs ${required} free on this computer to open; ${available} are free. Free some space, then open Browser again.`;
   }
   if (outcome?.state === "terminal_pre_effect_failure" && error?.payload?.stage === "viewer_compatibility") {
     return error.payload.code === "unsupported_viewer_display_mode"
@@ -255,11 +256,11 @@ export function browserMetricsText(status, {
       : "n/a";
   const videoBytes =
     Number.isFinite(Number(latestWebrtcStats?.video_bytes_received))
-      ? `${Math.round(Number(latestWebrtcStats.video_bytes_received) / 1024)}KiB`
+      ? formatBytes(latestWebrtcStats.video_bytes_received)
       : "n/a";
   const audioBytes =
     Number.isFinite(Number(latestWebrtcStats?.audio_bytes_received))
-      ? `${Math.round(Number(latestWebrtcStats.audio_bytes_received) / 1024)}KiB`
+      ? formatBytes(latestWebrtcStats.audio_bytes_received)
       : "n/a";
   const audioState = remoteAudioExpected ? (remoteAudioUnlocked ? "on" : "muted") : "n/a";
   const rtt =

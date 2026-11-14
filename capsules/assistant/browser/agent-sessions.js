@@ -21,7 +21,7 @@ import {
 import {
   syncAgentSendButton,
   composerInput as shelfComposerInput,
-} from "./agent-shelf.js";
+} from "./agent-shelf.js?v=download-progress-20261112";
 
 /** @type {null | object} */
 let ctx = null;
