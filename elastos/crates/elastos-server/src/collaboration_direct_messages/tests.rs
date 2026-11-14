@@ -242,6 +242,7 @@ async fn retention_prunes_only_oldest_expired_terminal_pairs_and_preserves_state
         envelope: encode(&byte_pending),
         incoming: false,
         recorded_at: now,
+        delivery_issue: None,
     });
     expected
         .messages
@@ -400,6 +401,7 @@ async fn production_entry_limit_prunes_one_expired_terminal_pair_before_write() 
             envelope: encode(&terminal),
             incoming: false,
             recorded_at: old,
+            delivery_issue: None,
         }],
         receipts: vec![StoredReceipt {
             message_envelope_sha256: collaboration_message_envelope_sha256(&terminal),
@@ -419,6 +421,7 @@ async fn production_entry_limit_prunes_one_expired_terminal_pair_before_write() 
             envelope: encode(&message),
             incoming: false,
             recorded_at: now,
+            delivery_issue: None,
         });
     }
     let bytes = serde_json::to_vec(&state).unwrap();
