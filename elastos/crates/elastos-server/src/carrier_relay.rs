@@ -556,6 +556,7 @@ mod tests {
         })
         .await
         .unwrap();
+        eprintln!("Relay admission: capacity=2 observed={observed}");
         replacement.abort();
         let _ = replacement.await;
         first.abort();

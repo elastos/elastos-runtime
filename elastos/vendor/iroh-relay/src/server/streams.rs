@@ -497,14 +497,14 @@ pub(super) struct HomeBuckets {
 }
 
 impl HomeBuckets {
-    pub fn new(config: HomeRateLimit) -> Self {
+    pub(super) fn new(config: HomeRateLimit) -> Self {
         Self {
             config,
             entries: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn get(&self, endpoint: iroh_base::EndpointId) -> Option<HomeBucket> {
+    pub(super) fn get(&self, endpoint: iroh_base::EndpointId) -> Option<HomeBucket> {
         let mut entries = self.entries.lock().expect("Home byte budget map");
         let now = time::Instant::now();
         entries.retain(|_, bucket| {
