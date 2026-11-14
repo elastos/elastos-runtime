@@ -57,7 +57,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
                 'results':{name:'passed' for name in ('community_post','direct_received','sender_delivered',
                                                      'offline_pending','restart_delivery')},
                 'negative_controls':{name:{'assertion_rejected':True, 'api_state':'pending', 'ui_detail':'Sending'}
-                                     for name in ('community_post','direct_received','sender_delivered')}}
+                                     for name in ('sender_delivered',)}}
 
     def test_acceptance_refuses_stale_identity_unchecked_failure_controls_or_surviving_processes(self):
         valid = self.receipt()

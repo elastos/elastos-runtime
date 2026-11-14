@@ -40,7 +40,7 @@ product_ui() {
 }
 
 release() {
-  node --test scripts/ci-model-package.test.mjs scripts/ci-installed-home-failure.test.mjs
+  node --test scripts/ci-model-package.test.mjs scripts/ci-installed-home-failure.test.mjs scripts/ci-installed-two-home.test.mjs
   python3 scripts/ci-release-policy-test.py
   python3 scripts/ci-installed-two-home-test.py
   python3 scripts/ci-download-cache-test.py

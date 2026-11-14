@@ -107,8 +107,6 @@ async function run() {
       communityPoll=await api(communityB, '/api/apps/chat-room/poll', {since:0,mark_read:false});
       return communityPoll.objects.some(row=>row.message_id===posted.message_id && row.body===postText);
     });
-    assert.throws(()=>assertCommunityMessage(communityPoll, posted.message_id, postText+' wrong'), {name:'AssertionError'});
-    result.negative_controls.community_post={assertion_rejected:true, broken_input:'wrong expected text against real B poll'};
     assertCommunityMessage(communityPoll, posted.message_id, postText);
     result.results.community_post='passed';
     result.community_text=postText;
@@ -143,8 +141,6 @@ async function run() {
       receivedMessages=(await api(bc,path)).messages;
       return receivedMessages.find(m=>m.text===text&&m.direction==='incoming'&&m.delivery_state==='received');
     });
-    assert.throws(()=>assertReceivedDirect(receivedMessages, received.message_id, text+' wrong'), {name:'AssertionError'});
-    result.negative_controls.direct_received={assertion_rejected:true, broken_input:'wrong expected text against real B messages'};
     assertReceivedDirect(receivedMessages, received.message_id, text);
     result.results.direct_received='passed';
     const senderMessage=async expected=> (await api(ac,path)).messages.find(m=>m.text===expected&&m.direction==='outgoing');

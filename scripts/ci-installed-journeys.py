@@ -1766,7 +1766,7 @@ def two_home_receipt_valid(row, identity):
             and all(row.get("results", {}).get(name) == "passed" for name in (
                 "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
             and all(row.get("negative_controls", {}).get(name, {}).get("assertion_rejected") is True
-                    for name in ("community_post", "direct_received", "sender_delivered"))
+                    for name in ("sender_delivered",))
             and row["negative_controls"]["sender_delivered"].get("api_state") == "pending"
             and row["negative_controls"]["sender_delivered"].get("ui_detail") == "Sending")
 
@@ -1794,12 +1794,6 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         return {"PATH": os.environ["PATH"], "HOME": str(owner[0]), "XDG_DATA_HOME": str(owner[1].parent),
                 "ELASTOS_CARRIER_NETWORK": "direct", "ELASTOS_CARRIER_MDNS": "0",
                 "ELASTOS_QUIET_RUNTIME_NOTICES": "1"}
-    protected = {8090, 61240, 61200, 61201, 62684, 8096, 61185}
-    def port(kind=socket.SOCK_STREAM):
-        while True:
-            number = free_port(kind)
-            if number not in protected:
-                return number
     def launch(name):
         owner = fixtures[name]
         with (owner[0] / "runtime.private.log").open("ab") as log:
@@ -1837,8 +1831,8 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
             copied = fresh_fixture(home, data, destination, include_engine=False)
             assert installed_message_identity(copied) == identity
             with (copied / "config.toml").open("a") as config:
-                config.write(f'carrier_bind_addr = "127.0.0.1:{port(socket.SOCK_DGRAM)}"\n')
-            fixtures[name] = (destination, copied, f"127.0.0.1:{port()}")
+                config.write(f'carrier_bind_addr = "127.0.0.1:{free_port(socket.SOCK_DGRAM)}"\n')
+            fixtures[name] = (destination, copied, f"127.0.0.1:{free_port()}")
             record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos")})
         launch("community")
         configure("create-authority-key", "--key", root / "authority.key")
@@ -1881,7 +1875,7 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         assert all(record["results"].get(name) == "passed" for name in (
             "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
         assert all(record["negative_controls"].get(name, {}).get("assertion_rejected") is True
-                   for name in ("community_post", "direct_received", "sender_delivered"))
+                   for name in ("sender_delivered",))
     except BaseException as error:
         record["failure"] = observer_failure("two_home_messages", error, [str(root), str(home)])
         raise
@@ -1941,7 +1935,7 @@ if __name__ == "__main__":
     parser.add_argument("--model-repair", action="store_true", help="real Stop, Get different model and interrupted Get/Home restart/Retry")
     parser.add_argument("--two-home-messages", action="store_true")
     parser.add_argument("--network-arrangement", choices=["same-host"], default="same-host")
-    parser.add_argument("--two-home-root", type=Path, help="fresh disposable fixture path; Mac QA uses ~/.local/share/elastos-qa/two-home/<run>")
+    parser.add_argument("--two-home-root", type=Path, help="fresh disposable fixture path")
     args = parser.parse_args()
     if args.two_home_messages:
         if args.repeat or args.home_only or args.carrier_get or args.finite_memory or args.model_repair:

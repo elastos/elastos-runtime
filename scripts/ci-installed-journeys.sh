@@ -159,7 +159,7 @@ if repair:
     "fixture_policy": "fresh Home state and engine process per run; verified source engine prerequisite; same host with potentially warm OS file cache"
                       + ("; reply package only on a separate holder Home, fetched over Carrier" if carrier else ""),
     "engine_absent_home": absence,
-    "two_home_messages": messages,
+    **({"two_home_messages": messages} if messages_required else {}),
     **({"finite_memory_refusal": memory} if finite else {}),
     **({"model_repair": repair_record} if repair else {}),
 }, indent=2) + "\n")
