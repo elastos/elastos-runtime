@@ -34,3 +34,15 @@ against the replacement source.
 If QAD startup fails after HTTP starts, startup awaits HTTP teardown before
 returning the error. Normal shutdown also waits for the HTTP task to finish.
 The failed-start control proves an immediate rebind of the released listeners.
+
+An optional authenticated-endpoint budget charges encoded relay frames before
+forwarding. All sockets for one endpoint share its bucket, including debt from
+cancelled frames; idle state is retired only after a full refill, with a fixed
+state-capacity limit. Connection I/O retains its separate pre-authentication
+limit. Throttled frames remain cancellable while the actor serves other queues.
+The real relay wire test measures fresh-socket and replacement bursts.
+
+HTTP upgrade handshakes are tracked, deadline-bound and cancelled by their
+service owner. Shutdown waits for them before closing registered clients;
+dropping the HTTP server also cancels their service token. A held authenticated
+handshake control proves that its admission is released during shutdown.

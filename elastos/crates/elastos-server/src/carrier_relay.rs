@@ -284,6 +284,14 @@ fn apply_byte_limits(
     );
     rate.max_burst_bytes = std::num::NonZeroU32::new(burst);
     relay.limits.client_rx = Some(rate);
+    relay.limits.home_rx = Some(
+        iroh_relay::server::HomeRateLimit::new(
+            rate,
+            std::num::NonZeroU32::new(RELAY_CONNECTIONS_TOTAL as u32)
+                .expect("nonzero Home capacity"),
+        )
+        .expect("configured relay byte rate refills each tick"),
+    );
 }
 
 const RELAY_CONNECTIONS_TOTAL: usize = 4096;
