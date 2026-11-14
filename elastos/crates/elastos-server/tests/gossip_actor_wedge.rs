@@ -10,13 +10,18 @@
 //! queue that drops or aborts instead of awaiting.
 //!
 //! The two assertions are the two symptoms a Community node shows: traffic to
-//! the other neighbours keeps flowing, and a fresh join still completes.
+//! the other neighbours keeps flowing, and a fresh join still completes. They
+//! run only after the flood completed or stalled with more broadcasts accepted
+//! than that stream credit and that channel can hold, which is the load that
+//! parks the 0.101.0 actor.
 
+use std::convert::Infallible;
+use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt;
 use gossip_rand::rngs::StdRng;
@@ -25,21 +30,47 @@ use iroh::address_lookup::memory::MemoryLookup;
 use iroh::endpoint::{presets, Connection, RecvStream, SendStream};
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey, TransportAddr};
-use iroh_gossip::api::{Event as ApiEvent, GossipReceiver};
+use iroh_gossip::api::{Event as ApiEvent, GossipReceiver, GossipSender};
 use iroh_gossip::net::Gossip;
 use iroh_gossip::proto::{
     Command, Config as ProtoConfig, Event as ProtoEvent, InEvent, Message as WireMessage, OutEvent,
     PeerData, State as ProtoState, TopicId,
 };
+use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio::time::timeout;
 
 /// Just under the 4096-byte default `max_message_size`, leaving header room.
 const PAYLOAD_SIZE: usize = 3800;
-/// Enough to exhaust the 1.25 MiB default stream receive window (about 330
-/// payloads) and the 64-message send queue, with room to spare.
+/// The per-peer channel that iroh-gossip 0.101.0 awaits on, in messages.
+const SEND_QUEUE_CAP: usize = 64;
+/// The default QUIC `stream_receive_window` in bytes, which is the credit a
+/// neighbour grants on one stream before it reads.
+const STREAM_RECEIVE_WINDOW: usize = 1_250_000;
+/// The broadcasts that the neighbour's stream credit and the hub's send queue
+/// absorb together. A flood that ends at or below this count may never have
+/// met a full queue, so it says nothing about the hub.
+const PRESSURE_FLOOR: usize = SEND_QUEUE_CAP + STREAM_RECEIVE_WINDOW / PAYLOAD_SIZE;
 const FLOOD_MESSAGES: usize = 500;
+
 const PROBE_BUDGET: Duration = Duration::from_secs(15);
 const JOIN_BUDGET: Duration = Duration::from_secs(30);
+/// iroh-gossip 0.102.0 holds each broadcast for up to 100 ms while the only
+/// eager neighbour of its topic is busy (`BROADCAST_WAIT_LIMIT`), so a healthy
+/// flood of `FLOOD_MESSAGES` can take up to 50 s.
+const FLOOD_BUDGET: Duration = Duration::from_secs(60);
+/// Ten of those holds, so a flood that the hub only slows still moves in every
+/// sample.
+const STALL_SAMPLE: Duration = Duration::from_secs(1);
+const QUIET_SAMPLES_IN_A_STALL: u32 = 2;
+/// Binding and closing the endpoints, which have no budget of their own. One
+/// close takes up to 3 s here.
+const UNBUDGETED_MARGIN: Duration = Duration::from_secs(30);
+const TEST_DEADLINE: Duration = Duration::from_secs(
+    5 * JOIN_BUDGET.as_secs()
+        + 2 * PROBE_BUDGET.as_secs()
+        + FLOOD_BUDGET.as_secs()
+        + UNBUDGETED_MARGIN.as_secs(),
+);
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_neighbour_that_stops_reading_leaves_the_actor_serving_other_topics() -> Result<()> {
@@ -47,6 +78,14 @@ async fn a_neighbour_that_stops_reading_leaves_the_actor_serving_other_topics() 
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init()
         .ok();
+    let report = timeout(TEST_DEADLINE, serve_others_beside_a_silent_neighbour())
+        .await
+        .map_err(|_| anyhow!("the test did not finish within {TEST_DEADLINE:?}"))??;
+    println!("{report}");
+    Ok(())
+}
+
+async fn serve_others_beside_a_silent_neighbour() -> Result<String> {
     let flood_topic = TopicId::from_bytes([0xAB; 32]);
     let probe_topic = TopicId::from_bytes([0xCD; 32]);
     let lookup = MemoryLookup::new();
@@ -61,7 +100,7 @@ async fn a_neighbour_that_stops_reading_leaves_the_actor_serving_other_topics() 
     let silent_id = silent_endpoint.id();
     lookup.add_endpoint_info(loopback_addr(&silent_endpoint));
     let (went_silent, mut is_silent) = tokio::sync::mpsc::channel(1);
-    let silent_task = tokio::spawn(run_silent_neighbour(
+    let mut silent_task = tokio::spawn(run_silent_neighbour(
         silent_endpoint.clone(),
         flood_topic,
         went_silent,
@@ -71,113 +110,184 @@ async fn a_neighbour_that_stops_reading_leaves_the_actor_serving_other_topics() 
     let (member_endpoint, member, _member_router) = gossip_node(&lookup).await?;
     let hub_id = hub_endpoint.id();
 
-    let member_join = tokio::spawn({
-        let member = member.clone();
-        async move { member.subscribe_and_join(probe_topic, vec![hub_id]).await }
-    });
-    let hub_probe = timeout(JOIN_BUDGET, hub.subscribe_and_join(probe_topic, vec![]))
-        .await
-        .context("the hub did not join the probe topic")??;
-    let member_probe = timeout(JOIN_BUDGET, member_join)
-        .await
-        .context("the member did not join the probe topic")???;
-    let (probe_sender, _hub_probe_receiver) = hub_probe.split();
-    let (_member_sender, mut member_receiver) = member_probe.split();
-
-    probe_sender
-        .broadcast(Bytes::from_static(b"before the flood"))
-        .await
-        .context("broadcast before the flood")?;
-    wait_for(&mut member_receiver, b"before the flood", PROBE_BUDGET)
-        .await
-        .context("the probe path failed before the flood, so the fixture is wrong")?;
-
-    let flood = timeout(
-        JOIN_BUDGET,
-        hub.subscribe_and_join(flood_topic, vec![silent_id]),
-    )
-    .await
-    .context("the hub did not take the silent neighbour into its active view")??;
-    // Without this the neighbour is still reading, and the flood proves nothing.
-    timeout(JOIN_BUDGET, is_silent.recv())
-        .await
-        .ok()
-        .flatten()
-        .context("the neighbour never reached the active view, so the fixture is wrong")?;
-    let (flood_sender, mut flood_receiver) = flood.split();
-    tokio::spawn(async move { while flood_receiver.next().await.is_some() {} });
-
-    // Fire and forget: the flood may stall, and only its collateral matters.
-    let sent = Arc::new(AtomicUsize::new(0));
-    let flood_task = tokio::spawn({
-        let sent = sent.clone();
-        async move {
-            let payload = Bytes::from(vec![0x5A; PAYLOAD_SIZE]);
-            for _ in 0..FLOOD_MESSAGES {
-                if flood_sender.broadcast(payload.clone()).await.is_err() {
-                    break;
-                }
-                sent.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    });
-    let flooded = wait_until_flood_settles(&flood_task, &sent).await;
-
-    let probe_started = Instant::now();
-    let delivery = async {
-        probe_sender
-            .broadcast(Bytes::from_static(b"during the flood"))
+    let observation = async {
+        let member_join = tokio::spawn({
+            let member = member.clone();
+            async move { member.subscribe_and_join(probe_topic, vec![hub_id]).await }
+        });
+        let hub_probe = timeout(JOIN_BUDGET, hub.subscribe_and_join(probe_topic, vec![]))
             .await
-            .context("broadcast during the flood")?;
-        wait_for(&mut member_receiver, b"during the flood", PROBE_BUDGET).await
-    }
-    .await;
-    let probe_seconds = probe_started.elapsed().as_secs_f32();
+            .context("the hub did not join the probe topic")??;
+        let member_probe = timeout(JOIN_BUDGET, member_join)
+            .await
+            .context("the member did not join the probe topic")???;
+        let (probe_sender, _hub_probe_receiver) = hub_probe.split();
+        let (_member_sender, mut member_receiver) = member_probe.split();
 
-    let join_started = Instant::now();
-    let (newcomer_endpoint, newcomer, _newcomer_router) = gossip_node(&lookup).await?;
-    let fresh_join = timeout(
-        JOIN_BUDGET,
-        newcomer.subscribe_and_join(probe_topic, vec![hub_id]),
-    )
-    .await
-    .map_err(|_| anyhow!("a fresh join did not complete within {JOIN_BUDGET:?}"))
-    .and_then(|joined| joined.map_err(anyhow::Error::from));
-    let join_seconds = join_started.elapsed().as_secs_f32();
+        deliver(&probe_sender, &mut member_receiver, b"before the flood")
+            .await
+            .context("the probe path failed before the flood, so the fixture is wrong")?;
 
-    silent_endpoint.close().await;
-    flood_task.abort();
+        let (flood_sender, mut flood_receiver) = timeout(
+            JOIN_BUDGET,
+            hub.subscribe_and_join(flood_topic, vec![silent_id]),
+        )
+        .await
+        .context("the hub did not take the silent neighbour into its active view")??
+        .split();
+        // Without this the neighbour is still reading, and the flood proves nothing.
+        timeout(JOIN_BUDGET, is_silent.recv())
+            .await
+            .ok()
+            .flatten()
+            .context("the neighbour never reached the active view, so the fixture is wrong")?;
+        tokio::spawn(async move { while flood_receiver.next().await.is_some() {} });
+        let flood = flood_until_settled(flood_sender).await?;
+
+        let probe_started = Instant::now();
+        let delivery = deliver(&probe_sender, &mut member_receiver, b"during the flood").await;
+        let probe_seconds = probe_started.elapsed().as_secs_f32();
+
+        let join_started = Instant::now();
+        let (newcomer_endpoint, newcomer, _newcomer_router) = gossip_node(&lookup).await?;
+        let fresh_join = timeout(
+            JOIN_BUDGET,
+            newcomer.subscribe_and_join(probe_topic, vec![hub_id]),
+        )
+        .await
+        .map_err(|_| anyhow!("a fresh join did not complete within {JOIN_BUDGET:?}"))
+        .and_then(|joined| joined.map_err(anyhow::Error::from));
+        let join_seconds = join_started.elapsed().as_secs_f32();
+        newcomer_endpoint.close().await;
+
+        let report = format!(
+            "{flood}; delivery to the other neighbour took {probe_seconds:.1} s; \
+             the fresh join took {join_seconds:.1} s"
+        );
+        anyhow::Ok((flood, delivery, fresh_join, report))
+    };
+    // The neighbour ends only when it fails. A neighbour that lets go of its
+    // streams frees a wedged hub, and then both assertions pass.
+    let (flood, delivery, fresh_join, report) = tokio::select! {
+        biased;
+        ended = &mut silent_task => match ended
+            .context("the silent neighbour panicked")?
+            .context("the silent neighbour failed")? {},
+        observed = observation => observed?,
+    };
+
+    // A hub that the neighbour frees resumes a parked flood, so stop the flood
+    // first.
+    let flood_stopped = flood.stop().await;
     silent_task.abort();
-    newcomer_endpoint.close().await;
+    silent_endpoint.close().await;
     member_endpoint.close().await;
     hub_endpoint.close().await;
 
-    let report = format!(
-        "{flooded} of {FLOOD_MESSAGES} broadcasts left the hub; \
-         delivery to the other neighbour took {probe_seconds:.1} s; \
-         the fresh join took {join_seconds:.1} s"
-    );
+    flood_stopped?;
     delivery.with_context(|| format!("delivery to the other neighbour stopped: {report}"))?;
     fresh_join.with_context(|| format!("a fresh join stopped: {report}"))?;
-    println!("{report}");
-    Ok(())
+    Ok(report)
 }
 
-/// Returns the broadcasts the hub accepted once the flood finishes or stops
-/// making progress; a stalled flood is the state the assertions run against.
-async fn wait_until_flood_settles(
-    flood: &tokio::task::JoinHandle<()>,
-    sent: &AtomicUsize,
-) -> usize {
-    let mut last = 0;
-    loop {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let now = sent.load(Ordering::Relaxed);
-        if flood.is_finished() || now == last {
-            return now;
+/// A flood that put the hub under pressure. The hub is judged in either state.
+enum SettledFlood {
+    /// The hub accepted every broadcast.
+    Completed,
+    /// The hub stopped accepting broadcasts above `PRESSURE_FLOOR`, and the
+    /// flood stays parked on the next one.
+    Stalled {
+        accepted: usize,
+        parked: JoinHandle<Result<()>>,
+    },
+}
+
+/// Broadcasts into a topic whose only neighbour reads nothing, until the flood
+/// ends in one of three ways: it completed, it stalled, or the fixture failed.
+/// A broadcast error, a panic, and a flood that stays at or below
+/// `PRESSURE_FLOOR` are failures of the fixture, so they return the error.
+async fn flood_until_settled(sender: GossipSender) -> Result<SettledFlood> {
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let mut task = tokio::spawn({
+        let accepted = accepted.clone();
+        async move {
+            let payload = Bytes::from(vec![0x5A; PAYLOAD_SIZE]);
+            for _ in 0..FLOOD_MESSAGES {
+                sender.broadcast(payload.clone()).await?;
+                accepted.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(())
         }
+    });
+
+    let started = Instant::now();
+    let mut last = 0;
+    let mut quiet_samples = 0;
+    while started.elapsed() < FLOOD_BUDGET {
+        if let Ok(ended) = timeout(STALL_SAMPLE, &mut task).await {
+            flood_result(ended)?;
+            ensure_pressure(accepted.load(Ordering::Relaxed))?;
+            return Ok(SettledFlood::Completed);
+        }
+        let now = accepted.load(Ordering::Relaxed);
+        quiet_samples = if now == last { quiet_samples + 1 } else { 0 };
         last = now;
+        if now > PRESSURE_FLOOR && quiet_samples >= QUIET_SAMPLES_IN_A_STALL {
+            return Ok(SettledFlood::Stalled {
+                accepted: now,
+                parked: task,
+            });
+        }
     }
+    task.abort();
+    ensure_pressure(last)?;
+    bail!(
+        "the flood neither completed nor stalled within {FLOOD_BUDGET:?}: \
+         the hub accepted {last} of {FLOOD_MESSAGES} broadcasts and still accepts more"
+    )
+}
+
+impl SettledFlood {
+    /// Ends a parked flood, and reports what it did if it moved again after
+    /// the stall.
+    async fn stop(self) -> Result<()> {
+        let Self::Stalled { parked, .. } = self else {
+            return Ok(());
+        };
+        parked.abort();
+        match parked.await {
+            Err(ended) if ended.is_cancelled() => Ok(()),
+            ended => flood_result(ended),
+        }
+    }
+}
+
+impl fmt::Display for SettledFlood {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Completed => write!(f, "the hub accepted all {FLOOD_MESSAGES} flood broadcasts"),
+            Self::Stalled { accepted, .. } => write!(
+                f,
+                "the hub stalled after {accepted} of {FLOOD_MESSAGES} flood broadcasts"
+            ),
+        }
+    }
+}
+
+fn flood_result(ended: Result<Result<()>, JoinError>) -> Result<()> {
+    ended
+        .context("the flood task panicked")?
+        .context("a flood broadcast failed")
+}
+
+fn ensure_pressure(accepted: usize) -> Result<()> {
+    ensure!(
+        accepted > PRESSURE_FLOOR,
+        "the fixture did not build enough pressure: the flood ended after {accepted} \
+         broadcasts, and the silent neighbour's stream credit plus the hub's send queue \
+         absorb {PRESSURE_FLOOR}"
+    );
+    Ok(())
 }
 
 async fn gossip_node(lookup: &MemoryLookup) -> Result<(Endpoint, Gossip, Router)> {
@@ -218,11 +328,19 @@ fn loopback_addr(endpoint: &Endpoint) -> EndpointAddr {
     EndpointAddr::from_parts(endpoint.id(), sockets)
 }
 
-async fn wait_for(receiver: &mut GossipReceiver, expected: &[u8], budget: Duration) -> Result<()> {
-    timeout(budget, async {
+async fn deliver(
+    sender: &GossipSender,
+    receiver: &mut GossipReceiver,
+    payload: &'static [u8],
+) -> Result<()> {
+    timeout(PROBE_BUDGET, async {
+        sender
+            .broadcast(Bytes::from_static(payload))
+            .await
+            .context("the hub refused the broadcast")?;
         while let Some(event) = receiver.next().await {
             if let Ok(ApiEvent::Received(message)) = event {
-                if message.content.as_ref() == expected {
+                if message.content.as_ref() == payload {
                     return Ok(());
                 }
             }
@@ -230,18 +348,19 @@ async fn wait_for(receiver: &mut GossipReceiver, expected: &[u8], budget: Durati
         Err(anyhow!("the event stream ended"))
     })
     .await
-    .map_err(|_| anyhow!("no delivery within {budget:?}"))?
+    .map_err(|_| anyhow!("no delivery within {PROBE_BUDGET:?}"))?
 }
 
 /// Speaks the real membership handshake through the public protocol state, so
 /// the hub promotes it into the active view, then holds its streams open and
 /// reads nothing. The endpoint driver keeps acknowledging at the transport
 /// level, so QUIC stays healthy while the stream credit is never returned.
+/// The first connection that fails ends the neighbour with that error.
 async fn run_silent_neighbour(
     endpoint: Endpoint,
     topic: TopicId,
     went_silent: tokio::sync::mpsc::Sender<()>,
-) -> Result<()> {
+) -> Result<Infallible> {
     let mut state: ProtoState<EndpointId, StdRng> = ProtoState::new(
         endpoint.id(),
         PeerData::new(Vec::<u8>::new()),
@@ -257,22 +376,24 @@ async fn run_silent_neighbour(
         .for_each(drop);
     let state = Arc::new(tokio::sync::Mutex::new(state));
 
-    while let Some(incoming) = endpoint.accept().await {
-        let Ok(connection) = incoming.await else {
-            continue;
-        };
-        let state = state.clone();
-        let went_silent = went_silent.clone();
-        tokio::spawn(async move {
-            let remote = connection.remote_id();
-            if let Err(error) =
-                go_silent_after_membership(connection, topic, remote, state, went_silent).await
-            {
-                eprintln!("the silent neighbour stopped: {error:#}");
+    let mut connections = JoinSet::new();
+    loop {
+        tokio::select! {
+            incoming = endpoint.accept() => {
+                let incoming = incoming.context("the silent endpoint closed")?;
+                let state = state.clone();
+                let went_silent = went_silent.clone();
+                connections.spawn(async move {
+                    let connection = incoming.await.context("accept a connection")?;
+                    let remote = connection.remote_id();
+                    go_silent_after_membership(connection, topic, remote, state, went_silent).await
+                });
             }
-        });
+            Some(ended) = connections.join_next() => {
+                match ended.context("a silent connection panicked")?? {}
+            }
+        }
     }
-    Ok(())
 }
 
 async fn go_silent_after_membership(
@@ -281,7 +402,7 @@ async fn go_silent_after_membership(
     remote: EndpointId,
     state: Arc<tokio::sync::Mutex<ProtoState<EndpointId, StdRng>>>,
     went_silent: tokio::sync::mpsc::Sender<()>,
-) -> Result<()> {
+) -> Result<Infallible> {
     let mut recv = connection.accept_uni().await.context("accept a stream")?;
     // The stream header starts with the bare topic id and has gained fields
     // since 0.101, so match the prefix rather than the whole frame.
@@ -340,8 +461,7 @@ async fn go_silent_after_membership(
     }
 
     went_silent.send(()).await.ok();
-    std::future::pending::<()>().await;
-    unreachable!()
+    std::future::pending().await
 }
 
 async fn read_frame(recv: &mut RecvStream) -> Result<Vec<u8>> {
