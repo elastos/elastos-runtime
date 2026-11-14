@@ -1491,7 +1491,7 @@ fn parse_elastos_carrier_network(raw: Option<&str>) -> anyhow::Result<CarrierNod
 }
 
 /// Operator-approved ElastOS relay URL. Empty or invalid is an error.
-/// The direct constructor rejects a present URL until CR3 names the relay.
+/// Direct endpoints reject a present relay URL.
 fn parse_elastos_relay_url(raw: Option<&str>) -> anyhow::Result<Option<url::Url>> {
     let Some(raw) = raw else {
         return Ok(None);

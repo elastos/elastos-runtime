@@ -473,19 +473,44 @@ HTTP here is a control-plane protocol. It is not the Carrier substrate.
 Peer discovery, gossip messaging, and peer-to-peer content transfer. Built into the runtime as `carrier.rs`.
 
 **Current implementation:**
-- Built-in Carrier node using **Iroh 1.0.2** with iroh-gossip 0.101.0 and
-  mDNS
+- Built-in Carrier node using the pinned Iroh and gossip dependencies, with
+  mDNS for local IP discovery
 - `tunnel-provider` capsule using **cloudflared** (HTTP tunnel to public internet)
 
-**Transport:** direct Iroh QUIC only. With `ELASTOS_CARRIER_NETWORK` unset or
-`direct`, Carrier uses Iroh's Minimal preset: no relay and no public address
-discovery. Peers resolve through mDNS on the local network and through
-explicit tickets and bootstrap peers; gossip topics join those peers directly.
-`ELASTOS_CARRIER_NETWORK=public` is refused, and so is `ELASTOS_RELAY_URL`
-with the direct network.
-Relay support is planned in
-[#345](https://github.com/elastos/elastos-runtime/issues/345) and
-[#354](https://github.com/elastos/elastos-runtime/issues/354).
+**Transport:** direct Iroh QUIC by default. With `ELASTOS_CARRIER_NETWORK`
+unset or `direct`, Carrier uses Iroh's Minimal preset and direct routes from
+mDNS, local operator tickets and filtered gossip. The direct setting rejects
+relay configuration. The retired `public` setting is invalid.
+
+The experimental `relay` setting requires `ELASTOS_RELAY_URL`. Runtime owns
+that single origin and filters explicit dials, memory, mDNS and received gossip
+routes through the same policy. HTTPS uses the configured hostname or IP and
+trusted Web PKI certificates. Plain HTTP is limited to literal loopback and
+documentation-network test addresses. Both long-lived and temporary endpoints
+use the system DNS resolver with public fallback disabled. A failed system DNS
+lookup stays within that policy and produces a bounded delivery reason.
+
+Public tickets contain public IP addresses only. A Home without one exports
+its endpoint ID alone. LAN and VPN routes stay in local mDNS and operator state;
+a direct-only peer on another subnet needs a local route to that ID. This
+privacy rule also applies to public bootstrap and operator status receipts.
+
+The public-publisher role can explicitly configure `carrier_relay_bind_addr`
+for the relay service. Discovery additionally needs
+`carrier_relay_discovery_bind_addr`, `carrier_relay_tls_cert` and
+`carrier_relay_tls_key`. Discovery validates source addresses before reserving
+bounded handshake and session slots. Relay transport limits cover pending TCP,
+TLS, upgraded and authenticated sockets, with IPv6 budgets shared by /64.
+A reverse proxy shares its source-network budget; forwarded headers carry no
+admission authority. The authenticated endpoint's byte budget survives socket
+replacement and reconnects. These experimental settings stay separate from the
+release's default direct policy and its future signed relay pin.
+
+A pending direct message keeps its original signed envelope and retries for
+its delivery window. After the existing one-minute wait, Chat shows
+“Unconfirmed” with the current local failure reason and a Retry control.
+Receipt settlement replaces that state with the message time. Runtime limits
+these failure warnings to one per minute per Home.
 
 ### 3. Data plane (host to VM networking)
 
