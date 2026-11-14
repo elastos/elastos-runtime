@@ -654,6 +654,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn client_shutdown_bounds_a_backpressured_final_flush() {
+        let (io, _peer_that_never_reads) = tokio::io::duplex(1);
+        let mut stream = RelayedStream::test(io);
+        stream
+            .feed(RelayToClientMsg::Health {
+                problem: "queued".repeat(128),
+            })
+            .await
+            .unwrap();
+        let id = SecretKey::from_bytes(&[244; 32]).public();
+        let mut config = Config::new(OnDisconnectGuard::empty(id), stream, ProtocolVersion::V2);
+        config.write_timeout = Duration::from_millis(20);
+        let client = Client::new(config, &Clients::default(), Arc::new(Metrics::default()));
+        let stopped = tokio::time::timeout(Duration::from_secs(3), client.shutdown()).await;
+        assert!(
+            stopped.is_ok(),
+            "shutdown waited on an unbounded final flush"
+        );
+    }
+
+    #[tokio::test]
     #[traced_test]
     async fn test_client_actor_basic() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
