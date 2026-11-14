@@ -116,7 +116,7 @@ async function run() {
     async function api(page,path,body) {
       return page.evaluate(async ({path,body})=>{
         const token=new URLSearchParams(location.hash.slice(1)).get('home_token');
-        const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','x-elastos-home-token':token},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
+        const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','x-elastos-home-token':token,'x-elastos-direct-delivery-details':'true'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
         if(!r.ok) throw new Error('product API '+path+' HTTP '+r.status);
         return r.json();
       },{path,body});
@@ -163,7 +163,7 @@ async function run() {
     result.stage='direct_send';
     const sent=await api(ac,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text});
     result.observations.push({step:'direct_send',status:sent.status,text});
-    const path='/api/apps/chat-room/direct/conversations/'+encodeURIComponent(conversation.conversation_id)+'/messages?retry_details=true&delivery_details=true';
+    const path='/api/apps/chat-room/direct/conversations/'+encodeURIComponent(conversation.conversation_id)+'/messages?retry_details=true';
     result.stage='direct_receive';
     let receivedMessages;
     const received=await until('B direct exact text',async()=> {
