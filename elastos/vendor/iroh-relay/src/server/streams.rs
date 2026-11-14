@@ -692,7 +692,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for RateLimited<S> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use n0_error::{Result, StdResultExt};
     use n0_future::time;
