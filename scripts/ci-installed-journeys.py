@@ -2,6 +2,7 @@
 """Run journeys against this job's installed Home; save only public proof."""
 import argparse
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import runpy
 import select
 import secrets
 import signal
+import shlex
 import shutil
 import socket
 import stat
@@ -1549,7 +1551,8 @@ def run(home, data, evidence, model=True, carrier=False, memory_gib=0, repair=Fa
             record["finite_memory"] = finite.finish()
             record["process_cleanup"] = {"status": record["finite_memory"]["status"]}
             record["results"]["finite_memory_boundary"] = record["finite_memory"]["status"]
-            (evidence / "installed-journeys.json").write_text(json.dumps(record, indent=2) + "\n")
+            record["elapsed_seconds"] = round(time.monotonic() - started, 2)
+        (evidence / "installed-journeys.json").write_text(json.dumps(record, indent=2) + "\n")
         if holder:
             cleanup_runtime(holder, holder_data)
         raise
@@ -1666,6 +1669,7 @@ def run(home, data, evidence, model=True, carrier=False, memory_gib=0, repair=Fa
                 and record["process_cleanup"].get("before", {}).get("llama_server") == 0
                 else "failed")
             record["results"]["engine_absent_home"] = "passed" if record["engine_absent_after_ui"] else "failed"
+        record["elapsed_seconds"] = round(time.monotonic() - started, 2)
         (evidence / "installed-journeys.json").write_text(json.dumps(record, indent=2) + "\n")
 
     if record["process_cleanup"]["status"] != "passed":
@@ -1741,10 +1745,106 @@ def remove_message_fixture(root):
     root = Path(os.path.abspath(root))
     for path in (root, *root.parents):
         assert stat.S_ISDIR(path.lstat().st_mode) and not path.is_symlink()
-    assert not owned_processes(process_rows(), -1, root)
-    before = root.lstat()
-    assert (root.lstat().st_dev, root.lstat().st_ino) == (before.st_dev, before.st_ino)
+    assert not any(row["command"].startswith(str(root) + "/") for row in process_rows().values())
     shutil.rmtree(root)
+
+
+# The 10-minute CI step reserves 360 s for work, 150 s for process cleanup,
+# and 30 s for disk/removal/receipt operations: 540 s, with 60 s runner margin.
+@contextmanager
+def message_timeout(seconds):
+    def expired(_signum, _frame):
+        raise TimeoutError("two-Home phase deadline")
+    started = time.monotonic()
+    previous = signal.signal(signal.SIGALRM, expired)
+    timer = signal.setitimer(signal.ITIMER_REAL, 0)
+    signal.setitimer(signal.ITIMER_REAL, min(seconds, timer[0]) if timer[0] else seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+        if timer[0]:
+            signal.setitimer(signal.ITIMER_REAL, max(.001, timer[0] - (time.monotonic() - started)), timer[1])
+
+
+def remember_message_processes(child, known, marker=None):
+    rows = {pid: row for pid, row in process_rows().items()
+            if not row["command"].endswith(" <defunct>")}
+    roots = {pid for pid, old in known.items() if pid in rows
+             and all(rows[pid][key] == old[key] for key in ("start", "command"))}
+    if not known and child.pid in rows and child.poll() is None:
+        roots.add(child.pid)
+    # Chromium has its own process group. Its unique fixture argument also
+    # identifies it if Node exits before the next descendant census.
+    if marker:
+        roots.update(pid for pid, row in rows.items() if marker in shlex.split(row["command"]))
+    for pid, row in rows.items():
+        parent, visited = pid, set()
+        while parent in rows and parent not in roots and parent not in visited:
+            visited.add(parent)
+            parent = rows[parent]["ppid"]
+        if parent in roots:
+            known[pid] = row
+    return {pid: row for pid, row in known.items() if pid in rows
+            and all(rows[pid][key] == row[key] for key in ("start", "command"))}
+
+
+def stop_message_processes(child, known, marker=None, grace=5, killed=3):
+    """Bounded TERM/KILL census, retaining detached children across reparenting."""
+    remaining = remember_message_processes(child, known, marker)
+    for action, seconds in ((signal.SIGTERM, grace), (signal.SIGKILL, killed)):
+        for pid, row in remaining.items():
+            latest = process_rows().get(pid)
+            if latest and all(latest[key] == row[key] for key in ("start", "command")):
+                try:
+                    os.kill(pid, action)
+                except ProcessLookupError:
+                    pass
+        end = time.monotonic() + seconds
+        while remaining and time.monotonic() < end:
+            child.poll()  # Reap our child before checking the census.
+            time.sleep(.05)
+            remaining = remember_message_processes(child, known, marker)
+        if not remaining:
+            break
+    assert not remaining, "two-Home observer process survived cleanup"
+
+
+def finish_message_fixture(root, data, evidence, record, children, fixtures, stop, browser, known, started):
+    """Attempt every cleanup and save the failure receipt before raising."""
+    failures = []
+    def attempt(label, action, seconds):
+        try:
+            with message_timeout(seconds):
+                action()
+            return True
+        except BaseException as error:
+            failures.append(observer_failure(label, error, [str(root)]))
+            return False
+    if browser:
+        attempt("browser_cleanup", lambda: stop_message_processes(
+            browser, known, "--two-home-fixture=" + str(root / "control")), 15)
+    for name in list(children):
+        child = children[name]
+        if not attempt("stop_" + name, lambda: stop(name), 35):
+            # A failed Runtime census/stop still gets an independent PID-bound
+            # attempt, then the next Home is stopped regardless of its result.
+            attempt("fallback_" + name, lambda: stop_message_processes(
+                child, owned_processes(process_rows(), child.pid, fixtures[name][1])), 10)
+    def remove_and_measure():
+        attempt("disk_reserve", lambda: record.update(disk_after=require_disk_space(data)), 5)
+        if attempt("fixture_removal", lambda: remove_message_fixture(root), 20):
+            record["fixture_removed"] = True
+    with message_timeout(30):
+        remove_and_measure()
+        if failures:
+            record["cleanup_failures"] = failures
+            record["status"] = "failed"
+        record["elapsed_seconds"] = round(time.monotonic() - started, 2)
+        (evidence / "installed-journeys.json").write_text(json.dumps(record, indent=2) + "\n")
+    if failures:
+        raise RuntimeError("two-Home cleanup failed; see installed journey receipt")
 
 
 MESSAGE_NETWORKS = {
@@ -1815,8 +1915,8 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
     control.mkdir(mode=0o700)
     record = dict(identity, network_arrangement=network, results={}, homes=[], negative_controls={},
                   direct_endpoint_observations=[])
-    receipt_path = evidence / "installed-journeys.json"
     children, fixtures, browser = {}, {}, None
+    browser_processes = {}
     cleanup = []
     started = time.monotonic()
     # Explicit environment excludes ambient relay, public-network and provider overrides.
@@ -1824,6 +1924,7 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         return {"PATH": os.environ["PATH"], "HOME": str(owner[0]), "XDG_DATA_HOME": str(owner[1].parent),
                 **settings["environment"], "ELASTOS_QUIET_RUNTIME_NOTICES": "1"}
     def launch(name):
+        assert name not in children, "Home already has an owned Runtime"
         owner = fixtures[name]
         with (owner[0] / "runtime.private.log").open("ab") as log:
             child = subprocess.Popen([str(owner[1] / "bin/elastos"), "gateway", "--addr", owner[2]],
@@ -1842,85 +1943,74 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         assert observed == [{settings["ticket_transport"]: owner[3]}], "ticket differs from configured Carrier address"
         record["direct_endpoint_observations"].append({"home": name, "ticket_addresses": observed})
     def stop(name):
-        child = children.pop(name)
-        row = cleanup_runtime(child, fixtures[name][1])
+        child = children[name]
+        with message_timeout(35):
+            row = cleanup_runtime(child, fixtures[name][1])
         cleanup.append(dict(row, home=name))
         assert row["status"] == "passed", "two-Home process cleanup failed"
+        del children[name]
     def configure(*arguments):
         owner = fixtures["community"]
         with (root / "configuration.private.log").open("ab") as log:
             subprocess.run([str(owner[1] / "bin/elastos"), "collaboration-config", *map(str, arguments)],
                            env=environment(owner), stdout=log, stderr=log, check=True, timeout=60)
     try:
-        for name in ("community", "a", "b"):
-            destination = root / name
-            copied = fresh_fixture(home, data, destination, include_engine=False)
-            assert installed_message_identity(copied) == identity
-            carrier = f"{settings['bind_host']}:{free_port(socket.SOCK_DGRAM)}"
-            with (copied / "config.toml").open("a") as config:
-                config.write(f'carrier_bind_addr = "{carrier}"\n')
-            fixtures[name] = (destination, copied, f"{settings['bind_host']}:{free_port()}", carrier)
-            record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos"),
-                                    "carrier_bind_address": carrier})
-        launch("community")
-        configure("create-authority-key", "--key", root / "authority.key")
-        configure("export-local-bootstrap-receipt", "--data-root", fixtures["community"][1],
-                  "--runtime-kind", "gateway", "--output", root / "bootstrap.json")
-        configure("generate-initial", "--authority-key", root / "authority.key", "--network-id", "ci.two-home",
-                  "--conversation-id", "community", "--bootstrap-peer", root / "bootstrap.json", "--output", root / "network.json")
-        configure("verify", "--input", root / "network.json")
-        stop("community")
-        for owner in fixtures.values():
-            target = owner[1] / "collaboration-network-v1.json"
-            shutil.copy2(root / "network.json", target)
-            target.chmod(0o600)
-        for name in fixtures:
-            launch(name)
-        bases = [f"http://{settings['browser_host']}:" + fixtures[name][2].rsplit(":", 1)[1] for name in ("a", "b")]
-        with (root / "browser.private.log").open("wb") as log:
-            browser = subprocess.Popen(["node", "scripts/ci-installed-two-home-journey.mjs", *bases,
-                                        str(evidence), str(control)], stdout=log, stderr=log, start_new_session=True)
-        deadline, last = time.monotonic() + 420, 0
-        while browser.poll() is None:
-            assert time.monotonic() < deadline, "two-Home browser deadline"
-            request = control / "request.json"
-            if request.exists():
-                value = private_json(request)
-                if value["id"] > last:
-                    assert value["id"] == last + 1 and value["action"] in {"stop_b", "start_b"}
-                    stop("b") if value["action"] == "stop_b" else launch("b")
-                    last = value["id"]
-                    private_json(control / "response.json", {"id": last, "status": "passed"})
-            time.sleep(.1)
-        observed = json.loads((evidence / "two-home-ui.json").read_text())
-        record.update(observed)
-        if browser.returncode and (control / "error.private.txt").exists():
-            record["browser_failure"] = redact((control / "error.private.txt").read_text(), [str(root)])[:1200]
-        assert browser.returncode == 0, "installed two-Home browser journey failed"
-        assert all(record["results"].get(name) == "passed" for name in (
-            "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
-        assert all(record["negative_controls"].get(name, {}).get("assertion_rejected") is True
-                   for name in ("sender_delivered",))
+        with message_timeout(360):
+            for name in ("community", "a", "b"):
+                destination = root / name
+                copied = fresh_fixture(home, data, destination, include_engine=False)
+                assert installed_message_identity(copied) == identity
+                carrier = f"{settings['bind_host']}:{free_port(socket.SOCK_DGRAM)}"
+                with (copied / "config.toml").open("a") as config:
+                    config.write(f'carrier_bind_addr = "{carrier}"\n')
+                fixtures[name] = (destination, copied, f"{settings['bind_host']}:{free_port()}", carrier)
+                record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos"),
+                                        "carrier_bind_address": carrier})
+            launch("community")
+            configure("create-authority-key", "--key", root / "authority.key")
+            configure("export-local-bootstrap-receipt", "--data-root", fixtures["community"][1],
+                      "--runtime-kind", "gateway", "--output", root / "bootstrap.json")
+            configure("generate-initial", "--authority-key", root / "authority.key", "--network-id", "ci.two-home",
+                      "--conversation-id", "community", "--bootstrap-peer", root / "bootstrap.json", "--output", root / "network.json")
+            configure("verify", "--input", root / "network.json")
+            stop("community")
+            for owner in fixtures.values():
+                target = owner[1] / "collaboration-network-v1.json"
+                shutil.copy2(root / "network.json", target)
+                target.chmod(0o600)
+            for name in fixtures:
+                launch(name)
+            bases = [f"http://{settings['browser_host']}:" + fixtures[name][2].rsplit(":", 1)[1] for name in ("a", "b")]
+            with (root / "browser.private.log").open("wb") as log:
+                browser = subprocess.Popen(["node", "scripts/ci-installed-two-home-journey.mjs", *bases,
+                                            str(evidence), str(control)], stdout=log, stderr=log, start_new_session=True)
+            last = 0
+            while browser.poll() is None:
+                remember_message_processes(browser, browser_processes, "--two-home-fixture=" + str(control))
+                request = control / "request.json"
+                if request.exists():
+                    value = private_json(request)
+                    if value["id"] > last:
+                        assert value["id"] == last + 1 and value["action"] in {"stop_b", "start_b"}
+                        stop("b") if value["action"] == "stop_b" else launch("b")
+                        last = value["id"]
+                        private_json(control / "response.json", {"id": last, "status": "passed"})
+                time.sleep(.1)
+            observed = json.loads((evidence / "two-home-ui.json").read_text())
+            record.update(observed)
+            if browser.returncode and (control / "error.private.txt").exists():
+                record["browser_failure"] = redact((control / "error.private.txt").read_text(), [str(root)])[:1200]
+            assert browser.returncode == 0, "installed two-Home browser journey failed"
+            assert all(record["results"].get(name) == "passed" for name in (
+                "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
+            assert all(record["negative_controls"].get(name, {}).get("assertion_rejected") is True
+                       for name in ("sender_delivered",))
     except BaseException as error:
         record["failure"] = observer_failure("two_home_messages", error, [str(root), str(home)])
         raise
     finally:
-        if browser and browser.poll() is None:
-            os.killpg(browser.pid, signal.SIGTERM)
-            try:
-                browser.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(browser.pid, signal.SIGKILL)
-                browser.wait(timeout=5)
-        for name in list(children):
-            stop(name)
         record["process_cleanup"] = cleanup
-        record["elapsed_seconds"] = round(time.monotonic() - started, 2)
-        record["disk_after"] = require_disk_space(data)
-        # Private keys, sessions and Runtime logs have one lifecycle: this invocation.
-        remove_message_fixture(root)
-        record["fixture_removed"] = True
-        receipt_path.write_text(json.dumps(record, indent=2) + "\n")
+        finish_message_fixture(root, data, evidence, record, children, fixtures, stop, browser, browser_processes, started)
 
 
 def repeat(home, data, evidence, count):

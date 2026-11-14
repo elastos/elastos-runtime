@@ -46,7 +46,7 @@ async function run() {
   let browser;
   try {
     result.stage='browser_launch';
-    browser = await chromium.launch({headless:true});
+    browser = await chromium.launch({headless:true, args:['--two-home-fixture='+control]});
     const homes=[];
     for(const [i,base] of bases.entries()) {
       const context=await browser.newContext({timezoneId:'UTC', serviceWorkers:'block', viewport:{width:1440,height:900}});
@@ -100,6 +100,7 @@ async function run() {
     result.stage='community_post';
     await communityA.locator('#message-input:enabled').waitFor({timeout:90000});
     await api(communityB, '/api/apps/chat-room/session/start', {});
+    await communityB.locator('#message-input:enabled').waitFor({timeout:60000});
     const postText='Two Home Community '+crypto.randomUUID();
     const posted=await api(communityA, '/api/apps/chat-room/objects/send', {request_id:'two-home:'+crypto.randomUUID(),body:postText});
     let communityPoll;
@@ -108,6 +109,8 @@ async function run() {
       return communityPoll.objects.some(row=>row.message_id===posted.message_id && row.body===postText);
     });
     assertCommunityMessage(communityPoll, posted.message_id, postText);
+    await communityB.locator('#message-list .message-body').filter({hasText:postText}).waitFor({state:'visible',timeout:60000});
+    assert.equal(await communityB.locator('#message-list .message-body').filter({hasText:postText}).innerText(),postText);
     result.results.community_post='passed';
     result.community_text=postText;
     await communityB.screenshot({path:join(evidence,'community-b-desktop.png'),fullPage:true});

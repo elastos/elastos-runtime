@@ -926,11 +926,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '26'
-      - name: installed two-Home Community and direct messages
-        timeout-minutes: 10
-        env:
-          CI_SOURCE_HOME: ${{ runner.temp }}/elastos-source-home
-        run: scripts/ci-installed-journeys.sh two-home-messages
       - name: prepare signed SmolLM2 fixture
         timeout-minutes: 20
         env:
@@ -952,6 +947,11 @@ jobs:
           CI_SOURCE_HOME: ${{ runner.temp }}/elastos-source-home
           CI_MODEL_REPAIR_JOURNEY: 'true'
         run: scripts/ci-installed-journeys.sh model-repair
+      - name: installed two-Home Community and direct messages
+        timeout-minutes: 10
+        env:
+          CI_SOURCE_HOME: ${{ runner.temp }}/elastos-source-home
+        run: scripts/ci-installed-journeys.sh two-home-messages
       - name: summarize installed model journey
         if: always()
         env:

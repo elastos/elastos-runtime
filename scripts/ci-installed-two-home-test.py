@@ -6,6 +6,10 @@ from pathlib import Path
 import runpy
 import os
 import stat
+import subprocess
+import sys
+import time
+import signal
 import tempfile
 import unittest
 from unittest import mock
@@ -34,6 +38,9 @@ class TwoHomeReceiptTests(unittest.TestCase):
 
     def test_source_home_jobs_run_and_require_the_message_receipt(self):
         source = (ROOT/'.github/workflows/ci.yml').read_text()
+        linux = source.split('\n  source-home-linux:\n',1)[1].split('\n  source-home-',1)[0]
+        self.assertLess(linux.index('run: scripts/ci-installed-journeys.sh model-repair'),
+                        linux.index('run: scripts/ci-installed-journeys.sh two-home-messages'))
         for job in ('source-home-linux', 'source-home-macos'):
             block = source.split('\n  '+job+':\n', 1)[1].split('\n  source-home-', 1)[0]
             self.assertIn('run: scripts/ci-installed-journeys.sh two-home-messages', block)
@@ -104,6 +111,92 @@ class TwoHomeReceiptTests(unittest.TestCase):
         changed = copy.deepcopy(valid)
         changed['homes'][0]['carrier_bind_address'] = '192.0.2.1:1234'
         self.assertFalse(check(changed, self.identity()))
+
+    def test_fixture_removal_refuses_nested_home_process(self):
+        remove = JOURNEY['remove_message_fixture']
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)/'fixture'
+            root.mkdir()
+            row = {'command':str(root/'b/data/bin/elastos')+' gateway'}
+            with mock.patch.dict(remove.__globals__, {'process_rows':lambda: {123:row}}):
+                with self.assertRaises(AssertionError):
+                    remove(root)
+            self.assertTrue(root.exists())
+            with mock.patch.dict(remove.__globals__, {'process_rows':lambda: {}}):
+                remove(root)
+            self.assertFalse(root.exists())
+
+    def test_failed_stop_and_disk_check_finish_other_stops_remove_keys_and_write_failure_receipt(self):
+        finish = JOURNEY['finish_message_fixture']
+        for disk_fails in (False, True):
+            with self.subTest(disk_fails=disk_fails), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)/'fixture'
+                root.mkdir()
+                (root/'authority.key').write_text('disposable test key')
+                evidence = Path(temporary)/'evidence'
+                evidence.mkdir()
+                stopped = []
+                children = {'a':mock.Mock(pid=101), 'b':mock.Mock(pid=102), 'community':mock.Mock(pid=103)}
+                def stop(name):
+                    stopped.append(name)
+                    if name == 'a':
+                        raise RuntimeError('injected stop failure')
+                    del children[name]
+                def disk(_):
+                    if disk_fails:
+                        raise RuntimeError('injected disk failure')
+                    return {'free':123}
+                fallback = mock.Mock()
+                with mock.patch.dict(finish.__globals__, {'process_rows':lambda: {},
+                        'stop_message_processes':fallback, 'require_disk_space':disk}):
+                    with self.assertRaisesRegex(RuntimeError, 'cleanup failed'):
+                        finish(root, root, evidence, {'status':'passed'}, children,
+                               {name:(root,root) for name in children}, stop, None, {}, time.monotonic())
+                self.assertEqual(stopped, ['a','b','community'])
+                fallback.assert_called_once()
+                self.assertFalse(root.exists())
+                receipt = json.loads((evidence/'installed-journeys.json').read_text())
+                self.assertEqual(receipt['status'], 'failed')
+                self.assertTrue(receipt['fixture_removed'])
+                self.assertEqual(len(receipt['cleanup_failures']), 2 if disk_fails else 1)
+                self.assertNotIn('disposable test key', json.dumps(receipt))
+
+    def test_work_deadline_interrupts_a_hung_phase_and_restores_the_timer(self):
+        before = signal.getsignal(signal.SIGALRM)
+        with self.assertRaises(TimeoutError):
+            with JOURNEY['message_timeout'](.05):
+                time.sleep(1)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0,0))
+        self.assertEqual(signal.getsignal(signal.SIGALRM), before)
+
+    def test_sigkill_fallback_stops_a_detached_browser_after_node_exits(self):
+        stop = JOURNEY['stop_message_processes']
+        with tempfile.TemporaryDirectory() as temporary:
+            pidfile = Path(temporary)/'browser.pid'
+            marker = '--two-home-fixture='+temporary
+            detached_code = 'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'
+            parent_code = ('import subprocess,sys; from pathlib import Path; '
+                           'p=subprocess.Popen([sys.executable,"-c",sys.argv[2],sys.argv[3]],start_new_session=True); '
+                           'Path(sys.argv[1]).write_text(str(p.pid))')
+            parent = subprocess.Popen([sys.executable,'-c',parent_code,str(pidfile),detached_code,marker])
+            detached = None
+            try:
+                parent.wait(timeout=5)
+                detached = int(pidfile.read_text())
+                # Node has already exited; the fixture marker identifies Chromium.
+                with JOURNEY['message_timeout'](10):
+                    stop(parent, {}, marker, grace=.2, killed=2)
+                rows = JOURNEY['process_rows']()
+                self.assertTrue(detached not in rows or rows[detached]['command'].endswith(' <defunct>'))
+            finally:
+                if detached:
+                    try:
+                        os.kill(detached, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if parent.poll() is None:
+                    parent.kill()
+                parent.wait()
 
     def test_source_identity_rejects_changed_runtime_and_browser_asset_before_launch(self):
         identify = JOURNEY['installed_message_identity']
