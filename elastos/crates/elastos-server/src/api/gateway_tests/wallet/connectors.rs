@@ -1575,7 +1575,7 @@ async fn test_walletconnect_account_removal_clears_its_store_through_wallet_rout
         (WALLET_WALLETCONNECT_CAPSULE_ID, true),
         (WALLET_METAMASK_CAPSULE_ID, false),
     ] {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let owner = passkey_authority(dir.path());
         let token = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &owner);
         let principal = &owner.principal_id;

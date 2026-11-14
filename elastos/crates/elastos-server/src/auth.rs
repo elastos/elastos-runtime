@@ -15788,7 +15788,7 @@ mod tests {
 
     #[test]
     fn walletconnect_removed_principal_clears_only_its_session_file() {
-        let data = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let principal =
             upsert_principal_for_binding(data.path(), passkey_binding(1, 100, 100), 100).unwrap();
         let directory = data
@@ -15815,7 +15815,7 @@ mod tests {
 
     #[test]
     fn walletconnect_principal_cleanup_failure_preserves_the_committed_auth_result() {
-        let data = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let principal =
             upsert_principal_for_binding(data.path(), passkey_binding(1, 100, 100), 100).unwrap();
         let directory = data
