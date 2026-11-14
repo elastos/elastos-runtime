@@ -95,10 +95,10 @@ class MessageNetwork:
                      "-s", self.home_ips[side], "--sport", port, "-j", "SNAT",
                      "--to-source", self.router_ips[side] + ":" + port)
 
-    def http_json(self, name, url, body=None, token=None, health=False, capability=None):
+    def http_json(self, name, url, body=None, token=None, health=False):
         # Secret input stays on stdin. The HTTP socket belongs to this Home's
         # network namespace, like the browser's socket, with no TCP forwards.
-        value = {"url": url, "body": body, "token": token, "health": health, "capability": capability}
+        value = {"url": url, "body": body, "token": token, "health": health}
         result = subprocess.run([*self.prefix(name), sys.executable, str(Path(__file__).resolve()), "--http"],
                                 input=json.dumps(value), capture_output=True, text=True, check=True,
                                 timeout=3 if health else 65)
@@ -116,8 +116,6 @@ def namespace_http():
         raise RuntimeError("fixture HTTP input exceeds its bound")
     value = json.loads(encoded)
     headers = {"Content-Type": "application/json"}
-    if value.get("capability"):
-        headers["X-Capability-Token"] = value["capability"]
     if value["token"]:
         headers["Authorization"] = "Bearer " + value["token"]
     body = json.dumps(value["body"]).encode() if value["body"] is not None else None

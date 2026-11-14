@@ -1986,36 +1986,47 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         decoded = json.loads(base64.b32decode(ticket.upper() + "=" * (-len(ticket) % 8)))
         endpoints = decoded["endpoints"]
         assert len(endpoints) == 1, "fixture ticket must describe one installed Home"
+        if name in record.get("promotion_candidates", {}):
+            assert endpoints[0]["id"] == record["promotion_candidates"][name], "operator hint identity differs from real endpoint"
         observed = endpoints[0]["addrs"]
         if topology:
             assert any(addr.get("Relay") == relay_url for addr in observed), "ticket lacks the real fixture relay"
         else:
             assert observed == [{settings["ticket_transport"]: owner[3]}], "ticket differs from configured Carrier address"
         record["direct_endpoint_observations"].append({"home": name, "ticket_addresses": observed})
+    def seed_promotion_routes():
+        # A mapping-availability fixture, not a second discovery system. Seed
+        # operator-owned direct candidates while UDP is still blocked; the live
+        # connection must first use relay and later select the opened path.
+        identities = {}
+        for name in ("a", "b"):
+            owner = fixtures[name]
+            result = subprocess.run([str(owner[1] / "bin/elastos"), "identity", "show"],
+                env=environment(owner), check=True, capture_output=True, text=True, timeout=30)
+            did = next(line.split(":", 1)[1].strip() for line in result.stdout.splitlines() if line.startswith("DID:"))
+            assert did.startswith("did:key:z") and len(did) < 128
+            alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+            number = 0
+            for character in did[9:]:
+                number = number * 58 + alphabet.index(character)
+            decoded = number.to_bytes((number.bit_length() + 7) // 8, "big")
+            assert decoded[:2] == bytes([0xed, 1]) and len(decoded) == 34
+            identities[name] = (did, decoded[2:].hex())
+        for name, peer in (("a", "b"), ("b", "a")):
+            did, endpoint = identities[peer]
+            port = fixtures[peer][3].rsplit(":", 1)[1]
+            encoded = {"topic":None, "endpoints":[{"id":endpoint, "addrs":[
+                {"Ip":topology.router_ips[peer] + ":" + port}, {"Relay":relay_url}]}]}
+            ticket = base64.b32encode(json.dumps(encoded).encode()).decode().rstrip("=").lower()
+            owner = fixtures[name]
+            subprocess.run([str(owner[1] / "bin/elastos"), "node", "peer", "add", "--did", did,
+                "--ticket", ticket, "--json"], env=environment(owner), check=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
+        record["promotion_candidates"] = {name: endpoint for name, (_, endpoint) in identities.items()}
+
     def promote():
         topology.promote(fixtures)
-        for name, peer in (("a", "b"), ("b", "a")):
-            owner = fixtures[name]
-            coordinates = json.loads(bounded_text(owner[1] / "gateway-runtime-coords.json"))
-            api = coordinates["api_url"].rstrip("/")
-            token = topology.http_json(name, api + "/api/auth/attach",
-                {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
-            cap = topology.http_json(name, api + "/api/capability/request",
-                {"resource": "elastos://peer/*", "action": "execute"}, token)["token"]
-            # Read the actual endpoint ID through this peer's local control.
-            peer_owner = fixtures[peer]
-            peer_coords = json.loads(bounded_text(peer_owner[1] / "gateway-runtime-coords.json"))
-            peer_api = peer_coords["api_url"].rstrip("/")
-            peer_token = topology.http_json(peer, peer_api + "/api/auth/attach",
-                {"secret": peer_coords["attach_secret"], "scope": "shell"})["token"]
-            ticket = topology.http_json(peer, peer_api + "/api/provider/peer/get_ticket", {}, peer_token)["data"]["ticket"]
-            decoded = json.loads(base64.b32decode(ticket.upper() + "=" * (-len(ticket) % 8)))
-            port = peer_owner[3].rsplit(":", 1)[1]
-            decoded["endpoints"][0]["addrs"] = [{"Ip": topology.router_ips[peer] + ":" + port}]
-            direct_ticket = base64.b32encode(json.dumps(decoded).encode()).decode().rstrip("=").lower()
-            response = topology.http_json(name, api + "/api/provider/peer/connect", {"ticket": direct_ticket}, token, capability=cap)
-            assert response["status"] == "ok", "Carrier refused the operator direct route hint"
-        record["promotion_setup"] = "opened UDP NAT mappings and supplied local operator route hints"
+        record["promotion_setup"] = "opened UDP NAT mappings for existing local operator route hints"
 
     def stop(name):
         child = children[name]
@@ -2049,6 +2060,8 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
                 fixtures[name] = (destination, copied, f"127.0.0.1:{port}", carrier)
                 record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos"),
                                         "carrier_bind_address": carrier})
+            if network == "relay-to-direct":
+                seed_promotion_routes()
             launch("community")
             configure("create-authority-key", "--key", root / "authority.key")
             configure("export-local-bootstrap-receipt", "--data-root", fixtures["community"][1],
