@@ -109,7 +109,7 @@ try {
     if (!configured) assert.equal(row, undefined, "unconfigured connector stays hidden");
     const launched = await launch("wallet-walletconnect");
     assert.equal(launched.status === 200, configured, "Home launches only configured connector");
-    if (!configured) assert(launched.status >= 400 && launched.status < 500, "Home refuses unconfigured launch");
+    if (!configured) assert(launched.status >= 400 && launched.status < 500, `Home refuses unconfigured launch: status ${launched.status}, body ${JSON.stringify(launched.body)}`);
   }
   await policy(false);
   // A disposable project file exercises operator configuration without relay access.

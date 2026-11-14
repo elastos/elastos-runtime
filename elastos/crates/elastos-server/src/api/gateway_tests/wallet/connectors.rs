@@ -515,6 +515,55 @@ async fn test_walletconnect_connector_requires_pinned_config() {
     );
 }
 
+#[tokio::test]
+async fn test_home_refuses_unconfigured_walletconnect_before_package_repair() {
+    let dir = tempfile::tempdir().unwrap();
+    write_test_browser_capsule(
+        dir.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        "app",
+        "WalletConnect",
+        None,
+    );
+    // An unavailable repair manifest must not turn a configuration refusal into
+    // a package-repair error. Configured local capsules still launch normally.
+    std::fs::write(
+        dir.path().join("components.json"),
+        b"invalid repair manifest",
+    )
+    .unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    for configured in [false, true] {
+        if configured {
+            seed_walletconnect_connector_config(dir.path());
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/apps/home/launch")
+                    .header(HOST, "localhost:61180")
+                    .header("origin", "http://localhost:61180")
+                    .header("sec-fetch-site", "same-origin")
+                    .header("x-elastos-home-token", home_app_token(dir.path()))
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"target":"wallet-walletconnect"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if configured {
+                StatusCode::OK
+            } else {
+                StatusCode::NOT_FOUND
+            }
+        );
+    }
+}
+
 #[test]
 fn test_marketplace_lists_walletconnect_only_once_its_config_is_pinned() {
     let dir = tempfile::tempdir().unwrap();

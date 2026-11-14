@@ -38,6 +38,15 @@ pub(super) async fn home_launch(
         ));
     }
 
+    // Configuration owns connector availability. Refuse a hidden connector before
+    // package repair, which cannot make an unconfigured connector launchable.
+    ensure_wallet_connector_configured(&state.data_dir, target).map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Home target not found" })),
+        )
+    })?;
+
     let mut target_summary = home_launch_target_for_platform(&state.data_dir, target, platform);
     if target_summary.is_none() || state.data_dir.join("capsules").join(target).exists() {
         ensure_home_target_package(&state.data_dir, target, target_summary.is_none())
