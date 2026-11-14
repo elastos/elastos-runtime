@@ -41,7 +41,7 @@ const DIRECT_DELIVERY_DETAILS_ACCEPT: &str = "application/json;elastos-direct-de
 
 fn direct_delivery_details(headers: &HeaderMap) -> bool {
     headers
-        .get(http::header::ACCEPT)
+        .get(axum::http::header::ACCEPT)
         .is_some_and(|value| value == DIRECT_DELIVERY_DETAILS_ACCEPT)
 }
 
@@ -139,11 +139,14 @@ mod direct_retry_wire_tests {
         let mut headers = HeaderMap::new();
         assert!(!direct_delivery_details(&headers));
         headers.insert(
-            http::header::ACCEPT,
+            axum::http::header::ACCEPT,
             DIRECT_DELIVERY_DETAILS_ACCEPT.parse().unwrap(),
         );
         assert!(direct_delivery_details(&headers));
-        headers.insert(http::header::ACCEPT, "application/json".parse().unwrap());
+        headers.insert(
+            axum::http::header::ACCEPT,
+            "application/json".parse().unwrap(),
+        );
         assert!(!direct_delivery_details(&headers));
     }
 
@@ -221,7 +224,7 @@ mod direct_retry_wire_tests {
         assert!(options.retry_details);
         let mut headers = HeaderMap::new();
         headers.insert(
-            http::header::ACCEPT,
+            axum::http::header::ACCEPT,
             "application/json;elastos-direct-delivery-details=1"
                 .parse()
                 .unwrap(),
@@ -230,7 +233,10 @@ mod direct_retry_wire_tests {
             direct_delivery_details(&headers),
             "delivery details must use the CORS-safelisted Accept profile"
         );
-        headers.insert(http::header::ACCEPT, "application/json".parse().unwrap());
+        headers.insert(
+            axum::http::header::ACCEPT,
+            "application/json".parse().unwrap(),
+        );
         assert!(!direct_delivery_details(&headers));
     }
 
