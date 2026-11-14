@@ -1328,16 +1328,32 @@ mod tests {
             .unwrap();
         let mut clients = Vec::new();
         for index in 0..32u8 {
-            clients.push(
-                ClientBuilder::new(
-                    url.clone(),
-                    SecretKey::from_bytes(&[index + 1; 32]),
-                    dns_resolver(),
-                )
-                .connect()
+            let mut client = ClientBuilder::new(
+                url.clone(),
+                SecretKey::from_bytes(&[index + 1; 32]),
+                dns_resolver(),
+            )
+            .connect()
+            .await
+            .unwrap_or_else(|error| panic!("client {index}: {error:#}"));
+            client
+                .send(ClientToRelayMsg::Ping([index; 8]))
                 .await
-                .unwrap(),
-            );
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    match client.next().await {
+                        Some(Ok(RelayToClientMsg::Pong(value))) if value == [index; 8] => break,
+                        Some(Ok(_)) => {}
+                        other => {
+                            panic!("authenticated client {index} closed before Pong: {other:?}")
+                        }
+                    }
+                }
+            })
+            .await
+            .expect("server processed this authenticated connection");
+            clients.push(client);
         }
         let refused = tokio::time::timeout(
             Duration::from_secs(2),

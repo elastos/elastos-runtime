@@ -829,12 +829,14 @@ mod tests {
         let udp = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let qad = udp.local_addr().unwrap();
         let (_, tls) = crate::server::testing::self_signed_tls_certs_and_config();
-        let mut config = crate::server::ServerConfig::default();
-        config.relay = Some(crate::server::RelayConfig::new(http));
-        config.quic = Some(crate::server::QuicConfig {
-            bind_addr: qad,
-            server_config: Some(tls),
-        });
+        let config = crate::server::ServerConfig {
+            relay: Some(crate::server::RelayConfig::new(http)),
+            quic: Some(crate::server::QuicConfig {
+                bind_addr: qad,
+                server_config: Some(tls),
+            }),
+            ..Default::default()
+        };
         assert!(crate::server::Server::spawn(config).await.is_err());
         let released_http = std::net::TcpListener::bind(http);
         drop(udp);
