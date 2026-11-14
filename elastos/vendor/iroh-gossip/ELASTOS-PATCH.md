@@ -9,3 +9,5 @@ it enters the gossip address lookup. Runtime supplies its one relay-pin policy,
 including after each actor rebuild. This preserves direct route discovery while
 excluding unapproved relays. Retire this patch when upstream exposes an equivalent
 received-address filter and the regression test passes against that source.
+
+One existing optional-writer condition uses `is_none_or` for the pinned toolchain's Clippy check; its meaning is unchanged. The packaged simulator target also has a configuration-input unit test.

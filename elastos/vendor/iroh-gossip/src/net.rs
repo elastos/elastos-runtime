@@ -735,10 +735,10 @@ impl Actor {
 
     fn handle_dial_failed(&mut self, peer_id: EndpointId) {
         // A connection writes the queue, so the failed dial loses nothing.
-        if !self
+        if self
             .peers
             .get(&peer_id)
-            .is_some_and(|peer| peer.writer.is_some())
+            .is_none_or(|peer| peer.writer.is_none())
         {
             self.handle_in_event(InEvent::PeerDisconnected(peer_id), Instant::now());
         }
