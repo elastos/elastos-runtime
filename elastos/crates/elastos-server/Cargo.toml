@@ -10,7 +10,7 @@ name = "elastos"
 path = "src/main.rs"
 
 [dependencies]
-exit-provider = { path = "../../../capsules/exit-provider" }
+exit-provider = { path = "../../../capsules/exit-provider", default-features = false }
 elastos-runtime = { path = "../elastos-runtime" }
 elastos-common = { path = "../elastos-common" }
 elastos-storage = { path = "../elastos-storage" }
