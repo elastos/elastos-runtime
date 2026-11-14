@@ -16,6 +16,8 @@ pub(super) struct ChatDirectMessageReadOptions {
     #[serde(default)]
     retry_details: bool,
     #[serde(default)]
+    delivery_details: bool,
+    #[serde(default)]
     mark_read: Option<bool>,
 }
 
@@ -41,12 +43,15 @@ fn direct_message_read_payload(
     mut messages: Vec<crate::collaboration_direct_messages::DirectMessageSummary>,
     conversation_id: &str,
     retry_details: bool,
+    delivery_details: bool,
 ) -> serde_json::Value {
-    // Older Chat bundles reject unknown message fields. Retry identity is
-    // opt-in on this same authenticated read endpoint.
-    if !retry_details {
-        for message in &mut messages {
+    // Released Chat already opts into retry identity and rejects unknown
+    // fields. Delivery diagnostics have their own opt-in on this endpoint.
+    for message in &mut messages {
+        if !retry_details {
             message.request_id = None;
+        }
+        if !delivery_details {
             message.delivery_issue = None;
         }
     }
@@ -117,6 +122,20 @@ mod direct_retry_wire_tests {
             &"/messages?retry_details=yes".parse().unwrap()
         )
         .is_err());
+        let options = Query::<ChatDirectMessageReadOptions>::try_from_uri(
+            &"/messages?retry_details=true&delivery_details=true"
+                .parse()
+                .unwrap(),
+        )
+        .unwrap()
+        .0;
+        assert!(options.retry_details && options.delivery_details);
+        let options = Query::<ChatDirectMessageReadOptions>::try_from_uri(
+            &"/messages?retry_details=true".parse().unwrap(),
+        )
+        .unwrap()
+        .0;
+        assert!(!options.delivery_details);
     }
 
     #[test]
@@ -206,7 +225,7 @@ mod direct_retry_wire_tests {
                 delivery_issue: None,
             },
         ];
-        let legacy = direct_message_read_payload(messages.clone(), "direct:one", false);
+        let legacy = direct_message_read_payload(messages.clone(), "direct:one", false, false);
         for message in legacy["messages"].as_array().unwrap() {
             assert_eq!(
                 message
@@ -224,13 +243,19 @@ mod direct_retry_wire_tests {
                 ]
             );
         }
-        let retry = direct_message_read_payload(messages, "direct:one", true);
+        let retry = direct_message_read_payload(messages.clone(), "direct:one", true, false);
         assert_eq!(retry["messages"][0]["request_id"], "request:out");
         assert!(
             retry["messages"][0].get("delivery_issue").is_none(),
             "the released retry-details reader rejects new message fields"
         );
         assert!(retry["messages"][1].get("request_id").is_none());
+        let detailed = direct_message_read_payload(messages, "direct:one", true, true);
+        assert_eq!(
+            detailed["messages"][0]["delivery_issue"],
+            "peer_unreachable"
+        );
+        assert!(detailed["messages"][1].get("delivery_issue").is_none());
     }
 
     #[tokio::test]
@@ -385,6 +410,7 @@ pub(super) async fn chat_direct_conversation_messages(
                 messages,
                 &conversation_id,
                 options.retry_details,
+                options.delivery_details,
             ))
             .into_response()
         }

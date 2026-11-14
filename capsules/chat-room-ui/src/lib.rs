@@ -1547,7 +1547,7 @@ impl App {
         let mark_read = self.can_mark_read(Some(&conversation_id));
         let messages_result: Result<DirectMessageList, u16> = direct_get_json(
             &format!(
-                "{DIRECT_API_BASE}/conversations/{}/messages?retry_details=true&mark_read={}",
+                "{DIRECT_API_BASE}/conversations/{}/messages?retry_details=true&delivery_details=true&mark_read={}",
                 encode_path_segment(&conversation_id),
                 mark_read
             ),

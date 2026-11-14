@@ -163,7 +163,7 @@ async function run() {
     result.stage='direct_send';
     const sent=await api(ac,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text});
     result.observations.push({step:'direct_send',status:sent.status,text});
-    const path='/api/apps/chat-room/direct/conversations/'+encodeURIComponent(conversation.conversation_id)+'/messages?retry_details=true';
+    const path='/api/apps/chat-room/direct/conversations/'+encodeURIComponent(conversation.conversation_id)+'/messages?retry_details=true&delivery_details=true';
     result.stage='direct_receive';
     let receivedMessages;
     const received=await until('B direct exact text',async()=> {
