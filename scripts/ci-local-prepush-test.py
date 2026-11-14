@@ -197,6 +197,14 @@ class PrepushTests(unittest.TestCase):
                 binary.write_text("fixture")
                 binary.chmod(0o755)
             elif args[0] == "test":
+                if "--bin" in args:
+                    target = args[args.index("--bin") + 1]
+                    declared = next((t for t in json.loads(os.environ.get("PREPUSH_LOCAL_TARGETS", "[]"))
+                                     if t["name"] == target), {})
+                    required = set(declared.get("required-features", []))
+                    enabled = set(args[args.index("--features") + 1].split(",")) if "--features" in args else set()
+                    if not required.issubset(enabled):
+                        sys.exit("target requires features: " + ",".join(sorted(required)))
                 if "--list" in args:
                     empty = (os.environ.get("PREPUSH_NO_TESTS") or
                              os.environ.get("PREPUSH_EMPTY_PACKAGE") == args[args.index("-p") + 1] or
@@ -374,6 +382,22 @@ class PrepushTests(unittest.TestCase):
         self.assert_stopped(result, "zero unit tests on this host: --bin server")
         self.assertTrue(any(c["args"][:4] == ["test", "-p", "server", "--lib"] and
                             "--nocapture" in c["args"] for c in self.commands()))
+
+    def test_feature_gated_binary_lists_and_runs_with_its_required_features(self):
+        self.write("elastos/crates/server/src/feature_bin.rs", "// feature target fixture\n")
+        self.commit()
+        target = {"name": "feature-bin", "kind": ["bin"], "test": True,
+                  "src_path": str(self.root / "elastos/crates/server/src/feature_bin.rs"),
+                  "required-features": ["server", "tls-ring"]}
+        result = self.invoke(extra={"PREPUSH_LOCAL_TARGETS": json.dumps([target])})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [c["args"] for c in self.commands()
+                 if c["args"][:5] == ["test", "-p", "server", "--bin", "feature-bin"]]
+        self.assertEqual(len(calls), 2, calls)
+        self.assertTrue(any("--list" in call for call in calls))
+        self.assertTrue(any("--nocapture" in call for call in calls))
+        for call in calls:
+            self.assertEqual(call[call.index("--features") + 1], "server,tls-ring")
 
     def test_large_file_in_history_stops_before_any_check(self):
         large = self.root / "output/model.gguf"
