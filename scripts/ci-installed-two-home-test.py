@@ -47,7 +47,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
 
     def receipt(self):
         identity = self.identity()
-        return {**identity, 'fixture_removed':True,
+        return {**identity, 'status':'passed', 'fixture_removed':True,
                 'homes':[{'home':name, 'installed_runtime_sha256':identity['installed_runtime_sha256']}
                          for name in ('a','b','community')],
                 'process_cleanup':[{'status':'passed', 'after':{'runtime':0}} for _ in range(5)],
@@ -67,7 +67,8 @@ class TwoHomeReceiptTests(unittest.TestCase):
             changed = copy.deepcopy(valid)
             changed[key] = 'stale'
             self.assertFalse(check(changed, self.identity()), key)
-        for key, value in [('fixture_removed',False), ('homes',[]), ('process_cleanup',[]),
+        for key, value in [('status','failed'), ('failure',{'phase':'late failure'}), ('browser_failure','failed'),
+                           ('fixture_removed',False), ('homes',[]), ('process_cleanup',[]),
                            ('browser_cross_home_http_requests',1), ('direct_endpoint_observations',[])]:
             changed = copy.deepcopy(valid)
             changed[key] = value

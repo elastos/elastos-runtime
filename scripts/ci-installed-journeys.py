@@ -1752,7 +1752,8 @@ def two_home_receipt_valid(row, identity):
         return False
     homes = row.get("homes", [])
     cleanup = row.get("process_cleanup", [])
-    return (row.get("fixture_removed") is True and len(homes) == 3
+    return (row.get("status") == "passed" and "failure" not in row and "browser_failure" not in row
+            and row.get("fixture_removed") is True and len(homes) == 3
             and {home.get("home") for home in homes} == {"a", "b", "community"}
             and all(home.get("installed_runtime_sha256") == identity["installed_runtime_sha256"] for home in homes)
             and len(cleanup) == 5 and all(item.get("status") == "passed" and item.get("after")
