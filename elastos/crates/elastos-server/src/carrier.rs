@@ -1944,14 +1944,23 @@ async fn start_carrier_node_with_network(
             .context("default Carrier bind address must parse")?,
     );
     let relay_server = relay::configured_server(&data_dir).await?;
-    let endpoint = bind_carrier_endpoint(
+    let endpoint = match bind_carrier_endpoint(
         secret_key,
         network,
         approved.as_ref(),
         requested_bind_addr,
         bind_addr.is_none(),
     )
-    .await?;
+    .await
+    {
+        Ok(endpoint) => endpoint,
+        Err(error) => {
+            if let Some(server) = relay_server {
+                let _ = server.shutdown().await;
+            }
+            return Err(error);
+        }
+    };
 
     // LAN discovery exchanges IP addresses for direct connections.
     // The endpoint's IP-only policy also filters the published addresses.

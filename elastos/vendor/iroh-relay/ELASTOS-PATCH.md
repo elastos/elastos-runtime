@@ -30,3 +30,7 @@ streams and datagrams are disabled, and incoming packet buffers are bounded.
 The discovery tests exercise real held handshakes, capacity, expiry and shutdown.
 Retire these changes when upstream enforces the same limits and these tests pass
 against the replacement source.
+
+If QAD startup fails after HTTP starts, startup awaits HTTP teardown before
+returning the error. Normal shutdown also waits for the HTTP task to finish.
+The failed-start control proves an immediate rebind of the released listeners.

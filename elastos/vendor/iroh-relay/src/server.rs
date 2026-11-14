@@ -844,14 +844,35 @@ impl Server {
                 debug!("Starting QUIC server {}", quic_config.bind_addr);
                 let server_config = quic_config
                     .server_config
-                    .or(tls_config.map(|config| (*config.config).clone()))
-                    .ok_or_else(|| {
-                        e!(SpawnError::QuicSpawn, e!(QuicSpawnError::TlsNotConfigured))
-                    })?;
-                Some(
-                    QuicServer::spawn(quic_config.bind_addr, server_config, metrics.server.clone())
-                        .map_err(|err| e!(SpawnError::QuicSpawn, err))?,
-                )
+                    .or(tls_config.map(|config| (*config.config).clone()));
+                let started = match server_config {
+                    Some(server_config) => QuicServer::spawn(
+                        quic_config.bind_addr,
+                        server_config,
+                        metrics.server.clone(),
+                    )
+                    .map_err(|err| e!(SpawnError::QuicSpawn, err)),
+                    None => Err(e!(
+                        SpawnError::QuicSpawn,
+                        e!(QuicSpawnError::TlsNotConfigured)
+                    )),
+                };
+                match started {
+                    Ok(server) => Some(server),
+                    Err(error) => {
+                        // Startup owns the listener until the complete service
+                        // set has started; return only after it is released.
+                        if let Some(mut server) = relay_server {
+                            server.shutdown();
+                            let _ = server.task_handle().await;
+                        }
+                        tasks.shutdown().await;
+                        if let Some(server) = metrics_server {
+                            server.shutdown().await;
+                        }
+                        return Err(error);
+                    }
+                }
             }
             None => None,
         };
@@ -1000,8 +1021,9 @@ async fn relay_supervisor(
 
     // Ensure the HTTP server terminated, there is no harm in calling this after it is
     // already shut down.
-    if let Some(server) = relay_http_server {
+    if let Some(mut server) = relay_http_server {
         server.shutdown();
+        let _ = server.task_handle().await;
     }
 
     // Ensure the QUIC server is closed
