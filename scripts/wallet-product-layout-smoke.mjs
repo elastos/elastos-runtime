@@ -67,6 +67,7 @@ function defaultState() {
     balanceCalls: [],
     qrCalls: [],
     sendBodies: [],
+    rejectBodies: [],
     defaultBodies: [],
     renameBodies: [],
     deleteBodies: [],
@@ -335,6 +336,13 @@ async function startServer() {
           return;
         }
         json(response, 200, summaryResponse(state));
+        return;
+      }
+      if (url.pathname === "/api/apps/wallet/wallet/approvals/approved-send/reject" && request.method === "POST") {
+        assert(request.headers["x-elastos-home-token"] === "wallet-home-token", "dismissal carries Wallet authority");
+        state.rejectBodies.push(await readBody(request));
+        state.approvals[0].status = "rejected";
+        json(response, 200, { approval_requests: state.approvals });
         return;
       }
       if (url.pathname === "/api/wallet/prices" && request.method === "GET") {
@@ -855,6 +863,23 @@ async function run() {
     }));
     assert(railState.presentation === "rail" && railState.heroNavHidden, "Rail mode must keep the reviewed Wallet rail presentation.");
     await assertNoErrors(railPage, server, "rail");
+    server.state.approvals = [{ ...railFixtureState.approvals[0], request_id: "approved-send",
+      status: "approved", intent: "transaction_intent", connector_id: "wallet-walletconnect",
+      expires_at: Math.floor(Date.now() / 1000) - 1 }];
+    await railPage.reload({ waitUntil: "networkidle" });
+    const dismissFrame = await walletFrame(railPage);
+    await dismissFrame.locator(".wallet-account").waitFor({ state: "visible" });
+    await dismissFrame.locator("#wallet-activity-open").click();
+    const approvedCard = dismissFrame.locator('[data-wallet-request-id="approved-send"]');
+    await approvedCard.waitFor({ state: "visible" });
+    assert((await approvedCard.textContent()).includes("does not cancel"), "dismissal explains ownership of the wallet transaction");
+    assert(await approvedCard.getByRole("button").count() === 1, "approved send offers Reject without another approval");
+    await approvedCard.getByRole("button", { name: "Reject", exact: true }).click();
+    await approvedCard.waitFor({ state: "detached" });
+    assert(server.state.rejectBodies.length === 1, "one dismissal reaches Runtime");
+    assert((await dismissFrame.locator("#wallet-status").textContent()).startsWith("Request dismissed."), "person sees dismissal confirmation");
+    await assertNoErrors(railPage, server, "dismissal");
+    console.log("Wallet approved-send dismissal PASS: visible recovery card, Reject, one Runtime request, removed after refresh");
     await railPage.close();
 
     console.log(`wallet-product-layout-smoke: OK\n${desktopShot}\n${narrowShot}`);

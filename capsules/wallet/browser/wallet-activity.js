@@ -26,7 +26,11 @@ export function createWalletActivity({ activityNode, textNode }) {
 }
 
 export function pendingRequests(requests) {
-  return requests.filter((request) => readText(request.status) === "pending");
+  // An approved connector send still needs its receipt or explicit dismissal.
+  return requests.filter((request) => readText(request.status) === "pending"
+    || (readText(request.status) === "approved"
+      && readText(request.intent) === "transaction_intent"
+      && Boolean(readText(request.connector_id))));
 }
 
 export function activityTime(request) {
@@ -50,6 +54,9 @@ export function activityTitle(request) {
     return `${capsule} · Approved ${requestTitle(request)}`;
   }
   if (status === "rejected") {
+    if (request.intent === "transaction_intent" && readText(request.connector_id)) {
+      return `${capsule} · Dismissed transaction request`;
+    }
     return `${capsule} · Rejected ${requestTitle(request)}`;
   }
   if (status === "expired") {

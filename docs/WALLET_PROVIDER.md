@@ -272,8 +272,8 @@ it again supplies recovery instructions and keeps the send control disabled.
 A returned transaction hash is passed to Runtime once even if the account,
 network or expiry changed during the phone prompt. An approved WalletConnect
 transaction can complete once within 24 hours after expiry, in the same Runtime
-session. Reject dismisses an approved connector transaction and releases its
-approval slot. It does not cancel a transaction on the phone wallet. An unfinished
+session. Wallet keeps an approved connector transaction in its request list.
+Reject dismisses it and releases its approval slot. It does not cancel a transaction on the phone wallet. An unfinished
 prompt expires after the grace period; other connectors keep their normal TTL.
 Runtime checks the returned
 transaction hash's format only. The phone wallet confirms the transaction;
