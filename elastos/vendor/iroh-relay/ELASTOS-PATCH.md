@@ -54,3 +54,9 @@ actor. IPv4 uses one address; IPv6 uses a /64. Forwarded headers grant no separa
 budget, so a reverse proxy shares that budget. QAD validates source ownership
 with stateless Retry before reserving pending slots and uses the same /64 rule.
 Retire these changes when upstream bounds both transports with equivalent guards.
+
+The standalone workspace keeps intermediates in its own target directory. Its
+independent lock graph cannot replace Home dependencies in the shared cache.
+
+The final actor flush uses the existing write deadline, including during owned
+shutdown. A peer that leaves a real output buffer full cannot hold shutdown open.
