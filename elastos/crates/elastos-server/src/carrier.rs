@@ -18501,14 +18501,30 @@ pub(crate) mod tests {
         let discovery = udp.local_addr().unwrap();
         let occupied = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let carrier_bind = occupied.local_addr().unwrap();
-        let config = toml::toml! {
-            gateway_public_publisher_bootstrap = true
-            carrier_relay_bind_addr = http.to_string()
-            carrier_relay_discovery_bind_addr = discovery.to_string()
-            carrier_relay_tls_cert = cert_path.to_str().unwrap()
-            carrier_relay_tls_key = key_path.to_str().unwrap()
-        };
-        std::fs::write(dir.path().join("config.toml"), config.to_string()).unwrap();
+        let mut config = toml::Table::new();
+        config.insert(
+            "gateway_public_publisher_bootstrap".into(),
+            toml::Value::Boolean(true),
+        );
+        for (name, value) in [
+            ("carrier_relay_bind_addr", http.to_string()),
+            ("carrier_relay_discovery_bind_addr", discovery.to_string()),
+            (
+                "carrier_relay_tls_cert",
+                cert_path.to_str().unwrap().to_string(),
+            ),
+            (
+                "carrier_relay_tls_key",
+                key_path.to_str().unwrap().to_string(),
+            ),
+        ] {
+            config.insert(name.into(), toml::Value::String(value));
+        }
+        std::fs::write(
+            dir.path().join("config.toml"),
+            toml::to_string(&config).unwrap(),
+        )
+        .unwrap();
         drop(tcp);
         drop(udp);
         let (sk, did) = elastos_identity::derive_did(&[230u8; 32]);
