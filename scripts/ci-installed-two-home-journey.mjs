@@ -116,7 +116,7 @@ async function run() {
     async function api(page,path,body) {
       return page.evaluate(async ({path,body})=>{
         const token=new URLSearchParams(location.hash.slice(1)).get('home_token');
-        const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','x-elastos-home-token':token,'x-elastos-direct-delivery-details':'true'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
+        const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','x-elastos-home-token':token,'accept':'application/json;elastos-direct-delivery-details=1'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
         if(!r.ok) throw new Error('product API '+path+' HTTP '+r.status);
         return r.json();
       },{path,body});

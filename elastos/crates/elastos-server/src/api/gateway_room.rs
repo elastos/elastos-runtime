@@ -37,12 +37,12 @@ fn direct_conversation_read_payload(
     payload
 }
 
-const DIRECT_DELIVERY_DETAILS_HEADER: &str = "x-elastos-direct-delivery-details";
+const DIRECT_DELIVERY_DETAILS_ACCEPT: &str = "application/json;elastos-direct-delivery-details=1";
 
 fn direct_delivery_details(headers: &HeaderMap) -> bool {
     headers
-        .get(DIRECT_DELIVERY_DETAILS_HEADER)
-        .is_some_and(|value| value == "true")
+        .get(http::header::ACCEPT)
+        .is_some_and(|value| value == DIRECT_DELIVERY_DETAILS_ACCEPT)
 }
 
 fn direct_message_read_payload(
@@ -128,8 +128,8 @@ mod direct_retry_wire_tests {
             &"/messages?retry_details=yes".parse().unwrap()
         )
         .is_err());
-        // The URI stays valid for the released strict query parser. An older
-        // server ignores the optional header, so cached UI also survives Undo.
+        // Accept's token-only parameter is CORS-safelisted. Both released
+        // query parsing and opaque-origin preflight keep their existing shape.
         let options = Query::<ChatDirectMessageReadOptions>::try_from_uri(
             &"/messages?retry_details=true".parse().unwrap(),
         )
@@ -138,9 +138,12 @@ mod direct_retry_wire_tests {
         assert!(options.retry_details);
         let mut headers = HeaderMap::new();
         assert!(!direct_delivery_details(&headers));
-        headers.insert(DIRECT_DELIVERY_DETAILS_HEADER, "true".parse().unwrap());
+        headers.insert(
+            http::header::ACCEPT,
+            DIRECT_DELIVERY_DETAILS_ACCEPT.parse().unwrap(),
+        );
         assert!(direct_delivery_details(&headers));
-        headers.insert(DIRECT_DELIVERY_DETAILS_HEADER, "false".parse().unwrap());
+        headers.insert(http::header::ACCEPT, "application/json".parse().unwrap());
         assert!(!direct_delivery_details(&headers));
     }
 

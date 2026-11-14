@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 pub(super) const DIRECT_API_BASE: &str = "/api/apps/chat-room/direct";
-pub(super) const DELIVERY_DETAILS_HEADER: &str = "x-elastos-direct-delivery-details";
+pub(super) const DELIVERY_DETAILS_ACCEPT: &str =
+    "application/json;elastos-direct-delivery-details=1";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct DirectUiState {
