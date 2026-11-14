@@ -1,3 +1,4 @@
+import { formatBytes as formatSize } from "./byte-format.js?v=download-progress-20261112";
 // Home opens an app's web link or shared file after the person sees the exact address
 // and chooses Open link (#430). App documents have no popup permission.
 //
@@ -519,14 +520,4 @@ export function createHomeExternalLinkPrompt({
       close();
     },
   };
-}
-
-function formatSize(bytes) {
-  if (bytes < 1024) return `${bytes} bytes`;
-  const power = bytes < 1024 ** 2 ? 1 : bytes < 1024 ** 3 ? 2 : 3;
-  const scaled = bytes * 10 / 1024 ** power;
-  const floor = Math.floor(scaled);
-  // Rust's post formatter rounds exact halves to the even decimal.
-  const rounded = scaled - floor === 0.5 ? floor + floor % 2 : Math.round(scaled);
-  return `${(rounded / 10).toFixed(1)} ${['', 'KB', 'MB', 'GB'][power]}`;
 }

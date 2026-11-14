@@ -387,6 +387,8 @@ where
             "current_version":controller.current_version,
             "new_version":controller.new_version,
             "message":controller.message,
+            "completed_bytes":controller.completed_bytes,
+            "total_bytes":controller.total_bytes,
         },
     }))
 }

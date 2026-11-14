@@ -36,6 +36,19 @@ const modelTitle = "Fixture model with a long title for clear phone detail contr
 const sharedOfferId = "remote:grant-one:model:writer";
 const contactOfferId = "contact-ai";
 const marketplaceManifest = JSON.parse(await readFile(join(repoRoot, "capsules/marketplace/capsule.json"), "utf8"));
+// Runtime reports the model download here; the test sets and clears it.
+const modelRuntime = { admitted: false, kept: false, dispatch_ready: false, dispatch_unavailable_reason: null, offer_id: null, preparation: null };
+const modelDownload = {
+  operation_id: "fixture-model-download",
+  cid: modelCid,
+  state: "preparing",
+  total_bytes: 1_320_000_000,
+  completed_bytes: 528_000_000,
+  cancel_requested: false,
+  admitted: false,
+  activation_pending: false,
+  failure_class: null,
+};
 
 function mediaListing({ mintId, displayName, accessState, quantity, price, codecs = "avc1.640028" }) {
   return {
@@ -155,7 +168,7 @@ const catalogCapsules = [
     content_size_bytes: 1_320_000_000,
     signature_state: "catalog-signature-verified",
     model_memory_fit: "fits",
-    model_runtime: { admitted: false, kept: false, dispatch_ready: false, dispatch_unavailable_reason: null, offer_id: null, preparation: null },
+    model_runtime: modelRuntime,
   },
 ];
 
@@ -341,6 +354,8 @@ function startServer() {
       initialCatalogHeld: false,
       initialInterfacesHeld: false,
       initialMediaHeld: false,
+      // A later catalog response the test holds to watch a view while it loads.
+      heldCatalogBarrier: null,
       mediaListings: [
         mediaListing({
           mintId: mediaCreatorMint,
@@ -451,6 +466,11 @@ function startServer() {
           state[normalToken].initialCatalogHeld = true;
           await state[normalToken].initialCatalogBarrier.promise;
         }
+        const heldCatalog = state[token]?.heldCatalogBarrier;
+        if (heldCatalog) {
+          state[token].heldCatalogBarrier = null;
+          await heldCatalog.promise;
+        }
         if (state[token]?.catalogFailuresRemaining > 0) {
           state[token].catalogFailuresRemaining -= 1;
           json(response, { message: "provider launch failed" }, 500);
@@ -468,6 +488,26 @@ function startServer() {
         }
         json(response, { interfaces: interfaceEntries });
         return;
+      }
+      // The detail polls this while a download runs; it reports the same bytes.
+      if (url.pathname === "/api/capsules/interfaces/invoke") {
+        const token = String(request.headers["x-elastos-home-token"] || "");
+        const body = await readJsonBody(request);
+        requestLog.push({ path: url.pathname, token, method: request.method, body });
+        // A poll in flight when the detail closes still gets its operation back.
+        if (body?.method === "content.status") {
+          json(response, {
+            schema: "elastos.capsules.invoke-result/v1",
+            status: "ok",
+            capsule: body.capsule,
+            interface: body.interface,
+            method: body.method,
+            request_id: body.request_id,
+            output: { kept: modelRuntime.kept, dispatch_ready: modelRuntime.dispatch_ready,
+              dispatch_unavailable_reason: modelRuntime.dispatch_unavailable_reason, offer_id: modelRuntime.offer_id, ...modelDownload },
+          });
+          return;
+        }
       }
       // A contact's Services offer: Services is hidden, so Marketplace must not show it.
       if (url.pathname === "/api/apps/services/summary") {
@@ -673,7 +713,7 @@ function detailShape() {
 
 // Models are ordinary Marketplace items: store rows, the app detail modal and
 // its footer actions, with size and device fit in the row's facts line.
-async function assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle }) {
+async function assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle, requestLog, state }) {
   await frame.locator('#category-list [data-destination="apps"]').click();
   const appRow = frame.locator('.store-row[data-app="documents"]').first();
   await appRow.waitFor();
@@ -717,12 +757,35 @@ async function assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle })
   await assertNoHorizontalOverflow(frame, "Marketplace Models");
   await page.screenshot({ path: MODELS_SCREENSHOT });
 
+  // A screen reader can skip a region that enters the page with text in it. Only
+  // the first model detail shows this, because the modal keeps the region after a
+  // detail closes, so hold this detail's catalog read and watch it without data.
+  const detailCatalog = createBarrier();
+  state[normalToken].heldCatalogBarrier = detailCatalog;
+  const catalogReadsBeforeDetail = requestLog.filter((entry) => entry.token === normalToken && entry.path === "/api/capsules/catalog").length;
   await modelRow.focus();
   await modelRow.press("Enter");
   await frame.locator("#detail-modal.active").waitFor();
+  await waitForRequestCount(requestLog, normalToken, "/api/capsules/catalog", catalogReadsBeforeDetail + 1);
+  const openingAnnouncement = await frame.evaluate(() => {
+    const regions = [...document.querySelectorAll(".transfer-announcement")];
+    return {
+      count: regions.length,
+      inDialog: regions.filter((node) => document.querySelector("#detail-modal").contains(node)).length,
+      text: regions[0]?.textContent ?? null,
+    };
+  });
+  assert(
+    JSON.stringify(openingAnnouncement) === JSON.stringify({ count: 1, inDialog: 1, text: "" }),
+    "A model detail must open one empty live region in the dialog before its first download text",
+    openingAnnouncement,
+  );
+  detailCatalog.release();
   const get = frame.locator('.modal-footer-actions [data-model-control="use"]');
   await get.waitFor();
   await frame.getByRole("group", { name: "Model status" }).waitFor();
+  const loadedAnnouncement = await frame.evaluate(() => document.querySelector(".transfer-announcement")?.textContent);
+  assert(loadedAnnouncement === "", "A loaded model detail with no download must keep its live region empty", { loadedAnnouncement });
   const detail = await frame.evaluate(() => ({
     developer: document.querySelector(".modal-developer")?.textContent.trim(),
     status: [...document.querySelectorAll("[data-model-management] li:not([hidden])")].map((node) => node.textContent.trim()),
@@ -763,6 +826,37 @@ async function assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle })
   await page.keyboard.press("Escape");
   const restoredFocus = await frame.evaluate(() => document.activeElement?.getAttribute("data-app") || "");
   assert(restoredFocus === `model:${modelCid}`, "Closing the model detail must return focus to its row", { restoredFocus });
+
+  modelRuntime.preparation = modelDownload;
+  await modelRow.press("Enter");
+  await frame.locator("#detail-modal.active").waitFor();
+  await frame.locator("[data-model-management] progress").waitFor();
+  const announcement = await frame.evaluate(() => {
+    const regions = [...document.querySelectorAll(".transfer-announcement")];
+    return {
+      count: regions.length,
+      inDialog: regions.filter((node) => document.querySelector("#detail-modal").contains(node)).length,
+      inSections: regions.filter((node) => document.querySelector("#detail-content").contains(node)).length,
+      role: regions[0]?.getAttribute("role"),
+      live: regions[0]?.getAttribute("aria-live"),
+      text: regions[0]?.textContent.trim(),
+    };
+  });
+  assert(
+    JSON.stringify(announcement) === JSON.stringify({
+      count: 1, inDialog: 1, inSections: 0, role: "status", live: "polite", text: "Model download: 0.53 GB of 1.32 GB, 40%.",
+    }),
+    "A running model download must announce politely from one live region outside the detail sections",
+    announcement,
+  );
+  const downloadDetailShape = await frame.evaluate(detailShape);
+  assert(JSON.stringify(downloadDetailShape) === JSON.stringify(appDetailShape),
+    "A downloading model detail must share the app detail structure", { downloadDetailShape, appDetailShape });
+  await page.keyboard.press("Escape");
+  await frame.locator("#detail-modal:not(.active)").waitFor({ state: "attached" });
+  modelRuntime.preparation = null;
+  const closedAnnouncement = await frame.evaluate(() => document.querySelector(".transfer-announcement")?.textContent.trim());
+  assert(closedAnnouncement === "", "Closing the detail must leave the live region empty", { closedAnnouncement });
 
   await frame.locator('.store-row[data-action="shared-detail"]').click();
   await frame.locator("#detail-modal.active").waitFor();
@@ -1132,7 +1226,7 @@ async function run() {
       { countsBeforeInvalidRefresh, countsAfterRefresh },
     );
 
-    await assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle });
+    await assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle, requestLog, state });
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await waitForFrameWidth(frame, 1280);

@@ -9,7 +9,7 @@ import {
   isDirectory,
   isProtectedContent,
   visibilityContract,
-} from "./model.js";
+} from "./model.js?v=download-progress-20261112";
 
 const LARGE_RENDER_THRESHOLD = 240;
 const INITIAL_RENDER_LIMIT = 120;

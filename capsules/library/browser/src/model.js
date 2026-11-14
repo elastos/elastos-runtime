@@ -1,3 +1,4 @@
+import { formatBytes } from "../byte-format.js?v=download-progress-20261112";
 export function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -315,19 +316,6 @@ function isArchiveName(name) {
   ].some((extension) => name.endsWith(extension));
 }
 
-export function formatBytes(bytes) {
-  const value = Number(bytes || 0);
-  if (!value) return "-";
-  const units = ["B", "KB", "MB", "GB"];
-  let size = value;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
-
 export function formatTime(timestamp) {
   const value = Number(timestamp || 0);
   if (!value) return "-";
@@ -359,3 +347,5 @@ export function base64ToBlob(data, mime) {
   }
   return new Blob([bytes], { type: mime || "application/octet-stream" });
 }
+
+export { formatBytes };

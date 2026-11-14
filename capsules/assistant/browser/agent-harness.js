@@ -1,3 +1,4 @@
+import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 /* Agent Harness — Home drops, Shelf stays as composer hinge.
    UI ≠ authority (Principle 16): never mints grants, never opens Carrier/
    capsule ambient paths. Inference is the typed model contract or nothing. */
@@ -11,7 +12,7 @@ import {
   getComposerDraft,
   applyComposerDraft,
   syncAgentSendButton,
-} from "./agent-shelf.js";
+} from "./agent-shelf.js?v=download-progress-20261112";
 import {
   shellState,
   desktopObjects,
@@ -728,7 +729,7 @@ function syncModelTrigger() {
   const content = liveContentModels().find(model => model.offerId === offer?.offerId);
   const downloading = offer ? null : liveDownloadingModel();
   const label = content?.title || offer?.label || liveInference.model ||
-    (downloading ? `${downloading.title} is downloading (${downloading.downloadPercent}%)` : "No model");
+    (downloading ? `${downloading.title} is downloading` : "No model");
   if (name) {
     name.textContent = label;
   }
@@ -736,6 +737,17 @@ function syncModelTrigger() {
     tier.textContent = "";
     tier.hidden = true;
   }
+  announceTransferProgress(btn.parentElement, downloading?.download?.completed ?? null, downloading?.download?.total, "Model download");
+  const toolbar = btn.closest(".agent-composer-toolbar");
+  let progress = toolbar?.parentElement.querySelector(".agent-model-download");
+  if (downloading?.download) {
+    if (!progress) {
+      progress = document.createElement("div");
+      progress.className = "agent-model-download";
+      toolbar.after(progress);
+    }
+    progress.replaceChildren(createTransferProgress(downloading.download.completed, downloading.download.total, "Model download progress"));
+  } else progress?.remove();
   btn.setAttribute("aria-label", offer ? `Model: ${label}` : "Choose a model");
   btn.title = offer ? label : "Choose a model";
 }

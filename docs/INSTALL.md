@@ -254,7 +254,10 @@ release is refused. The `discovery_uri` and `ipns_name` fields in
 `sources.json` are shown but not used to find updates. If the Carrier
 connection fails, the check fails.
 
-**What System shows.** System shows the new version and its release notes.
+**What System shows.** The Home update heading names the offered version. During
+the download, System shows progress and keeps the signed release notes visible
+under "What's new", above the update button. The Version row shows the installed
+version.
 
 **Approve and restart.** You approve the update with your passkey for that
 exact release. The Runtime always downloads the new Runtime binary and

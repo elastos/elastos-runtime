@@ -2509,7 +2509,7 @@ mod tests {
             image_space(5 * 1024 * 1024 * 1024, archive, UNPACKED_SET_BYTES)
                 .unwrap_err()
                 .to_string(),
-            "the Browser Engine image needs 7.1 GB of free disk space to download and unpack, and 5.0 GB is free"
+            "the Browser Engine image needs 7.62 GB of free disk space to download and unpack, and 5.37 GB is free"
         );
     }
 

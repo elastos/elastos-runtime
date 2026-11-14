@@ -1,4 +1,4 @@
-import { escapeHtml } from "./model.js";
+import { escapeHtml } from "./model.js?v=download-progress-20261112";
 
 // The file name the Chat post states, for the download only: the same rule as
 // Home's sharedFileName (home-external-link.js, which names the Runtime limit

@@ -959,6 +959,7 @@ async fn apply_keeps_a_head_cid_mismatch_retryable_and_records_no_refusal() {
         host_ready: true,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     controller
@@ -2298,6 +2299,7 @@ fn consumed_request_completion_preserves_a_different_request_identity() {
         child: None,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
         request: Some(choice.clone()),
         previous_binary_sha256: String::new(),
@@ -2388,6 +2390,7 @@ async fn pre_restart_reconciliation_retires_only_consumed_request_after_both_loc
         child: None,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
         request: None,
         previous_binary_sha256: String::new(),
@@ -2523,6 +2526,7 @@ async fn cancelled_carrier_close_await_keeps_the_same_task_until_cleanup_complet
         child: None,
         carrier: None,
         carrier_close: Some(task),
+        download_meter: Default::default(),
         test_readiness: None,
         request: None,
         previous_binary_sha256: String::new(),
@@ -2788,6 +2792,8 @@ fn publish_owner_queue_status(
             controller_start: process_start(std::process::id()).unwrap(),
             host_pid: Some(std::process::id()),
             generation: "d".repeat(32),
+            completed_bytes: 0,
+            total_bytes: None,
         },
     )
     .unwrap();
@@ -3193,6 +3199,7 @@ async fn recovery_with_an_owned_ready_child_publishes_its_terminal_result() {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     // A failed readiness proof retains recovery rather than publishing success.
@@ -3260,6 +3267,7 @@ async fn every_home_start_has_one_finite_readiness_budget() {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
 
@@ -3312,6 +3320,7 @@ async fn initial_home_loader_failure_names_the_private_log_and_keeps_the_install
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     // The signed fixture bytes have no native executable format.
@@ -3357,6 +3366,9 @@ struct RealRestartOwner {
 }
 
 impl crate::update::RestartOwner for RealRestartOwner {
+    fn download_plan(&self, completed: u64, total: Option<u64>) -> Result<()> {
+        crate::update::RestartOwner::download_plan(&self.controller, completed, total)
+    }
     fn progress(&self, phase: &str, message: &str) -> Result<()> {
         self.controller.publish(phase, message)
     }
@@ -3559,6 +3571,7 @@ async fn restart_scenario(
             host_ready: false,
             carrier: None,
             carrier_close: None,
+            download_meter: Default::default(),
             test_readiness: candidate_budget,
         },
         starts: Vec::new(),
@@ -3890,6 +3903,7 @@ fn retained_controller(fixture: &PrivateFixture) -> Controller {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     }
 }
@@ -4264,6 +4278,7 @@ async fn stopped_home_with_unreconciled_child_record_reports_failure_and_retains
         host_ready: true,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     let stopped = controller.stop_child().await;
@@ -4312,6 +4327,9 @@ struct StagingRestartOwner {
 }
 
 impl crate::update::RestartOwner for StagingRestartOwner {
+    fn download_plan(&self, completed: u64, total: Option<u64>) -> Result<()> {
+        crate::update::RestartOwner::download_plan(&self.controller, completed, total)
+    }
     fn progress(&self, phase: &str, message: &str) -> Result<()> {
         self.controller.publish(phase, message)
     }
@@ -4548,6 +4566,7 @@ async fn staged_support_skips_linux_only_home_component_on_darwin() {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     let components = serde_json::to_vec(&json!({
@@ -4593,6 +4612,7 @@ async fn staged_support_replaces_a_component_left_by_an_interrupted_undo() {
         host_ready: false,
         carrier: None,
         carrier_close: None,
+        download_meter: Default::default(),
         test_readiness: None,
     };
     // The description is unchanged; the installed bytes are another release's.
@@ -4991,6 +5011,7 @@ async fn stage_before_stop_preserves_home_on_fetch_or_verify_failure_and_restart
                 host_ready: true,
                 carrier: None,
                 carrier_close: None,
+                download_meter: Default::default(),
                 test_readiness: None,
             },
             host: Some(
@@ -5019,6 +5040,7 @@ async fn stage_before_stop_preserves_home_on_fetch_or_verify_failure_and_restart
         let components_cid = raw_cid(&components);
         let app_cid = raw_cid(&app);
         let original_sources = fs::read(fixture.data.join("sources.json")).unwrap();
+        let expected_total = (binary.len() + components.len() + support.len() + app.len()) as u64;
         let items = std::collections::BTreeMap::from([
             (request.head_cid.clone(), head),
             (request.release_cid.clone(), release),
@@ -5079,9 +5101,8 @@ async fn stage_before_stop_preserves_home_on_fetch_or_verify_failure_and_restart
                 if binary_fetch || support_fetch || app_fetch {
                     let status = status(&data)?.unwrap();
                     assert_eq!(status.phase, "downloading");
-                    assert_eq!(status.message, format!(
-                        "Downloading the update ({} B). Home restarts when the update is ready.", bytes.len()
-                    ));
+                    assert_eq!(status.message, crate::update::DOWNLOAD_MESSAGE);
+                    assert_eq!(status.total_bytes, Some(expected_total), "one signed-size plan for binary, components, support and cached app: {outcome}");
                 }
                 if outcome.ends_with("fetch") && failure_target {
                     return Err(crate::update::UpdateSourceUnavailable.into());
@@ -5262,6 +5283,15 @@ async fn stage_before_stop_preserves_home_on_fetch_or_verify_failure_and_restart
 
 #[tokio::test]
 async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_activation() {
+    restarting_network_update(false).await;
+}
+
+#[tokio::test]
+async fn system_update_with_symlinked_binary_parent() {
+    restarting_network_update(true).await;
+}
+
+async fn restarting_network_update(symlinked_parent: bool) {
     let config_file = crate::collaboration_startup::COLLABORATION_STARTUP_CONFIG_FILE;
     for outcome in [
         "joined",
@@ -5300,6 +5330,14 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
         let components = serde_json::to_vec(&value).unwrap();
         fixture.publish_installed_release_with_components(&old_components);
         publish_retained_receipt(&fixture);
+        if symlinked_parent {
+            let alias = fixture.data.join("linked-bin");
+            symlink(&fixture.data, &alias).unwrap();
+            let mut sources = crate::sources::load_trusted_sources(&fixture.data).unwrap();
+            sources.sources[0].install_path =
+                alias.join("installed-runtime").to_str().unwrap().into();
+            crate::sources::save_trusted_sources(&fixture.data, &sources).unwrap();
+        }
         if outcome == "isolated" {
             crate::collaboration_release_network::choose_isolated(&fixture.data).unwrap();
         }
@@ -5344,6 +5382,7 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
                 host_ready: true,
                 carrier: None,
                 carrier_close: None,
+                download_meter: Default::default(),
                 test_readiness: None,
             },
             host: Some(
@@ -5364,6 +5403,9 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
         } else {
             network.clone()
         };
+        let components_count = components.len() as u64;
+        let payload_completed = (binary.len() + components.len()) as u64;
+        let payload_total = payload_completed + b"new support".len() as u64;
         let items = std::collections::BTreeMap::from([
             (request.head_cid.clone(), head),
             (request.release_cid.clone(), release),
@@ -5378,11 +5420,24 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
         let fetch: crate::update::FetchFn = Box::new(move |cid| {
             let bytes = items.get(&cid).cloned();
             let network_fetch = cid == network_cid;
+            let support_fetch = cid == raw_cid(b"new support");
             let observed = observed.clone();
             let birth = birth.clone();
             let data = data.clone();
             Box::pin(async move {
                 if network_fetch {
+                    let progress = status(&data)?.unwrap();
+                    assert_eq!(
+                        progress.total_bytes,
+                        Some(payload_total),
+                        "metadata holds the signed payload total"
+                    );
+                    assert!(progress.completed_bytes >= components_count);
+                    assert!(progress.completed_bytes <= payload_completed);
+                    assert_eq!(
+                        progress.message,
+                        "Checking update metadata. Home restarts when the update is ready."
+                    );
                     observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     // The network comes with the other downloads, while the
                     // current Home still runs on the current release.
@@ -5391,6 +5446,20 @@ async fn system_update_fetches_the_pinned_network_before_stop_and_joins_after_ac
                         fs::read(data.join("bin/fixture-provider")).unwrap(),
                         b"old support"
                     );
+                }
+                if support_fetch {
+                    let progress = status(&data)?.unwrap();
+                    assert_eq!(
+                        progress.total_bytes,
+                        Some(payload_total),
+                        "the signed payload total resumes unchanged"
+                    );
+                    assert!(progress.completed_bytes >= components_count);
+                    assert!(
+                        progress.completed_bytes <= payload_completed,
+                        "metadata bytes are outside the payload count"
+                    );
+                    assert_eq!(progress.message, crate::update::DOWNLOAD_MESSAGE);
                 }
                 bytes.ok_or_else(|| anyhow::anyhow!("content {cid} is not published"))
             })
@@ -5609,4 +5678,389 @@ async fn first_home_start_notes_progress_while_it_waits() {
     let mut quick = Vec::new();
     note_while_starting(async {}, |seconds| quick.push(seconds)).await;
     assert!(quick.is_empty());
+}
+
+fn download_progress_controller(fixture: &PrivateFixture) -> Controller {
+    fixture.publish_installed_release();
+    publish_retained_receipt(fixture);
+    Controller {
+        receipt: read_private_json(&fixture.directory.join(RECEIPT)).unwrap(),
+        directory: fixture.directory.clone(),
+        child: None,
+        request: None,
+        previous_binary_sha256: String::new(),
+        previous_version: String::new(),
+        generation: String::new(),
+        host_ready: false,
+        carrier: None,
+        carrier_close: None,
+        download_meter: Default::default(),
+        test_readiness: None,
+    }
+}
+
+#[test]
+fn download_status_reads_both_legacy_directions_and_binds_progress_to_its_owner() {
+    use crate::update::RestartOwner;
+    let fixture = PrivateFixture::new();
+    let mut controller = download_progress_controller(&fixture);
+    let (_, request, _) = choice_fixture();
+    controller.request = Some(request.clone());
+    controller.download_plan(250, Some(1000)).unwrap();
+    controller
+        .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+        .unwrap();
+    // The old reader rejects unknown fields. Keep its exact pinned wire shape.
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacyStatus {
+        id: Option<String>,
+        phase: String,
+        current_version: String,
+        new_version: Option<String>,
+        message: String,
+        controller_pid: u32,
+        controller_start: String,
+        host_pid: Option<u32>,
+        generation: String,
+    }
+    let bytes = fs::read(fixture.directory.join(STATUS)).unwrap();
+    let legacy: LegacyStatus = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(legacy.phase, "downloading", "new writer -> old reader");
+    let old_bytes = serde_json::to_vec(&legacy).unwrap();
+    let next: UpdateStatus = serde_json::from_slice(&old_bytes).unwrap();
+    assert_eq!(
+        (next.completed_bytes, next.total_bytes),
+        (0, None),
+        "old writer -> new reader"
+    );
+    let joined = status(&fixture.data).unwrap().unwrap();
+    assert_eq!(
+        (joined.completed_bytes, joined.total_bytes),
+        (250, Some(1000))
+    );
+    let saved_progress = fs::read(fixture.directory.join(DOWNLOAD_PROGRESS)).unwrap();
+    controller
+        .publish("updated", "Home is up to date.")
+        .unwrap();
+    assert!(!fixture.directory.join(DOWNLOAD_PROGRESS).exists());
+    assert_eq!(status(&fixture.data).unwrap().unwrap().total_bytes, None);
+    fixture.file(
+        &fixture.directory.join(DOWNLOAD_PROGRESS),
+        &saved_progress,
+        0o600,
+    );
+    controller.request.as_mut().unwrap().id = "e".repeat(32);
+    controller
+        .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+        .unwrap();
+    assert_eq!(
+        status(&fixture.data).unwrap().unwrap().total_bytes,
+        None,
+        "previous request cannot supply progress"
+    );
+    controller.request = Some(request);
+    let mut progress: DownloadProgress =
+        read_private_json(&fixture.directory.join(DOWNLOAD_PROGRESS)).unwrap();
+    progress.controller_start = "previous controller".into();
+    write_private(&fixture.directory.join(DOWNLOAD_PROGRESS), &progress).unwrap();
+    controller
+        .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+        .unwrap();
+    assert_eq!(
+        status(&fixture.data).unwrap().unwrap().total_bytes,
+        None,
+        "previous process cannot supply progress"
+    );
+}
+
+#[tokio::test]
+async fn update_fetch_reports_monotonic_bytes_against_one_total_over_carrier() {
+    use crate::update::RestartOwner;
+    let fixture = PrivateFixture::new();
+    let mut controller = download_progress_controller(&fixture);
+    let (_, request, _) = choice_fixture();
+    controller.request = Some(request.clone());
+    let items: Vec<Vec<u8>> = [262_144, 524_288, 1_048_576]
+        .into_iter()
+        .enumerate()
+        .map(|(index, size)| vec![index as u8; size])
+        .collect();
+    let total: u64 = items.iter().map(|bytes| bytes.len() as u64).sum();
+    use tokio::io::AsyncBufReadExt;
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .clear_ip_transports()
+        .portmapper_config(iroh::endpoint::PortmapperConfig::Disabled)
+        .alpns(vec![b"elastos/carrier/1".to_vec()])
+        .bind_addr("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .unwrap()
+        .bind()
+        .await
+        .unwrap();
+    let address = crate::carrier::tests::wait_for_direct_endpoint_addr(&endpoint).await;
+    let serving_endpoint = endpoint.clone();
+    let serving_items = items.clone();
+    let data = fixture.data.clone();
+    let observed = Arc::new(std::sync::Mutex::new(vec![0]));
+    let intermediate = observed.clone();
+    let serving = tokio::spawn(async move {
+        let connection = serving_endpoint.accept().await.unwrap().await.unwrap();
+        let mut base = 0;
+        for bytes in serving_items {
+            let (mut send, recv) = connection.accept_bi().await.unwrap();
+            let mut request = String::new();
+            tokio::io::BufReader::new(recv)
+                .read_line(&mut request)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&request).unwrap()["cid"],
+                raw_cid(&bytes)
+            );
+            send.write_all(&(bytes.len() as u64).to_be_bytes())
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(110)).await;
+            let half = bytes.len() / 2;
+            send.write_all(&bytes[..half]).await.unwrap();
+            // With no Carrier progress scope this waits for an impossible
+            // mid-reply observation and fails before the reply can complete.
+            tokio::time::timeout(Duration::from_millis(500), async {
+                loop {
+                    let progress = status(&data).unwrap().unwrap();
+                    assert_eq!(progress.total_bytes, Some(total));
+                    if progress.completed_bytes > base
+                        && progress.completed_bytes <= base + half as u64
+                    {
+                        intermediate.lock().unwrap().push(progress.completed_bytes);
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+            })
+            .await
+            .expect("controller must publish bytes before fetch returns");
+            send.write_all(&bytes[half..]).await.unwrap();
+            send.finish().unwrap();
+            base += bytes.len() as u64;
+        }
+        connection.closed().await;
+    });
+    let client = crate::carrier::CarrierClient::connect_endpoint_addr(address, 15)
+        .await
+        .unwrap();
+    controller.download_plan(0, Some(total)).unwrap();
+    controller
+        .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+        .unwrap();
+    for bytes in &items {
+        // Rate limiting has its own elapsed-time test. Make this transport
+        // observation eligible without exceeding Carrier's one-second idle limit.
+        controller.download_meter.lock().unwrap().last_write =
+            std::time::Instant::now().checked_sub(Duration::from_secs(1));
+        let received = track_update_fetch(
+            &fixture.directory,
+            &request.id,
+            &controller.download_meter,
+            client.fetch_content(&raw_cid(bytes), None),
+        )
+        .await
+        .unwrap();
+        assert_eq!(&received, bytes);
+        let meter = controller.download_meter.lock().unwrap();
+        let progress = meter.progress.as_ref().unwrap();
+        assert_eq!(progress.total_bytes, Some(total));
+        observed.lock().unwrap().push(progress.completed_bytes);
+    }
+    let observed = observed.lock().unwrap().clone();
+    assert_eq!(observed.len(), 7);
+    assert_eq!(observed[0], 0);
+    assert_eq!(*observed.last().unwrap(), total);
+    assert!(observed.windows(2).all(|pair| pair[0] < pair[1]));
+    client.close().await;
+    endpoint.close().await;
+    serving.await.unwrap();
+}
+
+#[tokio::test]
+async fn advisory_progress_errors_preserve_status_and_fetch() {
+    use crate::update::RestartOwner;
+    for record in [b"broken".as_slice(), br#"{"future_shape":true}"#, b""] {
+        let fixture = PrivateFixture::new();
+        let mut controller = download_progress_controller(&fixture);
+        let (_, request, _) = choice_fixture();
+        controller.request = Some(request.clone());
+        controller.download_plan(250, Some(1000)).unwrap();
+        controller
+            .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+            .unwrap();
+        fs::write(fixture.directory.join(DOWNLOAD_PROGRESS), record).unwrap();
+        let current = status(&fixture.data).unwrap().unwrap();
+        assert_eq!(current.message, crate::update::DOWNLOAD_MESSAGE);
+        assert_eq!((current.completed_bytes, current.total_bytes), (0, None));
+        assert_eq!(
+            track_update_fetch(
+                &fixture.directory,
+                &request.id,
+                &controller.download_meter,
+                async { Ok(vec![1, 2]) }
+            )
+            .await
+            .unwrap(),
+            vec![1, 2]
+        );
+    }
+}
+
+#[test]
+fn future_progress_fields_are_optional_and_terminal_phases_remove_progress() {
+    use crate::update::RestartOwner;
+    for phase in ["updated", "failed", "restored", "recovery_required", "idle"] {
+        let fixture = PrivateFixture::new();
+        let mut controller = download_progress_controller(&fixture);
+        let (_, request, _) = choice_fixture();
+        controller.request = Some(request);
+        controller.download_plan(250, Some(1000)).unwrap();
+        controller
+            .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+            .unwrap();
+        let path = fixture.directory.join(DOWNLOAD_PROGRESS);
+        let mut record: Value = read_private_json(&path).unwrap();
+        record["future_field"] = json!(true);
+        write_private(&path, &record).unwrap();
+        assert_eq!(
+            status(&fixture.data).unwrap().unwrap().total_bytes,
+            Some(1000)
+        );
+        controller.publish(phase, "Update ended.").unwrap();
+        assert!(!path.exists(), "{phase} must remove advisory progress");
+    }
+}
+
+#[test]
+fn progress_plan_writes_at_most_once_per_second() {
+    use crate::update::RestartOwner;
+    let fixture = PrivateFixture::new();
+    let mut controller = download_progress_controller(&fixture);
+    controller.request = Some(choice_fixture().1);
+    controller.download_plan(250, Some(1000)).unwrap();
+    let path = fixture.directory.join(DOWNLOAD_PROGRESS);
+    let before = fs::read(&path).unwrap();
+    controller.download_plan(500, Some(1000)).unwrap();
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "rapid plan writes are coalesced"
+    );
+    std::thread::sleep(Duration::from_millis(1050));
+    controller.download_plan(750, Some(1000)).unwrap();
+    let progress: DownloadProgress = read_private_json(&path).unwrap();
+    assert_eq!(progress.completed_bytes, 750);
+}
+
+#[test]
+fn terminal_status_write_failure_keeps_the_last_progress_record() {
+    use crate::update::RestartOwner;
+    let fixture = PrivateFixture::new();
+    let mut controller = download_progress_controller(&fixture);
+    controller.request = Some(choice_fixture().1);
+    controller.download_plan(250, Some(1000)).unwrap();
+    controller
+        .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+        .unwrap();
+    let progress_path = fixture.directory.join(DOWNLOAD_PROGRESS);
+    let before = fs::read(&progress_path).unwrap();
+    // Refuse the terminal status write after the current progress exists.
+    let status_path = fixture.directory.join(STATUS);
+    fs::remove_file(&status_path).unwrap();
+    fs::create_dir(&status_path).unwrap();
+    assert!(controller
+        .publish("updated", "Home is up to date.")
+        .is_err());
+    assert_eq!(fs::read(&progress_path).unwrap(), before);
+}
+
+#[test]
+fn verifying_flushes_final_download_progress_before_its_status() {
+    use crate::update::RestartOwner;
+    let fixture = PrivateFixture::new();
+    let mut controller = download_progress_controller(&fixture);
+    controller.request = Some(choice_fixture().1);
+    controller.download_plan(250, Some(1000)).unwrap();
+    controller
+        .publish("downloading", crate::update::DOWNLOAD_MESSAGE)
+        .unwrap();
+    controller.download_plan(1000, Some(1000)).unwrap();
+    let path = fixture.directory.join(DOWNLOAD_PROGRESS);
+    let coalesced: DownloadProgress = read_private_json(&path).unwrap();
+    assert_eq!(coalesced.completed_bytes, 250);
+    // Refuse the phase write: the final download record must already be visible.
+    let status_path = fixture.directory.join(STATUS);
+    fs::remove_file(&status_path).unwrap();
+    fs::create_dir(&status_path).unwrap();
+    assert!(controller
+        .publish("verifying", "Verifying the update.")
+        .is_err());
+    let final_progress: DownloadProgress = read_private_json(&path).unwrap();
+    assert_eq!(final_progress.completed_bytes, 1000);
+    assert_eq!(final_progress.total_bytes, Some(1000));
+    fs::remove_dir(&status_path).unwrap();
+    controller
+        .publish("verifying", "Verifying the update.")
+        .unwrap();
+    let current = status(&fixture.data).unwrap().unwrap();
+    assert_eq!(current.phase, "verifying");
+    assert_eq!(current.completed_bytes, 1000);
+    assert_eq!(current.total_bytes, Some(1000));
+}
+
+#[tokio::test]
+async fn download_progress_startup_removes_only_stale_private_temp_files_under_lease() {
+    let fixture = PrivateFixture::new();
+    publish_retained_receipt(&fixture);
+    let receipt_path = fixture.directory.join(RECEIPT);
+    // Stop startup after lease acquisition, before it can start a Home.
+    let mut receipt: Receipt = read_private_json(&receipt_path).unwrap();
+    receipt.schema = "invalid fixture".into();
+    write_private(&receipt_path, &receipt).unwrap();
+    let stale = fixture
+        .directory
+        .join("download-progress.0123456789abcdef0123456789abcdef.tmp");
+    fixture.file(&stale, b"interrupted progress", 0o600);
+    let unrelated = fixture
+        .directory
+        .join("status.0123456789abcdef0123456789abcdef.tmp");
+    fixture.file(&unrelated, b"keep", 0o600);
+    let malformed = fixture.directory.join("download-progress.other.tmp");
+    fixture.file(&malformed, b"keep", 0o600);
+    let target = fixture.data.join("outside-progress");
+    fixture.file(&target, b"keep target", 0o600);
+    let linked = fixture
+        .directory
+        .join("download-progress.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tmp");
+    symlink(&target, &linked).unwrap();
+    let nested = fixture
+        .directory
+        .join("download-progress.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.tmp");
+    fs::create_dir(&nested).unwrap();
+    let current = fixture.directory.join(DOWNLOAD_PROGRESS);
+    fixture.file(&current, b"keep current", 0o600);
+
+    let lease = acquire_lease(&fixture.directory).unwrap();
+    assert!(run(receipt_path.clone()).await.is_err());
+    assert!(stale.exists(), "live controller's write stays protected");
+    drop(lease);
+    assert!(run(receipt_path).await.is_err());
+    assert!(
+        !stale.exists(),
+        "orphan progress temporary removed at startup"
+    );
+    for path in [&unrelated, &malformed, &target, &linked, &nested, &current] {
+        assert!(
+            fs::symlink_metadata(path).is_ok(),
+            "kept {}",
+            path.display()
+        );
+    }
+    assert_eq!(fs::read(target).unwrap(), b"keep target");
 }

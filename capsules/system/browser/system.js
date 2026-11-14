@@ -1,3 +1,4 @@
+import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 import {
   gatePreviewAuditView,
   inspectActionRequestValidation,
@@ -62,6 +63,7 @@ const technicalInspectRefreshButton = document.querySelector("#technical-inspect
 const deviceDidCopyButton = document.querySelector("#device-did-copy");
 const runtimeUpdateNode = document.querySelector("#runtime-update");
 const runtimeUpdateButton = document.querySelector("#runtime-update-apply");
+const runtimeUpdateProgressNode = document.querySelector("#runtime-update-progress");
 const runtimeUpdateStatusNode = document.querySelector("#runtime-update-status");
 const sourceChannelChoice = document.querySelector("#source-channel-choice");
 const sourceChannelStatus = document.querySelector("#source-channel-status");
@@ -3827,7 +3829,18 @@ function runtimeUpdateControllerBusy() {
 }
 
 function renderRuntimeUpdate(update) {
+  const previous = runtimeUpdate?.controller;
   runtimeUpdate = update && typeof update === "object" ? update : null;
+  const current = runtimeUpdate?.controller;
+  // An atomic advisory-file replacement can leave one poll without counters.
+  // Keep this update's received count; the latest poll owns its total.
+  if (previous?.id && current?.id === previous.id
+    && ["staging", "downloading", "verifying"].includes(previous.phase)
+    && ["staging", "downloading", "verifying"].includes(current.phase)) {
+    runtimeUpdate = { ...runtimeUpdate, controller: { ...current,
+      completed_bytes: Math.max(previous.completed_bytes || 0, current.completed_bytes || 0),
+    } };
+  }
   if (!runtimeUpdateNode || !runtimeUpdateButton) return;
   const configured = runtimeUpdate?.configured === true;
   runtimeUpdateNode.hidden = !configured && !runtimeUpdatePending;
@@ -3856,17 +3869,29 @@ function renderRuntimeUpdate(update) {
     reloadForRuntimeUpdate();
     return;
   }
+  if (runtimeUpdateProgressNode) {
+    const show = ["staging", "downloading", "verifying"].includes(phase);
+    runtimeUpdateProgressNode.hidden = !show;
+    announceTransferProgress(runtimeUpdateProgressNode.parentElement, show ? controller?.completed_bytes ?? 0 : null, controller?.total_bytes, "Update download");
+    runtimeUpdateProgressNode.replaceChildren(...(show ? [createTransferProgress(controller?.completed_bytes, controller?.total_bytes, "Update download progress")] : []));
+  }
   const choice = runtimeUpdatePending?.intent || runtimeUpdate;
-  const inProgress = runtimeUpdatePending || ["staging", "downloading", "verifying", "restarting"].includes(phase);
-  setTextFields("update-current-version", readText(choice?.current_version) || readText(controller?.current_version));
-  setTextFields("update-new-version", readText(choice?.new_version) || readText(controller?.new_version));
+  const inProgress = runtimeUpdatePending ? Boolean(runtimeUpdatePending.stepUpToken)
+    : ["staging", "downloading", "verifying", "restarting"].includes(phase);
+  const newVersion = runtimeUpdatePending ? readText(choice?.new_version)
+    : inProgress ? readText(controller?.new_version) || readText(choice?.new_version)
+      : readText(choice?.new_version);
+  setTextFields("update-heading", newVersion && (inProgress || runtimeUpdatePending || runtimeUpdate?.available === true)
+    ? `${inProgress ? "Updating" : "Update"} to ${newVersion}` : "Home update");
   const publisher = readText(runtimeUpdatePending?.publisher || runtimeUpdate?.publisher);
   setTextFields("update-publisher", publisher);
   setHiddenFields("update-publisher-row", !publisher);
-  const hideOffer = runtimeUpdate?.available !== true && !inProgress;
+  const hideOffer = runtimeUpdate?.available !== true && !inProgress && !runtimeUpdatePending;
   setHiddenFields("update-offer", hideOffer);
   const changes = updateNoteItems(runtimeUpdatePending?.changes || runtimeUpdate?.changes);
-  setHiddenFields("update-changes", hideOffer || (inProgress && !changes.length && runtimeUpdate?.available !== true));
+  const hideNotes = hideOffer || (inProgress && !changes.length && runtimeUpdate?.available !== true);
+  setHiddenFields("update-notes", hideNotes);
+  setHiddenFields("update-changes", hideNotes);
   setUpdateNotes(changes);
   const actionable = runtimeUpdateCanApply();
   runtimeUpdateButton.hidden = !actionable && !runtimeUpdatePending;
@@ -3955,9 +3980,11 @@ function showRuntimeUpdateStatus(message) {
 function scheduleRuntimeUpdateRefresh(delay) {
   window.clearTimeout(runtimeUpdateTimer);
   if (!runtimeUpdateActive || (runtimeUpdate !== undefined && runtimeUpdate?.configured !== true && !runtimeUpdatePending)) return;
+  const phase = runtimeUpdateProgressPhase();
+  const downloading = ["queued", "staging", "downloading", "verifying"].includes(phase);
   runtimeUpdateTimer = window.setTimeout(pollRuntimeUpdate,
-    document.hidden ? 30_000 : delay ?? (runtimeUpdate?.controller?.phase === "restarting"
-      || (runtimeUpdateInProgressSeen && runtimeUpdateReconnects > 0) ? 2_000 : 5_000));
+    document.hidden ? 30_000 : delay ?? (phase === "restarting"
+      || (runtimeUpdateInProgressSeen && runtimeUpdateReconnects > 0) ? 2_000 : downloading ? 1_000 : 5_000));
 }
 
 async function pollRuntimeUpdate() {
@@ -4037,6 +4064,7 @@ async function onRuntimeUpdateApply() {
   try {
     pending.stepUpToken = await requestPasskeyStepUp("system.update.apply", intent);
     if (!runtimeUpdateActive || runtimeUpdatePending !== pending) return;
+    renderRuntimeUpdate(runtimeUpdate);
     const body = JSON.stringify({ ...intent, step_up_token: pending.stepUpToken });
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {

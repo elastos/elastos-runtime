@@ -6,11 +6,12 @@
 <title>System · ElastOS</title>
 <script src="./elastos-theme.js"></script>
 <script src="./elastos-drawer.js"></script>
-<script src="./model-management.js"></script>
+<script type="module" src="./model-management.js?v=download-progress-20261112"></script>
 <link rel="stylesheet" href="./model-management.css">
 <script src="./elastos-accent-picker.js"></script>
+<link rel="stylesheet" href="./transfer-progress.css">
 <link rel="stylesheet" href="./elastos-ui.css">
-<link rel="stylesheet" href="./style.css?v=system-20261110-inbox">
+<link rel="stylesheet" href="./style.css?v=download-progress-20261112">
 </head>
 <body>
   <section id="system-locked" class="system-locked" hidden>
@@ -404,19 +405,17 @@
                 </dl>
               </div>
               <div id="runtime-update" class="pc2-group-row" hidden>
-                <div class="pc2-card-row pc2-card-row-stack">
-                  <div>
-                    <div class="pc2-card-label">Home update</div>
-                    <p id="runtime-update-status" class="pc2-card-sublabel" role="status" aria-live="polite"></p>
-                  </div>
-                  <button id="runtime-update-apply" class="pc2-btn pc2-btn-secondary" type="button" hidden disabled>Update and restart Home</button>
+                <div class="pc2-card-label" data-field="update-heading">Home update</div>
+                <p id="runtime-update-status" class="pc2-card-sublabel" role="status" aria-live="polite"></p>
+                <div id="runtime-update-progress" hidden></div>
+                <div class="runtime-update-changes" data-field="update-notes" hidden>
+                  <h4 class="runtime-update-changes-heading">What's new</h4>
+                  <div data-field="update-changes"></div>
                 </div>
                 <dl class="system-fields runtime-update-fields" data-field="update-offer" hidden>
-                  <div><dt>Current version</dt><dd data-field="update-current-version"></dd></div>
-                  <div><dt>New version</dt><dd data-field="update-new-version"></dd></div>
                   <div data-field="update-publisher-row"><dt>Publisher</dt><dd data-field="update-publisher"></dd></div>
                 </dl>
-                <div class="runtime-update-changes" data-field="update-changes"></div>
+                <button id="runtime-update-apply" class="pc2-btn pc2-btn-secondary" type="button" hidden disabled>Update and restart Home</button>
               </div>
               <div class="pc2-group-row">
                 <div class="pc2-card-row">
@@ -469,7 +468,7 @@
 
     <p class="system-error" hidden></p>
   </main>
-  <script src="./system-tabs.js"></script>
-  <script type="module" src="./system.js?v=system-20261110-inbox"></script>
+  <script src="./system-tabs.js?v=download-progress-20261112"></script>
+  <script type="module" src="./system.js?v=download-progress-20261112"></script>
 </body>
 </html>

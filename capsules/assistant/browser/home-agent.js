@@ -35,14 +35,14 @@ import {
   MAX_HOME_CLIPBOARD_TEXT_UTF8_BYTES,
 } from "/apps/home/home-clipboard-client.js?v=home-20260726a";
 
-import { bindAgentShelf, raiseComposerFace, agentShelfFaceActive, composerInput } from "./agent-shelf.js";
+import { bindAgentShelf, raiseComposerFace, agentShelfFaceActive, composerInput } from "./agent-shelf.js?v=download-progress-20261112";
 import {
   bindAgentHarness,
   showAgentHarness,
   hideAgentHarness,
   agentHarnessActive,
   applyAgentWorkspaceSnapshot,
-} from "./agent-harness.js";
+} from "./agent-harness.js?v=download-progress-20261112";
 import { handleShellEscape } from "./shell-popovers.js";
 import {
   postToHome,
