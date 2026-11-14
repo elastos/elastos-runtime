@@ -33,7 +33,7 @@ JOIN_LINE = "carrier: gossip_join"
 DEAD_LINE = "Community link looks dead"
 REBUILD_LINE = "rebuilding Carrier gossip"
 #: A joined Home repairs after one silence window, so a pass must outlast it.
-SETTLE_SECONDS = 90
+DEFAULT_SETTLE_SECONDS = 90
 
 
 def platform_key():
@@ -152,7 +152,7 @@ def observe(home, started):
     }
 
 
-def run_arrangement(node_build, home_build, root, bind_host):
+def run_arrangement(node_build, home_build, root, bind_host, settle):
     """One node version against one Home version, with a fresh join after restart."""
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     homes, record = {}, {
@@ -196,7 +196,7 @@ def run_arrangement(node_build, home_build, root, bind_host):
         started = time.monotonic()
         for home in homes.values():
             home.start()
-        time.sleep(SETTLE_SECONDS)
+        time.sleep(settle)
         record["observations"] += [observe(homes[name], started) for name in ("a", "b")]
 
         # The node restarts, as an updated node does; the Homes keep running.
@@ -207,7 +207,7 @@ def run_arrangement(node_build, home_build, root, bind_host):
         admit(fresh)
         fresh_started = time.monotonic()
         fresh.start()
-        time.sleep(SETTLE_SECONDS)
+        time.sleep(settle)
         record["observations"].append(observe(fresh, fresh_started))
         record["observations"] += [observe(homes[name], started) for name in ("a", "b")]
         record["status"] = (
@@ -215,10 +215,9 @@ def run_arrangement(node_build, home_build, root, bind_host):
             if all(row["joined"] and row["link_dead"] == 0 for row in record["observations"])
             else "failed"
         )
-    except BaseException as error:
+    except Exception as error:
         record["status"] = "failed"
         record["failure"] = f"{type(error).__name__}: {error}"[:300]
-        raise
     finally:
         for home in homes.values():
             try:
@@ -237,6 +236,7 @@ def main():
     parser.add_argument("--develop-target", type=Path, required=True)
     parser.add_argument("--fixture-root", type=Path, required=True)
     parser.add_argument("--bind-host", default="127.0.0.1")
+    parser.add_argument("--settle-seconds", type=int, default=DEFAULT_SETTLE_SECONDS)
     parser.add_argument("--receipt", type=Path)
     arguments = parser.parse_args()
     builds = {
@@ -248,7 +248,10 @@ def main():
         for home in ("released", "develop"):
             root = arguments.fixture_root / f"node-{node}-homes-{home}"
             receipt["arrangements"].append(
-                run_arrangement(builds[node], builds[home], root, arguments.bind_host)
+                run_arrangement(
+                    builds[node], builds[home], root,
+                    arguments.bind_host, arguments.settle_seconds,
+                )
             )
     receipt["status"] = (
         "passed"
@@ -258,7 +261,8 @@ def main():
     if arguments.receipt:
         arguments.receipt.write_text(json.dumps(receipt, indent=2) + "\n")
     for row in receipt["arrangements"]:
-        print(f"node={row['node_build']:<9} homes={row['home_build']:<9} {row['status']}")
+        print(f"node={row['node_build']:<9} homes={row['home_build']:<9} {row['status']}"
+              + (f"  {row['failure']}" if "failure" in row else ""))
         for observation in row["observations"]:
             print(
                 f"  {observation['home']} joined={observation['joined']} "
