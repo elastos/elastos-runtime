@@ -649,6 +649,9 @@ do
     fi
 done
 
+# Prove the web Home before the CLI starts its own managed Runtime.
+node "${REPO_ROOT}/scripts/walletconnect-installed-policy-smoke.mjs" "${ELASTOS_BIN}" "${DATA_DIR}" "${TEST_ROOT}"
+
 STATUS_OUT="${TEST_ROOT}/home-status.txt"
 test -x "${DATA_DIR}/capsules/home-cli/bin/home-cli"
 cmp "$HOME_CLI_RENDERER" "${DATA_DIR}/capsules/home-cli/bin/home-cli"
@@ -672,8 +675,6 @@ grep -q "Home CLI /" "${HOME_OUT}" || {
     echo "expected home output missing from ${HOME_OUT}" >&2
     exit 1
 }
-
-node "${REPO_ROOT}/scripts/walletconnect-installed-policy-smoke.mjs" "${ELASTOS_BIN}" "${DATA_DIR}" "${TEST_ROOT}"
 
 echo "[local-carrier-setup] OK"
 echo "[local-carrier-setup] temp data dir: ${DATA_DIR}"

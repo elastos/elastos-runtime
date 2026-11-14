@@ -409,6 +409,9 @@ do
         exit 1
     fi
 done
+# Prove the web Home before the CLI starts its own managed Runtime.
+node "${ROOT}/scripts/walletconnect-installed-policy-smoke.mjs" "$ROOT/elastos/target/debug/elastos" "$HOME_DIR/xdg-data/elastos" "$HOME_DIR"
+
 mv "$INSTALLED_HOME_CLI_DIR" "${INSTALLED_HOME_CLI_DIR}.installed"
 
 echo "[home-frontdoor] prove current source elastos + current source Home CLI component against clean-home data"
@@ -544,6 +547,4 @@ run_repeated_action_case()
 PY
 test -x "$INSTALLED_HOME_CLI_DIR/bin/home-cli"
 cmp "$HOME_CLI_RENDERER" "$INSTALLED_HOME_CLI_DIR/bin/home-cli"
-node "${ROOT}/scripts/walletconnect-installed-policy-smoke.mjs" "$ROOT/elastos/target/debug/elastos" "$HOME_DIR/xdg-data/elastos" "$HOME_DIR"
-
 echo "[home-frontdoor] OK"

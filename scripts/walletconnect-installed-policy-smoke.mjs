@@ -30,7 +30,7 @@ const env = { ...process.env, HOME: home, XDG_DATA_HOME: dirname(data), ELASTOS_
 delete env.ELASTOS_WALLETCONNECT_PROJECT_FILE;
 delete env.ELASTOS_WALLETCONNECT_PROJECT_ID;
 const log = await open(join(home, "walletconnect-installed-policy.log"), "w", 0o600);
-const runtime = spawn(binary, ["serve", "--addr", `127.0.0.1:${port}`], { env, stdio: ["ignore", log.fd, log.fd] });
+const runtime = spawn(binary, ["gateway", "--addr", `127.0.0.1:${port}`], { env, stdio: ["ignore", log.fd, log.fd] });
 const stopped = new Promise(resolve => runtime.once("exit", resolve));
 let browser;
 const project = join(home, "walletconnect-test-project");
