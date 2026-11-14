@@ -6,7 +6,16 @@
 //!
 //! For a complete relay server implementation, see the parent [`server`](super) module.
 
-use std::{collections::HashMap, convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    net::{IpAddr, SocketAddr},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use bytes::Bytes;
 use derive_more::Debug;
@@ -53,6 +62,92 @@ use crate::{
         streams::{MaybeTlsStream, RateLimited, RelayedStream},
     },
 };
+
+// These transport slots cover idle TCP, TLS, HTTP upgrade, authenticated
+// handshakes and established relays. A proxy shares its source-network budget;
+// untrusted Forwarded headers never grant a separate slot.
+const TCP_CONNECTIONS: usize = 128;
+const TCP_PENDING: usize = 32;
+const TCP_PER_NETWORK: usize = 32;
+const TCP_PENDING_PER_NETWORK: usize = 8;
+
+#[derive(Debug, Default)]
+struct ConnectionCounts {
+    pending: usize,
+    established: usize,
+    networks: HashMap<IpAddr, (usize, usize)>,
+}
+
+#[derive(Debug, Default)]
+struct NetworkAdmission(Arc<Mutex<ConnectionCounts>>);
+
+#[derive(Debug)]
+pub(super) struct ConnectionPermit {
+    counts: Arc<Mutex<ConnectionCounts>>,
+    network: IpAddr,
+    established: AtomicBool,
+}
+
+impl NetworkAdmission {
+    fn admit(&self, ip: IpAddr) -> Option<Arc<ConnectionPermit>> {
+        let network = super::source_network(ip);
+        let mut counts = self.0.lock().expect("TCP admission");
+        let (pending, established) = counts.networks.get(&network).copied().unwrap_or_default();
+        if counts.pending >= TCP_PENDING
+            || counts.pending + counts.established >= TCP_CONNECTIONS
+            || pending >= TCP_PENDING_PER_NETWORK
+            || pending + established >= TCP_PER_NETWORK
+        {
+            return None;
+        }
+        counts.pending += 1;
+        counts.networks.entry(network).or_default().0 += 1;
+        Some(Arc::new(ConnectionPermit {
+            counts: self.0.clone(),
+            network,
+            established: AtomicBool::new(false),
+        }))
+    }
+}
+
+impl ConnectionPermit {
+    fn establish(&self) {
+        let mut counts = self.counts.lock().expect("TCP admission");
+        if !self.established.swap(true, Ordering::Relaxed) {
+            counts.pending -= 1;
+            counts.established += 1;
+            let network = counts
+                .networks
+                .get_mut(&self.network)
+                .expect("owned network slot");
+            network.0 -= 1;
+            network.1 += 1;
+        }
+    }
+}
+
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        let mut counts = self.counts.lock().expect("TCP admission");
+        if self.established.load(Ordering::Relaxed) {
+            counts.established -= 1;
+        } else {
+            counts.pending -= 1;
+        }
+        let network = counts
+            .networks
+            .get_mut(&self.network)
+            .expect("owned network slot");
+        if self.established.load(Ordering::Relaxed) {
+            network.1 -= 1;
+        } else {
+            network.0 -= 1;
+        }
+        if *network == (0, 0) {
+            counts.networks.remove(&self.network);
+        }
+    }
+}
 
 /// Boxed HTTP response body produced by [`RelayServiceWithNotify`].
 pub type BytesBody = Box<
@@ -511,10 +606,14 @@ impl ServerBuilder {
                                 debug!("connection opened from {peer_addr}");
                                 let tls_config = tls_config.clone();
                                 let service = service.clone();
-                                // spawn a task to handle the connection
+                                let Some(permit) = service.0.network_admission.admit(peer_addr.ip()) else {
+                                    drop(stream);
+                                    continue;
+                                };
+                                // Reserve before spawning: queued tasks also own a slot.
                                 set.spawn(async move {
                                     service
-                                        .handle_connection(stream, tls_config, self.establish_timeout)
+                                        .handle_admitted_connection(stream, tls_config, self.establish_timeout, permit)
                                         .await
                                 }.instrument(info_span!("conn", peer = %peer_addr)));
                             }
@@ -554,6 +653,7 @@ struct Inner {
     write_timeout: Duration,
     rate_limit: watch::Sender<Option<ClientRateLimit>>,
     home_budgets: Option<super::streams::HomeBuckets>,
+    network_admission: NetworkAdmission,
     handshakes: TaskTracker,
     closing: CancellationToken,
     key_cache: KeyCache,
@@ -756,6 +856,7 @@ pub struct RelayServiceWithNotify {
     service: RelayService,
     on_establish: Arc<Notify>,
     deadline: tokio::time::Instant,
+    network_permit: Option<Arc<ConnectionPermit>>,
 }
 
 impl RelayServiceWithNotify {
@@ -768,6 +869,7 @@ impl RelayServiceWithNotify {
             service,
             on_establish,
             deadline: tokio::time::Instant::now() + ESTABLISH_TIMEOUT,
+            network_permit: None,
         }
     }
 }
@@ -777,7 +879,10 @@ impl Service<Request<Incoming>> for RelayServiceWithNotify {
     type Error = HyperError;
     type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
 
-    fn call(&self, req: Request<Incoming>) -> Self::Future {
+    fn call(&self, mut req: Request<Incoming>) -> Self::Future {
+        if let Some(permit) = &self.network_permit {
+            req.extensions_mut().insert(permit.clone());
+        }
         // Create a client if the request hits the relay endpoint.
         if matches!(
             (req.method(), req.uri().path()),
@@ -903,13 +1008,21 @@ impl Inner {
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
+        let network_permit = request_parts
+            .extensions
+            .get::<Arc<ConnectionPermit>>()
+            .cloned();
+        if let Some(permit) = &network_permit {
+            permit.establish();
+        }
         let request =
             ClientRequest::new(authentication.client_key, protocol_version, request_parts);
 
         // Authorize the request against the configured `AccessControl`.
-        let guard = authentication
+        let mut guard = authentication
             .authorize_with(&request, &self.access, &mut io)
             .await?;
+        guard._network_permit = network_permit;
 
         trace!("accept: verified authorization");
 
@@ -971,6 +1084,7 @@ impl RelayService {
             write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit: watch::Sender::new(rate_limit),
             home_budgets: None,
+            network_admission: NetworkAdmission::default(),
             handshakes: TaskTracker::new(),
             closing: CancellationToken::new(),
             key_cache,
@@ -1074,6 +1188,23 @@ impl RelayService {
         tls_config: Option<TlsConfig>,
         establish_timeout: Duration,
     ) {
+        let Ok(peer) = stream.peer_addr() else {
+            return;
+        };
+        let Some(permit) = self.0.network_admission.admit(peer.ip()) else {
+            return;
+        };
+        self.handle_admitted_connection(stream, tls_config, establish_timeout, permit)
+            .await;
+    }
+
+    async fn handle_admitted_connection(
+        self,
+        stream: TcpStream,
+        tls_config: Option<TlsConfig>,
+        establish_timeout: Duration,
+        permit: Arc<ConnectionPermit>,
+    ) {
         let metrics = self.0.metrics.clone();
         metrics.http_connections.inc();
         // We create a notification token to be triggered once the connection is fully established
@@ -1081,6 +1212,7 @@ impl RelayService {
         let on_establish = Arc::new(Notify::new());
         let mut service = RelayServiceWithNotify::new(self, on_establish.clone());
         service.deadline = tokio::time::Instant::now() + establish_timeout;
+        service.network_permit = Some(permit);
 
         // This is the main connection future, driving the connection to completion.
         let serve_fut = async move {
@@ -1248,6 +1380,39 @@ struct Elapsed;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn network_admission_keeps_upgraded_slots_bounds_pending_and_releases_exact_owners() {
+        let admission = super::NetworkAdmission::default();
+        let ip = "192.0.2.8".parse().unwrap();
+        let mut established = Vec::new();
+        for _ in 0..super::TCP_PER_NETWORK {
+            let permit = admission.admit(ip).unwrap();
+            permit.establish();
+            established.push(permit);
+        }
+        assert!(admission.admit(ip).is_none());
+        assert!(admission.admit("192.0.2.9".parse().unwrap()).is_some());
+        established.pop();
+        assert!(admission.admit(ip).is_some());
+        drop(established);
+        assert!(admission.0.lock().unwrap().networks.is_empty());
+        let mut pending = Vec::new();
+        for index in 1..=super::TCP_PENDING {
+            pending.push(
+                admission
+                    .admit(std::net::Ipv4Addr::new(192, 0, 2, index as u8).into())
+                    .unwrap(),
+            );
+        }
+        assert!(admission.admit("192.0.2.250".parse().unwrap()).is_none());
+        for permit in &pending {
+            permit.establish();
+        }
+        assert!(admission.admit("192.0.2.250".parse().unwrap()).is_some());
+        drop(pending);
+        assert!(admission.0.lock().unwrap().networks.is_empty());
+    }
+
     use std::sync::Arc;
 
     use iroh_base::{PublicKey, SecretKey};

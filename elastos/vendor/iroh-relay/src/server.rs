@@ -378,6 +378,7 @@ pub struct OnDisconnectGuard {
     access: Option<Arc<dyn DynAccessControl>>,
     endpoint_id: EndpointId,
     connection_id: ConnectionId,
+    _network_permit: Option<Arc<http_server::ConnectionPermit>>,
 }
 
 impl OnDisconnectGuard {
@@ -389,6 +390,7 @@ impl OnDisconnectGuard {
     pub fn for_access_control(access: Arc<dyn DynAccessControl>, request: &ClientRequest) -> Self {
         Self {
             access: Some(access),
+            _network_permit: None,
             endpoint_id: request.endpoint_id(),
             connection_id: request.connection_id(),
         }
@@ -401,6 +403,7 @@ impl OnDisconnectGuard {
     pub fn empty(endpoint_id: EndpointId) -> Self {
         Self {
             access: None,
+            _network_permit: None,
             endpoint_id,
             connection_id: ConnectionId::next(),
         }
@@ -421,6 +424,17 @@ impl Drop for OnDisconnectGuard {
     fn drop(&mut self) {
         if let Some(access) = self.access.as_ref() {
             access.on_disconnect(self.endpoint_id, self.connection_id);
+        }
+    }
+}
+
+/// IPv4 peers own one address budget; IPv6 peers share a /64 budget so
+/// rotating interface addresses cannot mint a fresh admission allowance.
+pub(crate) fn source_network(ip: std::net::IpAddr) -> std::net::IpAddr {
+    match ip.to_canonical() {
+        std::net::IpAddr::V4(ip) => ip.into(),
+        std::net::IpAddr::V6(ip) => {
+            std::net::Ipv6Addr::from(u128::from(ip) & (u128::MAX << 64)).into()
         }
     }
 }
@@ -1303,6 +1317,54 @@ mod tests {
         assert!(
             matches!(refused, Ok(Ok(0))),
             "ninth idle socket must be refused before authentication: {refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticated_keys_share_their_source_network_capacity() {
+        let server = spawn_local_relay().await.unwrap();
+        let url: RelayUrl = format!("http://{}/", server.http_addr().unwrap())
+            .parse()
+            .unwrap();
+        let mut clients = Vec::new();
+        for index in 0..32u8 {
+            clients.push(
+                ClientBuilder::new(
+                    url.clone(),
+                    SecretKey::from_bytes(&[index + 1; 32]),
+                    dns_resolver(),
+                )
+                .connect()
+                .await
+                .unwrap(),
+            );
+        }
+        let refused = tokio::time::timeout(
+            Duration::from_secs(2),
+            ClientBuilder::new(url, SecretKey::from_bytes(&[99; 32]), dns_resolver()).connect(),
+        )
+        .await;
+        server.shutdown().await.unwrap();
+        drop(clients);
+        assert!(
+            refused.is_ok_and(|result| result.is_err()),
+            "new keys must share the network cap"
+        );
+    }
+
+    #[test]
+    fn source_budgets_canonicalize_mapped_ipv4_and_group_ipv6_by_64() {
+        assert_eq!(
+            source_network("::ffff:192.0.2.8".parse().unwrap()),
+            "192.0.2.8".parse::<std::net::IpAddr>().unwrap()
+        );
+        assert_eq!(
+            source_network("2001:db8:1234:5::1".parse().unwrap()),
+            source_network("2001:db8:1234:5::ffff".parse().unwrap())
+        );
+        assert_ne!(
+            source_network("2001:db8:1234:5::1".parse().unwrap()),
+            source_network("2001:db8:1234:6::1".parse().unwrap())
         );
     }
 

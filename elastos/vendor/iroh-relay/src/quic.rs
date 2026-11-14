@@ -69,6 +69,7 @@ pub(crate) mod server {
             ip: IpAddr,
             limits: DiscoveryLimits,
         ) -> Option<Self> {
+            let ip = crate::server::source_network(ip);
             let mut state = counts.lock().expect("discovery accounting");
             if state.pending >= limits.pending
                 || state.established >= limits.established
@@ -276,6 +277,12 @@ pub(crate) mod server {
                             }
                             res = endpoint.accept() => match res {
                                 Some(incoming) => {
+                                     if !incoming.remote_address_validated() {
+                                         // A Retry proves source ownership without holding
+                                         // an application handshake slot or task.
+                                         let _ = incoming.retry();
+                                         continue;
+                                     }
                                      let remote_addr = incoming.remote_address();
                                      let Some(permit) = Permit::acquire(&admissions, remote_addr.ip().to_canonical(), limits) else {
                                          metrics.qad_incoming_error.inc();
@@ -757,6 +764,37 @@ mod tests {
                 })
                 .await
                 .expect("real client Initial packet");
+                proxy
+                    .send_to(&packet[..length], server.bind_addr())
+                    .await
+                    .unwrap();
+                // Complete only the stateless source-validation round trip.
+                // Hold the TLS handshake by dropping all subsequent replies.
+                let length = tokio::time::timeout(Duration::from_secs(1), async {
+                    loop {
+                        let (length, source) = proxy.recv_from(&mut packet).await.unwrap();
+                        if source == server.bind_addr() {
+                            break length;
+                        }
+                    }
+                })
+                .await
+                .expect("real server Retry");
+                assert_eq!(packet[0] & 0xf0, 0xf0, "QUIC v1 Retry packet");
+                proxy
+                    .send_to(&packet[..length], source_address)
+                    .await
+                    .unwrap();
+                let length = tokio::time::timeout(Duration::from_secs(1), async {
+                    loop {
+                        let (length, source) = proxy.recv_from(&mut packet).await.unwrap();
+                        if source == source_address {
+                            break length;
+                        }
+                    }
+                })
+                .await
+                .expect("client Initial with validated Retry token");
                 proxy
                     .send_to(&packet[..length], server.bind_addr())
                     .await

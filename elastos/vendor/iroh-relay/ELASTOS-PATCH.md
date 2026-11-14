@@ -46,3 +46,11 @@ HTTP upgrade handshakes are tracked, deadline-bound and cancelled by their
 service owner. Shutdown waits for them before closing registered clients;
 dropping the HTTP server also cancels their service token. A held authenticated
 handshake control proves that its admission is released during shutdown.
+
+The HTTP transport admits at most 128 sockets, including queued and authenticated
+connections, with at most 32 pending in total, 32 per source network and 8 pending
+per source network. The guard survives HTTP upgrade and remains with the relay
+actor. IPv4 uses one address; IPv6 uses a /64. Forwarded headers grant no separate
+budget, so a reverse proxy shares that budget. QAD validates source ownership
+with stateless Retry before reserving pending slots and uses the same /64 rule.
+Retire these changes when upstream bounds both transports with equivalent guards.
