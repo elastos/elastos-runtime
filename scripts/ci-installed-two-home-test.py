@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Receipt guards for the installed two-Home journey; no Runtime or browser mocks."""
+import contextlib
 import copy
+import io
 import json
 from pathlib import Path
 import runpy
@@ -67,12 +69,13 @@ class TwoHomeReceiptTests(unittest.TestCase):
                           'direct':{'from':'a', 'to':'b', 'sent':name+' direct', 'received':name+' direct'}}
         return rows
 
-    def receipt(self):
-        identity = self.identity()
-        return {**identity, 'node_identity':identity, 'status':'passed', 'fixture_removed':True,
+    def receipt(self, identity=None, node=None):
+        identity = identity or self.identity()
+        node = node or identity
+        return {**identity, 'node_identity':node, 'status':'passed', 'fixture_removed':True,
                 'network_arrangement':'same-host',
-                'homes':[{'home':name, 'installed_runtime_sha256':identity['installed_runtime_sha256'],
-                          'carrier_bind_address':f'127.0.0.1:{1025+index}'}
+                'homes':[{'home':name, 'carrier_bind_address':f'127.0.0.1:{1025+index}',
+                          'installed_runtime_sha256':(node if name == 'community' else identity)['installed_runtime_sha256']}
                          for index,name in enumerate(('a','b','c','community'))],
                 'process_cleanup':[{'status':'passed', 'after':{'runtime':0}} for _ in range(7)],
                 'browser_cross_home_http_requests':0,
@@ -94,6 +97,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
             self.assertFalse(check(changed, self.identity()), key)
         for key, value in [('status','failed'), ('failure',{'phase':'late failure'}), ('browser_failure','failed'),
                            ('fixture_removed',False), ('homes',[]), ('process_cleanup',[]),
+                           ('process_cleanup',valid['process_cleanup'][:5]),
                            ('browser_cross_home_http_requests',1), ('direct_endpoint_observations',[]),
                            ('transitions',{})]:
             changed = copy.deepcopy(valid)
@@ -117,9 +121,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
     def test_acceptance_binds_the_node_and_each_home_to_its_own_build(self):
         check = JOURNEY['two_home_receipt_valid']
         homes, node = self.identity(), {**self.identity(), 'candidate':'f'*40, 'installed_runtime_sha256':'9'*64}
-        mixed = self.receipt()
-        mixed['node_identity'] = node
-        next(home for home in mixed['homes'] if home['home'] == 'community')['installed_runtime_sha256'] = '9'*64
+        mixed = self.receipt(homes, node)
         self.assertTrue(check(mixed, homes, node_identity=node))
         self.assertFalse(check(mixed, homes), 'a same-version acceptance refuses another node build')
         self.assertFalse(check(self.receipt(), homes, node_identity=node), 'the named node build did not run')
@@ -159,7 +161,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
                 if len(homes) > 3:
                     refused(pair+' is a second post from its sender', lambda rows: rows[name]['community'][index].update(
                         sent='second post', received='second post'))
-            refused('a post is counted twice at '+name,
+            refused('one post stands in for another at '+name,
                     lambda rows: rows[name]['community'].__setitem__(1, rows[name]['community'][0]))
             refused('direct is missing at '+name, lambda rows: rows[name].pop('direct'))
             refused('direct arrived as a prefix at '+name, lambda rows: rows[name]['direct'].update(received=name+' direc'))
@@ -201,6 +203,95 @@ class TwoHomeReceiptTests(unittest.TestCase):
                                      ({'runtime':{'running':True}}, None)):
                 (home/'status.json').write_text(json.dumps(status))
                 self.assertEqual(JOURNEY['home_peer_count'](owner, environment), expected)
+
+    def drive(self, outcome):
+        """Run the mixed-version driver over a stand-in journey that saves a valid receipt unless ``outcome`` interferes."""
+        driver = runpy.run_path(str(ROOT/'scripts/gossip-mixed-version-journey.py'))
+        journey = driver['JOURNEY']
+        identities = {'released':{**self.identity(), 'candidate':'1'*40, 'installed_runtime_sha256':'2'*64},
+                      'candidate':self.identity()}
+        calls = []
+        def stand_in(homes, evidence, fixture_root, node_build):
+            calls.append((node_build.name, homes.name, evidence.name, fixture_root.name))
+            evidence.mkdir()
+            receipt = self.receipt(homes.identity, node_build.identity)
+            error = outcome(len(calls), receipt, fixture_root, journey)
+            (evidence/'installed-journeys.json').write_text(json.dumps(receipt))
+            if error:
+                raise error
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            arguments = [argument for build in identities for part in ('home', 'data', 'repo')
+                         for argument in (f'--{build}-{part}', str(root/build/part))]
+            raised = None
+            with mock.patch.dict(journey, {'two_home_messages':stand_in, 'installed_build':lambda name, *paths:
+                    journey['InstalledBuild'](name, *paths, identities[name])}), contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    driver['main']([*arguments, '--evidence', str(root/'evidence'), '--fixture-root', str(root/'fixtures')])
+                except BaseException as error:
+                    raised = error
+            return raised, json.loads((root/'evidence/mixed-version-journey.json').read_text()), calls
+
+    def test_mixed_version_driver_runs_every_pairing_into_its_own_evidence_and_fixture(self):
+        raised, receipt, calls = self.drive(lambda *_: None)
+        self.assertEqual(raised.code, 0)
+        names = ['node-released-homes-released', 'node-released-homes-candidate',
+                 'node-candidate-homes-released', 'node-candidate-homes-candidate']
+        self.assertEqual(calls, [('released','released',names[0],names[0]), ('released','candidate',names[1],names[1]),
+                                 ('candidate','released',names[2],names[2]), ('candidate','candidate',names[3],names[3])])
+        self.assertEqual((receipt['status'], receipt['fixture_root_removed']), ('passed', True))
+        self.assertEqual([row['arrangement'] for row in receipt['arrangements']], names)
+        for row, (node, homes, *_) in zip(receipt['arrangements'], calls):
+            self.assertEqual((row['status'], row['node']['build'], row['homes']['build']), ('passed', node, homes))
+            self.assertEqual(row['node']['installed_runtime_sha256'], ('2' if node == 'released' else 'a')*64)
+            self.assertEqual(row['homes']['installed_runtime_sha256'], ('2' if homes == 'released' else 'a')*64)
+            self.assertEqual(row['journey']['transitions'], self.transitions())
+
+    def test_mixed_version_driver_fails_on_a_failed_cleanup_an_unproven_receipt_or_a_leftover_fixture(self):
+        def deadline(index, receipt, _root, journey):
+            if index == 1:
+                receipt.update(failure={'phase':'two_home_messages'})
+                return journey['MessageDeadline']('two-Home phase deadline')
+        def failed_cleanup(index, receipt, _root, _journey):
+            if index == 2:
+                receipt.update(status='failed', cleanup_failures=[{'phase':'stop_a'}])
+                return RuntimeError('two-Home cleanup failed; see installed journey receipt')
+        def no_peer(index, receipt, _root, _journey):
+            if index == 3:
+                receipt['transitions']['node_restart']['homes']['a']['peer_count'] = 0
+        def raised_after_its_receipt(index, _receipt, _root, _journey):
+            if index == 4:
+                return RuntimeError('late failure')
+        def leftover(index, _receipt, root, _journey):
+            if index == 4:
+                (root/'a').mkdir(parents=True)
+        for outcome, failed, removed in ((deadline, ['node-released-homes-released'], True),
+                                         (failed_cleanup, ['node-released-homes-candidate'], True),
+                                         (no_peer, ['node-candidate-homes-released'], True),
+                                         (raised_after_its_receipt, ['node-candidate-homes-candidate'], True),
+                                         (leftover, [], False)):
+            with self.subTest(outcome=outcome.__name__):
+                raised, receipt, calls = self.drive(outcome)
+                self.assertEqual(raised.code, 1)
+                self.assertEqual(len(calls), 4, 'the other arrangements stay observable')
+                self.assertEqual((receipt['status'], receipt['fixture_root_removed']), ('failed', removed))
+                self.assertEqual([row['arrangement'] for row in receipt['arrangements'] if row['status'] != 'passed'], failed)
+
+    def test_mixed_version_driver_stops_on_sigterm_and_keeps_a_failed_receipt(self):
+        def terminated(index, _receipt, _root, _journey):
+            if index == 2:
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(1)
+        ignored = []
+        operator = lambda *_: ignored.append(True)
+        previous = signal.signal(signal.SIGTERM, operator)
+        try:
+            raised, receipt, calls = self.drive(terminated)
+            self.assertIs(signal.getsignal(signal.SIGTERM), operator)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        self.assertEqual((type(raised).__name__, ignored, len(calls)), ('MessageTermination', [], 2))
+        self.assertEqual((receipt['status'], len(receipt['arrangements'])), ('failed', 1))
 
     def test_network_arrangement_and_each_observed_ticket_must_match_configuration(self):
         check = JOURNEY['two_home_receipt_valid']
