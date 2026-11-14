@@ -64,6 +64,8 @@ use crate::sources::{
 const CARRIER_ALPN: &[u8] = b"elastos/carrier/1";
 #[path = "carrier_file.rs"]
 mod file_transfer;
+#[path = "carrier_relay.rs"]
+mod relay;
 pub(crate) use file_transfer::fetch_file_from_trusted_source_to_bound;
 #[path = "carrier_exit.rs"]
 mod browser_exit;
@@ -641,6 +643,7 @@ pub struct CarrierNode {
     _router: Router,
     pub gossip_state: Arc<Mutex<GossipState>>,
     pub memory_lookup: MemoryLookup,
+    relay_server: Option<iroh_relay::server::Server>,
 }
 
 impl CarrierNode {
@@ -658,6 +661,11 @@ impl CarrierNode {
             Err(_) => tracing::warn!("carrier gossip did not shut down in time; dropping it"),
         }
         self.endpoint.close().await;
+        if let Some(server) = self.relay_server {
+            if let Err(error) = server.shutdown().await {
+                tracing::warn!("Carrier relay shutdown: {error:#}");
+            }
+        }
     }
 }
 
@@ -1444,8 +1452,7 @@ pub async fn start_carrier_node(
 /// How a Carrier node attaches to the network.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CarrierNodeNetwork {
-    /// Explicit N0 constructor for tests that still need public discovery.
-    /// Operator configuration cannot select this value.
+    /// Explicit operator relay. Uses Minimal and only the configured relay.
     Public,
     /// Direct connections only. The Minimal preset has no public Iroh relay
     /// and no public address discovery. Peers resolve LAN addresses through
@@ -1465,6 +1472,7 @@ fn parse_elastos_carrier_network(raw: Option<&str>) -> anyhow::Result<CarrierNod
     anyhow::ensure!(!raw.is_empty(), "ELASTOS_CARRIER_NETWORK is empty");
     match raw {
         "direct" => Ok(CarrierNodeNetwork::Isolated),
+        "relay" => Ok(CarrierNodeNetwork::Public),
         "public" => anyhow::bail!("ELASTOS_CARRIER_NETWORK=public is invalid: use direct"),
         other => anyhow::bail!("ELASTOS_CARRIER_NETWORK is invalid: {other}"),
     }
@@ -1667,19 +1675,6 @@ fn apply_isolated_endpoint_policy(builder: iroh::endpoint::Builder) -> iroh::end
         .hooks(RejectForeignRelayHook)
 }
 
-fn apply_public_relay_map(
-    builder: iroh::endpoint::Builder,
-    approved: Option<&url::Url>,
-) -> iroh::endpoint::Builder {
-    match approved {
-        Some(relay_url) => {
-            let config = iroh::RelayConfig::new(relay_url.clone().into(), Some(Default::default()));
-            builder.relay_mode(iroh::RelayMode::Custom(iroh::RelayMap::from_iter([config])))
-        }
-        None => builder,
-    }
-}
-
 fn short_lived_endpoint_builder(
     secret_key: SecretKey,
     network: CarrierNodeNetwork,
@@ -1693,12 +1688,14 @@ fn short_lived_endpoint_builder(
         CarrierNodeNetwork::Isolated => apply_isolated_endpoint_policy(
             Endpoint::builder(iroh::endpoint::presets::Minimal).secret_key(secret_key),
         ),
-        CarrierNodeNetwork::Public => apply_public_relay_map(
-            Endpoint::builder(iroh::endpoint::presets::N0).secret_key(secret_key),
-            approved_relay,
-        ),
+        CarrierNodeNetwork::Public => relay::apply_relay(
+            Endpoint::builder(iroh::endpoint::presets::Minimal).secret_key(secret_key),
+            approved_relay.context("relay mode requires ELASTOS_RELAY_URL")?,
+        )?,
     };
-    Ok(builder.transport_config(carrier_transport_config()))
+    Ok(builder
+        .dns_resolver(relay::system_dns())
+        .transport_config(carrier_transport_config()))
 }
 
 fn carrier_transport_config() -> iroh::endpoint::QuicTransportConfig {
@@ -1952,6 +1949,7 @@ async fn start_carrier_node_with_network(
             .parse::<std::net::SocketAddr>()
             .context("default Carrier bind address must parse")?,
     );
+    let relay_server = relay::configured_server(&data_dir).await?;
     let endpoint = bind_carrier_endpoint(
         secret_key,
         network,
@@ -2091,6 +2089,7 @@ async fn start_carrier_node_with_network(
         _router: router,
         gossip_state,
         memory_lookup,
+        relay_server,
     })
 }
 
@@ -8652,6 +8651,17 @@ impl CarrierClient {
             .await
             .context(CarrierTransportFailure)?;
         send.finish().context(CarrierTransportFailure)?;
+
+        // Observe this request's selected path, rather than infer it from the
+        // relay configuration. The private journey log retains this evidence.
+        if let Some(path) = self.conn.paths().iter().find(|path| path.is_selected()) {
+            tracing::info!(
+                route = if path.is_relay() { "relay" } else { "direct" },
+                operation = %invocation.op,
+                provider = %invocation.target,
+                "Carrier provider request path"
+            );
+        }
 
         let mut reader = BufReader::new(recv);
         let reply_bound = if invocation.target == crate::collaboration_history::HISTORY_PROVIDER

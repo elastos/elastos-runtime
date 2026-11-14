@@ -1855,6 +1855,16 @@ MESSAGE_NETWORKS = {
         "bind_host": "127.0.0.1", "browser_host": "localhost", "ticket_transport": "Ip",
         "launches": {"community": 2, "a": 1, "b": 2},
     },
+    "two-nat": {
+        "environment": {"ELASTOS_CARRIER_NETWORK": "relay", "ELASTOS_CARRIER_MDNS": "0"},
+        "bind_host": None, "browser_host": "localhost", "ticket_transport": "Relay",
+        "launches": {"community": 2, "a": 1, "b": 2},
+    },
+    "forced-relay": {
+        "environment": {"ELASTOS_CARRIER_NETWORK": "relay", "ELASTOS_CARRIER_MDNS": "0"},
+        "bind_host": None, "browser_host": "localhost", "ticket_transport": "Relay",
+        "launches": {"community": 2, "a": 1, "b": 2},
+    },
 }
 
 
@@ -1867,13 +1877,20 @@ def message_endpoints_valid(homes, observations, arrangement):
         return False
     for address in addresses.values():
         host, _, port = address.rpartition(":")
-        if host != settings["bind_host"] or not port.isdecimal() or not 0 < int(port) < 65536:
+        expected = settings["bind_host"] or {"community": "203.0.113.1", "a": "10.0.1.2", "b": "10.0.2.2"}[
+            next(name for name, value in addresses.items() if value == address)]
+        if host != expected or not port.isdecimal() or not 0 < int(port) < 65536:
             return False
     counts = dict.fromkeys(settings["launches"], 0)
     for observation in observations:
         name = observation.get("home")
-        if name not in addresses or observation.get("ticket_addresses") != [
-                {settings["ticket_transport"]: addresses[name]}]:
+        if name not in addresses:
+            return False
+        observed = observation.get("ticket_addresses", [])
+        if arrangement == "same-host":
+            if observed != [{settings["ticket_transport"]: addresses[name]}]:
+                return False
+        elif not observed or not any("Relay" in addr for addr in observed):
             return False
         counts[name] += 1
     return counts == settings["launches"]
@@ -1894,6 +1911,10 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host"):
                                          and sum(item["after"].values()) == 0 for item in cleanup)
             and row.get("browser_cross_home_http_requests") == 0
             and message_endpoints_valid(homes, row.get("direct_endpoint_observations", []), network_arrangement)
+            and (network_arrangement == "same-host" or
+                 bool(row.get("route_observations")) and
+                 all(route in {"direct", "relay"} for route in row["route_observations"]) and
+                 (network_arrangement != "forced-relay" or set(row["route_observations"]) == {"relay"}))
             and all(row.get("results", {}).get(name) == "passed" for name in (
                 "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
             and all(row.get("negative_controls", {}).get(name, {}).get("assertion_rejected") is True
@@ -1919,22 +1940,29 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
                   direct_endpoint_observations=[])
     children, fixtures, browser = {}, {}, None
     browser_processes = {}
+    topology = None
+    relay_url = None
     cleanup = []
     started = time.monotonic()
     # Explicit environment excludes ambient relay, public-network and provider overrides.
     def environment(owner):
         return {"PATH": os.environ["PATH"], "HOME": str(owner[0]), "XDG_DATA_HOME": str(owner[1].parent),
-                **settings["environment"], "ELASTOS_QUIET_RUNTIME_NOTICES": "1"}
+                **settings["environment"], "ELASTOS_QUIET_RUNTIME_NOTICES": "1",
+                **({"ELASTOS_RELAY_URL": relay_url} if relay_url else {})}
     def launch(name):
         assert name not in children, "Home already has an owned Runtime"
         owner = fixtures[name]
         with (owner[0] / "runtime.private.log").open("ab") as log:
-            child = subprocess.Popen([str(owner[1] / "bin/elastos"), "gateway", "--addr", owner[2]],
+            prefix = topology.prefix(name) if topology else []
+            address = "0.0.0.0:" + owner[2].rsplit(":", 1)[1] if topology and name != "community" else owner[2]
+            child = subprocess.Popen([*prefix, str(owner[1] / "bin/elastos"), "gateway", "--addr", address],
                                      env=environment(owner), stdout=log, stderr=log, start_new_session=True)
         children[name] = child
         wait_healthy(child, owner[2], "two-Home " + name)
         coordinates = json.loads(bounded_text(owner[1] / "gateway-runtime-coords.json"))
         api = coordinates["api_url"].rstrip("/")
+        if topology:
+            api = topology.api_url(name, api)
         token = post_json(api + "/api/auth/attach", {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
         ticket = post_json(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
         assert len(ticket) <= 16384
@@ -1942,7 +1970,10 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         endpoints = decoded["endpoints"]
         assert len(endpoints) == 1, "fixture ticket must describe one installed Home"
         observed = endpoints[0]["addrs"]
-        assert observed == [{settings["ticket_transport"]: owner[3]}], "ticket differs from configured Carrier address"
+        if topology:
+            assert any(addr.get("Relay") == relay_url for addr in observed), "ticket lacks the real fixture relay"
+        else:
+            assert observed == [{settings["ticket_transport"]: owner[3]}], "ticket differs from configured Carrier address"
         record["direct_endpoint_observations"].append({"home": name, "ticket_addresses": observed})
     def stop(name):
         child = children[name]
@@ -1958,14 +1989,24 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
                            env=environment(owner), stdout=log, stderr=log, check=True, timeout=60)
     try:
         with message_timeout(360):
+            if network != "same-host":
+                topology = runpy.run_path(str(Path(__file__).with_name("ci-two-nat-network.py")))["MessageNetwork"](network)
+                relay_url = f"http://203.0.113.1:{free_port()}/"
             for name in ("community", "a", "b"):
                 destination = root / name
                 copied = fresh_fixture(home, data, destination, include_engine=False)
                 assert installed_message_identity(copied) == identity
-                carrier = f"{settings['bind_host']}:{free_port(socket.SOCK_DGRAM)}"
+                bind_host = topology.home_ips[name] if topology else settings['bind_host']
+                carrier = f"{bind_host}:{free_port(socket.SOCK_DGRAM)}"
                 with (copied / "config.toml").open("a") as config:
                     config.write(f'carrier_bind_addr = "{carrier}"\n')
-                fixtures[name] = (destination, copied, f"{settings['bind_host']}:{free_port()}", carrier)
+                    if topology and name == "community":
+                        config.write('gateway_public_publisher_bootstrap = true\n')
+                        config.write(f'carrier_relay_bind_addr = "203.0.113.1:{urllib.parse.urlsplit(relay_url).port}"\n')
+                port = free_port()
+                if topology:
+                    topology.forward(name, port)
+                fixtures[name] = (destination, copied, f"127.0.0.1:{port}", carrier)
                 record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos"),
                                         "carrier_bind_address": carrier})
             launch("community")
@@ -2009,12 +2050,26 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
                 "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
             assert all(record["negative_controls"].get(name, {}).get("assertion_rejected") is True
                        for name in ("sender_delivered",))
+            if topology:
+                # Only observations made by the actual signed-DM provider path
+                # enter this receipt. Relay configuration supplies no route proof.
+                log = bounded_text(fixtures["a"][0] / "runtime.private.log", 4 * 1024 * 1024)
+                log = re.sub(r"\x1b\[[0-9;]*m", "", log)
+                record["route_observations"] = re.findall(
+                    r'route="?(direct|relay)"?[^\n]*provider=collaboration-direct', log)
+                assert record["route_observations"], "signed-DM selected-path observation is missing"
+                if network == "forced-relay":
+                    assert set(record["route_observations"]) == {"relay"}, "forced relay used a direct path"
     except BaseException as error:
         record["failure"] = observer_failure("two_home_messages", error, [str(root), str(home)])
         raise
     finally:
         record["process_cleanup"] = cleanup
-        finish_message_fixture(root, data, evidence, record, children, fixtures, stop, browser, browser_processes, started)
+        try:
+            finish_message_fixture(root, data, evidence, record, children, fixtures, stop, browser, browser_processes, started)
+        finally:
+            if topology:
+                topology.close()
 
 
 def repeat(home, data, evidence, count):
