@@ -510,6 +510,9 @@ def crate_units(root, workspace, package, paths, lease):
     executed = 0
     for target, selectors, prefixes, touched in plan:
         args = ["cargo", "test", "-p", package["name"], *selectors]
+        required_features = target.get("required-features", [])
+        if required_features:
+            args.extend(["--features", ",".join(required_features)])
         listed = run([*args, "--", "--list"], workspace, capture=True, lease=lease)
         tests = re.findall(r"(?m)^(.+): test$", listed)
         if not tests:
