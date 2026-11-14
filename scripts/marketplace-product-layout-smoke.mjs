@@ -354,6 +354,8 @@ function startServer() {
       initialCatalogHeld: false,
       initialInterfacesHeld: false,
       initialMediaHeld: false,
+      // A later catalog response the test holds to watch a view while it loads.
+      heldCatalogBarrier: null,
       mediaListings: [
         mediaListing({
           mintId: mediaCreatorMint,
@@ -463,6 +465,11 @@ function startServer() {
         if (token === normalToken && !state[normalToken].initialCatalogHeld) {
           state[normalToken].initialCatalogHeld = true;
           await state[normalToken].initialCatalogBarrier.promise;
+        }
+        const heldCatalog = state[token]?.heldCatalogBarrier;
+        if (heldCatalog) {
+          state[token].heldCatalogBarrier = null;
+          await heldCatalog.promise;
         }
         if (state[token]?.catalogFailuresRemaining > 0) {
           state[token].catalogFailuresRemaining -= 1;
@@ -706,7 +713,7 @@ function detailShape() {
 
 // Models are ordinary Marketplace items: store rows, the app detail modal and
 // its footer actions, with size and device fit in the row's facts line.
-async function assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle }) {
+async function assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle, requestLog, state }) {
   await frame.locator('#category-list [data-destination="apps"]').click();
   const appRow = frame.locator('.store-row[data-app="documents"]').first();
   await appRow.waitFor();
@@ -750,12 +757,35 @@ async function assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle })
   await assertNoHorizontalOverflow(frame, "Marketplace Models");
   await page.screenshot({ path: MODELS_SCREENSHOT });
 
+  // A screen reader can skip a region that enters the page with text in it. Only
+  // the first model detail shows this, because the modal keeps the region after a
+  // detail closes, so hold this detail's catalog read and watch it without data.
+  const detailCatalog = createBarrier();
+  state[normalToken].heldCatalogBarrier = detailCatalog;
+  const catalogReadsBeforeDetail = requestLog.filter((entry) => entry.token === normalToken && entry.path === "/api/capsules/catalog").length;
   await modelRow.focus();
   await modelRow.press("Enter");
   await frame.locator("#detail-modal.active").waitFor();
+  await waitForRequestCount(requestLog, normalToken, "/api/capsules/catalog", catalogReadsBeforeDetail + 1);
+  const openingAnnouncement = await frame.evaluate(() => {
+    const regions = [...document.querySelectorAll(".transfer-announcement")];
+    return {
+      count: regions.length,
+      inDialog: regions.filter((node) => document.querySelector("#detail-modal").contains(node)).length,
+      text: regions[0]?.textContent ?? null,
+    };
+  });
+  assert(
+    JSON.stringify(openingAnnouncement) === JSON.stringify({ count: 1, inDialog: 1, text: "" }),
+    "A model detail must open one empty live region in the dialog before its first download text",
+    openingAnnouncement,
+  );
+  detailCatalog.release();
   const get = frame.locator('.modal-footer-actions [data-model-control="use"]');
   await get.waitFor();
   await frame.getByRole("group", { name: "Model status" }).waitFor();
+  const loadedAnnouncement = await frame.evaluate(() => document.querySelector(".transfer-announcement")?.textContent);
+  assert(loadedAnnouncement === "", "A loaded model detail with no download must keep its live region empty", { loadedAnnouncement });
   const detail = await frame.evaluate(() => ({
     developer: document.querySelector(".modal-developer")?.textContent.trim(),
     status: [...document.querySelectorAll("[data-model-management] li:not([hidden])")].map((node) => node.textContent.trim()),
@@ -1196,7 +1226,7 @@ async function run() {
       { countsBeforeInvalidRefresh, countsAfterRefresh },
     );
 
-    await assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle });
+    await assertModelsLayout(page, frame, { appPrimaryStyle, appRowStyle, requestLog, state });
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await waitForFrameWidth(frame, 1280);
