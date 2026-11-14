@@ -28,6 +28,10 @@ def run(args, cwd, capture=False, lease=None):
         target = str(Path(cwd).resolve() / "target")
         environment["CARGO_TARGET_DIR"] = target
         environment["CARGO_BUILD_TARGET_DIR"] = target
+        # Standalone vendor workspaces resolve their own lock graphs. Their
+        # intermediates must not replace same-version dependencies of Home.
+        if Path(cwd).resolve().parent.name == "vendor":
+            environment["CARGO_BUILD_BUILD_DIR"] = target
         # Use the same flags as CI. Caller lint caps, individual allows and
         # encoded flags can otherwise weaken -D warnings or change the source.
         environment.pop("CARGO_ENCODED_RUSTFLAGS", None)

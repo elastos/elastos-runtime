@@ -1,0 +1,3 @@
+[build]
+# This standalone workspace resolves a lock graph independent of Home.
+build-dir = "target"
