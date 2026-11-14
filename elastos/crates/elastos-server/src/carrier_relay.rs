@@ -286,6 +286,7 @@ fn apply_byte_limits(
     relay.limits.client_rx = Some(rate);
 }
 
+const RELAY_CONNECTIONS_TOTAL: usize = 4096;
 const RELAY_RECONNECT_BURST: f64 = 4.0;
 const RELAY_RECONNECT_INTERVAL: Duration = Duration::from_secs(15);
 const RELAY_REPLACE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -323,7 +324,7 @@ struct RelayAdmission {
 
 impl Default for RelayAdmission {
     fn default() -> Self {
-        Self::new(4096)
+        Self::new(RELAY_CONNECTIONS_TOTAL)
     }
 }
 
@@ -359,6 +360,12 @@ impl RelayAdmission {
             !home.connections.is_empty() || home.reconnect_tokens < RELAY_RECONNECT_BURST
         });
         let total: usize = homes.values().map(|home| home.connections.len()).sum();
+        if total >= self.maximum {
+            return Err("relay is full");
+        }
+        if !homes.contains_key(&endpoint_id) && homes.len() >= self.maximum {
+            return Err("relay Home slots are busy; retry shortly");
+        }
         let home = homes.entry(endpoint_id).or_insert(HomeAdmission {
             connections: Vec::new(),
             reconnect_tokens: RELAY_RECONNECT_BURST,
@@ -367,13 +374,8 @@ impl RelayAdmission {
         if home.reconnect_tokens < 1.0 {
             return Err("this Home reconnects too often");
         }
-        // A full relay still lets a Home replace its one connection; a new
-        // Home, or one whose last replacement is still closing, waits.
-        if total >= self.maximum && home.connections.len() != 1 {
-            if home.connections.is_empty() && home.reconnect_tokens >= RELAY_RECONNECT_BURST {
-                homes.remove(&endpoint_id);
-            }
-            return Err("relay is full");
+        if home.connections.len() >= 2 {
+            return Err("this Home's previous replacement is still opening");
         }
         home.reconnect_tokens -= 1.0;
         let older = home.connections.clone();
@@ -493,6 +495,75 @@ impl AccessControl for RelayAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn admission_connection(home: EndpointId) -> ConnectionId {
+        ClientRequest::new(
+            home,
+            iroh_relay::http::ProtocolVersion::V2,
+            axum::http::Request::new(()).into_parts().0,
+        )
+        .connection_id()
+    }
+
+    #[test]
+    fn admission_keeps_exact_ids_paces_reconnects_and_bounds_idle_home_state() {
+        let admission = RelayAdmission::new(2);
+        let home = iroh::SecretKey::from_bytes(&[226; 32]).public();
+        let other = iroh::SecretKey::from_bytes(&[227; 32]).public();
+        let third = iroh::SecretKey::from_bytes(&[228; 32]).public();
+        let now = Instant::now();
+        let first = admission_connection(home);
+        let neighbor = admission_connection(other);
+        assert!(admission.admit(home, first, now).is_ok());
+        assert!(admission.admit(other, neighbor, now).is_ok());
+        assert!(
+            admission
+                .admit(home, admission_connection(home), now)
+                .is_err(),
+            "replacement owns a capacity slot too"
+        );
+        admission.release(other, neighbor);
+        let next = admission_connection(home);
+        assert_eq!(admission.admit(home, next, now).unwrap(), vec![first]);
+        admission.release(home, first);
+        admission.release(home, first);
+        assert_eq!(
+            admission.connections(home),
+            1,
+            "late duplicate disconnect cannot release the replacement"
+        );
+        drop(PendingAdmission {
+            admission: &admission,
+            endpoint_id: home,
+            connection: Some(next),
+        });
+        assert_eq!(admission.connections(home), 0);
+        assert!(
+            admission
+                .admit(third, admission_connection(third), now)
+                .is_err(),
+            "idle identities retain pacing and bounded state"
+        );
+        let later = now + RELAY_RECONNECT_INTERVAL * 4;
+        assert!(admission
+            .admit(third, admission_connection(third), later)
+            .is_ok());
+        assert_eq!(admission.homes.lock().unwrap().len(), 1);
+        let mut last = admission_connection(home);
+        assert!(admission.admit(home, last, later).is_ok());
+        for _ in 1..4 {
+            admission.release(home, last);
+            last = admission_connection(home);
+            assert!(admission.admit(home, last, later).is_ok());
+        }
+        admission.release(home, last);
+        assert!(
+            admission
+                .admit(home, admission_connection(home), later)
+                .is_err(),
+            "fresh sockets cannot reset pacing"
+        );
+    }
 
     #[tokio::test]
     async fn admission_full_capacity_counts_held_handshakes_and_replacements() {

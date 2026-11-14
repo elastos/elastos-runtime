@@ -70,6 +70,7 @@ pub struct Config<S> {
     /// becomes non-zero.
     pub(crate) rate_limited: Option<watch::Receiver<u64>>,
     pub(crate) home_budget: Option<super::streams::HomeBucket>,
+    pub(crate) server_shutdown: CancellationToken,
 }
 
 impl<S> Config<S> {
@@ -89,6 +90,7 @@ impl<S> Config<S> {
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             rate_limited: None,
             home_budget: None,
+            server_shutdown: CancellationToken::new(),
         }
     }
 }
@@ -135,6 +137,7 @@ impl Client {
             protocol_version,
             rate_limited,
             home_budget,
+            server_shutdown,
         } = config;
         let endpoint_id = guard.endpoint_id;
         let connection_id = guard.connection_id;
@@ -155,6 +158,7 @@ impl Client {
             protocol_version,
             rate_limited,
             home_budget,
+            server_shutdown,
             metrics,
         };
 
@@ -341,6 +345,7 @@ struct Actor<S> {
     /// Optional signal counting how often the connection has been rate-limited.
     rate_limited: Option<watch::Receiver<u64>>,
     home_budget: Option<super::streams::HomeBucket>,
+    server_shutdown: CancellationToken,
     metrics: Arc<Metrics>,
 }
 
@@ -382,6 +387,7 @@ where
         ping_interval.tick().await;
 
         let mut rate_limit_notified = false;
+        let server_shutdown = self.server_shutdown.clone();
         let mut pending_frame = None;
         let mut budget_wait = Box::pin(async_time::sleep(Duration::ZERO));
 
@@ -389,7 +395,7 @@ where
             tokio::select! {
                 biased;
 
-                _ = done.cancelled() => {
+                _ = async { tokio::select! { _ = done.cancelled() => {}, _ = server_shutdown.cancelled() => {} } } => {
                     trace!("actor loop cancelled, exiting");
                     // final flush
                     self.stream.flush().await.map_err(|_| e!(RunError::Flush))?;
@@ -674,6 +680,7 @@ mod tests {
             protocol_version: ProtocolVersion::V2,
             rate_limited: None,
             home_budget: None,
+            server_shutdown: CancellationToken::new(),
             metrics,
         };
 

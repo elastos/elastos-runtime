@@ -28,7 +28,10 @@ use tokio::{
     sync::{Notify, watch},
 };
 use tokio_rustls_acme::AcmeAcceptor;
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::{
+    sync::CancellationToken,
+    task::{AbortOnDropHandle, TaskTracker},
+};
 use tracing::{Instrument, debug, error, info, info_span, trace, warn};
 
 use super::{
@@ -147,6 +150,13 @@ impl Server {
     /// Returns the [`RelayService`] driving this server.
     pub(super) fn service(&self) -> &RelayService {
         &self.service
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.cancel_server_loop.cancel();
+        self.service.0.closing.cancel();
     }
 }
 
@@ -544,6 +554,8 @@ struct Inner {
     write_timeout: Duration,
     rate_limit: watch::Sender<Option<ClientRateLimit>>,
     home_budgets: Option<super::streams::HomeBuckets>,
+    handshakes: TaskTracker,
+    closing: CancellationToken,
     key_cache: KeyCache,
     access: Arc<dyn DynAccessControl>,
     metrics: Arc<Metrics>,
@@ -639,10 +651,12 @@ impl RelayServiceWithNotify {
         // Note: This can't possibly be fulfilled until the 101 response
         // is returned below, so it's better to spawn this future instead
         // waiting for it to complete to then return a response.
-        tokio::task::spawn({
+        self.service.0.handshakes.spawn({
             let this = self.clone();
             async move {
-                match hyper::upgrade::on(&mut req).await {
+                let closing = this.service.0.closing.clone();
+                let deadline = this.deadline;
+                let handshake = async move { match hyper::upgrade::on(&mut req).await {
                     Ok(upgraded) => {
                         let (parts, _) = req.into_parts();
                         if let Err(err) = this
@@ -661,6 +675,12 @@ impl RelayServiceWithNotify {
                         };
                     }
                     Err(err) => warn!("upgrade error: {err:#}"),
+                }};
+                tokio::select! {
+                    biased;
+                    _ = closing.cancelled() => {},
+                    _ = tokio::time::sleep_until(deadline) => { debug!("relay handshake deadline"); },
+                    _ = handshake => {},
                 }
             }
             .instrument(info_span!("handler"))
@@ -735,6 +755,7 @@ impl RelayServiceWithNotify {
 pub struct RelayServiceWithNotify {
     service: RelayService,
     on_establish: Arc<Notify>,
+    deadline: tokio::time::Instant,
 }
 
 impl RelayServiceWithNotify {
@@ -746,6 +767,7 @@ impl RelayServiceWithNotify {
         Self {
             service,
             on_establish,
+            deadline: tokio::time::Instant::now() + ESTABLISH_TIMEOUT,
         }
     }
 }
@@ -909,6 +931,7 @@ impl Inner {
                     .ok_or_else(|| e!(AcceptError::HomeBudgetCapacity))
             })
             .transpose()?;
+        client_conn_builder.server_shutdown = self.closing.clone();
         trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
@@ -948,6 +971,8 @@ impl RelayService {
             write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit: watch::Sender::new(rate_limit),
             home_budgets: None,
+            handshakes: TaskTracker::new(),
+            closing: CancellationToken::new(),
             key_cache,
             access,
             metrics,
@@ -971,6 +996,9 @@ impl RelayService {
 
     /// Shuts down the relay service, disconnecting all clients.
     pub async fn shutdown(&self) {
+        self.0.closing.cancel();
+        self.0.handshakes.close();
+        self.0.handshakes.wait().await;
         self.0.clients.shutdown().await;
     }
 
@@ -1051,7 +1079,8 @@ impl RelayService {
         // We create a notification token to be triggered once the connection is fully established
         // and passed to the relay server.
         let on_establish = Arc::new(Notify::new());
-        let service = RelayServiceWithNotify::new(self, on_establish.clone());
+        let mut service = RelayServiceWithNotify::new(self, on_establish.clone());
+        service.deadline = tokio::time::Instant::now() + establish_timeout;
 
         // This is the main connection future, driving the connection to completion.
         let serve_fut = async move {
