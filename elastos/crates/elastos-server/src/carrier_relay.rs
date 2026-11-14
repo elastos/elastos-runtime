@@ -71,7 +71,7 @@ pub(super) async fn configured_server(
             == Some(true),
         "Carrier relay requires the explicit public publisher role"
     );
-    let bind = bind
+    let bind: std::net::SocketAddr = bind
         .as_str()
         .context("carrier_relay_bind_addr must be a socket address")?
         .parse()
