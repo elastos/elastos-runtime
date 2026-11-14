@@ -226,7 +226,10 @@ mod direct_retry_wire_tests {
         }
         let retry = direct_message_read_payload(messages, "direct:one", true);
         assert_eq!(retry["messages"][0]["request_id"], "request:out");
-        assert_eq!(retry["messages"][0]["delivery_issue"], "peer_unreachable");
+        assert!(
+            retry["messages"][0].get("delivery_issue").is_none(),
+            "the released retry-details reader rejects new message fields"
+        );
         assert!(retry["messages"][1].get("request_id").is_none());
     }
 
