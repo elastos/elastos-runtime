@@ -521,13 +521,20 @@ try {
   assert(walletUiBeforeConnectors.settingsOpen === false, "Wallet fixture opened settings early");
 
   for (const [target, connectLabel] of Object.entries(connectorLabels)) {
-    if (await wallet.locator("#wallet-settings-drawer").isHidden()) {
-      await wallet.locator("#wallet-settings-open").click({ timeout: 15_000 });
-    }
-    // Connector controls arrive with the summary; wait for an actionable button.
-    await wallet.locator(`[data-wallet-open-method="${target}"]`).click({
-      timeout: 15_000,
+    // Connector controls arrive with the summary, after the static Wallet HTML.
+    await wallet.locator(`[data-wallet-open-method="${target}"]`).waitFor({
+      state: "attached", timeout: 15_000,
     });
+    // Keep Settings open for the continuity proof while activating the handler.
+    await wallet.evaluate(({ connectorTarget }) => {
+      const drawer = document.querySelector("#wallet-settings-drawer");
+      if (drawer?.hidden !== false) {
+        document.querySelector("#wallet-settings-open").click();
+      }
+      document
+        .querySelector(`[data-wallet-open-method="${connectorTarget}"]`)
+        .click();
+    }, { connectorTarget: target });
     await waitFor(() => frameFor(page, target), 15_000, `${target} connector UI`);
     const connector = frameFor(page, target);
     await connector.waitForSelector("#wallet-connect", { timeout: 15_000 });
