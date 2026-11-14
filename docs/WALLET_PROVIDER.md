@@ -275,8 +275,8 @@ transaction can complete once within 24 hours after expiry, in the same Runtime
 session. Wallet keeps an approved connector transaction in its request list.
 Its owner can use Reject in Wallet, System or Inbox to dismiss it in a later
 Runtime session and release its approval slot. Connector calls and completion
-keep their original session binding. Reject does not cancel a phone transaction. An unfinished
-prompt expires after the grace period; other connectors keep their normal TTL.
+keep their original session binding. Reject does not cancel a phone transaction.
+An unfinished prompt expires after the grace period; other connectors keep their normal TTL.
 Runtime checks the returned
 transaction hash's format only. The phone wallet confirms the transaction;
 the hash alone does not prove that it matches the approved payload. A completion error keeps the
@@ -307,9 +307,10 @@ rechecks the launch and owner on each heartbeat and outbound frame, authenticate
 relay TLS, and limits frames and sockets. It reaches only
 `relay.walletconnect.org` and `relay.walletconnect.com` on TLS port 443 through
 a local Exit backend and its separate adapter and relay sockets. When Browser's
-local Exit helper starts successfully, Browser's existing backends keep first
-match and its wildcard backend carries the relay. When that helper stays stopped
-or fails to start, WalletConnect's own relay-only backend takes first match for
+local Exit helper starts successfully, the first matching existing backend takes
+precedence; the default Browser wildcard therefore carries the relay. WalletConnect's
+backend handles requests those backends do not match. When the Browser helper stays
+stopped or fails to start, WalletConnect's relay-only backend takes first match for
 these two TLS hosts. Retained Browser backends keep their order and matching for
 other traffic, including on older linux-amd64 Homes with a wildcard Browser config.
 Runtime validates the merged configuration with
