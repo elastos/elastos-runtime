@@ -234,18 +234,20 @@ fn validated_chain_outcome_projection_is_exact_and_idempotent() {
 #[test]
 fn transaction_intent_validates_payload_and_allows_external_handoff() {
     for connector in ["wallet-metamask", "wallet-walletconnect"] {
-        external_transaction_handoff_with_expiry(connector, false);
+        external_transaction_handoff_with_expiry(connector, None);
     }
 }
 
 #[test]
 fn approved_connector_transaction_can_be_rejected_and_releases_its_slot() {
-    for connector in ["wallet-metamask", "wallet-walletconnect"] {
-        external_transaction_handoff_with_expiry(connector, true);
+    for actor in ["wallet", "system", "inbox"] {
+        for connector in ["wallet-metamask", "wallet-walletconnect"] {
+            external_transaction_handoff_with_expiry(connector, Some(actor));
+        }
     }
 }
 
-fn external_transaction_handoff_with_expiry(connector: &str, dismiss: bool) {
+fn external_transaction_handoff_with_expiry(connector: &str, dismiss_actor: Option<&str>) {
     let dir = tempfile::tempdir().unwrap();
     let mut provider = init_provider(dir.path());
     let principal_id = "person:local:alice";
@@ -345,6 +347,13 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss: bool) {
         }
         other => panic!("expected external transaction approval request, got {other:?}"),
     };
+    if let Some(actor) = dismiss_actor {
+        let context = wallet_context_in_session(principal_id, actor, "session:replacement");
+        assert!(matches!(invoke_wallet_with_context(&mut provider, &context,
+            WalletProviderOperationV2::RejectApproval {
+                request_id: request_id.clone(), reason: "Pending request in another session".into(),
+            }), Response::Error { .. }), "pending requests keep their original session binding");
+    }
     let transaction = match invoke_wallet(
         &mut provider,
         principal_id,
@@ -411,13 +420,14 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss: bool) {
             ApprovalStatus::Approved
         );
     }
-    if dismiss {
+    if let Some(actor) = dismiss_actor {
         let reject = || WalletProviderOperationV2::RejectApproval {
             request_id: request_id.clone(),
             reason: "Dismiss abandoned send".into(),
         };
         for context in [
-            wallet_context_in_session(principal_id, "wallet", "session:other"),
+            wallet_context_in_session(principal_id, connector, "session:replacement"),
+            wallet_context_in_session(principal_id, "browser", "session:replacement"),
             wallet_context("person:local:bob", "wallet"),
             wallet_context(principal_id, "wallet-unisat"),
         ] {
@@ -426,6 +436,13 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss: bool) {
                 Response::Error { .. }
             ));
         }
+        let connector_context = wallet_context_in_session(principal_id, connector, "session:replacement");
+        assert!(matches!(invoke_wallet_with_context(&mut provider, &connector_context,
+            WalletProviderOperationV2::CompleteConnectorHandoff {
+                request_id: request_id.clone(), payload_hash: payload_hash.clone(),
+                signature: None, signature_type: None, public_key: None,
+                signer: external_address.into(), transaction_hash: Some(format!("0x{}", "a".repeat(64))),
+            }), Response::Error { .. }), "completion keeps its original session binding");
         // Fill the quota from an actual approved handoff; rejecting one must permit
         // a new request through the provider's real admission path.
         for index in 1..MAX_ACTIVE_APPROVAL_REQUESTS_PER_PRINCIPAL {
@@ -446,7 +463,8 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss: bool) {
             matches!(invoke_wallet(&mut provider, principal_id, "system", next()),
             Response::Error { ref code, .. } if code == "approval_limit_reached")
         );
-        let response = invoke_wallet(&mut provider, principal_id, "wallet", reject());
+        let context = wallet_context_in_session(principal_id, actor, "session:replacement");
+        let response = invoke_wallet_with_context(&mut provider, &context, reject());
         assert!(matches!(response, Response::Ok { .. }), "{response:?}");
         let rejected = provider
             .store
