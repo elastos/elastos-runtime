@@ -226,12 +226,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let id = iroh::SecretKey::from_bytes(&[247; 32]).public();
         let encode = |addr: iroh::EndpointAddr| {
-            base32::encode(
-                base32::Alphabet::Rfc4648 { padding: false },
-                &serde_json::to_vec(&serde_json::json!({"topic": null, "endpoints": [addr]}))
-                    .unwrap(),
-            )
-            .to_lowercase()
+            data_encoding::BASE32_NOPAD
+                .encode(
+                    &serde_json::to_vec(&serde_json::json!({"topic": null, "endpoints": [addr]}))
+                        .unwrap(),
+                )
+                .to_ascii_lowercase()
         };
         // The local provider retains its local hint; exported bootstrap data
         // carries only the endpoint identity when no public address exists.
