@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn exported_tickets_without_a_public_ip_keep_only_the_relay() {
+    fn exported_tickets_without_a_public_ip_are_did_only() {
         let peer = iroh::SecretKey::from_bytes(&[214; 32]).public();
         let relay: RelayUrl = "https://relay.example/".parse().unwrap();
         let private = [
@@ -396,9 +396,9 @@ mod tests {
         );
         let exported = super::super::exported_endpoint_addr(address.clone());
         assert_eq!(exported.id, peer);
-        assert_eq!(
-            exported.addrs.into_iter().collect::<Vec<_>>(),
-            vec![iroh::TransportAddr::Relay(relay)]
+        assert!(
+            exported.addrs.is_empty(),
+            "exported tickets carry public IP hints only; Runtime owns the relay pin"
         );
         assert_eq!(
             super::super::published_direct_endpoint_addr(address)
