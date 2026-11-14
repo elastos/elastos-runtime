@@ -174,11 +174,14 @@ class TwoHomeReceiptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             pidfile = Path(temporary)/'browser.pid'
             marker = '--two-home-fixture='+temporary
-            detached_code = 'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'
-            parent_code = ('import subprocess,sys; from pathlib import Path; '
-                           'p=subprocess.Popen([sys.executable,"-c",sys.argv[2],sys.argv[3]],start_new_session=True); '
-                           'Path(sys.argv[1]).write_text(str(p.pid))')
-            parent = subprocess.Popen([sys.executable,'-c',parent_code,str(pidfile),detached_code,marker])
+            termfile = Path(temporary)/'term-observed'
+            detached_code = ('import os,signal,sys,time; from pathlib import Path; '
+                             'signal.signal(signal.SIGTERM,lambda *_: Path(sys.argv[3]).write_text("TERM")); '
+                             'Path(sys.argv[2]).write_text(str(os.getpid())); time.sleep(60)')
+            parent_code = ('import subprocess,sys,time; from pathlib import Path\n'
+                           'subprocess.Popen([sys.executable,"-c",sys.argv[2],sys.argv[3],sys.argv[1],sys.argv[4]],start_new_session=True)\n'
+                           'while not Path(sys.argv[1]).exists(): time.sleep(.01)')
+            parent = subprocess.Popen([sys.executable,'-c',parent_code,str(pidfile),detached_code,marker,str(termfile)])
             detached = None
             try:
                 parent.wait(timeout=5)
@@ -186,6 +189,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
                 # Node has already exited; the fixture marker identifies Chromium.
                 with JOURNEY['message_timeout'](10):
                     stop(parent, {}, marker, grace=.2, killed=2)
+                self.assertTrue(termfile.exists(), 'detached browser received TERM and required KILL')
                 rows = JOURNEY['process_rows']()
                 self.assertTrue(detached not in rows or rows[detached]['command'].endswith(' <defunct>'))
             finally:

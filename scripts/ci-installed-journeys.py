@@ -11,7 +11,6 @@ import runpy
 import select
 import secrets
 import signal
-import shlex
 import shutil
 import socket
 import stat
@@ -1778,7 +1777,7 @@ def remember_message_processes(child, known, marker=None):
     # Chromium has its own process group. Its unique fixture argument also
     # identifies it if Node exits before the next descendant census.
     if marker:
-        roots.update(pid for pid, row in rows.items() if marker in shlex.split(row["command"]))
+        roots.update(pid for pid, row in rows.items() if re.search(r"(?<!\S)" + re.escape(marker) + r"(?!\S)", row["command"]))
     for pid, row in rows.items():
         parent, visited = pid, set()
         while parent in rows and parent not in roots and parent not in visited:
