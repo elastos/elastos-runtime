@@ -24,8 +24,20 @@ class PipeReadersTest(unittest.TestCase):
             shutil.copyfile(GUARD, guard)
             fixture = root / relative
             fixture.parent.mkdir(parents=True, exist_ok=True)
-            fixture.write_text(source)
+            if isinstance(source, bytes):
+                fixture.write_bytes(source)
+            else:
+                fixture.write_text(source)
             return subprocess.run([sys.executable, str(guard)], capture_output=True, text=True, timeout=10)
+
+    def test_generated_node_dependencies_are_outside_the_project_source_scan(self):
+        for relative, source in (
+            ("scripts/walletconnect/node_modules/@esbuild/linux-x64/bin/esbuild", b"\x7fELF\x00\xa0"),
+            ("scripts/tool/node_modules/dependency/setup.sh", "set -euo pipefail\nproducer" + PIPE + "grep -q match\n"),
+        ):
+            with self.subTest(relative=relative):
+                result = self.check_source(relative, source)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_rejects_early_readers(self):
         readers = (
