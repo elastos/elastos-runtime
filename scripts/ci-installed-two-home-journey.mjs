@@ -21,6 +21,12 @@ export function assertSenderDelivery(message, detail) {
 export function assertMessageOrigins(bases, browserHost) {
   assert(browserHost && bases.every(base => new URL(base).hostname === browserHost), 'Home origins match the network arrangement browser host');
 }
+export async function registrationRefusal(response, home) {
+  const path = new URL(response.url()).pathname;
+  if (!path.startsWith('/api/auth/passkey/register/') || response.ok()) return;
+  return {home, method:response.request().method(), path, status:response.status(),
+    reason:(await response.text()).slice(0,512)};
+}
 async function run() {
   const require = createRequire(import.meta.url);
   const {chromium} = require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE || '../elastos/tools/browser-playwright-engine/node_modules/playwright');
@@ -63,16 +69,8 @@ async function run() {
       });
       const page=await context.newPage();
       page.on('response', async response => {
-        const path = new URL(response.url()).pathname;
-        if (!path.startsWith('/api/auth/passkey/register/') || response.ok()) return;
-        const refusal = {home:i, method:response.request().method(), path, status:response.status()};
-        try {
-          const body = await response.json();
-          for (const key of ['error','message','reason','code']) {
-            if (typeof body[key] === 'string') refusal[key] = body[key].slice(0,512);
-          }
-        } catch { refusal.reason = 'non-JSON registration refusal'; }
-        result.registration_refusals.push(refusal);
+        const refusal = await registrationRefusal(response, i);
+        if (refusal) result.registration_refusals.push(refusal);
       });
       const cdp=await context.newCDPSession(page);
       await cdp.send('WebAuthn.enable');

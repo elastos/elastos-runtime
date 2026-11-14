@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {assertCommunityMessage, assertReceivedDirect, assertSenderDelivery, assertMessageOrigins} from './ci-installed-two-home-journey.mjs';
+import {assertCommunityMessage, assertReceivedDirect, assertSenderDelivery, assertMessageOrigins, registrationRefusal} from './ci-installed-two-home-journey.mjs';
+
+test('Registration refusal retains a plain-text reason within the receipt bound', async () => {
+  const response = {url:()=> 'http://localhost/api/auth/passkey/register/begin', ok:()=>false,
+    request:()=>({method:()=> 'POST'}), status:()=>403, text:async()=> 'local owner required'};
+  assert.deepEqual(await registrationRefusal(response,0), {home:0,method:'POST',
+    path:'/api/auth/passkey/register/begin',status:403,reason:'local owner required'});
+  assert.equal((await registrationRefusal({...response,text:async()=> 'x'.repeat(1000)},1)).reason.length,512);
+  assert.equal(await registrationRefusal({...response,ok:()=>true},0),undefined);
+  assert.equal(await registrationRefusal({...response,url:()=> 'http://localhost/api/other'},0),undefined);
+});
 
 test('Community proof rejects wrong text, wrong identity and the receiving Home own post', () => {
   const message = {message_id:'post:one', body:'fresh post', from_current_session:false};
