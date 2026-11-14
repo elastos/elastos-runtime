@@ -5,10 +5,16 @@ use futures_lite::StreamExt as _;
 use iroh::address_lookup::{AddrFilter, AddressLookup, EndpointData, EndpointInfo, Item};
 use iroh::endpoint::{BeforeConnectOutcome, EndpointHooks};
 use iroh::tls::CaTlsConfig;
+use iroh::EndpointId;
 use iroh::RelayUrl;
+use iroh_relay::server::{clients::Clients, Access, AccessControl, ClientRequest, ConnectionId};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
 /// Shared by every endpoint. The system resolver owns DNS; failure stays local
 /// to that policy. Irzhy reviews this choice before discovery is enabled.
@@ -256,12 +262,16 @@ pub(super) async fn configured_server(
     let mut config = iroh_relay::server::ServerConfig::default();
     let mut relay = iroh_relay::server::RelayConfig::new(bind);
     apply_byte_limits(&mut relay, 8 * 1024 * 1024, 1024 * 1024);
+    let admission = Arc::new(RelayAdmission::default());
+    relay.access = admission.clone();
     config.relay = Some(relay);
-    Ok(Some(
-        iroh_relay::server::Server::spawn(config)
-            .await
-            .map_err(|error| anyhow::anyhow!("Carrier relay failed to start: {error:#}"))?,
-    ))
+    let server = iroh_relay::server::Server::spawn(config)
+        .await
+        .map_err(|error| anyhow::anyhow!("Carrier relay failed to start: {error:#}"))?;
+    if let Some(service) = server.relay_service() {
+        let _ = admission.clients.set(service.clients().clone());
+    }
+    Ok(Some(server))
 }
 
 fn apply_byte_limits(
@@ -276,9 +286,301 @@ fn apply_byte_limits(
     relay.limits.client_rx = Some(rate);
 }
 
+const RELAY_RECONNECT_BURST: f64 = 4.0;
+const RELAY_RECONNECT_INTERVAL: Duration = Duration::from_secs(15);
+const RELAY_REPLACE_TIMEOUT: Duration = Duration::from_secs(10);
+const RELAY_REPLACE_POLL: Duration = Duration::from_millis(5);
+
+#[cfg(test)]
+#[derive(Debug)]
+struct HeldAdmission {
+    home: EndpointId,
+    once: std::sync::atomic::AtomicBool,
+    admitted: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+/// One Home's relay admission state.
+#[derive(Debug)]
+struct HomeAdmission {
+    /// Every admitted connection until its disconnect, oldest first: the
+    /// last is the Home's connection, the others are being replaced.
+    connections: Vec<ConnectionId>,
+    reconnect_tokens: f64,
+    refilled: Instant,
+}
+
+/// Admits one relay connection per Home (a new one replaces the old ones),
+/// paces each Home's reconnects and caps the relay's total connections.
+#[derive(Debug)]
+struct RelayAdmission {
+    maximum: usize,
+    #[cfg(test)]
+    held: Option<Arc<HeldAdmission>>,
+    homes: Mutex<HashMap<EndpointId, HomeAdmission>>,
+    clients: OnceLock<Clients>,
+}
+
+impl Default for RelayAdmission {
+    fn default() -> Self {
+        Self::new(4096)
+    }
+}
+
+impl RelayAdmission {
+    fn new(maximum: usize) -> Self {
+        Self {
+            maximum,
+            homes: Mutex::new(HashMap::new()),
+            clients: OnceLock::new(),
+            #[cfg(test)]
+            held: None,
+        }
+    }
+
+    /// Admits `connection` and returns the Home's older connections, which
+    /// it replaces, or the reason it is refused.
+    fn admit(
+        &self,
+        endpoint_id: EndpointId,
+        connection: ConnectionId,
+        now: Instant,
+    ) -> std::result::Result<Vec<ConnectionId>, &'static str> {
+        let mut homes = self.homes.lock().expect("relay admission lock");
+        for home in homes.values_mut() {
+            home.reconnect_tokens = (home.reconnect_tokens
+                + now.duration_since(home.refilled).as_secs_f64()
+                    / RELAY_RECONNECT_INTERVAL.as_secs_f64())
+            .min(RELAY_RECONNECT_BURST);
+            home.refilled = now;
+        }
+        // A Home that is gone and fully paced again needs no state.
+        homes.retain(|_, home| {
+            !home.connections.is_empty() || home.reconnect_tokens < RELAY_RECONNECT_BURST
+        });
+        let total: usize = homes.values().map(|home| home.connections.len()).sum();
+        let home = homes.entry(endpoint_id).or_insert(HomeAdmission {
+            connections: Vec::new(),
+            reconnect_tokens: RELAY_RECONNECT_BURST,
+            refilled: now,
+        });
+        if home.reconnect_tokens < 1.0 {
+            return Err("this Home reconnects too often");
+        }
+        // A full relay still lets a Home replace its one connection; a new
+        // Home, or one whose last replacement is still closing, waits.
+        if total >= self.maximum && home.connections.len() != 1 {
+            if home.connections.is_empty() && home.reconnect_tokens >= RELAY_RECONNECT_BURST {
+                homes.remove(&endpoint_id);
+            }
+            return Err("relay is full");
+        }
+        home.reconnect_tokens -= 1.0;
+        let older = home.connections.clone();
+        home.connections.push(connection);
+        Ok(older)
+    }
+
+    fn release(&self, endpoint_id: EndpointId, connection: ConnectionId) {
+        let mut homes = self.homes.lock().expect("relay admission lock");
+        if let Some(home) = homes.get_mut(&endpoint_id) {
+            home.connections.retain(|id| *id != connection);
+        }
+    }
+
+    fn is_admitted(&self, endpoint_id: EndpointId, connection: ConnectionId) -> bool {
+        let homes = self.homes.lock().expect("relay admission lock");
+        homes
+            .get(&endpoint_id)
+            .is_some_and(|home| home.connections.contains(&connection))
+    }
+
+    /// Admits a connection and closes every connection it replaces. iroh
+    /// registers an admitted connection only after its handshake reply, so
+    /// a replaced one may not be closable yet: the new connection waits
+    /// until it registers (and closes it) or ends.
+    async fn connect(&self, endpoint_id: EndpointId, connection: ConnectionId) -> Access {
+        let older = match self.admit(endpoint_id, connection, Instant::now()) {
+            Ok(older) => older,
+            Err(reason) => {
+                return Access::Deny {
+                    reason: Some(reason.to_string()),
+                }
+            }
+        };
+        // iroh reports the disconnect of an allowed connection only; until
+        // then a refusal or a dropped handshake releases it here.
+        let pending = PendingAdmission {
+            admission: self,
+            endpoint_id,
+            connection: Some(connection),
+        };
+        #[cfg(test)]
+        if let Some(held) = &self.held {
+            if held.home == endpoint_id
+                && !held.once.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                held.admitted.notify_one();
+                held.release.notified().await;
+            }
+        }
+        if let Some(clients) = self.clients.get() {
+            let deadline = tokio::time::Instant::now() + RELAY_REPLACE_TIMEOUT;
+            for old in older {
+                while self.is_admitted(endpoint_id, old)
+                    && !clients.disconnect(endpoint_id, Some(old))
+                {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Access::Deny {
+                            reason: Some("this Home's previous connection is still opening".into()),
+                        };
+                    }
+                    tokio::time::sleep(RELAY_REPLACE_POLL).await;
+                }
+            }
+        }
+        pending.allow();
+        Access::Allow
+    }
+
+    #[cfg(test)]
+    fn connections(&self, endpoint_id: EndpointId) -> usize {
+        let homes = self.homes.lock().expect("relay admission lock");
+        homes
+            .get(&endpoint_id)
+            .map_or(0, |home| home.connections.len())
+    }
+}
+
+/// An admitted connection before iroh holds its disconnect guard.
+struct PendingAdmission<'a> {
+    admission: &'a RelayAdmission,
+    endpoint_id: EndpointId,
+    connection: Option<ConnectionId>,
+}
+
+impl PendingAdmission<'_> {
+    /// iroh now reports this connection's disconnect.
+    fn allow(mut self) {
+        self.connection = None;
+    }
+}
+
+impl Drop for PendingAdmission<'_> {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection {
+            self.admission.release(self.endpoint_id, connection);
+        }
+    }
+}
+
+impl AccessControl for RelayAdmission {
+    async fn on_connect(&self, request: &ClientRequest) -> Access {
+        if self.clients.get().is_none() {
+            return Access::Deny {
+                reason: Some("relay is starting".into()),
+            };
+        }
+        self.connect(request.endpoint_id(), request.connection_id())
+            .await
+    }
+
+    fn on_disconnect(&self, endpoint_id: EndpointId, connection_id: ConnectionId) {
+        self.release(endpoint_id, connection_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn admission_full_capacity_counts_held_handshakes_and_replacements() {
+        use futures::SinkExt as _;
+        let held_key = iroh::SecretKey::from_bytes(&[224; 32]);
+        let held = Arc::new(HeldAdmission {
+            home: held_key.public(),
+            once: Default::default(),
+            admitted: Default::default(),
+            release: Default::default(),
+        });
+        let mut admission = RelayAdmission::new(2);
+        admission.held = Some(held.clone());
+        let admission = Arc::new(admission);
+        let mut relay =
+            iroh_relay::server::RelayConfig::new(std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
+        relay.access = admission.clone();
+        let mut config = iroh_relay::server::ServerConfig::default();
+        config.relay = Some(relay);
+        let server = iroh_relay::server::Server::spawn(config).await.unwrap();
+        admission
+            .clients
+            .set(server.relay_service().unwrap().clients().clone())
+            .ok();
+        let url: RelayUrl = format!("http://{}/", server.http_addr().unwrap())
+            .parse()
+            .unwrap();
+        let tls = CaTlsConfig::embedded()
+            .client_config(Arc::new(rustls::crypto::ring::default_provider()))
+            .unwrap();
+        let client = |key: iroh::SecretKey| {
+            iroh_relay::client::ClientBuilder::new(url.clone(), key, system_dns())
+                .tls_client_config(tls.clone())
+        };
+        let mut other = client(iroh::SecretKey::from_bytes(&[225; 32]))
+            .connect()
+            .await
+            .unwrap();
+        let first = client(held_key.clone());
+        let first = tokio::spawn(async move { first.connect().await });
+        tokio::time::timeout(Duration::from_secs(3), held.admitted.notified())
+            .await
+            .unwrap();
+        assert_eq!(admission.connections(held_key.public()), 1);
+        let replacement = client(held_key);
+        let replacement = tokio::spawn(async move { replacement.connect().await });
+        let observed = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let total: usize = admission
+                    .homes
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .map(|home| home.connections.len())
+                    .sum();
+                if total > 2 || replacement.is_finished() {
+                    break total;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        replacement.abort();
+        let _ = replacement.await;
+        first.abort();
+        let _ = first.await;
+        let _ = other.close().await;
+        tokio::time::timeout(Duration::from_secs(3), server.shutdown())
+            .await
+            .expect("owned held-handshake shutdown")
+            .unwrap();
+        let remaining: usize = admission
+            .homes
+            .lock()
+            .unwrap()
+            .values()
+            .map(|home| home.connections.len())
+            .sum();
+        assert_eq!(
+            remaining, 0,
+            "cancelled and completed handshakes release their exact admissions"
+        );
+        assert!(
+            observed <= 2,
+            "a replacement exceeded total capacity while the old handshake was held: {observed}"
+        );
+    }
 
     #[tokio::test]
     async fn home_byte_budget_survives_replacement_and_closed_connection_bursts() {
