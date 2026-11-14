@@ -19,10 +19,13 @@ use std::{
 /// Shared by every endpoint. The system resolver owns DNS; failure stays local
 /// to that policy. Irzhy reviews this choice before discovery is enabled.
 pub(super) fn system_dns() -> iroh::dns::DnsResolver {
+    system_dns_builder().build()
+}
+
+fn system_dns_builder() -> iroh::dns::Builder {
     iroh::dns::DnsResolver::builder()
         .with_system_defaults()
         .disable_fallback()
-        .build()
 }
 
 pub(super) fn apply_relay(
@@ -503,6 +506,59 @@ impl AccessControl for RelayAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dns_configuration_uses_system_defaults_without_any_fallback() {
+        let configured = format!("{:?}", system_dns_builder());
+        for expected in [
+            "use_system_defaults: true",
+            "nameservers: []",
+            "fallback_mode: Never",
+            "fallback_nameservers: []",
+        ] {
+            assert!(
+                configured.contains(expected),
+                "DNS policy changed: {expected}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn blocked_dns_probe(resolver: iroh::dns::DnsResolver) {
+        assert_eq!(
+            std::env::var("ELASTOS_DNS_ISOLATED_PROBE").as_deref(),
+            Ok("1"),
+            "run through the owned network fixture"
+        );
+        let started = std::time::Instant::now();
+        assert!(resolver
+            .lookup_ipv4("carrier-dns-test.example", Duration::from_secs(10))
+            .await
+            .is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(12),
+            "DNS failure is bounded"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "requires the owned blocked-network fixture; scripts/carrier-dns-policy-test.py"]
+    async fn dns_probe_system_only() {
+        blocked_dns_probe(system_dns()).await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "negative trap control in scripts/carrier-dns-policy-test.py"]
+    async fn dns_probe_public_fallback_control() {
+        blocked_dns_probe(
+            iroh::dns::DnsResolver::builder()
+                .with_system_defaults()
+                .build(),
+        )
+        .await;
+    }
 
     fn admission_connection(home: EndpointId) -> ConnectionId {
         ClientRequest::new(
