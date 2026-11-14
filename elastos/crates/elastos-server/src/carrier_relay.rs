@@ -254,7 +254,9 @@ pub(super) async fn configured_server(
         .parse()
         .context("invalid carrier_relay_bind_addr")?;
     let mut config = iroh_relay::server::ServerConfig::default();
-    config.relay = Some(iroh_relay::server::RelayConfig::new(bind));
+    let mut relay = iroh_relay::server::RelayConfig::new(bind);
+    apply_byte_limits(&mut relay, 8 * 1024 * 1024, 1024 * 1024);
+    config.relay = Some(relay);
     Ok(Some(
         iroh_relay::server::Server::spawn(config)
             .await
@@ -262,9 +264,103 @@ pub(super) async fn configured_server(
     ))
 }
 
+fn apply_byte_limits(
+    relay: &mut iroh_relay::server::RelayConfig,
+    bytes_per_second: u32,
+    burst: u32,
+) {
+    let mut rate = iroh_relay::server::ClientRateLimit::new(
+        std::num::NonZeroU32::new(bytes_per_second).expect("nonzero relay rate"),
+    );
+    rate.max_burst_bytes = std::num::NonZeroU32::new(burst);
+    relay.limits.client_rx = Some(rate);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn home_byte_budget_survives_replacement_and_closed_connection_bursts() {
+        use futures::SinkExt as _;
+        use iroh_relay::protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg};
+        const RATE: u32 = 1024;
+        const BURST: u32 = 4096;
+        let mut relay =
+            iroh_relay::server::RelayConfig::new(std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
+        apply_byte_limits(&mut relay, RATE, BURST);
+        let mut config = iroh_relay::server::ServerConfig::default();
+        config.relay = Some(relay);
+        let server = iroh_relay::server::Server::spawn(config).await.unwrap();
+        let url: RelayUrl = format!("http://{}/", server.http_addr().unwrap())
+            .parse()
+            .unwrap();
+        let tls = CaTlsConfig::embedded()
+            .client_config(Arc::new(rustls::crypto::ring::default_provider()))
+            .unwrap();
+        let build = |key: iroh::SecretKey| {
+            iroh_relay::client::ClientBuilder::new(url.clone(), key, system_dns())
+                .tls_client_config(tls.clone())
+        };
+        let receiver_key = iroh::SecretKey::from_bytes(&[220; 32]);
+        let mut receiver = build(receiver_key.clone()).connect().await.unwrap();
+        let mut measurements = Vec::new();
+        for (keep_replaced, key) in [(false, 218), (true, 219)] {
+            let key = iroh::SecretKey::from_bytes(&[key; 32]);
+            let mut held = Vec::new();
+            let mut delivered = 0usize;
+            let started = std::time::Instant::now();
+            for _ in 0..4 {
+                let mut sender = build(key.clone()).connect().await.unwrap();
+                sender
+                    .send(ClientToRelayMsg::Datagrams {
+                        dst_endpoint_id: receiver_key.public(),
+                        datagrams: Datagrams::from(vec![42; 2048]),
+                    })
+                    .await
+                    .unwrap();
+                delivered += tokio::time::timeout(std::time::Duration::from_secs(20), async {
+                    loop {
+                        match receiver.next().await.unwrap().unwrap() {
+                            RelayToClientMsg::Datagrams {
+                                remote_endpoint_id,
+                                datagrams,
+                            } => {
+                                assert_eq!(remote_endpoint_id, key.public());
+                                break datagrams.contents.len();
+                            }
+                            RelayToClientMsg::Ping(value) => {
+                                receiver.send(ClientToRelayMsg::Pong(value)).await.unwrap()
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .await
+                .expect("real relay packet delivery");
+                if keep_replaced {
+                    held.push(sender);
+                } else {
+                    let _ = sender.close().await;
+                }
+            }
+            let elapsed = started.elapsed().as_secs_f64();
+            let allowed = f64::from(BURST) + f64::from(RATE) * elapsed;
+            eprintln!("Home byte budget: replacement={keep_replaced} delivered={delivered} elapsed={elapsed:.3}s allowed={allowed:.0}");
+            measurements.push((delivered as f64, allowed));
+            for mut sender in held {
+                let _ = sender.close().await;
+            }
+        }
+        let _ = receiver.close().await;
+        server.shutdown().await.unwrap();
+        assert!(
+            measurements
+                .iter()
+                .all(|(delivered, allowed)| delivered <= allowed),
+            "fresh sockets must share the Home's byte bucket"
+        );
+    }
 
     async fn real_relay() -> (iroh_relay::server::Server, url::Url) {
         let mut config = iroh_relay::server::ServerConfig::default();
