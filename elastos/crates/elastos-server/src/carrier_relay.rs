@@ -28,6 +28,24 @@ fn system_dns_builder() -> iroh::dns::Builder {
         .disable_fallback()
 }
 
+pub(super) async fn failed_route_reason(endpoint: &iroh::Endpoint) -> &'static str {
+    use iroh::Watcher as _;
+    if let Ok(resolver) = endpoint.dns_resolver() {
+        for status in endpoint.home_relay_status().get() {
+            if !status.is_connected() && matches!(status.url().host(), Some(url::Host::Domain(_))) {
+                if resolver
+                    .resolve_host(status.url(), false, Duration::from_secs(1))
+                    .await
+                    .is_err()
+                {
+                    return "carrier_system_dns_unavailable";
+                }
+            }
+        }
+    }
+    "no verified Carrier route to the requested peer"
+}
+
 pub(super) fn apply_relay(
     builder: iroh::endpoint::Builder,
     relay: &url::Url,

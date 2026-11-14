@@ -47,6 +47,7 @@ fn direct_message_read_payload(
     if !retry_details {
         for message in &mut messages {
             message.request_id = None;
+            message.delivery_issue = None;
         }
     }
     serde_json::json!({"conversation_id": conversation_id, "messages": messages})
@@ -191,6 +192,9 @@ mod direct_retry_wire_tests {
                 text: "hello".into(),
                 created_at: 10,
                 delivery_state: "pending",
+                delivery_issue: Some(
+                    crate::collaboration_direct_messages::DirectDeliveryIssue::PeerUnreachable,
+                ),
             },
             DirectMessageSummary {
                 message_id: "message:in".into(),
@@ -199,6 +203,7 @@ mod direct_retry_wire_tests {
                 text: "hi".into(),
                 created_at: 11,
                 delivery_state: "received",
+                delivery_issue: None,
             },
         ];
         let legacy = direct_message_read_payload(messages.clone(), "direct:one", false);
@@ -221,6 +226,7 @@ mod direct_retry_wire_tests {
         }
         let retry = direct_message_read_payload(messages, "direct:one", true);
         assert_eq!(retry["messages"][0]["request_id"], "request:out");
+        assert_eq!(retry["messages"][0]["delivery_issue"], "peer_unreachable");
         assert!(retry["messages"][1].get("request_id").is_none());
     }
 

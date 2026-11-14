@@ -8057,14 +8057,16 @@ impl ProviderCarrierInvoker for CarrierProviderInvoker {
                         .invoke_loopback_provider(peer_endpoint, invocation, request)
                         .await;
                 }
-                let client = self
+                let client = match self
                     .connected_client(
                         peer_endpoint,
                         iroh::EndpointAddr::from(public_key),
                         timeout_secs,
                     )
                     .await
-                    .map_err(|err| {
+                {
+                    Ok(client) => client,
+                    Err(err) => {
                         // Keep the cause. A message that will not send is
                         // hard enough to diagnose without the Runtime
                         // throwing away the reason on its way out.
@@ -8073,10 +8075,10 @@ impl ProviderCarrierInvoker for CarrierProviderInvoker {
                             error = %err,
                             "Carrier peer connect failed"
                         );
-                        ProviderError::Unavailable(
-                            "no verified Carrier route to the requested peer".to_string(),
-                        )
-                    })?;
+                        let reason = relay::failed_route_reason(peer_endpoint).await;
+                        return Err(ProviderError::Unavailable(reason.to_string()));
+                    }
+                };
                 // A bounded Content read carries no effect, so a silent peer
                 // gets the same budget as the connect, as on ticket routes.
                 let bounded = bounded_content_fetch(invocation, &request);

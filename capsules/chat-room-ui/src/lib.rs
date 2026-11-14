@@ -5096,14 +5096,21 @@ impl App {
                 .request_id
                 .as_ref()
                 .is_some_and(|id| state.direct_in_flight.contains_key(id));
-            detail.set_text_content(Some(&if in_flight {
-                "Sending".to_string()
-            } else {
-                message
-                    .delivery_state
-                    .label()
-                    .map_or_else(|| format_time(message.created_at), str::to_string)
-            }));
+            let note_due = seen
+                .get(&message.message_id)
+                .is_some_and(|at| pending_note_wait_ms(*at, now_ms) == 0.0);
+            detail.set_text_content(Some(
+                &if message.delivery_state == DirectDeliveryState::Pending && note_due {
+                    "Unconfirmed".to_string()
+                } else if in_flight {
+                    "Sending".to_string()
+                } else {
+                    message
+                        .delivery_state
+                        .label()
+                        .map_or_else(|| format_time(message.created_at), str::to_string)
+                },
+            ));
             meta.append_child(&sender)?;
             meta.append_child(&detail)?;
             let body = self.document.create_element("div")?;
@@ -5145,6 +5152,7 @@ impl App {
                                 .get(request_id)
                                 .map(|at| format_time(*at))
                                 .as_deref(),
+                            message.delivery_issue,
                         )
                     });
                     if let Some(detail) = terminal.map(str::to_string).or(pending_note.flatten()) {
