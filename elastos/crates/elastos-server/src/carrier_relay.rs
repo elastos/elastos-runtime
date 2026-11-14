@@ -647,6 +647,18 @@ mod tests {
         .bind()
         .await
         .unwrap();
+        let failed_dial = tokio::time::timeout(
+            Duration::from_secs(2),
+            endpoint.connect(
+                iroh::SecretKey::from_bytes(&[240; 32]).public(),
+                b"elastos/dns-policy-probe",
+            ),
+        )
+        .await;
+        assert!(
+            !matches!(failed_dial, Ok(Ok(_))),
+            "blocked DNS must not produce a relay path"
+        );
         let reason = tokio::time::timeout(Duration::from_secs(3), failed_route_reason(&endpoint))
             .await
             .expect("the owner's DNS diagnosis is bounded");
