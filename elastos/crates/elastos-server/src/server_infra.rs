@@ -619,8 +619,8 @@ pub(crate) async fn start_carrier_plane(
     .await?;
     provider_registry
         .set_carrier_invoker(Arc::new(
-            elastos_server::carrier::CarrierProviderInvoker::with_carrier_endpoint_and_registry(
-                carrier_node.endpoint.clone(),
+            elastos_server::carrier::CarrierProviderInvoker::with_carrier_node_and_registry(
+                &carrier_node,
                 Arc::downgrade(provider_registry),
             ),
         ))

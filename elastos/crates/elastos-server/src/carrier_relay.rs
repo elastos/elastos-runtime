@@ -28,19 +28,25 @@ fn system_dns_builder() -> iroh::dns::Builder {
         .disable_fallback()
 }
 
-pub(super) async fn failed_route_reason(endpoint: &iroh::Endpoint) -> &'static str {
+pub(super) async fn failed_route_reason(
+    endpoint: &iroh::Endpoint,
+    pin: Option<&RelayUrl>,
+) -> &'static str {
     use iroh::Watcher as _;
-    if let Ok(resolver) = endpoint.dns_resolver() {
-        for status in endpoint.home_relay_status().get() {
-            if !status.is_connected()
-                && matches!(status.url().host(), Some(url::Host::Domain(_)))
-                && resolver
-                    .resolve_host(status.url(), false, Duration::from_secs(1))
-                    .await
-                    .is_err()
-            {
-                return "carrier_system_dns_unavailable";
-            }
+    if let (Some(pin), Ok(resolver)) = (pin, endpoint.dns_resolver()) {
+        let connected = endpoint
+            .home_relay_status()
+            .get()
+            .iter()
+            .any(|status| status.url() == pin && status.is_connected());
+        if !connected
+            && matches!(pin.host(), Some(url::Host::Domain(_)))
+            && resolver
+                .resolve_host(pin, false, Duration::from_secs(1))
+                .await
+                .is_err()
+        {
+            return "carrier_system_dns_unavailable";
         }
     }
     "no verified Carrier route to the requested peer"
@@ -659,9 +665,13 @@ mod tests {
             !matches!(failed_dial, Ok(Ok(_))),
             "blocked DNS must not produce a relay path"
         );
-        let reason = tokio::time::timeout(Duration::from_secs(3), failed_route_reason(&endpoint))
-            .await
-            .expect("the owner's DNS diagnosis is bounded");
+        let pin = RelayUrl::from(relay.clone());
+        let reason = tokio::time::timeout(
+            Duration::from_secs(3),
+            failed_route_reason(&endpoint, Some(&pin)),
+        )
+        .await
+        .expect("the owner's DNS diagnosis is bounded");
         assert_eq!(reason, "carrier_system_dns_unavailable");
         endpoint.close().await;
     }
@@ -1104,6 +1114,15 @@ mod tests {
         .await
         .unwrap();
         let peer = iroh::SecretKey::from_bytes(&[213; 32]).public();
+        let invoker = super::super::CarrierProviderInvoker::with_carrier_node_and_registry(
+            &node,
+            std::sync::Weak::new(),
+        );
+        assert_eq!(
+            invoker.relay_pin,
+            Some(RelayUrl::from(pin.clone())),
+            "provider calls retain the configured pin even without live relay status"
+        );
         node.memory_lookup.add_endpoint_info(
             iroh::EndpointAddr::new(peer).with_relay_url(other.as_str().parse().unwrap()),
         );

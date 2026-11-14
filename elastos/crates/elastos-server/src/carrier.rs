@@ -647,6 +647,7 @@ pub struct CarrierNode {
     pub gossip_state: Arc<Mutex<GossipState>>,
     pub memory_lookup: MemoryLookup,
     relay_server: Option<iroh_relay::server::Server>,
+    relay_pin: Option<iroh::RelayUrl>,
 }
 
 impl CarrierNode {
@@ -2140,6 +2141,7 @@ async fn start_carrier_node_with_network(
         gossip_state,
         memory_lookup,
         relay_server,
+        relay_pin: approved.map(iroh::RelayUrl::from),
     })
 }
 
@@ -7800,6 +7802,7 @@ async fn recv_loop(
 #[derive(Default)]
 pub struct CarrierProviderInvoker {
     peer_endpoint: Option<Endpoint>,
+    relay_pin: Option<iroh::RelayUrl>,
     provider_registry: Weak<ProviderRegistry>,
     peer_clients: Mutex<BTreeMap<iroh::PublicKey, Arc<CarrierClient>>>,
 }
@@ -7828,9 +7831,24 @@ impl CarrierProviderInvoker {
         Self::default()
     }
 
+    /// Carries the owning node's immutable routing policy into provider calls.
+    /// A relay whose DNS has failed may be absent from live status snapshots.
+    pub fn with_carrier_node_and_registry(
+        node: &CarrierNode,
+        provider_registry: Weak<ProviderRegistry>,
+    ) -> Self {
+        Self {
+            peer_endpoint: Some(node.endpoint.clone()),
+            relay_pin: node.relay_pin.clone(),
+            provider_registry,
+            ..Self::default()
+        }
+    }
+
     /// Binds the invoker to the long-lived Carrier endpoint that owns peer
     /// discovery. This form can resolve foreign peer-DID routes but deliberately
     /// has no same-endpoint dispatcher.
+    #[cfg(test)]
     pub fn with_carrier_endpoint(endpoint: Endpoint) -> Self {
         Self {
             peer_endpoint: Some(endpoint),
@@ -7839,8 +7857,9 @@ impl CarrierProviderInvoker {
     }
 
     /// Binds the Carrier endpoint and its non-owning local provider dispatcher.
-    /// Production uses this form so a same-endpoint route enters the exact same
-    /// Carrier provider admission path as a remotely received invocation.
+    /// Isolated transport fixtures use this form; production carries the full
+    /// node policy through `with_carrier_node_and_registry`.
+    #[cfg(test)]
     pub fn with_carrier_endpoint_and_registry(
         endpoint: Endpoint,
         provider_registry: Weak<ProviderRegistry>,
@@ -8090,7 +8109,9 @@ impl ProviderCarrierInvoker for CarrierProviderInvoker {
                             error = %err,
                             "Carrier peer connect failed"
                         );
-                        let reason = relay::failed_route_reason(peer_endpoint).await;
+                        let reason =
+                            relay::failed_route_reason(peer_endpoint, self.relay_pin.as_ref())
+                                .await;
                         return Err(ProviderError::Unavailable(reason.to_string()));
                     }
                 };
