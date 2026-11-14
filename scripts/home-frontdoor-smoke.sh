@@ -380,6 +380,7 @@ fi
 # fixture. Runtime admits each with its own existing installation rules.
 mkdir -p "$BOOTSTRAP_HOME_DIR"
 HOME="$BOOTSTRAP_HOME_DIR" XDG_DATA_HOME="$BOOTSTRAP_HOME_DIR/xdg-data" ELASTOS_PUBLISHER_GATEWAY="$PUBLISHER_GATEWAY" ELASTOS_MAINTAINER_DID="$MAINTAINER_DID" bash "$ROOT/scripts/install.sh" >"$HOME_DIR/bootstrap-install.log"
+test -x "$BOOTSTRAP_HOME_DIR/.local/bin/elastos"
 
 mkdir -p "$HOME_DIR/xdg-data/elastos/bin"
 install -m 700 "$ROOT/elastos/target/release/localhost-provider" "$HOME_DIR/xdg-data/elastos/bin/localhost-provider"
@@ -446,6 +447,12 @@ for installed in \
     "$HOME_DIR/xdg-data/elastos/bin/browser-engine-adapter" \
     "$HOME_DIR/xdg-data/elastos/bin/browser-local-exit" \
     "$HOME_DIR/xdg-data/elastos/bin/object-provider" \
+    "$HOME_DIR/xdg-data/elastos/bin/kubo" \
+    "$HOME_DIR/xdg-data/elastos/capsules/kubo/capsule.json" \
+    "$HOME_DIR/xdg-data/elastos/bin/ipfs-provider" \
+    "$HOME_DIR/xdg-data/elastos/bin/model-provider" \
+    "$HOME_DIR/xdg-data/elastos/capsules/assistant/browser/index.html" \
+    "$HOME_DIR/xdg-data/elastos/capsules/chat-room/browser/index.html" \
     "$HOME_DIR/xdg-data/elastos/bin/wallet-provider"
 do
     if [[ ! -f "$installed" ]]; then
@@ -471,8 +478,8 @@ node "${ROOT}/scripts/walletconnect-installed-policy-smoke.mjs" "$ROOT/elastos/t
 
 mv "$INSTALLED_HOME_CLI_DIR" "${INSTALLED_HOME_CLI_DIR}.installed"
 
-echo "[home-frontdoor] prove current source elastos + current source Home CLI component against clean-home data"
-HOME_DIR="$HOME_DIR" ROOT="$ROOT" SOURCE_COMPONENTS_MANIFEST="$SOURCE_COMPONENTS_MANIFEST" python3 - <<'PY'
+echo "[home-frontdoor] prove Home CLI refusal, setup repair, and navigation"
+HOME_DIR="$HOME_DIR" ROOT="$ROOT" SOURCE_COMPONENTS_MANIFEST="$SOURCE_RUNTIME_DATA_DIR/components.json" python3 - <<'PY'
 import os
 import pty
 import select
@@ -544,6 +551,25 @@ def shutdown(master: int, proc: subprocess.Popen) -> None:
     finally:
         os.close(master)
 
+def run_missing_renderer_and_repair_case() -> None:
+    # Runtime reports an incomplete Home. Setup owns restoring the installed
+    # renderer; a launch does not fetch executable code as a fallback.
+    master, proc = launch_pty()
+    try:
+        output = read_until(
+            "missing renderer", master,
+            lambda text: "Home CLI native renderer missing" in text, 10.0,
+        )
+        if "Run the installer again to repair Home" not in output or proc.wait(timeout=5) == 0:
+            raise SystemExit(f"missing renderer: expected repair refusal:\n{output}")
+    finally:
+        shutdown(master, proc)
+    repair_env = env.copy()
+    repair_env["ELASTOS_COMPONENTS_MANIFEST"] = os.environ["SOURCE_COMPONENTS_MANIFEST"]
+    repair_env["ELASTOS_COLLABORATION_STARTUP_MODE"] = "isolated"
+    subprocess.run([cmd[0], "setup", "--profile", "home"], env=repair_env,
+                   check=True, timeout=120)
+
 def run_repeated_action_case() -> None:
     # Two actions in a row must keep Home open (the second one used to quit
     # with "provider localhost/delete failed [403 Forbidden]").
@@ -599,6 +625,7 @@ def run_navigation_case() -> None:
     finally:
         shutdown(master, proc)
 
+run_missing_renderer_and_repair_case()
 run_navigation_case()
 run_repeated_action_case()
 PY
