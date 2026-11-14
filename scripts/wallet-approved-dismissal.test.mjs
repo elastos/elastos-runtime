@@ -15,18 +15,20 @@ class Element {
 }
 const descendants = node => [node, ...node.children.flatMap(descendants)];
 
-test("Wallet exposes and dismisses approved connector sends without another approval", async t => {
+test("Wallet dismisses earlier-session connector sends without another approval", async t => {
   const previous = globalThis.document;
   globalThis.document = { createElement: tag => new Element(tag) };
   t.after(() => { globalThis.document = previous; });
   for (const connector of ["wallet-walletconnect", "wallet-metamask"]) {
+    const now = Math.floor(Date.now() / 1000);
+    const expires = connector === "wallet-walletconnect" ? now - 13 * 3600 : now + 300;
     let request = { request_id: "approval:abandoned", status: "approved", intent: "transaction_intent",
       connector_id: connector, capsule_id: "browser", address: `0x${"12".repeat(20)}`,
-      created_at: 1, expires_at: 2, reason: "Send transaction" };
+      created_at: expires - 300, expires_at: expires, reason: "Send transaction" };
     const root = new Element("section"), panel = new Element("section"), calls = [], messages = [];
     let refuse = true;
     const requests = createWalletRequests({ requestsNode: root, requestsPanelNode: panel,
-      shellHeaders: headers => ({ ...headers, "x-elastos-home-token": "fixture-wallet-token" }),
+      shellHeaders: headers => ({ ...headers, "x-elastos-home-token": "fixture-current-session-wallet-token" }),
       fetchJson: async (path, input) => {
         calls.push({ path, input });
         if (refuse) throw new Error("Runtime refused dismissal");
@@ -55,6 +57,8 @@ test("Wallet exposes and dismisses approved connector sends without another appr
     assert.equal(calls.length, 2);
     assert.equal(calls[1].path, "/api/apps/wallet/wallet/approvals/approval%3Aabandoned/reject");
     assert.equal(calls[1].input.method, "POST");
+    assert.equal(calls[1].input.headers["x-elastos-home-token"], "fixture-current-session-wallet-token",
+      "dismissal uses the current Wallet launch, including for an earlier-session send");
     assert.equal(root.children.length, 0, "successful refresh removes the dismissed request");
     assert.equal(panel.hidden, true);
     assert(messages.some(message => message.startsWith("Request dismissed.")));
