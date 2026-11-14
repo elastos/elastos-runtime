@@ -1957,6 +1957,7 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
     record = dict(identity, network_arrangement=network, results={}, homes=[], negative_controls={},
                   direct_endpoint_observations=[])
     children, fixtures, browser = {}, {}, None
+    local_tickets = {}
     browser_processes = {}
     topology = None
     relay_url = None
@@ -1982,6 +1983,7 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
         post = (lambda url, body, token=None: topology.http_json(name, url, body, token)) if topology else post_json
         token = post(api + "/api/auth/attach", {"secret": coordinates["attach_secret"], "scope": "shell"})["token"]
         ticket = post(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
+        local_tickets[name] = ticket
         assert len(ticket) <= 16384
         decoded = json.loads(base64.b32decode(ticket.upper() + "=" * (-len(ticket) % 8)))
         endpoints = decoded["endpoints"]
@@ -2069,6 +2071,18 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
             configure("generate-initial", "--authority-key", root / "authority.key", "--network-id", "ci.two-home",
                       "--conversation-id", "community", "--bootstrap-peer", root / "bootstrap.json", "--output", root / "network.json")
             configure("verify", "--input", root / "network.json")
+            if network == "same-host":
+                # Public bootstrap receipts contain public routes only. The
+                # same-host arrangement owns its local bootstrap hint separately.
+                owner = fixtures["community"]
+                result = subprocess.run([str(owner[1] / "bin/elastos"), "identity", "show"],
+                    env=environment(owner), check=True, capture_output=True, text=True, timeout=30)
+                did = next(line.split(":", 1)[1].strip() for line in result.stdout.splitlines() if line.startswith("DID:"))
+                for name in ("a", "b"):
+                    owner = fixtures[name]
+                    subprocess.run([str(owner[1] / "bin/elastos"), "node", "peer", "add", "--did", did,
+                        "--ticket", local_tickets["community"], "--json"], env=environment(owner), check=True,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
             stop("community")
             for owner in fixtures.values():
                 target = owner[1] / "collaboration-network-v1.json"
