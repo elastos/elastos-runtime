@@ -1408,6 +1408,19 @@ async fn durable_pending_restarts_with_the_exact_envelope_and_settles_once() {
             .unwrap(),
         DirectDeliveryStatus::Pending,
     );
+    let summary = direct_a
+        .message_summaries(
+            pair.store_a.as_ref(),
+            &pair.profile_a,
+            &pair.conversation_id,
+            now_ts(),
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&summary).unwrap()[0]["delivery_issue"],
+        "peer_unreachable",
+        "a bounded failed attempt must explain the missing route"
+    );
     let before = direct_a
         .context(&pair.profile_a.document().profile_did, now_ts())
         .unwrap()
