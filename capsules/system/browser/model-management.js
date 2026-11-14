@@ -140,8 +140,11 @@ import { createTransferProgress, announceTransferProgress } from "./transfer-pro
     // Compact mode is the Marketplace detail: root is its Status list, so each
     // fact is a list row led by a copy of itemMarker; the actions go to
     // actionsRoot (the detail footer) and Refresh appears only when a read failed.
+    // The consumer owns announceRoot: the element that holds the live region
+    // outside the rows this view replaces, and outside structure it must match.
     create({ root, capsule, token, buttonClass = "pc2-btn pc2-btn-secondary", primaryButtonClass = buttonClass,
-      cid: requiredCid = null, compact = false, onReadyOpen = null, actionsRoot = null, itemMarker = null }) {
+      cid: requiredCid = null, compact = false, onReadyOpen = null, actionsRoot = null, itemMarker = null,
+      announceRoot = root.parentElement }) {
       let visible = false, closed = false, generation = 0, busy = false, timer, reader;
       let selectedCid = requiredCid, choices = [], model = null, methods = new Map(), message = "", loading = false;
       let unresolvedUse = null, reconcileRequired = false, refusal = "";
@@ -406,7 +409,7 @@ import { createTransferProgress, announceTransferProgress } from "./transfer-pro
         row.append(fact(label));
         if (compact) row.append(fact(`Download size: ${formatBytes(model.content_size_bytes)}`, "model-size"));
         row.append(fact((compact ? COMPACT_MEMORY_FIT_TEXT : MEMORY_FIT_TEXT)[model.model_memory_fit], "model-memory-fit"));
-        announceTransferProgress(root.parentElement, active(p) ? p.completed_bytes : null, p?.total_bytes, "Model download");
+        announceTransferProgress(announceRoot, active(p) ? p.completed_bytes : null, p?.total_bytes, "Model download");
         if (active(p)) {
           const progress = createTransferProgress(p.completed_bytes, p.total_bytes, "Model download progress");
           if (compact) { const item = fact(""); item.append(progress); row.append(item); }
@@ -463,13 +466,15 @@ import { createTransferProgress, announceTransferProgress } from "./transfer-pro
       }
       function setVisible(value) {
         if (visible === value) return;
-        if (!value) announceTransferProgress(root.parentElement, null, null);
+        if (!value) announceTransferProgress(announceRoot, null, null);
         visible = value; root.hidden = !value; ++generation; stopRead();
         if (show()) void load();
       }
       const onVisibility = () => { ++generation; stopRead(); if (show()) void load(); };
       function destroy() {
         closed = true; ++generation; stopRead();
+        // A live region on a host that outlives this view keeps its last text.
+        announceTransferProgress(announceRoot, null, null);
         document.removeEventListener("visibilitychange", onVisibility);
         window.removeEventListener("pagehide", destroy);
       }

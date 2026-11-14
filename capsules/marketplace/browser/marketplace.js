@@ -1069,6 +1069,9 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
         buttonClass: "modal-btn secondary", primaryButtonClass: "modal-btn primary", cid: app.modelCid, compact: true, itemMarker,
         onReadyOpen: openReadyModelInAssistant,
         actionsRoot: els.detailContent.querySelector("[data-model-actions]"),
+        // The dialog holds the download announcement: it stays in the modal a
+        // screen reader reads, and a model detail keeps the app detail's sections.
+        announceRoot: els.detailModal,
       });
       detailModels.setVisible(true);
     }
