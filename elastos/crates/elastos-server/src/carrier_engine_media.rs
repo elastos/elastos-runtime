@@ -1001,7 +1001,7 @@ mod tests {
                 "turn":{"listen_host":"127.0.0.1","listen_port":target.local_addr().unwrap().port()}});
             let retiring=Arc::new(AtomicBool::new(false));
             bind_target(engine_root.path(),consumer.endpoint.id(),&authority,retiring.clone()).await.unwrap();
-            let grant=json!({"peer_did":engine.endpoint.id().to_string(),"connect_ticket":super::super::carrier_connect_ticket(&engine.endpoint)});
+            let grant=json!({"peer_did":engine.endpoint.id().to_string(),"connect_ticket":super::super::local_carrier_connect_ticket(&engine.endpoint)});
             let unused=std::net::TcpListener::bind("127.0.0.1:0").unwrap();let port=unused.local_addr().unwrap().port();drop(unused);
             std::fs::create_dir_all(consumer_root.path().join("config")).unwrap();
             std::fs::write(consumer_root.path().join("config/browser-viewer-ingress.json"),serde_json::to_vec(&json!({
