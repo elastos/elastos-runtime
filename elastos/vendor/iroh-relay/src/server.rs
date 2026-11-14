@@ -1333,6 +1333,7 @@ mod tests {
                 SecretKey::from_bytes(&[index + 1; 32]),
                 dns_resolver(),
             )
+            .tls_client_config(ring_config())
             .connect()
             .await
             .unwrap_or_else(|error| panic!("client {index}: {error:#}"));
@@ -1357,7 +1358,9 @@ mod tests {
         }
         let refused = tokio::time::timeout(
             Duration::from_secs(2),
-            ClientBuilder::new(url, SecretKey::from_bytes(&[99; 32]), dns_resolver()).connect(),
+            ClientBuilder::new(url, SecretKey::from_bytes(&[99; 32]), dns_resolver())
+                .tls_client_config(ring_config())
+                .connect(),
         )
         .await;
         server.shutdown().await.unwrap();
