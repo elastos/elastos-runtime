@@ -22,14 +22,14 @@ class TwoHomeReceiptTests(unittest.TestCase):
     def test_fresh_home_and_data_are_private_with_the_operator_umask(self):
         fresh = JOURNEY['fresh_fixture']
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)/'source'
+            home = Path(temporary).resolve()/'source'
             data = home/'.local/share/elastos'
             data.mkdir(parents=True)
             (data/'components.json').write_text('{}')
             prior = os.umask(0o022)
             try:
                 with mock.patch.dict(fresh.__globals__, {'engine_paths':lambda _: (None,None,None,data/'missing-engine')}):
-                    destination = Path(temporary)/'fresh'
+                    destination = Path(temporary).resolve()/'fresh'
                     copied = fresh(home,data,destination,include_engine=False)
                 self.assertEqual(stat.S_IMODE(destination.stat().st_mode),0o700)
                 self.assertEqual(stat.S_IMODE(copied.stat().st_mode),0o700)
@@ -115,7 +115,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
     def test_fixture_removal_refuses_nested_home_process(self):
         remove = JOURNEY['remove_message_fixture']
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)/'fixture'
+            root = Path(temporary).resolve()/'fixture'
             root.mkdir()
             row = {'command':str(root/'b/data/bin/elastos')+' gateway'}
             with mock.patch.dict(remove.__globals__, {'process_rows':lambda: {123:row}}):
@@ -130,10 +130,10 @@ class TwoHomeReceiptTests(unittest.TestCase):
         finish = JOURNEY['finish_message_fixture']
         for disk_fails in (False, True):
             with self.subTest(disk_fails=disk_fails), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)/'fixture'
+                root = Path(temporary).resolve()/'fixture'
                 root.mkdir()
                 (root/'authority.key').write_text('disposable test key')
-                evidence = Path(temporary)/'evidence'
+                evidence = Path(temporary).resolve()/'evidence'
                 evidence.mkdir()
                 stopped = []
                 children = {'a':mock.Mock(pid=101), 'b':mock.Mock(pid=102), 'community':mock.Mock(pid=103)}
@@ -172,9 +172,9 @@ class TwoHomeReceiptTests(unittest.TestCase):
     def test_sigkill_fallback_stops_a_detached_browser_after_node_exits(self):
         stop = JOURNEY['stop_message_processes']
         with tempfile.TemporaryDirectory() as temporary:
-            pidfile = Path(temporary)/'browser.pid'
-            marker = '--two-home-fixture='+temporary
-            termfile = Path(temporary)/'term-observed'
+            pidfile = Path(temporary).resolve()/'browser.pid'
+            marker = '--two-home-fixture='+str(Path(temporary).resolve())
+            termfile = Path(temporary).resolve()/'term-observed'
             detached_code = ('import os,signal,sys,time; from pathlib import Path; '
                              'signal.signal(signal.SIGTERM,lambda *_: Path(sys.argv[3]).write_text("TERM")); '
                              'Path(sys.argv[2]).write_text(str(os.getpid())); time.sleep(60)')
@@ -205,7 +205,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
     def test_source_identity_rejects_changed_runtime_and_browser_asset_before_launch(self):
         identify = JOURNEY['installed_message_identity']
         with tempfile.TemporaryDirectory() as temporary:
-            data = Path(temporary)
+            data = Path(temporary).resolve()
             (data/'bin').mkdir()
             (data/'receipts').mkdir()
             runtime = data/'bin/elastos'

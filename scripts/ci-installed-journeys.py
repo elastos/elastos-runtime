@@ -1550,8 +1550,7 @@ def run(home, data, evidence, model=True, carrier=False, memory_gib=0, repair=Fa
             record["finite_memory"] = finite.finish()
             record["process_cleanup"] = {"status": record["finite_memory"]["status"]}
             record["results"]["finite_memory_boundary"] = record["finite_memory"]["status"]
-            record["elapsed_seconds"] = round(time.monotonic() - started, 2)
-        (evidence / "installed-journeys.json").write_text(json.dumps(record, indent=2) + "\n")
+            (evidence / "installed-journeys.json").write_text(json.dumps(record, indent=2) + "\n")
         if holder:
             cleanup_runtime(holder, holder_data)
         raise
@@ -1668,7 +1667,6 @@ def run(home, data, evidence, model=True, carrier=False, memory_gib=0, repair=Fa
                 and record["process_cleanup"].get("before", {}).get("llama_server") == 0
                 else "failed")
             record["results"]["engine_absent_home"] = "passed" if record["engine_absent_after_ui"] else "failed"
-        record["elapsed_seconds"] = round(time.monotonic() - started, 2)
         (evidence / "installed-journeys.json").write_text(json.dumps(record, indent=2) + "\n")
 
     if record["process_cleanup"]["status"] != "passed":
