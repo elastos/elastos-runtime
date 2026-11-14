@@ -2040,7 +2040,14 @@ async fn start_carrier_node_with_network(
             memory: memory_lookup.clone(),
             mdns,
         };
-        policy.install(&endpoint)?;
+        if let Err(error) = policy.install(&endpoint) {
+            let _ = state.gossip.shutdown().await;
+            endpoint.close().await;
+            if let Some(server) = relay_server {
+                let _ = server.shutdown().await;
+            }
+            return Err(error);
+        }
         state.relay_lookups = Some(policy);
         state.gossip_handler.clone()
     };
@@ -8697,7 +8704,8 @@ impl CarrierClient {
         // Observe this request's selected path, rather than infer it from the
         // relay configuration. The private journey log retains this evidence.
         if let Some(path) = self.conn.paths().iter().find(|path| path.is_selected()) {
-            tracing::info!(
+            tracing::debug!(
+                target: "elastos_carrier_path",
                 route = if path.is_relay() { "relay" } else { "direct" },
                 operation = %invocation.op,
                 provider = %invocation.target,

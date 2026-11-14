@@ -1967,6 +1967,7 @@ def two_home_messages(home, data, evidence, network="same-host", fixture_root=No
     def environment(owner):
         return {"PATH": os.environ["PATH"], "HOME": str(owner[0]), "XDG_DATA_HOME": str(owner[1].parent),
                 **settings["environment"], "ELASTOS_QUIET_RUNTIME_NOTICES": "1",
+                "RUST_LOG": "warn,elastos_carrier_path=debug",
                 **({"ELASTOS_RELAY_URL": relay_url} if relay_url else {})}
     def launch(name):
         assert name not in children, "Home already has an owned Runtime"

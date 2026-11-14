@@ -60,6 +60,13 @@ pub(super) fn apply_relay(
             && relay.fragment().is_none(),
         "ELASTOS_RELAY_URL must be an HTTP(S) origin without credentials"
     );
+    let http_fixture = relay.host().is_some_and(|host| match host {
+        url::Host::Ipv4(ip) => ip.is_loopback() || ip.is_documentation(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+        url::Host::Domain(_) => false,
+    });
+    anyhow::ensure!(relay.scheme() == "https" || http_fixture,
+        "Carrier relay origins require HTTPS; HTTP is reserved for literal loopback and documentation-network fixtures");
     let relay = RelayUrl::from(relay.clone());
     let quic = (relay.scheme() == "https").then(Default::default);
     Ok(endpoint_policy(builder, Some(&relay))
@@ -614,7 +621,7 @@ mod tests {
     #[ignore = "requires the owned blocked-network fixture; scripts/carrier-dns-policy-test.py"]
     async fn dns_probe_system_only() {
         blocked_dns_probe(system_dns()).await;
-        let relay = url::Url::parse("http://carrier-dns-test.example/").unwrap();
+        let relay = url::Url::parse("https://carrier-dns-test.example/").unwrap();
         let endpoint = apply_relay(
             iroh::Endpoint::builder(iroh::endpoint::presets::Minimal).clear_ip_transports(),
             &relay,
@@ -653,6 +660,21 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             std::fs::write(dir.path().join("config.toml"), contents).unwrap();
             assert!(configured_server(dir.path()).await.is_err());
+        }
+    }
+
+    #[test]
+    fn relay_requires_https_outside_owned_fixture_address_ranges() {
+        for origin in [
+            "http://relay.example/",
+            "http://8.8.8.8/",
+            "http://192.168.1.8/",
+        ] {
+            let result = apply_relay(
+                iroh::Endpoint::builder(iroh::endpoint::presets::Minimal),
+                &origin.parse().unwrap(),
+            );
+            assert!(result.is_err(), "{origin}");
         }
     }
 
