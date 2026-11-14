@@ -22,6 +22,8 @@ EARLY_READER = re.compile(
 failures = []
 for directory in (ROOT / "scripts", ROOT / ".githooks"):
     for path in sorted(directory.rglob("*")):
+        if "node_modules" in path.relative_to(ROOT).parts:
+            continue
         if not path.is_file() or path.suffix not in (".sh", ".mjs", ".py", ""):
             continue
         source = path.read_text()
