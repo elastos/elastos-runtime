@@ -1048,7 +1048,9 @@ async fn relay_supervisor(
     // already shut down.
     if let Some(mut server) = relay_http_server {
         server.shutdown();
-        let _ = server.task_handle().await;
+        if !server.task_handle().is_finished() {
+            let _ = server.task_handle().await;
+        }
     }
 
     // Ensure the QUIC server is closed
