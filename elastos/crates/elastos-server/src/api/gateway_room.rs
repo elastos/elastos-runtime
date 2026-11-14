@@ -207,6 +207,31 @@ mod direct_retry_wire_tests {
     }
 
     #[test]
+    fn delivery_profile_uses_the_released_uri_and_safelisted_accept_header() {
+        let options = Query::<ChatDirectMessageReadOptions>::try_from_uri(
+            &"/messages?retry_details=true&mark_read=false"
+                .parse()
+                .unwrap(),
+        )
+        .unwrap()
+        .0;
+        assert!(options.retry_details);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::ACCEPT,
+            "application/json;elastos-direct-delivery-details=1"
+                .parse()
+                .unwrap(),
+        );
+        assert!(
+            direct_delivery_details(&headers),
+            "delivery details must use the CORS-safelisted Accept profile"
+        );
+        headers.insert(http::header::ACCEPT, "application/json".parse().unwrap());
+        assert!(!direct_delivery_details(&headers));
+    }
+
+    #[test]
     fn old_direct_reads_omit_retry_identity_and_opt_in_reads_expose_only_outgoing_identity() {
         use crate::collaboration_direct_messages::DirectMessageSummary;
         let messages = vec![
