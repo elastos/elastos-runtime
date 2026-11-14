@@ -242,7 +242,6 @@ async fn retention_prunes_only_oldest_expired_terminal_pairs_and_preserves_state
         envelope: encode(&byte_pending),
         incoming: false,
         recorded_at: now,
-        delivery_issue: None,
     });
     expected
         .messages
@@ -401,7 +400,6 @@ async fn production_entry_limit_prunes_one_expired_terminal_pair_before_write() 
             envelope: encode(&terminal),
             incoming: false,
             recorded_at: old,
-            delivery_issue: None,
         }],
         receipts: vec![StoredReceipt {
             message_envelope_sha256: collaboration_message_envelope_sha256(&terminal),
@@ -421,7 +419,6 @@ async fn production_entry_limit_prunes_one_expired_terminal_pair_before_write() 
             envelope: encode(&message),
             incoming: false,
             recorded_at: now,
-            delivery_issue: None,
         });
     }
     let bytes = serde_json::to_vec(&state).unwrap();
@@ -1439,6 +1436,30 @@ async fn durable_pending_restarts_with_the_exact_envelope_and_settles_once() {
     assert_eq!(before.len(), 1);
     assert!(!before[0].incoming);
     assert!(!before[0].receipt_settled);
+    // Rollback readers deny unknown stored fields. Local diagnostics stay in
+    // bounded memory, so a failed attempt preserves the existing store schema.
+    let stored = serde_json::to_value(
+        direct_a
+            .context(&pair.profile_a.document().profile_did, now_ts())
+            .unwrap()
+            .message_store
+            .load()
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let keys: std::collections::BTreeSet<_> = stored["messages"][0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["envelope", "incoming", "recorded_at"]
+            .into_iter()
+            .collect()
+    );
     let exact_envelope = before[0].envelope_bytes.clone();
     let exact_message: SignedCollaborationMessage =
         serde_json::from_slice(&exact_envelope).unwrap();

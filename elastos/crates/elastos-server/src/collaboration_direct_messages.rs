@@ -95,6 +95,7 @@ struct DirectServiceInner {
     contexts: Mutex<BTreeMap<String, DirectContext>>,
     retry_offsets: Mutex<BTreeMap<String, usize>>,
     failure_warning: Mutex<Option<std::time::Instant>>,
+    delivery_issues: Mutex<BTreeMap<String, DirectDeliveryIssue>>,
 }
 
 #[derive(Clone)]
@@ -149,7 +150,6 @@ pub(crate) struct DirectMessageRecord {
     pub(crate) incoming: bool,
     pub(crate) recorded_at: u64,
     pub(crate) receipt_settled: bool,
-    pub(crate) delivery_issue: Option<DirectDeliveryIssue>,
 }
 
 /// Local attempt diagnostics. Signed messages and peer receipts keep their
@@ -272,8 +272,6 @@ struct StoredMessage {
     envelope: String,
     incoming: bool,
     recorded_at: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    delivery_issue: Option<DirectDeliveryIssue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,7 +330,6 @@ impl DirectMessageStore {
                     envelope_bytes,
                     incoming: entry.incoming,
                     recorded_at: entry.recorded_at,
-                    delivery_issue: entry.delivery_issue,
                     receipt_settled: state
                         .receipts
                         .iter()
@@ -340,23 +337,6 @@ impl DirectMessageStore {
                 })
             })
             .collect()
-    }
-
-    fn record_delivery_issue(&self, hash: &str, issue: DirectDeliveryIssue) -> anyhow::Result<()> {
-        self.mutate(|state| {
-            for entry in &mut state.messages {
-                if !entry.incoming
-                    && collaboration_message_envelope_sha256(&decode(
-                        &entry.envelope,
-                        "direct message",
-                    )?) == hash
-                {
-                    entry.delivery_issue = Some(issue);
-                    break;
-                }
-            }
-            Ok(())
-        })
     }
 
     pub(crate) fn has_receipt(&self, message_hash: &str) -> anyhow::Result<bool> {
@@ -420,7 +400,6 @@ impl DirectMessageStore {
                 envelope: encode(envelope_bytes),
                 incoming,
                 recorded_at: now,
-                delivery_issue: None,
             });
             self.prune_for_capacity(state, now, max_messages, max_bytes)?;
             Ok(true)
@@ -478,7 +457,6 @@ impl DirectMessageStore {
                 envelope: encode(&bytes),
                 incoming: false,
                 recorded_at: now,
-                delivery_issue: None,
             });
             self.prune_for_capacity(
                 state,
@@ -866,6 +844,7 @@ impl CollaborationDirectMessageService {
             contexts: Mutex::new(BTreeMap::new()),
             retry_offsets: Mutex::new(BTreeMap::new()),
             failure_warning: Mutex::new(None),
+            delivery_issues: Mutex::new(BTreeMap::new()),
         });
         let provider: Arc<dyn Provider> = Arc::new(CollaborationDirectMessageProvider {
             inner: inner.clone(),
@@ -1255,7 +1234,16 @@ impl CollaborationDirectMessageService {
                 delivery_issue: (!record.incoming
                     && !record.receipt_settled
                     && envelope.payload.expires_at > now)
-                    .then_some(record.delivery_issue)
+                    .then(|| {
+                        self.inner
+                            .delivery_issues
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .get(&collaboration_message_envelope_sha256(
+                                &record.envelope_bytes,
+                            ))
+                            .copied()
+                    })
                     .flatten(),
                 // `expired` is terminal: retry_pending stops re-delivering the
                 // moment the envelope's TTL passes, so the product must stop
@@ -1430,7 +1418,7 @@ impl CollaborationDirectMessageService {
             .inner
             .failure_warning
             .lock()
-            .expect("delivery warning lock");
+            .unwrap_or_else(|error| error.into_inner());
         if last.is_some_and(|last| now.duration_since(last) < std::time::Duration::from_secs(60)) {
             return false;
         }
@@ -1511,9 +1499,16 @@ impl CollaborationDirectMessageService {
                 } else {
                     DirectDeliveryIssue::PeerUnreachable
                 };
-                context
-                    .message_store
-                    .record_delivery_issue(&message_hash, issue)?;
+                let mut issues = self
+                    .inner
+                    .delivery_issues
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                if issues.len() >= MAX_DIRECT_MESSAGES && !issues.contains_key(&message_hash) {
+                    issues.pop_first();
+                }
+                issues.insert(message_hash.clone(), issue);
+                drop(issues);
                 if self.should_warn_delivery_failure(std::time::Instant::now()) {
                     tracing::warn!(reason = ?issue, "direct delivery is unconfirmed; Home will retry");
                 }
@@ -1540,6 +1535,11 @@ impl CollaborationDirectMessageService {
         context
             .message_store
             .persist_receipt(&message_hash, &receipt_bytes, now)?;
+        self.inner
+            .delivery_issues
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&message_hash);
         Ok(DirectDeliveryStatus::ReceiptSettled)
     }
 
