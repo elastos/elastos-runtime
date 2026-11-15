@@ -1471,6 +1471,12 @@ mod tests {
             .await
             .unwrap();
         let peer = refresh_presence(b, now).await;
+        // Both publishers complete their local projection so expired
+        // announcements can leave the outgoing store during long measurements.
+        b.presence
+            .project_authorized_presence(&peer, now)
+            .await
+            .unwrap();
         a.product
             .test_core()
             .accept_incoming_from_signed_source_for_test(peer.test_envelope_bytes(), now)
