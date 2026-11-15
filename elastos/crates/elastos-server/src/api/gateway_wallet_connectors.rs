@@ -649,6 +649,8 @@ mod sdk_verification_tests {
             "same-size tampering invalidates the cache"
         );
         assert_eq!(reads(&sdk).len(), 2);
+        // Allow coarse filesystem change clocks to advance before a same-size rewrite.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         std::fs::write(&sdk, b"fixture-sdk").unwrap();
         check().await.unwrap();
         let replacement = sdk.with_extension("replacement");
@@ -658,6 +660,8 @@ mod sdk_verification_tests {
             check().await.is_err(),
             "file replacement invalidates the cache"
         );
+        // Allow coarse filesystem change clocks to advance before a same-size rewrite.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         std::fs::write(&sdk, b"fixture-sdk").unwrap();
         check().await.unwrap();
         value["sdk_sha256"] = serde_json::json!("00".repeat(32));
@@ -759,6 +763,8 @@ mod sdk_verification_tests {
         std::fs::write(&config, value.to_string()).unwrap();
         ensure_wallet_connector_configured_with_cache(dir.path(), &cache).unwrap();
         assert_eq!(reads(&sdk).len(), 2, "a new pin is checked immediately");
+        // Allow coarse filesystem change clocks to advance before a same-size rewrite.
+        std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(&sdk, b"tampered!!!").unwrap();
         assert!(ensure_wallet_connector_configured_with_cache(dir.path(), &cache).is_err());
         assert_eq!(
