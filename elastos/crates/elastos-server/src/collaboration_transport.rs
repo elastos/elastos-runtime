@@ -669,6 +669,11 @@ mod tests {
         fn observe_durable_incoming_before_send(&self, core: Arc<CollaborationCore>) {
             *self.durable_incoming_before_send.lock().unwrap() = Some(core);
         }
+        /// Drops the replies one cycle scripted but did not use, so the next
+        /// cycle starts from its own script.
+        fn drain_replies(&self) {
+            self.replies.lock().unwrap().clear();
+        }
         fn requests(&self) -> Vec<serde_json::Value> {
             self.requests.lock().unwrap().clone()
         }
@@ -2908,6 +2913,190 @@ mod tests {
                 "gossip_send",
                 "gossip_ack",
             ]
+        );
+    }
+
+    /// The message each `gossip_send` receipt accepts, in send order.
+    fn receipted_hashes(carrier: &FakeCarrier) -> Vec<String> {
+        carrier
+            .requests()
+            .iter()
+            .filter(|request| request["op"] == "gossip_send")
+            .map(|request| receipt_message_hash(request["message"].as_str().unwrap()))
+            .collect()
+    }
+
+    /// A post from its own sender, ready for the topic.
+    fn remote_post(fixture: &Fixture, body: &str) -> Vec<u8> {
+        let (key, message) = remote_message(fixture, generate_keypair().0, body);
+        sign_collaboration_transport_frame(&key, &message).unwrap()
+    }
+
+    const PINNED_WINDOW: usize = 8;
+    const PINNED_CYCLES: usize = 5;
+
+    /// Receipts the Home gossiped in each of `PINNED_CYCLES` live cycles that
+    /// all read the same Carrier range. `scripted` prepares one cycle's
+    /// replies after the pinned peek.
+    async fn receipts_per_pinned_cycle(
+        driver: &CollaborationTransportDriver,
+        carrier: &FakeCarrier,
+        window: &[serde_json::Value],
+        scripted: impl Fn(),
+    ) -> Vec<usize> {
+        let mut per_cycle = Vec::new();
+        let mut seen = 0;
+        for _ in 0..PINNED_CYCLES {
+            carrier.push([peek(0, window.len() as u64, window.to_vec())]);
+            scripted();
+            // No acknowledgement reply: the Carrier keeps replaying this range.
+            assert!(matches!(
+                driver.process_incoming_once(NOW).await.unwrap(),
+                CollaborationIncomingOnceOutcome::RetryRequired(_)
+            ));
+            carrier.drain_replies();
+            let total = receipted_hashes(carrier).len();
+            per_cycle.push(total - seen);
+            seen = total;
+        }
+        per_cycle
+    }
+
+    /// The Carrier replays the same batch range until the Home acknowledges it
+    /// (`carrier.rs:7140-7146`). A Home that cannot acknowledge must receipt
+    /// those frames once, not once per 500 ms cycle.
+    #[tokio::test]
+    async fn a_pinned_batch_receipts_its_frames_once_when_the_acknowledgement_fails() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        let window = (0..PINNED_WINDOW)
+            .map(|index| gossip(&remote_post(&fixture, &format!("post-{index}"))))
+            .collect::<Vec<_>>();
+        let sent = serde_json::json!({"status":"ok","data":{"remote_peer_count":1}});
+        let per_cycle = receipts_per_pinned_cycle(&driver, &carrier, &window, || {
+            carrier.push(std::iter::repeat_n(sent.clone(), PINNED_WINDOW));
+        })
+        .await;
+        assert_eq!(per_cycle, [PINNED_WINDOW, 0, 0, 0, 0]);
+    }
+
+    /// A Home whose intake is full refuses every new frame (#409), so its
+    /// batch never completes. The frames it accepted before the refusal keep
+    /// their receipts; they do not earn a new one every cycle.
+    #[tokio::test]
+    async fn a_full_home_receipts_the_frames_it_accepted_once() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        for index in 0..crate::collaboration_core::MAX_PENDING_INCOMING - PINNED_WINDOW {
+            let frame = remote_post(&fixture, &format!("fill-{index}"));
+            assert!(matches!(
+                core.ingest_transport_frame(&frame, NOW).unwrap(),
+                CollaborationTransportIngestion::Incoming(_)
+            ));
+        }
+        // The last frame finds the intake full and keeps the batch unfinished.
+        let window = (0..=PINNED_WINDOW)
+            .map(|index| gossip(&remote_post(&fixture, &format!("post-{index}"))))
+            .collect::<Vec<_>>();
+        let sent = serde_json::json!({"status":"ok","data":{"remote_peer_count":1}});
+        let per_cycle = receipts_per_pinned_cycle(&driver, &carrier, &window, || {
+            carrier.push(std::iter::repeat_n(sent.clone(), PINNED_WINDOW));
+        })
+        .await;
+        assert_eq!(per_cycle, [PINNED_WINDOW, 0, 0, 0, 0]);
+    }
+
+    /// A Home with no gossip neighbour reaches nobody with its receipts. It
+    /// keeps the durable acceptance and lets each sender's own re-send ask for
+    /// the receipt again, instead of re-sending every receipt every cycle.
+    #[tokio::test]
+    async fn a_home_without_a_gossip_neighbour_receipts_its_frames_once() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        let window = (0..PINNED_WINDOW)
+            .map(|index| gossip(&remote_post(&fixture, &format!("post-{index}"))))
+            .collect::<Vec<_>>();
+        let local_only = serde_json::json!({
+            "status":"ok","broadcast":"local_only","data":{"remote_peer_count":0}
+        });
+        let per_cycle = receipts_per_pinned_cycle(&driver, &carrier, &window, || {
+            carrier.push(std::iter::repeat_n(local_only.clone(), PINNED_WINDOW));
+        })
+        .await;
+        assert_eq!(per_cycle, [PINNED_WINDOW, 0, 0, 0, 0]);
+    }
+
+    /// A sender re-sends its own post on its back-off until a Home receipts
+    /// it. That copy arrives at a new Carrier position, so it is receipted
+    /// again.
+    #[tokio::test]
+    async fn a_resent_post_is_receipted_again_at_its_new_carrier_position() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        let (key, message) = remote_message(&fixture, generate_keypair().0, "resent post");
+        let frame = sign_collaboration_transport_frame(&key, &message).unwrap();
+        let hash = collaboration_message_envelope_sha256(&message);
+        let sent = serde_json::json!({"status":"ok","data":{"remote_peer_count":1}});
+        for cursor in 0..2 {
+            carrier.push([
+                peek(cursor, cursor + 1, vec![gossip(&frame)]),
+                sent.clone(),
+                ack(cursor, cursor + 1),
+            ]);
+            assert!(matches!(
+                driver.process_incoming_once(NOW + cursor).await.unwrap(),
+                CollaborationIncomingOnceOutcome::Acknowledged(_)
+            ));
+        }
+        assert_eq!(receipted_hashes(&carrier), [hash.clone(), hash]);
+    }
+
+    /// The reproduction instrument for the 14 Nov Community burst: what each
+    /// gossip message costs on the wire, as `gossip_send` encodes it
+    /// (`carrier.rs:7008-7027`). Run it with `--nocapture`.
+    #[tokio::test]
+    async fn community_resend_reproduction_table() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        let post = remote_post(&fixture, "a post of ordinary length");
+        let presence = presence_frame(&fixture, &generate_keypair().0, NOW);
+        let sent = serde_json::json!({"status":"ok","data":{"remote_peer_count":1}});
+        carrier.push([peek(0, 1, vec![gossip(&post)]), sent, ack(0, 1)]);
+        driver.process_incoming_once(NOW).await.unwrap();
+        let receipt = carrier
+            .requests()
+            .iter()
+            .find(|request| request["op"] == "gossip_send")
+            .map(|request| request["message"].as_str().unwrap().as_bytes().to_vec())
+            .unwrap();
+        let wire = |frame: &[u8]| {
+            serde_json::to_vec(&crate::carrier::GossipMessage {
+                sender_id: core.local_device_did(),
+                sender_nick: "unknown".to_string(),
+                content: String::from_utf8(frame.to_vec()).unwrap(),
+                ts: NOW,
+                nonce: u64::MAX,
+                signature: None,
+                sender_session_id: None,
+            })
+            .unwrap()
+            .len()
+        };
+        println!(
+            "wire bytes: presence {} post {} receipt {}",
+            wire(&presence),
+            wire(&post),
+            wire(&receipt)
         );
     }
 
