@@ -448,11 +448,12 @@ pub(super) async fn home_summary(
             {
                 return home_error_response(err);
             }
-            let browser_state = match {
+            let browser_state = {
                 let data = state.data_dir.clone();
                 let context = context.clone();
                 blocking_capsule_inventory(move || home_browser_state(&data, &context)).await
-            } {
+            };
+            let browser_state = match browser_state {
                 Ok(state) => state,
                 Err(err) => return home_error_response(err),
             };
@@ -6337,11 +6338,12 @@ pub(super) async fn home_browser_state_get(
         Ok(context) => context,
         Err(err) => return home_error_response(err),
     };
-    match {
+    let inventory_result = {
         let data = state.data_dir.clone();
         let context = context.clone();
         blocking_capsule_inventory(move || home_browser_state(&data, &context)).await
-    } {
+    };
+    match inventory_result {
         Ok(state) => Json(state).into_response(),
         Err(err) => home_error_response(err),
     }
@@ -6356,11 +6358,12 @@ pub(super) async fn home_browser_state_update(
         Ok(context) => context,
         Err(err) => return home_error_response(err),
     };
-    match {
+    let inventory_result = {
         let data = state.data_dir.clone();
         let context = context.clone();
         blocking_capsule_inventory(move || home_save_browser_state(&data, &context, input)).await
-    } {
+    };
+    match inventory_result {
         Ok(state) => Json(state).into_response(),
         Err(err) => gateway_assistant_workspace_v2::migration_error_response(&err)
             .unwrap_or_else(|| home_error_response(err)),
@@ -6372,10 +6375,11 @@ pub(super) async fn home_active_shell_get(
     headers: HeaderMap,
 ) -> Response {
     let context = require_home_active_shell_token_context(&state.data_dir, &headers).ok();
-    match {
+    let inventory_result = {
         let data = state.data_dir.clone();
         blocking_capsule_inventory(move || home_active_shell_summary(&data, context.as_ref())).await
-    } {
+    };
+    match inventory_result {
         Ok(summary) => Json(summary).into_response(),
         Err(err) => home_error_response(err),
     }
@@ -6390,14 +6394,15 @@ pub(super) async fn home_active_shell_update(
         Ok(context) => context,
         Err(err) => return home_error_response(err),
     };
-    match {
+    let inventory_result = {
         let data = state.data_dir.clone();
         let context = context.clone();
         blocking_capsule_inventory(move || {
             home_save_active_shell(&data, &context, input.active.trim())
         })
         .await
-    } {
+    };
+    match inventory_result {
         Ok(summary) => Json(summary).into_response(),
         Err(err) => {
             let text = err.to_string();

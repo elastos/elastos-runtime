@@ -176,11 +176,12 @@ pub(super) async fn capsule_interfaces(
     State(state): State<GatewayState>,
     headers: HeaderMap,
 ) -> Response {
-    match {
+    let inventory_result = {
         let data = state.data_dir.clone();
         let headers = headers.clone();
         blocking_capsule_inventory(move || require_capsule_catalog_token(&data, &headers)).await
-    } {
+    };
+    match inventory_result {
         Ok(_) => Json(
             capsule_interface_registry_summary_with_bindings(
                 &state.data_dir,
@@ -265,11 +266,12 @@ pub(super) async fn capsule_interface_invoke(
     owner: Option<Extension<ModelPreparationOwner>>,
     Json(request): Json<CapsuleInterfaceInvokeRequest>,
 ) -> Response {
-    let resolved = match {
+    let resolved = {
         let data = state.data_dir.clone();
         let request = request.clone();
         blocking_capsule_inventory(move || resolve_capsule_affordance(&data, &request)).await
-    } {
+    };
+    let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(err) => {
             return capsule_invoke_request_error(
