@@ -1,4 +1,4 @@
-import { createWalletActivity } from "./wallet-activity.js?v=wallet-20260523a";
+import { createWalletActivity } from "./wallet-activity.js?v=wallet-20261115a";
 import {
   createWalletApi,
   readHomeOrigin,

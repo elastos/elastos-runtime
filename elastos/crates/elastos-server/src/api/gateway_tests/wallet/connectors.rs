@@ -1385,6 +1385,35 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
         if matches!(case, "valid" | "expired" | "dismissed") {
             assert_eq!(response.status(), StatusCode::OK, "{case}");
             assert!(operations.contains(&WalletOperationKind::CompleteConnectorHandoff));
+            let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let response_json: Value = serde_json::from_slice(&response_body).unwrap();
+            assert_eq!(
+                response_json["receipt_status"],
+                if case == "dismissed" {
+                    "sent_after_dismissal"
+                } else {
+                    "completed"
+                }
+            );
+            let auth = crate::auth::load_auth_state(dir.path()).unwrap();
+            let event = auth
+                .audit
+                .iter()
+                .find(|event| {
+                    event.challenge_id.as_deref() == Some("wallet-approval:wc-complete")
+                        && event.event_type != "wallet.approval.approved"
+                })
+                .unwrap();
+            assert_eq!(
+                event.event_type,
+                if case == "dismissed" {
+                    "wallet.approval.sent_after_dismissal"
+                } else {
+                    "wallet.approval.completed"
+                }
+            );
             let requests = provider.requests.lock().await;
             let forwarded = requests
                 .iter()

@@ -934,6 +934,9 @@ async fn test_inbox_reject_resolved_wallet_request_returns_bad_request() {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
+        if status == "approved" {
+            assert!(String::from_utf8_lossy(&body).contains("Request dismissed."));
+        }
         if expected == StatusCode::BAD_REQUEST {
             assert!(String::from_utf8(body.to_vec())
                 .unwrap()

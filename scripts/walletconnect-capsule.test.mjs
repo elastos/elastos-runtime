@@ -64,3 +64,11 @@ test('a stalled old SDK disconnect cannot block a new storage generation',async 
 
 for(const scenario of ['numeric-chain','numeric-chain-link'])test(`capsule accepts the pinned SDK numeric chain for ${scenario}`,async()=>{const r=await exerciseWalletConnect(scenario);assert.equal(r.error,undefined);assert.equal(r.result.status,scenario.endsWith('link')?'linked':'completed');});
 for(const value of [0,-1,1.5,9007199254740992,'20','0x0','0x20000000000000',null])test(`capsule refuses invalid chain ${JSON.stringify(value)} before authority changes`,async()=>{const r=await exerciseWalletConnect('invalid-chain:'+JSON.stringify(value));assert.match(r.error,/invalid chain/);assert.equal(r.routes.filter(c=>c.path.endsWith('/approve')||c.path.endsWith('/verify')).length,0);});
+
+test('late send reports dismissal without claiming completion',async()=>{
+  const r=await exerciseWalletConnect('dismissed-during-send');
+  assert.equal(r.error,undefined);
+  assert.equal(r.result.status,'sent_after_dismissal');
+  assert.equal(r.result.message,'Request dismissed. Transaction sent from wallet.');
+  assert.equal(completed(r).length,1);
+});

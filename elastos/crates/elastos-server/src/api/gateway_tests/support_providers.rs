@@ -6201,7 +6201,7 @@ impl MockWalletProvider {
                 };
                 let approved_send = approval["status"] == "approved"
                     && approval["intent"] == "transaction_intent"
-                    && approval["connector_id"].as_str().is_some();
+                    && approval["connector_id"] == "wallet-walletconnect";
                 if approval["status"] != "pending" && !approved_send {
                     return Ok(json!({
                         "status": "error",
@@ -6399,7 +6399,9 @@ impl MockWalletProvider {
                         "message": "wallet approval request belongs to a different connector"
                     }));
                 }
-                approval["status"] = serde_json::Value::String("completed".to_string());
+                if approval["status"] != "rejected" {
+                    approval["status"] = serde_json::Value::String("completed".to_string());
+                }
                 if approval.get("intent").and_then(|value| value.as_str())
                     == Some("transaction_intent")
                 {

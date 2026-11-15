@@ -623,6 +623,8 @@ struct SystemWalletDefaultSummary {
 
 #[derive(Debug, Clone, Default, Serialize)]
 struct SystemWalletApprovalsSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_status: Option<String>,
     available: bool,
     pending_count: usize,
     approval_requests: Vec<SystemWalletApprovalSummary>,

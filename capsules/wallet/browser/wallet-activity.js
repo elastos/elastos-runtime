@@ -39,7 +39,8 @@ export function activityTime(request) {
 
 export function activityIcon(request) {
   const status = readText(request.status);
-  if (status === "completed") return "✓";
+  if (request.transaction_hash || status === "completed") return "✓";
+  if (status === "rejected" && request.approved_at) return "·";
   if (status === "rejected" || status === "expired") return "×";
   return "!";
 }
@@ -48,7 +49,7 @@ export function activityTitle(request) {
   const status = readText(request.status);
   const capsule = readText(request.capsule_id) || "Capsule";
   if (request.transaction_hash && status === "rejected" && request.approved_at) {
-    return `${capsule} · Dismissed here; still sent from wallet`;
+    return `${capsule} · Sent from wallet after request was dismissed`;
   }
   if (request.transaction_hash) {
     return `${capsule} · Sent transaction`;

@@ -215,7 +215,7 @@ async function onRequestClick(event) {
     const result = await requestCapsuleWalletEffect({ kind: "approve", approvalRequestId });
     watchConnection();
     showStatus(
-      result.effect === "transaction" ? "Transaction sent." : "Request signed.",
+      result.message || (result.effect === "transaction" ? "Transaction sent." : "Request signed."),
       "success",
     );
     notifyHomeSummaryChanged();

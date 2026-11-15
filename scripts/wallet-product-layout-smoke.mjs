@@ -877,8 +877,8 @@ async function run() {
     const approvedCard = dismissFrame.locator('[data-wallet-request-id="approved-send"]');
     await approvedCard.waitFor({ state: "visible" });
     assert((await approvedCard.textContent()).includes("does not cancel"), "dismissal explains ownership of the wallet transaction");
-    assert(await approvedCard.getByRole("button").count() === 1, "approved send offers Reject without another approval");
-    await approvedCard.getByRole("button", { name: "Reject", exact: true }).click();
+    assert(await approvedCard.getByRole("button").count() === 1, "approved send offers Dismiss without another approval");
+    await approvedCard.getByRole("button", { name: "Dismiss", exact: true }).click();
     await approvedCard.waitFor({ state: "detached" });
     assert(server.state.rejectBodies.length === 1, "one dismissal reaches Runtime");
     assert((await dismissFrame.locator("#wallet-status").textContent()).startsWith("Request dismissed."), "person sees dismissal confirmation");
@@ -890,7 +890,7 @@ async function run() {
     await lateFrame.locator("#wallet-activity-open").click();
     const lateRow = lateFrame.locator(".wallet-activity-row");
     assert(await lateRow.count() === 1, "late receipt stays on one Activity line");
-    assert((await lateRow.textContent()).includes("Dismissed here; still sent from wallet"), "late receipt explains the dismissed send");
+    assert((await lateRow.textContent()).includes("Sent from wallet after request was dismissed"), "late receipt explains the dismissed send");
     assert((await lateRow.textContent()).includes(server.state.approvals[0].transaction_hash), "late receipt keeps the full hash available");
     await railPage.setViewportSize({ width: 390, height: 844 });
     await lateFrame.locator("#wallet-activity-drawer").evaluate(async drawer => {
@@ -911,7 +911,7 @@ async function run() {
       assert(await otherFrame.locator('[data-wallet-request-id="approved-send"]').count() === 0, `${connector_id} stays out of the pending list`);
     }
     await assertNoErrors(railPage, server, "dismissal");
-    console.log("Wallet approved-send dismissal PASS: visible recovery card, Reject, one Runtime request, removed after refresh");
+    console.log("Wallet approved-send dismissal PASS: visible recovery card, Dismiss, one Runtime request, removed after refresh");
     await railPage.close();
 
     console.log(`wallet-product-layout-smoke: OK\n${desktopShot}\n${narrowShot}\n${latePhoneShot}`);

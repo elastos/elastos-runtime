@@ -1,4 +1,4 @@
-import { pendingRequests } from "./wallet-activity.js?v=wallet-20260523a";
+import { pendingRequests } from "./wallet-activity.js?v=wallet-20261115a";
 import {
   isBitcoinProofRequest,
   isManagedRequest,
@@ -64,7 +64,7 @@ export function createWalletRequests({
       main.append(accountAccessReview);
     }
     if (approvedTransaction) {
-      main.append(textNode("small", "Check your connected wallet before sending again. Reject dismisses this request; it does not cancel a transaction in your wallet."));
+      main.append(textNode("small", "Check your connected wallet before sending again. Dismiss closes this request; it does not cancel a transaction in your wallet."));
     }
     card.append(main);
 
@@ -86,7 +86,7 @@ export function createWalletRequests({
     } else if (connectorId === "wallet-metamask") {
       actions.append(actionButton("Open MetaMask", "walletOpenMethod", connectorId));
     }
-    const reject = actionButton("Reject", "walletRequestReject", requestId, true);
+    const reject = actionButton(approvedTransaction ? "Dismiss" : "Reject", "walletRequestReject", requestId, true);
     if (approvedTransaction) reject.dataset.walletApprovedTransaction = "true";
     actions.append(reject);
     card.append(actions);
@@ -181,12 +181,12 @@ export function createWalletRequests({
       return;
     }
     setBusy(button, true);
-    showStatus("Rejecting request.", "muted");
+    showStatus(button.dataset.walletApprovedTransaction === "true" ? "Dismissing request." : "Rejecting request.", "muted");
     try {
       await fetchJson(`/api/apps/wallet/wallet/approvals/${encodeURIComponent(requestId)}/reject`, {
         method: "POST",
         headers: shellHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ reason: "Rejected in Wallet" }),
+        body: JSON.stringify({ reason: button.dataset.walletApprovedTransaction === "true" ? "Dismissed in Wallet" : "Rejected in Wallet" }),
       });
       showStatus(button.dataset.walletApprovedTransaction === "true"
         ? "Request dismissed. Check your connected wallet before sending again."

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createWalletRequests } from "../capsules/wallet/browser/wallet-requests.js";
-import { activityTitle, activitySubtitle, pendingRequests } from "../capsules/wallet/browser/wallet-activity.js";
+import { activityTitle, activitySubtitle, activityIcon, pendingRequests } from "../capsules/wallet/browser/wallet-activity.js";
 
 class Element {
   children = []; dataset = {}; hidden = false; textContent = "";
@@ -21,7 +21,7 @@ test("Wallet dismisses earlier-session connector sends without another approval"
   t.after(() => { globalThis.document = previous; });
   for (const connector of ["wallet-walletconnect"]) {
     const now = Math.floor(Date.now() / 1000);
-    const expires = connector === "wallet-walletconnect" ? now - 13 * 3600 : now + 300;
+    const expires = now - 13 * 3600;
     let request = { request_id: "approval:abandoned", status: "approved", intent: "transaction_intent",
       connector_id: connector, capsule_id: "browser", address: `0x${"12".repeat(20)}`,
       approved_at: expires - 290, created_at: expires - 300, expires_at: expires, reason: "Send transaction" };
@@ -47,7 +47,7 @@ test("Wallet dismisses earlier-session connector sends without another approval"
     ]) assert.deepEqual(requests.pendingWalletRequests([other]), []);
     requests.renderRequests(requests.pendingWalletRequests([request]));
     const buttons = descendants(root).filter(node => node.tagName === "button");
-    assert.deepEqual(buttons.map(button => button.textContent), ["Reject"], "approved sends offer dismissal without another send");
+    assert.deepEqual(buttons.map(button => button.textContent), ["Dismiss"], "approved sends offer dismissal without another send");
     assert(descendants(root).some(node => node.textContent.includes("does not cancel")));
     await requests.onRequestClick({ target: buttons[0] });
     assert.equal(root.children.length, 1, "a refused dismissal keeps its recovery card");
@@ -80,6 +80,8 @@ test("Activity distinguishes pending rejection, approved dismissal and a late wa
   assert.match(activityTitle(request), /Rejected/);
   assert.match(activityTitle({ ...request, approved_at: 10 }), /Dismissed transaction request/);
   const late = { ...request, approved_at: 10, transaction_hash: `0x${"a".repeat(64)}` };
-  assert.match(activityTitle(late), /Dismissed here.*still sent from wallet/);
+  assert.match(activityTitle(late), /Sent from wallet after request was dismissed/);
+  assert.equal(activityIcon(late), "✓");
+  assert.equal(activityIcon({ ...request, approved_at: 10 }), "·");
   assert(activitySubtitle(late).includes(late.transaction_hash));
 });

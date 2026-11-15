@@ -301,7 +301,7 @@ pub(in crate::api::gateway) async fn complete_external_wallet_approval(
     capsule_id: &str,
     audit_reason: &str,
 ) -> anyhow::Result<SystemWalletApprovalsSummary> {
-    runtime_wallet_data(
+    let completed = runtime_wallet_data(
         state,
         authority,
         elastos_wallet_contract::WalletProviderOperationV2::CompleteConnectorHandoff {
@@ -315,19 +315,35 @@ pub(in crate::api::gateway) async fn complete_external_wallet_approval(
         },
     )
     .await?;
+    let late_receipt = completed["approval_request"]["status"] == "rejected";
+    let receipt_status = if late_receipt {
+        "sent_after_dismissal"
+    } else {
+        "completed"
+    };
     append_wallet_approval_audit(
         &state.data_dir,
         WalletApprovalAuditInput {
             capsule_id,
-            event_type: "wallet.approval.completed",
+            event_type: if late_receipt {
+                "wallet.approval.sent_after_dismissal"
+            } else {
+                "wallet.approval.completed"
+            },
             principal_id: &context.principal_id,
             session_id: &context.session_id,
             request_id,
-            result: "completed",
-            reason: audit_reason,
+            result: receipt_status,
+            reason: if late_receipt {
+                "Request dismissed. Transaction sent from wallet."
+            } else {
+                audit_reason
+            },
         },
     )?;
-    Ok(system_wallet_approvals_summary(state, authority, false).await)
+    let mut summary = system_wallet_approvals_summary(state, authority, false).await;
+    summary.receipt_status = Some(receipt_status.to_string());
+    Ok(summary)
 }
 
 pub(in crate::api::gateway) async fn pending_wallet_approval_request(
@@ -377,6 +393,7 @@ pub(in crate::api::gateway) async fn system_wallet_approvals_summary(
                 .count();
             SystemWalletApprovalsSummary {
                 available: true,
+                receipt_status: None,
                 pending_count,
                 approval_requests,
                 handoff: None,

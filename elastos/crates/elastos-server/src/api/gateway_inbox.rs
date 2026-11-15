@@ -510,7 +510,7 @@ async fn dispatch_inbox_action(
         return Ok(outcome.message);
     }
     if let Some(request_id) = action_id.strip_prefix("wallet-reject-request:") {
-        runtime_wallet_data(
+        let rejected = runtime_wallet_data(
             state,
             authority,
             elastos_wallet_contract::WalletProviderOperationV2::RejectApproval {
@@ -519,19 +519,33 @@ async fn dispatch_inbox_action(
             },
         )
         .await?;
+        let dismissed = rejected["approval_request"]["approved_at"]
+            .as_u64()
+            .is_some()
+            && rejected["approval_request"]["intent"] == "transaction_intent"
+            && rejected["approval_request"]["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID;
         append_wallet_approval_audit(
             data_dir,
             WalletApprovalAuditInput {
                 capsule_id: INBOX_CAPSULE_ID,
-                event_type: "wallet.approval.rejected",
+                event_type: if dismissed {
+                    "wallet.approval.dismissed"
+                } else {
+                    "wallet.approval.rejected"
+                },
                 principal_id: &context.principal_id,
                 session_id: &context.session_id,
                 request_id,
-                result: "rejected",
+                result: if dismissed { "dismissed" } else { "rejected" },
                 reason: "Wallet approval rejected through Runtime authority",
             },
         )?;
-        return Ok("Rejected wallet request.".to_string());
+        return Ok(if dismissed {
+            "Request dismissed. Check your connected wallet before sending again."
+        } else {
+            "Rejected wallet request."
+        }
+        .to_string());
     }
     if let Some(request_id) = action_id.strip_prefix("capability-approve-request:") {
         return approve_runtime_capability_request(data_dir, request_id).await;
