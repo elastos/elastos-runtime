@@ -4074,11 +4074,23 @@ fn home_services_stage_exit_config(
     Ok(file)
 }
 
-fn home_services_refresh_exit_config(
+pub(in crate::api::gateway) fn home_services_refresh_exit_config(
+    data_dir: &std::path::Path,
+    platform: &str,
     registry: &elastos_runtime::provider::ProviderRegistry,
     config: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    let request_id = hex::encode(Sha256::digest(serde_json::to_vec(config)?));
+    let walletconnect = crate::setup::walletconnect::local_exit(data_dir, platform);
+    let browser_running = walletconnect.is_some()
+        && tokio::runtime::Handle::current().block_on(
+            crate::setup::walletconnect::browser_helper_running(config, platform),
+        );
+    let config = crate::setup::walletconnect::exit_config(
+        config.clone(),
+        walletconnect.as_ref().map(|(_, provider)| provider),
+        browser_running,
+    );
+    let request_id = hex::encode(Sha256::digest(serde_json::to_vec(&config)?));
     let request =
         serde_json::json!({"op":"refresh_config", "request_id":request_id, "config":config});
     let result = tokio::runtime::Handle::current().block_on(async {
@@ -4112,10 +4124,22 @@ fn home_services_commit_exit_config(
         .map(serde_json::from_slice)
         .transpose()?
         .unwrap_or_else(|| serde_json::json!({}));
-    if let Err(error) = home_services_refresh_exit_config(registry, config) {
+    if let Err(error) = home_services_refresh_exit_config(
+        data_dir,
+        &crate::setup::detect_platform(),
+        registry,
+        config,
+    ) {
         // A missing/malformed ACK may follow application. Retain the durable
         // pending decision and explicitly report an unconfirmed compensation.
-        if home_services_refresh_exit_config(registry, &previous_config).is_err() {
+        if home_services_refresh_exit_config(
+            data_dir,
+            &crate::setup::detect_platform(),
+            registry,
+            &previous_config,
+        )
+        .is_err()
+        {
             anyhow::bail!("Exit activation and provider rollback remain unconfirmed");
         }
         return Err(error);
@@ -4138,7 +4162,12 @@ fn home_services_commit_exit_config(
         } else {
             Ok(())
         };
-        let provider_restored = home_services_refresh_exit_config(registry, &previous_config);
+        let provider_restored = home_services_refresh_exit_config(
+            data_dir,
+            &crate::setup::detect_platform(),
+            registry,
+            &previous_config,
+        );
         if restored.is_err() || provider_restored.is_err() {
             anyhow::bail!("Exit activation rollback remains unconfirmed");
         }

@@ -57,10 +57,42 @@ pub fn merge_exit_config(
     if browser_helper_running {
         backends.push(managed.clone());
     } else {
-        backends.insert(0, managed.clone());
+        let browser = backends
+            .iter()
+            .position(|backend| backend["id"] == "source-home-browser-exit")
+            .unwrap_or(backends.len());
+        backends.insert(browser, managed.clone());
     }
     exit_provider::parse_config(existing.clone()).map_err(anyhow::Error::msg)?;
     Ok(existing)
+}
+
+/// Refresh checks the relay used by the generated Browser backend at that moment.
+/// Owner backends retain their position regardless of Browser helper state.
+pub async fn browser_helper_running(config: &serde_json::Value, platform: &str) -> bool {
+    if !super::browser_available(platform) {
+        return false;
+    }
+    #[cfg(unix)]
+    if let Some(path) = config["backends"]
+        .as_array()
+        .and_then(|backends| {
+            backends
+                .iter()
+                .find(|backend| backend["id"] == "source-home-browser-exit")
+        })
+        .and_then(|backend| backend["relay_ipc"]["path"].as_str())
+    {
+        return matches!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                tokio::net::UnixStream::connect(path),
+            )
+            .await,
+            Ok(Ok(_))
+        );
+    }
+    false
 }
 
 /// A refused WalletConnect addition leaves the owner's Exit selection intact.
@@ -151,6 +183,34 @@ mod tests {
         );
         assert!(merge_exit_config(serde_json::json!({"backends":false}), Some(&wc), true).is_err());
     }
+    #[test]
+    fn owner_local_backend_keeps_first_match_with_browser_stopped() {
+        let config = serde_json::json!({"backends":[
+            {"id":"owner-local", "kind":"stream_relay", "allowed_hosts":["*"]},
+            {"id":"source-home-browser-exit", "kind":"stream_relay", "allowed_hosts":["*"]}
+        ]});
+        let wc = serde_json::json!({"backends":[{"id":"walletconnect-local-exit", "kind":"stream_relay", "allowed_hosts":["relay.walletconnect.org"]}]});
+        for running in [false, true] {
+            let merged = merge_exit_config(config.clone(), Some(&wc), running).unwrap();
+            let parsed = exit_provider::parse_config(merged.clone()).unwrap();
+            assert_eq!(parsed.backends[0].id, "owner-local");
+            let target = url::Url::parse("tls://relay.walletconnect.org:443").unwrap();
+            assert_eq!(
+                parsed
+                    .backends
+                    .iter()
+                    .find(|b| b.allows_target(&target))
+                    .unwrap()
+                    .id,
+                "owner-local"
+            );
+            assert_eq!(
+                merged["backends"][if running { 2 } else { 1 }]["id"],
+                "walletconnect-local-exit"
+            );
+        }
+    }
+
     #[test]
     fn walletconnect_refused_merge_preserves_browser_exit_and_matching_order() {
         let browser = serde_json::json!({"backends":[{"id":"browser", "kind":"stream_relay", "allowed_hosts":["*"]}]});
