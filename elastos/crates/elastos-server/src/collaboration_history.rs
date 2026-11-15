@@ -34,13 +34,13 @@ const MAX_PEERS_PER_PASS: usize = 4;
 const PEER_TIMEOUT: Duration = Duration::from_secs(5);
 /// Wait before the first pass that nothing else asks for.
 const HISTORY_BASE_WAIT_SECS: u64 = 15;
-/// Longest wait between two passes of a Home whose passes bring answers.
+/// Longest wait after an answered pass while nobody is reading Community.
 const HISTORY_MAX_WAIT_SECS: u64 = 900;
-/// Longest wait between two passes of a Home whose passes reach nobody. The
-/// Community link calls itself silent after 60 s (`COMMUNITY_LINK_SILENCE`),
+/// Longest wait while a person reads Community or a pass reaches nobody.
+/// The Community link calls itself silent after 60 s (`COMMUNITY_LINK_SILENCE`),
 /// so a Home that answers nothing for a minute is the longest silence this
 /// Runtime already treats as normal.
-const HISTORY_UNANSWERED_MAX_WAIT_SECS: u64 = 60;
+const HISTORY_SHORT_MAX_WAIT_SECS: u64 = 60;
 /// How long the Home page heartbeat keeps a person counted as reading
 /// Community. The page sends it every 15 s, so three missed heartbeats end
 /// the signal, the same tolerance a presence record carries.
@@ -116,17 +116,15 @@ impl HistoryCadence {
         true
     }
 
-    /// The wait after a pass. A pass that brought posts from another Home
-    /// doubles the wait towards a quarter of an hour, because that Home gave
-    /// what it has. A pass that reached nobody keeps the wait at a minute,
-    /// because the Homes this one wants are present and can answer at any
-    /// check, and a person must never wait longer than that for the posts a
-    /// returning Home holds.
+    /// Answered passes grow the wait towards a quarter of an hour only while
+    /// nobody is reading Community. An open view or an unanswered pass keeps
+    /// the wait at a minute, so a quick reopening within the heartbeat's
+    /// lifetime still asks for the posts a returning Home holds.
     fn pass_finished(&mut self, now: u64, answered: bool) {
-        let ceiling = if answered {
+        let ceiling = if answered && !self.watching {
             HISTORY_MAX_WAIT_SECS
         } else {
-            HISTORY_UNANSWERED_MAX_WAIT_SECS
+            HISTORY_SHORT_MAX_WAIT_SECS
         };
         self.wait = self
             .wait
@@ -1526,9 +1524,9 @@ mod tests {
         }
     }
 
-    /// Ten minutes of Runtime checks, 15 s apart, measured as the seconds at
-    /// which the Runtime asked another Home for earlier posts.
-    async fn seconds_of_history_asks(answers: bool) -> Vec<u64> {
+    /// Runtime checks, 15 s apart, measured as the seconds at which the
+    /// Runtime asked another Home for earlier posts while nobody was watching.
+    async fn seconds_of_history_asks(answers: bool, ticks: u64) -> Vec<u64> {
         let now = now_secs();
         let a = fixture("history-measured", "community", now).await;
         let b = fixture("history-measured", "community", now).await;
@@ -1544,7 +1542,7 @@ mod tests {
         a.registry.set_carrier_invoker(plane.clone()).await;
         let mut asked_at = Vec::new();
         let mut asks = 0;
-        for tick in 0..41 {
+        for tick in 0..ticks {
             let at = now + tick * HISTORY_BASE_WAIT_SECS;
             keep_both_present(&a, &b, at).await;
             a.service.fetch_if_due(at).await.unwrap();
@@ -1562,8 +1560,8 @@ mod tests {
     #[tokio::test]
     async fn answered_history_passes_back_off_to_the_long_wait() {
         assert_eq!(
-            seconds_of_history_asks(true).await,
-            [0, 15, 45, 105, 225, 465]
+            seconds_of_history_asks(true, 125).await,
+            [0, 15, 45, 105, 225, 465, 945, 1845]
         );
     }
 
@@ -1573,14 +1571,14 @@ mod tests {
     #[tokio::test]
     async fn unanswered_history_passes_keep_the_short_wait() {
         assert_eq!(
-            seconds_of_history_asks(false).await,
+            seconds_of_history_asks(false, 41).await,
             [0, 15, 45, 105, 165, 225, 285, 345, 405, 465, 525, 585]
         );
     }
 
     /// Ten minutes of Runtime checks, 15 s apart, as the cadence sees them.
-    /// The two measured tests above show the same seconds on the service
-    /// path, with the requests each pass made.
+    /// The two measured tests above cover these seconds on the service path,
+    /// with the requests each pass made.
     #[test]
     fn the_history_wait_grows_only_on_an_answered_pass() {
         let now = 1_800_000_000;
