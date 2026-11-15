@@ -6199,7 +6199,10 @@ impl MockWalletProvider {
                         "message": "wallet approval request not found"
                     }));
                 };
-                if approval["status"] != "pending" {
+                let approved_send = approval["status"] == "approved"
+                    && approval["intent"] == "transaction_intent"
+                    && approval["connector_id"].as_str().is_some();
+                if approval["status"] != "pending" && !approved_send {
                     return Ok(json!({
                         "status": "error",
                         "code": "invalid_request",
