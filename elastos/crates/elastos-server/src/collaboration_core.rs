@@ -200,11 +200,25 @@ impl DurableIncomingAcceptance {
 pub(crate) struct CollaborationTransportIncomingAcceptance {
     acceptance_receipt_bytes: Vec<u8>,
     product_handoff_pending: bool,
+    message_hash: String,
+    message_expires_at: u64,
 }
 
 impl CollaborationTransportIncomingAcceptance {
     pub(crate) fn acceptance_receipt_bytes(&self) -> &[u8] {
         &self.acceptance_receipt_bytes
+    }
+
+    /// The accepted post this receipt confirms.
+    pub(crate) fn message_hash(&self) -> &str {
+        &self.message_hash
+    }
+
+    /// When the accepted post expires. A receipt for it is worth sending
+    /// until then and no longer: after that second the sender has dropped the
+    /// post and nobody waits for the confirmation.
+    pub(crate) fn message_expires_at(&self) -> u64 {
+        self.message_expires_at
     }
 
     #[cfg_attr(
@@ -3122,6 +3136,8 @@ fn transport_incoming_acceptance(
     accepted: DurableIncomingAcceptance,
 ) -> CollaborationTransportIncomingAcceptance {
     CollaborationTransportIncomingAcceptance {
+        message_hash: accepted.authorized.message().envelope_sha256().to_string(),
+        message_expires_at: accepted.authorized.message().envelope().payload.expires_at,
         acceptance_receipt_bytes: accepted.acceptance_receipt_bytes,
         product_handoff_pending: accepted.product_handoff_pending,
     }

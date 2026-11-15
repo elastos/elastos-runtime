@@ -1,6 +1,6 @@
 //! Bounded Runtime driver for one durable collaboration core and Carrier subscription.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -28,6 +28,7 @@ pub(crate) struct CollaborationTransportDriver {
     home_delivery: Option<SharedHomeDelivery>,
     gossip: Mutex<GossipSchedule>,
     ingested: Mutex<IngestedBatch>,
+    receipts: Mutex<ReceiptQueue>,
 }
 
 /// The frames this Home already ingested from the batch the Carrier holds at
@@ -56,6 +57,9 @@ const SHARED_FAST_RETRY_WINDOW_SECS: u64 = 3;
 const SHARED_CUSTODY_FAST_RETRY: Duration = Duration::from_millis(500);
 const SHARED_CUSTODY_RETRY: Duration = Duration::from_secs(5);
 const MAX_CUSTODY_RETRIES_PER_CYCLE: usize = 4;
+/// One held receipt for each post the intake can hold.
+const MAX_HELD_RECEIPTS: usize = crate::collaboration_core::MAX_PENDING_INCOMING;
+const MAX_HELD_RECEIPT_BYTES: usize = 1024 * 1024;
 pub(crate) const SHARED_PROVIDER: &str = "collaboration.shared";
 const SHARED_OP: &str = "deliver";
 const MAX_SHARED_DELIVERY_BYTES: usize = MAX_COLLABORATION_TRANSPORT_FRAME_BYTES * 6 + 2048;
@@ -82,6 +86,61 @@ struct SharedRetrySchedule {
 #[derive(Default)]
 struct GossipSchedule {
     sent: HashMap<String, (Instant, u32)>,
+}
+
+/// The acceptance receipts this Home owes senders whose posts it holds
+/// durably and whose receipt reached nobody. The post is delivered, so the
+/// sender needs the confirmation and nothing else: this queue sends it again
+/// without the sender re-sending the post to every Home on the topic.
+///
+/// The queue holds at most `MAX_HELD_RECEIPTS` posts, as many as the intake
+/// itself holds, and at most `MAX_HELD_RECEIPT_BYTES` of frames. The oldest
+/// entry leaves first, because its sender has had the most time to re-send.
+#[derive(Default)]
+struct ReceiptQueue {
+    held: VecDeque<HeldReceipt>,
+    bytes: usize,
+}
+
+struct HeldReceipt {
+    message_hash: String,
+    receipt_frame: Vec<u8>,
+    /// The post this receipt confirms, as its sender signed it. The retry
+    /// presents it to the same gate the first send passed.
+    original_frame: Vec<u8>,
+    expires_at: u64,
+    last_send: Instant,
+    sends: u32,
+}
+
+impl HeldReceipt {
+    fn bytes(&self) -> usize {
+        self.receipt_frame.len() + self.original_frame.len()
+    }
+}
+
+impl ReceiptQueue {
+    fn retain(&mut self, keep: impl Fn(&HeldReceipt) -> bool) {
+        let mut dropped = 0;
+        self.held.retain(|held| {
+            if keep(held) {
+                return true;
+            }
+            dropped += held.bytes();
+            false
+        });
+        self.bytes = self.bytes.saturating_sub(dropped);
+    }
+
+    fn drop_oldest(&mut self) -> bool {
+        match self.held.pop_front() {
+            Some(held) => {
+                self.bytes = self.bytes.saturating_sub(held.bytes());
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Wait after `sends` gossip broadcasts of one original. Presence keeps the
@@ -347,6 +406,7 @@ impl CollaborationTransportDriver {
             home_delivery: None,
             gossip: Mutex::new(GossipSchedule::default()),
             ingested: Mutex::new(IngestedBatch::default()),
+            receipts: Mutex::new(ReceiptQueue::default()),
         }
     }
 
@@ -412,7 +472,121 @@ impl CollaborationTransportDriver {
         summary.attempted += homes.attempted;
         summary.remote_broadcasts += homes.remote_broadcasts;
         summary.send_failures += homes.send_failures;
+        // The owed receipts follow the originals on the same Carrier link, so
+        // one send waits for the one before it.
+        let receipts = self.retry_receipts_once(now).await?;
+        summary.attempted += receipts.attempted;
+        summary.remote_broadcasts += receipts.remote_broadcasts;
+        summary.local_only_buffered += receipts.local_only_buffered;
+        summary.send_failures += receipts.send_failures;
         Ok(summary)
+    }
+
+    /// Sends the acceptance receipts that reached nobody again. Each one waits
+    /// 5, 10, 20, 40 and then 60 s between sends and leaves the queue when its
+    /// post expires, so a sender learns its post arrived without re-sending
+    /// the post itself. One live cycle sends at most
+    /// `MAX_CUSTODY_RETRIES_PER_CYCLE` of them, the bound a pending original
+    /// already uses.
+    async fn retry_receipts_once(
+        &self,
+        now: u64,
+    ) -> anyhow::Result<CollaborationOutgoingRetrySummary> {
+        if !self.core.community_membership().joined() {
+            return Ok(CollaborationOutgoingRetrySummary::default());
+        }
+        let attempted_at = Instant::now();
+        let due = {
+            let mut queue = self
+                .receipts
+                .lock()
+                .map_err(|_| anyhow::anyhow!("held receipt lock poisoned"))?;
+            queue.retain(|held| now < held.expires_at);
+            let mut due = Vec::new();
+            for held in queue.held.iter_mut() {
+                if due.len() == MAX_CUSTODY_RETRIES_PER_CYCLE {
+                    break;
+                }
+                if attempted_at.duration_since(held.last_send)
+                    < gossip_resend_interval(true, held.sends)
+                {
+                    continue;
+                }
+                held.last_send = attempted_at;
+                held.sends = held.sends.saturating_add(1);
+                due.push((
+                    held.message_hash.clone(),
+                    held.receipt_frame.clone(),
+                    held.original_frame.clone(),
+                ));
+            }
+            due
+        };
+        let mut summary = CollaborationOutgoingRetrySummary::default();
+        for (message_hash, receipt_frame, original_frame) in due {
+            self.core.community_membership().require_joined()?;
+            summary.attempted += 1;
+            match self
+                .network
+                .send_gossip(&self.core, &receipt_frame, Some(&original_frame))
+                .await
+            {
+                Ok(CollaborationCarrierSendOutcome::RemoteBroadcast { .. }) => {
+                    summary.remote_broadcasts += 1;
+                    self.release_receipt(&message_hash)?;
+                }
+                Ok(CollaborationCarrierSendOutcome::LocalOnlyBuffered) => {
+                    summary.local_only_buffered += 1;
+                }
+                Err(_) => {
+                    summary.send_failures += 1;
+                }
+            }
+        }
+        Ok(summary)
+    }
+
+    /// Keeps the receipt for a post this Home holds durably and whose receipt
+    /// reached nobody.
+    fn hold_receipt(
+        &self,
+        message_hash: &str,
+        receipt_frame: &[u8],
+        original_frame: &[u8],
+        expires_at: u64,
+    ) -> anyhow::Result<()> {
+        let held = HeldReceipt {
+            message_hash: message_hash.to_string(),
+            receipt_frame: receipt_frame.to_vec(),
+            original_frame: original_frame.to_vec(),
+            expires_at,
+            last_send: Instant::now(),
+            sends: 1,
+        };
+        let mut queue = self
+            .receipts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("held receipt lock poisoned"))?;
+        queue.retain(|entry| entry.message_hash != held.message_hash);
+        while queue.held.len() >= MAX_HELD_RECEIPTS
+            || queue.bytes.saturating_add(held.bytes()) > MAX_HELD_RECEIPT_BYTES
+        {
+            if !queue.drop_oldest() {
+                break;
+            }
+        }
+        queue.bytes = queue.bytes.saturating_add(held.bytes());
+        queue.held.push_back(held);
+        Ok(())
+    }
+
+    /// Forgets a receipt a neighbour took, so it never goes out twice.
+    fn release_receipt(&self, message_hash: &str) -> anyhow::Result<()> {
+        self.receipts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("held receipt lock poisoned"))?
+            .retain(|held| held.message_hash != message_hash);
+        Ok(())
     }
 
     /// Broadcasts each pending original at once, then resends it until a
@@ -672,12 +846,26 @@ impl CollaborationTransportDriver {
                 {
                     Ok(CollaborationCarrierSendOutcome::RemoteBroadcast { .. }) => {
                         summary.acceptance_receipt_broadcasts += 1;
+                        if self.release_receipt(accepted.message_hash()).is_err() {
+                            return false;
+                        }
                     }
                     // The acceptance is durable, so this frame is ingested.
-                    // Its sender keeps re-sending until a receipt reaches it,
-                    // and each copy earns a fresh receipt of its own: direct
-                    // by the Home call, on the topic by its new position.
-                    Ok(CollaborationCarrierSendOutcome::LocalOnlyBuffered) | Err(_) => {}
+                    // This Home owes the sender the confirmation and keeps the
+                    // receipt until it goes out or the post expires.
+                    Ok(CollaborationCarrierSendOutcome::LocalOnlyBuffered) | Err(_) => {
+                        if self
+                            .hold_receipt(
+                                accepted.message_hash(),
+                                &receipt_frame,
+                                frame,
+                                accepted.message_expires_at(),
+                            )
+                            .is_err()
+                        {
+                            return false;
+                        }
+                    }
                 }
                 true
             }
@@ -713,7 +901,7 @@ mod tests {
     };
     use elastos_runtime::provider::ProviderCarrierInvoker;
     use elastos_runtime::signature::{generate_keypair, SigningKey};
-    use std::collections::{BTreeMap, VecDeque};
+    use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     const NETWORK: &str = "collaboration-transport-test";
     const CONVERSATION: &str = "default-conversation";
@@ -3085,8 +3273,10 @@ mod tests {
     }
 
     /// A Home with no gossip neighbour reaches nobody with its receipts. It
-    /// keeps the durable acceptance and lets each sender's own re-send ask for
-    /// the receipt again, instead of re-sending every receipt every cycle.
+    /// keeps the durable acceptance and sends each receipt once in the live
+    /// cycle that ingested its frame, instead of once per cycle. The owed
+    /// receipts then wait in their own queue
+    /// (`receipts_that_reached_nobody_wait_in_a_bounded_queue`).
     #[tokio::test]
     async fn a_home_without_a_gossip_neighbour_receipts_its_frames_once() {
         let fixture = Fixture::new();
