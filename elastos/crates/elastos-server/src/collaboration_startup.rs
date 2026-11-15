@@ -816,7 +816,7 @@ async fn run_collaboration_history_worker(
                 tokio::select! {
                     biased;
                     _ = joined.changed() => Ok(()),
-                    result = service.fetch_once(now_secs()) => result,
+                    result = service.fetch_if_due(now_secs()) => result,
                 }
             } => {
                 if result.is_err() { tracing::debug!("Community history refresh is unavailable"); }

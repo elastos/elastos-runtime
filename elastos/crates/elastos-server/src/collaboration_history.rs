@@ -1,6 +1,7 @@
 //! Bounded Community catch-up through the private Runtime/Carrier provider plane.
 //! Live gossip admission and its replay/receipt lifetime remain unchanged.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,6 +32,10 @@ pub(crate) const MAX_HISTORY_RESPONSE_BYTES: usize = MAX_CONVERSATION_HISTORY_BY
 pub(crate) const MAX_HISTORY_CARRIER_REPLY_BYTES: usize = MAX_HISTORY_RESPONSE_BYTES + 64;
 const MAX_PEERS_PER_PASS: usize = 4;
 const PEER_TIMEOUT: Duration = Duration::from_secs(5);
+/// Wait before the first pass that nothing else asks for.
+const HISTORY_BASE_WAIT_SECS: u64 = 15;
+/// Longest wait between two passes of a Home that keeps seeing the same Homes.
+const HISTORY_MAX_WAIT_SECS: u64 = 900;
 // History requests carry this Home's own signed presence, which exists only
 // for people who granted Community presence.
 const NOT_SHOWN_DETAIL: &str = "Show yourself in Community to load earlier posts.";
@@ -47,6 +52,7 @@ struct HistoryInner {
     registry: Arc<ProviderRegistry>,
     data_root: PathBuf,
     peers: Mutex<HistoryPeerRound>,
+    cadence: Mutex<HistoryCadence>,
 }
 
 #[derive(Default)]
@@ -54,6 +60,41 @@ struct HistoryPeerRound {
     endpoints: Vec<String>,
     next: usize,
     available: bool,
+}
+
+/// When this Home next asks present Homes for earlier posts. Three things make
+/// a pass due at once: a Community join, a Community connection that returns,
+/// and a Home that is present now and was absent at the last pass, because any
+/// of them can leave this Home without posts the others kept. A pass that none
+/// of them asked for waits twice as long as the one before it.
+#[derive(Default)]
+struct HistoryCadence {
+    due_at: u64,
+    wait: u64,
+    connected: bool,
+    present: BTreeSet<String>,
+}
+
+impl HistoryCadence {
+    fn due(&mut self, now: u64, connected: bool, present: BTreeSet<String>) -> bool {
+        let returned = connected && !self.connected;
+        let arrived = present.difference(&self.present).next().is_some();
+        self.connected = connected;
+        if returned || arrived {
+            self.wait = 0;
+            self.due_at = now;
+        }
+        if now < self.due_at {
+            return false;
+        }
+        self.present = present;
+        self.wait = self
+            .wait
+            .saturating_mul(2)
+            .clamp(HISTORY_BASE_WAIT_SECS, HISTORY_MAX_WAIT_SECS);
+        self.due_at = now.saturating_add(self.wait);
+        true
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -98,6 +139,7 @@ impl CollaborationHistoryService {
                 registry: registry.clone(),
                 data_root,
                 peers: Mutex::new(HistoryPeerRound::default()),
+                cadence: Mutex::new(HistoryCadence::default()),
             }),
         };
         registry
@@ -195,6 +237,39 @@ impl CollaborationHistoryService {
         self.inner
             .product
             .project_history(&self.inner.data_root, &messages, now)
+    }
+
+    /// Runs a pass only when this Home has a reason to ask. The Runtime calls
+    /// this on its own cadence; `HistoryCadence` decides which of those checks
+    /// reaches other Homes.
+    pub(crate) async fn fetch_if_due(&self, now: u64) -> anyhow::Result<()> {
+        if !self.inner.product.community_membership().joined() {
+            *self
+                .inner
+                .cadence
+                .lock()
+                .map_err(|_| anyhow::anyhow!("history cadence is unavailable"))? =
+                HistoryCadence::default();
+            return Ok(());
+        }
+        let connected = self.inner.product.conversation_transport_view().available;
+        let present = self
+            .inner
+            .presence
+            .history_participants(now)?
+            .into_iter()
+            .map(|peer| peer.endpoint_did)
+            .collect();
+        let due = self
+            .inner
+            .cadence
+            .lock()
+            .map_err(|_| anyhow::anyhow!("history cadence is unavailable"))?
+            .due(now, connected, present);
+        if !due {
+            return Ok(());
+        }
+        self.fetch_once(now).await
     }
 
     /// Independently scheduled from live gossip. Four unavailable peers cannot
@@ -1287,6 +1362,57 @@ mod tests {
                 NOT_SHOWN_DETAIL
             );
         }
+    }
+
+    /// Ten minutes of Runtime checks, 15 s apart, for a Home that keeps
+    /// seeing the same Homes.
+    #[test]
+    fn earlier_posts_are_asked_for_on_a_growing_wait() {
+        let now = 1_800_000_000;
+        let present = BTreeSet::from(["did:peer".to_string()]);
+        let mut cadence = HistoryCadence::default();
+        let checks = (0..40).map(|tick| now + tick * HISTORY_BASE_WAIT_SECS);
+        let due = checks
+            .clone()
+            .filter(|check| cadence.due(*check, true, present.clone()))
+            .map(|check| check - now)
+            .collect::<Vec<_>>();
+        assert_eq!(checks.count(), 40, "every check asked other Homes before");
+        assert_eq!(due, [0, 15, 45, 105, 225, 465]);
+
+        // A Home that was absent at the last pass is a reason to ask again.
+        let joined = BTreeSet::from(["did:peer".to_string(), "did:newcomer".to_string()]);
+        assert!(cadence.due(now + 600, true, joined.clone()));
+        assert!(!cadence.due(now + 601, true, joined.clone()));
+        // So is a Community connection that returns.
+        assert!(!cadence.due(now + 602, false, joined.clone()));
+        assert!(cadence.due(now + 603, true, joined));
+    }
+
+    #[tokio::test]
+    async fn a_history_check_inside_its_wait_asks_nobody() {
+        let now = now_secs();
+        let a = fixture("history-cadence", "community", now).await;
+        let b = fixture("history-cadence", "community", now).await;
+        observe(&a, &b, now);
+        a.product.set_community_connected(true);
+        let plane = Arc::new(Plane {
+            source: a.product.local_device_did(),
+            peers: BTreeMap::from([(b.product.local_device_did(), b.registry.clone())]),
+            calls: Mutex::new(Vec::new()),
+            stall: false,
+        });
+        a.registry.set_carrier_invoker(plane.clone()).await;
+        let asks = || plane.calls.lock().unwrap().len();
+        a.service.fetch_if_due(now).await.unwrap();
+        assert_eq!(asks(), 1);
+        a.service.fetch_if_due(now + 14).await.unwrap();
+        assert_eq!(asks(), 1);
+        a.service
+            .fetch_if_due(now + HISTORY_BASE_WAIT_SECS)
+            .await
+            .unwrap();
+        assert_eq!(asks(), 2);
     }
 
     #[tokio::test(start_paused = true)]
