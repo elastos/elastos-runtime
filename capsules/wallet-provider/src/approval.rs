@@ -399,7 +399,7 @@ impl WalletProvider {
         };
         let approved_connector_transaction = request.status == ApprovalStatus::Approved
             && request.intent == "transaction_intent"
-            && request.connector_id.is_some();
+            && request.connector_id.as_deref() == Some("wallet-walletconnect");
         // Dismissal grants no signing authority. The request's person may clear
         // an approved external send from an owner surface after signing in again.
         let owner_dismissal =

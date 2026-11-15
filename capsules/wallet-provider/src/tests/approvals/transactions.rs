@@ -241,7 +241,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
 #[test]
 fn approved_connector_transaction_can_be_rejected_and_releases_its_slot() {
     for actor in ["wallet", "system", "inbox"] {
-        for connector in ["wallet-metamask", "wallet-walletconnect"] {
+        for connector in ["wallet-walletconnect"] {
             for same_session in [false, true] {
                 external_transaction_handoff_with_expiry(connector, Some(actor), same_session);
             }
@@ -357,6 +357,11 @@ fn external_transaction_handoff_with_expiry(
         }
         other => panic!("expected external transaction approval request, got {other:?}"),
     };
+    // The owner has a pending card before the connector approves it.
+    let pending_card = invoke_wallet(&mut provider, principal_id, "wallet",
+        WalletProviderOperationV2::ListApprovals { include_resolved: false });
+    assert!(matches!(pending_card, Response::Ok { data: Some(ref data) }
+        if data["approval_requests"].as_array().unwrap().iter().any(|r| r["request_id"] == request_id)));
     if let Some(actor) = dismiss_actor {
         let context = wallet_context_in_session(principal_id, actor, "session:replacement");
         assert!(
@@ -398,6 +403,15 @@ fn external_transaction_handoff_with_expiry(
         .find(|r| r.request_id == request_id)
         .unwrap()
         .clone();
+    if connector == "wallet-metamask" {
+        for actor in ["wallet", "system", "inbox"] {
+            let rejected = invoke_wallet(&mut provider, principal_id, actor,
+                WalletProviderOperationV2::RejectApproval {
+                    request_id: request_id.clone(), reason: "Reject from stale pending card".into(),
+                });
+            assert!(matches!(rejected, Response::Error { .. }), "stale {actor} card must preserve MetaMask completion: {rejected:?}");
+        }
+    }
     let now = now_ts();
     let grace = elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS;
     for (elapsed, expected) in [
