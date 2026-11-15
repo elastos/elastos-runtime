@@ -19509,6 +19509,75 @@ pub(crate) mod tests {
         shutdown_test_carrier_node(node).await;
     }
 
+    /// A consumer cursor number is not a frame identity. `gossip_leave` drops
+    /// the topic buffer and every cursor on it, and the next join starts a
+    /// buffer at position 0, so the same consumer peeks position 0 again and
+    /// finds a frame it never read. The Community driver binds its progress to
+    /// the frames it ingested because of this.
+    #[tokio::test]
+    async fn test_gossip_leave_and_join_give_the_same_cursor_a_new_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signing_key, did) = elastos_identity::derive_did(&[66u8; 32]);
+        let node = start_carrier_node(&signing_key, &did, dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let provider = CarrierGossipProvider::new(node.gossip_state.clone());
+        let topic = "__test/gossip-cursor-reuse";
+        let consumer = "community-consumer";
+        let join = serde_json::json!({"op":"gossip_join_exact", "topic":topic, "peers":[]});
+        let peek = serde_json::json!({
+            "op":"gossip_peek", "topic":topic, "consumer_id":consumer, "limit":32
+        });
+        let send = |message: &str| serde_json::json!({"op":"gossip_send", "topic":topic, "message":message});
+        let read_one = |response: &serde_json::Value| {
+            (
+                response["data"]["cursor"].as_u64(),
+                response["data"]["next_cursor"].as_u64(),
+                response["data"]["messages"][0]["content"]
+                    .as_str()
+                    .map(str::to_string),
+            )
+        };
+
+        assert_eq!(provider.send_raw(&join).await.unwrap()["status"], "ok");
+        assert_eq!(
+            provider.send_raw(&send("first frame")).await.unwrap()["status"],
+            "ok"
+        );
+        assert_eq!(
+            read_one(&provider.send_raw(&peek).await.unwrap()),
+            (Some(0), Some(1), Some("first frame".to_string()))
+        );
+        assert_eq!(
+            provider
+                .send_raw(&serde_json::json!({
+                    "op":"gossip_ack", "topic":topic, "consumer_id":consumer,
+                    "cursor":0, "next_cursor":1
+                }))
+                .await
+                .unwrap()["status"],
+            "ok"
+        );
+        assert_eq!(
+            provider
+                .send_raw(&serde_json::json!({"op":"gossip_leave", "topic":topic}))
+                .await
+                .unwrap()["status"],
+            "ok"
+        );
+        assert_eq!(provider.send_raw(&join).await.unwrap()["status"], "ok");
+        assert_eq!(
+            provider.send_raw(&send("second frame")).await.unwrap()["status"],
+            "ok"
+        );
+        assert_eq!(
+            read_one(&provider.send_raw(&peek).await.unwrap()),
+            (Some(0), Some(1), Some("second frame".to_string())),
+            "the recreated topic hands the same consumer cursor a frame it never read"
+        );
+        shutdown_test_carrier_node(node).await;
+    }
+
     #[tokio::test]
     async fn test_gossip_empty_peek_requires_exact_empty_ack() {
         let dir = tempfile::tempdir().unwrap();

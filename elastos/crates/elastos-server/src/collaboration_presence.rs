@@ -42,6 +42,10 @@ pub struct CollaborationPresenceProductPort {
     /// The Runtime publisher's last pass: `Some(true)` it announced someone,
     /// `Some(false)` nobody here has a presence grant, `None` unknown.
     local_publication: Arc<std::sync::Mutex<Option<bool>>>,
+    /// When a person on this Home last had Community open. The Home page
+    /// heartbeat sets it, and History reads it to ask for earlier posts while
+    /// somebody is reading Community.
+    community_open_at: Arc<std::sync::Mutex<Option<u64>>>,
     /// Mints and validates Community presence grants with the Runtime's
     /// capability manager. `None` (standalone gateway, most tests): no grant
     /// can be made or honoured, so nobody is announced.
@@ -184,6 +188,7 @@ impl CollaborationPresenceProductPort {
             core,
             read_model,
             local_publication: Arc::new(std::sync::Mutex::new(None)),
+            community_open_at: Arc::new(std::sync::Mutex::new(None)),
             presence_authority: None,
             own_principals: Arc::new(Mutex::new(std::collections::HashMap::new())),
         })
@@ -486,6 +491,20 @@ impl CollaborationPresenceProductPort {
         } else {
             OwnHistoryPresence::Absent
         })
+    }
+
+    /// A person has Community in front of them right now. The Home page
+    /// heartbeat reports this every `HOME_PRESENCE_HEARTBEAT_MS`, so History
+    /// can ask for earlier posts while somebody is reading them.
+    pub(crate) fn record_community_open(&self, now: u64) {
+        if let Ok(mut current) = self.community_open_at.lock() {
+            *current = Some(now);
+        }
+    }
+
+    /// When a person last had Community open on this Home.
+    pub(crate) fn community_open_at(&self) -> Option<u64> {
+        self.community_open_at.lock().ok().and_then(|at| *at)
     }
 
     pub(crate) fn record_local_publication(&self, state: Option<bool>) {
