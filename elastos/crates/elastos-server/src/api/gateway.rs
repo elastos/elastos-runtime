@@ -221,8 +221,10 @@ pub use gateway_server::GatewayCollaborationContext;
 use gateway_site::*;
 pub(super) use gateway_site::{content_type, validate_file_path};
 use gateway_transaction_effects::*;
-pub(crate) use gateway_wallet::ensure_wallet_connector_configured;
 use gateway_wallet::*;
+pub(crate) use gateway_wallet::{
+    ensure_wallet_connector_configured, ensure_wallet_connector_configured_async,
+};
 
 /// A capsule this Home does not offer is absent everywhere: not served, not
 /// launchable and not in the catalog. Services is hidden until sharing moves

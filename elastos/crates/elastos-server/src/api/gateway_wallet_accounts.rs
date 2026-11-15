@@ -319,16 +319,18 @@ pub(in crate::api::gateway) async fn wallet_app_summary(
             "id": WALLET_CAPSULE_ID,
             "title": "Wallet",
         },
-        "approval_methods": wallet_approval_methods_summary(&state.data_dir),
+        "approval_methods": wallet_approval_methods_summary(&state.data_dir).await,
         "wallet_accounts": wallet_accounts,
         "wallet_approvals": wallet_approvals,
     }))
     .into_response()
 }
 
-fn wallet_approval_methods_summary(data_dir: &FsPath) -> serde_json::Value {
+async fn wallet_approval_methods_summary(data_dir: &FsPath) -> serde_json::Value {
     let walletconnect_available =
-        ensure_wallet_connector_configured(data_dir, WALLET_WALLETCONNECT_CAPSULE_ID).is_ok();
+        ensure_wallet_connector_configured_async(data_dir, WALLET_WALLETCONNECT_CAPSULE_ID)
+            .await
+            .is_ok();
     serde_json::json!({
         "schema": "elastos.wallet.approval-methods/v1",
         "metamask": {

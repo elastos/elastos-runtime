@@ -388,12 +388,7 @@ fn ensure_consent_request(
 }
 
 async fn verify_sdk(state: &GatewayState) -> anyhow::Result<()> {
-    let data = state.data_dir.clone();
-    tokio::task::spawn_blocking(move || {
-        ensure_wallet_connector_configured(&data, WALLET_WALLETCONNECT_CAPSULE_ID)
-    })
-    .await??;
-    Ok(())
+    ensure_wallet_connector_configured_async(&state.data_dir, WALLET_WALLETCONNECT_CAPSULE_ID).await
 }
 
 pub(in crate::api) fn connector_launch_authority(

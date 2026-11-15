@@ -3611,17 +3611,17 @@ impl std::fmt::Display for WalletConnectorBridgeRequired {
 
 impl std::error::Error for WalletConnectorBridgeRequired {}
 
-fn require_wallet_link_context(
+async fn require_wallet_link_context(
     state: &GatewayState,
     headers: &HeaderMap,
 ) -> anyhow::Result<WalletLinkContext> {
     let authority =
         super::gateway::walletconnect_connector_launch_authority(&state.data_dir, headers)
             .map_err(|_| anyhow::Error::new(WalletConnectorBridgeRequired))?;
-    verified_wallet_link_context(state, WALLET_WALLETCONNECT_CAPSULE_ID, authority)
+    verified_wallet_link_context(state, WALLET_WALLETCONNECT_CAPSULE_ID, authority).await
 }
 
-pub(in crate::api) fn verified_wallet_link_context(
+pub(in crate::api) async fn verified_wallet_link_context(
     state: &GatewayState,
     app: &str,
     authority: RuntimeWalletAuthority,
@@ -3639,7 +3639,7 @@ pub(in crate::api) fn verified_wallet_link_context(
         proof_binding_id: verified.proof_binding_id().map(ToString::to_string),
         grant_id: verified.grant_id().to_string(),
     };
-    super::gateway::ensure_wallet_connector_configured(&state.data_dir, app)?;
+    super::gateway::ensure_wallet_connector_configured_async(&state.data_dir, app).await?;
     if context.proof_binding_id.is_none() {
         anyhow::bail!("missing proof-bound auth session");
     }
@@ -4112,7 +4112,7 @@ async fn evm_challenge_inner(
     headers: &HeaderMap,
     input: EvmChallengeRequest,
 ) -> anyhow::Result<EvmChallengeResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     evm_challenge_for_wallet_link(state, headers, input, link).await
 }
 
@@ -4182,7 +4182,7 @@ async fn evm_verify_inner(
     headers: &HeaderMap,
     input: EvmVerifyRequest,
 ) -> anyhow::Result<EvmVerifyResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     evm_verify_for_wallet_link(state, input, link).await
 }
 
@@ -4362,7 +4362,7 @@ async fn btc_challenge_inner(
     headers: &HeaderMap,
     input: BtcChallengeRequest,
 ) -> anyhow::Result<BtcChallengeResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     btc_challenge_for_wallet_link(state, headers, input, link).await
 }
 
@@ -4435,7 +4435,7 @@ async fn btc_verify_inner(
     headers: &HeaderMap,
     input: BtcVerifyRequest,
 ) -> anyhow::Result<BtcVerifyResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     btc_verify_for_wallet_link(state, input, link).await
 }
 

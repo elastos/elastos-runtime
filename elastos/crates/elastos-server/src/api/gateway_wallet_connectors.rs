@@ -9,7 +9,9 @@ pub(in crate::api::gateway) async fn wallet_connector_config(
         &state.data_dir,
         &headers,
         wallet_connector.as_str(),
-    ) {
+    )
+    .await
+    {
         Ok(context) => context,
         Err(err) => return system_error_response(err),
     };
@@ -57,7 +59,9 @@ pub(in crate::api::gateway) async fn wallet_connector_accounts(
         &state.data_dir,
         &headers,
         wallet_connector.as_str(),
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return system_error_response(err),
     };
@@ -79,7 +83,9 @@ pub(in crate::api::gateway) async fn wallet_connector_approvals(
         &state.data_dir,
         &headers,
         wallet_connector.as_str(),
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return system_error_response(err),
     };
@@ -116,7 +122,9 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_approve(
         &state.data_dir,
         &headers,
         wallet_connector.as_str(),
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return system_error_response(err),
     };
@@ -179,7 +187,9 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_complete(
         &state.data_dir,
         &headers,
         wallet_connector.as_str(),
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return system_error_response(err),
     };
@@ -252,7 +262,7 @@ fn require_capsule_owned_connector_effects(connector_id: &str) -> anyhow::Result
     anyhow::bail!("unknown wallet connector capsule")
 }
 
-pub(in crate::api::gateway) fn require_wallet_connector_launch_context(
+pub(in crate::api::gateway) async fn require_wallet_connector_launch_context(
     data_dir: &FsPath,
     headers: &HeaderMap,
     connector_id: &str,
@@ -260,7 +270,7 @@ pub(in crate::api::gateway) fn require_wallet_connector_launch_context(
     if !is_wallet_connector_capsule_id(connector_id) {
         anyhow::bail!("unknown wallet connector capsule");
     }
-    ensure_wallet_connector_configured(data_dir, connector_id)?;
+    ensure_wallet_connector_configured_async(data_dir, connector_id).await?;
     if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
         Ok(
             gateway_walletconnect::connector_launch_authority(data_dir, headers)?
@@ -271,7 +281,7 @@ pub(in crate::api::gateway) fn require_wallet_connector_launch_context(
     }
 }
 
-pub(in crate::api::gateway) fn require_wallet_connector_launch_authority(
+pub(in crate::api::gateway) async fn require_wallet_connector_launch_authority(
     data_dir: &FsPath,
     headers: &HeaderMap,
     connector_id: &str,
@@ -279,7 +289,7 @@ pub(in crate::api::gateway) fn require_wallet_connector_launch_authority(
     if !is_wallet_connector_capsule_id(connector_id) {
         anyhow::bail!("unknown wallet connector capsule");
     }
-    ensure_wallet_connector_configured(data_dir, connector_id)?;
+    ensure_wallet_connector_configured_async(data_dir, connector_id).await?;
     if connector_id == WALLET_WALLETCONNECT_CAPSULE_ID {
         gateway_walletconnect::connector_launch_authority(data_dir, headers)
     } else {
@@ -294,6 +304,54 @@ pub(in crate::api::gateway) fn require_wallet_app_launch_authority(
     require_runtime_wallet_authority(data_dir, headers, &[WALLET_CAPSULE_ID])
 }
 
+// Async callers use this entry point. Other targets retain their direct path.
+pub(crate) async fn ensure_wallet_connector_configured_async(
+    data_dir: &FsPath,
+    connector_id: &str,
+) -> anyhow::Result<()> {
+    if connector_id != WALLET_WALLETCONNECT_CAPSULE_ID {
+        return Ok(());
+    }
+    let data = data_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        ensure_wallet_connector_configured(&data, WALLET_WALLETCONNECT_CAPSULE_ID)
+    })
+    .await?
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct WalletConnectSdkStamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    identity: (u64, u64, i64, i64),
+}
+
+fn walletconnect_sdk_stamp(path: &FsPath) -> anyhow::Result<WalletConnectSdkStamp> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.len() <= 8 * 1024 * 1024,
+        "WalletConnect connector requires a bounded regular SDK file"
+    );
+    Ok(WalletConnectSdkStamp {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+        #[cfg(unix)]
+        identity: {
+            use std::os::unix::fs::MetadataExt;
+            (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            )
+        },
+    })
+}
+
+// Synchronous inventory/setup callers share this cache with HTTP admissions.
+// A miss hashes on a worker, including when a synchronous inventory is built
+// by an async caller. HTTP callers also yield while the worker finishes.
 pub(crate) fn ensure_wallet_connector_configured(
     data_dir: &FsPath,
     connector_id: &str,
@@ -303,16 +361,46 @@ pub(crate) fn ensure_wallet_connector_configured(
     }
     let config = load_walletconnect_connector_config(data_dir)?;
     validate_walletconnect_connector_config(&config)?;
-
     let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
-    let bytes =
-        gateway_walletconnect::read_bytes(&sdk_path, 8 * 1024 * 1024)?.ok_or_else(|| {
-            anyhow::anyhow!("WalletConnect connector is not configured: pinned SDK asset missing")
-        })?;
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let stamp = walletconnect_sdk_stamp(&sdk_path)?;
+    type SdkCache = std::collections::BTreeMap<PathBuf, (WalletConnectSdkStamp, String)>;
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<SdkCache>> = std::sync::OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| anyhow::anyhow!("WalletConnect SDK verification cache unavailable"))?;
+    if cache
+        .get(&sdk_path)
+        .is_some_and(|entry| entry == &(stamp.clone(), config.sdk_sha256.clone()))
+    {
+        return Ok(());
+    }
+    // Keep the bounded read and hash off Runtime's async threads, also for the
+    // synchronous package inventory API. Only successful checks enter the cache.
+    let digest = std::thread::scope(|scope| {
+        scope
+            .spawn(|| -> anyhow::Result<String> {
+                #[cfg(test)]
+                sdk_verification_tests::record_read(&sdk_path);
+                let bytes = gateway_walletconnect::read_bytes(&sdk_path, 8 * 1024 * 1024)?
+                    .ok_or_else(|| anyhow::anyhow!("WalletConnect pinned SDK asset missing"))?;
+                Ok(format!("{:x}", Sha256::digest(&bytes)))
+            })
+            .join()
+            .map_err(|_| anyhow::anyhow!("WalletConnect SDK verification worker failed"))?
+    })?;
+    anyhow::ensure!(
+        stamp == walletconnect_sdk_stamp(&sdk_path)?,
+        "WalletConnect SDK changed during verification"
+    );
     if !digest.eq_ignore_ascii_case(config.sdk_sha256.trim()) {
         anyhow::bail!("WalletConnect connector is not configured: pinned SDK hash mismatch");
     }
+    // Runtime normally has one data root. Bound retained fixture/retired roots.
+    if cache.len() >= 16 {
+        cache.clear();
+    }
+    cache.insert(sdk_path, (stamp, config.sdk_sha256));
     Ok(())
 }
 
@@ -443,4 +531,122 @@ fn validate_walletconnect_handoff(
         "WalletConnect handoff binding mismatch"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod sdk_verification_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::thread::ThreadId;
+
+    type Reads = HashMap<PathBuf, Vec<ThreadId>>;
+    static READS: OnceLock<Mutex<Reads>> = OnceLock::new();
+    pub(super) fn record_read(path: &FsPath) {
+        READS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .entry(path.to_path_buf())
+            .or_default()
+            .push(std::thread::current().id());
+    }
+    fn reads(path: &FsPath) -> Vec<ThreadId> {
+        READS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .get(path)
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, serde_json::Value) {
+        let dir = tempfile::tempdir().unwrap();
+        let sdk = dir.path().join(WALLETCONNECT_SDK_PATH);
+        let config = dir.path().join(WALLETCONNECT_CONFIG_PATH);
+        std::fs::create_dir_all(sdk.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&sdk, b"fixture-sdk").unwrap();
+        let value = serde_json::json!({"schema":WALLETCONNECT_CONFIG_SCHEMA,
+            "project_id":"fixture-project", "sdk_package":WALLETCONNECT_SDK_PACKAGE,
+            "sdk_version":"1.0.0", "sdk_sha256":format!("{:x}",Sha256::digest(b"fixture-sdk"))});
+        std::fs::write(&config, value.to_string()).unwrap();
+        (dir, sdk, config, value)
+    }
+
+    #[tokio::test]
+    async fn walletconnect_sdk_cache_reuses_verification_and_invalidates_files_and_pin() {
+        let (dir, sdk, config, mut value) = fixture();
+        let check = || {
+            ensure_wallet_connector_configured_async(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID)
+        };
+        check().await.unwrap();
+        check().await.unwrap();
+        assert_eq!(
+            reads(&sdk).len(),
+            1,
+            "unchanged requests reuse the verified SDK"
+        );
+        // Same length and restored mtime still invalidate through ctime on Unix.
+        let modified = std::fs::metadata(&sdk).unwrap().modified().unwrap();
+        std::fs::write(&sdk, b"tampered!!!").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&sdk)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        assert!(
+            check().await.is_err(),
+            "same-size tampering invalidates the cache"
+        );
+        assert_eq!(reads(&sdk).len(), 2);
+        std::fs::write(&sdk, b"fixture-sdk").unwrap();
+        check().await.unwrap();
+        let replacement = sdk.with_extension("replacement");
+        std::fs::write(&replacement, b"tampered!!!").unwrap();
+        std::fs::rename(&replacement, &sdk).unwrap();
+        assert!(
+            check().await.is_err(),
+            "file replacement invalidates the cache"
+        );
+        std::fs::write(&sdk, b"fixture-sdk").unwrap();
+        check().await.unwrap();
+        value["sdk_sha256"] = serde_json::json!("00".repeat(32));
+        std::fs::write(&config, value.to_string()).unwrap();
+        assert!(
+            check().await.is_err(),
+            "a different pinned digest invalidates the cache"
+        );
+        std::fs::remove_file(&sdk).unwrap();
+        assert!(
+            check().await.is_err(),
+            "a missing SDK invalidates the cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn walletconnect_sdk_hash_runs_off_the_async_thread_for_sync_inventory_too() {
+        let (dir, sdk, _, _) = fixture();
+        ensure_wallet_connector_configured(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID).unwrap();
+        assert_ne!(reads(&sdk)[0], std::thread::current().id());
+    }
+
+    #[test]
+    fn other_targets_need_neither_a_runtime_nor_a_blocking_pool_hop() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        for target in ["wallet-metamask", "wallet-unisat", "browser", "chat-room"] {
+            let mut future = std::pin::pin!(ensure_wallet_connector_configured_async(
+                FsPath::new("absent-fixture"),
+                target
+            ));
+            assert!(matches!(
+                future
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Ok(()))
+            ));
+        }
+    }
 }

@@ -212,7 +212,11 @@ async fn serve_browser_capsule_asset(
     requested_path: Option<&str>,
     raw_query: Option<&str>,
 ) -> Response {
-    if !capsule_is_offered(data_dir, app) {
+    if app == "services"
+        || super::gateway::ensure_wallet_connector_configured_async(data_dir, app)
+            .await
+            .is_err()
+    {
         return (StatusCode::NOT_FOUND, "Browser capsule not found").into_response();
     }
 

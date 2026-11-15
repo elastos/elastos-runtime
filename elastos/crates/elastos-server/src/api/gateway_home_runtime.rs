@@ -40,19 +40,14 @@ pub(super) async fn home_launch(
 
     // Configuration owns connector availability. Refuse a hidden connector
     // before package repair.
-    let data = state.data_dir.clone();
-    let connector_target = target.to_string();
-    tokio::task::spawn_blocking(move || {
-        ensure_wallet_connector_configured(&data, &connector_target)
-    })
-    .await
-    .unwrap_or_else(|error| Err(error.into()))
-    .map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Home target not found" })),
-        )
-    })?;
+    ensure_wallet_connector_configured_async(&state.data_dir, target)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Home target not found" })),
+            )
+        })?;
 
     let mut target_summary = home_launch_target_for_platform(&state.data_dir, target, platform);
     if target_summary.is_none() || state.data_dir.join("capsules").join(target).exists() {
