@@ -59,7 +59,10 @@ pub(in crate::api::gateway) async fn reject_wallet_approval_request(
     )
     .await
     {
-        Ok(_) => {
+        Ok(rejected) => {
+            let dismissed = rejected["approval_request"]["approved_at"].as_u64().is_some()
+                && rejected["approval_request"]["intent"] == "transaction_intent"
+                && rejected["approval_request"]["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID;
             let _ = append_wallet_approval_audit(
                 &state.data_dir,
                 WalletApprovalAuditInput {
@@ -72,7 +75,11 @@ pub(in crate::api::gateway) async fn reject_wallet_approval_request(
                     reason: "Wallet approval rejected through Runtime authority",
                 },
             );
-            Json(system_wallet_approvals_summary(state, authority, false).await).into_response()
+            let mut summary = system_wallet_approvals_summary(state, authority, false).await;
+            if dismissed {
+                summary.note = Some("Request dismissed. Check your connected wallet before sending again.".to_string());
+            }
+            Json(summary).into_response()
         }
         Err(err) => system_error_response(err),
     }

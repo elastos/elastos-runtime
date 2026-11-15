@@ -183,14 +183,12 @@ export function createWalletRequests({
     setBusy(button, true);
     showStatus(button.dataset.walletApprovedTransaction === "true" ? "Dismissing request." : "Rejecting request.", "muted");
     try {
-      await fetchJson(`/api/apps/wallet/wallet/approvals/${encodeURIComponent(requestId)}/reject`, {
+      const result = await fetchJson(`/api/apps/wallet/wallet/approvals/${encodeURIComponent(requestId)}/reject`, {
         method: "POST",
         headers: shellHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({ reason: button.dataset.walletApprovedTransaction === "true" ? "Dismissed in Wallet" : "Rejected in Wallet" }),
       });
-      showStatus(button.dataset.walletApprovedTransaction === "true"
-        ? "Request dismissed. Check your connected wallet before sending again."
-        : "Request rejected.", "success");
+      showStatus(result?.note || "Request rejected.", "success");
       notifyHomeSummaryChanged();
       await refreshWalletState();
     } catch (error) {
