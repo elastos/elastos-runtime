@@ -567,9 +567,11 @@ impl CollaborationTransportDriver {
             .ingested
             .lock()
             .map_err(|_| anyhow::anyhow!("ingested batch lock poisoned"))?;
-        Ok((ingested.cursor == cursor)
-            .then_some(ingested.frames)
-            .unwrap_or_default())
+        Ok(if ingested.cursor == cursor {
+            ingested.frames
+        } else {
+            0
+        })
     }
 
     fn record_ingested_frames(&self, cursor: u64, frames: usize) -> anyhow::Result<()> {
