@@ -812,10 +812,17 @@ async fn run_collaboration_history_worker(
                 if changed.is_err() || *shutdown.borrow() { return; }
             }
             result = async {
+                // A person who joins Community again waits for the posts of
+                // the time away, not for the wait the passes before it grew.
+                // The change can arrive while this worker sleeps or asks, so
+                // the worker reads the change itself.
+                if joined.has_changed().unwrap_or(false) {
+                    service.reset_cadence()?;
+                }
                 if !*joined.borrow_and_update() { return Ok(()); }
                 tokio::select! {
                     biased;
-                    _ = joined.changed() => Ok(()),
+                    _ = joined.changed() => service.reset_cadence(),
                     result = service.fetch_if_due(now_secs()) => result,
                 }
             } => {

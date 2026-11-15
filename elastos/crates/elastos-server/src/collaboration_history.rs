@@ -244,12 +244,7 @@ impl CollaborationHistoryService {
     /// reaches other Homes.
     pub(crate) async fn fetch_if_due(&self, now: u64) -> anyhow::Result<()> {
         if !self.inner.product.community_membership().joined() {
-            *self
-                .inner
-                .cadence
-                .lock()
-                .map_err(|_| anyhow::anyhow!("history cadence is unavailable"))? =
-                HistoryCadence::default();
+            self.reset_cadence()?;
             return Ok(());
         }
         let connected = self.inner.product.conversation_transport_view().available;
@@ -270,6 +265,19 @@ impl CollaborationHistoryService {
             return Ok(());
         }
         self.fetch_once(now).await
+    }
+
+    /// Forgets the grown wait, so the next check starts a pass. A person who
+    /// leaves Community and joins it again owns this reset: the posts of the
+    /// time away are the reason the wait exists.
+    pub(crate) fn reset_cadence(&self) -> anyhow::Result<()> {
+        *self
+            .inner
+            .cadence
+            .lock()
+            .map_err(|_| anyhow::anyhow!("history cadence is unavailable"))? =
+            HistoryCadence::default();
+        Ok(())
     }
 
     /// Independently scheduled from live gossip. Four unavailable peers cannot
