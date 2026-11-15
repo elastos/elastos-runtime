@@ -1690,6 +1690,59 @@ mod tests {
         assert_eq!(asks(), 2, "an open view does not ask at every check");
     }
 
+    /// Answered passes run long enough to reach the quiet Home's longest
+    /// wait. A ten-second switch away keeps the previous heartbeat fresh,
+    /// so reopening has to work even when every check sees an open view.
+    #[tokio::test]
+    async fn quick_reopening_community_keeps_history_within_the_short_wait() {
+        let now = now_secs();
+        let a = fixture("history-quick-reopen", "community", now).await;
+        let b = fixture("history-quick-reopen", "community", now).await;
+        a.product.set_community_connected(true);
+        let (network_id, conversation_id) = a.product.history_scope();
+        let plane = Arc::new(CadencePlane {
+            endpoint: b.product.local_device_did(),
+            network_id: network_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            answers: true,
+            calls: Mutex::new(Vec::new()),
+        });
+        a.registry.set_carrier_invoker(plane.clone()).await;
+        let asks = || plane.calls.lock().unwrap().len();
+        let mut asked_at = Vec::new();
+        for tick in 0..=63 {
+            let offset = tick * 15;
+            let at = now + offset;
+            keep_both_present(&a, &b, at).await;
+            a.presence.record_community_open(at);
+            let before = asks();
+            a.service.fetch_if_due(at).await.unwrap();
+            if asks() > before {
+                asked_at.push(offset);
+            }
+        }
+        assert_eq!(asked_at.last(), Some(&945));
+        let before_reopening = asks();
+        // The person switches away just after the last heartbeat and returns
+        // ten seconds later. There is no close signal or false watching sample.
+        a.presence.record_community_open(now + 955);
+        for offset in [960, 975, 990, 1005] {
+            let at = now + offset;
+            keep_both_present(&a, &b, at).await;
+            a.presence.record_community_open(at);
+            a.service.fetch_if_due(at).await.unwrap();
+        }
+        assert_eq!(
+            asks(),
+            before_reopening + 1,
+            "a quick reopening gets another provider request within 60 seconds"
+        );
+        assert!(
+            asked_at.windows(2).all(|pair| pair[1] - pair[0] <= 60),
+            "answered passes stay short while Community remains open: {asked_at:?}"
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn stalled_history_has_a_per_peer_deadline() {
         let now = now_secs();
