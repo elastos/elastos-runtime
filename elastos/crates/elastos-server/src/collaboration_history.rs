@@ -1466,46 +1466,56 @@ mod tests {
         }
     }
 
-    /// Ten minutes of Runtime checks, measured as the Home-to-Home requests
-    /// they produce on the provider plane. A Home whose passes bring answers
-    /// backs off to a quarter of an hour. A Home whose passes reach nobody
-    /// keeps asking every minute, because the Homes it wants are present and
-    /// can become reachable at any check.
-    #[tokio::test]
-    async fn earlier_posts_are_asked_for_on_a_measured_cadence() {
-        for answers in [true, false] {
-            let now = now_secs();
-            let a = fixture("history-measured", "community", now).await;
-            let b = fixture("history-measured", "community", now).await;
-            a.product.set_community_connected(true);
-            let (network_id, conversation_id) = a.product.history_scope();
-            let plane = Arc::new(CadencePlane {
-                endpoint: b.product.local_device_did(),
-                network_id: network_id.to_string(),
-                conversation_id: conversation_id.to_string(),
-                answers,
-                calls: Mutex::new(Vec::new()),
-            });
-            a.registry.set_carrier_invoker(plane.clone()).await;
-            let mut asked_at = Vec::new();
-            let mut asks = 0;
-            for tick in 0..41 {
-                let at = now + tick * HISTORY_BASE_WAIT_SECS;
-                keep_both_present(&a, &b, at).await;
-                a.service.fetch_if_due(at).await.unwrap();
-                let calls = plane.calls.lock().unwrap().len();
-                if calls > asks {
-                    asked_at.push(at - now);
-                    asks = calls;
-                }
+    /// Ten minutes of Runtime checks, 15 s apart, measured as the seconds at
+    /// which the Runtime asked another Home for earlier posts.
+    async fn seconds_of_history_asks(answers: bool) -> Vec<u64> {
+        let now = now_secs();
+        let a = fixture("history-measured", "community", now).await;
+        let b = fixture("history-measured", "community", now).await;
+        a.product.set_community_connected(true);
+        let (network_id, conversation_id) = a.product.history_scope();
+        let plane = Arc::new(CadencePlane {
+            endpoint: b.product.local_device_did(),
+            network_id: network_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            answers,
+            calls: Mutex::new(Vec::new()),
+        });
+        a.registry.set_carrier_invoker(plane.clone()).await;
+        let mut asked_at = Vec::new();
+        let mut asks = 0;
+        for tick in 0..41 {
+            let at = now + tick * HISTORY_BASE_WAIT_SECS;
+            keep_both_present(&a, &b, at).await;
+            a.service.fetch_if_due(at).await.unwrap();
+            let calls = plane.calls.lock().unwrap().len();
+            if calls > asks {
+                asked_at.push(at - now);
+                asks = calls;
             }
-            let expected: Vec<u64> = if answers {
-                vec![0, 15, 45, 105, 225, 465]
-            } else {
-                vec![0, 15, 45, 105, 165, 225, 285, 345, 405, 465, 525, 585]
-            };
-            assert_eq!(asked_at, expected, "answers: {answers}");
         }
+        asked_at
+    }
+
+    /// A Home whose passes bring answers backs off towards a quarter of an
+    /// hour, because the Homes it reached already gave it their posts.
+    #[tokio::test]
+    async fn answered_history_passes_back_off_to_the_long_wait() {
+        assert_eq!(
+            seconds_of_history_asks(true).await,
+            [0, 15, 45, 105, 225, 465]
+        );
+    }
+
+    /// A Home whose passes reach nobody keeps asking every minute. The Homes
+    /// it wants are present and can become reachable at any check, so a
+    /// person who opens Community waits one minute, not a quarter of an hour.
+    #[tokio::test]
+    async fn unanswered_history_passes_keep_the_short_wait() {
+        assert_eq!(
+            seconds_of_history_asks(false).await,
+            [0, 15, 45, 105, 165, 225, 285, 345, 405, 465, 525, 585]
+        );
     }
 
     /// Ten minutes of Runtime checks, 15 s apart, for a Home that keeps

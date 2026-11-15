@@ -3121,15 +3121,25 @@ mod tests {
         let next_hash = collaboration_message_envelope_sha256(&next_message);
         let sent = serde_json::json!({"status":"ok","data":{"remote_peer_count":1}});
 
+        let mut acknowledged = Vec::new();
         for (second, frame) in [(0, &first), (1, &next), (2, &first)] {
+            carrier.drain_replies();
             carrier.push([peek(0, 1, vec![gossip(frame)]), sent.clone(), ack(0, 1)]);
-            driver.process_incoming_once(NOW + second).await.unwrap();
+            acknowledged.push(matches!(
+                driver.process_incoming_once(NOW + second).await,
+                Ok(CollaborationIncomingOnceOutcome::Acknowledged(_))
+            ));
         }
 
         assert_eq!(
             receipted_hashes(&carrier),
             [first_hash.clone(), next_hash, first_hash],
             "each frame at the reused position earns its own receipt"
+        );
+        assert_eq!(
+            acknowledged,
+            [true, true, true],
+            "every cycle completes its range"
         );
         assert_eq!(
             request_ops(&carrier),
