@@ -34,8 +34,17 @@ const MAX_PEERS_PER_PASS: usize = 4;
 const PEER_TIMEOUT: Duration = Duration::from_secs(5);
 /// Wait before the first pass that nothing else asks for.
 const HISTORY_BASE_WAIT_SECS: u64 = 15;
-/// Longest wait between two passes of a Home that keeps seeing the same Homes.
+/// Longest wait between two passes of a Home whose passes bring answers.
 const HISTORY_MAX_WAIT_SECS: u64 = 900;
+/// Longest wait between two passes of a Home whose passes reach nobody. The
+/// Community link calls itself silent after 60 s (`COMMUNITY_LINK_SILENCE`),
+/// so a Home that answers nothing for a minute is the longest silence this
+/// Runtime already treats as normal.
+const HISTORY_UNANSWERED_MAX_WAIT_SECS: u64 = 60;
+/// How long the Home page heartbeat keeps a person counted as reading
+/// Community. The page sends it every 15 s, so three missed heartbeats end
+/// the signal, the same tolerance a presence record carries.
+const HISTORY_OPEN_SIGNAL_SECS: u64 = 45;
 // History requests carry this Home's own signed presence, which exists only
 // for people who granted Community presence.
 const NOT_SHOWN_DETAIL: &str = "Show yourself in Community to load earlier posts.";
@@ -62,38 +71,68 @@ struct HistoryPeerRound {
     available: bool,
 }
 
-/// When this Home next asks present Homes for earlier posts. Three things make
+/// When this Home next asks present Homes for earlier posts. Four things make
 /// a pass due at once: a Community join, a Community connection that returns,
-/// and a Home that is present now and was absent at the last pass, because any
-/// of them can leave this Home without posts the others kept. A pass that none
-/// of them asked for waits twice as long as the one before it.
+/// a Home that is present now and was absent at the check before, and a person
+/// who opens Community. Any of them can leave this Home without posts the
+/// others kept.
 #[derive(Default)]
 struct HistoryCadence {
     due_at: u64,
     wait: u64,
     connected: bool,
+    watching: bool,
     present: BTreeSet<String>,
 }
 
 impl HistoryCadence {
-    fn due(&mut self, now: u64, connected: bool, present: BTreeSet<String>) -> bool {
+    /// Does this check start a pass? Every check samples the Homes it sees
+    /// and the person reading Community, so a Home that lapses and returns
+    /// between two passes, and a person who opens Community between them,
+    /// both make the next check due.
+    fn due(
+        &mut self,
+        now: u64,
+        connected: bool,
+        present: BTreeSet<String>,
+        watching: bool,
+    ) -> bool {
         let returned = connected && !self.connected;
         let arrived = present.difference(&self.present).next().is_some();
+        let opened = watching && !self.watching;
         self.connected = connected;
-        if returned || arrived {
+        self.watching = watching;
+        self.present = present;
+        if returned || arrived || opened {
             self.wait = 0;
             self.due_at = now;
         }
         if now < self.due_at {
             return false;
         }
-        self.present = present;
+        // The pass that follows owns the next wait. This provisional wait
+        // holds a pass that ends in an error to the short cadence.
+        self.due_at = now.saturating_add(HISTORY_BASE_WAIT_SECS);
+        true
+    }
+
+    /// The wait after a pass. A pass that brought posts from another Home
+    /// doubles the wait towards a quarter of an hour, because that Home gave
+    /// what it has. A pass that reached nobody keeps the wait at a minute,
+    /// because the Homes this one wants are present and can answer at any
+    /// check, and a person must never wait longer than that for the posts a
+    /// returning Home holds.
+    fn pass_finished(&mut self, now: u64, answered: bool) {
+        let ceiling = if answered {
+            HISTORY_MAX_WAIT_SECS
+        } else {
+            HISTORY_UNANSWERED_MAX_WAIT_SECS
+        };
         self.wait = self
             .wait
             .saturating_mul(2)
-            .clamp(HISTORY_BASE_WAIT_SECS, HISTORY_MAX_WAIT_SECS);
+            .clamp(HISTORY_BASE_WAIT_SECS, ceiling);
         self.due_at = now.saturating_add(self.wait);
-        true
     }
 }
 
@@ -255,16 +294,27 @@ impl CollaborationHistoryService {
             .into_iter()
             .map(|peer| peer.endpoint_did)
             .collect();
+        let watching = self
+            .inner
+            .presence
+            .community_open_at()
+            .is_some_and(|at| now.saturating_sub(at) <= HISTORY_OPEN_SIGNAL_SECS);
         let due = self
             .inner
             .cadence
             .lock()
             .map_err(|_| anyhow::anyhow!("history cadence is unavailable"))?
-            .due(now, connected, present);
+            .due(now, connected, present, watching);
         if !due {
             return Ok(());
         }
-        self.fetch_once(now).await
+        let answered = self.fetch_once(now).await;
+        self.inner
+            .cadence
+            .lock()
+            .map_err(|_| anyhow::anyhow!("history cadence is unavailable"))?
+            .pass_finished(now, matches!(answered, Ok(true)));
+        answered.map(|_| ())
     }
 
     /// Forgets the grown wait, so the next check starts a pass. A person who
@@ -282,9 +332,11 @@ impl CollaborationHistoryService {
 
     /// Independently scheduled from live gossip. Four unavailable peers cannot
     /// monopolize a pass or starve later available participants across passes.
-    pub(crate) async fn fetch_once(&self, now: u64) -> anyhow::Result<()> {
+    /// Reports whether a Home answered this pass, which decides how long the
+    /// Runtime waits before the next one.
+    pub(crate) async fn fetch_once(&self, now: u64) -> anyhow::Result<bool> {
         if !self.inner.product.community_membership().joined() {
-            return Ok(());
+            return Ok(false);
         }
         let (peers, own) = match async {
             Ok::<_, anyhow::Error>((
@@ -307,7 +359,7 @@ impl CollaborationHistoryService {
             OwnHistoryPresence::Usable(_) => {}
             OwnHistoryPresence::NotUsable => {
                 self.inner.product.set_history_unavailable(NOT_SHOWN_DETAIL);
-                return Ok(());
+                return Ok(false);
             }
             OwnHistoryPresence::Absent => {
                 // Nobody chosen is a fact only the publisher knows; before its
@@ -318,7 +370,7 @@ impl CollaborationHistoryService {
                 } else {
                     self.inner.product.set_history_searching();
                 }
-                return Ok(());
+                return Ok(false);
             }
         }
         let local_endpoint = self.inner.product.local_device_did();
@@ -328,7 +380,7 @@ impl CollaborationHistoryService {
             .collect::<Vec<_>>();
         if remote.is_empty() {
             self.inner.product.set_history_unavailable(ALONE_DETAIL);
-            return Ok(());
+            return Ok(false);
         }
         let round_complete = {
             let mut round = self
@@ -365,7 +417,7 @@ impl CollaborationHistoryService {
                 .await?
             else {
                 self.inner.product.set_history_unavailable(NOT_SHOWN_DETAIL);
-                return Ok(());
+                return Ok(false);
             };
             let request = serde_json::to_value(self.request(own))?;
             // History reads have no remote effect. A lost response can be
@@ -417,7 +469,7 @@ impl CollaborationHistoryService {
         if round_complete {
             round.available = false;
         }
-        Ok(())
+        Ok(available)
     }
 }
 
@@ -1526,29 +1578,60 @@ mod tests {
         );
     }
 
-    /// Ten minutes of Runtime checks, 15 s apart, for a Home that keeps
-    /// seeing the same Homes.
+    /// Ten minutes of Runtime checks, 15 s apart, as the cadence sees them.
+    /// The two measured tests above show the same seconds on the service
+    /// path, with the requests each pass made.
     #[test]
-    fn earlier_posts_are_asked_for_on_a_growing_wait() {
+    fn the_history_wait_grows_only_on_an_answered_pass() {
         let now = 1_800_000_000;
-        let present = BTreeSet::from(["did:peer".to_string()]);
-        let mut cadence = HistoryCadence::default();
-        let checks = (0..40).map(|tick| now + tick * HISTORY_BASE_WAIT_SECS);
-        let due = checks
-            .clone()
-            .filter(|check| cadence.due(*check, true, present.clone()))
-            .map(|check| check - now)
-            .collect::<Vec<_>>();
-        assert_eq!(checks.count(), 40, "every check asked other Homes before");
-        assert_eq!(due, [0, 15, 45, 105, 225, 465]);
+        let peer = BTreeSet::from(["did:peer".to_string()]);
+        let passes = |answered: bool| {
+            let mut cadence = HistoryCadence::default();
+            let mut due = Vec::new();
+            for tick in 0..40 {
+                let at = now + tick * HISTORY_BASE_WAIT_SECS;
+                if cadence.due(at, true, peer.clone(), false) {
+                    due.push(at - now);
+                    cadence.pass_finished(at, answered);
+                }
+            }
+            due
+        };
+        assert_eq!(passes(true), [0, 15, 45, 105, 225, 465]);
+        assert_eq!(
+            passes(false),
+            [0, 15, 45, 105, 165, 225, 285, 345, 405, 465, 525, 585]
+        );
+    }
 
-        // A Home that was absent at the last pass is a reason to ask again.
+    /// Each reason to ask other Homes at once, one check at a time.
+    #[test]
+    fn a_new_home_a_returned_link_and_an_open_community_each_ask_at_once() {
+        let now = 1_800_000_000;
+        let peer = BTreeSet::from(["did:peer".to_string()]);
         let joined = BTreeSet::from(["did:peer".to_string(), "did:newcomer".to_string()]);
-        assert!(cadence.due(now + 600, true, joined.clone()));
-        assert!(!cadence.due(now + 601, true, joined.clone()));
-        // So is a Community connection that returns.
-        assert!(!cadence.due(now + 602, false, joined.clone()));
-        assert!(cadence.due(now + 603, true, joined));
+        let mut cadence = HistoryCadence::default();
+        assert!(cadence.due(now, true, peer.clone(), false));
+        cadence.pass_finished(now, true);
+        assert!(!cadence.due(now + 1, true, peer.clone(), false));
+        // A Home this one did not see at the check before.
+        assert!(cadence.due(now + 2, true, joined.clone(), false));
+        cadence.pass_finished(now + 2, true);
+        // A Home that lapses and returns between two passes. Every check
+        // samples the Homes it sees, so the return asks again.
+        assert!(!cadence.due(now + 3, true, peer.clone(), false));
+        assert!(cadence.due(now + 4, true, joined.clone(), false));
+        cadence.pass_finished(now + 4, true);
+        // A Community connection that returns.
+        assert!(!cadence.due(now + 5, false, joined.clone(), false));
+        assert!(cadence.due(now + 6, true, joined.clone(), false));
+        cadence.pass_finished(now + 6, true);
+        // A person who opens Community.
+        assert!(!cadence.due(now + 7, true, joined.clone(), false));
+        assert!(cadence.due(now + 8, true, joined.clone(), true));
+        cadence.pass_finished(now + 8, true);
+        // The wait holds while Community stays open.
+        assert!(!cadence.due(now + 9, true, joined, true));
     }
 
     #[tokio::test]
@@ -1575,6 +1658,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(asks(), 2);
+    }
+
+    /// A person opens Community inside a wait. The Runtime asks present Homes
+    /// at the next check, because the Home page heartbeat records the open
+    /// view on the presence port History reads. Nothing new travels between
+    /// Homes for this.
+    #[tokio::test]
+    async fn opening_community_asks_present_homes_at_the_next_check() {
+        let now = now_secs();
+        let a = fixture("history-open", "community", now).await;
+        let b = fixture("history-open", "community", now).await;
+        observe(&a, &b, now);
+        a.product.set_community_connected(true);
+        let plane = Arc::new(Plane {
+            source: a.product.local_device_did(),
+            peers: BTreeMap::from([(b.product.local_device_did(), b.registry.clone())]),
+            calls: Mutex::new(Vec::new()),
+            stall: false,
+        });
+        a.registry.set_carrier_invoker(plane.clone()).await;
+        let asks = || plane.calls.lock().unwrap().len();
+        a.service.fetch_if_due(now).await.unwrap();
+        assert_eq!(asks(), 1);
+        a.service.fetch_if_due(now + 1).await.unwrap();
+        assert_eq!(asks(), 1, "the wait holds while nothing changes");
+        a.presence.record_community_open(now + 2);
+        a.service.fetch_if_due(now + 2).await.unwrap();
+        assert_eq!(asks(), 2, "a person who opens Community waits for nothing");
+        a.service.fetch_if_due(now + 3).await.unwrap();
+        assert_eq!(asks(), 2, "an open view does not ask at every check");
     }
 
     #[tokio::test(start_paused = true)]
