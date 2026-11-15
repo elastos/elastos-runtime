@@ -3458,7 +3458,7 @@ mod tests {
             driver.process_incoming_once(received_at).await.unwrap(),
             CollaborationIncomingOnceOutcome::Acknowledged(_)
         ));
-        assert_eq!(receipted_hashes(&carrier), [hash.clone()]);
+        assert_eq!(receipted_hashes(&carrier), std::slice::from_ref(&hash));
 
         let mut sent_at = Vec::new();
         let mut sends = 1;
