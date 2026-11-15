@@ -358,8 +358,14 @@ fn external_transaction_handoff_with_expiry(
         other => panic!("expected external transaction approval request, got {other:?}"),
     };
     // The owner has a pending card before the connector approves it.
-    let pending_card = invoke_wallet(&mut provider, principal_id, "wallet",
-        WalletProviderOperationV2::ListApprovals { include_resolved: false });
+    let pending_card = invoke_wallet(
+        &mut provider,
+        principal_id,
+        "wallet",
+        WalletProviderOperationV2::ListApprovals {
+            include_resolved: false,
+        },
+    );
     assert!(matches!(pending_card, Response::Ok { data: Some(ref data) }
         if data["approval_requests"].as_array().unwrap().iter().any(|r| r["request_id"] == request_id)));
     if let Some(actor) = dismiss_actor {
@@ -405,11 +411,19 @@ fn external_transaction_handoff_with_expiry(
         .clone();
     if connector == "wallet-metamask" {
         for actor in ["wallet", "system", "inbox"] {
-            let rejected = invoke_wallet(&mut provider, principal_id, actor,
+            let rejected = invoke_wallet(
+                &mut provider,
+                principal_id,
+                actor,
                 WalletProviderOperationV2::RejectApproval {
-                    request_id: request_id.clone(), reason: "Reject from stale pending card".into(),
-                });
-            assert!(matches!(rejected, Response::Error { .. }), "stale {actor} card must preserve MetaMask completion: {rejected:?}");
+                    request_id: request_id.clone(),
+                    reason: "Reject from stale pending card".into(),
+                },
+            );
+            assert!(
+                matches!(rejected, Response::Error { .. }),
+                "stale {actor} card must preserve MetaMask completion: {rejected:?}"
+            );
         }
     }
     let now = now_ts();
