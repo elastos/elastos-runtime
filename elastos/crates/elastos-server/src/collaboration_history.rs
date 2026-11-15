@@ -1,6 +1,7 @@
 //! Bounded Community catch-up through the private Runtime/Carrier provider plane.
 //! Live gossip admission and its replay/receipt lifetime remain unchanged.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,6 +32,19 @@ pub(crate) const MAX_HISTORY_RESPONSE_BYTES: usize = MAX_CONVERSATION_HISTORY_BY
 pub(crate) const MAX_HISTORY_CARRIER_REPLY_BYTES: usize = MAX_HISTORY_RESPONSE_BYTES + 64;
 const MAX_PEERS_PER_PASS: usize = 4;
 const PEER_TIMEOUT: Duration = Duration::from_secs(5);
+/// Wait before the first pass that nothing else asks for.
+const HISTORY_BASE_WAIT_SECS: u64 = 15;
+/// Longest wait after an answered pass while nobody is reading Community.
+const HISTORY_MAX_WAIT_SECS: u64 = 900;
+/// Longest wait while a person reads Community or a pass reaches nobody.
+/// The Community link calls itself silent after 60 s (`COMMUNITY_LINK_SILENCE`),
+/// so a Home that answers nothing for a minute is the longest silence this
+/// Runtime already treats as normal.
+const HISTORY_SHORT_MAX_WAIT_SECS: u64 = 60;
+/// How long the Home page heartbeat keeps a person counted as reading
+/// Community. The page sends it every 15 s, so three missed heartbeats end
+/// the signal, the same tolerance a presence record carries.
+const HISTORY_OPEN_SIGNAL_SECS: u64 = 45;
 // History requests carry this Home's own signed presence, which exists only
 // for people who granted Community presence.
 const NOT_SHOWN_DETAIL: &str = "Show yourself in Community to load earlier posts.";
@@ -47,6 +61,7 @@ struct HistoryInner {
     registry: Arc<ProviderRegistry>,
     data_root: PathBuf,
     peers: Mutex<HistoryPeerRound>,
+    cadence: Mutex<HistoryCadence>,
 }
 
 #[derive(Default)]
@@ -54,6 +69,69 @@ struct HistoryPeerRound {
     endpoints: Vec<String>,
     next: usize,
     available: bool,
+}
+
+/// When this Home next asks present Homes for earlier posts. Four things make
+/// a pass due at once: a Community join, a Community connection that returns,
+/// a Home that is present now and was absent at the check before, and a person
+/// who opens Community. Any of them can leave this Home without posts the
+/// others kept.
+#[derive(Default)]
+struct HistoryCadence {
+    due_at: u64,
+    wait: u64,
+    connected: bool,
+    watching: bool,
+    present: BTreeSet<String>,
+}
+
+impl HistoryCadence {
+    /// Does this check start a pass? Every check samples the Homes it sees
+    /// and the person reading Community, so a Home that lapses and returns
+    /// between two passes, and a person who opens Community between them,
+    /// both make the next check due.
+    fn due(
+        &mut self,
+        now: u64,
+        connected: bool,
+        present: BTreeSet<String>,
+        watching: bool,
+    ) -> bool {
+        let returned = connected && !self.connected;
+        let arrived = present.difference(&self.present).next().is_some();
+        let opened = watching && !self.watching;
+        self.connected = connected;
+        self.watching = watching;
+        self.present = present;
+        if returned || arrived || opened {
+            self.wait = 0;
+            self.due_at = now;
+        }
+        if now < self.due_at {
+            return false;
+        }
+        // The pass that follows owns the next wait. This provisional wait
+        // holds a pass that ends in an error to the short cadence.
+        self.due_at = now.saturating_add(HISTORY_BASE_WAIT_SECS);
+        true
+    }
+
+    /// Answered passes grow the wait towards a quarter of an hour only while
+    /// nobody is reading Community. An open view or an unanswered pass keeps
+    /// the wait at a minute, so a quick reopening within the heartbeat's
+    /// lifetime still asks for the posts a returning Home holds.
+    fn pass_finished(&mut self, now: u64, answered: bool) {
+        let ceiling = if answered && !self.watching {
+            HISTORY_MAX_WAIT_SECS
+        } else {
+            HISTORY_SHORT_MAX_WAIT_SECS
+        };
+        self.wait = self
+            .wait
+            .saturating_mul(2)
+            .clamp(HISTORY_BASE_WAIT_SECS, ceiling);
+        self.due_at = now.saturating_add(self.wait);
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -98,6 +176,7 @@ impl CollaborationHistoryService {
                 registry: registry.clone(),
                 data_root,
                 peers: Mutex::new(HistoryPeerRound::default()),
+                cadence: Mutex::new(HistoryCadence::default()),
             }),
         };
         registry
@@ -197,11 +276,65 @@ impl CollaborationHistoryService {
             .project_history(&self.inner.data_root, &messages, now)
     }
 
+    /// Runs a pass only when this Home has a reason to ask. The Runtime calls
+    /// this on its own cadence; `HistoryCadence` decides which of those checks
+    /// reaches other Homes.
+    pub(crate) async fn fetch_if_due(&self, now: u64) -> anyhow::Result<()> {
+        if !self.inner.product.community_membership().joined() {
+            self.reset_cadence()?;
+            return Ok(());
+        }
+        let connected = self.inner.product.conversation_transport_view().available;
+        let present = self
+            .inner
+            .presence
+            .history_participants(now)?
+            .into_iter()
+            .map(|peer| peer.endpoint_did)
+            .collect();
+        let watching = self
+            .inner
+            .presence
+            .community_open_at()
+            .is_some_and(|at| now.saturating_sub(at) <= HISTORY_OPEN_SIGNAL_SECS);
+        let due = self
+            .inner
+            .cadence
+            .lock()
+            .map_err(|_| anyhow::anyhow!("history cadence is unavailable"))?
+            .due(now, connected, present, watching);
+        if !due {
+            return Ok(());
+        }
+        let answered = self.fetch_once(now).await;
+        self.inner
+            .cadence
+            .lock()
+            .map_err(|_| anyhow::anyhow!("history cadence is unavailable"))?
+            .pass_finished(now, matches!(answered, Ok(true)));
+        answered.map(|_| ())
+    }
+
+    /// Forgets the grown wait, so the next check starts a pass. A person who
+    /// leaves Community and joins it again owns this reset: the posts of the
+    /// time away are the reason the wait exists.
+    pub(crate) fn reset_cadence(&self) -> anyhow::Result<()> {
+        *self
+            .inner
+            .cadence
+            .lock()
+            .map_err(|_| anyhow::anyhow!("history cadence is unavailable"))? =
+            HistoryCadence::default();
+        Ok(())
+    }
+
     /// Independently scheduled from live gossip. Four unavailable peers cannot
     /// monopolize a pass or starve later available participants across passes.
-    pub(crate) async fn fetch_once(&self, now: u64) -> anyhow::Result<()> {
+    /// Reports whether a Home answered this pass, which decides how long the
+    /// Runtime waits before the next one.
+    pub(crate) async fn fetch_once(&self, now: u64) -> anyhow::Result<bool> {
         if !self.inner.product.community_membership().joined() {
-            return Ok(());
+            return Ok(false);
         }
         let (peers, own) = match async {
             Ok::<_, anyhow::Error>((
@@ -224,7 +357,7 @@ impl CollaborationHistoryService {
             OwnHistoryPresence::Usable(_) => {}
             OwnHistoryPresence::NotUsable => {
                 self.inner.product.set_history_unavailable(NOT_SHOWN_DETAIL);
-                return Ok(());
+                return Ok(false);
             }
             OwnHistoryPresence::Absent => {
                 // Nobody chosen is a fact only the publisher knows; before its
@@ -235,7 +368,7 @@ impl CollaborationHistoryService {
                 } else {
                     self.inner.product.set_history_searching();
                 }
-                return Ok(());
+                return Ok(false);
             }
         }
         let local_endpoint = self.inner.product.local_device_did();
@@ -245,7 +378,7 @@ impl CollaborationHistoryService {
             .collect::<Vec<_>>();
         if remote.is_empty() {
             self.inner.product.set_history_unavailable(ALONE_DETAIL);
-            return Ok(());
+            return Ok(false);
         }
         let round_complete = {
             let mut round = self
@@ -282,7 +415,7 @@ impl CollaborationHistoryService {
                 .await?
             else {
                 self.inner.product.set_history_unavailable(NOT_SHOWN_DETAIL);
-                return Ok(());
+                return Ok(false);
             };
             let request = serde_json::to_value(self.request(own))?;
             // History reads have no remote effect. A lost response can be
@@ -334,7 +467,7 @@ impl CollaborationHistoryService {
         if round_complete {
             round.available = false;
         }
-        Ok(())
+        Ok(available)
     }
 }
 
@@ -1287,6 +1420,331 @@ mod tests {
                 NOT_SHOWN_DETAIL
             );
         }
+    }
+
+    /// One fresh presence announcement from this Home's person, as its
+    /// Runtime publishes one while the person is shown.
+    async fn refresh_presence(
+        fixture: &Fixture,
+        now: u64,
+    ) -> crate::collaboration_presence::PreparedCollaborationPresence {
+        let root = crate::auth::principal_localhost_root(PRINCIPAL);
+        let profile = crate::collaboration_profile_authority::load_profile_authority(
+            fixture.root.path(),
+            PRINCIPAL,
+            &root,
+        )
+        .unwrap()
+        .unwrap();
+        let grant = crate::collaboration_presence_grant::presence_grant(
+            &fixture.authority,
+            fixture.root.path(),
+            PRINCIPAL,
+            &fixture.profile_did,
+            &fixture.presence.presence_scope(),
+            crate::collaboration_presence_grant::PresencePublisher::Runtime,
+            now,
+        )
+        .await
+        .unwrap();
+        fixture
+            .presence
+            .prepare_presence(
+                presence_request_binding(
+                    &grant.bind_request_id(&format!("presence-at-{now}")),
+                    PRINCIPAL,
+                    &profile,
+                )
+                .unwrap(),
+                &profile,
+                now,
+            )
+            .unwrap()
+    }
+
+    /// A presence record lives 45 s, so both Homes keep announcing their
+    /// person while a measurement runs for minutes.
+    async fn keep_both_present(a: &Fixture, b: &Fixture, now: u64) {
+        let own = refresh_presence(a, now).await;
+        a.presence
+            .project_authorized_presence(&own, now)
+            .await
+            .unwrap();
+        let peer = refresh_presence(b, now).await;
+        // Both publishers complete their local projection so expired
+        // announcements can leave the outgoing store during long measurements.
+        b.presence
+            .project_authorized_presence(&peer, now)
+            .await
+            .unwrap();
+        a.product
+            .test_core()
+            .accept_incoming_from_signed_source_for_test(peer.test_envelope_bytes(), now)
+            .unwrap();
+        for presence in a.presence.pending_presences().unwrap() {
+            a.presence.project_handoff(&presence, now).unwrap();
+        }
+        assert!(
+            a.presence
+                .history_participants(now)
+                .unwrap()
+                .iter()
+                .any(|participant| participant.endpoint_did == b.product.local_device_did()),
+            "the peer stays present through the measurement"
+        );
+    }
+
+    /// Counts every history request and either answers it with an empty
+    /// retained history or leaves the Home unreachable.
+    struct CadencePlane {
+        endpoint: String,
+        network_id: String,
+        conversation_id: String,
+        answers: bool,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ProviderCarrierInvoker for CadencePlane {
+        async fn invoke_carrier_provider(
+            &self,
+            route: &ProviderCarrierRoute,
+            _invocation: &ProviderInvocation,
+            _request: serde_json::Value,
+        ) -> Result<serde_json::Value, ProviderError> {
+            let ProviderCarrierRoute::PeerDid { peer_did, .. } = route else {
+                panic!("history selects verified Profile endpoint");
+            };
+            self.calls.lock().unwrap().push(peer_did.clone());
+            if !self.answers {
+                return Err(ProviderError::Unavailable("offline".to_string()));
+            }
+            Ok(serde_json::json!({
+                "schema": RESPONSE_SCHEMA,
+                "network_id": self.network_id,
+                "conversation_id": self.conversation_id,
+                "sender_service": CHAT_SERVICE,
+                "endpoint_did": self.endpoint,
+                "envelopes": [],
+            }))
+        }
+    }
+
+    /// Runtime checks, 15 s apart, measured as the seconds at which the
+    /// Runtime asked another Home for earlier posts while nobody was watching.
+    async fn seconds_of_history_asks(answers: bool, ticks: u64) -> Vec<u64> {
+        let now = now_secs();
+        let a = fixture("history-measured", "community", now).await;
+        let b = fixture("history-measured", "community", now).await;
+        a.product.set_community_connected(true);
+        let (network_id, conversation_id) = a.product.history_scope();
+        let plane = Arc::new(CadencePlane {
+            endpoint: b.product.local_device_did(),
+            network_id: network_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            answers,
+            calls: Mutex::new(Vec::new()),
+        });
+        a.registry.set_carrier_invoker(plane.clone()).await;
+        let mut asked_at = Vec::new();
+        let mut asks = 0;
+        for tick in 0..ticks {
+            let at = now + tick * HISTORY_BASE_WAIT_SECS;
+            keep_both_present(&a, &b, at).await;
+            a.service.fetch_if_due(at).await.unwrap();
+            let calls = plane.calls.lock().unwrap().len();
+            if calls > asks {
+                asked_at.push(at - now);
+                asks = calls;
+            }
+        }
+        asked_at
+    }
+
+    /// A Home whose passes bring answers backs off towards a quarter of an
+    /// hour, because the Homes it reached already gave it their posts.
+    #[tokio::test]
+    async fn answered_history_passes_back_off_to_the_long_wait() {
+        assert_eq!(
+            seconds_of_history_asks(true, 125).await,
+            [0, 15, 45, 105, 225, 465, 945, 1845]
+        );
+    }
+
+    /// A Home whose passes reach nobody keeps asking every minute. The Homes
+    /// it wants are present and can become reachable at any check, so a
+    /// person who opens Community waits one minute, not a quarter of an hour.
+    #[tokio::test]
+    async fn unanswered_history_passes_keep_the_short_wait() {
+        assert_eq!(
+            seconds_of_history_asks(false, 41).await,
+            [0, 15, 45, 105, 165, 225, 285, 345, 405, 465, 525, 585]
+        );
+    }
+
+    /// Ten minutes of Runtime checks, 15 s apart, as the cadence sees them.
+    /// The two measured tests above cover these seconds on the service path,
+    /// with the requests each pass made.
+    #[test]
+    fn the_history_wait_grows_only_on_an_answered_pass() {
+        let now = 1_800_000_000;
+        let peer = BTreeSet::from(["did:peer".to_string()]);
+        let passes = |answered: bool| {
+            let mut cadence = HistoryCadence::default();
+            let mut due = Vec::new();
+            for tick in 0..40 {
+                let at = now + tick * HISTORY_BASE_WAIT_SECS;
+                if cadence.due(at, true, peer.clone(), false) {
+                    due.push(at - now);
+                    cadence.pass_finished(at, answered);
+                }
+            }
+            due
+        };
+        assert_eq!(passes(true), [0, 15, 45, 105, 225, 465]);
+        assert_eq!(
+            passes(false),
+            [0, 15, 45, 105, 165, 225, 285, 345, 405, 465, 525, 585]
+        );
+    }
+
+    /// Each reason to ask other Homes at once, one check at a time.
+    #[test]
+    fn a_new_home_a_returned_link_and_an_open_community_each_ask_at_once() {
+        let now = 1_800_000_000;
+        let peer = BTreeSet::from(["did:peer".to_string()]);
+        let joined = BTreeSet::from(["did:peer".to_string(), "did:newcomer".to_string()]);
+        let mut cadence = HistoryCadence::default();
+        assert!(cadence.due(now, true, peer.clone(), false));
+        cadence.pass_finished(now, true);
+        assert!(!cadence.due(now + 1, true, peer.clone(), false));
+        // A Home this one did not see at the check before.
+        assert!(cadence.due(now + 2, true, joined.clone(), false));
+        cadence.pass_finished(now + 2, true);
+        // A Home that lapses and returns between two passes. Every check
+        // samples the Homes it sees, so the return asks again.
+        assert!(!cadence.due(now + 3, true, peer.clone(), false));
+        assert!(cadence.due(now + 4, true, joined.clone(), false));
+        cadence.pass_finished(now + 4, true);
+        // A Community connection that returns.
+        assert!(!cadence.due(now + 5, false, joined.clone(), false));
+        assert!(cadence.due(now + 6, true, joined.clone(), false));
+        cadence.pass_finished(now + 6, true);
+        // A person who opens Community.
+        assert!(!cadence.due(now + 7, true, joined.clone(), false));
+        assert!(cadence.due(now + 8, true, joined.clone(), true));
+        cadence.pass_finished(now + 8, true);
+        // The wait holds while Community stays open.
+        assert!(!cadence.due(now + 9, true, joined, true));
+    }
+
+    #[tokio::test]
+    async fn a_history_check_inside_its_wait_asks_nobody() {
+        let now = now_secs();
+        let a = fixture("history-cadence", "community", now).await;
+        let b = fixture("history-cadence", "community", now).await;
+        observe(&a, &b, now);
+        a.product.set_community_connected(true);
+        let plane = Arc::new(Plane {
+            source: a.product.local_device_did(),
+            peers: BTreeMap::from([(b.product.local_device_did(), b.registry.clone())]),
+            calls: Mutex::new(Vec::new()),
+            stall: false,
+        });
+        a.registry.set_carrier_invoker(plane.clone()).await;
+        let asks = || plane.calls.lock().unwrap().len();
+        a.service.fetch_if_due(now).await.unwrap();
+        assert_eq!(asks(), 1);
+        a.service.fetch_if_due(now + 14).await.unwrap();
+        assert_eq!(asks(), 1);
+        a.service
+            .fetch_if_due(now + HISTORY_BASE_WAIT_SECS)
+            .await
+            .unwrap();
+        assert_eq!(asks(), 2);
+    }
+
+    /// A person opens Community inside a wait. The Runtime asks present Homes
+    /// at the next check, because the Home page heartbeat records the open
+    /// view on the presence port History reads. Nothing new travels between
+    /// Homes for this.
+    #[tokio::test]
+    async fn opening_community_asks_present_homes_at_the_next_check() {
+        let now = now_secs();
+        let a = fixture("history-open", "community", now).await;
+        let b = fixture("history-open", "community", now).await;
+        observe(&a, &b, now);
+        a.product.set_community_connected(true);
+        let plane = Arc::new(Plane {
+            source: a.product.local_device_did(),
+            peers: BTreeMap::from([(b.product.local_device_did(), b.registry.clone())]),
+            calls: Mutex::new(Vec::new()),
+            stall: false,
+        });
+        a.registry.set_carrier_invoker(plane.clone()).await;
+        let asks = || plane.calls.lock().unwrap().len();
+        a.service.fetch_if_due(now).await.unwrap();
+        assert_eq!(asks(), 1);
+        a.service.fetch_if_due(now + 1).await.unwrap();
+        assert_eq!(asks(), 1, "the wait holds while nothing changes");
+        a.presence.record_community_open(now + 2);
+        a.service.fetch_if_due(now + 2).await.unwrap();
+        assert_eq!(asks(), 2, "a person who opens Community waits for nothing");
+        a.service.fetch_if_due(now + 3).await.unwrap();
+        assert_eq!(asks(), 2, "an open view does not ask at every check");
+    }
+
+    /// Answered passes run long enough to reach the quiet Home's longest
+    /// wait. A ten-second switch away keeps the previous heartbeat fresh,
+    /// so reopening has to work even when every check sees an open view.
+    #[tokio::test]
+    async fn quick_reopening_community_keeps_history_within_the_short_wait() {
+        let now = now_secs();
+        let a = fixture("history-quick-reopen", "community", now).await;
+        let b = fixture("history-quick-reopen", "community", now).await;
+        a.product.set_community_connected(true);
+        let (network_id, conversation_id) = a.product.history_scope();
+        let plane = Arc::new(CadencePlane {
+            endpoint: b.product.local_device_did(),
+            network_id: network_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            answers: true,
+            calls: Mutex::new(Vec::new()),
+        });
+        a.registry.set_carrier_invoker(plane.clone()).await;
+        let asks = || plane.calls.lock().unwrap().len();
+        let mut asked_at = Vec::new();
+        for tick in 0..=63 {
+            let offset = tick * 15;
+            let at = now + offset;
+            keep_both_present(&a, &b, at).await;
+            a.presence.record_community_open(at);
+            let before = asks();
+            a.service.fetch_if_due(at).await.unwrap();
+            if asks() > before {
+                asked_at.push(offset);
+            }
+        }
+        assert_eq!(asked_at.last(), Some(&945));
+        let before_reopening = asks();
+        // The person switches away just after the last heartbeat and returns
+        // ten seconds later. There is no close signal or false watching sample.
+        a.presence.record_community_open(now + 955);
+        for offset in [960, 975, 990, 1005] {
+            let at = now + offset;
+            keep_both_present(&a, &b, at).await;
+            a.presence.record_community_open(at);
+            a.service.fetch_if_due(at).await.unwrap();
+        }
+        assert_eq!(
+            asks(),
+            before_reopening + 1,
+            "a quick reopening gets another provider request within 60 seconds"
+        );
+        assert!(
+            asked_at.windows(2).all(|pair| pair[1] - pair[0] <= 60),
+            "answered passes stay short while Community remains open: {asked_at:?}"
+        );
     }
 
     #[tokio::test(start_paused = true)]

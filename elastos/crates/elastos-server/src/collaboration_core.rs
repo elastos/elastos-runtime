@@ -49,7 +49,7 @@ pub(crate) const DEFAULT_CONVERSATION_SEND_METHOD: &str = "message.send";
 const MAX_CORE_STATE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_UNRESOLVED_OUTGOING: usize = 64;
 const MAX_OUTGOING_RECORDS: usize = 4_096;
-const MAX_PENDING_INCOMING: usize = 32;
+pub(crate) const MAX_PENDING_INCOMING: usize = 32;
 pub(crate) const MAX_PENDING_INCOMING_PER_SENDER: usize = 8;
 pub(crate) const MAX_ACCEPTANCE_RECEIPTS_PER_OUTGOING: usize = 32;
 const MAX_INCOMING_RECORDS_AND_TOMBSTONES: usize = 4_096;
@@ -200,11 +200,25 @@ impl DurableIncomingAcceptance {
 pub(crate) struct CollaborationTransportIncomingAcceptance {
     acceptance_receipt_bytes: Vec<u8>,
     product_handoff_pending: bool,
+    message_hash: String,
+    message_expires_at: u64,
 }
 
 impl CollaborationTransportIncomingAcceptance {
     pub(crate) fn acceptance_receipt_bytes(&self) -> &[u8] {
         &self.acceptance_receipt_bytes
+    }
+
+    /// The accepted post this receipt confirms.
+    pub(crate) fn message_hash(&self) -> &str {
+        &self.message_hash
+    }
+
+    /// When the accepted post expires. A receipt for it is worth sending
+    /// until then and no longer: after that second the sender has dropped the
+    /// post and nobody waits for the confirmation.
+    pub(crate) fn message_expires_at(&self) -> u64 {
+        self.message_expires_at
     }
 
     #[cfg_attr(
@@ -3122,6 +3136,8 @@ fn transport_incoming_acceptance(
     accepted: DurableIncomingAcceptance,
 ) -> CollaborationTransportIncomingAcceptance {
     CollaborationTransportIncomingAcceptance {
+        message_hash: accepted.authorized.message().envelope_sha256().to_string(),
+        message_expires_at: accepted.authorized.message().envelope().payload.expires_at,
         acceptance_receipt_bytes: accepted.acceptance_receipt_bytes,
         product_handoff_pending: accepted.product_handoff_pending,
     }

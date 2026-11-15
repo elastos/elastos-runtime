@@ -132,6 +132,10 @@ x-wing = { version = "=0.1.0", features = ["hazmat", "zeroize"] }
 # The rand generation iroh-gossip's membership state machine takes; the
 # Community hub test drives that state machine directly.
 gossip-rand = { package = "rand", version = "0.10", default-features = false, features = ["std_rng"] }
+# The gossip wire encoding, for the neighbour that the actor-wedge test keeps
+# silent after the membership handshake.
+bytes = "1.7"
+postcard = { version = "1", default-features = false, features = ["alloc", "use-std"] }
 
 [features]
 default = []

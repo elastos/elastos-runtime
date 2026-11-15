@@ -812,11 +812,18 @@ async fn run_collaboration_history_worker(
                 if changed.is_err() || *shutdown.borrow() { return; }
             }
             result = async {
+                // A person who joins Community again waits for the posts of
+                // the time away, not for the wait the passes before it grew.
+                // The change can arrive while this worker sleeps or asks, so
+                // the worker reads the change itself.
+                if joined.has_changed().unwrap_or(false) {
+                    service.reset_cadence()?;
+                }
                 if !*joined.borrow_and_update() { return Ok(()); }
                 tokio::select! {
                     biased;
-                    _ = joined.changed() => Ok(()),
-                    result = service.fetch_once(now_secs()) => result,
+                    _ = joined.changed() => service.reset_cadence(),
+                    result = service.fetch_if_due(now_secs()) => result,
                 }
             } => {
                 if result.is_err() { tracing::debug!("Community history refresh is unavailable"); }
@@ -2821,6 +2828,164 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(service.history_task.is_none());
+    }
+
+    struct CountingHistoryInvoker {
+        asked: Arc<tokio::sync::Notify>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl elastos_runtime::provider::ProviderCarrierInvoker for CountingHistoryInvoker {
+        async fn invoke_carrier_provider(
+            &self,
+            _route: &elastos_runtime::provider::ProviderCarrierRoute,
+            invocation: &elastos_runtime::provider::ProviderInvocation,
+            _request: serde_json::Value,
+        ) -> Result<serde_json::Value, ProviderError> {
+            assert_eq!(
+                invocation.target,
+                crate::collaboration_history::HISTORY_PROVIDER
+            );
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.asked.notify_one();
+            Err(ProviderError::Unavailable("offline".to_string()))
+        }
+    }
+
+    /// A person leaves Community and joins it again. The history worker asks
+    /// for earlier posts at once, inside the wait its first pass set. The
+    /// test runs the real worker loop, so it covers the place where the
+    /// worker observes the membership change.
+    #[tokio::test(start_paused = true)]
+    async fn the_history_worker_asks_again_after_a_leave_and_a_join() {
+        for check_while_left in [false, true] {
+            let (temp, _) = configured_root(true);
+            let configuration =
+                load_and_accept_collaboration_startup_configuration(temp.path()).unwrap();
+            let CollaborationNetworkConfiguration::Configured {
+                profile,
+                grant: Some(grant),
+            } = configuration.configuration
+            else {
+                panic!("expected configured conversation");
+            };
+            let now = now_secs();
+            let (key, _) = generate_keypair();
+            let core = Arc::new(
+                CollaborationCore::new(
+                    temp.path(),
+                    key.clone(),
+                    (*profile).clone(),
+                    grant.clone(),
+                    CHAT_ROOM_CAPSULE,
+                )
+                .unwrap(),
+            );
+            let chat = CollaborationChatProductPort::new(core.clone()).unwrap();
+            let presence = CollaborationPresenceProductPort::new(core.clone())
+                .unwrap()
+                .with_presence_authority(crate::collaboration_presence_grant::test_authority());
+            let (local_profile, presence_grant) =
+                grant_local_presence(temp.path(), &presence, "test-principal", now).await;
+            let prepared = presence
+                .prepare_presence(
+                    presence_request_binding(
+                        &presence_grant.bind_request_id("local-history-presence"),
+                        "test-principal",
+                        &local_profile,
+                    )
+                    .unwrap(),
+                    &local_profile,
+                    now,
+                )
+                .unwrap();
+            presence.project_prepared_presence(&prepared, now).unwrap();
+            let (remote_key, _) = generate_keypair();
+            let remote_profile = profile_for_endpoint(&remote_key, "Remote");
+            let remote =
+                DefaultConversationDeviceAuthority::new(remote_key, (*profile).clone(), grant)
+                    .unwrap();
+            let announcement = remote
+                .prepare_profile_outgoing(
+                    &remote_profile,
+                    SERVICE,
+                    "elastos.chat.presence/v1",
+                    serde_json::json!({}),
+                    now,
+                    // The clock this worker reads stands still in this test,
+                    // so the record stays live and a presence lapse cannot
+                    // explain a later pass.
+                    45,
+                )
+                .unwrap();
+            core.accept_incoming_from_signed_source_for_test(announcement.envelope_bytes(), now)
+                .unwrap();
+            for handoff in presence.pending_presences().unwrap() {
+                presence.project_handoff(&handoff, now).unwrap();
+            }
+            let registry = Arc::new(ProviderRegistry::new());
+            let asked = Arc::new(tokio::sync::Notify::new());
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            registry
+                .set_carrier_invoker(Arc::new(CountingHistoryInvoker {
+                    asked: asked.clone(),
+                    calls: calls.clone(),
+                }))
+                .await;
+            let history = CollaborationHistoryService::new(
+                chat.clone(),
+                presence.clone(),
+                registry,
+                temp.path().to_path_buf(),
+            )
+            .await
+            .unwrap();
+            let membership = chat.community_membership().clone();
+            membership.set_joined(true).unwrap();
+            let (shutdown, shutdown_rx) = watch::channel(false);
+            let history_task = tokio::spawn(run_collaboration_history_worker(history, shutdown_rx));
+            // The first pass reaches nobody and sets a wait. The clock the
+            // worker reads does not move in this test, so only a reset can
+            // make a second pass due.
+            tokio::time::timeout(Duration::from_secs(60), asked.notified())
+                .await
+                .unwrap();
+            if check_while_left {
+                // The worker runs one check at 15 s while the person is away.
+                membership.set_joined(false).unwrap();
+                tokio::time::sleep(Duration::from_secs(20)).await;
+                membership.set_joined(true).unwrap();
+            } else {
+                // The leave and the join both fall inside one worker wait.
+                membership.set_joined(false).unwrap();
+                membership.set_joined(true).unwrap();
+            }
+            tokio::time::timeout(Duration::from_secs(60), asked.notified())
+                .await
+                .expect("the worker asks again after the join");
+            let mut service = CollaborationRuntimeService {
+                shutdown,
+                task: None,
+                discovery_task: None,
+                presence_task: None,
+                history_task: Some(history_task),
+                product_port: Some(chat),
+                presence_port: Some(presence),
+                discovery_service: None,
+                worker_product_port: None,
+                worker_presence_port: None,
+            };
+            tokio::time::timeout(Duration::from_millis(500), service.shutdown())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                calls.load(std::sync::atomic::Ordering::SeqCst),
+                2,
+                "check_while_left: {check_while_left}"
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]
