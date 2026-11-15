@@ -355,6 +355,8 @@ fn walletconnect_sdk_stamp(path: &FsPath) -> anyhow::Result<WalletConnectSdkStam
     })
 }
 
+type SdkCache = std::collections::BTreeMap<PathBuf, (WalletConnectSdkStamp, String)>;
+
 // Synchronous inventory/setup callers share this cache with HTTP admissions.
 // A miss hashes on a worker, including when a synchronous inventory is built
 // by an async caller. HTTP callers also yield while the worker finishes.
@@ -365,14 +367,19 @@ pub(crate) fn ensure_wallet_connector_configured(
     if connector_id != WALLET_WALLETCONNECT_CAPSULE_ID {
         return Ok(());
     }
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<SdkCache>> = std::sync::OnceLock::new();
+    ensure_wallet_connector_configured_with_cache(data_dir, CACHE.get_or_init(Default::default))
+}
+
+fn ensure_wallet_connector_configured_with_cache(
+    data_dir: &FsPath,
+    cache: &std::sync::Mutex<SdkCache>,
+) -> anyhow::Result<()> {
     let config = load_walletconnect_connector_config(data_dir)?;
     validate_walletconnect_connector_config(&config)?;
     let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
     let stamp = walletconnect_sdk_stamp(&sdk_path)?;
-    type SdkCache = std::collections::BTreeMap<PathBuf, (WalletConnectSdkStamp, String)>;
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<SdkCache>> = std::sync::OnceLock::new();
-    let mut cache = CACHE
-        .get_or_init(Default::default)
+    let mut cache = cache
         .lock()
         .map_err(|_| anyhow::anyhow!("WalletConnect SDK verification cache unavailable"))?;
     if cache
@@ -583,10 +590,15 @@ mod sdk_verification_tests {
     #[tokio::test]
     async fn walletconnect_sdk_cache_reuses_verification_and_invalidates_files_and_pin() {
         let (dir, sdk, config, mut value) = fixture();
-        let check = || {
-            ensure_wallet_connector_configured_async(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID)
-        };
+        let cache = Mutex::default();
+        let check = || async { ensure_wallet_connector_configured_with_cache(dir.path(), &cache) };
         check().await.unwrap();
+        // Other Homes can fill and evict the process-wide cache between checks.
+        let other_homes: Vec<_> = (0..16).map(|_| fixture()).collect();
+        for (other, _, _, _) in &other_homes {
+            ensure_wallet_connector_configured(other.path(), WALLET_WALLETCONNECT_CAPSULE_ID)
+                .unwrap();
+        }
         check().await.unwrap();
         assert_eq!(
             reads(&sdk).len(),
