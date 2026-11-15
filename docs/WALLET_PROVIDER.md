@@ -251,7 +251,8 @@ config on each admission. A changed pinned digest, SDK size, modification time,
 or file identity invalidates the entry; Unix identity includes device, inode,
 and change time. Missing or invalid files fail closed. Runtime restart clears
 the cache, and it retains at most 16 SDK paths. Matching and mismatched hashes
-share the same file-stamp and pin invalidation rules. Existing admitted relay frames
+share the same file-stamp and pin invalidation rules. Metadata before and after
+hashing comes from the same open file handle. Existing admitted relay frames
 keep their original admission; new admissions check the current files.
 
 WalletConnect is a dedicated connector capsule (`wallet-walletconnect`). The

@@ -327,14 +327,30 @@ struct WalletConnectSdkStamp {
     identity: (u64, u64, i64, i64),
 }
 
-fn walletconnect_sdk_stamp(path: &FsPath) -> anyhow::Result<WalletConnectSdkStamp> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+fn open_walletconnect_sdk(path: &FsPath) -> anyhow::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    // Refuse the final symlink on other platforms as well.
+    anyhow::ensure!(
+        !std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()),
+        "WalletConnect connector requires a regular SDK file"
+    );
+    options.open(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             anyhow::anyhow!("WalletConnect connector is not configured: pinned SDK asset missing")
         } else {
             error.into()
         }
-    })?;
+    })
+}
+
+fn walletconnect_sdk_stamp(file: &std::fs::File) -> anyhow::Result<WalletConnectSdkStamp> {
+    let metadata = file.metadata()?;
     anyhow::ensure!(
         metadata.is_file() && metadata.len() <= 8 * 1024 * 1024,
         "WalletConnect connector requires a bounded regular SDK file"
@@ -377,7 +393,8 @@ fn ensure_wallet_connector_configured_with_cache(
     let config = load_walletconnect_connector_config(data_dir)?;
     validate_walletconnect_connector_config(&config)?;
     let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
-    let stamp = walletconnect_sdk_stamp(&sdk_path)?;
+    let file = open_walletconnect_sdk(&sdk_path)?;
+    let stamp = walletconnect_sdk_stamp(&file)?;
     let mut cache = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -391,11 +408,16 @@ fn ensure_wallet_connector_configured_with_cache(
     // Async admissions and inventories already own a blocking-pool worker.
     #[cfg(test)]
     sdk_verification_tests::record_read(&sdk_path);
-    let bytes = gateway_walletconnect::read_bytes(&sdk_path, 8 * 1024 * 1024)?
-        .ok_or_else(|| anyhow::anyhow!("WalletConnect pinned SDK asset missing"))?;
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    (&file).take(8 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(
+        bytes.len() <= 8 * 1024 * 1024,
+        "WalletConnect SDK exceeds its limit"
+    );
     let digest = format!("{:x}", Sha256::digest(&bytes));
     anyhow::ensure!(
-        stamp == walletconnect_sdk_stamp(&sdk_path)?,
+        stamp == walletconnect_sdk_stamp(&file)?,
         "WalletConnect SDK changed during verification"
     );
     let matches = digest.eq_ignore_ascii_case(config.sdk_sha256.trim());
@@ -549,7 +571,19 @@ mod sdk_verification_tests {
 
     type Reads = HashMap<PathBuf, Vec<ThreadId>>;
     static READS: OnceLock<Mutex<Reads>> = OnceLock::new();
+    static REPLACE: OnceLock<Mutex<HashMap<PathBuf, Vec<u8>>>> = OnceLock::new();
     pub(super) fn record_read(path: &FsPath) {
+        if let Some(bytes) = REPLACE
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .remove(path)
+        {
+            let parent = path.parent().unwrap();
+            std::fs::rename(parent, parent.with_extension("original")).unwrap();
+            std::fs::create_dir_all(parent).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
         READS
             .get_or_init(Default::default)
             .lock()
@@ -732,6 +766,36 @@ mod sdk_verification_tests {
             3,
             "changed bytes are checked immediately"
         );
+    }
+
+    #[test]
+    fn walletconnect_sdk_stamp_and_hash_use_the_same_open_file() {
+        let (dir, sdk, _, _) = fixture();
+        let cache = Mutex::default();
+        REPLACE
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert(sdk.clone(), b"tampered!!!".to_vec());
+        ensure_wallet_connector_configured_with_cache(dir.path(), &cache).unwrap();
+        assert!(
+            ensure_wallet_connector_configured_with_cache(dir.path(), &cache).is_err(),
+            "next admission sees the replacement immediately"
+        );
+        assert_eq!(reads(&sdk).len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walletconnect_sdk_refuses_a_final_symlink_even_after_a_cached_pass() {
+        let (dir, sdk, _, _) = fixture();
+        let cache = Mutex::default();
+        ensure_wallet_connector_configured_with_cache(dir.path(), &cache).unwrap();
+        let target = sdk.with_extension("target");
+        std::fs::rename(&sdk, &target).unwrap();
+        std::os::unix::fs::symlink(&target, &sdk).unwrap();
+        assert!(ensure_wallet_connector_configured_with_cache(dir.path(), &cache).is_err());
+        assert_eq!(reads(&sdk).len(), 1);
     }
 
     #[test]
