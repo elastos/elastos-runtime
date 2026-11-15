@@ -89,6 +89,7 @@ pub(in crate::api::gateway) async fn reject_wallet_approval_request(
             );
             let mut summary = system_wallet_approvals_summary(state, authority, false).await;
             if dismissed {
+                summary.receipt_status = Some("dismissed".to_string());
                 summary.note = Some(
                     "Request dismissed. Check your connected wallet before sending again."
                         .to_string(),

@@ -33,7 +33,7 @@ test("Wallet dismisses earlier-session connector sends without another approval"
         calls.push({ path, input });
         if (refuse) throw new Error("Runtime refused dismissal");
         request = { ...request, status: "rejected" };
-        return { note: "Request dismissed. Check your connected wallet before sending again." };
+        return { receipt_status: "dismissed" };
       },
       notifyHomeSummaryChanged() {},
       openApprovalMethod() { assert.fail("dismissal opens no signer"); },
@@ -91,9 +91,8 @@ test("Activity distinguishes pending rejection, approved dismissal and a late wa
 for (const dismissed of [false, true]) test(`Wallet uses the current rejection result (dismissed=${dismissed})`, async () => {
   const messages = [];
   const requests = createWalletRequests({
-    fetchJson: async () => ({ note: dismissed
-      ? "Request dismissed. Check your connected wallet before sending again."
-      : null }),
+    fetchJson: async () => ({ receipt_status: dismissed ? "dismissed" : null,
+      note: "Fixture provider summary unavailable" }),
     shellHeaders: headers => headers,
     showStatus: message => messages.push(message),
     notifyHomeSummaryChanged() {}, refreshWalletState: async () => {},

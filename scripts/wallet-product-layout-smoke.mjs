@@ -342,7 +342,7 @@ async function startServer() {
         assert(request.headers["x-elastos-home-token"] === "wallet-home-token", "dismissal carries Wallet authority");
         state.rejectBodies.push(await readBody(request));
         state.approvals[0].status = "rejected";
-        json(response, 200, { approval_requests: state.approvals, note: "Request dismissed. Check your connected wallet before sending again." });
+        json(response, 200, { approval_requests: state.approvals, receipt_status: "dismissed", note: "Request dismissed. Check your connected wallet before sending again." });
         return;
       }
       if (url.pathname === "/api/wallet/prices" && request.method === "GET") {

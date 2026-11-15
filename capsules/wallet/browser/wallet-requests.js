@@ -188,7 +188,9 @@ export function createWalletRequests({
         headers: shellHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({ reason: button.dataset.walletApprovedTransaction === "true" ? "Dismissed in Wallet" : "Rejected in Wallet" }),
       });
-      showStatus(result?.note || "Request rejected.", "success");
+      showStatus(result?.receipt_status === "dismissed"
+        ? "Request dismissed. Check your connected wallet before sending again."
+        : "Request rejected.", "success");
       notifyHomeSummaryChanged();
       await refreshWalletState();
     } catch (error) {

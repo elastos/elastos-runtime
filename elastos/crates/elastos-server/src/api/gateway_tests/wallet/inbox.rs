@@ -953,6 +953,10 @@ async fn test_inbox_reject_resolved_wallet_request_returns_bad_request() {
                 .unwrap();
             if status == "approved" {
                 assert!(String::from_utf8_lossy(&body).contains("Request dismissed."));
+                if surface != INBOX_CAPSULE_ID {
+                    let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(response["receipt_status"], "dismissed");
+                }
             }
             if expected == StatusCode::OK {
                 let auth = crate::auth::load_auth_state(dir.path()).unwrap();
