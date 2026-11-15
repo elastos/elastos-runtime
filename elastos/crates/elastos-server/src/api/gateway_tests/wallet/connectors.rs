@@ -633,10 +633,11 @@ async fn test_walletconnect_connector_config_returns_pinned_sdk_contract() {
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
 
     let response = app
+        .clone()
         .oneshot(
             test_browser_request("localhost:61180", "null")
                 .uri("/api/apps/wallet-walletconnect/wallet/config")
-                .header("x-elastos-home-token", token)
+                .header("x-elastos-home-token", &token)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -664,6 +665,19 @@ async fn test_walletconnect_connector_config_returns_pinned_sdk_contract() {
     assert_eq!(json["evm_chains"][0]["chainName"], "Elastos Smart Chain");
     assert_eq!(json["evm_chains"][1]["chainId"], "0x2105");
     assert_eq!(json["evm_chains"][1]["chainName"], "Base");
+    // A valid launch with a removed SDK retains the configuration error response.
+    std::fs::remove_file(dir.path().join(WALLETCONNECT_SDK_PATH)).unwrap();
+    let missing = app
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .uri("/api/apps/wallet-walletconnect/wallet/config")
+                .header("x-elastos-home-token", &token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

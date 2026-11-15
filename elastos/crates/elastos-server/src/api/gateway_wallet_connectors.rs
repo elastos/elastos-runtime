@@ -328,7 +328,13 @@ struct WalletConnectSdkStamp {
 }
 
 fn walletconnect_sdk_stamp(path: &FsPath) -> anyhow::Result<WalletConnectSdkStamp> {
-    let metadata = std::fs::symlink_metadata(path)?;
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!("WalletConnect connector is not configured: pinned SDK asset missing")
+        } else {
+            error.into()
+        }
+    })?;
     anyhow::ensure!(
         metadata.is_file() && metadata.len() <= 8 * 1024 * 1024,
         "WalletConnect connector requires a bounded regular SDK file"
@@ -589,6 +595,8 @@ mod sdk_verification_tests {
         );
         // Same length and restored mtime still invalidate through ctime on Unix.
         let modified = std::fs::metadata(&sdk).unwrap().modified().unwrap();
+        // Allow coarse filesystem change clocks to advance before restoring mtime.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         std::fs::write(&sdk, b"tampered!!!").unwrap();
         std::fs::File::options()
             .write(true)
@@ -619,9 +627,12 @@ mod sdk_verification_tests {
             "a different pinned digest invalidates the cache"
         );
         std::fs::remove_file(&sdk).unwrap();
+        let missing = check().await.unwrap_err();
         assert!(
-            check().await.is_err(),
-            "a missing SDK invalidates the cache"
+            missing
+                .to_string()
+                .contains("WalletConnect connector is not configured: pinned SDK asset missing"),
+            "missing SDK keeps the configuration error response: {missing}"
         );
     }
 
