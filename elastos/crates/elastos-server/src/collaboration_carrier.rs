@@ -22,7 +22,7 @@ use crate::collaboration_protocol::{
 
 const COLLABORATION_TOPIC_DOMAIN: &[u8] = b"elastos.collaboration.carrier.topic.v1";
 const COLLABORATION_TOPIC_PREFIX: &str = "__elastos_internal/collaboration-v1/";
-const COLLABORATION_RECEIVE_BATCH_SIZE: usize = 32;
+pub(crate) const COLLABORATION_RECEIVE_BATCH_SIZE: usize = 32;
 const MAX_RECEIVE_RESPONSE_BYTES: usize =
     MAX_COLLABORATION_TRANSPORT_FRAME_BYTES * COLLABORATION_RECEIVE_BATCH_SIZE + 64 * 1024;
 /// How long a joined Home may have no Community peer before it repairs the

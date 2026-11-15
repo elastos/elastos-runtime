@@ -10,9 +10,12 @@ use elastos_runtime::provider::{
     ProviderRegistry, ProviderTransfer, ResourceRequest, ResourceResponse,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::time::Instant;
 
-use crate::collaboration_carrier::{CollaborationCarrierSendOutcome, JoinedCollaborationNetwork};
+use crate::collaboration_carrier::{
+    CollaborationCarrierSendOutcome, JoinedCollaborationNetwork, COLLABORATION_RECEIVE_BATCH_SIZE,
+};
 use crate::collaboration_core::{CollaborationCore, CollaborationTransportIngestion};
 use crate::collaboration_presence::CollaborationPresenceProductPort;
 use crate::collaboration_protocol::{
@@ -27,15 +30,26 @@ pub(crate) struct CollaborationTransportDriver {
     ingested: Mutex<IngestedBatch>,
 }
 
-/// How far this Home got through the batch the Carrier holds at `cursor`.
-/// The Carrier replays that exact range until the Home acknowledges it
-/// (`carrier.rs:7140-7146`), so without this count a Home that cannot
+/// The frames this Home already ingested from the batch the Carrier holds at
+/// `cursor`. The Carrier replays that exact range until the Home acknowledges
+/// it (`carrier.rs:7140-7146`), so without this record a Home that cannot
 /// acknowledge would ingest those frames again on every live cycle and gossip
 /// each stored acceptance receipt again with it.
+///
+/// Each entry names its own frame by digest, because a Carrier position
+/// belongs to a topic buffer that a leave and a join recreate from position 0
+/// (`carrier.rs:6957-6988`, `carrier.rs:1344-1350`). A position alone would
+/// let this record hide a frame it was never counted on. The record holds one
+/// batch, so it stays at or under `COLLABORATION_RECEIVE_BATCH_SIZE` digests,
+/// and the acknowledged range drops it.
 #[derive(Default)]
 struct IngestedBatch {
     cursor: u64,
-    frames: usize,
+    digests: Vec<[u8; 32]>,
+}
+
+fn transport_frame_digest(frame: &[u8]) -> [u8; 32] {
+    Sha256::digest(frame).into()
 }
 
 const SHARED_FAST_RETRY_WINDOW_SECS: u64 = 3;
@@ -541,7 +555,7 @@ impl CollaborationTransportDriver {
             return Ok(CollaborationIncomingOnceOutcome::RetryRequired(summary));
         }
         summary.carrier_rejected_frames = batch.rejected_frames();
-        let mut ingested = self.ingested_frames(batch.cursor())?;
+        let mut ingested = self.ingested_frames(batch.cursor(), batch.envelopes())?;
         for envelope in batch.envelopes().iter().skip(ingested) {
             if !self.core.community_membership().joined() {
                 return Ok(CollaborationIncomingOnceOutcome::RetryRequired(summary));
@@ -549,37 +563,71 @@ impl CollaborationTransportDriver {
             if !self.ingest_frame(envelope, now, &mut summary).await {
                 return Ok(CollaborationIncomingOnceOutcome::RetryRequired(summary));
             }
+            self.record_ingested_frame(batch.cursor(), ingested, envelope)?;
             ingested += 1;
-            self.record_ingested_frames(batch.cursor(), ingested)?;
         }
 
         match self.network.ack(&batch).await {
-            Ok(()) => Ok(CollaborationIncomingOnceOutcome::Acknowledged(summary)),
+            Ok(()) => {
+                self.forget_ingested_frames()?;
+                Ok(CollaborationIncomingOnceOutcome::Acknowledged(summary))
+            }
             Err(_) => Ok(CollaborationIncomingOnceOutcome::RetryRequired(summary)),
         }
     }
 
-    /// Frames of the batch at `cursor` this Home has already ingested. A later
-    /// cursor starts its own count, and a Carrier range is always the same
-    /// buffer positions, so a sender's genuine re-send never lands in a count.
-    fn ingested_frames(&self, cursor: u64) -> anyhow::Result<usize> {
+    /// How many frames at the front of this batch the record already names.
+    /// The count stops at the first frame the record does not name, so a
+    /// Carrier position that now carries another frame earns its own
+    /// ingestion, and a sender's genuine re-send at a new position does too.
+    fn ingested_frames(&self, cursor: u64, envelopes: &[Vec<u8>]) -> anyhow::Result<usize> {
         let ingested = self
             .ingested
             .lock()
             .map_err(|_| anyhow::anyhow!("ingested batch lock poisoned"))?;
-        Ok(if ingested.cursor == cursor {
-            ingested.frames
-        } else {
-            0
-        })
+        if ingested.cursor != cursor {
+            return Ok(0);
+        }
+        Ok(envelopes
+            .iter()
+            .zip(ingested.digests.iter())
+            .take_while(|(envelope, digest)| transport_frame_digest(envelope) == **digest)
+            .count())
     }
 
-    fn record_ingested_frames(&self, cursor: u64, frames: usize) -> anyhow::Result<()> {
+    /// Names the frame at `position` of the batch at `cursor` as ingested.
+    fn record_ingested_frame(
+        &self,
+        cursor: u64,
+        position: usize,
+        frame: &[u8],
+    ) -> anyhow::Result<()> {
+        let mut ingested = self
+            .ingested
+            .lock()
+            .map_err(|_| anyhow::anyhow!("ingested batch lock poisoned"))?;
+        if ingested.cursor != cursor {
+            *ingested = IngestedBatch {
+                cursor,
+                digests: Vec::new(),
+            };
+        }
+        ingested.digests.truncate(position);
+        if ingested.digests.len() == position && position < COLLABORATION_RECEIVE_BATCH_SIZE {
+            ingested.digests.push(transport_frame_digest(frame));
+        }
+        Ok(())
+    }
+
+    /// Drops the record once the Carrier accepts the range. The Carrier never
+    /// replays an acknowledged range, so the record has nothing left to say,
+    /// and a later range at the same position starts from nothing.
+    fn forget_ingested_frames(&self) -> anyhow::Result<()> {
         *self
             .ingested
             .lock()
             .map_err(|_| anyhow::anyhow!("ingested batch lock poisoned"))? =
-            IngestedBatch { cursor, frames };
+            IngestedBatch::default();
         Ok(())
     }
 
@@ -665,7 +713,6 @@ mod tests {
     };
     use elastos_runtime::provider::ProviderCarrierInvoker;
     use elastos_runtime::signature::{generate_keypair, SigningKey};
-    use sha2::{Digest, Sha256};
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     const NETWORK: &str = "collaboration-transport-test";
