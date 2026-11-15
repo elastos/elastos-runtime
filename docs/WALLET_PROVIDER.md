@@ -272,11 +272,15 @@ it again supplies recovery instructions and keeps the send control disabled.
 A returned transaction hash is passed to Runtime once even if the account,
 network or expiry changed during the phone prompt. An approved WalletConnect
 transaction can complete once within 24 hours after expiry, in the same Runtime
-session. Wallet keeps an approved connector transaction in its request list.
+session. Wallet keeps an approved WalletConnect transaction in its request list.
 Its owner can use Reject in Wallet to dismiss it in a later Runtime session and
 release its approval slot. Runtime also accepts this rejection from System and
-Inbox. Connector calls and completion
-keep their original session binding. Reject does not cancel a phone transaction.
+Inbox. These owner surfaces can dismiss an approved send in the same session or
+a later session. The connector and requesting app keep their original authority.
+Completion keeps its original session binding. Reject does not cancel a phone transaction.
+Runtime records one hash returned within the same grace period after dismissal,
+with the normal completion bindings. The request stays dismissed; Activity shows
+that it was dismissed here and still sent from the wallet, with the hash.
 An unfinished prompt expires after the grace period; other connectors keep their normal TTL.
 Runtime checks the returned
 transaction hash's format only. The phone wallet confirms the transaction;
@@ -311,8 +315,10 @@ a local Exit backend and its separate adapter and relay sockets. When Browser's
 local Exit helper starts successfully, the first matching existing backend takes
 precedence; the default Browser wildcard therefore carries the relay. WalletConnect's
 backend handles requests those backends do not match. When the Browser helper stays
-stopped or fails to start, WalletConnect's relay-only backend takes first match for
-these two TLS hosts. Retained Browser backends keep their order and matching for
+stopped or fails to start, WalletConnect's relay-only backend precedes the generated
+Browser backend for these two TLS hosts. Operator backends keep their order and
+first match. Exit configuration refresh uses the same merge and checks the Browser
+relay helper at that moment. Retained Browser backends keep their matching for
 other traffic, including on older linux-amd64 Homes with a wildcard Browser config.
 Runtime validates the merged configuration with
 exit-provider's parser and keeps the existing Exit configuration if the addition

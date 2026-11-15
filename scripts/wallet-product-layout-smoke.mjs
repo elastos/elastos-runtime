@@ -865,11 +865,13 @@ async function run() {
     await assertNoErrors(railPage, server, "rail");
     server.state.approvals = [{ ...railFixtureState.approvals[0], request_id: "approved-send",
       status: "approved", intent: "transaction_intent", connector_id: "wallet-walletconnect",
+      approved_at: Math.floor(Date.now() / 1000) - 13 * 3600 - 290,
       created_at: Math.floor(Date.now() / 1000) - 13 * 3600 - 300,
       expires_at: Math.floor(Date.now() / 1000) - 13 * 3600 }];
     await railPage.goto(`${server.baseUrl}/fixture-host.html?mode=window`, { waitUntil: "networkidle" });
     const dismissFrame = await walletFrame(railPage);
     await dismissFrame.locator(".wallet-account").waitFor({ state: "visible" });
+    assert(await dismissFrame.locator("#wallet-approvals-badge").textContent() === "1", "WalletConnect unfinished send counts in Activity");
     await dismissFrame.locator("#wallet-activity-open").click();
     const approvedCard = dismissFrame.locator('[data-wallet-request-id="approved-send"]');
     await approvedCard.waitFor({ state: "visible" });
@@ -879,6 +881,24 @@ async function run() {
     await approvedCard.waitFor({ state: "detached" });
     assert(server.state.rejectBodies.length === 1, "one dismissal reaches Runtime");
     assert((await dismissFrame.locator("#wallet-status").textContent()).startsWith("Request dismissed."), "person sees dismissal confirmation");
+    server.state.approvals[0].transaction_hash = `0x${"a".repeat(64)}`;
+    await railPage.reload({ waitUntil: "networkidle" });
+    const lateFrame = await walletFrame(railPage);
+    await lateFrame.locator(".wallet-account").waitFor({ state: "visible" });
+    await lateFrame.locator("#wallet-activity-open").click();
+    const lateRow = lateFrame.locator(".wallet-activity-row");
+    assert(await lateRow.count() === 1, "late receipt stays on one Activity line");
+    assert((await lateRow.textContent()).includes("Dismissed here; still sent from wallet"), "late receipt explains the dismissed send");
+    assert((await lateRow.textContent()).includes("tx 0xaaaa"), "late receipt shows its hash");
+    for (const connector_id of ["wallet-metamask", "wallet-unisat"]) {
+      server.state.approvals = [{ ...server.state.approvals[0], status: "approved", connector_id, transaction_hash: undefined }];
+      await railPage.reload({ waitUntil: "networkidle" });
+      const otherFrame = await walletFrame(railPage);
+      await otherFrame.locator(".wallet-account").waitFor({ state: "visible" });
+      assert(await otherFrame.locator("#wallet-approvals-badge").isHidden(), `${connector_id} keeps the normal Activity badge`);
+      await otherFrame.locator("#wallet-activity-open").click();
+      assert(await otherFrame.locator('[data-wallet-request-id="approved-send"]').count() === 0, `${connector_id} stays out of the pending list`);
+    }
     await assertNoErrors(railPage, server, "dismissal");
     console.log("Wallet approved-send dismissal PASS: visible recovery card, Reject, one Runtime request, removed after refresh");
     await railPage.close();
