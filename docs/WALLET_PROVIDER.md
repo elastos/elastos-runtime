@@ -244,6 +244,15 @@ storage, and signed runtime audit scaffolding. An approval that expires before
 managed signing or external handoff completion fails closed instead of becoming
 a stale signing authority.
 
+SDK availability checks share a verified-result cache. Async HTTP handlers run
+verification in the blocking pool. Synchronous package inventory checks also
+hash on a worker, and wait for a cold verification. The cache checks the current
+config on each admission. A changed pinned digest, SDK size, modification time,
+or file identity invalidates the entry; Unix identity includes device, inode,
+and change time. Missing or invalid files fail closed. Runtime restart clears
+the cache, and it retains at most 16 SDK paths. Existing admitted relay frames
+keep their original admission; new admissions check the current files.
+
 WalletConnect is a dedicated connector capsule (`wallet-walletconnect`). The
 reviewed Reown SDK and its bundled QR renderer run only in that capsule's opaque
 sandboxed frame. `wallet-provider` owns proof verification, linked accounts,
@@ -273,14 +282,18 @@ A returned transaction hash is passed to Runtime once even if the account,
 network or expiry changed during the phone prompt. An approved WalletConnect
 transaction can complete once within 24 hours after expiry, in the same Runtime
 session. Wallet keeps an approved WalletConnect transaction in its request list.
-Its owner can use Reject in Wallet to dismiss it in a later Runtime session and
-release its approval slot. Runtime also accepts this rejection from System and
-Inbox. These owner surfaces can dismiss an approved send in the same session or
-a later session. The connector and requesting app keep their original authority.
-Completion keeps its original session binding. Reject does not cancel a phone transaction.
+Its owner can use Dismiss in Wallet to close it and release its approval slot,
+in the same Runtime session or a later session. System and Inbox list pending
+requests only. Runtime accepts dismissal through their owner-authorized actions
+if a pending card remains on screen after WalletConnect approves the send.
+The connector and requesting app keep their original authority. The requesting
+app keeps its rejection after dismissal. Completion keeps its original session
+binding. Dismiss does not cancel a phone transaction.
 Runtime records one hash returned within the same grace period after dismissal,
 with the normal completion bindings. The request stays dismissed; Activity shows
-that it was dismissed here and still sent from the wallet, with the hash.
+"Sent from wallet after request was dismissed" with the hash and a sent mark.
+Runtime logs `wallet.approval.sent_after_dismissal` for this receipt, and the
+connector reports "Request dismissed. Transaction sent from wallet."
 An unfinished prompt expires after the grace period; other connectors keep their normal TTL.
 Runtime checks the returned
 transaction hash's format only. The phone wallet confirms the transaction;
