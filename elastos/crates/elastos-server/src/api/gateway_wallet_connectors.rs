@@ -385,10 +385,15 @@ async fn walletconnect_request_binding(
         .as_array()
         .and_then(|requests| requests.iter().find(|r| r["request_id"] == request_id))
         .ok_or_else(|| anyhow::anyhow!("WalletConnect approval request not found"))?;
+    let late_transaction_receipt = status == "approved"
+        && request["status"] == "rejected"
+        && request["approved_at"].as_u64().is_some()
+        && request["intent"] == "transaction_intent"
+        && request["signed_result"].is_null();
     anyhow::ensure!(
         request["principal_id"].as_str() == Some(authority.verified_context().principal_id())
             && request["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
-            && request["status"] == status
+            && (request["status"] == status || late_transaction_receipt)
             && (request["expires_at"].as_u64().is_some_and(|expiry| expiry > now_ts())
                 // The phone can return a sent transaction after the approval TTL.
                 // Approved state still binds its one completion to the same payload.

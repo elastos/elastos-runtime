@@ -96,7 +96,7 @@ impl Fixture {
             })
             .unwrap();
         let owner = passkey_authority(data.path());
-        super::connectors::seed_walletconnect_connector_config(data.path());
+        seed_walletconnect_connector_config(data.path());
         let connector = projection_launch_token_for_authority_context(
             data.path(),
             WALLET_WALLETCONNECT_CAPSULE_ID,

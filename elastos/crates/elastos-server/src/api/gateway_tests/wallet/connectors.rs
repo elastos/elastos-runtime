@@ -755,29 +755,6 @@ async fn test_metamask_connector_config_returns_runtime_evm_chain_metadata() {
     assert!(json.get("walletconnect").is_none());
 }
 
-pub(super) fn seed_walletconnect_connector_config(data_dir: &std::path::Path) {
-    let sdk = b"// pinned test WalletConnect SDK asset\n";
-    let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
-    std::fs::create_dir_all(sdk_path.parent().unwrap()).unwrap();
-    std::fs::write(&sdk_path, sdk).unwrap();
-    let sdk_sha256 = format!("{:x}", Sha256::digest(sdk));
-
-    let config_path = data_dir.join(WALLETCONNECT_CONFIG_PATH);
-    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-    std::fs::write(
-        config_path,
-        serde_json::to_vec(&json!({
-            "schema": WALLETCONNECT_CONFIG_SCHEMA,
-            "project_id": "test_walletconnect_project",
-            "sdk_package": WALLETCONNECT_SDK_PACKAGE,
-            "sdk_version": "1.0.0",
-            "sdk_sha256": sdk_sha256
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-}
-
 #[tokio::test]
 async fn test_metamask_connector_lists_external_wallet_accounts() {
     let dir = tempfile::tempdir().unwrap();
@@ -1349,6 +1326,10 @@ async fn test_metamask_connector_completes_external_wallet_handoff() {
 async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding() {
     for case in [
         "valid",
+        "dismissed",
+        "dismissed-pending",
+        "dismissed-outside-grace",
+        "dismissed-recorded",
         "hash-text",
         "hash-short",
         "hash-nonhex",
@@ -1373,12 +1354,14 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
         let payload = format!("0x{}", "ab".repeat(32));
         let provider = Arc::new(RecordingWalletProvider::new(MockWalletProvider {
             approvals: TokioMutex::new(vec![json!({
-                "request_id":"wallet-approval:wc-complete", "status":if case == "pending" { "pending" } else { "approved" },
+                "request_id":"wallet-approval:wc-complete", "status":if case == "pending" { "pending" } else if case.starts_with("dismissed") { "rejected" } else { "approved" },
                 "intent":"transaction_intent", "requested_by_actor":"documents", "resource":"elastos://transaction", "reason":"Fixture",
                 "account_id":"fixture-account", "address":address, "proof_type":"siwe", "chain_namespace":"eip155:20",
                 "connector_id":if case == "connector" { WALLET_METAMASK_CAPSULE_ID } else { WALLET_WALLETCONNECT_CAPSULE_ID },
                 "principal_id":if case == "principal" { "other-principal" } else { &owner.principal_id },
-                "payload_hash":payload, "created_at":now_ts(), "expires_at":if case == "expired" { now_ts()-1 } else if case == "outside-grace" { now_ts()-elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS } else { now_ts()+600 },
+                "approved_at":if case == "dismissed-pending" { None } else { Some(now_ts()-60) },
+                "signed_result":if case == "dismissed-recorded" { json!({"transaction_hash":"recorded"}) } else { Value::Null },
+                "payload_hash":payload, "created_at":now_ts(), "expires_at":if matches!(case, "expired" | "dismissed") { now_ts()-1 } else if matches!(case, "outside-grace" | "dismissed-outside-grace") { now_ts()-elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS } else { now_ts()+600 },
             })]),
             ..Default::default()
         }));
@@ -1399,7 +1382,7 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
             .header("x-elastos-home-token", &connector).header(CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string())).unwrap()).await.unwrap();
         let operations = provider.recorded_v2_operation_kinds().await;
-        if matches!(case, "valid" | "expired") {
+        if matches!(case, "valid" | "expired" | "dismissed") {
             assert_eq!(response.status(), StatusCode::OK, "{case}");
             assert!(operations.contains(&WalletOperationKind::CompleteConnectorHandoff));
             let requests = provider.requests.lock().await;

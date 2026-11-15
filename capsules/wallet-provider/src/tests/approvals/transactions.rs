@@ -234,7 +234,7 @@ fn validated_chain_outcome_projection_is_exact_and_idempotent() {
 #[test]
 fn transaction_intent_validates_payload_and_allows_external_handoff() {
     for connector in ["wallet-metamask", "wallet-walletconnect"] {
-        external_transaction_handoff_with_expiry(connector, None);
+        external_transaction_handoff_with_expiry(connector, None, false);
     }
 }
 
@@ -242,12 +242,18 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
 fn approved_connector_transaction_can_be_rejected_and_releases_its_slot() {
     for actor in ["wallet", "system", "inbox"] {
         for connector in ["wallet-metamask", "wallet-walletconnect"] {
-            external_transaction_handoff_with_expiry(connector, Some(actor));
+            for same_session in [false, true] {
+                external_transaction_handoff_with_expiry(connector, Some(actor), same_session);
+            }
         }
     }
 }
 
-fn external_transaction_handoff_with_expiry(connector: &str, dismiss_actor: Option<&str>) {
+fn external_transaction_handoff_with_expiry(
+    connector: &str,
+    dismiss_actor: Option<&str>,
+    same_session: bool,
+) {
     let dir = tempfile::tempdir().unwrap();
     let mut provider = init_provider(dir.path());
     let principal_id = "person:local:alice";
@@ -316,7 +322,11 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss_actor: Opti
     let (request_id, payload_hash) = match invoke_wallet(
         &mut provider,
         principal_id,
-        "system",
+        if dismiss_actor.is_some() {
+            "browser"
+        } else {
+            "system"
+        },
         WalletProviderOperationV2::RequestApproval {
             account_id: external_account_id.clone(),
             chain_namespace: "eip155:20".into(),
@@ -438,6 +448,8 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss_actor: Opti
         for context in [
             wallet_context_in_session(principal_id, connector, "session:replacement"),
             wallet_context_in_session(principal_id, "browser", "session:replacement"),
+            wallet_context(principal_id, connector),
+            wallet_context(principal_id, "browser"),
             wallet_context("person:local:bob", "wallet"),
             wallet_context(principal_id, "wallet-unisat"),
         ] {
@@ -487,7 +499,11 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss_actor: Opti
             matches!(invoke_wallet(&mut provider, principal_id, "system", next()),
             Response::Error { ref code, .. } if code == "approval_limit_reached")
         );
-        let context = wallet_context_in_session(principal_id, actor, "session:replacement");
+        let context = if same_session {
+            wallet_context(principal_id, actor)
+        } else {
+            wallet_context_in_session(principal_id, actor, "session:replacement")
+        };
         let response = invoke_wallet_with_context(&mut provider, &context, reject());
         assert!(matches!(response, Response::Ok { .. }), "{response:?}");
         let rejected = provider
@@ -506,23 +522,127 @@ fn external_transaction_handoff_with_expiry(connector: &str, dismiss_actor: Opti
             invoke_wallet(&mut provider, principal_id, "wallet", reject()),
             Response::Error { .. }
         ));
-        assert!(matches!(
-            invoke_wallet(
-                &mut provider,
-                principal_id,
-                connector,
-                WalletProviderOperationV2::CompleteConnectorHandoff {
-                    request_id,
+        let dismissed = provider
+            .store
+            .approval_requests
+            .iter()
+            .find(|r| r.request_id == request_id)
+            .unwrap()
+            .clone();
+        let complete = || WalletProviderOperationV2::CompleteConnectorHandoff {
+            request_id: request_id.clone(),
+            payload_hash: payload_hash.clone(),
+            signature: None,
+            signature_type: None,
+            public_key: None,
+            signer: external_address.into(),
+            transaction_hash: Some(format!("0x{}", "a".repeat(64))),
+        };
+        if connector == "wallet-walletconnect" {
+            for (who, session) in [
+                ("person:local:bob", "session:test"),
+                (principal_id, "session:replacement"),
+            ] {
+                let context = wallet_context_in_session(who, connector, session);
+                assert!(matches!(
+                    invoke_wallet_with_context(&mut provider, &context, complete()),
+                    Response::Error { .. }
+                ));
+            }
+            for field in ["payload", "signer", "signature"] {
+                let mut operation = complete();
+                if let WalletProviderOperationV2::CompleteConnectorHandoff {
                     payload_hash,
-                    signature: None,
-                    signature_type: None,
-                    public_key: None,
-                    signer: external_address.into(),
-                    transaction_hash: Some(format!("0x{}", "a".repeat(64))),
+                    signer,
+                    transaction_hash,
+                    signature,
+                    signature_type,
+                    ..
+                } = &mut operation
+                {
+                    match field {
+                        "payload" => *payload_hash = format!("0x{}", "b".repeat(64)),
+                        "signer" => *signer = format!("0x{}", "4".repeat(40)),
+                        "signature" => {
+                            *transaction_hash = None;
+                            *signature = Some(format!("0x{}", "a".repeat(130)));
+                            *signature_type = Some("personal_sign".into());
+                        }
+                        _ => unreachable!(),
+                    }
                 }
+                assert!(
+                    matches!(
+                        invoke_wallet(&mut provider, principal_id, connector, operation),
+                        Response::Error { .. }
+                    ),
+                    "{field}"
+                );
+            }
+            assert!(matches!(
+                invoke_wallet(&mut provider, principal_id, "wallet-metamask", complete()),
+                Response::Error { .. }
+            ));
+            for (approved_at, expires_at) in
+                [(None, now + 300), (dismissed.approved_at, now - grace)]
+            {
+                let request = provider
+                    .store
+                    .approval_requests
+                    .iter_mut()
+                    .find(|r| r.request_id == request_id)
+                    .unwrap();
+                request.approved_at = approved_at;
+                request.expires_at = expires_at;
+                assert!(matches!(
+                    invoke_wallet(&mut provider, principal_id, connector, complete()),
+                    Response::Error { .. }
+                ));
+            }
+            *provider
+                .store
+                .approval_requests
+                .iter_mut()
+                .find(|r| r.request_id == request_id)
+                .unwrap() = dismissed.clone();
+            let response = invoke_wallet(&mut provider, principal_id, connector, complete());
+            assert!(
+                matches!(response, Response::Ok { .. }),
+                "late receipt: {response:?}"
+            );
+            let stored = provider
+                .store
+                .approval_requests
+                .iter()
+                .find(|r| r.request_id == request_id)
+                .unwrap();
+            assert_eq!(stored.status, ApprovalStatus::Rejected);
+            assert_eq!(stored.resolved_at, dismissed.resolved_at);
+            assert_eq!(stored.rejection_reason, dismissed.rejection_reason);
+            assert_eq!(
+                stored.signed_result.as_ref().unwrap()["transaction_hash"],
+                format!("0x{}", "a".repeat(64))
+            );
+            assert!(stored.completed_at.is_some());
+            assert!(!approval_authority_is_active(stored, now_ts()));
+            let saved = load_store(provider.store_path.as_ref().unwrap()).unwrap();
+            assert_eq!(
+                saved
+                    .approval_requests
+                    .iter()
+                    .find(|r| r.request_id == request_id)
+                    .unwrap()
+                    .status,
+                ApprovalStatus::Rejected
+            );
+        }
+        assert!(
+            matches!(
+                invoke_wallet(&mut provider, principal_id, connector, complete()),
+                Response::Error { .. }
             ),
-            Response::Error { .. }
-        ));
+            "one receipt only; other connectors keep their TTL"
+        );
         return;
     }
     let transaction_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
