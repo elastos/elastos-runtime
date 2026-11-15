@@ -358,8 +358,7 @@ fn walletconnect_sdk_stamp(path: &FsPath) -> anyhow::Result<WalletConnectSdkStam
 type SdkCache = std::collections::BTreeMap<PathBuf, (WalletConnectSdkStamp, String)>;
 
 // Synchronous inventory/setup callers share this cache with HTTP admissions.
-// A miss hashes on a worker, including when a synchronous inventory is built
-// by an async caller. HTTP callers also yield while the worker finishes.
+// Callers on the blocking pool hash inline; synchronous setup uses its own thread.
 pub(crate) fn ensure_wallet_connector_configured(
     data_dir: &FsPath,
     connector_id: &str,
@@ -381,27 +380,18 @@ fn ensure_wallet_connector_configured_with_cache(
     let stamp = walletconnect_sdk_stamp(&sdk_path)?;
     let mut cache = cache
         .lock()
-        .map_err(|_| anyhow::anyhow!("WalletConnect SDK verification cache unavailable"))?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if cache
         .get(&sdk_path)
         .is_some_and(|entry| entry == &(stamp.clone(), config.sdk_sha256.clone()))
     {
         return Ok(());
     }
-    // Keep the bounded read and hash off Runtime's async threads, also for the
-    // synchronous package inventory API. Only successful checks enter the cache.
-    let digest = std::thread::scope(|scope| {
-        scope
-            .spawn(|| -> anyhow::Result<String> {
-                #[cfg(test)]
-                sdk_verification_tests::record_read(&sdk_path);
-                let bytes = gateway_walletconnect::read_bytes(&sdk_path, 8 * 1024 * 1024)?
-                    .ok_or_else(|| anyhow::anyhow!("WalletConnect pinned SDK asset missing"))?;
-                Ok(format!("{:x}", Sha256::digest(&bytes)))
-            })
-            .join()
-            .map_err(|_| anyhow::anyhow!("WalletConnect SDK verification worker failed"))?
-    })?;
+    #[cfg(test)]
+    sdk_verification_tests::record_read(&sdk_path);
+    let bytes = gateway_walletconnect::read_bytes(&sdk_path, 8 * 1024 * 1024)?
+        .ok_or_else(|| anyhow::anyhow!("WalletConnect pinned SDK asset missing"))?;
+    let digest = format!("{:x}", Sha256::digest(&bytes));
     anyhow::ensure!(
         stamp == walletconnect_sdk_stamp(&sdk_path)?,
         "WalletConnect SDK changed during verification"
@@ -648,11 +638,16 @@ mod sdk_verification_tests {
         );
     }
 
-    #[tokio::test]
-    async fn walletconnect_sdk_hash_runs_off_the_async_thread_for_sync_inventory_too() {
+    #[test]
+    fn walletconnect_sdk_verification_recovers_a_poisoned_cache_and_hashes_inline() {
         let (dir, sdk, _, _) = fixture();
-        ensure_wallet_connector_configured(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID).unwrap();
-        assert_ne!(reads(&sdk)[0], std::thread::current().id());
+        let cache = Mutex::default();
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = cache.lock().unwrap();
+            panic!("fixture poisoned cache");
+        });
+        ensure_wallet_connector_configured_with_cache(dir.path(), &cache).unwrap();
+        assert_eq!(reads(&sdk), [std::thread::current().id()]);
     }
 
     #[test]
