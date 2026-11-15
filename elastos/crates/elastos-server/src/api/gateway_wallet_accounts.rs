@@ -15,6 +15,23 @@ pub(in crate::api::gateway) async fn system_wallet_accounts_summary(
     wallet_accounts_summary_from_response(response)
 }
 
+fn cleanup_removed_walletconnect_account(
+    data_dir: &FsPath,
+    data: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let account = &data["account"];
+    if account["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
+        && !account["revoked_at"].is_null()
+        && data["connector_accounts_remaining"] == 0
+    {
+        let owner = account["principal_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Removed account owner is missing"))?;
+        gateway_walletconnect::clear_principal_storage(data_dir, owner)?;
+    }
+    Ok(())
+}
+
 pub(in crate::api::gateway) async fn runtime_wallet_data(
     state: &GatewayState,
     authority: &RuntimeWalletAuthority,
@@ -29,7 +46,14 @@ pub(in crate::api::gateway) async fn runtime_wallet_data(
         .await?
         .result
     {
-        elastos_wallet_contract::WalletResultV2::Ok { data } => Ok(data),
+        elastos_wallet_contract::WalletResultV2::Ok { data } => {
+            if cleanup_removed_walletconnect_account(&state.data_dir, &data).is_err() {
+                tracing::warn!(
+                    "WalletConnect session cleanup requires operator retry after account removal"
+                );
+            }
+            Ok(data)
+        }
         elastos_wallet_contract::WalletResultV2::Error { message, .. } => anyhow::bail!(message),
     }
 }
@@ -49,7 +73,14 @@ pub(in crate::api::gateway) async fn runtime_wallet_data_with_request_id(
         .await?
         .result
     {
-        elastos_wallet_contract::WalletResultV2::Ok { data } => Ok(data),
+        elastos_wallet_contract::WalletResultV2::Ok { data } => {
+            if cleanup_removed_walletconnect_account(&state.data_dir, &data).is_err() {
+                tracing::warn!(
+                    "WalletConnect session cleanup requires operator retry after account removal"
+                );
+            }
+            Ok(data)
+        }
         elastos_wallet_contract::WalletResultV2::Error { message, .. } => anyhow::bail!(message),
     }
 }
@@ -288,16 +319,18 @@ pub(in crate::api::gateway) async fn wallet_app_summary(
             "id": WALLET_CAPSULE_ID,
             "title": "Wallet",
         },
-        "approval_methods": wallet_approval_methods_summary(&state.data_dir),
+        "approval_methods": wallet_approval_methods_summary(&state.data_dir).await,
         "wallet_accounts": wallet_accounts,
         "wallet_approvals": wallet_approvals,
     }))
     .into_response()
 }
 
-fn wallet_approval_methods_summary(data_dir: &FsPath) -> serde_json::Value {
+async fn wallet_approval_methods_summary(data_dir: &FsPath) -> serde_json::Value {
     let walletconnect_available =
-        ensure_wallet_connector_configured(data_dir, WALLET_WALLETCONNECT_CAPSULE_ID).is_ok();
+        ensure_wallet_connector_configured_async(data_dir, WALLET_WALLETCONNECT_CAPSULE_ID)
+            .await
+            .is_ok();
     serde_json::json!({
         "schema": "elastos.wallet.approval-methods/v1",
         "metamask": {
@@ -314,4 +347,36 @@ fn wallet_approval_methods_summary(data_dir: &FsPath) -> serde_json::Value {
             "requires_pinned_config": !walletconnect_available,
         },
     })
+}
+
+#[cfg(test)]
+mod walletconnect_cleanup_tests {
+    use super::*;
+    #[test]
+    fn walletconnect_account_cleanup_uses_owner_and_keeps_other_accounts_pairing() {
+        let data = tempfile::tempdir().unwrap();
+        for principal in ["owner", "caller"] {
+            assert_eq!(
+                gateway_walletconnect::storage_revision(data.path(), principal).unwrap(),
+                "\"0\""
+            );
+        }
+        let mut response = serde_json::json!({"account":{"connector_id":WALLET_WALLETCONNECT_CAPSULE_ID,
+            "principal_id":"owner","revoked_at":1},"connector_accounts_remaining":1});
+        cleanup_removed_walletconnect_account(data.path(), &response).unwrap();
+        assert_eq!(
+            gateway_walletconnect::storage_revision(data.path(), "owner").unwrap(),
+            "\"0\""
+        );
+        response["connector_accounts_remaining"] = serde_json::json!(0);
+        cleanup_removed_walletconnect_account(data.path(), &response).unwrap();
+        assert_eq!(
+            gateway_walletconnect::storage_revision(data.path(), "owner").unwrap(),
+            "\"1\""
+        );
+        assert_eq!(
+            gateway_walletconnect::storage_revision(data.path(), "caller").unwrap(),
+            "\"0\""
+        );
+    }
 }

@@ -889,3 +889,138 @@ async fn test_btc_wallet_approval_journey_reviews_in_inbox_and_signs() {
         .unwrap_or_default()
         .starts_with("did:key:"));
 }
+
+#[tokio::test]
+async fn test_inbox_reject_resolved_wallet_request_returns_bad_request() {
+    for surface in [INBOX_CAPSULE_ID, WALLET_CAPSULE_ID, SYSTEM_CAPSULE_ID] {
+        for (status, expected) in [
+            (
+                "completed",
+                if surface == INBOX_CAPSULE_ID {
+                    StatusCode::BAD_REQUEST
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                },
+            ),
+            ("approved", StatusCode::OK),
+            ("pending", StatusCode::OK),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let authority = passkey_authority(dir.path());
+            let token = app_token_for_authority(dir.path(), surface, &authority);
+            let provider = MockWalletProvider {
+                challenges: TokioMutex::default(),
+                bitcoin_challenges: TokioMutex::default(),
+                accounts: TokioMutex::default(),
+                approvals: TokioMutex::new(vec![json!({
+                    "request_id": "wallet-approval:resolved",
+                    "principal_id": authority.principal_id,
+                    "status": status,
+                    "connector_id":"wallet-walletconnect", "approved_at":if status == "pending" { None } else { Some(now_ts()-1) },
+                    "intent": "transaction_intent", "requested_by_actor":"browser",
+                    "resource":"elastos://transaction", "reason":"Sent", "account_id":"fixture",
+                    "address":"0xabc", "created_at":now_ts()-2, "expires_at":now_ts()+300
+                })]),
+                defaults: TokioMutex::default(),
+            };
+            let state = wallet_test_state_with_provider(dir.path(), provider).await;
+            let app = gateway_router(state);
+            let uri = if surface == INBOX_CAPSULE_ID {
+                "/api/apps/inbox/actions".to_string()
+            } else {
+                format!("/api/apps/{surface}/wallet/approvals/wallet-approval:resolved/reject")
+            };
+            let input = if surface == INBOX_CAPSULE_ID {
+                json!({"action_id":"wallet-reject-request:wallet-approval:resolved"})
+            } else {
+                json!({"reason":"Reject from stale card"})
+            };
+            let response = app
+                .oneshot(
+                    test_browser_request("localhost:61180", "null")
+                        .method("POST")
+                        .uri(uri)
+                        .header("x-elastos-home-token", token)
+                        .header(CONTENT_TYPE, "application/json")
+                        .body(Body::from(input.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{status}");
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            if status == "approved" {
+                assert!(String::from_utf8_lossy(&body).contains("Request dismissed."));
+                if surface != INBOX_CAPSULE_ID {
+                    let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(response["receipt_status"], "dismissed");
+                }
+            }
+            if expected == StatusCode::OK {
+                let auth = crate::auth::load_auth_state(dir.path()).unwrap();
+                let event = auth
+                    .audit
+                    .iter()
+                    .find(|event| event.challenge_id.as_deref() == Some("wallet-approval:resolved"))
+                    .unwrap();
+                assert_eq!(
+                    event.event_type,
+                    if status == "approved" {
+                        "wallet.approval.dismissed"
+                    } else {
+                        "wallet.approval.rejected"
+                    },
+                    "{surface} {status}"
+                );
+                assert_eq!(
+                    event.result,
+                    if status == "approved" {
+                        "dismissed"
+                    } else {
+                        "rejected"
+                    }
+                );
+                assert_eq!(
+                    event.reason.as_str(),
+                    if status == "approved" {
+                        "Wallet approval dismissed through Runtime authority"
+                    } else {
+                        "Wallet approval rejected through Runtime authority"
+                    }
+                );
+            }
+            if expected != StatusCode::OK {
+                assert!(String::from_utf8(body.to_vec())
+                    .unwrap()
+                    .contains("cannot be rejected"));
+            }
+        }
+    }
+}
+
+#[test]
+fn test_wallet_activity_summary_preserves_approval_and_late_receipt() {
+    let mut request = json!({"request_id":"fixture", "status":"rejected", "intent":"transaction_intent",
+        "requested_by_actor":"browser", "resource":"elastos://transaction", "reason":"Dismissed",
+        "account_id":"fixture", "address":"0xabc", "created_at":10, "expires_at":20,
+        "connector_id":"wallet-walletconnect"});
+    assert!(
+        serde_json::to_value(system_wallet_approval_summary(&request).unwrap())
+            .unwrap()
+            .get("approved_at")
+            .is_none()
+    );
+    request["approved_at"] = json!(15);
+    request["completed_at"] = json!(25);
+    request["signed_result"] = json!({"transaction_hash":format!("0x{}", "a".repeat(64))});
+    let summary = serde_json::to_value(system_wallet_approval_summary(&request).unwrap()).unwrap();
+    assert_eq!(summary["status"], "rejected");
+    assert_eq!(summary["approved_at"], 15);
+    assert_eq!(summary["completed_at"], 25);
+    assert_eq!(
+        summary["transaction_hash"],
+        request["signed_result"]["transaction_hash"]
+    );
+}

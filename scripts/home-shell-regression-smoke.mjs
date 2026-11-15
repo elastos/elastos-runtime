@@ -1897,10 +1897,10 @@ const continuityWalletEntry = await shellWindows.attachAuthorizedTarget({
   launch_status: "launched",
 });
 const continuityWallet = windowModel(continuityWalletEntry);
-for (const target of ["wallet-metamask", "wallet-unisat"]) {
+for (const target of ["wallet-metamask", "wallet-unisat", "wallet-walletconnect"]) {
   const connectorEntry = await shellWindows.attachAuthorizedTarget({
     target,
-    title: target === "wallet-metamask" ? "MetaMask" : "UniSat",
+    title: ({ "wallet-metamask": "MetaMask", "wallet-unisat": "UniSat", "wallet-walletconnect": "WalletConnect" })[target],
     route:
       `/apps/${target}/?home_origin=http%3A%2F%2Flocalhost%3A61180` +
       `#home_token=deterministic-${target}-token`,

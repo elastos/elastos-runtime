@@ -227,6 +227,16 @@ async fn passkey_step_up_begin_inner(
             "Browser internet request has changed; review the current request"
         );
         stored
+    } else if matches!(
+        operation.as_str(),
+        gateway_walletconnect::GRANT | gateway_walletconnect::REVOKE
+    ) {
+        let stored = gateway_walletconnect::step_up_request(state, &launch, &operation).await?;
+        anyhow::ensure!(
+            input.request == stored,
+            "WalletConnect request has changed; review the current request"
+        );
+        stored
     } else {
         input.request
     };
@@ -1516,6 +1526,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             cache_dir: data_dir.path().join("cache"),
             data_dir: data_dir.path().to_path_buf(),

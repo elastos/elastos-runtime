@@ -1,4 +1,4 @@
-import { pendingRequests } from "./wallet-activity.js?v=wallet-20260523a";
+import { pendingRequests } from "./wallet-activity.js?v=wallet-20261115a";
 import {
   isBitcoinProofRequest,
   isManagedRequest,
@@ -45,6 +45,7 @@ export function createWalletRequests({
 
   function requestCard(request, focused = false) {
     const requestId = readText(request.request_id);
+    const approvedTransaction = request.status === "approved" && request.intent === "transaction_intent";
     const accountAccess = readText(request.intent) === "browser_account_access";
     const accountAccessReview = accountAccess ? requestAccountAccessReview(request.review) : null;
     const card = document.createElement("article");
@@ -62,12 +63,17 @@ export function createWalletRequests({
     if (accountAccessReview) {
       main.append(accountAccessReview);
     }
+    if (approvedTransaction) {
+      main.append(textNode("small", "Check your connected wallet before sending again. Dismiss closes this request; it does not cancel a transaction in your wallet."));
+    }
     card.append(main);
 
     const actions = document.createElement("div");
     actions.className = "wallet-request-actions";
     const connectorId = readText(request.connector_id);
-    if (isManagedRequest(request) && (!accountAccess || accountAccessReview)) {
+    if (approvedTransaction) {
+      // Keep an unfinished external send visible without offering another handoff.
+    } else if (isManagedRequest(request) && (!accountAccess || accountAccessReview)) {
       const approve = actionButton(
         accountAccess ? "Allow" : "Approve",
         "walletRequestManagedApprove",
@@ -80,7 +86,9 @@ export function createWalletRequests({
     } else if (connectorId === "wallet-metamask") {
       actions.append(actionButton("Open MetaMask", "walletOpenMethod", connectorId));
     }
-    actions.append(actionButton("Reject", "walletRequestReject", requestId, true));
+    const reject = actionButton(approvedTransaction ? "Dismiss" : "Reject", "walletRequestReject", requestId, true);
+    if (approvedTransaction) reject.dataset.walletApprovedTransaction = "true";
+    actions.append(reject);
     card.append(actions);
     return card;
   }
@@ -173,14 +181,16 @@ export function createWalletRequests({
       return;
     }
     setBusy(button, true);
-    showStatus("Rejecting request.", "muted");
+    showStatus(button.dataset.walletApprovedTransaction === "true" ? "Dismissing request." : "Rejecting request.", "muted");
     try {
-      await fetchJson(`/api/apps/wallet/wallet/approvals/${encodeURIComponent(requestId)}/reject`, {
+      const result = await fetchJson(`/api/apps/wallet/wallet/approvals/${encodeURIComponent(requestId)}/reject`, {
         method: "POST",
         headers: shellHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ reason: "Rejected in Wallet" }),
+        body: JSON.stringify({ reason: button.dataset.walletApprovedTransaction === "true" ? "Dismissed in Wallet" : "Rejected in Wallet" }),
       });
-      showStatus("Request rejected.", "success");
+      showStatus(result?.receipt_status === "dismissed"
+        ? "Request dismissed. Check your connected wallet before sending again."
+        : "Request rejected.", "success");
       notifyHomeSummaryChanged();
       await refreshWalletState();
     } catch (error) {

@@ -16,7 +16,9 @@ mod gateway_wallet_send;
 pub(in crate::api::gateway) use gateway_wallet_accounts::*;
 pub(in crate::api::gateway) use gateway_wallet_app::*;
 pub(in crate::api::gateway) use gateway_wallet_approvals::*;
-pub(crate) use gateway_wallet_connectors::ensure_wallet_connector_configured;
 pub(in crate::api::gateway) use gateway_wallet_connectors::*;
+pub(crate) use gateway_wallet_connectors::{
+    ensure_wallet_connector_configured, ensure_wallet_connector_configured_async,
+};
 pub(in crate::api::gateway) use gateway_wallet_prices::*;
 pub(in crate::api::gateway) use gateway_wallet_send::*;

@@ -41,6 +41,7 @@ use super::gateway::{
     is_wallet_connector_capsule_id, issue_home_launch_token_for_auth_grant,
     require_home_launch_token_binding, require_runtime_wallet_authority, runtime_wallet_authority,
     GatewayState, RuntimeWalletAdapter, RuntimeWalletAuthority, HOME_CAPSULE_ID, HOME_ROUTE,
+    WALLET_WALLETCONNECT_CAPSULE_ID,
 };
 
 use crate::auth::AUTH_SESSION_TTL_SECS;
@@ -3599,21 +3600,28 @@ pub(in crate::api) struct WalletLinkContext {
     authority: RuntimeWalletAuthority,
 }
 
-fn require_wallet_link_context(
+#[derive(Debug)]
+struct WalletConnectorBridgeRequired;
+
+impl std::fmt::Display for WalletConnectorBridgeRequired {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Wallet linking requires the trusted Home wallet connector bridge")
+    }
+}
+
+impl std::error::Error for WalletConnectorBridgeRequired {}
+
+async fn require_wallet_link_context(
     state: &GatewayState,
     headers: &HeaderMap,
 ) -> anyhow::Result<WalletLinkContext> {
-    let authority = require_runtime_wallet_authority(
-        &state.data_dir,
-        headers,
-        &[super::gateway::WALLET_WALLETCONNECT_CAPSULE_ID],
-    )?;
-    let verified = authority.verified_context();
-    let app = verified.actor().to_string();
-    verified_wallet_link_context(state, &app, authority)
+    let authority =
+        super::gateway::walletconnect_connector_launch_authority(&state.data_dir, headers)
+            .map_err(|_| anyhow::Error::new(WalletConnectorBridgeRequired))?;
+    verified_wallet_link_context(state, WALLET_WALLETCONNECT_CAPSULE_ID, authority).await
 }
 
-pub(in crate::api) fn verified_wallet_link_context(
+pub(in crate::api) async fn verified_wallet_link_context(
     state: &GatewayState,
     app: &str,
     authority: RuntimeWalletAuthority,
@@ -3631,7 +3639,7 @@ pub(in crate::api) fn verified_wallet_link_context(
         proof_binding_id: verified.proof_binding_id().map(ToString::to_string),
         grant_id: verified.grant_id().to_string(),
     };
-    super::gateway::ensure_wallet_connector_configured(&state.data_dir, app)?;
+    super::gateway::ensure_wallet_connector_configured_async(&state.data_dir, app).await?;
     if context.proof_binding_id.is_none() {
         anyhow::bail!("missing proof-bound auth session");
     }
@@ -4104,7 +4112,7 @@ async fn evm_challenge_inner(
     headers: &HeaderMap,
     input: EvmChallengeRequest,
 ) -> anyhow::Result<EvmChallengeResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     evm_challenge_for_wallet_link(state, headers, input, link).await
 }
 
@@ -4174,7 +4182,7 @@ async fn evm_verify_inner(
     headers: &HeaderMap,
     input: EvmVerifyRequest,
 ) -> anyhow::Result<EvmVerifyResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     evm_verify_for_wallet_link(state, input, link).await
 }
 
@@ -4354,7 +4362,7 @@ async fn btc_challenge_inner(
     headers: &HeaderMap,
     input: BtcChallengeRequest,
 ) -> anyhow::Result<BtcChallengeResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     btc_challenge_for_wallet_link(state, headers, input, link).await
 }
 
@@ -4427,7 +4435,7 @@ async fn btc_verify_inner(
     headers: &HeaderMap,
     input: BtcVerifyRequest,
 ) -> anyhow::Result<BtcVerifyResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     btc_verify_for_wallet_link(state, input, link).await
 }
 
@@ -4792,6 +4800,7 @@ pub(in crate::api) fn auth_error_response(err: anyhow::Error) -> Response {
     let text = err.to_string();
     let status = if err.is::<PasskeyRegistrationDenied>()
         || err.is::<crate::auth::OwnerEnrollmentDenied>()
+        || err.is::<WalletConnectorBridgeRequired>()
         || text.contains("missing")
         || text.contains("invalid")
         || text.contains("expired")
@@ -4960,6 +4969,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.to_path_buf(),
             data_dir: data_dir.to_path_buf(),
@@ -5222,6 +5232,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.to_path_buf(),
             data_dir: data_dir.to_path_buf(),
@@ -6633,6 +6644,13 @@ mod tests {
             crate::auth::active_passkey_principal_count(temp.path()).unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn wallet_connector_bridge_refusal_is_typed_even_with_context() {
+        let error =
+            anyhow::Error::new(WalletConnectorBridgeRequired).context("wallet link refused");
+        assert_eq!(auth_error_response(error).status(), StatusCode::FORBIDDEN);
     }
 
     #[test]

@@ -387,7 +387,7 @@
     }
 
     function pendingRequestEntries() {
-      return state.entries.filter((entry) => entry && entry.kind !== "service_access_grant" && entry.kind !== "hosted_route_history" && entry.kind !== "browser_internet_decision");
+      return state.entries.filter((entry) => entry && entry.kind !== "service_access_grant" && entry.kind !== "hosted_route_history" && entry.kind !== "browser_internet_decision" && entry.kind !== "walletconnect_internet_decision");
     }
 
     function renderInbox() {
@@ -527,6 +527,26 @@
 
     function fillEntryActions(actions, entry) {
       const actionId = entry.action_ref && entry.action_ref.action_id;
+      if (entry.kind === "walletconnect_internet_request" || entry.kind === "walletconnect_internet_decision") {
+        const path = "/api/apps/wallet-walletconnect/internet";
+        const act = async (id, operation) => {
+          setButtonsDisabled(true);
+          try {
+            const current = await api(path);
+            const stepUpToken = current.status === "revoked" ? undefined : await requestPasskeyStepUp(operation, current.request);
+            await inboxAction(id, { step_up_token: stepUpToken });
+            await loadInbox(); notifyHome();
+            if (operation === 'walletconnect.internet.grant') window.top.postMessage({type:'home:open-target',homeToken:state.homeToken,target:'wallet-walletconnect',query:{}},homeParentOrigin);
+          } finally { setButtonsDisabled(false); }
+        };
+        if (actionId?.startsWith("walletconnect-internet-allow:")) {
+          actions.appendChild(createActionButton("Don't Allow", actionId.replace("-allow:", "-deny:")));
+          actions.appendChild(createButton("Allow", () => act(actionId, "walletconnect.internet.grant"), "primary"));
+        } else if (actionId?.startsWith("walletconnect-internet-turn-off:")) {
+          actions.appendChild(createButton("Turn Off", () => act(actionId, "walletconnect.internet.revoke"), "danger"));
+        }
+        return;
+      }
       if (entry.kind === "browser_internet_decision") {
         if (actionId?.startsWith("browser-internet-turn-off:")) {
           actions.appendChild(createButton("Turn Off", async () => {
@@ -888,6 +908,7 @@
         .filter((entry) => entry && entry.id && !entry.read
           && entry.kind !== "wallet_approval_request"
           && entry.kind !== "browser_internet_request"
+          && entry.kind !== "walletconnect_internet_request"
           && entry.kind !== "contact_request" && entry.kind !== "service_access_request")
         .map((entry) => entry.id);
       if (unreadIds.length === 0) {

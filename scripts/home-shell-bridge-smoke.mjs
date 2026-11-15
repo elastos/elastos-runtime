@@ -562,7 +562,7 @@ globalThis.fetch = async (url, init = {}) => {
         title: "System",
       });
     }
-    if (["assistant", "home-agent", "marketplace", "inbox"].includes(body?.target)) {
+    if (["assistant", "home-agent", "marketplace", "inbox", "wallet-walletconnect"].includes(body?.target)) {
       return jsonResponse({ attach_kind: "iframe", target: body.target,
         route: `/apps/${body.target}/?home_origin=http%3A%2F%2Flocalhost%3A61180#home_token=${body.target}-token` });
     }
@@ -1610,7 +1610,7 @@ sendChildMessage("http://evil.invalid", walletFrameWindow, {
 });
 sendChildMessage("null", walletFrameWindow, {
   type: "home:open-target",
-  target: "wallet-walletconnect",
+  target: "wallet-unknown",
   homeToken: "wallet-token",
 });
 sendChildMessage("null", walletFrameWindow, {
@@ -2453,6 +2453,23 @@ sendChildMessage("null", browserFrameWindow, {
   assert(focus().length===before,"Only exact trusted Inbox focus is accepted");
   sendChildMessage("null",source,intent);
   assert(focus().length===before+1,"Inbox focus reaches GUI without opening a new window");
+  const attachments=()=>shellMessages.filter(m=>m.payload?.command==="attach-authorized-target" && m.payload?.descriptor?.target==="wallet-walletconnect");
+  const countBefore=attachments().length;
+  const reopen={type:"home:open-target",homeToken:"inbox-token",target:"wallet-walletconnect",query:{}};
+  for (const [origin,sender,message] of [
+    ["null",source,{...reopen,query:{injected:true}}],
+    ["null",source,{...reopen,target:"wallet-metamask"}],
+    ["null",source,{...reopen,extra:true}],
+    ["https://evil.invalid",source,reopen],
+    ["null",{},reopen],
+  ]) sendChildMessage(origin,sender,message);
+  await new Promise(r=>setTimeout(r,0));
+  assert(attachments().length===countBefore,"Inbox connector return rejects unrelated effects");
+  sendChildMessage("null",source,reopen);
+  for(let i=0;i<50 && attachments().length===countBefore;i++) await new Promise(r=>setTimeout(r,0));
+  assert(attachments().length===countBefore+1,"Inbox Allow returns through real Home to the WalletConnect window");
+  assert(attachments().at(-1).payload.descriptor.route.includes("/apps/wallet-walletconnect/"),"Home supplies the connector attachment");
+
 }
 const connectorLaunchesBeforeBrowserRequest = requests.filter(
   (request) =>

@@ -623,6 +623,8 @@ struct SystemWalletDefaultSummary {
 
 #[derive(Debug, Clone, Default, Serialize)]
 struct SystemWalletApprovalsSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_status: Option<String>,
     available: bool,
     pending_count: usize,
     approval_requests: Vec<SystemWalletApprovalSummary>,
@@ -641,6 +643,7 @@ struct SystemWalletApprovalSummary {
     resource: String,
     reason: String,
     account_id: String,
+    chain_namespace: String,
     address: String,
     proof_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -651,6 +654,8 @@ struct SystemWalletApprovalSummary {
     expires_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approved_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     transaction_hash: Option<String>,
 }

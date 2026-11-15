@@ -448,7 +448,12 @@ pub(super) async fn home_summary(
             {
                 return home_error_response(err);
             }
-            let browser_state = match home_browser_state(&state.data_dir, context) {
+            let browser_state = {
+                let data = state.data_dir.clone();
+                let context = context.clone();
+                blocking_capsule_inventory(move || home_browser_state(&data, &context)).await
+            };
+            let browser_state = match browser_state {
                 Ok(state) => state,
                 Err(err) => return home_error_response(err),
             };
@@ -475,7 +480,7 @@ pub(super) async fn home_summary(
         };
 
     let mut notifications = home_state.notifications;
-    let capsule_catalog = capsule_catalog_summary(&state.data_dir);
+    let capsule_catalog = capsule_catalog_summary_async(&state.data_dir).await;
     let active_shell = match home_active_shell_summary_from_catalog(
         &state.data_dir,
         context.as_ref(),
@@ -4074,11 +4079,23 @@ fn home_services_stage_exit_config(
     Ok(file)
 }
 
-fn home_services_refresh_exit_config(
+pub(in crate::api::gateway) fn home_services_refresh_exit_config(
+    data_dir: &std::path::Path,
+    platform: &str,
     registry: &elastos_runtime::provider::ProviderRegistry,
     config: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    let request_id = hex::encode(Sha256::digest(serde_json::to_vec(config)?));
+    let walletconnect = crate::setup::walletconnect::local_exit(data_dir, platform);
+    let browser_running = walletconnect.is_some()
+        && tokio::runtime::Handle::current().block_on(
+            crate::setup::walletconnect::browser_helper_running(config, platform),
+        );
+    let config = crate::setup::walletconnect::exit_config(
+        config.clone(),
+        walletconnect.as_ref().map(|(_, provider)| provider),
+        browser_running,
+    );
+    let request_id = hex::encode(Sha256::digest(serde_json::to_vec(&config)?));
     let request =
         serde_json::json!({"op":"refresh_config", "request_id":request_id, "config":config});
     let result = tokio::runtime::Handle::current().block_on(async {
@@ -4112,10 +4129,22 @@ fn home_services_commit_exit_config(
         .map(serde_json::from_slice)
         .transpose()?
         .unwrap_or_else(|| serde_json::json!({}));
-    if let Err(error) = home_services_refresh_exit_config(registry, config) {
+    if let Err(error) = home_services_refresh_exit_config(
+        data_dir,
+        &crate::setup::detect_platform(),
+        registry,
+        config,
+    ) {
         // A missing/malformed ACK may follow application. Retain the durable
         // pending decision and explicitly report an unconfirmed compensation.
-        if home_services_refresh_exit_config(registry, &previous_config).is_err() {
+        if home_services_refresh_exit_config(
+            data_dir,
+            &crate::setup::detect_platform(),
+            registry,
+            &previous_config,
+        )
+        .is_err()
+        {
             anyhow::bail!("Exit activation and provider rollback remain unconfirmed");
         }
         return Err(error);
@@ -4138,7 +4167,12 @@ fn home_services_commit_exit_config(
         } else {
             Ok(())
         };
-        let provider_restored = home_services_refresh_exit_config(registry, &previous_config);
+        let provider_restored = home_services_refresh_exit_config(
+            data_dir,
+            &crate::setup::detect_platform(),
+            registry,
+            &previous_config,
+        );
         if restored.is_err() || provider_restored.is_err() {
             anyhow::bail!("Exit activation rollback remains unconfirmed");
         }
@@ -6304,7 +6338,12 @@ pub(super) async fn home_browser_state_get(
         Ok(context) => context,
         Err(err) => return home_error_response(err),
     };
-    match home_browser_state(&state.data_dir, &context) {
+    let inventory_result = {
+        let data = state.data_dir.clone();
+        let context = context.clone();
+        blocking_capsule_inventory(move || home_browser_state(&data, &context)).await
+    };
+    match inventory_result {
         Ok(state) => Json(state).into_response(),
         Err(err) => home_error_response(err),
     }
@@ -6319,7 +6358,12 @@ pub(super) async fn home_browser_state_update(
         Ok(context) => context,
         Err(err) => return home_error_response(err),
     };
-    match home_save_browser_state(&state.data_dir, &context, input) {
+    let inventory_result = {
+        let data = state.data_dir.clone();
+        let context = context.clone();
+        blocking_capsule_inventory(move || home_save_browser_state(&data, &context, input)).await
+    };
+    match inventory_result {
         Ok(state) => Json(state).into_response(),
         Err(err) => gateway_assistant_workspace_v2::migration_error_response(&err)
             .unwrap_or_else(|| home_error_response(err)),
@@ -6331,7 +6375,11 @@ pub(super) async fn home_active_shell_get(
     headers: HeaderMap,
 ) -> Response {
     let context = require_home_active_shell_token_context(&state.data_dir, &headers).ok();
-    match home_active_shell_summary(&state.data_dir, context.as_ref()) {
+    let inventory_result = {
+        let data = state.data_dir.clone();
+        blocking_capsule_inventory(move || home_active_shell_summary(&data, context.as_ref())).await
+    };
+    match inventory_result {
         Ok(summary) => Json(summary).into_response(),
         Err(err) => home_error_response(err),
     }
@@ -6346,7 +6394,15 @@ pub(super) async fn home_active_shell_update(
         Ok(context) => context,
         Err(err) => return home_error_response(err),
     };
-    match home_save_active_shell(&state.data_dir, &context, input.active.trim()) {
+    let inventory_result = {
+        let data = state.data_dir.clone();
+        let context = context.clone();
+        blocking_capsule_inventory(move || {
+            home_save_active_shell(&data, &context, input.active.trim())
+        })
+        .await
+    };
+    match inventory_result {
         Ok(summary) => Json(summary).into_response(),
         Err(err) => {
             let text = err.to_string();

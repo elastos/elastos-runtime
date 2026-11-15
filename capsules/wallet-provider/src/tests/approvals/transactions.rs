@@ -233,6 +233,27 @@ fn validated_chain_outcome_projection_is_exact_and_idempotent() {
 
 #[test]
 fn transaction_intent_validates_payload_and_allows_external_handoff() {
+    for connector in ["wallet-metamask", "wallet-walletconnect"] {
+        external_transaction_handoff_with_expiry(connector, None, false);
+    }
+}
+
+#[test]
+fn approved_connector_transaction_can_be_rejected_and_releases_its_slot() {
+    for actor in ["wallet", "system", "inbox"] {
+        for connector in ["wallet-walletconnect"] {
+            for same_session in [false, true] {
+                external_transaction_handoff_with_expiry(connector, Some(actor), same_session);
+            }
+        }
+    }
+}
+
+fn external_transaction_handoff_with_expiry(
+    connector: &str,
+    dismiss_actor: Option<&str>,
+    same_session: bool,
+) {
     let dir = tempfile::tempdir().unwrap();
     let mut provider = init_provider(dir.path());
     let principal_id = "person:local:alice";
@@ -283,7 +304,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
         invoke_wallet(
             &mut provider,
             principal_id,
-            "wallet-metamask",
+            connector,
             WalletProviderOperationV2::LinkVerifiedAccount {
                 proof_binding_id: format!("proof:eip155:20:{external_address}"),
                 chain_namespace: "eip155:20".into(),
@@ -301,7 +322,11 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
     let (request_id, payload_hash) = match invoke_wallet(
         &mut provider,
         principal_id,
-        "system",
+        if dismiss_actor.is_some() {
+            "browser"
+        } else {
+            "system"
+        },
         WalletProviderOperationV2::RequestApproval {
             account_id: external_account_id.clone(),
             chain_namespace: "eip155:20".into(),
@@ -314,7 +339,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
     ) {
         Response::Ok { data: Some(data) } => {
             assert_eq!(data["approval_request"]["intent"], "transaction_intent");
-            assert_eq!(data["approval_request"]["connector_id"], "wallet-metamask");
+            assert_eq!(data["approval_request"]["connector_id"], connector);
             assert_eq!(
                 data["approval_request"]["payload"]["schema"],
                 "elastos.chain.unsigned_transaction_intent/v1"
@@ -332,10 +357,38 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
         }
         other => panic!("expected external transaction approval request, got {other:?}"),
     };
+    // The owner has a pending card before the connector approves it.
+    let pending_card = invoke_wallet(
+        &mut provider,
+        principal_id,
+        "wallet",
+        WalletProviderOperationV2::ListApprovals {
+            include_resolved: false,
+        },
+    );
+    assert!(matches!(pending_card, Response::Ok { data: Some(ref data) }
+        if data["approval_requests"].as_array().unwrap().iter().any(|r| r["request_id"] == request_id)));
+    if let Some(actor) = dismiss_actor {
+        let context = wallet_context_in_session(principal_id, actor, "session:replacement");
+        assert!(
+            matches!(
+                invoke_wallet_with_context(
+                    &mut provider,
+                    &context,
+                    WalletProviderOperationV2::RejectApproval {
+                        request_id: request_id.clone(),
+                        reason: "Pending request in another session".into(),
+                    }
+                ),
+                Response::Error { .. }
+            ),
+            "pending requests keep their original session binding"
+        );
+    }
     let transaction = match invoke_wallet(
         &mut provider,
         principal_id,
-        "wallet-metamask",
+        connector,
         WalletProviderOperationV2::ApproveConnectorHandoff {
             request_id: request_id.clone(),
             reason: "Approved transaction".into(),
@@ -349,8 +402,283 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
     };
     assert_eq!(transaction["from"], external_address);
     assert_eq!(transaction["chainId"], "0x14");
+    let approved = provider
+        .store
+        .approval_requests
+        .iter()
+        .find(|r| r.request_id == request_id)
+        .unwrap()
+        .clone();
+    if connector == "wallet-metamask" {
+        for actor in ["wallet", "system", "inbox"] {
+            let rejected = invoke_wallet(
+                &mut provider,
+                principal_id,
+                actor,
+                WalletProviderOperationV2::RejectApproval {
+                    request_id: request_id.clone(),
+                    reason: "Reject from stale pending card".into(),
+                },
+            );
+            assert!(
+                matches!(rejected, Response::Error { .. }),
+                "stale {actor} card must preserve MetaMask completion: {rejected:?}"
+            );
+        }
+    }
+    let now = now_ts();
+    let grace = elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS;
+    for (elapsed, expected) in [
+        (1, connector == "wallet-walletconnect"),
+        (grace - 1, connector == "wallet-walletconnect"),
+        (grace, false),
+        (grace + 1, false),
+    ] {
+        let mut declined = approved.clone();
+        declined.expires_at = now - elapsed;
+        expire_approval_if_elapsed(&mut declined, now);
+        assert_eq!(
+            declined.status == ApprovalStatus::Approved,
+            expected,
+            "{connector} after {elapsed}"
+        );
+        assert_eq!(
+            approval_authority_is_active(&declined, now),
+            expected,
+            "declined prompt releases its active quota after grace"
+        );
+    }
+    if connector == "wallet-walletconnect" {
+        provider
+            .store
+            .approval_requests
+            .iter_mut()
+            .find(|r| r.request_id == request_id)
+            .unwrap()
+            .expires_at = now - 1;
+        provider.store = prune_store(std::mem::take(&mut provider.store), now);
+        assert_eq!(
+            provider
+                .store
+                .approval_requests
+                .iter()
+                .find(|r| r.request_id == request_id)
+                .unwrap()
+                .status,
+            ApprovalStatus::Approved
+        );
+    }
+    if let Some(actor) = dismiss_actor {
+        let reject = || WalletProviderOperationV2::RejectApproval {
+            request_id: request_id.clone(),
+            reason: "Dismiss abandoned send".into(),
+        };
+        for context in [
+            wallet_context_in_session(principal_id, connector, "session:replacement"),
+            wallet_context_in_session(principal_id, "browser", "session:replacement"),
+            wallet_context(principal_id, connector),
+            wallet_context(principal_id, "browser"),
+            wallet_context("person:local:bob", "wallet"),
+            wallet_context(principal_id, "wallet-unisat"),
+        ] {
+            assert!(matches!(
+                invoke_wallet_with_context(&mut provider, &context, reject()),
+                Response::Error { .. }
+            ));
+        }
+        let connector_context =
+            wallet_context_in_session(principal_id, connector, "session:replacement");
+        assert!(
+            matches!(
+                invoke_wallet_with_context(
+                    &mut provider,
+                    &connector_context,
+                    WalletProviderOperationV2::CompleteConnectorHandoff {
+                        request_id: request_id.clone(),
+                        payload_hash: payload_hash.clone(),
+                        signature: None,
+                        signature_type: None,
+                        public_key: None,
+                        signer: external_address.into(),
+                        transaction_hash: Some(format!("0x{}", "a".repeat(64))),
+                    }
+                ),
+                Response::Error { .. }
+            ),
+            "completion keeps its original session binding"
+        );
+        // Fill the quota from an actual approved handoff; rejecting one must permit
+        // a new request through the provider's real admission path.
+        for index in 1..MAX_ACTIVE_APPROVAL_REQUESTS_PER_PRINCIPAL {
+            let mut other = approved.clone();
+            other.request_id = format!("quota:{index}");
+            provider.store.approval_requests.push(other);
+        }
+        let next = || WalletProviderOperationV2::RequestApproval {
+            account_id: external_account_id.clone(),
+            chain_namespace: "eip155:20".into(),
+            intent: "transaction_intent".into(),
+            resource: "elastos://chain/esc-mainnet/broadcast_transaction".into(),
+            reason: "Another transaction".into(),
+            payload: transaction_intent_payload(external_address),
+            expires_at: now_ts().saturating_add(APPROVAL_REQUEST_TTL_SECS),
+        };
+        assert!(
+            matches!(invoke_wallet(&mut provider, principal_id, "system", next()),
+            Response::Error { ref code, .. } if code == "approval_limit_reached")
+        );
+        let context = if same_session {
+            wallet_context(principal_id, actor)
+        } else {
+            wallet_context_in_session(principal_id, actor, "session:replacement")
+        };
+        let response = invoke_wallet_with_context(&mut provider, &context, reject());
+        assert!(matches!(response, Response::Ok { .. }), "{response:?}");
+        let rejected = provider
+            .store
+            .approval_requests
+            .iter()
+            .find(|r| r.request_id == request_id)
+            .unwrap();
+        assert_eq!(rejected.status, ApprovalStatus::Rejected);
+        assert_eq!(
+            rejected.rejection_reason.as_deref(),
+            Some("Wallet approval dismissed through Runtime authority")
+        );
+        assert!(!approval_authority_is_active(rejected, now_ts()));
+        assert!(matches!(
+            invoke_wallet(&mut provider, principal_id, "system", next()),
+            Response::Ok { .. }
+        ));
+        assert!(matches!(
+            invoke_wallet(&mut provider, principal_id, "wallet", reject()),
+            Response::Error { .. }
+        ));
+        let dismissed = provider
+            .store
+            .approval_requests
+            .iter()
+            .find(|r| r.request_id == request_id)
+            .unwrap()
+            .clone();
+        let complete = || WalletProviderOperationV2::CompleteConnectorHandoff {
+            request_id: request_id.clone(),
+            payload_hash: payload_hash.clone(),
+            signature: None,
+            signature_type: None,
+            public_key: None,
+            signer: external_address.into(),
+            transaction_hash: Some(format!("0x{}", "a".repeat(64))),
+        };
+        if connector == "wallet-walletconnect" {
+            for (who, session) in [
+                ("person:local:bob", "session:test"),
+                (principal_id, "session:replacement"),
+            ] {
+                let context = wallet_context_in_session(who, connector, session);
+                assert!(matches!(
+                    invoke_wallet_with_context(&mut provider, &context, complete()),
+                    Response::Error { .. }
+                ));
+            }
+            for field in ["payload", "signer", "signature"] {
+                let mut operation = complete();
+                if let WalletProviderOperationV2::CompleteConnectorHandoff {
+                    payload_hash,
+                    signer,
+                    transaction_hash,
+                    signature,
+                    signature_type,
+                    ..
+                } = &mut operation
+                {
+                    match field {
+                        "payload" => *payload_hash = format!("0x{}", "b".repeat(64)),
+                        "signer" => *signer = format!("0x{}", "4".repeat(40)),
+                        "signature" => {
+                            *transaction_hash = None;
+                            *signature = Some(format!("0x{}", "a".repeat(130)));
+                            *signature_type = Some("personal_sign".into());
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                assert!(
+                    matches!(
+                        invoke_wallet(&mut provider, principal_id, connector, operation),
+                        Response::Error { .. }
+                    ),
+                    "{field}"
+                );
+            }
+            assert!(matches!(
+                invoke_wallet(&mut provider, principal_id, "wallet-metamask", complete()),
+                Response::Error { .. }
+            ));
+            for (approved_at, expires_at) in
+                [(None, now + 300), (dismissed.approved_at, now - grace)]
+            {
+                let request = provider
+                    .store
+                    .approval_requests
+                    .iter_mut()
+                    .find(|r| r.request_id == request_id)
+                    .unwrap();
+                request.approved_at = approved_at;
+                request.expires_at = expires_at;
+                assert!(matches!(
+                    invoke_wallet(&mut provider, principal_id, connector, complete()),
+                    Response::Error { .. }
+                ));
+            }
+            *provider
+                .store
+                .approval_requests
+                .iter_mut()
+                .find(|r| r.request_id == request_id)
+                .unwrap() = dismissed.clone();
+            let response = invoke_wallet(&mut provider, principal_id, connector, complete());
+            assert!(
+                matches!(response, Response::Ok { .. }),
+                "late receipt: {response:?}"
+            );
+            let stored = provider
+                .store
+                .approval_requests
+                .iter()
+                .find(|r| r.request_id == request_id)
+                .unwrap();
+            assert_eq!(stored.status, ApprovalStatus::Rejected);
+            assert_eq!(stored.resolved_at, dismissed.resolved_at);
+            assert_eq!(stored.rejection_reason, dismissed.rejection_reason);
+            assert_eq!(
+                stored.signed_result.as_ref().unwrap()["transaction_hash"],
+                format!("0x{}", "a".repeat(64))
+            );
+            assert!(stored.completed_at.is_some());
+            assert!(!approval_authority_is_active(stored, now_ts()));
+            let saved = load_store(provider.store_path.as_ref().unwrap()).unwrap();
+            assert_eq!(
+                saved
+                    .approval_requests
+                    .iter()
+                    .find(|r| r.request_id == request_id)
+                    .unwrap()
+                    .status,
+                ApprovalStatus::Rejected
+            );
+        }
+        assert!(
+            matches!(
+                invoke_wallet(&mut provider, principal_id, connector, complete()),
+                Response::Error { .. }
+            ),
+            "one receipt only; other connectors keep their TTL"
+        );
+        return;
+    }
     let transaction_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let context = wallet_context(principal_id, "wallet-metamask");
+    let context = wallet_context(principal_id, connector);
     let invalid_completion = wallet_request(
         &context,
         WalletProviderOperationV2::CompleteConnectorHandoff {
@@ -384,7 +712,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
     match invoke_wallet(
         &mut provider,
         principal_id,
-        "wallet-metamask",
+        connector,
         WalletProviderOperationV2::CompleteConnectorHandoff {
             request_id: request_id.clone(),
             payload_hash: payload_hash.clone(),
@@ -424,7 +752,7 @@ fn transaction_intent_validates_payload_and_allows_external_handoff() {
         chain_namespace: "eip155:20".into(),
         network: elastos_wallet_contract::PublicNetwork::new("esc-mainnet").unwrap(),
         binding: ValidatedChainOutcomeBindingV1::ExternalConnector {
-            connector_id: "wallet-metamask".into(),
+            connector_id: connector.into(),
             originating_address: external_address.into(),
         },
         transaction_hash: transaction_hash.into(),

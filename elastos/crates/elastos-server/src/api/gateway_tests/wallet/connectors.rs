@@ -1,6 +1,118 @@
 use super::super::*;
 
 #[tokio::test]
+async fn test_walletconnect_capsule_handoff_keeps_runtime_binding() {
+    struct ReplyOverride {
+        inner: MockWalletProvider,
+        field: Option<&'static str>,
+    }
+    #[async_trait::async_trait]
+    impl Provider for ReplyOverride {
+        fn name(&self) -> &'static str {
+            "walletconnect-binding-fixture"
+        }
+        fn schemes(&self) -> Vec<&'static str> {
+            vec!["wallet"]
+        }
+        async fn handle(
+            &self,
+            request: ResourceRequest,
+        ) -> Result<ResourceResponse, ProviderError> {
+            self.inner.handle(request).await
+        }
+        async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+            let mut reply = self.inner.send_raw(request).await?;
+            let data = &mut reply["data"]["result"]["data"];
+            if let Some(field) = self.field.filter(|_| data.get("handoff").is_some()) {
+                data["approval_request"][field] = if field == "payload_hash" {
+                    json!(format!("0x{}", "ff".repeat(32)))
+                } else {
+                    json!("other-principal")
+                };
+            }
+            Ok(reply)
+        }
+    }
+    async fn call(app: &Router, token: &str, suffix: &str, input: Value) -> (StatusCode, Value) {
+        let response = app.clone().oneshot(test_browser_request("localhost:61180", "null")
+            .method("POST").uri(format!("/api/apps/wallet-walletconnect/wallet/approvals/wallet-approval%3Awc-reviewed/{suffix}"))
+            .header("x-elastos-home-token", token).header(CONTENT_TYPE, "application/json")
+            .body(Body::from(input.to_string())).unwrap()).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes)
+                .unwrap_or_else(|_| json!({"text":String::from_utf8_lossy(&bytes)})),
+        )
+    }
+    for case in [
+        "valid",
+        "other-principal",
+        "other-connector",
+        "expired",
+        "already-approved",
+        "response-principal_id",
+        "response-payload_hash",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = passkey_authority(dir.path());
+        seed_walletconnect_connector_config(dir.path());
+        let connector = projection_launch_token_for_authority_context(
+            dir.path(),
+            WALLET_WALLETCONNECT_CAPSULE_ID,
+            &owner,
+        );
+        let expiry = now_ts() + 600;
+        let payload_hash = format!("0x{}", "ab".repeat(32));
+        let account = format!("wallet:eip155:20:0x{}", "12".repeat(20));
+        let approval = json!({
+            "request_id":"wallet-approval:wc-reviewed", "status":if case == "already-approved" { "approved" } else { "pending" }, "intent":"publish_envelope",
+            "requested_by_actor":"documents", "resource":"elastos://content/publish", "reason":"Controlled proof",
+            "account_id":account, "address":format!("0x{}", "12".repeat(20)), "proof_type":"siwe", "chain_namespace":"eip155:20",
+            "connector_id":if case == "other-connector" { WALLET_METAMASK_CAPSULE_ID } else { WALLET_WALLETCONNECT_CAPSULE_ID },
+            "principal_id":if case == "other-principal" { "other-principal" } else { &owner.principal_id },
+            "payload_hash":payload_hash, "created_at":now_ts(), "expires_at":if case == "expired" { 0 } else { expiry },
+        });
+        let provider = MockWalletProvider {
+            approvals: TokioMutex::new(vec![approval]),
+            ..Default::default()
+        };
+        let provider = ReplyOverride {
+            inner: provider,
+            field: case.strip_prefix("response-"),
+        };
+        let app = gateway_router(
+            wallet_test_state_with_shared_provider(dir.path(), Arc::new(provider)).await,
+        );
+        let input = json!({});
+        if case != "valid" {
+            assert_ne!(
+                call(&app, &connector, "approve", input).await.0,
+                StatusCode::OK,
+                "{case}"
+            );
+            continue;
+        }
+        for field in ["account_id", "requested_by_actor", "payload_hash"] {
+            let mut injected = input.clone();
+            injected[field] = json!("capsule-selected");
+            assert_ne!(
+                call(&app, &connector, "approve", injected).await.0,
+                StatusCode::OK
+            );
+        }
+        let (status, result) = call(&app, &connector, "approve", input).await;
+        assert_eq!(status, StatusCode::OK, "{result}");
+        assert_eq!(result["binding"]["principal_id"], owner.principal_id);
+        assert_eq!(result["binding"]["payload_hash"], payload_hash);
+        assert_eq!(result["handoff"]["payload_hash"], payload_hash);
+    }
+}
+
+#[tokio::test]
 async fn test_wallet_connector_route_requires_connector_launch_token() {
     let dir = tempfile::tempdir().unwrap();
     let context = local_home_launch_token_context(dir.path()).unwrap();
@@ -403,6 +515,43 @@ async fn test_walletconnect_connector_requires_pinned_config() {
     );
 }
 
+#[tokio::test]
+async fn test_home_refuses_unconfigured_walletconnect_before_package_repair() {
+    let dir = tempfile::tempdir().unwrap();
+    // The seeded connector row has no repair platform. Configuration refusal
+    // still returns 404, while a configured local capsule launches normally.
+    let app = gateway_router(test_state(dir.path()));
+    for configured in [false, true] {
+        if configured {
+            seed_walletconnect_connector_config(dir.path());
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/apps/home/launch")
+                    .header(HOST, "localhost:61180")
+                    .header("origin", "http://localhost:61180")
+                    .header("sec-fetch-site", "same-origin")
+                    .header("x-elastos-home-token", home_app_token(dir.path()))
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"target":"wallet-walletconnect"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if configured {
+                StatusCode::OK
+            } else {
+                StatusCode::NOT_FOUND
+            }
+        );
+    }
+}
+
 #[test]
 fn test_marketplace_lists_walletconnect_only_once_its_config_is_pinned() {
     let dir = tempfile::tempdir().unwrap();
@@ -442,10 +591,12 @@ fn test_marketplace_lists_walletconnect_only_once_its_config_is_pinned() {
 async fn test_walletconnect_connector_accepts_pinned_config() {
     let dir = tempfile::tempdir().unwrap();
     seed_walletconnect_connector_config(dir.path());
-    let context = local_home_launch_token_context(dir.path()).unwrap();
-    let token =
-        issue_home_launch_token_with_context(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &context)
-            .unwrap();
+    let authority = passkey_authority(dir.path());
+    let token = projection_launch_token_for_authority_context(
+        dir.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &authority,
+    );
     let provider = MockWalletProvider::default();
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
 
@@ -472,18 +623,21 @@ async fn test_walletconnect_connector_accepts_pinned_config() {
 async fn test_walletconnect_connector_config_returns_pinned_sdk_contract() {
     let dir = tempfile::tempdir().unwrap();
     seed_walletconnect_connector_config(dir.path());
-    let context = local_home_launch_token_context(dir.path()).unwrap();
-    let token =
-        issue_home_launch_token_with_context(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &context)
-            .unwrap();
+    let authority = passkey_authority(dir.path());
+    let token = projection_launch_token_for_authority_context(
+        dir.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &authority,
+    );
     let provider = MockWalletProvider::default();
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
 
     let response = app
+        .clone()
         .oneshot(
             test_browser_request("localhost:61180", "null")
                 .uri("/api/apps/wallet-walletconnect/wallet/config")
-                .header("x-elastos-home-token", token)
+                .header("x-elastos-home-token", &token)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -511,6 +665,19 @@ async fn test_walletconnect_connector_config_returns_pinned_sdk_contract() {
     assert_eq!(json["evm_chains"][0]["chainName"], "Elastos Smart Chain");
     assert_eq!(json["evm_chains"][1]["chainId"], "0x2105");
     assert_eq!(json["evm_chains"][1]["chainName"], "Base");
+    // A valid launch with a removed SDK retains the configuration error response.
+    std::fs::remove_file(dir.path().join(WALLETCONNECT_SDK_PATH)).unwrap();
+    let missing = app
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .uri("/api/apps/wallet-walletconnect/wallet/config")
+                .header("x-elastos-home-token", &token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -600,29 +767,6 @@ async fn test_metamask_connector_config_returns_runtime_evm_chain_metadata() {
     assert_eq!(json["evm_chains"][0]["chainId"], "0x14");
     assert_eq!(json["evm_chains"][1]["chainId"], "0x2105");
     assert!(json.get("walletconnect").is_none());
-}
-
-fn seed_walletconnect_connector_config(data_dir: &std::path::Path) {
-    let sdk = b"// pinned test WalletConnect SDK asset\n";
-    let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
-    std::fs::create_dir_all(sdk_path.parent().unwrap()).unwrap();
-    std::fs::write(&sdk_path, sdk).unwrap();
-    let sdk_sha256 = format!("{:x}", Sha256::digest(sdk));
-
-    let config_path = data_dir.join(WALLETCONNECT_CONFIG_PATH);
-    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-    std::fs::write(
-        config_path,
-        serde_json::to_vec(&json!({
-            "schema": WALLETCONNECT_CONFIG_SCHEMA,
-            "project_id": "test_walletconnect_project",
-            "sdk_package": WALLETCONNECT_SDK_PACKAGE,
-            "sdk_version": "1.0.0",
-            "sdk_sha256": sdk_sha256
-        }))
-        .unwrap(),
-    )
-    .unwrap();
 }
 
 #[tokio::test]
@@ -1190,4 +1334,364 @@ async fn test_metamask_connector_completes_external_wallet_handoff() {
         .as_deref()
         .unwrap_or_default()
         .starts_with("did:key:"));
+}
+
+#[tokio::test]
+async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding() {
+    for case in [
+        "valid",
+        "dismissed",
+        "dismissed-pending",
+        "dismissed-outside-grace",
+        "dismissed-recorded",
+        "hash-text",
+        "hash-short",
+        "hash-nonhex",
+        "hash-uppercase-prefix",
+        "payload",
+        "signer",
+        "pending",
+        "expired",
+        "outside-grace",
+        "principal",
+        "connector",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = passkey_authority(dir.path());
+        seed_walletconnect_connector_config(dir.path());
+        let connector = projection_launch_token_for_authority_context(
+            dir.path(),
+            WALLET_WALLETCONNECT_CAPSULE_ID,
+            &owner,
+        );
+        let address = format!("0x{}", "12".repeat(20));
+        let payload = format!("0x{}", "ab".repeat(32));
+        let provider = Arc::new(RecordingWalletProvider::new(MockWalletProvider {
+            approvals: TokioMutex::new(vec![json!({
+                "request_id":"wallet-approval:wc-complete", "status":if case == "pending" { "pending" } else if case.starts_with("dismissed") { "rejected" } else { "approved" },
+                "intent":"transaction_intent", "requested_by_actor":"documents", "resource":"elastos://transaction", "reason":"Fixture",
+                "account_id":"fixture-account", "address":address, "proof_type":"siwe", "chain_namespace":"eip155:20",
+                "connector_id":if case == "connector" { WALLET_METAMASK_CAPSULE_ID } else { WALLET_WALLETCONNECT_CAPSULE_ID },
+                "principal_id":if case == "principal" { "other-principal" } else { &owner.principal_id },
+                "approved_at":if case == "dismissed-pending" { None } else { Some(now_ts()-60) },
+                "signed_result":if case == "dismissed-recorded" { json!({"transaction_hash":"recorded"}) } else { Value::Null },
+                "payload_hash":payload, "created_at":now_ts(), "expires_at":if matches!(case, "expired" | "dismissed") { now_ts()-1 } else if matches!(case, "outside-grace" | "dismissed-outside-grace") { now_ts()-elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS } else { now_ts()+600 },
+            })]),
+            ..Default::default()
+        }));
+        let app = gateway_router(
+            wallet_test_state_with_shared_provider(dir.path(), provider.clone()).await,
+        );
+        let hash = match case {
+            "hash-text" => "Check a fake recovery site".into(),
+            "hash-short" => "0x12".into(),
+            "hash-nonhex" => format!("0x{}", "zz".repeat(32)),
+            "hash-uppercase-prefix" => format!("0X{}", "ab".repeat(32)),
+            _ => format!("0x{}", "aB".repeat(32)),
+        };
+        let body = json!({"payload_hash":if case == "payload" { format!("0x{}", "cd".repeat(32)) } else { payload },
+            "signer":if case == "signer" { "another-account" } else { &address }, "transaction_hash":hash});
+        let response = app.oneshot(test_browser_request("localhost:61180", "null")
+            .method("POST").uri("/api/apps/wallet-walletconnect/wallet/approvals/wallet-approval%3Awc-complete/complete")
+            .header("x-elastos-home-token", &connector).header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string())).unwrap()).await.unwrap();
+        let operations = provider.recorded_v2_operation_kinds().await;
+        if matches!(case, "valid" | "expired" | "dismissed") {
+            assert_eq!(response.status(), StatusCode::OK, "{case}");
+            assert!(operations.contains(&WalletOperationKind::CompleteConnectorHandoff));
+            let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let response_json: Value = serde_json::from_slice(&response_body).unwrap();
+            assert_eq!(
+                response_json["receipt_status"],
+                if case == "dismissed" {
+                    "sent_after_dismissal"
+                } else {
+                    "completed"
+                }
+            );
+            let auth = crate::auth::load_auth_state(dir.path()).unwrap();
+            let event = auth
+                .audit
+                .iter()
+                .find(|event| {
+                    event.challenge_id.as_deref() == Some("wallet-approval:wc-complete")
+                        && event.event_type != "wallet.approval.approved"
+                })
+                .unwrap();
+            assert_eq!(
+                event.event_type,
+                if case == "dismissed" {
+                    "wallet.approval.sent_after_dismissal"
+                } else {
+                    "wallet.approval.completed"
+                }
+            );
+            let requests = provider.requests.lock().await;
+            let forwarded = requests
+                .iter()
+                .filter_map(|request| {
+                    let bytes = serde_json::to_vec(&request["request"]).ok()?;
+                    let request = WalletProviderRequestV2::decode_at(&bytes, now_ts()).ok()?;
+                    match request.operation {
+                        WalletProviderOperationV2::CompleteConnectorHandoff {
+                            transaction_hash,
+                            ..
+                        } => transaction_hash,
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(forwarded, vec![format!("0x{}", "aB".repeat(32))]);
+        } else {
+            assert_ne!(response.status(), StatusCode::OK, "{case}");
+            assert!(
+                !operations.contains(&WalletOperationKind::CompleteConnectorHandoff),
+                "{case}: refused before provider effect"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_walletconnect_capsule_config_link_and_effect_authority_matrix() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = passkey_authority(dir.path());
+    seed_walletconnect_connector_config(dir.path());
+    let token = projection_launch_token_for_authority_context(
+        dir.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &owner,
+    );
+    let wrong_selection = issue_home_projection_launch_token_with_context(
+        dir.path(),
+        WALLET_CAPSULE_ID,
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &runtime_wallet_authority_for_app_token(
+            dir.path(),
+            WALLET_WALLETCONNECT_CAPSULE_ID,
+            &token,
+        )
+        .home_launch_context(),
+    )
+    .unwrap();
+    let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
+    let context =
+        runtime_wallet_authority_for_app_token(dir.path(), WALLET_WALLETCONNECT_CAPSULE_ID, &token)
+            .home_launch_context();
+    let expired = gateway_home_token::issue_expired_home_launch_token_with_context(
+        dir.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &context,
+    )
+    .unwrap();
+    let signing_key = EvmSigningKey::from_bytes((&[9u8; 32]).into()).unwrap();
+    let address = evm_test_address(&signing_key);
+    let payload = format!("0x{}", "ab".repeat(32));
+    let provider = MockWalletProvider {
+        approvals: TokioMutex::new(vec![json!({
+            "request_id":"wallet-approval:wc-authority", "status":"pending", "intent":"transaction_intent",
+            "requested_by_actor":"documents", "resource":"elastos://transaction", "reason":"Fixture",
+            "account_id":"fixture-account", "address":address, "proof_type":"siwe", "chain_namespace":"eip155:1",
+            "connector_id":WALLET_WALLETCONNECT_CAPSULE_ID, "principal_id":owner.principal_id,
+            "payload_hash":payload, "created_at":now_ts(), "expires_at":now_ts()+600,
+        })]),
+        ..Default::default()
+    };
+    let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
+    async fn call(
+        app: &Router,
+        home: &str,
+        token: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let response = app
+            .clone()
+            .oneshot(
+                test_browser_request(
+                    "localhost:61180",
+                    if token == home {
+                        "http://localhost:61180"
+                    } else {
+                        "null"
+                    },
+                )
+                .method(if body.is_some() { "POST" } else { "GET" })
+                .uri(path)
+                .header("x-elastos-home-token", token)
+                .header(CONTENT_TYPE, "application/json")
+                .body(body.map_or_else(Body::empty, |v| Body::from(v.to_string())))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 128 * 1024)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+    let mut calls = vec![
+        ("/api/apps/wallet-walletconnect/wallet/config", None),
+        (
+            "/api/auth/evm/challenge",
+            Some(json!({"address":address,"chain_id":1})),
+        ),
+    ];
+    let mut index = 0;
+    while index < calls.len() {
+        let (path, body) = calls[index].clone();
+        for invalid in [&owner.home_token, &inbox, &expired, &wrong_selection] {
+            assert_ne!(
+                call(&app, &owner.home_token, invalid, path, body.clone())
+                    .await
+                    .0,
+                StatusCode::OK,
+                "{path}: invalid caller"
+            );
+        }
+        let (status, value) = call(&app, &owner.home_token, &token, path, body).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {value}");
+        if path.ends_with("challenge") {
+            let message = value["message"].as_str().unwrap();
+            calls.push((
+                "/api/auth/evm/verify",
+                Some(json!({"message":message,"signature":evm_sign_message(&signing_key,message)})),
+            ));
+            calls.push(("/api/apps/wallet-walletconnect/wallet/approvals/wallet-approval%3Awc-authority/approve", Some(json!({}))));
+            calls.push(("/api/apps/wallet-walletconnect/wallet/approvals/wallet-approval%3Awc-authority/complete", Some(json!({"payload_hash":payload,"signer":address,"transaction_hash":format!("0x{}","34".repeat(32))}))));
+        }
+        index += 1;
+    }
+    // Both a consumed ownership proof and a launch whose session was revoked fail closed.
+    let (path, body) = &calls[2];
+    assert_ne!(
+        call(&app, &owner.home_token, &token, path, body.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    crate::auth::revoke_session_grant(dir.path(), &context.session_id, now_ts()).unwrap();
+    for (path, body) in calls {
+        assert_ne!(
+            call(&app, &owner.home_token, &token, path, body).await.0,
+            StatusCode::OK,
+            "{path}: revoked launch replay"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_walletconnect_unfinished_transaction_is_visible_without_another_handoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = passkey_authority(dir.path());
+    seed_walletconnect_connector_config(dir.path());
+    let token = projection_launch_token_for_authority_context(
+        dir.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &owner,
+    );
+    let provider = MockWalletProvider {
+        approvals: TokioMutex::new(vec![json!({
+            "request_id":"wallet-approval:unfinished","status":"approved","intent":"transaction_intent",
+            "requested_by_actor":"documents","resource":"elastos://transaction","reason":"Fixture","account_id":"fixture-account",
+            "address":format!("0x{}","12".repeat(20)),"proof_type":"siwe","chain_namespace":"eip155:1",
+            "connector_id":WALLET_WALLETCONNECT_CAPSULE_ID,"principal_id":owner.principal_id,
+            "payload_hash":format!("0x{}","ab".repeat(32)),"created_at":now_ts(),"expires_at":now_ts()+600,
+        })]),
+        ..Default::default()
+    };
+    let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
+    let response = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .uri("/api/apps/wallet-walletconnect/wallet/approvals")
+                .header("x-elastos-home-token", &token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let summary: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(summary["pending_count"], 0);
+    assert_eq!(summary["approval_requests"][0]["status"], "approved");
+    let response=app.oneshot(test_browser_request("localhost:61180","null").method("POST")
+        .uri("/api/apps/wallet-walletconnect/wallet/approvals/wallet-approval%3Aunfinished/approve")
+        .header("x-elastos-home-token",token).header(CONTENT_TYPE,"application/json").body(Body::from("{}")).unwrap()).await.unwrap();
+    assert_ne!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_walletconnect_account_removal_clears_its_store_through_wallet_route() {
+    for (connector_id, keep_another) in [
+        (WALLET_WALLETCONNECT_CAPSULE_ID, false),
+        (WALLET_WALLETCONNECT_CAPSULE_ID, true),
+        (WALLET_METAMASK_CAPSULE_ID, false),
+    ] {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let owner = passkey_authority(dir.path());
+        let token = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &owner);
+        let principal = &owner.principal_id;
+        let directory = dir
+            .path()
+            .join("ElastOS/SystemServices/WalletConnect/sessions");
+        std::fs::create_dir_all(&directory).unwrap();
+        let store = directory.join(format!(
+            "{}.json",
+            hex::encode(Sha256::digest(principal.as_bytes()))
+        ));
+        std::fs::write(&store, b"{}").unwrap();
+        let mut accounts = vec![json!({
+                "account_id":"fixture-other","principal_id":principal,"proof_binding_id":"fixture-proof",
+                "chain_namespace":"eip155:20","address":format!("0x{}","12".repeat(20)),"proof_type":"siwe",
+                "connector_id":connector_id,"linked_at":now_ts(),
+        })];
+        if !keep_another {
+            accounts.clear();
+        }
+        accounts.push(json!({
+                "account_id":"fixture-account","principal_id":principal,"proof_binding_id":"fixture-proof",
+                "chain_namespace":"eip155:1","address":format!("0x{}","12".repeat(20)),"proof_type":"siwe",
+                "connector_id":connector_id,"linked_at":now_ts(),
+            }));
+        let provider = MockWalletProvider {
+            accounts: TokioMutex::new(accounts),
+            ..Default::default()
+        };
+        let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
+        let step_up = step_up_token_for_app_context(
+            dir.path(),
+            WALLET_CAPSULE_ID,
+            &token,
+            "wallet.account.delete",
+            &json!({"account_id":"fixture-account"}),
+        );
+        let response = app
+            .oneshot(
+                test_browser_request("localhost:61180", "null")
+                    .method("DELETE")
+                    .uri("/api/apps/wallet/wallet/accounts/fixture-account")
+                    .header("x-elastos-home-token", token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"step_up_token":step_up}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            store.exists(),
+            connector_id != WALLET_WALLETCONNECT_CAPSULE_ID || keep_another
+        );
+    }
 }

@@ -126,7 +126,9 @@ pub(super) async fn home_wallet_connector_evm_link_challenge(
         &input.connector_id,
         &input.connector_token,
         WALLET_METAMASK_CAPSULE_ID,
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -134,7 +136,9 @@ pub(super) async fn home_wallet_connector_evm_link_challenge(
         &state,
         &input.connector_id,
         authority.wallet,
-    ) {
+    )
+    .await
+    {
         Ok(link) => link,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -172,7 +176,9 @@ pub(super) async fn home_wallet_connector_evm_link_verify(
         &input.connector_id,
         &input.connector_token,
         WALLET_METAMASK_CAPSULE_ID,
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -180,7 +186,9 @@ pub(super) async fn home_wallet_connector_evm_link_verify(
         &state,
         &input.connector_id,
         authority.wallet,
-    ) {
+    )
+    .await
+    {
         Ok(link) => link,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -217,7 +225,9 @@ pub(super) async fn home_wallet_connector_bitcoin_link_challenge(
         &input.connector_id,
         &input.connector_token,
         WALLET_UNISAT_CAPSULE_ID,
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -225,7 +235,9 @@ pub(super) async fn home_wallet_connector_bitcoin_link_challenge(
         &state,
         &input.connector_id,
         authority.wallet,
-    ) {
+    )
+    .await
+    {
         Ok(link) => link,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -263,7 +275,9 @@ pub(super) async fn home_wallet_connector_bitcoin_link_verify(
         &input.connector_id,
         &input.connector_token,
         WALLET_UNISAT_CAPSULE_ID,
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -271,7 +285,9 @@ pub(super) async fn home_wallet_connector_bitcoin_link_verify(
         &state,
         &input.connector_id,
         authority.wallet,
-    ) {
+    )
+    .await
+    {
         Ok(link) => link,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -314,7 +330,9 @@ pub(super) async fn home_wallet_connector_approval_handoff(
         &input.connector_id,
         &input.connector_token,
         input.connector_id.as_str(),
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -382,7 +400,9 @@ pub(super) async fn home_wallet_connector_approval_complete(
         &input.connector_id,
         &input.connector_token,
         input.connector_id.as_str(),
-    ) {
+    )
+    .await
+    {
         Ok(authority) => authority,
         Err(err) => return home_wallet_connector_authority_error_response(err),
     };
@@ -416,7 +436,7 @@ pub(super) async fn home_wallet_connector_approval_complete(
     }
 }
 
-fn require_home_wallet_connector_authority(
+async fn require_home_wallet_connector_authority(
     state: &GatewayState,
     headers: &HeaderMap,
     schema: &str,
@@ -432,7 +452,7 @@ fn require_home_wallet_connector_authority(
     {
         anyhow::bail!("Home wallet-connector actor mismatch");
     }
-    ensure_wallet_connector_configured(&state.data_dir, connector_id)?;
+    ensure_wallet_connector_configured_async(&state.data_dir, connector_id).await?;
 
     let home = require_home_runtime_wallet_authority(&state.data_dir, headers)?;
     let connector_launch =

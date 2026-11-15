@@ -35,6 +35,12 @@ pub(in crate::api::gateway) async fn system_wallet_approval_reject(
     .await
 }
 
+pub(in crate::api::gateway) fn wallet_approval_is_dismissal(request: &serde_json::Value) -> bool {
+    request["approved_at"].as_u64().is_some()
+        && request["intent"] == "transaction_intent"
+        && request["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
+}
+
 pub(in crate::api::gateway) async fn reject_wallet_approval_request(
     state: &GatewayState,
     context: &HomeLaunchTokenContext,
@@ -59,20 +65,37 @@ pub(in crate::api::gateway) async fn reject_wallet_approval_request(
     )
     .await
     {
-        Ok(_) => {
+        Ok(rejected) => {
+            let dismissed = wallet_approval_is_dismissal(&rejected["approval_request"]);
             let _ = append_wallet_approval_audit(
                 &state.data_dir,
                 WalletApprovalAuditInput {
                     capsule_id,
-                    event_type: "wallet.approval.rejected",
+                    event_type: if dismissed {
+                        "wallet.approval.dismissed"
+                    } else {
+                        "wallet.approval.rejected"
+                    },
                     principal_id: &context.principal_id,
                     session_id: &context.session_id,
                     request_id,
-                    result: "rejected",
-                    reason: "Wallet approval rejected through Runtime authority",
+                    result: if dismissed { "dismissed" } else { "rejected" },
+                    reason: if dismissed {
+                        elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON
+                    } else {
+                        "Wallet approval rejected through Runtime authority"
+                    },
                 },
             );
-            Json(system_wallet_approvals_summary(state, authority, false).await).into_response()
+            let mut summary = system_wallet_approvals_summary(state, authority, false).await;
+            if dismissed {
+                summary.receipt_status = Some("dismissed".to_string());
+                summary.note = Some(
+                    "Request dismissed. Check your connected wallet before sending again."
+                        .to_string(),
+                );
+            }
+            Json(summary).into_response()
         }
         Err(err) => system_error_response(err),
     }
@@ -248,6 +271,12 @@ pub(in crate::api::gateway) async fn approve_external_wallet_request(
     capsule_id: &str,
 ) -> anyhow::Result<WalletApprovalReviewOutcome> {
     let request = pending_wallet_approval_request(state, authority, request_id).await?;
+    if capsule_id == WALLET_WALLETCONNECT_CAPSULE_ID {
+        anyhow::ensure!(
+            request.status == "pending" && request.expires_at > now_ts(),
+            "WalletConnect request changed or expired"
+        );
+    }
     if is_managed_wallet_proof_type(&request.proof_type) {
         anyhow::bail!("Use System to approve built-in wallet requests");
     }
@@ -282,7 +311,7 @@ pub(in crate::api::gateway) async fn approve_external_wallet_request(
             wallet_connector_label(capsule_id)
         ),
         handoff,
-        approval_request: None,
+        approval_request: data.get("approval_request").cloned(),
     })
 }
 
@@ -295,7 +324,7 @@ pub(in crate::api::gateway) async fn complete_external_wallet_approval(
     capsule_id: &str,
     audit_reason: &str,
 ) -> anyhow::Result<SystemWalletApprovalsSummary> {
-    runtime_wallet_data(
+    let completed = runtime_wallet_data(
         state,
         authority,
         elastos_wallet_contract::WalletProviderOperationV2::CompleteConnectorHandoff {
@@ -309,19 +338,35 @@ pub(in crate::api::gateway) async fn complete_external_wallet_approval(
         },
     )
     .await?;
+    let late_receipt = completed["approval_request"]["status"] == "rejected";
+    let receipt_status = if late_receipt {
+        "sent_after_dismissal"
+    } else {
+        "completed"
+    };
     append_wallet_approval_audit(
         &state.data_dir,
         WalletApprovalAuditInput {
             capsule_id,
-            event_type: "wallet.approval.completed",
+            event_type: if late_receipt {
+                "wallet.approval.sent_after_dismissal"
+            } else {
+                "wallet.approval.completed"
+            },
             principal_id: &context.principal_id,
             session_id: &context.session_id,
             request_id,
-            result: "completed",
-            reason: audit_reason,
+            result: receipt_status,
+            reason: if late_receipt {
+                "Request dismissed. Transaction sent from wallet."
+            } else {
+                audit_reason
+            },
         },
     )?;
-    Ok(system_wallet_approvals_summary(state, authority, false).await)
+    let mut summary = system_wallet_approvals_summary(state, authority, false).await;
+    summary.receipt_status = Some(receipt_status.to_string());
+    Ok(summary)
 }
 
 pub(in crate::api::gateway) async fn pending_wallet_approval_request(
@@ -371,6 +416,7 @@ pub(in crate::api::gateway) async fn system_wallet_approvals_summary(
                 .count();
             SystemWalletApprovalsSummary {
                 available: true,
+                receipt_status: None,
                 pending_count,
                 approval_requests,
                 handoff: None,
@@ -508,6 +554,11 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
         reason: value.get("reason")?.as_str()?.to_string(),
         account_id: value.get("account_id")?.as_str()?.to_string(),
         address: value.get("address")?.as_str()?.to_string(),
+        chain_namespace: value
+            .get("chain_namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
         proof_type: value
             .get("proof_type")
             .and_then(|value| value.as_str())
@@ -528,6 +579,7 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
                     .and_then(|value| value.get("completed_at"))
                     .and_then(|value| value.as_u64())
             }),
+        approved_at: value.get("approved_at").and_then(|value| value.as_u64()),
         transaction_hash: signed_result
             .and_then(|value| value.get("transaction_hash"))
             .and_then(|value| value.as_str())
