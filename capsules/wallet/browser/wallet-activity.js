@@ -74,7 +74,8 @@ export function activitySubtitle(request) {
     parts.push(shortAddress(request.address));
   }
   if (request.transaction_hash) {
-    parts.push(`tx ${shortAddress(request.transaction_hash)}`);
+    const dismissed = request.status === "rejected" && request.approved_at;
+    parts.push(`tx ${dismissed ? readText(request.transaction_hash) : shortAddress(request.transaction_hash)}`);
   } else if (request.reason) {
     parts.push(readText(request.reason));
   }

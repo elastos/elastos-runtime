@@ -81,5 +81,5 @@ test("Activity distinguishes pending rejection, approved dismissal and a late wa
   assert.match(activityTitle({ ...request, approved_at: 10 }), /Dismissed transaction request/);
   const late = { ...request, approved_at: 10, transaction_hash: `0x${"a".repeat(64)}` };
   assert.match(activityTitle(late), /Dismissed here.*still sent from wallet/);
-  assert.match(activitySubtitle(late), /tx 0xaaaa/);
+  assert(activitySubtitle(late).includes(late.transaction_hash));
 });

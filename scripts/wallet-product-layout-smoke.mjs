@@ -889,9 +889,14 @@ async function run() {
     const lateRow = lateFrame.locator(".wallet-activity-row");
     assert(await lateRow.count() === 1, "late receipt stays on one Activity line");
     assert((await lateRow.textContent()).includes("Dismissed here; still sent from wallet"), "late receipt explains the dismissed send");
-    assert((await lateRow.textContent()).includes("tx 0xaaaa"), "late receipt shows its hash");
+    assert((await lateRow.textContent()).includes(server.state.approvals[0].transaction_hash), "late receipt keeps the full hash available");
+    await railPage.setViewportSize({ width: 390, height: 844 });
+    const lateBounds = await lateRow.evaluate(row => ({ right: row.getBoundingClientRect().right, width: window.innerWidth, scroll: document.documentElement.scrollWidth }));
+    assert(lateBounds.right <= lateBounds.width && lateBounds.scroll <= lateBounds.width, "full late hash fits the phone Activity row");
+    await screenshot(lateFrame, join(tempDir, "wallet-late-receipt-phone.png"));
+    await railPage.setViewportSize({ width: 640, height: 900 });
     for (const connector_id of ["wallet-metamask", "wallet-unisat"]) {
-      server.state.approvals = [{ ...server.state.approvals[0], status: "approved", connector_id, transaction_hash: undefined }];
+      server.state.approvals = [{ ...server.state.approvals[0], status: "approved", connector_id, expires_at: Math.floor(Date.now() / 1000) + 300, transaction_hash: undefined }];
       await railPage.reload({ waitUntil: "networkidle" });
       const otherFrame = await walletFrame(railPage);
       await otherFrame.locator(".wallet-account").waitFor({ state: "visible" });
