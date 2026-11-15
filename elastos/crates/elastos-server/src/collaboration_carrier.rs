@@ -152,6 +152,12 @@ impl CollaborationCarrierReceiveBatch {
     pub fn rejected_frames(&self) -> usize {
         self.rejected_frames
     }
+
+    /// The buffer position of the first frame in this batch. The Carrier
+    /// replays the batch from here until the Home acknowledges it.
+    pub fn cursor(&self) -> u64 {
+        self.cursor
+    }
 }
 
 #[derive(Deserialize)]

@@ -24,6 +24,18 @@ pub(crate) struct CollaborationTransportDriver {
     network: JoinedCollaborationNetwork,
     home_delivery: Option<SharedHomeDelivery>,
     gossip: Mutex<GossipSchedule>,
+    ingested: Mutex<IngestedBatch>,
+}
+
+/// How far this Home got through the batch the Carrier holds at `cursor`.
+/// The Carrier replays that exact range until the Home acknowledges it
+/// (`carrier.rs:7140-7146`), so without this count a Home that cannot
+/// acknowledge would ingest those frames again on every live cycle and gossip
+/// each stored acceptance receipt again with it.
+#[derive(Default)]
+struct IngestedBatch {
+    cursor: u64,
+    frames: usize,
 }
 
 const SHARED_FAST_RETRY_WINDOW_SECS: u64 = 3;
@@ -320,6 +332,7 @@ impl CollaborationTransportDriver {
             network,
             home_delivery: None,
             gossip: Mutex::new(GossipSchedule::default()),
+            ingested: Mutex::new(IngestedBatch::default()),
         }
     }
 
@@ -515,10 +528,7 @@ impl CollaborationTransportDriver {
         // senders may never resend them, so this Home owns the retry.
         let mut held = self.core.take_held_frames(now).into_iter();
         while let Some(frame) = held.next() {
-            if !self
-                .ingest_frame(frame.frame(), now, &mut summary, true)
-                .await
-            {
+            if !self.ingest_frame(frame.frame(), now, &mut summary).await {
                 self.core
                     .restore_held_frames(std::iter::once(frame).chain(held).collect());
                 return Ok(CollaborationIncomingOnceOutcome::RetryRequired(summary));
@@ -531,13 +541,16 @@ impl CollaborationTransportDriver {
             return Ok(CollaborationIncomingOnceOutcome::RetryRequired(summary));
         }
         summary.carrier_rejected_frames = batch.rejected_frames();
-        for envelope in batch.envelopes() {
+        let mut ingested = self.ingested_frames(batch.cursor())?;
+        for envelope in batch.envelopes().iter().skip(ingested) {
             if !self.core.community_membership().joined() {
                 return Ok(CollaborationIncomingOnceOutcome::RetryRequired(summary));
             }
-            if !self.ingest_frame(envelope, now, &mut summary, false).await {
+            if !self.ingest_frame(envelope, now, &mut summary).await {
                 return Ok(CollaborationIncomingOnceOutcome::RetryRequired(summary));
             }
+            ingested += 1;
+            self.record_ingested_frames(batch.cursor(), ingested)?;
         }
 
         match self.network.ack(&batch).await {
@@ -546,14 +559,35 @@ impl CollaborationTransportDriver {
         }
     }
 
-    /// Ingests one frame and sends its receipt. Returns false when the cycle
-    /// must stop and retry this frame later.
+    /// Frames of the batch at `cursor` this Home has already ingested. A later
+    /// cursor starts its own count, and a Carrier range is always the same
+    /// buffer positions, so a sender's genuine re-send never lands in a count.
+    fn ingested_frames(&self, cursor: u64) -> anyhow::Result<usize> {
+        let ingested = self
+            .ingested
+            .lock()
+            .map_err(|_| anyhow::anyhow!("ingested batch lock poisoned"))?;
+        Ok((ingested.cursor == cursor)
+            .then_some(ingested.frames)
+            .unwrap_or_default())
+    }
+
+    fn record_ingested_frames(&self, cursor: u64, frames: usize) -> anyhow::Result<()> {
+        *self
+            .ingested
+            .lock()
+            .map_err(|_| anyhow::anyhow!("ingested batch lock poisoned"))? =
+            IngestedBatch { cursor, frames };
+        Ok(())
+    }
+
+    /// Ingests one frame and sends its receipt. Returns false when the frame
+    /// is not ingested and the cycle must retry it later.
     async fn ingest_frame(
         &self,
         frame: &[u8],
         now: u64,
         summary: &mut CollaborationIncomingOnceSummary,
-        held: bool,
     ) -> bool {
         match self.core.allows_gossip_frame(frame) {
             Ok(true) => {}
@@ -588,12 +622,14 @@ impl CollaborationTransportDriver {
                 {
                     Ok(CollaborationCarrierSendOutcome::RemoteBroadcast { .. }) => {
                         summary.acceptance_receipt_broadcasts += 1;
-                        true
                     }
-                    // A held frame's senders fetch its durable receipt again
-                    // by retrying: direct by the Home call, gossip by re-broadcast.
-                    Ok(CollaborationCarrierSendOutcome::LocalOnlyBuffered) | Err(_) => held,
+                    // The acceptance is durable, so this frame is ingested.
+                    // Its sender keeps re-sending until a receipt reaches it,
+                    // and each copy earns a fresh receipt of its own: direct
+                    // by the Home call, on the topic by its new position.
+                    Ok(CollaborationCarrierSendOutcome::LocalOnlyBuffered) | Err(_) => {}
                 }
+                true
             }
         }
     }
@@ -2767,11 +2803,12 @@ mod tests {
             .requests()
             .iter()
             .all(|request| request["op"] != "gossip_ack"));
+        // The retry resumes at the frame that failed: the three rejections the
+        // first cycle already consumed are not read again.
         assert_eq!(
             driver.process_incoming_once(NOW).await.unwrap(),
             CollaborationIncomingOnceOutcome::Acknowledged(CollaborationIncomingOnceSummary {
                 carrier_rejected_frames: 2,
-                deterministic_rejections: 3,
                 incoming_acceptances: 2,
                 acceptance_receipt_broadcasts: 2,
                 ..CollaborationIncomingOnceSummary::default()
@@ -2842,7 +2879,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn incoming_receipt_is_durable_before_send_and_replayed_until_exact_ack() {
+    async fn an_incoming_receipt_is_durable_before_its_single_send() {
         let fixture = Fixture::new();
         let core = fixture.core();
         let (sender, _) = generate_keypair();
@@ -2853,16 +2890,18 @@ mod tests {
             .to_vec();
         let carrier = FakeCarrier::new();
         let driver = fixture.driver(core.clone(), carrier.clone()).await;
-        // A separately opened Core reads the persisted acceptance before each send.
+        // A separately opened Core reads the persisted acceptance before the send.
         carrier.observe_durable_incoming_before_send(fixture.core());
-        let remote = serde_json::json!({"status":"ok","data":{"remote_peer_count":1}});
+        // A receipt that reaches no gossip neighbour leaves the acceptance
+        // durable, so the batch completes and the Home stops reading it.
         carrier.push([
             peek(0, 1, vec![gossip(&frame)]),
             serde_json::json!({"status":"ok","broadcast":"local_only","data":{"remote_peer_count":0}}),
+            ack(0, 1),
         ]);
         assert!(matches!(
             driver.process_incoming_once(NOW).await.unwrap(),
-            CollaborationIncomingOnceOutcome::RetryRequired(_)
+            CollaborationIncomingOnceOutcome::Acknowledged(_)
         ));
         assert_eq!(core.summary().unwrap().pending_product_handoffs, 1);
         core.acknowledge_product_handoff(&collaboration_message_envelope_sha256(&envelope))
@@ -2872,19 +2911,10 @@ mod tests {
         assert_eq!(core.summary().unwrap().replay_tombstones, 0);
         *carrier.durable_incoming_before_send.lock().unwrap() = None;
 
-        carrier.push([peek(0, 1, vec![gossip(&frame)])]);
+        // A send that fails outright ingests the frame just the same.
+        carrier.push([peek(1, 2, vec![gossip(&frame)])]);
         carrier.push_failure("receipt send failed");
-        assert!(matches!(
-            driver.process_incoming_once(NOW + 1).await.unwrap(),
-            CollaborationIncomingOnceOutcome::RetryRequired(_)
-        ));
-        carrier.push([peek(0, 1, vec![gossip(&frame)]), remote.clone()]);
-        carrier.push_failure("ack failed");
-        assert!(matches!(
-            driver.process_incoming_once(NOW + 1).await.unwrap(),
-            CollaborationIncomingOnceOutcome::RetryRequired(_)
-        ));
-        carrier.push([peek(0, 1, vec![gossip(&frame)]), remote, ack(0, 1)]);
+        carrier.push([ack(1, 2)]);
         assert!(matches!(
             driver.process_incoming_once(NOW + 1).await.unwrap(),
             CollaborationIncomingOnceOutcome::Acknowledged(_)
@@ -2895,17 +2925,12 @@ mod tests {
             .filter(|request| request["op"] == "gossip_send")
             .map(|request| request["message"].as_str().unwrap().as_bytes().to_vec())
             .collect();
-        assert_eq!(receipts.len(), 4);
-        assert!(receipts.windows(2).all(|pair| pair[0] == pair[1]));
+        assert_eq!(receipts.len(), 2);
         assert!(core.allows_gossip_receipt(&receipts[0], &frame).unwrap());
         assert_eq!(
             request_ops(&carrier),
             [
                 "gossip_join_exact",
-                "gossip_peek",
-                "gossip_send",
-                "gossip_peek",
-                "gossip_send",
                 "gossip_peek",
                 "gossip_send",
                 "gossip_ack",
