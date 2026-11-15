@@ -229,6 +229,22 @@ pub(crate) use gateway_wallet::{
 /// A capsule this Home does not offer is absent everywhere: not served, not
 /// launchable and not in the catalog. Services is hidden until sharing moves
 /// into People; WalletConnect waits for an operator-pinned config.
+// Async callers yield while synchronous inventory reads verify pinned assets.
+pub(crate) async fn blocking_capsule_inventory<T: Send + 'static>(
+    read: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    tokio::task::spawn_blocking(read)
+        .await
+        .expect("capsule inventory worker failed")
+}
+
+pub(crate) async fn capsule_is_offered_async(data_dir: &std::path::Path, name: &str) -> bool {
+    name != SERVICES_CAPSULE_ID
+        && ensure_wallet_connector_configured_async(data_dir, name)
+            .await
+            .is_ok()
+}
+
 pub(crate) fn capsule_is_offered(data_dir: &std::path::Path, name: &str) -> bool {
     name != SERVICES_CAPSULE_ID && ensure_wallet_connector_configured(data_dir, name).is_ok()
 }

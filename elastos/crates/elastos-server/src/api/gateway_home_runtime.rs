@@ -49,7 +49,15 @@ pub(super) async fn home_launch(
             )
         })?;
 
-    let mut target_summary = home_launch_target_for_platform(&state.data_dir, target, platform);
+    let mut target_summary = {
+        let data = state.data_dir.clone();
+        let target = target.to_string();
+        let platform = platform.to_string();
+        blocking_capsule_inventory(move || {
+            home_launch_target_for_platform(&data, &target, &platform)
+        })
+        .await
+    };
     if target_summary.is_none() || state.data_dir.join("capsules").join(target).exists() {
         ensure_home_target_package(&state.data_dir, target, target_summary.is_none())
             .await
@@ -59,7 +67,15 @@ pub(super) async fn home_launch(
                     Json(serde_json::json!({ "error": err })),
                 )
             })?;
-        target_summary = home_launch_target_for_platform(&state.data_dir, target, platform);
+        target_summary = {
+            let data = state.data_dir.clone();
+            let target = target.to_string();
+            let platform = platform.to_string();
+            blocking_capsule_inventory(move || {
+                home_launch_target_for_platform(&data, &target, &platform)
+            })
+            .await
+        };
     }
 
     let Some(target_summary) = target_summary else {

@@ -1,6 +1,15 @@
 //! Relay-only defaults for a configured WalletConnect Home, independent of a Browser VM.
 use std::path::Path;
 
+pub async fn local_exit_async(
+    data: &Path,
+    platform: &str,
+) -> Option<(serde_json::Value, serde_json::Value)> {
+    let data = data.to_path_buf();
+    let platform = platform.to_string();
+    crate::api::gateway::blocking_capsule_inventory(move || local_exit(&data, &platform)).await
+}
+
 pub fn local_exit(data: &Path, platform: &str) -> Option<(serde_json::Value, serde_json::Value)> {
     crate::api::gateway::ensure_wallet_connector_configured(data, "wallet-walletconnect").ok()?;
     if !matches!(platform, "darwin-arm64" | "linux-amd64" | "linux-arm64") {

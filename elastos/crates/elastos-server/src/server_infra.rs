@@ -1199,7 +1199,8 @@ async fn setup_server_infrastructure_impl(
     // Browser is unavailable.
     let platform = elastos_server::setup::detect_platform();
     let browser_available = elastos_server::setup::browser_available(&platform);
-    let walletconnect_exit = elastos_server::setup::walletconnect::local_exit(&data_dir, &platform);
+    let walletconnect_exit =
+        elastos_server::setup::walletconnect::local_exit_async(&data_dir, &platform).await;
     let browser_exit = browser_available
         .then(|| browser_local_exit_config_from_env(&data_dir))
         .flatten();

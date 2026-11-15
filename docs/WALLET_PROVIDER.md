@@ -245,12 +245,13 @@ managed signing or external handoff completion fails closed instead of becoming
 a stale signing authority.
 
 SDK availability checks share a verified-result cache. Async HTTP handlers run
-verification in the blocking pool. Synchronous package inventory checks also
-hash on a worker, and wait for a cold verification. The cache checks the current
+verification in the blocking pool. Synchronous setup and CLI callers hash inline. Async package inventory and
+local Exit callers yield while the blocking pool verifies the SDK. The cache checks the current
 config on each admission. A changed pinned digest, SDK size, modification time,
 or file identity invalidates the entry; Unix identity includes device, inode,
 and change time. Missing or invalid files fail closed. Runtime restart clears
-the cache, and it retains at most 16 SDK paths. Existing admitted relay frames
+the cache, and it retains at most 16 SDK paths. Matching and mismatched hashes
+share the same file-stamp and pin invalidation rules. Existing admitted relay frames
 keep their original admission; new admissions check the current files.
 
 WalletConnect is a dedicated connector capsule (`wallet-walletconnect`). The

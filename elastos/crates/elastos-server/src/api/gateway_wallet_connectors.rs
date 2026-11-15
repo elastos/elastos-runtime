@@ -313,10 +313,10 @@ pub(crate) async fn ensure_wallet_connector_configured_async(
         return Ok(());
     }
     let data = data_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || {
+    blocking_capsule_inventory(move || {
         ensure_wallet_connector_configured(&data, WALLET_WALLETCONNECT_CAPSULE_ID)
     })
-    .await?
+    .await
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -355,7 +355,7 @@ fn walletconnect_sdk_stamp(path: &FsPath) -> anyhow::Result<WalletConnectSdkStam
     })
 }
 
-type SdkCache = std::collections::BTreeMap<PathBuf, (WalletConnectSdkStamp, String)>;
+type SdkCache = std::collections::BTreeMap<PathBuf, (WalletConnectSdkStamp, String, bool)>;
 
 // Synchronous inventory/setup callers share this cache with HTTP admissions.
 // Callers on the blocking pool hash inline; synchronous setup uses its own thread.
@@ -381,12 +381,14 @@ fn ensure_wallet_connector_configured_with_cache(
     let mut cache = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if cache
-        .get(&sdk_path)
-        .is_some_and(|entry| entry == &(stamp.clone(), config.sdk_sha256.clone()))
-    {
-        return Ok(());
+    let mismatch =
+        || anyhow::anyhow!("WalletConnect connector is not configured: pinned SDK hash mismatch");
+    if let Some((cached_stamp, pin, matches)) = cache.get(&sdk_path) {
+        if cached_stamp == &stamp && pin == &config.sdk_sha256 {
+            return if *matches { Ok(()) } else { Err(mismatch()) };
+        }
     }
+    // Async admissions and inventories already own a blocking-pool worker.
     #[cfg(test)]
     sdk_verification_tests::record_read(&sdk_path);
     let bytes = gateway_walletconnect::read_bytes(&sdk_path, 8 * 1024 * 1024)?
@@ -396,15 +398,17 @@ fn ensure_wallet_connector_configured_with_cache(
         stamp == walletconnect_sdk_stamp(&sdk_path)?,
         "WalletConnect SDK changed during verification"
     );
-    if !digest.eq_ignore_ascii_case(config.sdk_sha256.trim()) {
-        anyhow::bail!("WalletConnect connector is not configured: pinned SDK hash mismatch");
-    }
+    let matches = digest.eq_ignore_ascii_case(config.sdk_sha256.trim());
     // Runtime normally has one data root. Bound retained fixture/retired roots.
     if cache.len() >= 16 {
         cache.clear();
     }
-    cache.insert(sdk_path, (stamp, config.sdk_sha256));
-    Ok(())
+    cache.insert(sdk_path, (stamp, config.sdk_sha256, matches));
+    if matches {
+        Ok(())
+    } else {
+        Err(mismatch())
+    }
 }
 
 pub(in crate::api::gateway) fn load_walletconnect_connector_config(
@@ -648,6 +652,86 @@ mod sdk_verification_tests {
         });
         ensure_wallet_connector_configured_with_cache(dir.path(), &cache).unwrap();
         assert_eq!(reads(&sdk), [std::thread::current().id()]);
+    }
+
+    #[tokio::test]
+    async fn walletconnect_inventories_hash_on_the_blocking_pool() {
+        for source in ["catalog", "launcher", "local-exit"] {
+            let (dir, sdk, _, _) = fixture();
+            // A declared app makes both inventory entrypoints exercise availability.
+            std::fs::write(dir.path().join("components.json"), serde_json::json!({
+                "external": { "wallet-walletconnect": { "install_path": "capsules/wallet-walletconnect", "platforms": {} } },
+                "capsules": {}, "profiles": {}
+            }).to_string()).unwrap();
+            let capsule = dir.path().join("capsules/wallet-walletconnect");
+            std::fs::write(
+                capsule.join("capsule.json"),
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../../capsules/wallet-walletconnect/capsule.json"
+                )),
+            )
+            .unwrap();
+            std::fs::create_dir_all(capsule.join("browser")).unwrap();
+            std::fs::write(capsule.join("browser/index.html"), "fixture").unwrap();
+            match source {
+                "catalog" => {
+                    capsule_catalog_summary_async(dir.path()).await;
+                }
+                "launcher" => {
+                    crate::api::browser_capsules::list_launchable_browser_capsules_async(
+                        dir.path(),
+                    )
+                    .await;
+                }
+                _ => {
+                    assert!(crate::setup::walletconnect::local_exit_async(
+                        dir.path(),
+                        "darwin-arm64"
+                    )
+                    .await
+                    .is_some());
+                }
+            }
+            assert!(
+                !reads(&sdk).is_empty(),
+                "{source} must exercise SDK verification"
+            );
+            assert!(
+                reads(&sdk)
+                    .iter()
+                    .all(|thread| *thread != std::thread::current().id()),
+                "{source} blocked the async thread"
+            );
+        }
+    }
+
+    #[test]
+    fn walletconnect_sdk_caches_hash_failure_until_file_or_pin_changes() {
+        let (dir, sdk, config, mut value) = fixture();
+        let cache = Mutex::default();
+        value["sdk_sha256"] = serde_json::json!("00".repeat(32));
+        std::fs::write(&config, value.to_string()).unwrap();
+        for _ in 0..2 {
+            assert!(
+                ensure_wallet_connector_configured_with_cache(dir.path(), &cache)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("hash mismatch")
+            );
+        }
+        assert_eq!(reads(&sdk).len(), 1, "unchanged hash failures are cached");
+        value["sdk_sha256"] = serde_json::json!(format!("{:x}", Sha256::digest(b"fixture-sdk")));
+        std::fs::write(&config, value.to_string()).unwrap();
+        ensure_wallet_connector_configured_with_cache(dir.path(), &cache).unwrap();
+        assert_eq!(reads(&sdk).len(), 2, "a new pin is checked immediately");
+        std::fs::write(&sdk, b"tampered!!!").unwrap();
+        assert!(ensure_wallet_connector_configured_with_cache(dir.path(), &cache).is_err());
+        assert_eq!(
+            reads(&sdk).len(),
+            3,
+            "changed bytes are checked immediately"
+        );
     }
 
     #[test]

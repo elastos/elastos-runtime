@@ -212,11 +212,7 @@ async fn serve_browser_capsule_asset(
     requested_path: Option<&str>,
     raw_query: Option<&str>,
 ) -> Response {
-    if app == "services"
-        || super::gateway::ensure_wallet_connector_configured_async(data_dir, app)
-            .await
-            .is_err()
-    {
+    if !super::gateway::capsule_is_offered_async(data_dir, app).await {
         return (StatusCode::NOT_FOUND, "Browser capsule not found").into_response();
     }
 
@@ -457,6 +453,14 @@ fn home_document_origin(headers: &axum::http::HeaderMap) -> Option<String> {
             "http"
         }
     ))
+}
+
+pub(crate) async fn list_launchable_browser_capsules_async(
+    data_dir: &Path,
+) -> Vec<LaunchableBrowserCapsule> {
+    let data = data_dir.to_path_buf();
+    super::gateway::blocking_capsule_inventory(move || list_launchable_browser_capsules(&data))
+        .await
 }
 
 pub(crate) fn list_launchable_browser_capsules(data_dir: &Path) -> Vec<LaunchableBrowserCapsule> {

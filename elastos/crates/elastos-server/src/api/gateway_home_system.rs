@@ -448,7 +448,11 @@ pub(super) async fn home_summary(
             {
                 return home_error_response(err);
             }
-            let browser_state = match home_browser_state(&state.data_dir, context) {
+            let browser_state = match {
+                let data = state.data_dir.clone();
+                let context = context.clone();
+                blocking_capsule_inventory(move || home_browser_state(&data, &context)).await
+            } {
                 Ok(state) => state,
                 Err(err) => return home_error_response(err),
             };
@@ -475,7 +479,7 @@ pub(super) async fn home_summary(
         };
 
     let mut notifications = home_state.notifications;
-    let capsule_catalog = capsule_catalog_summary(&state.data_dir);
+    let capsule_catalog = capsule_catalog_summary_async(&state.data_dir).await;
     let active_shell = match home_active_shell_summary_from_catalog(
         &state.data_dir,
         context.as_ref(),
@@ -6333,7 +6337,11 @@ pub(super) async fn home_browser_state_get(
         Ok(context) => context,
         Err(err) => return home_error_response(err),
     };
-    match home_browser_state(&state.data_dir, &context) {
+    match {
+        let data = state.data_dir.clone();
+        let context = context.clone();
+        blocking_capsule_inventory(move || home_browser_state(&data, &context)).await
+    } {
         Ok(state) => Json(state).into_response(),
         Err(err) => home_error_response(err),
     }
@@ -6348,7 +6356,11 @@ pub(super) async fn home_browser_state_update(
         Ok(context) => context,
         Err(err) => return home_error_response(err),
     };
-    match home_save_browser_state(&state.data_dir, &context, input) {
+    match {
+        let data = state.data_dir.clone();
+        let context = context.clone();
+        blocking_capsule_inventory(move || home_save_browser_state(&data, &context, input)).await
+    } {
         Ok(state) => Json(state).into_response(),
         Err(err) => gateway_assistant_workspace_v2::migration_error_response(&err)
             .unwrap_or_else(|| home_error_response(err)),
@@ -6360,7 +6372,10 @@ pub(super) async fn home_active_shell_get(
     headers: HeaderMap,
 ) -> Response {
     let context = require_home_active_shell_token_context(&state.data_dir, &headers).ok();
-    match home_active_shell_summary(&state.data_dir, context.as_ref()) {
+    match {
+        let data = state.data_dir.clone();
+        blocking_capsule_inventory(move || home_active_shell_summary(&data, context.as_ref())).await
+    } {
         Ok(summary) => Json(summary).into_response(),
         Err(err) => home_error_response(err),
     }
@@ -6375,7 +6390,14 @@ pub(super) async fn home_active_shell_update(
         Ok(context) => context,
         Err(err) => return home_error_response(err),
     };
-    match home_save_active_shell(&state.data_dir, &context, input.active.trim()) {
+    match {
+        let data = state.data_dir.clone();
+        let context = context.clone();
+        blocking_capsule_inventory(move || {
+            home_save_active_shell(&data, &context, input.active.trim())
+        })
+        .await
+    } {
         Ok(summary) => Json(summary).into_response(),
         Err(err) => {
             let text = err.to_string();
