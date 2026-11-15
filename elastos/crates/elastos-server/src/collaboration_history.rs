@@ -1364,6 +1364,150 @@ mod tests {
         }
     }
 
+    /// One fresh presence announcement from this Home's person, as its
+    /// Runtime publishes one while the person is shown.
+    async fn refresh_presence(
+        fixture: &Fixture,
+        now: u64,
+    ) -> crate::collaboration_presence::PreparedCollaborationPresence {
+        let root = crate::auth::principal_localhost_root(PRINCIPAL);
+        let profile = crate::collaboration_profile_authority::load_profile_authority(
+            fixture.root.path(),
+            PRINCIPAL,
+            &root,
+        )
+        .unwrap()
+        .unwrap();
+        let grant = crate::collaboration_presence_grant::presence_grant(
+            &fixture.authority,
+            fixture.root.path(),
+            PRINCIPAL,
+            &fixture.profile_did,
+            &fixture.presence.presence_scope(),
+            crate::collaboration_presence_grant::PresencePublisher::Runtime,
+            now,
+        )
+        .await
+        .unwrap();
+        fixture
+            .presence
+            .prepare_presence(
+                presence_request_binding(
+                    &grant.bind_request_id(&format!("presence-at-{now}")),
+                    PRINCIPAL,
+                    &profile,
+                )
+                .unwrap(),
+                &profile,
+                now,
+            )
+            .unwrap()
+    }
+
+    /// A presence record lives 45 s, so both Homes keep announcing their
+    /// person while a measurement runs for minutes.
+    async fn keep_both_present(a: &Fixture, b: &Fixture, now: u64) {
+        let own = refresh_presence(a, now).await;
+        a.presence
+            .project_authorized_presence(&own, now)
+            .await
+            .unwrap();
+        let peer = refresh_presence(b, now).await;
+        a.product
+            .test_core()
+            .accept_incoming_from_signed_source_for_test(peer.test_envelope_bytes(), now)
+            .unwrap();
+        for presence in a.presence.pending_presences().unwrap() {
+            a.presence.project_handoff(&presence, now).unwrap();
+        }
+        assert!(
+            a.presence
+                .history_participants(now)
+                .unwrap()
+                .iter()
+                .any(|participant| participant.endpoint_did == b.product.local_device_did()),
+            "the peer stays present through the measurement"
+        );
+    }
+
+    /// Counts every history request and either answers it with an empty
+    /// retained history or leaves the Home unreachable.
+    struct CadencePlane {
+        endpoint: String,
+        network_id: String,
+        conversation_id: String,
+        answers: bool,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ProviderCarrierInvoker for CadencePlane {
+        async fn invoke_carrier_provider(
+            &self,
+            route: &ProviderCarrierRoute,
+            _invocation: &ProviderInvocation,
+            _request: serde_json::Value,
+        ) -> Result<serde_json::Value, ProviderError> {
+            let ProviderCarrierRoute::PeerDid { peer_did, .. } = route else {
+                panic!("history selects verified Profile endpoint");
+            };
+            self.calls.lock().unwrap().push(peer_did.clone());
+            if !self.answers {
+                return Err(ProviderError::Unavailable("offline".to_string()));
+            }
+            Ok(serde_json::json!({
+                "schema": RESPONSE_SCHEMA,
+                "network_id": self.network_id,
+                "conversation_id": self.conversation_id,
+                "sender_service": CHAT_SERVICE,
+                "endpoint_did": self.endpoint,
+                "envelopes": [],
+            }))
+        }
+    }
+
+    /// Ten minutes of Runtime checks, measured as the Home-to-Home requests
+    /// they produce on the provider plane. A Home whose passes bring answers
+    /// backs off to a quarter of an hour. A Home whose passes reach nobody
+    /// keeps asking every minute, because the Homes it wants are present and
+    /// can become reachable at any check.
+    #[tokio::test]
+    async fn earlier_posts_are_asked_for_on_a_measured_cadence() {
+        for answers in [true, false] {
+            let now = now_secs();
+            let a = fixture("history-measured", "community", now).await;
+            let b = fixture("history-measured", "community", now).await;
+            a.product.set_community_connected(true);
+            let (network_id, conversation_id) = a.product.history_scope();
+            let plane = Arc::new(CadencePlane {
+                endpoint: b.product.local_device_did(),
+                network_id: network_id.to_string(),
+                conversation_id: conversation_id.to_string(),
+                answers,
+                calls: Mutex::new(Vec::new()),
+            });
+            a.registry.set_carrier_invoker(plane.clone()).await;
+            let mut asked_at = Vec::new();
+            let mut asks = 0;
+            for tick in 0..41 {
+                let at = now + tick * HISTORY_BASE_WAIT_SECS;
+                keep_both_present(&a, &b, at).await;
+                a.service.fetch_if_due(at).await.unwrap();
+                let calls = plane.calls.lock().unwrap().len();
+                if calls > asks {
+                    asked_at.push(at - now);
+                    asks = calls;
+                }
+            }
+            let expected: Vec<u64> = if answers {
+                vec![0, 15, 45, 105, 225, 465]
+            } else {
+                vec![0, 15, 45, 105, 165, 225, 285, 345, 405, 465, 525, 585]
+            };
+            assert_eq!(asked_at, expected, "answers: {answers}");
+        }
+    }
+
     /// Ten minutes of Runtime checks, 15 s apart, for a Home that keeps
     /// seeing the same Homes.
     #[test]

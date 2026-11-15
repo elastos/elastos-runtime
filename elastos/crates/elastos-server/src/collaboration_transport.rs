@@ -3057,6 +3057,19 @@ mod tests {
         })
         .await;
         assert_eq!(per_cycle, [PINNED_WINDOW, 0, 0, 0, 0]);
+
+        // Local-only delivery makes progress by itself: with the
+        // acknowledgement working, this Home completes the batch and moves on.
+        let receipts = receipted_hashes(&carrier).len();
+        carrier.push([
+            peek(0, window.len() as u64, window.clone()),
+            ack(0, window.len() as u64),
+        ]);
+        assert!(matches!(
+            driver.process_incoming_once(NOW).await.unwrap(),
+            CollaborationIncomingOnceOutcome::Acknowledged(_)
+        ));
+        assert_eq!(receipted_hashes(&carrier).len(), receipts);
     }
 
     /// A sender re-sends its own post on its back-off until a Home receipts
@@ -3084,6 +3097,238 @@ mod tests {
             ));
         }
         assert_eq!(receipted_hashes(&carrier), [hash.clone(), hash]);
+    }
+
+    /// A post this Home never read must be ingested and receipted, even when
+    /// it arrives at a Carrier position an earlier batch already used. A
+    /// `gossip_leave` drops the topic buffer and its cursors
+    /// (`carrier.rs:6957-6988`) and the next join starts a buffer at position
+    /// 0 (`carrier.rs:1344-1350`), which
+    /// `test_gossip_leave_and_join_give_the_same_cursor_a_new_frame` proves.
+    #[tokio::test]
+    async fn a_reused_cursor_ingests_its_frame_after_an_acknowledged_range() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        let (first_key, first_message) =
+            remote_message(&fixture, generate_keypair().0, "before the leave");
+        let (next_key, next_message) =
+            remote_message(&fixture, generate_keypair().0, "after the join");
+        let first = sign_collaboration_transport_frame(&first_key, &first_message).unwrap();
+        let next = sign_collaboration_transport_frame(&next_key, &next_message).unwrap();
+        let first_hash = collaboration_message_envelope_sha256(&first_message);
+        let next_hash = collaboration_message_envelope_sha256(&next_message);
+        let sent = serde_json::json!({"status":"ok","data":{"remote_peer_count":1}});
+
+        for (second, frame) in [(0, &first), (1, &next), (2, &first)] {
+            carrier.push([peek(0, 1, vec![gossip(frame)]), sent.clone(), ack(0, 1)]);
+            driver.process_incoming_once(NOW + second).await.unwrap();
+        }
+
+        assert_eq!(
+            receipted_hashes(&carrier),
+            [first_hash.clone(), next_hash, first_hash],
+            "each frame at the reused position earns its own receipt"
+        );
+        assert_eq!(
+            request_ops(&carrier),
+            [
+                "gossip_join_exact",
+                "gossip_peek",
+                "gossip_send",
+                "gossip_ack",
+                "gossip_peek",
+                "gossip_send",
+                "gossip_ack",
+                "gossip_peek",
+                "gossip_send",
+                "gossip_ack",
+            ]
+        );
+        assert_eq!(
+            core.summary().unwrap().pending_product_handoffs,
+            2,
+            "both posts reached the product, and the replay added no third row"
+        );
+    }
+
+    /// The same reused position, with the earlier range still unacknowledged.
+    /// The held progress belongs to frames that are no longer there.
+    #[tokio::test]
+    async fn a_reused_cursor_ingests_its_frame_after_a_held_range() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        let (first_key, first_message) =
+            remote_message(&fixture, generate_keypair().0, "held before the leave");
+        let (next_key, next_message) =
+            remote_message(&fixture, generate_keypair().0, "after the join");
+        let first = sign_collaboration_transport_frame(&first_key, &first_message).unwrap();
+        let next = sign_collaboration_transport_frame(&next_key, &next_message).unwrap();
+        let first_hash = collaboration_message_envelope_sha256(&first_message);
+        let next_hash = collaboration_message_envelope_sha256(&next_message);
+        let sent = serde_json::json!({"status":"ok","data":{"remote_peer_count":1}});
+
+        carrier.push([peek(0, 1, vec![gossip(&first)]), sent.clone()]);
+        carrier.push_failure("acknowledgement failed");
+        assert!(matches!(
+            driver.process_incoming_once(NOW).await.unwrap(),
+            CollaborationIncomingOnceOutcome::RetryRequired(_)
+        ));
+        carrier.push([peek(0, 1, vec![gossip(&next)]), sent, ack(0, 1)]);
+        driver.process_incoming_once(NOW + 1).await.unwrap();
+
+        assert_eq!(receipted_hashes(&carrier), [first_hash, next_hash]);
+        assert_eq!(core.summary().unwrap().pending_product_handoffs, 2);
+    }
+
+    /// A receipt that reached no neighbour stays this Home's to send. A
+    /// gossip-only post leaves its sender at 0, 5, 15, 35, 75, 135, 195 and
+    /// 255 s of its 300 s lifetime, so a receipt dropped at 255 s leaves a
+    /// post that this Home holds durably showing "Sending" until it expires.
+    #[tokio::test(start_paused = true)]
+    async fn a_receipt_that_reached_nobody_is_sent_again_until_the_post_expires() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        let (key, message) = remote_message(&fixture, generate_keypair().0, "a post received late");
+        let frame = sign_collaboration_transport_frame(&key, &message).unwrap();
+        let hash = collaboration_message_envelope_sha256(&message);
+        let local_only = serde_json::json!({
+            "status":"ok","broadcast":"local_only","data":{"remote_peer_count":0}
+        });
+        // The sender's last gossip attempt; the post expires 45 s later.
+        let received_at = NOW + 255;
+        carrier.push([
+            peek(0, 1, vec![gossip(&frame)]),
+            local_only.clone(),
+            ack(0, 1),
+        ]);
+        assert!(matches!(
+            driver.process_incoming_once(received_at).await.unwrap(),
+            CollaborationIncomingOnceOutcome::Acknowledged(_)
+        ));
+        assert_eq!(receipted_hashes(&carrier), [hash.clone()]);
+
+        let mut sent_at = Vec::new();
+        let mut sends = 1;
+        for second in 0..=60 {
+            carrier.push([local_only.clone()]);
+            driver
+                .retry_outgoing_once(received_at + second)
+                .await
+                .unwrap();
+            carrier.drain_replies();
+            let total = receipted_hashes(&carrier).len();
+            if total > sends {
+                sent_at.push(second);
+                sends = total;
+            }
+            tokio::time::advance(Duration::from_secs(1)).await;
+        }
+        assert_eq!(
+            sent_at,
+            [5, 15, 35],
+            "the receipt waits 5, 10 then 20 s, and the next attempt would \
+             fall after the post expires"
+        );
+        assert!(receipted_hashes(&carrier)
+            .iter()
+            .all(|receipted| *receipted == hash));
+    }
+
+    /// A receipt a neighbour took is never sent again. The limit this change
+    /// keeps is that a stuck batch costs one receipt per frame, not one per
+    /// 500 ms cycle.
+    #[tokio::test(start_paused = true)]
+    async fn a_receipt_that_reached_a_neighbour_is_not_sent_again() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        let frame = remote_post(&fixture, "a post receipted at once");
+        let sent = serde_json::json!({"status":"ok","data":{"remote_peer_count":1}});
+        carrier.push([peek(0, 1, vec![gossip(&frame)]), sent.clone(), ack(0, 1)]);
+        driver.process_incoming_once(NOW).await.unwrap();
+        assert_eq!(receipted_hashes(&carrier).len(), 1);
+        for second in 0..=60 {
+            carrier.push([sent.clone()]);
+            driver.retry_outgoing_once(NOW + second).await.unwrap();
+            carrier.drain_replies();
+            tokio::time::advance(Duration::from_secs(1)).await;
+        }
+        assert_eq!(
+            receipted_hashes(&carrier).len(),
+            1,
+            "a receipt that went out is not retried"
+        );
+    }
+
+    /// The receipts that reached nobody wait in a bounded queue: as many as
+    /// the intake holds accepted posts, and four sends in one live cycle.
+    #[tokio::test(start_paused = true)]
+    async fn receipts_that_reached_nobody_wait_in_a_bounded_queue() {
+        let fixture = Fixture::new();
+        let core = fixture.core();
+        let carrier = FakeCarrier::new();
+        let driver = fixture.driver(core.clone(), carrier.clone()).await;
+        let local_only = serde_json::json!({
+            "status":"ok","broadcast":"local_only","data":{"remote_peer_count":0}
+        });
+        let overflow = 8;
+        let posts = crate::collaboration_core::MAX_PENDING_INCOMING + overflow;
+        let mut hashes = Vec::new();
+        for index in 0..posts {
+            let (key, message) =
+                remote_message(&fixture, generate_keypair().0, &format!("post-{index}"));
+            let frame = sign_collaboration_transport_frame(&key, &message).unwrap();
+            let hash = collaboration_message_envelope_sha256(&message);
+            let cursor = index as u64;
+            carrier.push([
+                peek(cursor, cursor + 1, vec![gossip(&frame)]),
+                local_only.clone(),
+                ack(cursor, cursor + 1),
+            ]);
+            driver.process_incoming_once(NOW).await.unwrap();
+            // The product takes each post, so the intake never refuses one.
+            core.acknowledge_product_handoff(&hash).unwrap();
+            hashes.push(hash);
+        }
+        let first_send = receipted_hashes(&carrier);
+        assert_eq!(first_send.len(), posts);
+
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let mut per_cycle = Vec::new();
+        let mut sends = posts;
+        for _ in 0..20 {
+            carrier.push(std::iter::repeat_n(local_only.clone(), 8));
+            driver.retry_outgoing_once(NOW + 5).await.unwrap();
+            carrier.drain_replies();
+            let total = receipted_hashes(&carrier).len();
+            per_cycle.push(total - sends);
+            sends = total;
+        }
+        let retried = receipted_hashes(&carrier)[posts..].to_vec();
+        assert!(
+            per_cycle
+                .iter()
+                .all(|count| *count <= MAX_CUSTODY_RETRIES_PER_CYCLE),
+            "a cycle sends at most four held receipts: {per_cycle:?}"
+        );
+        assert_eq!(
+            retried.iter().collect::<HashSet<_>>().len(),
+            crate::collaboration_core::MAX_PENDING_INCOMING,
+            "the queue holds as many receipts as the intake holds posts"
+        );
+        assert!(
+            hashes[..overflow]
+                .iter()
+                .all(|hash| !retried.contains(hash)),
+            "a full queue drops its oldest receipt for the newest one"
+        );
     }
 
     /// The reproduction instrument for the 14 Nov Community burst: what each
