@@ -541,6 +541,10 @@ fn external_transaction_handoff_with_expiry(
             .find(|r| r.request_id == request_id)
             .unwrap();
         assert_eq!(rejected.status, ApprovalStatus::Rejected);
+        assert_eq!(
+            rejected.rejection_reason.as_deref(),
+            Some("Wallet approval dismissed through Runtime authority")
+        );
         assert!(!approval_authority_is_active(rejected, now_ts()));
         assert!(matches!(
             invoke_wallet(&mut provider, principal_id, "system", next()),

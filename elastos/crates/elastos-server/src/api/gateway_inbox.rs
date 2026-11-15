@@ -519,11 +519,7 @@ async fn dispatch_inbox_action(
             },
         )
         .await?;
-        let dismissed = rejected["approval_request"]["approved_at"]
-            .as_u64()
-            .is_some()
-            && rejected["approval_request"]["intent"] == "transaction_intent"
-            && rejected["approval_request"]["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID;
+        let dismissed = wallet_approval_is_dismissal(&rejected["approval_request"]);
         append_wallet_approval_audit(
             data_dir,
             WalletApprovalAuditInput {
@@ -537,7 +533,11 @@ async fn dispatch_inbox_action(
                 session_id: &context.session_id,
                 request_id,
                 result: if dismissed { "dismissed" } else { "rejected" },
-                reason: "Wallet approval rejected through Runtime authority",
+                reason: if dismissed {
+                    elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON
+                } else {
+                    "Wallet approval rejected through Runtime authority"
+                },
             },
         )?;
         return Ok(if dismissed {

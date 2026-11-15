@@ -17,6 +17,10 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fmt;
 
+/// Canonical reason when the owner dismisses an approved WalletConnect send.
+pub const WALLETCONNECT_DISMISSAL_REASON: &str =
+    "Wallet approval dismissed through Runtime authority";
+
 /// Time to retain an approved WalletConnect send receipt after its request expires.
 /// The phone can finish a send after expiry; an abandoned prompt releases its quota afterward.
 pub const WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS: u64 = 24 * 60 * 60;

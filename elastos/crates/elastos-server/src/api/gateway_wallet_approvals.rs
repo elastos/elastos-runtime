@@ -35,6 +35,12 @@ pub(in crate::api::gateway) async fn system_wallet_approval_reject(
     .await
 }
 
+pub(in crate::api::gateway) fn wallet_approval_is_dismissal(request: &serde_json::Value) -> bool {
+    request["approved_at"].as_u64().is_some()
+        && request["intent"] == "transaction_intent"
+        && request["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
+}
+
 pub(in crate::api::gateway) async fn reject_wallet_approval_request(
     state: &GatewayState,
     context: &HomeLaunchTokenContext,
@@ -60,24 +66,33 @@ pub(in crate::api::gateway) async fn reject_wallet_approval_request(
     .await
     {
         Ok(rejected) => {
-            let dismissed = rejected["approval_request"]["approved_at"].as_u64().is_some()
-                && rejected["approval_request"]["intent"] == "transaction_intent"
-                && rejected["approval_request"]["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID;
+            let dismissed = wallet_approval_is_dismissal(&rejected["approval_request"]);
             let _ = append_wallet_approval_audit(
                 &state.data_dir,
                 WalletApprovalAuditInput {
                     capsule_id,
-                    event_type: "wallet.approval.rejected",
+                    event_type: if dismissed {
+                        "wallet.approval.dismissed"
+                    } else {
+                        "wallet.approval.rejected"
+                    },
                     principal_id: &context.principal_id,
                     session_id: &context.session_id,
                     request_id,
-                    result: "rejected",
-                    reason: "Wallet approval rejected through Runtime authority",
+                    result: if dismissed { "dismissed" } else { "rejected" },
+                    reason: if dismissed {
+                        elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON
+                    } else {
+                        "Wallet approval rejected through Runtime authority"
+                    },
                 },
             );
             let mut summary = system_wallet_approvals_summary(state, authority, false).await;
             if dismissed {
-                summary.note = Some("Request dismissed. Check your connected wallet before sending again.".to_string());
+                summary.note = Some(
+                    "Request dismissed. Check your connected wallet before sending again."
+                        .to_string(),
+                );
             }
             Json(summary).into_response()
         }

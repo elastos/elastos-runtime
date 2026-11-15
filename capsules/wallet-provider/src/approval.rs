@@ -424,7 +424,11 @@ impl WalletProvider {
         }
         request.status = ApprovalStatus::Rejected;
         request.resolved_at = Some(now);
-        request.rejection_reason = Some(reason.trim().to_string());
+        request.rejection_reason = Some(if owner_dismissal {
+            elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON.to_string()
+        } else {
+            reason.trim().to_string()
+        });
         let request = request.clone();
         if let Err(err) = self.save() {
             return Response::error("storage_error", err);
