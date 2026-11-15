@@ -544,6 +544,7 @@ async function run() {
   const tempDir = await mkdtemp(join(tmpdir(), "wallet-uiux-"));
   const desktopShot = join(tempDir, "wallet-desktop-1280x900.png");
   const narrowShot = join(tempDir, "wallet-narrow-640x900.png");
+  const latePhoneShot = join(tempDir, "wallet-late-receipt-phone.png");
   const browser = await chromium.launch({
     ...productSmokeLaunchOptions(),
     headless: true,
@@ -882,6 +883,7 @@ async function run() {
     assert(server.state.rejectBodies.length === 1, "one dismissal reaches Runtime");
     assert((await dismissFrame.locator("#wallet-status").textContent()).startsWith("Request dismissed."), "person sees dismissal confirmation");
     server.state.approvals[0].transaction_hash = `0x${"a".repeat(64)}`;
+    server.state.approvals[0].completed_at = Math.floor(Date.now() / 1000);
     await railPage.reload({ waitUntil: "networkidle" });
     const lateFrame = await walletFrame(railPage);
     await lateFrame.locator(".wallet-account").waitFor({ state: "visible" });
@@ -891,9 +893,13 @@ async function run() {
     assert((await lateRow.textContent()).includes("Dismissed here; still sent from wallet"), "late receipt explains the dismissed send");
     assert((await lateRow.textContent()).includes(server.state.approvals[0].transaction_hash), "late receipt keeps the full hash available");
     await railPage.setViewportSize({ width: 390, height: 844 });
+    await lateFrame.locator("#wallet-activity-drawer").evaluate(async drawer => {
+      await Promise.all(drawer.getAnimations().map(animation => animation.finished));
+    });
     const lateBounds = await lateRow.evaluate(row => ({ right: row.getBoundingClientRect().right, width: window.innerWidth, scroll: document.documentElement.scrollWidth }));
-    assert(lateBounds.right <= lateBounds.width && lateBounds.scroll <= lateBounds.width, "full late hash fits the phone Activity row");
-    await screenshot(lateFrame, join(tempDir, "wallet-late-receipt-phone.png"));
+    assert(lateBounds.right <= lateBounds.width && lateBounds.scroll <= lateBounds.width, "full late hash fits the phone Activity row", lateBounds);
+    await screenshot(lateFrame, latePhoneShot);
+    console.log(`Wallet late receipt phone PASS: ${JSON.stringify(lateBounds)}`);
     await railPage.setViewportSize({ width: 640, height: 900 });
     for (const connector_id of ["wallet-metamask", "wallet-unisat"]) {
       server.state.approvals = [{ ...server.state.approvals[0], status: "approved", connector_id, expires_at: Math.floor(Date.now() / 1000) + 300, transaction_hash: undefined }];
@@ -908,7 +914,7 @@ async function run() {
     console.log("Wallet approved-send dismissal PASS: visible recovery card, Reject, one Runtime request, removed after refresh");
     await railPage.close();
 
-    console.log(`wallet-product-layout-smoke: OK\n${desktopShot}\n${narrowShot}`);
+    console.log(`wallet-product-layout-smoke: OK\n${desktopShot}\n${narrowShot}\n${latePhoneShot}`);
   } finally {
     await browser.close().catch(() => {});
     await server.close().catch(() => {});
