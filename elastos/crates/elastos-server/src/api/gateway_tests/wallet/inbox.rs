@@ -889,3 +889,72 @@ async fn test_btc_wallet_approval_journey_reviews_in_inbox_and_signs() {
         .unwrap_or_default()
         .starts_with("did:key:"));
 }
+
+#[tokio::test]
+async fn test_inbox_reject_resolved_wallet_request_returns_bad_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let authority = passkey_authority(dir.path());
+    let token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let provider = MockWalletProvider {
+        challenges: TokioMutex::default(),
+        bitcoin_challenges: TokioMutex::default(),
+        accounts: TokioMutex::default(),
+        approvals: TokioMutex::new(vec![json!({
+            "request_id": "wallet-approval:resolved",
+            "principal_id": authority.principal_id,
+            "status": "completed",
+            "intent": "transaction_intent", "requested_by_actor":"browser",
+            "resource":"elastos://transaction", "reason":"Sent", "account_id":"fixture",
+            "address":"0xabc", "created_at":10, "expires_at":20
+        })]),
+        defaults: TokioMutex::default(),
+    };
+    let state = wallet_test_state_with_provider(dir.path(), provider).await;
+    let app = gateway_router(state);
+    let response = app
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .method("POST")
+                .uri("/api/apps/inbox/actions")
+                .header("x-elastos-home-token", token)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"action_id":"wallet-reject-request:wallet-approval:resolved"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(String::from_utf8(body.to_vec())
+        .unwrap()
+        .contains("cannot be rejected"));
+}
+
+#[test]
+fn test_wallet_activity_summary_preserves_approval_and_late_receipt() {
+    let mut request = json!({"request_id":"fixture", "status":"rejected", "intent":"transaction_intent",
+        "requested_by_actor":"browser", "resource":"elastos://transaction", "reason":"Dismissed",
+        "account_id":"fixture", "address":"0xabc", "created_at":10, "expires_at":20,
+        "connector_id":"wallet-walletconnect"});
+    assert!(
+        serde_json::to_value(system_wallet_approval_summary(&request).unwrap())
+            .unwrap()
+            .get("approved_at")
+            .is_none()
+    );
+    request["approved_at"] = json!(15);
+    request["completed_at"] = json!(25);
+    request["signed_result"] = json!({"transaction_hash":format!("0x{}", "a".repeat(64))});
+    let summary = serde_json::to_value(system_wallet_approval_summary(&request).unwrap()).unwrap();
+    assert_eq!(summary["status"], "rejected");
+    assert_eq!(summary["approved_at"], 15);
+    assert_eq!(summary["completed_at"], 25);
+    assert_eq!(
+        summary["transaction_hash"],
+        request["signed_result"]["transaction_hash"]
+    );
+}

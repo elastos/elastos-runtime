@@ -539,6 +539,7 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
                     .and_then(|value| value.get("completed_at"))
                     .and_then(|value| value.as_u64())
             }),
+        approved_at: value.get("approved_at").and_then(|value| value.as_u64()),
         transaction_hash: signed_result
             .and_then(|value| value.get("transaction_hash"))
             .and_then(|value| value.as_str())

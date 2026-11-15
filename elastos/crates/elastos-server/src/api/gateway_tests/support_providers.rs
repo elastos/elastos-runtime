@@ -6199,6 +6199,13 @@ impl MockWalletProvider {
                         "message": "wallet approval request not found"
                     }));
                 };
+                if approval["status"] != "pending" {
+                    return Ok(json!({
+                        "status": "error",
+                        "code": "invalid_request",
+                        "message": "wallet approval request cannot be rejected"
+                    }));
+                }
                 approval["status"] = serde_json::Value::String("rejected".to_string());
                 Ok(json!({
                     "status": "ok",
@@ -6227,7 +6234,7 @@ impl MockWalletProvider {
                     return Ok(json!({
                         "status": "error",
                         "code": "invalid_request",
-                        "message": "wallet approval request is not pending"
+                        "message": "wallet approval request cannot be rejected"
                     }));
                 }
                 if !approval
@@ -6585,4 +6592,27 @@ impl MockWalletProvider {
             })),
         }
     }
+}
+
+pub(super) fn seed_walletconnect_connector_config(data_dir: &std::path::Path) {
+    let sdk = b"// pinned test WalletConnect SDK asset\n";
+    let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
+    std::fs::create_dir_all(sdk_path.parent().unwrap()).unwrap();
+    std::fs::write(&sdk_path, sdk).unwrap();
+    let sdk_sha256 = format!("{:x}", Sha256::digest(sdk));
+
+    let config_path = data_dir.join(WALLETCONNECT_CONFIG_PATH);
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        config_path,
+        serde_json::to_vec(&json!({
+            "schema": WALLETCONNECT_CONFIG_SCHEMA,
+            "project_id": "test_walletconnect_project",
+            "sdk_package": WALLETCONNECT_SDK_PACKAGE,
+            "sdk_version": "1.0.0",
+            "sdk_sha256": sdk_sha256
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 }

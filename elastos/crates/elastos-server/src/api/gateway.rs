@@ -1478,6 +1478,7 @@ fn inbox_error_response(err: anyhow::Error) -> Response {
     } else if text.contains("unknown inbox action")
         || text.contains("Open Wallet")
         || text.contains("is not pending")
+        || text.contains("cannot be rejected")
         || text.contains("is no longer pending")
         || text.contains("changed before Inbox approval")
         || text.contains("service access request")

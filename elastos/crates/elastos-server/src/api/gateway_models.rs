@@ -653,6 +653,8 @@ struct SystemWalletApprovalSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    approved_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     transaction_hash: Option<String>,
 }
 
