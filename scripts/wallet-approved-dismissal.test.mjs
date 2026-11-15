@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createWalletRequests } from "../capsules/wallet/browser/wallet-requests.js";
-import { activityTitle } from "../capsules/wallet/browser/wallet-activity.js";
+import { activityTitle, activitySubtitle, pendingRequests } from "../capsules/wallet/browser/wallet-activity.js";
 
 class Element {
   children = []; dataset = {}; hidden = false; textContent = "";
@@ -19,12 +19,12 @@ test("Wallet dismisses earlier-session connector sends without another approval"
   const previous = globalThis.document;
   globalThis.document = { createElement: tag => new Element(tag) };
   t.after(() => { globalThis.document = previous; });
-  for (const connector of ["wallet-walletconnect", "wallet-metamask"]) {
+  for (const connector of ["wallet-walletconnect"]) {
     const now = Math.floor(Date.now() / 1000);
     const expires = connector === "wallet-walletconnect" ? now - 13 * 3600 : now + 300;
     let request = { request_id: "approval:abandoned", status: "approved", intent: "transaction_intent",
       connector_id: connector, capsule_id: "browser", address: `0x${"12".repeat(20)}`,
-      created_at: expires - 300, expires_at: expires, reason: "Send transaction" };
+      approved_at: expires - 290, created_at: expires - 300, expires_at: expires, reason: "Send transaction" };
     const root = new Element("section"), panel = new Element("section"), calls = [], messages = [];
     let refuse = true;
     const requests = createWalletRequests({ requestsNode: root, requestsPanelNode: panel,
@@ -64,4 +64,22 @@ test("Wallet dismisses earlier-session connector sends without another approval"
     assert(messages.some(message => message.startsWith("Request dismissed.")));
     assert.match(activityTitle(request), /Dismissed transaction request/);
   }
+});
+
+test("only WalletConnect unfinished approved sends enter the request list and badge", () => {
+  const approved = { status: "approved", intent: "transaction_intent", approved_at: 10 };
+  for (const connector_id of ["wallet-metamask", "wallet-unisat", "wallet-walletconnect"]) {
+    const request = { ...approved, connector_id };
+    assert.equal(pendingRequests([request]).length, connector_id === "wallet-walletconnect" ? 1 : 0);
+    assert.equal(pendingRequests([{ ...request, status: "pending" }]).length, 1);
+  }
+});
+
+test("Activity distinguishes pending rejection, approved dismissal and a late wallet send", () => {
+  const request = { status: "rejected", intent: "transaction_intent", connector_id: "wallet-walletconnect", capsule_id: "browser" };
+  assert.match(activityTitle(request), /Rejected/);
+  assert.match(activityTitle({ ...request, approved_at: 10 }), /Dismissed transaction request/);
+  const late = { ...request, approved_at: 10, transaction_hash: `0x${"a".repeat(64)}` };
+  assert.match(activityTitle(late), /Dismissed here.*still sent from wallet/);
+  assert.match(activitySubtitle(late), /tx 0xaaaa/);
 });

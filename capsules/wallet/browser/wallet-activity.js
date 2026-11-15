@@ -26,11 +26,11 @@ export function createWalletActivity({ activityNode, textNode }) {
 }
 
 export function pendingRequests(requests) {
-  // An approved connector send still needs its receipt or explicit dismissal.
+  // WalletConnect keeps an approved send through its receipt grace period.
   return requests.filter((request) => readText(request.status) === "pending"
     || (readText(request.status) === "approved"
       && readText(request.intent) === "transaction_intent"
-      && Boolean(readText(request.connector_id))));
+      && readText(request.connector_id) === "wallet-walletconnect"));
 }
 
 export function activityTime(request) {
@@ -47,6 +47,9 @@ export function activityIcon(request) {
 export function activityTitle(request) {
   const status = readText(request.status);
   const capsule = readText(request.capsule_id) || "Capsule";
+  if (request.transaction_hash && status === "rejected" && request.approved_at) {
+    return `${capsule} · Dismissed here; still sent from wallet`;
+  }
   if (request.transaction_hash) {
     return `${capsule} · Sent transaction`;
   }
@@ -54,7 +57,7 @@ export function activityTitle(request) {
     return `${capsule} · Approved ${requestTitle(request)}`;
   }
   if (status === "rejected") {
-    if (request.intent === "transaction_intent" && readText(request.connector_id)) {
+    if (request.intent === "transaction_intent" && request.approved_at && readText(request.connector_id)) {
       return `${capsule} · Dismissed transaction request`;
     }
     return `${capsule} · Rejected ${requestTitle(request)}`;
