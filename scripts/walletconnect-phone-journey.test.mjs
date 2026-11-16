@@ -19,7 +19,7 @@ async function setup(t){
    const pairings=Object.entries(fixture.state.keys).find(([k])=>k.endsWith('//pairing'))?.[1];const pairing=pairings?.find(p=>!p.active);
    const raw=Object.entries(fixture.state.keys).find(([k])=>k.endsWith('//keychain'))?.[1];const keys=typeof raw==='string'?JSON.parse(raw):raw;
    const key=Array.isArray(keys)?new Map(keys).get(pairing.topic):keys?.[pairing.topic];uri=`wc:${pairing.topic}@2?symKey=${key}&relay-protocol=irn&expiryTimestamp=${pairing.expiry}`;
-  }else{await frame.getByRole('button',{name:'Copy connection link',exact:true}).click();uri=await page.evaluate(()=>window.copied);}
+  }else{await frame.getByRole('button',{name:'Copy connection link',exact:true}).click();await frame.getByText('Connection link copied. Open it in your wallet app.',{exact:true}).waitFor({timeout:3000});uri=await page.evaluate(()=>window.copied);}
   await peer.pair(uri);
  };
  const unlinked=async()=>{peer.choose({request:'reject'});await frame.locator('#wallet-connect').click();await pair();await frame.locator('#wallet-status').filter({hasText:'declined the ownership signature'}).waitFor({timeout:20000});assert.equal(fixture.state.verified,0);};
