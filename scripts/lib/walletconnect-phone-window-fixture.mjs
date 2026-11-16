@@ -14,7 +14,7 @@ export async function windowFixture() {
   try{
    if(path==='/') {res.setHeader('content-type','text/html');res.end(`<!doctype html><style>body{margin:0}iframe{border:0;width:100%;height:100vh}</style><iframe id="wallet" sandbox="allow-scripts allow-forms" src="/apps/wallet-walletconnect/?home_origin=http://127.0.0.1:${server.address().port}#home_token=fixture-wallet"></iframe><script>
    window.copied='';addEventListener('message',async e=>{const d=e.data;if(d.type==='home:app-ready')e.source.postMessage({type:'home:clipboard-ready',schema:'elastos.home.clipboard.ready/v1',targetId:'wallet-walletconnect',homeToken:'fixture-wallet',parentOrigin:location.origin,generation:'fixture-generation'},'*');
-   if(d.type==='home:clipboard-request'){window.copied=d.text;e.source.postMessage({type:'home:clipboard-result',schema:'elastos.home.clipboard.result/v1',targetId:d.targetId,homeToken:d.homeToken,parentOrigin:location.origin,generation:d.generation,requestId:d.requestId,operation:d.operation,purpose:d.purpose,ok:true},'*');}});</script>`);return;}
+   if(d.type==='home:clipboard-request'){window.copied=d.text;e.source.postMessage({type:'home:clipboard-result',schema:'elastos.home.clipboard.result/v1',targetId:'wallet-walletconnect',homeToken:d.homeToken,parentOrigin:location.origin,generation:d.generation,requestId:d.requestId,operation:d.operation,purpose:d.purpose,ok:true},'*');}});</script>`);return;}
    if(path.startsWith('/api/')) {
     state.calls.push({path,method:req.method,revision:req.headers['if-match']});
     if(state.expiredLaunch){res.writeHead(403).end('Launch expired');return;}
