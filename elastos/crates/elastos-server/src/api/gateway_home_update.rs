@@ -175,14 +175,16 @@ pub(super) enum UpdateCheckSnapshot {
 }
 
 pub(super) enum CheckOutcome {
-    Confirmed(crate::operator_control::OperatorUpdateCheck),
+    Confirmed(Box<crate::operator_control::OperatorUpdateCheck>),
     Unavailable,
     Rejected,
 }
 
 impl From<Option<crate::operator_control::OperatorUpdateCheck>> for CheckOutcome {
     fn from(check: Option<crate::operator_control::OperatorUpdateCheck>) -> Self {
-        check.map(Self::Confirmed).unwrap_or(Self::Rejected)
+        check
+            .map(|check| Self::Confirmed(Box::new(check)))
+            .unwrap_or(Self::Rejected)
     }
 }
 
@@ -236,7 +238,7 @@ impl UpdateCheckCache {
                     let outcome = check.await.into();
                     let unavailable = matches!(outcome, CheckOutcome::Unavailable);
                     let check = match outcome {
-                        CheckOutcome::Confirmed(check) => Some(check),
+                        CheckOutcome::Confirmed(check) => Some(*check),
                         _ => None,
                     };
                     CachedCheck {
@@ -389,7 +391,9 @@ pub(super) async fn check_current_policy(
         return CheckOutcome::Rejected;
     }
     match result {
-        Ok(check) if check_matches_source(&source, &check) => CheckOutcome::Confirmed(check),
+        Ok(check) if check_matches_source(&source, &check) => {
+            CheckOutcome::Confirmed(Box::new(check))
+        }
         Err(error) if error.is::<crate::update::UpdateSourceUnavailable>() => {
             CheckOutcome::Unavailable
         }

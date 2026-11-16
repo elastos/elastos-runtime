@@ -3791,9 +3791,9 @@ async function onBackgroundChange() {
   backgroundBusy = true;
   backgroundChoice.disabled = true;
   try {
-    const settings = await api("/api/apps/system/update-background", {
-      method: "POST", body: JSON.stringify({ enabled: backgroundChoice.checked }),
-    });
+    const settings = await fetchRuntimeUpdateJson({
+      method: "POST", headers: shellHeaders({ "content-type": "application/json" }), body: JSON.stringify({ enabled: backgroundChoice.checked }),
+    }, "/api/apps/system/update-background");
     renderRuntimeUpdate({ ...runtimeUpdate, background_checks: settings });
   } catch (_error) {
     backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;

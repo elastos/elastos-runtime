@@ -79,8 +79,6 @@ mod gateway_home_system_ai_provider;
 mod gateway_home_terminal;
 #[path = "gateway_home_token.rs"]
 mod gateway_home_token;
-#[path = "gateway_update_notice.rs"]
-mod gateway_update_notice;
 #[path = "gateway_home_update.rs"]
 mod gateway_home_update;
 #[path = "gateway_home_wallet_connector.rs"]
@@ -95,6 +93,8 @@ mod gateway_marketplace;
 mod gateway_model_remote;
 #[path = "gateway_model_service.rs"]
 mod gateway_model_service;
+#[path = "gateway_update_notice.rs"]
+mod gateway_update_notice;
 pub(in crate::api) use gateway_model_service::deny_grant_and_settle as deny_model_grant_and_settle;
 pub(crate) use gateway_model_service::{
     invoke as invoke_remote_model, model_grant_id, ModelServiceGrant, MODEL_AUTHORITY_TIMEOUT_CODE,

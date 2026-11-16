@@ -1538,10 +1538,10 @@ async fn update_notice_real_inbox_accounts_lifecycle_and_shared_system_view() {
         let mut check = cached_offer();
         check.version_status = version_status;
         check.update_available = false;
-        notice_seed(dir.path(), CheckOutcome::Confirmed(check)).await;
+        notice_seed(dir.path(), CheckOutcome::from(Some(check))).await;
         assert!(notice_list(&app, &alice_inbox).await.is_empty());
     }
-    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
     // No System GET has occurred. Inbox uses the confirmed offer, never discovery.
     let entries = notice_list(&app, &alice_inbox).await;
     assert_eq!(entries.len(), 1);
@@ -1574,13 +1574,13 @@ async fn update_notice_real_inbox_accounts_lifecycle_and_shared_system_view() {
     assert_eq!(notice_list(&app, &bob_inbox).await.len(), 1);
     // A restart loses offers, not acknowledgement; the next check restores it.
     *UPDATE_CHECK.get().unwrap().lock().await = UpdateCheckCache::default();
-    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
     assert!(notice_list(&app, &alice_inbox).await.is_empty());
     assert_eq!(notice_list(&app, &bob_inbox).await.len(), 1);
     let mut higher = cached_offer();
     higher.latest_version = "0.7.2".into();
     higher.release_cid = Some(TEST_CIDV1.into());
-    notice_seed(dir.path(), CheckOutcome::Confirmed(higher)).await;
+    notice_seed(dir.path(), CheckOutcome::from(Some(higher))).await;
     assert_eq!(notice_list(&app, &alice_inbox).await.len(), 1);
     assert_eq!(notice_list(&app, &bob_inbox).await.len(), 1);
     let path = notice::state_path(dir.path()).unwrap();
@@ -1603,7 +1603,7 @@ async fn update_notice_reconciles_live_refusal_queue_failure_channel_and_source(
     configure_update_summary(dir.path());
     let owner = passkey_authority_with_name(dir.path(), Some("notice-owner"));
     let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
-    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
     assert_eq!(notice_list(&app, &inbox).await.len(), 1);
     let path = dir.path().join("update-controller/status.json");
     let original: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -1642,7 +1642,7 @@ async fn update_notice_reconciles_live_refusal_queue_failure_channel_and_source(
     );
     for field in ["channel", "connect_ticket"] {
         configure_update_summary(dir.path());
-        notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+        notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
         let mut config = crate::sources::load_trusted_sources(dir.path()).unwrap();
         if field == "channel" {
             config.sources[0].channel = "canary".into();
@@ -1670,7 +1670,7 @@ async fn update_notice_typed_failures_preserve_only_unreachable_confirmed_offer(
         .await = UpdateCheckCache::default();
     notice_seed(dir.path(), CheckOutcome::Unavailable).await;
     assert!(notice_list(&app, &inbox).await.is_empty());
-    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
     let first = notice_list(&app, &inbox).await;
     notice_seed(dir.path(), CheckOutcome::Unavailable).await;
     assert_eq!(notice_list(&app, &inbox).await, first);
@@ -1720,7 +1720,7 @@ async fn update_notice_state_defaults_admin_switch_and_explicit_repair() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
     assert_eq!(
         notice_list(&app, &inbox).await.len(),
         1,
@@ -1782,7 +1782,7 @@ async fn update_notice_task_simulated_clock_spread_wake_failures_and_restart_off
             || 3600,
             move |_, _, _| {
                 count.fetch_add(1, Ordering::SeqCst);
-                async { CheckOutcome::Confirmed(cached_offer()) }
+                async { CheckOutcome::from(Some(cached_offer())) }
             },
         )
         .await;
