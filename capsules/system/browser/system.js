@@ -3858,7 +3858,7 @@ async function onBackgroundChange() {
       ? "Sign in as the Home owner to change background checks."
       : error.status === 409
         ? runtimeUpdate.background_checks.save_error
-        : "Home did not answer. Try again.";
+        : "Home could not confirm the setting change. Try again.";
     renderUpdateNotice();
   } finally {
     backgroundBusy = false;
