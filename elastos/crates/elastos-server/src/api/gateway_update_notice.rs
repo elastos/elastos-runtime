@@ -16,7 +16,7 @@ const SAVE_ERROR: &str = "Home could not save background checks. Try again.";
 const NOTICE_TITLE: &str = "Home update found";
 const NOTICE_BODY: &str = "Home {version} was found. Review the update in System.";
 const FOLDER_TEXT: &str = "Background checks are off because Home cannot use their settings folder. Ask the Home owner to repair the folder permissions.";
-const INVALID_VERSION_TEXT: &str = "Background checks are paused because the installed Home version is invalid. Ask the Home owner to repair the installation.";
+const INVALID_VERSION_TEXT: &str = "Home cannot check for updates because its installed version is invalid. Ask the Home owner to repair the installation.";
 const UNREADABLE_TEXT: &str = "Background checks are off because Home could not read their settings. Turn this on to save new settings.";
 
 #[derive(Default, Serialize, Deserialize)]
@@ -118,7 +118,7 @@ pub(super) fn preference(data_dir: &Path) -> serde_json::Value {
         FOLDER_TEXT
     } else if state.is_err() {
         UNREADABLE_TEXT
-    } else if enabled && invalid_version {
+    } else if invalid_version {
         INVALID_VERSION_TEXT
     } else if enabled {
         ON_TEXT
@@ -342,7 +342,6 @@ pub(super) async fn run<F, O>(
             continue;
         }
         let delay = CHECK_INTERVAL + spread().min(MAX_SPREAD);
-        due = clock().saturating_add(delay);
         loop {
             let Some((_, source, key)) = update::update_inputs(&data_dir) else {
                 break;

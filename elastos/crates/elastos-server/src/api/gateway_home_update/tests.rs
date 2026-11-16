@@ -684,7 +684,24 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
         .await
         .unwrap();
     assert_eq!(summary["background_checks"]["message"],
-        "Background checks are paused because the installed Home version is invalid. Ask the Home owner to repair the installation.");
+        "Home cannot check for updates because its installed version is invalid. Ask the Home owner to repair the installation.");
+    let app = gateway_router(test_state(dir.path()));
+    for enabled in [false, true] {
+        let (status, settings) = home_test_post_json(
+            &app,
+            "/api/apps/system/update-background",
+            &owner.system_token,
+            "null",
+            json!({"enabled": enabled}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(settings["enabled"], enabled);
+        assert_eq!(
+            settings["message"], summary["background_checks"]["message"],
+            "invalid installation text applies with the switch on or off"
+        );
+    }
     assert_eq!(summary["available"], false);
     assert_eq!(summary["can_apply"], false);
     assert!(summary["message"]
@@ -2412,7 +2429,12 @@ async fn update_notice_task_shutdown_joins_blocked_check_and_start_stops() {
         tokio::time::timeout(std::time::Duration::from_secs(1), task.shutdown())
             .await
             .expect("shutdown joins a blocked check");
-        assert!(stopped.await.is_err(), "worker future has been dropped");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), stopped)
+                .await
+                .expect("shutdown drops the blocked worker")
+                .is_err()
+        );
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
             notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))),
