@@ -112,12 +112,12 @@ pub fn resume_restart_recovery() -> Result<()> {
     let Some(source) = load_trusted_sources(&data)?.default_source().cloned() else {
         return Ok(());
     };
-    let current = std::env::current_exe()?;
-    if source.install_path.is_empty() || Path::new(&source.install_path) != current {
+    let current = fs::canonicalize(std::env::current_exe()?)?;
+    if source.install_path.is_empty() || fs::canonicalize(&source.install_path)? != current {
         return Ok(());
     }
     let data = fs::canonicalize(data)?;
-    let binary = fs::canonicalize(current)?;
+    let binary = current;
     let Some(handoff) = restart_recovery_handoff(&data, &binary)? else {
         return Ok(());
     };
@@ -768,12 +768,12 @@ pub async fn enter_browser_home() -> Result<()> {
     let Some(source) = load_trusted_sources(&data)?.default_source().cloned() else {
         return Ok(());
     };
-    let current = std::env::current_exe()?;
-    if source.install_path.is_empty() || Path::new(&source.install_path) != current {
+    let current = fs::canonicalize(std::env::current_exe()?)?;
+    if source.install_path.is_empty() || fs::canonicalize(&source.install_path)? != current {
         return Ok(());
     }
     let data = fs::canonicalize(data)?;
-    let binary = fs::canonicalize(current)?;
+    let binary = current;
     if !crate::install_transaction::InstallTransaction::has_pending_recovery(&binary) {
         repair_installed_support(&data, &binary, &source).await?;
     }
