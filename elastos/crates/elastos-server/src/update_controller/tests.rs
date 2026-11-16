@@ -5684,7 +5684,8 @@ async fn linked_start_controller_fixture() {
             crate::setup::tests::carrier_cid_source(&data, &source, items).await;
         queue_update(&data, request).unwrap();
         assert!(controller.process_request().await.unwrap());
-        assert_eq!(status(&data).unwrap().unwrap().phase, "updated");
+        let update_status = status(&data).unwrap().unwrap();
+        assert_eq!(update_status.phase, "updated", "{update_status:#?}");
         server.close().await;
         serving.await.unwrap();
         stream.write_all(b"U").await.unwrap();
