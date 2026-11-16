@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cleanupVirtualPasskey, shouldRetainVirtualAuthProfile, VIRTUAL_AUTH_PROFILE_CLEANUP_INSTRUCTION } from "./virtual-auth-cleanup.mjs";
+import { cleanupVirtualPasskey, shouldRetainVirtualAuthProfile, retainedFirstOwnerProfileMessage, VIRTUAL_AUTH_PROFILE_CLEANUP_INSTRUCTION } from "./virtual-auth-cleanup.mjs";
 
 test("first-owner cleanup keeps the passkey and its profile without calling removal", async () => {
   const created = { created: true, mode: "admin" };
@@ -20,6 +20,13 @@ test("guest cleanup still removes its passkey and permits profile cleanup", asyn
   const cleanup = await cleanupVirtualPasskey(created, async () => { removals++; return { ok: true }; });
   assert.equal(removals, 1);
   assert.equal(shouldRetainVirtualAuthProfile({ created, cleanup, credentialCount: 1 }), false);
+});
+
+test("kept first-owner message names the profile and tells the operator to keep it", () => {
+  const profile = "/fixture/lasting profile";
+  const message = retainedFirstOwnerProfileMessage(profile);
+  assert.ok(message.includes(JSON.stringify(profile)));
+  assert.match(message, /must keep this profile and its saved authenticator/);
 });
 
 test("disabled or failed cleanup and uncertain credential persistence retain the profile", () => {

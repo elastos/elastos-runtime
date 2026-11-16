@@ -222,15 +222,22 @@ HOME_VIRTUAL_AUTH_BROWSER_DIAGNOSTIC_CLICK_EXPECT_TEXT_RE='Edit Profile' \
 scripts/browser-mac-vm-proof.sh --artifact-out /tmp/elastos-browser-mac-vm-proof.json
 ```
 
-The default proof uses a disposable virtual passkey principal and removes it at
-the end, so it will not see ela.city cookies from a human's normal Home profile.
-Set `ELASTOS_BROWSER_MAC_VM_PROOF_AUTH_PROFILE` to reuse one virtual-auth browser
-profile and preserve the same Browser VM principal across setup and proof runs;
+The default proof shares one retained virtual-auth profile across both smoke
+runs. It uses `HOME_VIRTUAL_AUTH_PROFILE` when set, otherwise
+`<source-home-data-dir>/browser-mac-vm-proof-auth`. Keep this directory while its
+passkey has access to Home. This profile is separate from a human's normal
+Home profile and carries its own ela.city cookies.
+Set `ELASTOS_BROWSER_MAC_VM_PROOF_AUTH_PROFILE` to select a different lasting
+profile before the first proof, or pass the retained path for later setup runs;
 the profile also carries an owner-only virtual authenticator credential store so
 the same passkey can sign back in after a fresh proof process. The wrapper
-defaults `HOME_VIRTUAL_AUTH_CLEANUP=0` in that mode unless the operator
+defaults `HOME_VIRTUAL_AUTH_CLEANUP=0` unless the operator
 overrides it. For first-time ela.city login setup, open a headed setup run with
-the same persistent virtual-auth profile:
+the same persistent virtual-auth profile.
+
+If you already collected a default proof, replace the example profile path
+below with the retained path printed by that run. Use that same path in the
+later proof and handoff commands.
 
 ```bash
 scripts/browser-mac-vm-auth-profile-setup.sh \

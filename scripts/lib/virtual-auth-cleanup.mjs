@@ -18,5 +18,9 @@ export function shouldRetainVirtualAuthProfile({ created, cleanup, credentialCou
   ));
 }
 
+export function retainedFirstOwnerProfileMessage(profileDir) {
+  return `First owner passkey kept. You must keep this profile and its saved authenticator: ${JSON.stringify(profileDir)}`;
+}
+
 export const VIRTUAL_AUTH_PROFILE_CLEANUP_INSTRUCTION =
   "Keep this profile while its test passkey has access to Home. To remove a first-owner passkey, add another admin passkey first. Remove the test passkey in System before deleting this profile, or dispose of an isolated test Home and its profile together. Set HOME_VIRTUAL_AUTH_PROFILE to this profile_dir and use the same HOME_URL to restore its authenticator.";

@@ -43,6 +43,8 @@ When --machine-proof is omitted, this script runs scripts/browser-mac-vm-proof.s
 first. It always writes a hash-bound manual UX template and an expected failing
 acceptance audit so the operator can see the exact remaining human/authenticated
 evidence before editing the manual report.
+The default proof keeps its shared virtual-auth profile under the source Home's
+data directory. Use the retained profile printed by the smoke for later setup.
 
 Fresh proofs default to the current ela.city acceptance route:
   ELASTOS_BROWSER_MAC_VM_PROOF_URL=https://ela.city/channels
@@ -282,7 +284,8 @@ const machineReady =
   proof.ok === true &&
   machineFailing.length === 0;
 const persistentProfile = proof.virtual_auth?.persistent_profile === true;
-const authProfileHint = authProfile || "$HOME/.local/share/elastos/mac-browser-vm-proof-auth";
+const authProfileHint = authProfile || process.env.ELASTOS_BROWSER_MAC_VM_PROOF_AUTH_PROFILE
+  || process.env.HOME_VIRTUAL_AUTH_PROFILE || "<retained-proof-auth-profile>";
 let authSetupReceipt = null;
 let authSetupReceiptError = null;
 let authSetupReceiptSha256 = null;
