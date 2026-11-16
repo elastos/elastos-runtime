@@ -9845,7 +9845,7 @@ mod tests {
         .unwrap();
         let app = axum::Router::new()
             .route(
-                "/api/auth/passkeys/{proof_binding_id}/revoke",
+                "/api/auth/passkeys/:proof_binding_id/revoke",
                 axum::routing::post(passkey_revoke),
             )
             .route(
