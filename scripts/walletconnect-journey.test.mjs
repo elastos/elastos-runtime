@@ -40,7 +40,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       if(path==='/api/apps/inbox/actions'){let body='';for await(const chunk of req)body+=chunk;const action=JSON.parse(body);actions.push(action);if(action.action_id.includes('-deny:'))status='refused';else if(action.action_id.includes('-allow:'))status='granted';else if(action.action_id.includes('-turn-off:'))status='revoked';json({});return;}
       if(path.startsWith('/api/')){json({});return;}
       const match=path.match(/^\/apps\/(wallet-walletconnect|inbox|home)\/(.*)$/);
-      if(match){const root=resolve('capsules',match[1],match[1]==='wallet-walletconnect'&&match[2].startsWith('vendor/')?'':'browser');const file=resolve(root,match[2]||'index.html');assert.ok(!relative(root,file).startsWith('..'));res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html','.woff2':'font/woff2'})[extname(file)]||'application/octet-stream');res.end(readFileSync(file));return;}
+      if(match){const root=resolve('capsules',match[1],match[1]==='wallet-walletconnect'&&match[2].startsWith('vendor/')?'':'browser');const file=resolve(root,match[2]||'index.html');assert.ok(!relative(root,file).startsWith('..'));res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html','.woff2':'font/woff2'})[extname(file)]||'application/octet-stream');res.end(process.env.WALLETCONNECT_SOURCE_REF?execFileSync('git',['show',`${process.env.WALLETCONNECT_SOURCE_REF}:${relative(process.cwd(),file)}`],{maxBuffer:4*1024*1024}):readFileSync(file));return;}
       res.writeHead(404).end();
     }catch(error){res.writeHead(500).end(error.message);}
   });
@@ -206,6 +206,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await settlePermission();
       assert.equal(permissionPosts,beforePosts,`${reason} clears the saved action before a permission post`);
       assert.equal(verified,expectedVerified,`${reason} clears the saved action`);
+      if(reason==='replacement')assert.equal(await wallet.locator('#wallet-status').textContent(),'Internet access is allowed. Select Connect wallet to continue.','Allow before the first status poll replaces the pending sentence');
     }
     if(guardCase){console.log(`saved-action guard ${guardCase}: PASS`);return;}
     status='requested';requestId++;issuedAt=Math.floor(Date.now()/1000);await reload();
@@ -335,7 +336,7 @@ for (const ending of ['decline','expiry','cancel','disconnect']) for (const retu
       if(path.endsWith('/challenge'))return json({message:'Fixture ownership',expires_at:Math.floor(Date.now()/1000)+600});
       if(path.endsWith('/verify')||path.endsWith('/storage'))return json({});
       const match=path.match(/^\/apps\/(wallet-walletconnect|home)\/(.*)$/);
-      if(match){const root=resolve('capsules',match[1],'browser');const file=resolve(root,match[2]||'index.html');assert.ok(!relative(root,file).startsWith('..'));res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html'})[extname(file)]||'application/octet-stream');res.end(readFileSync(file));return;}
+      if(match){const root=resolve('capsules',match[1],'browser');const file=resolve(root,match[2]||'index.html');assert.ok(!relative(root,file).startsWith('..'));res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html'})[extname(file)]||'application/octet-stream');res.end(process.env.WALLETCONNECT_SOURCE_REF?execFileSync('git',['show',`${process.env.WALLETCONNECT_SOURCE_REF}:${relative(process.cwd(),file)}`],{maxBuffer:4*1024*1024}):readFileSync(file));return;}
       res.writeHead(404).end();
     });
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
