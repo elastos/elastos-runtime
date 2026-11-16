@@ -66,12 +66,17 @@ async function fixture() {
       summary.source={configured:true,name:"Home publisher",channel:"stable",installed_version:"0.7.0",mode:"release",update_checks_allowed:true};
       summary.runtime_update=state.guest?null:{configured:true,available:true,can_apply:true,current_version:"0.7.0",new_version:"0.7.1",changes:notes,
         publisher:"Home publisher", publisher_did:"did:key:fixture", source_name:"Home publisher", channel:"stable", head_cid:release, release_cid:release, background_checks:state.settings,controller:{phase:"ready"}};
+      if(summary.runtime_update && state.settings.message===copy("INVALID_VERSION_TEXT")) {
+        summary.source.installed_version="broken";
+        summary.runtime_update={configured:true,available:false,can_apply:false,checking:false,current_version:"broken",
+          message:"Installed release version is invalid. Run `elastos update --force` locally to install a verified signed release and repair it.",background_checks:state.settings};
+      }
       jsonResponse(response,summary);return true;
     }
     if (url.pathname === "/api/apps/system/update-background") {
       let body="";for await(const part of request)body+=part;const input=JSON.parse(body);
       state.writes.push({input,token:request.headers["x-elastos-home-token"]});
-      if(state.failWrite)jsonResponse(response,{error:"Save failed"},409);
+      if(state.failWrite)jsonResponse(response,{error:"Save failed"},state.failStatus||409);
       else{state.settings=preference(input.enabled);jsonResponse(response,state.settings);}return true;
     }
     if(url.pathname.startsWith("/icons/")) {
@@ -201,6 +206,11 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     assert.equal(await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).isChecked(),true);
     await page.waitForTimeout(5300);
     await system.getByText(copy("SAVE_ERROR"),{exact:true}).waitFor();
+    for(const status of [401,403]) {
+      f.state.failStatus=status;
+      await system.locator("label.system-switch:has(#update-background-choice)").click();
+      await system.getByText("Sign in as the Home owner to change background checks.",{exact:true}).waitFor();
+    }
     f.state.failWrite=false;f.state.settings=preference(false,false);await page.reload();
     await system.getByText(copy("UNREADABLE_TEXT"),{exact:true}).waitFor();
     await system.locator("label.system-switch:has(#update-background-choice)").click();await system.getByText(copy("ON_TEXT"),{exact:true}).waitFor();
