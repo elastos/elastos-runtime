@@ -82,3 +82,14 @@ test('round19 an approval on another network offers a working new-connection act
  assert.equal(await r.frame.getByRole('button',{name:'Review',exact:true}).count(),0);
  await r.frame.locator('#wallet-connect').click();await r.frame.locator('dialog[open]').waitFor({timeout:15000});
 });
+
+test('round19 Review during saved-session restore waits for the same live adapter',{timeout:60000},async t=>{
+ const r=await setup(t);await r.link();await r.page.goto('about:blank');
+ r.fixture.state.approvals=[{request_id:'restore-review',status:'pending',address:r.peer.address,chain_namespace:'eip155:8453',intent:'credential',proof_type:'siwe',connector_id:'wallet-walletconnect',expires_at:Math.floor(Date.now()/1000)+600}];
+ let release,entered;const held=new Promise(resolve=>{release=resolve;}),restoring=new Promise(resolve=>{entered=resolve;});let first=true;
+ await r.page.route('**/relay-admission',async route=>{if(first){first=false;entered();await held;}await route.continue();});
+ t.after(()=>release());await r.reopen({ready:false});await restoring;
+ await r.frame.getByRole('button',{name:'Review',exact:true}).click();release();
+ await r.frame.locator('#wallet-status').filter({hasText:'Request signed.'}).waitFor({timeout:15000});
+ assert.equal(r.fixture.state.completed,1);assert.equal(r.peer.trace.some(event=>event.kind==='deleted'),false,'restoring for Review keeps the phone session');
+});
