@@ -826,7 +826,10 @@ impl RoomSessionAuthorization {
                 &self.session_id,
                 now,
             )
-            .map_err(|_| anyhow::anyhow!("invalid or expired session authority"))?;
+            .map_err(|err| {
+                tracing::warn!(error = %err, "invalid or expired session authority");
+                anyhow::anyhow!("invalid or expired session authority")
+            })?;
             if grant.principal_id != self.principal_id
                 || grant.proof_binding_id != proof
                 || grant.grant_id != self.grant_id
