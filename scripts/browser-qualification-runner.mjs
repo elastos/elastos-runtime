@@ -366,6 +366,7 @@ export async function runQualification(planPath, output, { signal = new AbortCon
     // Source helpers are part of this run's exact evidence, independently of
     // the installed Runtime/image's potentially older source lineage.
     for (const path of ["scripts/home-passkey-virtual-auth-smoke.mjs",
+      "scripts/lib/virtual-auth-cleanup.mjs",
       "scripts/lib/browser-journey-fixture.mjs", "scripts/lib/browser-journey-operator.mjs",
       "scripts/lib/browser-journey-audio.mjs", "scripts/lib/browser-journey-recovery.mjs",
       "scripts/lib/browser-open-failure.mjs", "scripts/lib/browser-journey-target.mjs",

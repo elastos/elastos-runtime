@@ -52,6 +52,7 @@ function frozenInputs(p) {
   return [...p.candidate.artifacts, { role: "operator_coordinates", path: p.runtime.operator_coords, sha256: "e".repeat(64) },
     ...["scripts/browser-qualification-runner.mjs", "scripts/browser-qualification-audit.mjs",
       "scripts/lib/browser-qualification-observer.mjs", "scripts/lib/browser-journey-target.mjs", "scripts/home-passkey-virtual-auth-smoke.mjs",
+      "scripts/lib/virtual-auth-cleanup.mjs",
       "capsules/browser/browser/browser-service-selection.js"].map(role =>
       ({ role, path: "/fixture/" + role, sha256: "e".repeat(64) }))].map(a => ({ ...a, identity: "1:2:3:4:5" }));
 }

@@ -207,6 +207,17 @@ node scripts/home-passkey-virtual-auth-smoke.mjs
 ```
 
 This script requires a `localhost` Home origin for local HTTP passkey tests.
+If it creates the first owner, it keeps that passkey and the browser profile
+with its saved virtual authenticator. Keep the printed `profile_dir` and use it
+as `HOME_VIRTUAL_AUTH_PROFILE` with the same `HOME_URL` on later runs.
+To remove this owner passkey, add another admin passkey first, remove the test
+passkey in System, then delete the test profile. For an isolated disposable
+Home, dispose of the test Home and its profile together. Cleanup still removes
+a guest passkey created by the smoke on an existing Home.
+
+The same cleanup rules apply to `just product-ui-virtual-auth`,
+`scripts/browser-home-session-smoke.sh`, and
+`scripts/browser-session-capacity-smoke.sh`, which call this script.
 See [scripts/home-passkey-virtual-auth-smoke.mjs](../scripts/home-passkey-virtual-auth-smoke.mjs)
 for its full environment surface.
 
