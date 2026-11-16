@@ -1668,7 +1668,7 @@ async fn walletconnect_revision_recheck_under_storage_lock_returns_conflict() {
     headers.insert("origin", "null".parse().unwrap());
     headers.insert("x-elastos-home-token", f.connector.parse().unwrap());
     headers.insert("if-match", revision.parse().unwrap());
-    let guard = f.state.walletconnect.inner.lock().await;
+    let guard = gateway_walletconnect::hold_storage_lock_for_test(&f.state).await;
     let mut request = Box::pin(gateway_walletconnect::storage(
         State(f.state.clone()),
         axum::http::Method::POST,

@@ -1026,6 +1026,13 @@ fn bump_storage_revision(data: &FsPath, name: &std::ffi::OsStr) -> anyhow::Resul
     crate::auth::atomic_write(&path, &serde_json::to_vec(&next)?)
 }
 
+// Keep the production lock private. Route tests hold it to exercise the
+// revision recheck deterministically, without an OS-thread timing race.
+#[cfg(test)]
+pub(super) async fn hold_storage_lock_for_test(state: &GatewayState) -> impl Sized + '_ {
+    state.walletconnect.inner.lock().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
