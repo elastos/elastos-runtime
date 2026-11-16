@@ -12,12 +12,12 @@ const MAX_SPREAD: u64 = 60 * 60;
 const SWITCH_LABEL: &str = "Check for updates in the background";
 const ON_TEXT: &str = "Home tries a few checks each day; the source can see the internet address and check time, while your name and installed version stay private.";
 const OFF_TEXT: &str = "Background checks are off; System checks for updates while it is open.";
-const SAVE_ERROR: &str = "Home could not save background checks. Try again.";
+const SAVE_ERROR: &str = "Home could not save background checks. On the device that runs Home, check free disk space, write access and private ownership of Local/Shared/System/Updates and its .notice.lock file. Move notice.json aside if it is a folder, then try again.";
 const NOTICE_TITLE: &str = "Home update found";
 const NOTICE_BODY: &str = "Home {version} was found. Review the update in System.";
-const FOLDER_TEXT: &str = "Background checks are off because Home cannot use their settings folder. Ask the Home owner to repair the folder permissions.";
-const INVALID_VERSION_TEXT: &str = "Home cannot check for updates because its installed version is invalid. Ask the Home owner to repair the installation.";
-const UNREADABLE_TEXT: &str = "Background checks are off because Home could not read their settings. Turn this on to save new settings.";
+const FOLDER_TEXT: &str = "Background checks are off because Home cannot use Local/Shared/System/Updates. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to your account, then turn this on.";
+const INVALID_VERSION_TEXT: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
+const UNREADABLE_TEXT: &str = "Background checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json, then turn this on.";
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -356,15 +356,17 @@ pub(super) async fn run<F, O>(
                     source,
                 )
             });
-            tokio::select! {
+            let checked = tokio::select! {
                 biased;
                 _ = shutdown.changed() => { return; }
-                _ = check => {}
-            }
+                checked = check => checked,
+            };
             if preference(&data_dir)["enabled"] != true {
                 break;
             }
-            if update::update_inputs(&data_dir).is_some_and(|(_, _, current)| current != key) {
+            if !checked
+                || update::update_inputs(&data_dir).is_some_and(|(_, _, current)| current != key)
+            {
                 continue;
             }
             break;

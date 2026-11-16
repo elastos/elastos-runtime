@@ -326,45 +326,39 @@ impl UpdateCheckCache {
         }
     }
 
-    // Await outside the mutex: System keeps its non-blocking read contract.
+    // Await one worker outside the mutex. True means this policy completed;
+    // false lets the background task recheck its switch before new admission.
     pub(super) async fn check_and_store<F, O>(
         cache: &tokio::sync::Mutex<Self>,
         key: UpdateCheckKey,
         work: impl FnOnce() -> F,
-    ) where
+    ) -> bool
+    where
         F: std::future::Future<Output = O> + Send + 'static,
         O: Into<CheckOutcome> + Send + 'static,
     {
-        let mut work = Some(work);
-        loop {
-            let (mut finished, running_key) = {
-                let mut cache = cache.lock().await;
-                if matches!(
-                    cache
-                        .read(key.clone(), std::time::Instant::now(), || {
-                            work.take().expect("one worker per policy")()
-                        })
-                        .await,
-                    UpdateCheckSnapshot::Completed(_)
-                ) {
-                    return;
-                }
-                let running = cache.running.as_ref().expect("pending check has a worker");
-                (running.finished.clone(), running.key.clone())
-            };
-            // Joining a result completes this turn even if the short System
-            // response expires before the waiter resumes (for example after sleep).
-            let _ = finished.changed().await;
-            cache
-                .lock()
-                .await
-                .collect_finished(std::time::Instant::now())
-                .await;
-            if running_key == key {
-                return;
+        let (mut finished, running_key) = {
+            let mut cache = cache.lock().await;
+            if matches!(
+                cache
+                    .read(key.clone(), std::time::Instant::now(), work)
+                    .await,
+                UpdateCheckSnapshot::Completed(_)
+            ) {
+                return true;
             }
-            // A different policy's worker drained; admit this policy next.
-        }
+            let running = cache.running.as_ref().expect("pending check has a worker");
+            (running.finished.clone(), running.key.clone())
+        };
+        let _ = finished.changed().await;
+        cache
+            .lock()
+            .await
+            .collect_finished(std::time::Instant::now())
+            .await;
+        // Return admission to the background task, including after another
+        // policy's worker drains. It owns the saved switch and current policy.
+        running_key == key
     }
 
     pub(super) async fn confirmed_offer(

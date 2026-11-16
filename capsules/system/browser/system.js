@@ -64,6 +64,7 @@ const deviceDidCopyButton = document.querySelector("#device-did-copy");
 const backgroundChoice = document.querySelector("#update-background-choice");
 let backgroundBusy = false;
 let backgroundSaveError = "";
+let backgroundSaveMessage = "";
 let focusUpdateRequested = false;
 const runtimeUpdateNode = document.querySelector("#runtime-update");
 const runtimeUpdateButton = document.querySelector("#runtime-update-apply");
@@ -303,11 +304,10 @@ function configureHomeRecoverySave() {
           && typeof query.settings === "string"
           && normalizedRequestedSettingsTab(query.settings) === query.settings
           && query.settings !== ""
-          && (query.focus === undefined || (query.focus === "update" && query.settings === "about"))
           && (query.recovery === undefined || (query.recovery === "import" && query.settings === "security"))) {
           activateSettingsTab(query.settings);
           focusUpdateRequested = false;
-          if (query.focus === "update") focusUpdateCard();
+          if (query.focus === "update" && query.settings === "about") focusUpdateCard();
           if (query.settings === "security") {
             (query.recovery === "import" ? recoveryImportInput
               : (recoveryProfileRequired ? recoveryProfileName : recoveryDownloadButton))?.focus();
@@ -3793,6 +3793,7 @@ function focusUpdateCard() {
 
 async function onBackgroundChange() {
   if (backgroundBusy || !backgroundChoice || !runtimeUpdate?.background_checks) return;
+  const messageAtSave = runtimeUpdate.background_checks.message;
   backgroundBusy = true;
   backgroundChoice.disabled = true;
   try {
@@ -3804,12 +3805,11 @@ async function onBackgroundChange() {
     renderUpdateNotice();
   } catch (error) {
     backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
+    backgroundSaveMessage = messageAtSave;
     backgroundSaveError = error.status === 401 || error.status === 403
       ? "Sign in as the Home owner to change background checks."
-      : runtimeUpdate.background_checks.readable === false
-        ? runtimeUpdate.background_checks.message
-        : runtimeUpdate.background_checks.save_error;
-    document.querySelector("#update-background-message").textContent = backgroundSaveError;
+      : runtimeUpdate.background_checks.save_error;
+    renderUpdateNotice();
   } finally {
     backgroundBusy = false;
     backgroundChoice.disabled = false;
@@ -3823,6 +3823,7 @@ function configureUpdateNotice() {
 
 function renderUpdateNotice() {
   const background = runtimeUpdate?.background_checks;
+  if (background?.message !== backgroundSaveMessage) backgroundSaveError = "";
   const backgroundNode = document.querySelector("#update-background");
   if (backgroundNode) backgroundNode.hidden = runtimeUpdateNode.hidden || !background;
   if (background && backgroundChoice) {

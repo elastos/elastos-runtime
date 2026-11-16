@@ -8223,6 +8223,10 @@ impl CarrierEndpointDrain {
         let result = match tokio::time::timeout(deadline, &mut *running).await {
             Ok(result) => result.context("drain update check endpoint"),
             Err(error) => {
+                warn!(
+                    timeout_seconds = deadline.as_secs(),
+                    "update check endpoint close timed out; cancelling drain"
+                );
                 running.abort();
                 let _ = running.await;
                 Err(anyhow::Error::new(error).context(crate::update::UpdateSourceUnavailable))
@@ -8231,6 +8235,24 @@ impl CarrierEndpointDrain {
         task.take();
         result
     }
+}
+
+#[cfg(test)]
+type TestClientClose = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+#[cfg(test)]
+tokio::task_local! {
+    static TEST_CLIENT_CLOSE: std::sync::Mutex<Option<TestClientClose>>;
+}
+
+#[cfg(test)]
+pub(crate) async fn with_test_client_close<T>(
+    close: impl std::future::Future<Output = ()> + Send + 'static,
+    work: impl std::future::Future<Output = T>,
+) -> T {
+    TEST_CLIENT_CLOSE
+        .scope(std::sync::Mutex::new(Some(Box::pin(close))), work)
+        .await
 }
 
 #[cfg(test)]
@@ -8424,7 +8446,14 @@ impl CarrierClient {
         timeout_secs: u64,
     ) -> Result<Self> {
         let closing = endpoint.clone();
-        let drain = CarrierEndpointDrain::new(async move { closing.close().await });
+        let close = async move { closing.close().await };
+        #[cfg(test)]
+        let close = TEST_CLIENT_CLOSE
+            .try_with(|fixture| fixture.lock().unwrap().take())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| Box::pin(close));
+        let drain = CarrierEndpointDrain::new(close);
         match Self::connect_known_endpoint(&endpoint, addr, timeout_secs).await {
             Ok(mut client) => {
                 client.owns_endpoint = true;
@@ -11756,6 +11785,14 @@ pub(crate) mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn carrier_endpoint_update_check_close_deadline_joins_hung_task() {
+        let warning = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(std::sync::Mutex::new(warning.reopen().unwrap()))
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
         let (started, starting) = tokio::sync::oneshot::channel();
         let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
         let drain = Arc::new(CarrierEndpointDrain::new(async move {
@@ -11777,10 +11814,19 @@ pub(crate) mod tests {
             .unwrap_err();
         assert!(error.is::<crate::update::UpdateSourceUnavailable>());
         assert!(
-            stopped.await.is_err(),
+            tokio::time::timeout(Duration::from_millis(1), stopped)
+                .await
+                .expect("timed-out close must drop its future")
+                .is_err(),
             "close future was dropped before returning"
         );
         assert!(drain.task.lock().await.is_none(), "no drain task remains");
+        let log = std::fs::read_to_string(warning.path()).unwrap();
+        assert_eq!(
+            log.matches("update check endpoint close timed out").count(),
+            1,
+            "{log}"
+        );
     }
 
     #[tokio::test(start_paused = true)]

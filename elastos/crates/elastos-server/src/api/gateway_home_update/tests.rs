@@ -684,7 +684,7 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
         .await
         .unwrap();
     assert_eq!(summary["background_checks"]["message"],
-        "Home cannot check for updates because its installed version is invalid. Ask the Home owner to repair the installation.");
+        "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.");
     let app = gateway_router(test_state(dir.path()));
     for enabled in [false, true] {
         let (status, settings) = home_test_post_json(
@@ -2388,7 +2388,7 @@ async fn update_notice_folder_failure_gives_action_that_can_work() {
             let settings = notice::preference(dir.path());
             assert_eq!(settings["enabled"], false);
             assert_eq!(settings["readable"], false);
-            assert_eq!(settings["message"], "Background checks are off because Home cannot use their settings folder. Ask the Home owner to repair the folder permissions.");
+            assert_eq!(settings["message"], "Background checks are off because Home cannot use Local/Shared/System/Updates. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to your account, then turn this on.");
             let (status, _) = home_test_post_json(&app, "/api/apps/system/update-background",
                 &owner.system_token, "null", json!({"enabled":true})).await;
             assert_eq!(status, StatusCode::CONFLICT);
@@ -2694,6 +2694,41 @@ async fn update_notice_task_switch_off_while_foreign_policy_worker_drains() {
         notice_tick(&wall, 100000).await;
         assert_eq!(calls.load(Ordering::SeqCst), 0, "later turns stay off");
         task.shutdown().await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn update_notice_settings_directory_reports_failed_repair_and_stays_off() {
+    with_test_check_cache(async {
+        let dir = tempfile::tempdir().unwrap();
+        configure_update_summary(dir.path());
+        let app = gateway_router(test_state(dir.path()));
+        let owner = passkey_authority_with_name(dir.path(), Some("notice-directory-settings"));
+        assert_eq!(notice::preference(dir.path())["enabled"], true);
+        let path = notice::state_path(dir.path()).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let settings = notice::preference(dir.path());
+        assert_eq!(settings["readable"], false);
+        assert!(settings["message"]
+            .as_str()
+            .unwrap()
+            .contains("repair or move aside"));
+        let (status, result) = home_test_post_json(
+            &app,
+            "/api/apps/system/update-background",
+            &owner.system_token,
+            "null",
+            json!({"enabled":true}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .contains("Move notice.json aside if it is a folder"));
+        assert_ne!(result["error"], settings["message"]);
+        assert_eq!(notice::preference(dir.path())["enabled"], false);
     })
     .await;
 }

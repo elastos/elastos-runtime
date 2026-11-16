@@ -1972,6 +1972,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn operator_carrier_drain_preserves_close_error() {
+        let drain = OperatorCarrierDrain::with_result(async {
+            Err(crate::update::UpdateSourceUnavailable.into())
+        });
+        assert!(drain
+            .finish()
+            .await
+            .unwrap_err()
+            .is::<crate::update::UpdateSourceUnavailable>());
+    }
+
+    #[tokio::test]
+    async fn operator_update_check_close_wiring_uses_deadline() {
+        use tokio::io::AsyncBufReadExt;
+        let dir = tempfile::tempdir().unwrap();
+        let server = Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .alpns(vec![crate::carrier::CARRIER_ALPN.to_vec()])
+            .bind()
+            .await
+            .unwrap();
+        let address = crate::carrier::tests::wait_for_direct_endpoint_addr(&server).await;
+        let (mut source, _, _) = signed_check_fixture(|_| {}, |_| {});
+        source.publisher_node_id = server.id().to_string();
+        source.connect_ticket = crate::carrier::tests::encode_ticket_for(address);
+        let mut sources = crate::sources::TrustedSourcesConfig::empty();
+        sources.upsert_source(source);
+        crate::sources::save_trusted_sources(dir.path(), &sources).unwrap();
+        let peer = server.clone();
+        let serving = tokio::spawn(async move {
+            let connection = peer.accept().await.unwrap().await.unwrap();
+            let (mut send, recv) = connection.accept_bi().await.unwrap();
+            let mut request = String::new();
+            BufReader::new(recv).read_line(&mut request).await.unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&request).unwrap()["op"],
+                "release_head"
+            );
+            send.write_all(b"{\"ok\":false}\n").await.unwrap();
+            send.finish().unwrap();
+            connection.closed().await;
+        });
+        let (started, starting) = tokio::sync::oneshot::channel();
+        let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
+        let path = dir.path().to_path_buf();
+        let mut check = tokio::spawn(async move {
+            crate::carrier::with_test_client_close(
+                async move {
+                    let _lifetime = dropped;
+                    let _ = started.send(());
+                    std::future::pending::<()>().await;
+                },
+                gather_local_update_check(&path),
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(10), starting)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::pause();
+        tokio::time::advance(OPERATOR_UPDATE_CLOSE_TIMEOUT).await;
+        let completed = tokio::time::timeout(Duration::from_millis(1), &mut check).await;
+        tokio::time::resume();
+        if completed.is_err() {
+            check.abort();
+            let _ = check.await;
+        }
+        let result = completed
+            .expect("real update check must use the bounded close")
+            .unwrap();
+        assert!(result.is_err(), "fixture has no signed release head");
+        assert!(tokio::time::timeout(Duration::from_secs(1), stopped)
+            .await
+            .unwrap()
+            .is_err());
+        server.close().await;
+        tokio::time::timeout(Duration::from_secs(5), serving)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn operator_carrier_drain_runs_after_operation_refusal() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let calls = Arc::new(AtomicUsize::new(0));

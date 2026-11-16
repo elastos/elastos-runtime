@@ -97,8 +97,8 @@ async function fixture() {
 }
 
 const screenshots = process.env.UPDATE_NOTICE_SCREENSHOTS;
-async function screen(page,name) {
-  if(!screenshots)return;
+async function screen(page,name,wording=false) {
+  if(!screenshots || (process.env.UPDATE_NOTICE_WORDING_ONLY && !wording))return;
   const theme = name.startsWith("dark-") ? "dark" : "light";
   for (const frame of page.frames().slice(1)) await frame.evaluate(theme => window.elastosTheme?.set(theme), theme);
   await page.waitForTimeout(120);
@@ -192,6 +192,12 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
         });
         await screen(page,`${theme}-system-control-centre-${fresh?'closed':'open'}`);
       }
+      await system.locator("button[data-settings=account]").click();
+      await gui.evaluate(()=>fixture.windows.openTarget('system',{query:{settings:'about',focus:'unknown'}}));
+      await system.locator('#runtime-update').waitFor();
+      await system.locator('#runtime-update').evaluate(node=>{
+        if(document.activeElement===node)throw new Error('unknown focus marker focused the card');
+      });
       assert.deepEqual(errors,[]);
       await page.close();
     }
@@ -224,9 +230,12 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await phone.close();
     }
     const page=await browser.newPage({viewport:{width:390,height:844}});
-    await page.goto(f.baseUrl+"/fixture?settings=about");
+    await page.goto(f.baseUrl+"/fixture?settings=about&focus=unknown");
     const system=page.frameLocator("#system-frame");
     await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).waitFor();
+    await system.locator('#runtime-update').evaluate(node=>{
+      if(document.activeElement===node)throw new Error('startup unknown marker focused the card');
+    });
     f.state.failWrite=true;
     await system.locator("label.system-switch:has(#update-background-choice)").click();
     await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).waitFor();
@@ -234,13 +243,31 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     assert.equal(await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).isChecked(),true);
     await page.waitForTimeout(5300);
     await system.getByText(copy("SAVE_ERROR"),{exact:true}).waitFor();
+    await screen(page,'phone-save-error',true);
+    const writesBeforeRefresh=f.state.writes.length;
+    f.state.settings=preference(false);
+    await page.evaluate(()=>document.querySelector('#system-frame').contentWindow.postMessage({
+      type:'elastos:runtime-events',schema:'elastos.home.runtime-events/v1',events:[],
+    },'*'));
+    await system.getByText(copy('OFF_TEXT'),{exact:true}).waitFor({timeout:5000});
+    assert.equal(f.state.writes.length,writesBeforeRefresh,'server message change clears feedback without another save');
+
     for(const status of [401,403]) {
       f.state.failStatus=status;
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.getByText("Sign in as the Home owner to change background checks.",{exact:true}).waitFor();
+      await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
     }
     f.state.failWrite=false;f.state.settings=preference(false,false);await page.reload();
     await system.getByText(copy("UNREADABLE_TEXT"),{exact:true}).waitFor();
+    await screen(page,'phone-unreadable-settings',true);
+    f.state.failWrite=true;f.state.failStatus=409;
+    await system.locator("label.system-switch:has(#update-background-choice)").click();
+    await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
+    await system.getByText(copy('SAVE_ERROR'),{exact:true}).waitFor();
+    assert.equal(await system.getByText(copy('UNREADABLE_TEXT'),{exact:true}).count(),0,'failed repair supplies the next step');
+    await screen(page,'phone-repair-failed',true);
+    f.state.failWrite=false;
     await system.locator("label.system-switch:has(#update-background-choice)").click();await system.getByText(copy("ON_TEXT"),{exact:true}).waitFor();
     await system.locator('#update-background').evaluate(row=>{
       const button=document.querySelector('#runtime-update-apply');
@@ -262,11 +289,15 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
         f.state.failWrite=true;f.state.failStatus=409;
         await system.locator("label.system-switch:has(#update-background-choice)").click();
         await system.locator('#update-background-choice:not(:checked):not(:disabled)').waitFor({state:'attached'});
-        await system.getByText(copy("FOLDER_TEXT"),{exact:true}).waitFor();
+        await system.getByText(copy("SAVE_ERROR"),{exact:true}).waitFor();
         assert.equal(await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).isChecked(),false);
         f.state.failWrite=false;
       }
-      await screen(page,`phone-${stateName.toLowerCase()}`);
+      if(stateName==='FOLDER_TEXT') {
+        // Reload gives the initial repair guidance; the failed save was tested above.
+        await page.reload();await system.getByText(copy(stateName),{exact:true}).waitFor();
+      }
+      await screen(page,`phone-${stateName.toLowerCase()}`,true);
     }
     f.state.guest=true;await page.reload();
     await system.locator("#runtime-update").waitFor({state:"hidden"});
