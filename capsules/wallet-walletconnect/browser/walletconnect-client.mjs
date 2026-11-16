@@ -27,7 +27,7 @@ const approvedNetworks = provider => {
 };
 // This module runs only in the connector's opaque frame. Runtime owns approval authority.
 export function createWalletConnectClient({ api, origin, copyLink, onPhase = () => {}, loadAdapter = () => import(`./vendor/reown-appkit.js?instance=${crypto.randomUUID()}`), clearMemory = () => {} }) {
-  let provider, adapter, activeRevision, sessionApi, projectId, pairing, operation, restoring, restoreAttempt, retiring, cleanupPromise, cleanupRequired = false, removed = false, hadSession = false, sessionExpiry = 0, generation = 0;
+  let provider, adapter, activeRevision, sessionApi, projectId, pairing, operation, restoring, restoreAttempt, retiring, cleanupPromise, latestPermission, cleanupRequired = false, removed = false, hadSession = false, sessionExpiry = 0, generation = 0;
   const stopped = 'Home stopped waiting for your wallet. Select Connect wallet for a new QR code.';
   const removedMessage = 'Your phone wallet removed this connection. Select Connect wallet for a new QR code.';
   const muted = message => Object.assign(new Error(message), {tone:'muted'});
@@ -125,6 +125,7 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
     if (cleanupRequired) await waitFor(clearStored(),signal);
     const config = await waitFor(api('wallet/config'),signal);
     const permission = await waitFor(api('internet'),signal);
+    latestPermission = permission;
     if (permission.status !== 'granted') throw muted('WalletConnect needs internet access. The Home owner can allow it in Inbox. Then select Connect wallet.');
     if (activeRevision !== undefined && activeRevision !== config.walletconnect.storage_revision) {
       provider = undefined;
@@ -180,7 +181,10 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
     return adopt(current);
   };
   const status = async () => {
-    const permission = await api('internet');
+    const observedGeneration = generation;
+    const read = await api('internet');
+    const permission = observedGeneration !== generation && latestPermission ? latestPermission : read;
+    latestPermission = permission;
     if (permission.status !== 'granted' && (provider || pairing || operation || adapter)) {
       await reset(muted('Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'));
     }
@@ -191,7 +195,11 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
         const stored = await waitFor(sessionApi('storage'),attempt.signal);
         const sessions = Object.entries(stored).find(([key])=>key.endsWith('//session'))?.[1];
         const saved = Array.isArray(sessions) ? sessions.find(session=>session.expiry > Date.now()/1000) : undefined;
-        if (!saved) return;
+        if (!saved) {
+          const expired = Array.isArray(sessions) && sessions.find(session=>Number.isSafeInteger(session.expiry) && session.expiry <= Date.now()/1000);
+          if (expired) { hadSession = true; sessionExpiry = expired.expiry; }
+          return;
+        }
         hadSession = true; sessionExpiry = saved.expiry;
         const currentAdapter = await load(attempt.signal);
         if (!currentAdapter.restoreWalletConnectEvm) return;
@@ -217,6 +225,7 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
     if (action.kind === 'status') return status();
     if (operation && !operation.signal.aborted) throw new Error('A wallet request is already active.');
     const attempt = new AbortController();
+    generation++;
     operation = attempt;
     restoreAttempt?.abort(muted(stopped));
     const signal = attempt.signal;

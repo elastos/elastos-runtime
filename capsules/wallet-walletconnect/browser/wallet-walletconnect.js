@@ -21,6 +21,8 @@ let currentPhase = 'idle';
 let connectionState;
 let linkedAccounts = [];
 let recoveryAction;
+let launchExpired = false;
+let ownerConsentNeeded = false;
 const clearMemory = installWalletConnectStorage(window);
 const runtimeOrigin = new URL(import.meta.url).origin;
 const api = (resource, init={}) => fetchJson(resource.startsWith('/api/') ? runtimeOrigin+resource : `${runtimeOrigin}/api/apps/${CONNECTOR_ID}/${resource}`, {
@@ -48,6 +50,7 @@ let permissionStatus;
 let connectionRevision;
 let connectionReturnPending = false;
 function watchConnection() {
+  if (launchExpired) { window.clearInterval(connectionTimer);connectionTimer = undefined;return; }
   if (!frameHomeToken || typeof window.setInterval !== "function") return;
   const interval = pendingEffect || permissionPending || hostEffectInFlight || permissionStatus && permissionStatus !== 'granted' || document.querySelector('dialog[open]') ? 1000 : 5000;
   if (connectionTimer && connectionInterval === interval) return;
@@ -56,7 +59,7 @@ function watchConnection() {
   connectionTimer = window.setInterval(checkConnection, interval);
 }
 async function checkConnection() {
-  if (!frameHomeToken) return;
+  if (launchExpired || !frameHomeToken) return;
   if (pendingEffect && (!pendingEffect.requestId || !Number.isFinite(pendingEffect.expiresAt) || pendingEffect.expiresAt <= Date.now())) pendingEffect = undefined;
   if (connectionCheckInFlight) { watchConnection(); return; }
   connectionCheckInFlight = true;
@@ -67,6 +70,7 @@ async function checkConnection() {
     if (epoch !== actionEpoch && current.permission.status === 'granted') return;
     const previousPermission = permissionStatus;
     permissionStatus = current.permission.status;
+    if (permissionStatus === 'granted') ownerConsentNeeded = false;
     permissionPending = current.permission.status === "requested" && Boolean(current.permission.request);
     if (saved && pendingEffect === saved && (!saved.requestId || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now() || current.permission.request?.id !== saved.requestId
       || !['requested','granted'].includes(current.permission.status))) pendingEffect = undefined;
@@ -151,16 +155,24 @@ function recoveryStep(capital = false) {
   return capital ? text[0].toUpperCase()+text.slice(1) : text;
 }
 function renderConnection() {
+  if (launchExpired) {
+    for (const button of document.querySelectorAll('.wallet-shell button')) button.hidden = true;
+    const node = document.querySelector('#wallet-connection');
+    if (node.textContent !== 'Window expired') node.textContent = 'Window expired';
+    return;
+  }
+  const needsOwner = ownerConsentNeeded && permissionStatus !== 'granted';
+  for (const button of requestsNode.querySelectorAll('[data-wallet-request-sign]')) { button.disabled = hostEffectInFlight || needsOwner;button.hidden = needsOwner; }
   const session = connectionState?.session;
   const linked = session && sessionIsLinked(session);
-  connectButton.hidden = hostEffectInFlight || Boolean(linked);
+  connectButton.hidden = needsOwner || hostEffectInFlight || Boolean(linked);
   connectButton.disabled = hostEffectInFlight;
-  document.querySelector('#wallet-finish').hidden = hostEffectInFlight || !session || Boolean(linked);
+  document.querySelector('#wallet-finish').hidden = needsOwner || hostEffectInFlight || !session || Boolean(linked);
   document.querySelector('#wallet-disconnect').hidden = hostEffectInFlight || !linked;
   document.querySelector('#wallet-cancel').hidden = !(hostEffectInFlight || pendingEffect) || Boolean(document.querySelector('dialog[open]'));
   const label = hostEffectInFlight
     ? currentPhase === 'starting' || currentPhase === 'idle' ? 'Preparing connection' : 'Waiting for phone'
-    : linked ? `Linked · ${chainLabel(session.chain)}` : session ? 'Linking unfinished'
+    : needsOwner ? 'Owner approval needed' : linked ? `Linked · ${chainLabel(session.chain)}` : session ? 'Linking unfinished'
     : connectionState?.removed ? 'Phone connection removed' : connectionState?.expired ? 'Phone connection expired' : 'Ready to connect';
   const node = document.querySelector('#wallet-connection');
   if (node.textContent !== label) node.textContent = label;
@@ -185,6 +197,7 @@ async function copyConnectionLink(uri,{signal}) {
   finally { signal.removeEventListener('abort',cancel); }
 }
 async function onConnect({fresh = true} = {}) {
+  if (hostEffectInFlight || launchExpired) return;
   const epoch = ++actionEpoch;
   currentPhase = 'starting';
   showStatus(fresh ? 'Preparing a new connection.' : 'Open your wallet app on your phone to finish linking.','muted');
@@ -339,6 +352,7 @@ async function onAccountClick(event) {
 }
 
 async function onRequestClick(event) {
+  if (hostEffectInFlight || launchExpired) return;
   const button = event.target?.closest?.("[data-wallet-request-sign]");
   const approvalRequestId = readText(button?.dataset?.walletRequestSign);
   if (!button || !approvalRequestId) {
@@ -378,6 +392,8 @@ async function requestCapsuleWalletEffect(action) {
   try {
     if (['link','approve'].includes(action.kind)) {
       const consent = await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
+      permissionStatus = consent.status;
+      if (consent.status === 'granted') ownerConsentNeeded = false;
       permissionPending = consent.status === 'requested' && Boolean(consent.request);
       if (consent.status !== 'granted') {
         pendingEffect = {requestId:consent.request?.id, expiresAt:(consent.request?.issued_at + 1800) * 1000, action, run: action.kind === 'link' ? ()=>onConnect({fresh:action.fresh !== false}) : () => {
@@ -449,7 +465,11 @@ async function fetchJson(url, init) {
   const response = await fetch(url, init);
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    if (detail.trim() === "Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.") throw Object.assign(new Error('The Home owner can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
+    if (detail.trim() === "Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.") {
+      ownerConsentNeeded = true;renderConnection();
+      throw Object.assign(new Error('The Home owner can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
+    }
+    if (response.status === 403) { launchExpired = true;renderConnection();watchConnection(); }
     throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open WalletConnect again.' : detail.trim() || 'ElastOS could not complete this request. Try again.');
   }
   return response.json();
