@@ -44,8 +44,12 @@ try{
  await capture(r,'ready','Home has no saved phone session.','Connect wallet starts a new QR.',true);
  r.fixture.state.permission='off';await r.frame.locator('#wallet-connect').click();await r.frame.locator('#wallet-status').filter({hasText:'The Home owner can allow it in Inbox.'}).waitFor();
  await capture(r,'permission-requested','The owner approval is pending.','Allow in Inbox continues once; Cancel stops the saved action.',true);
- r.fixture.setPermission('granted');await refresh(r);await r.frame.locator('#wallet-status').filter({hasText:'Preparing a new connection.'}).waitFor({timeout:5000});
- await capture(r,'preparing','A fresh connection is starting.','Cancel stops this attempt.',true);
+ let resumeSetup;const setupHeld=new Promise(resolve=>{resumeSetup=resolve;});
+ await r.page.route('**/relay-admission',async route=>{await setupHeld;await route.continue();});
+ try {
+  r.fixture.setPermission('granted');await refresh(r);await r.frame.locator('#wallet-status').filter({hasText:'Preparing a new connection.'}).waitFor({timeout:5000});
+  await capture(r,'preparing','A fresh connection is starting; fixture holds relay admission for this transient screenshot.','Cancel stops this attempt.',true);
+ } finally { resumeSetup(); }
  await r.frame.locator('dialog[open] canvas').waitFor({timeout:20000});
  await capture(r,'qr','The SDK issued a live pairing link.','Scan it or Copy connection link; Cancel closes it.',true);
  await copyLink(r);await capture(r,'qr-copied','Home Clipboard accepted the link write.','Open the copied link in the wallet app.',true);
