@@ -13,6 +13,8 @@ const requestsNode = document.querySelector("#wallet-requests");
 const frameHomeToken = readLaunchToken();
 const homeOrigin = readQueryParam("home_origin");
 let hostEffectInFlight = false;
+let pendingEffect;
+let connectionCheckInFlight = false;
 const clearMemory = installWalletConnectStorage(window);
 const runtimeOrigin = new URL(import.meta.url).origin;
 const api = (resource, init={}) => fetchJson(resource.startsWith('/api/') ? runtimeOrigin+resource : `${runtimeOrigin}/api/apps/${CONNECTOR_ID}/${resource}`, {
@@ -25,16 +27,27 @@ let connectionRevision;
 function watchConnection() {
   if (!frameHomeToken || connectionTimer || typeof window.setInterval !== "function") return;
   connectionTimer = window.setInterval(async () => {
-    if (hostEffectInFlight) return;
+    if (connectionCheckInFlight) return;
+    connectionCheckInFlight = true;
     try {
-      const current = await requestCapsuleWalletEffect({ kind: "status" });
+      const current = await connector.effect({ kind: "status" });
+      if (current.permission.status === 'granted' && pendingEffect && !hostEffectInFlight) {
+        const resume = pendingEffect.run;
+        pendingEffect = undefined;
+        resume();
+        return;
+      }
+      if (current.permission.status === 'revoked' && (hostEffectInFlight || document.querySelector("#wallet-connection").textContent === "Connected")) {
+        showStatus("Internet access for WalletConnect was turned off. Select Connect wallet to ask again.", "muted");
+      }
       document.querySelector("#wallet-connection").textContent = current.status === "connected" ? "Connected" : "Disconnected";
       if (current.status === "connected" && connectionRevision !== undefined && connectionRevision !== current.revision) {
         showStatus("Wallet changed. Check the account and network on your phone.", "muted");
       }
       connectionRevision = current.revision;
     } catch { document.querySelector("#wallet-connection").textContent = "Disconnected"; }
-  }, 5000);
+    finally { connectionCheckInFlight = false; }
+  }, 1000);
 }
 
 const homeClipboard = createHomeClipboardClient({
@@ -49,7 +62,7 @@ boot();
 function boot() {
   document.querySelector("#wallet-disconnect")?.addEventListener("click", async () => {
     try { await requestCapsuleWalletEffect({ kind: "disconnect" }); document.querySelector("#wallet-connection").textContent = "Disconnected"; showStatus("Disconnected. Linked accounts stay in Wallet.", "muted"); }
-    catch (error) { showStatus(errorMessage(error), "error"); }
+    catch (error) { showStatus(errorMessage(error), error.tone || "error"); }
   });
   connectButton?.addEventListener("click", onConnect);
   accountsNode?.addEventListener("click", onAccountClick);
@@ -57,13 +70,13 @@ function boot() {
   watchConnection();
   setState("0 linked");
   refreshWalletState().catch((error) => {
-    showStatus(errorMessage(error), "error");
+    showStatus(errorMessage(error), error.tone || "error");
   });
 }
 
 async function onConnect() {
   setButtonBusy(connectButton, true);
-  showStatus("Approve in your phone wallet.", "muted");
+  showStatus("Connecting. If a QR code appears, scan it with your phone wallet, then approve the request on your phone.", "muted");
   try {
     await requestCapsuleWalletEffect({ kind: "link" });
     document.querySelector("#wallet-connection").textContent = "Connected";
@@ -72,7 +85,7 @@ async function onConnect() {
     notifyHomeSummaryChanged();
     await refreshWalletState();
   } catch (error) {
-    showStatus(errorMessage(error), "error");
+    showStatus(errorMessage(error), error.tone || "error");
   } finally {
     setButtonBusy(connectButton, false);
   }
@@ -197,7 +210,7 @@ async function onAccountClick(event) {
     await copyText(address);
     showStatus("Address copied.", "success");
   } catch (error) {
-    showStatus(errorMessage(error), "error");
+    showStatus(errorMessage(error), error.tone || "error");
   } finally {
     setButtonBusy(button, false);
   }
@@ -221,21 +234,26 @@ async function onRequestClick(event) {
     notifyHomeSummaryChanged();
     await refreshWalletState();
   } catch (error) {
-    showStatus(errorMessage(error), "error");
+    showStatus(errorMessage(error), error.tone || "error");
   } finally {
     setButtonBusy(button, false);
   }
 }
 
 async function requestCapsuleWalletEffect(action) {
+  if (action.kind === 'disconnect') pendingEffect = undefined;
   if (!frameHomeToken || hostEffectInFlight) throw new Error('A wallet request is already active.');
   hostEffectInFlight = true;
   try {
     if (['link','approve'].includes(action.kind)) {
       const consent = await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
       if (consent.status !== 'granted') {
+        pendingEffect = {run: action.kind === 'link' ? onConnect : () => {
+          const button = [...requestsNode.querySelectorAll('[data-wallet-request-sign]')].find(node => node.dataset.walletRequestSign === action.approvalRequestId);
+          if (button) return onRequestClick({target:button});
+        }};
         window.top.postMessage({type:'home:open-target',target:'inbox',query:{notification_id:'walletconnect-internet:permission'},homeToken:frameHomeToken},homeOrigin);
-        throw new Error('Allow WalletConnect internet access in Inbox, then connect again.');
+        throw Object.assign(new Error('WalletConnect needs internet access. Answer the request in Inbox. If it is no longer there, select Connect wallet to ask again.'), {tone:'muted'});
       }
     }
     return await connector.effect(action);
@@ -291,7 +309,7 @@ async function fetchJson(url, init) {
   const response = await fetch(url, init);
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open WalletConnect again.' : detail.trim() || 'Runtime could not complete this wallet request. Try again.');
+    throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open WalletConnect again.' : detail.trim() || 'ElastOS could not complete this request. Try again.');
   }
   return response.json();
 }

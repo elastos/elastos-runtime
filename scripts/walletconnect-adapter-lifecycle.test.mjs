@@ -49,7 +49,7 @@ test("the real adapter resumes restored sessions and refreshes authority before 
   providers[1].session.expiry = 1;
   let removed = 0;
   globalThis.document = {
-    createElement: () => ({ append() {}, addEventListener() {}, remove() { removed++; } }),
+    createElement: () => ({ append() {}, setAttribute() {}, addEventListener() {}, remove() { removed++; } }),
     body: { append() {} },
   };
   await connectWalletConnectEvm({ ...options, contextKey: "principal-two", api });
@@ -57,4 +57,27 @@ test("the real adapter resumes restored sessions and refreshes authority before 
   assert.equal(removed, 1);
   delete globalThis.document;
   delete globalThis.walletConnectSdkFixture;
+});
+
+for (const reason of ['expiry','permission']) test(`pairing closes with its ${reason} reason`, async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  let removed = 0, closed = 0, aborted = 0, options;
+  const controller = new AbortController();
+  globalThis.document = {createElement:() => ({append(){},setAttribute(){},addEventListener(){},remove(){removed++;}}),body:{append(){}}};
+  globalThis.walletConnectSdkFixture = async init => {
+    options = init;
+    return {connected:false,on(){},removeListener(){},connect:()=>new Promise(()=>{}),
+      signer:{abortPairingAttempt(){aborted++;},client:{core:{relayer:{transportOpen:async()=>{},transportClose:async()=>{closed++;}}}}}};
+  };
+  try {
+    const {connectWalletConnectEvm} = await import('./walletconnect/adapter.mjs');
+    const pending = connectWalletConnectEvm({contextKey:reason,chains:[1,20,8453,11155111],api:async()=>({}),signal:controller.signal});
+    const message = reason === 'expiry' ? 'The QR code expired. Select Connect wallet for a new one.' : 'Internet access for WalletConnect was turned off. Select Connect wallet to ask again.';
+    const rejected = assert.rejects(pending,{message});
+    for(let i=0;i<10;i++) await Promise.resolve();
+    assert.deepEqual(options.chains,[]);assert.deepEqual(options.optionalChains,[1,20,8453,11155111]);
+    if(reason === 'expiry') t.mock.timers.tick(180000); else controller.abort(new Error(message));
+    await rejected;
+    assert.equal(removed,1);assert.equal(closed,1);assert.equal(aborted,1);
+  } finally {delete globalThis.document;delete globalThis.walletConnectSdkFixture;}
 });

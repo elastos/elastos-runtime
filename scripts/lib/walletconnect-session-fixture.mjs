@@ -34,4 +34,5 @@ const client = createWalletConnectClient({api,origin:location.origin,loadAdapter
   }};
 }});
 window.done = client.effect({kind:'link'}).then(result => { window.result = result; }, error => { window.error = error.message; });
+window.relink = () => client.effect({kind:'link'});
 window.cleanup = () => client.effect({kind:'disconnect'});

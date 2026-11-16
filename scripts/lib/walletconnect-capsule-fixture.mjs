@@ -18,7 +18,7 @@ export async function exerciseWalletConnect(scenario='valid') {
       if(input.method==='eth_chainId'&&scenario.startsWith('invalid-chain:'))return JSON.parse(scenario.slice('invalid-chain:'.length));
       if(input.method==='eth_chainId')return scenario==='wrong-chain'||changed&&kind==='chain-change-during-send'?'0x1':'0x14';
       if(['personal_sign','eth_signTypedData_v4'].includes(input.method)){if(signatureIntent)change();return signature;}
-      if(input.method==='eth_sendTransaction'){change();return scenario==='invalid-hash'?'Open a fake recovery website':transactionHash;}
+      if(input.method==='eth_sendTransaction'){if(scenario==='sdk-unknown')throw new Error('Opaque SDK failure fixture');change();return scenario==='invalid-hash'?'Open a fake recovery website':transactionHash;}
       throw new Error('Unexpected wallet call');
     }};
   const api=async(path,input)=>{routes.push({path,input});
@@ -28,7 +28,7 @@ export async function exerciseWalletConnect(scenario='valid') {
     if(path.endsWith('/challenge'))return {schema:'elastos.auth.challenge/v1',message,expires_at:Math.floor(clock()/1000)+600};
     if(path.endsWith('/verify')){const body=JSON.parse(input.body);assert.equal(body.message,message);assert.equal(body.signature,signature);return {status:'linked'};}
     if(path==='wallet/approvals')return {approval_requests:[{request_id:'approval:fixture',status:scenario==='approved'?'approved':'pending',address,
-      intent,chain_namespace:'eip155:20',expires_at:Math.floor(clock()/1000)+lifetime}]};
+      intent,chain_namespace:scenario==='unapproved-network'?'eip155:8453':'eip155:20',expires_at:Math.floor(clock()/1000)+lifetime}]};
     if(path.endsWith('/approve'))return {handoff:{request_id:'approval:fixture',intent,
       payload_hash:payloadHash,signer:address,signature_type:scenario.startsWith('typed')?'eip712':'personal_sign',message:scenario==='protected-content'?'0x414243':'Runtime approval fixture',
       transaction:{from:address,to:`0x${'78'.repeat(20)}`,value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x1',chainId:'0x14'}},

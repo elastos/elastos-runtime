@@ -7,10 +7,11 @@ const approvedNetworks = provider => {
 };
 // This module runs only in the connector's opaque frame. Runtime owns approval authority.
 export function createWalletConnectClient({ api, origin, loadAdapter = () => import(`./vendor/reown-appkit.js?instance=${crypto.randomUUID()}`), clearMemory = () => {} }) {
-  let provider, adapter, activeRevision, sessionApi, projectId, generation = 0;
+  let provider, adapter, activeRevision, sessionApi, projectId, pairing, generation = 0;
   const sdkError = error => {
     console.error('WalletConnect SDK:', String(error?.message || error).split(projectId || '\0').join('[project]'));
-    return new Error(['Wallet connection cancelled.','The QR code expired. Select Connect wallet for a new one.'].includes(error?.message) ? error.message : connectionFailed);
+    const message = ['Wallet connection cancelled.','The QR code expired. Select Connect wallet for a new one.','Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'].includes(error?.message) ? error.message : connectionFailed;
+    return Object.assign(new Error(message), {tone:message.startsWith('The QR code expired.') || message.startsWith('Internet access for WalletConnect was turned off.') ? 'muted' : 'error'});
   };
   const requireNetwork = namespace => {
     if (!approvedNetworks(provider).has(namespace)) {
@@ -52,7 +53,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
   const connect = async () => {
     const config = await api('wallet/config');
     const permission = await api('internet');
-    if (permission.status !== 'granted') throw new Error('Allow WalletConnect internet access in Inbox, then connect again.');
+    if (permission.status !== 'granted') throw Object.assign(new Error('WalletConnect needs internet access. Answer the request in Inbox. If it is no longer there, select Connect wallet to ask again.'), {tone:'muted'});
     if (activeRevision !== undefined && activeRevision !== config.walletconnect.storage_revision) {
       await retireAdapter();
       provider = undefined; adapter = undefined; clearMemory();
@@ -61,18 +62,24 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     const revision = activeRevision;
     sessionApi = (resource, init={}) => api(resource, ['storage','relay-admission'].includes(resource)
       ? {...init,headers:{...init.headers,'if-match':revision}} : init);
-    adapter ??= await loadAdapter();
     projectId = config.walletconnect.project_id;
     let current;
-    try { current = await adapter.connectWalletConnectEvm({
-      contextKey:'wallet-walletconnect', projectId:config.walletconnect.project_id, chains:[1,20,8453,11155111], api:sessionApi,
+    const attempt = pairing = new AbortController();
+    try {
+      adapter ??= await loadAdapter();
+      current = await adapter.connectWalletConnectEvm({
+      signal:attempt.signal, contextKey:'wallet-walletconnect', projectId:config.walletconnect.project_id, chains:[1,20,8453,11155111], api:sessionApi,
       runtimeUrl:`${origin}/api/apps/wallet-walletconnect`, relayUrl:`${origin.replace(/^http/,'ws')}/api/apps/wallet-walletconnect/relay`,
       metadata:{name:'ElastOS Home',description:'Approve requests from your ElastOS Home',url:origin,icons:[]},
-    }); } catch (error) { throw sdkError(error); }
+    });
+      attempt.signal.throwIfAborted();
+    } catch (error) { throw sdkError(error); }
+    finally { if (pairing === attempt) pairing = undefined; }
     const approved = approvedNetworks(current);
     const supported = [...networks.keys()].filter(id => approved.has(`eip155:${id}`));
     if (!supported.length) { await disconnect(); throw new Error(noSupportedNetwork); }
-    if (!supported.includes(current.chainId)) current.signer.setDefaultChain(`eip155:${supported[0]}`);
+    try { if (!supported.includes(current.chainId)) current.signer.setDefaultChain(`eip155:${supported[0]}`); }
+    catch (error) { throw sdkError(error); }
     if (current !== provider) {
       provider = current;
       for (const name of ['accountsChanged','chainChanged','disconnect']) provider.on(name,()=>generation++);
@@ -81,6 +88,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
   };
   const disconnect = async () => {
     generation++;
+    pairing?.abort(new Error('Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'));
     try { await retireAdapter(); }
     finally {
       provider = undefined; adapter = undefined; activeRevision = undefined; clearMemory();
@@ -92,9 +100,9 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     if (action.kind === 'disconnect') return disconnect();
     if (action.kind === 'status') {
       const permission = await api('internet');
-      if (permission.status !== 'granted' && provider) await disconnect();
+      if (permission.status !== 'granted' && (provider || pairing)) await disconnect();
       return {status:provider?.connected && provider.session?.expiry > Date.now()/1000
-        && provider.signer?.client.core.relayer.connected ? 'connected':'disconnected',revision:generation};
+        && provider.signer?.client.core.relayer.connected ? 'connected':'disconnected',revision:generation,permission};
     }
     await connect();
     const revision = generation;

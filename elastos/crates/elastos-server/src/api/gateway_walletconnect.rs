@@ -10,7 +10,7 @@ use tokio::time::Instant;
 
 pub(super) const GRANT: &str = "walletconnect.internet.grant";
 pub(super) const REVOKE: &str = "walletconnect.internet.revoke";
-const CONSENT: &str = "WalletConnect uses this computer's internet connection to reach the wallet relay. The relay can see the connection address. Your phone wallet holds your keys and approves each request. You can turn this connection off here in Inbox.";
+const CONSENT: &str = "WalletConnect needs the internet to link this Home to your phone wallet. The WalletConnect service that carries the messages can see this computer's internet address. Your keys stay in your phone wallet, and you approve each request there. You can turn this off at any time here in Inbox.";
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SOCKETS: usize = 2;
 const RESOURCE: &str = "elastos://walletconnect/internet";
@@ -292,11 +292,11 @@ pub(super) fn notification(
         body: if pending {
             CONSENT
         } else if c.status == "granted" {
-            "WalletConnect can reach the wallet relay."
+            "WalletConnect can use the internet."
         } else if c.cleanup_pending {
             "WalletConnect is off. Select Turn Off again to finish clearing its saved session."
         } else {
-            "WalletConnect relay access is off."
+            "Internet access for WalletConnect is off."
         }
         .into(),
         severity: if pending { "attention" } else { "info" }.into(),

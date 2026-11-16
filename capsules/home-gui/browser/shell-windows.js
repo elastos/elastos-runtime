@@ -372,7 +372,7 @@ const OPAQUE_CAPSULE_ORIGIN = "null";
 const HOME_AGENT_TARGET_ID = "assistant";
 const MAX_SESSION_WINDOWS = 24;
 function isSingleWindowTarget(targetId, summary = shellState.currentSummary) {
-  return targetById(summary, targetId)?.window_policy === "single";
+  return targetId === "wallet-walletconnect" || targetById(summary, targetId)?.window_policy === "single";
 }
 
 /** Hybrid supplies a blank window. Multiple capsules own selection-aware

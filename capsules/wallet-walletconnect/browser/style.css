@@ -257,3 +257,40 @@ h2 {
     grid-template-columns: 1fr;
   }
 }
+
+.wallet-qr-dialog {
+  width: min(360px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  padding: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.wallet-qr-dialog[open] {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+}
+
+.wallet-qr-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.wallet-qr-dialog p {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.wallet-qr-dialog canvas {
+  display: block;
+  box-sizing: content-box;
+  width: min(280px, calc(100% - 20px));
+  height: auto;
+  padding: 10px;
+  background: white;
+  border-radius: 8px;
+}

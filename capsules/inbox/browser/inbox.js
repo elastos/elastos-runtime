@@ -530,9 +530,19 @@
       if (entry.kind === "walletconnect_internet_request" || entry.kind === "walletconnect_internet_decision") {
         const path = "/api/apps/wallet-walletconnect/internet";
         const act = async (id, operation) => {
+          if (operation === "walletconnect.internet.revoke") {
+            const dialog = document.querySelector("#walletconnect-internet-confirm");
+            const confirmed = await new Promise(resolve => {
+              dialog.returnValue = "cancel";
+              dialog.addEventListener("close", () => resolve(dialog.returnValue === "off"), {once:true});
+              dialog.showModal(); dialog.querySelector('[value="cancel"]').focus();
+            });
+            if (!confirmed) return;
+          }
           setButtonsDisabled(true);
           try {
-            const current = await api(path);
+            const current = await api(path, id ? undefined : {method:"POST",body:JSON.stringify({action:"request"})});
+            if (!id) id = "walletconnect-internet-allow:" + current.request?.id;
             const stepUpToken = current.status === "revoked" ? undefined : await requestPasskeyStepUp(operation, current.request);
             await inboxAction(id, { step_up_token: stepUpToken });
             await loadInbox(); notifyHome();
@@ -544,6 +554,8 @@
           actions.appendChild(createButton("Allow", () => act(actionId, "walletconnect.internet.grant"), "primary"));
         } else if (actionId?.startsWith("walletconnect-internet-turn-off:")) {
           actions.appendChild(createButton("Turn Off", () => act(actionId, "walletconnect.internet.revoke"), "danger"));
+        } else {
+          actions.appendChild(createButton("Allow", () => act(null, "walletconnect.internet.grant"), "primary"));
         }
         return;
       }

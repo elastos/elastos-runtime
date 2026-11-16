@@ -1,6 +1,6 @@
 // The source gateway test supplies the documents, headers and pinned SDK.
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { importProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { exerciseStorage } from "./lib/walletconnect-storage-probe.mjs";
@@ -9,7 +9,7 @@ const origin = process.env.ELASTOS_WALLETCONNECT_SANDBOX_URL;
 assert.ok(origin, "the source Runtime supplies the Home URL");
 const evidence = process.env.WALLETCONNECT_SCREENSHOTS;
 if (evidence) await mkdir(evidence, { recursive: true });
-const expectedHash = "6cff318e63fa0b8c9cc7ee95ce92d5a5470df6cd742a8ad8c2033ce829bb1895";
+const expectedHash = JSON.parse(await readFile(new URL("../capsules/wallet-walletconnect/vendor/adapter.json", import.meta.url), "utf8")).sdk_sha256;
 const sdk = await fetch(`${origin}/apps/wallet-walletconnect/vendor/reown-appkit.js`);
 assert.equal(sdk.status, 200);
 assert.equal(createHash("sha256").update(Buffer.from(await sdk.arrayBuffer())).digest("hex"), expectedHash);

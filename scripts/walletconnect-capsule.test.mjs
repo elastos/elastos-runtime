@@ -72,3 +72,16 @@ test('late send reports dismissal without claiming completion',async()=>{
   assert.equal(r.result.message,'Request dismissed. Transaction sent from wallet.');
   assert.equal(completed(r).length,1);
 });
+
+
+test('an unapproved request network stops before the phone and before handoff',async()=>{
+  const r=await exerciseWalletConnect('unapproved-network');
+  assert.equal(r.error,'This request is for Base, which your wallet did not approve. Connect again and approve Base.');
+  assert.equal(sent(r).length,0);assert.equal(r.routes.filter(call=>call.path.endsWith('/approve')).length,0);
+});
+test('an unknown SDK error stays in the console and gives a safe recovery message',async t=>{
+  const logs=[];t.mock.method(console,'error',(...args)=>logs.push(args));
+  const r=await exerciseWalletConnect('sdk-unknown');
+  assert.equal(r.error,'The wallet connection failed. Select Connect wallet to try again.');
+  assert.deepEqual(logs,[['WalletConnect SDK:','Opaque SDK failure fixture']]);
+});

@@ -610,6 +610,15 @@ try {
       `${target} click attached more than one connector window`,
     );
 
+    if (target === "wallet-walletconnect") {
+      await wallet.evaluate(() => document.querySelector('[data-wallet-open-method="wallet-walletconnect"]').click());
+      await waitFor(() => state.launches["wallet-walletconnect"] === 2, 5000, "WalletConnect return launch");
+      await page.waitForTimeout(300);
+      assert(await homeGui.locator('.window[data-target="wallet-walletconnect"]').count() === 1,
+        "returning to WalletConnect keeps its original window");
+      assert(frameFor(page, target) === connector, "WalletConnect return preserves its requesting frame");
+    }
+
     const connectorClose = homeGui.locator(
       `.window[data-target="${target}"] [data-action="close"]`,
     );
@@ -653,7 +662,7 @@ try {
   assert(state.launches.wallet === 1, "Home launched Wallet more than once", state);
   assert(
     state.launches["wallet-metamask"] === 1 &&
-      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 1,
+      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 2,
     "one Wallet click did not produce exactly one Runtime connector launch",
     state,
   );
@@ -708,7 +717,7 @@ try {
   );
   assert(
     state.launches["wallet-metamask"] === 1 &&
-      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 1,
+      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 2,
     "descriptor rejection invoked the generic Runtime launch path",
     state,
   );
