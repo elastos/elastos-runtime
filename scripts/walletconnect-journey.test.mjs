@@ -74,6 +74,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const refusedRead=page.waitForResponse(async response=>response.url().endsWith('/api/apps/wallet-walletconnect/internet')&&response.request().method()==='GET'&&(await response.json()).status==='refused');
     await refusedRead;
     await initialWalletFrame.waitForFunction(()=>window.fixtureIntervals.at(-1)===5000);
+    await inbox.locator('#entry-detail button:not(:disabled)').filter({hasText:/^Allow$/}).waitFor();
     for(const value of ['dark','light']){await theme(value);await shot(`r15-off-no-action-${value}`);}
 
     await inbox.locator('#entry-detail').getByRole('button',{name:'Allow',exact:true}).click();
