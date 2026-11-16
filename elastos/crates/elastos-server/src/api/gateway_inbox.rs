@@ -400,11 +400,6 @@ async fn dispatch_inbox_action(
         return gateway_update_notice::acknowledge(&state.data_dir, context, action_id).await;
     }
     let data_dir = &state.data_dir;
-    if action_id.starts_with("notification-read:home-update:")
-        || action_id.starts_with("notification-dismiss:home-update:")
-    {
-        return gateway_update_notice::acknowledge(data_dir, context, action_id).await;
-    }
     // Entries one account owns, such as its direct messages, change only for
     // that account.
     let viewer = super::gateway_home_system::load_profile_authority_for_context(data_dir, context)?

@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { chromium, makeSystemSummary, makeAppearanceRecord, startSystemFixtureServer, jsonResponse } from "./system-uiux-fixture.mjs";
 import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
@@ -9,10 +8,10 @@ const root = new URL("../", import.meta.url);
 // Wording belongs to the real summary. Fixtures and assertions read that source.
 const source = await readFile(new URL("elastos/crates/elastos-server/src/api/gateway_update_notice.rs", root), "utf8");
 const copy = name => JSON.parse(source.match(new RegExp(`const ${name}: &str = ("[^"\\n]*");`))[1]);
-const preference = (enabled, readable = true) => ({ enabled, readable, label:copy("SWITCH_LABEL"), message:copy(!readable ? "UNREADABLE_TEXT" : enabled ? "ON_TEXT" : "OFF_TEXT") });
+const preference = (enabled, readable = true) => ({ enabled, readable, label:copy("SWITCH_LABEL"), save_error:copy("SAVE_ERROR"), message:copy(!readable ? "UNREADABLE_TEXT" : enabled ? "ON_TEXT" : "OFF_TEXT") });
 const release = "bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const notice = () => ({ id:`home-update:${release}`, kind:"home_update_available", source_app:"system", severity:"info", read:false,
-  title:"Home update found", body:"Home 0.7.1 was found. Review the update in System.", created_at:1794826800, action_ref:null });
+  title:copy("NOTICE_TITLE"), body:copy("NOTICE_BODY").replace("{version}","0.7.1"), created_at:1794826800, action_ref:null });
 const notes = ["# Home improvements", "Home tells you when a newer version was found.", "Review the release in System before installation.", "Read release notes before you approve.", "Keep your saved files through the update.", "Control background checks in System."];
 
 async function fixture() {
@@ -33,10 +32,7 @@ async function fixture() {
         import * as surface from '/apps/home-gui/shell-surface.js?v=home-20261101d';
         let serial=0;
         for(const node of document.querySelectorAll('[data-home-gui-hidden-by-host]')) {node.hidden=false;node.inert=false;}
-        import * as surface from '/apps/home-gui/shell-surface.js';
         import * as control from '/apps/home-gui/shell-control-centre.js';
-        for(const node of document.querySelectorAll('[data-home-gui-hidden-by-host]')){node.hidden=false;node.inert=false;}
-        let serial=0;
         const summary={targets:[{target:'system',title:'System'},{target:'inbox',title:'Inbox'}],notifications:{entries:[],unread_count:0,attention_count:0}};
         core.shellState.currentSummary=summary;
         core.pinTargetToTaskbar('system');core.pinTargetToTaskbar('inbox');
@@ -99,20 +95,19 @@ async function screen(page,name) {
   await page.screenshot({path:`${screenshots}/${name}.png`});
 }
 
-test("update notice uses real Inbox, Dock and System navigation; switch saves and recovers", async () => {
+test("update notice uses real Inbox, bell and System navigation; switch saves and recovers", async () => {
   const f=await fixture();const browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
   try {
     for(const theme of ["light","dark"]) {
       f.state.entry=notice();f.state.holdReads=true;f.state.settings=preference(true);
-      const page=await browser.newPage({viewport:{width:1280,height:950}});
+      const page=await browser.newPage({viewport:{width:1280,height:950}});page.setDefaultTimeout(8000);
       const errors=[];page.on("pageerror",e=>errors.push(e.message));
       await page.goto(f.baseUrl+"/notice");
       const gui=page.frames().find(frame=>frame.url().endsWith("/notice-gui")) || await page.waitForSelector("#gui").then(h=>h.contentFrame());
       await gui.waitForFunction(()=>window.fixture, null, {timeout:5000}).catch(e=>{throw new Error(e.message+JSON.stringify({errors,failures:f.requestFailures}));});
       await gui.evaluate(theme=>window.elastosTheme?.set(theme),theme);
-      const badge=gui.locator('[data-target="system"] .taskbar-notification-badge');
+      const badge=gui.locator("#toolbar-inbox-count");
       await badge.waitFor();assert.equal(await badge.textContent(),"1");
-      await screen(page,`${theme}-dock-unread`);
       assert.equal(await gui.locator("#control-centre-approvals-detail").textContent(),"None","information is excluded from approvals");
       await gui.evaluate(()=>fixture.windows.openTarget("inbox"));
       const inbox=gui.frameLocator('iframe[title="Inbox"]');
@@ -160,7 +155,7 @@ test("update notice uses real Inbox, Dock and System navigation; switch saves an
     f.state.failWrite=true;
     await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).uncheck();
     await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).waitFor();
-    await system.getByText("Home could not save background checks. Try again.",{exact:true}).waitFor();
+    await system.getByText(copy("SAVE_ERROR"),{exact:true}).waitFor();
     assert.equal(await system.getByRole("switch").isChecked(),true);
     f.state.failWrite=false;f.state.settings=preference(false,false);await page.reload();
     await system.getByText(copy("UNREADABLE_TEXT"),{exact:true}).waitFor();

@@ -3797,7 +3797,7 @@ async function onBackgroundChange() {
     renderRuntimeUpdate({ ...runtimeUpdate, background_checks: settings });
   } catch (_error) {
     backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
-    document.querySelector("#update-background-message").textContent = "Home could not save background checks. Try again.";
+    document.querySelector("#update-background-message").textContent = runtimeUpdate.background_checks.save_error;
   } finally {
     backgroundBusy = false;
     backgroundChoice.disabled = false;

@@ -3,7 +3,6 @@ use super::gateway_home_update::{self as update, UpdateCheckCache};
 use super::*;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::path::{Path, PathBuf};
 
 const SCHEMA: &str = "elastos.update-notice/v1";
 const MAX_STATE_BYTES: usize = 64 * 1024;
@@ -11,8 +10,11 @@ const FIRST_WAIT: u64 = 3 * 60;
 const CHECK_INTERVAL: u64 = 6 * 60 * 60;
 const MAX_SPREAD: u64 = 60 * 60;
 const SWITCH_LABEL: &str = "Check for updates in the background";
-const ON_TEXT: &str = "Home asks its update source a few times a day. The source can see your address and the time of each check, but your name and installed version stay on Home.";
-const OFF_TEXT: &str = "Home checks for updates only while System is open.";
+const ON_TEXT: &str = "Home asks its update source a few times a day; the source sees the internet address and check time, while your name and installed version stay on Home.";
+const OFF_TEXT: &str = "Background checks are off; System checks for updates while it is open.";
+const SAVE_ERROR: &str = "Home could not save background checks. Try again.";
+const NOTICE_TITLE: &str = "Home update found";
+const NOTICE_BODY: &str = "Home {version} was found. Review the update in System.";
 const UNREADABLE_TEXT: &str = "Background checks are off because Home could not read their settings. Turn this on to save new settings.";
 
 #[derive(Default, Serialize, Deserialize)]
@@ -103,7 +105,7 @@ pub(super) fn preference(data_dir: &Path) -> serde_json::Value {
     let state = locked_path(data_dir).and_then(|(path, _lock)| read_state(&path));
     let enabled = state.as_ref().is_ok_and(|state| state.background_checks);
     serde_json::json!({"enabled":enabled, "readable":state.is_ok(), "label":SWITCH_LABEL,
-        "message":if state.is_err() { UNREADABLE_TEXT } else if enabled { ON_TEXT } else { OFF_TEXT }})
+        "save_error": SAVE_ERROR, "message":if state.is_err() { UNREADABLE_TEXT } else if enabled { ON_TEXT } else { OFF_TEXT }})
 }
 
 #[derive(Deserialize)]
@@ -149,7 +151,7 @@ pub(super) async fn set_background(
         Ok(()) => Json(preference(&state.data_dir)).into_response(),
         Err(_) => (
             StatusCode::CONFLICT,
-            Json(serde_json::json!({"error":"Home could not save background checks. Try again."})),
+            Json(serde_json::json!({"error": SAVE_ERROR})),
         )
             .into_response(),
     }
@@ -201,11 +203,8 @@ pub(super) async fn notification_with_cache(
         id: format!("home-update:{release}"),
         source_app: SYSTEM_CAPSULE_ID.into(),
         kind: "home_update_available".into(),
-        title: "Home update found".into(),
-        body: format!(
-            "Home {} was found. Review the update in System.",
-            offer.check.latest_version
-        ),
+        title: NOTICE_TITLE.into(),
+        body: NOTICE_BODY.replace("{version}", &offer.check.latest_version),
         severity: "info".into(),
         read: account.is_some_and(|account| account.read),
         created_at: offer.observed_at,
@@ -285,23 +284,6 @@ impl UpdateNoticeTask {
         let _ = self.shutdown.send(true);
         let _ = self.task.await;
     }
-}
-
-pub(super) fn start(data_dir: PathBuf) -> UpdateNoticeTask {
-    let (shutdown, receiver) = tokio::sync::watch::channel(false);
-    let task = tokio::spawn(async move {
-        run(
-            data_dir,
-            update::UPDATE_CHECK
-                .get_or_init(|| tokio::sync::Mutex::new(UpdateCheckCache::default())),
-            receiver,
-            now_secs,
-            || rand::random::<u64>() % (MAX_SPREAD + 1),
-            update::check_current_policy,
-        )
-        .await;
-    });
-    UpdateNoticeTask { shutdown, task }
 }
 
 // The production task and tests use this same loop. Wall time, rather than a

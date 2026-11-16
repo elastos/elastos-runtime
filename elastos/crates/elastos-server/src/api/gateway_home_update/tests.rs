@@ -1501,7 +1501,7 @@ async fn notice_seed(data_dir: &std::path::Path, outcome: CheckOutcome) {
     // Expire the short System response cache, while keeping confirmed history.
     cache.lock().await.expire_response();
     let (_, _, key) = update_inputs(data_dir).unwrap();
-    UpdateCheckCache::check_and_store(cache, key, || async { outcome }).await;
+    UpdateCheckCache::check_and_store(cache, key, || async move { outcome }).await;
 }
 
 async fn notice_list(app: &Router, token: &str) -> Vec<Value> {
