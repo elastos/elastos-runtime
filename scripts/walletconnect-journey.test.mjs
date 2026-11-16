@@ -376,3 +376,80 @@ for (const ending of ['decline','expiry','cancel','disconnect']) for (const retu
     }finally{await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
   });
 }
+
+// Round 18 replays the installed Home's replies, including its stale-revision 500.
+// The page, window module, client, adapter and pinned SDK are production code.
+for (const journey of ['A','B']) test(`round18 ${journey}: the open window recovers after Allow`, {timeout:90000}, async t => {
+  let status='granted', revision=journey==='A'?11:12, keys={}, requestId='installed-request', polls=0;
+  const failures=[];
+  const consent=()=>({status,request:['requested','granted'].includes(status)?{
+    id:requestId,issued_at:Math.floor(Date.now()/1000),resource:'elastos://walletconnect/internet',
+    text:status==='granted'?'Stop WalletConnect relay access on this computer.':
+      readFileSync('elastos/crates/elastos-server/src/api/gateway_walletconnect.rs','utf8').match(/const CONSENT: &str = "([^"]+)"/)[1],
+  }:null});
+  const server=http.createServer(async(req,res)=>{
+    const path=new URL(req.url,'http://fixture').pathname;
+    const json=value=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(value));};
+    if(path==='/') {res.setHeader('content-type','text/html');res.end('<iframe id="wallet" style="border:0;width:100%;height:96vh" src="/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(`http://127.0.0.1:${server.address().port}`)+'#home_token=fixture-wallet"></iframe>');return;}
+    if(path.endsWith('/internet')) {if(req.method==='GET')polls++;if(req.method==='POST'&&!['requested','granted'].includes(status)){status='requested';requestId='replacement-request';}json(consent());return;}
+    if(path.endsWith('/wallet/config')) {json({walletconnect:{project_id:'fixture-project',storage_revision:`"${revision}"`}});return;}
+    if(path.endsWith('/wallet/accounts')) {json({accounts:[]});return;}
+    if(path.endsWith('/wallet/approvals')) {json({approval_requests:[]});return;}
+    if(path.endsWith('/storage')&&req.method==='DELETE') {keys={};revision++;json({});return;}
+    if(path.endsWith('/storage')||path.endsWith('/relay-admission')) {
+      if((req.headers['if-match']||'"0"')!==`"${revision}"`) {
+        const body='WalletConnect session changed. Close this window and open WalletConnect again.';
+        failures.push({method:req.method,route:path,status:500,body,sent:req.headers['if-match'],expected:`"${revision}"`});res.writeHead(500);res.end(body);return;
+      }
+      if(path.endsWith('/relay-admission')) {json({token:'fixture-admission'});return;}
+      let body='';for await(const chunk of req)body+=chunk;
+      if(req.method==='POST'){const {key,value}=JSON.parse(body);if(value===null)delete keys[key];else keys[key]=value;}
+      json(keys);return;
+    }
+    const match=path.match(/^\/apps\/(wallet-walletconnect|home)\/(.*)$/);
+    if(match){const root=resolve('capsules',match[1],match[2].startsWith('vendor/')?'':'browser');const file=resolve(root,match[2]||'index.html');assert.ok(!relative(root,file).startsWith('..'));res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html'})[extname(file)]||'application/octet-stream');res.end(readFileSync(file));return;}
+    res.writeHead(404).end();
+  });
+  const {relay,methods}=walletConnectRelayFixture(server);
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  let browser;
+  try {
+    const {chromium}=await importProductSmokePlaywright();browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
+    const page=await browser.newPage({viewport:{width:1000,height:850}});
+    const origin=`http://127.0.0.1:${server.address().port}`;
+    await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
+    await page.goto(origin);
+    const wallet=page.frameLocator('#wallet'),frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
+    const text=()=>wallet.locator('#wallet-status').innerText();
+    const nextPoll=async()=>{const before=polls;await page.waitForFunction(()=>true);for(let i=0;polls===before&&i<70;i++)await page.waitForTimeout(100);assert.ok(polls>before);await frame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,50)));};
+    await wallet.locator('#wallet-connect').click();await wallet.locator('dialog[open] canvas').waitFor({timeout:20000});
+    if(journey==='A') {
+      await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
+      status='revoked';revision++;keys={};
+      await wallet.locator('#wallet-connect:enabled').click();
+      await wallet.locator('#wallet-status').filter({hasText:permissionText}).waitFor();
+      status='refused';await nextPoll();
+      await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access for WalletConnect was refused. Select Allow in Inbox, then Connect wallet.'));
+    } else {
+      status='revoked';revision++;keys={};await wallet.locator('#wallet-status').filter({hasText:turnedOff}).waitFor({timeout:10000});
+      assert.equal(await wallet.locator('dialog[open]').count(),0,'Turn Off removes the QR');
+    }
+    status='granted';await nextPoll();
+    await t.test('Allow replaces the old permission sentence',async()=>assert.equal(await text(),'Internet access is allowed. Select Connect wallet to continue.'));
+    const before=methods.filter(m=>m==='wc_proposeSession').length;
+    await wallet.locator('#wallet-connect:enabled').click();
+    await t.test('one Connect produces a QR in the same window',async()=>{
+      await wallet.locator('dialog[open] canvas').waitFor({timeout:15000});
+      assert.equal(methods.filter(m=>m==='wc_proposeSession').length,before+1);
+      assert.equal(page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/')),frame);
+      if(process.env.WALLETCONNECT_SCREENSHOTS){mkdirSync(process.env.WALLETCONNECT_SCREENSHOTS,{recursive:true});for(const theme of ['dark','light']){await frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);await page.screenshot({path:`${process.env.WALLETCONNECT_SCREENSHOTS}/r18-${journey}-allowed-qr-${theme}.png`});}}
+    });
+    await t.test('Cancel has neutral tone',async()=>{
+      if(await wallet.locator('dialog[open]').count())await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
+      assert.equal(await text(),messages.cancelled);assert.equal(await wallet.locator('#wallet-status').getAttribute('data-tone'),'muted');
+    });
+    // A stale SDK is still fenced by the exact installed response, rather than
+    // silently acquiring the new revision. The fresh adapter can recover anyway.
+    for(const failure of failures)assert.equal(failure.body,'WalletConnect session changed. Close this window and open WalletConnect again.');
+  } finally {await browser?.close();for(const client of relay.clients)client.terminate();await new Promise(resolve=>relay.close(resolve));server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});

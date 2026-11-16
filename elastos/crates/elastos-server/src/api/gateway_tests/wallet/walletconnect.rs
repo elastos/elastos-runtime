@@ -1542,3 +1542,63 @@ async fn walletconnect_turn_off_keeps_cleanup_retry_in_its_inbox_entry() {
         .action_ref
         .is_none());
 }
+
+#[tokio::test]
+async fn walletconnect_stale_revision_returns_conflict_through_real_routes() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    let mut statuses = Vec::new();
+    for (path, method, body) in [
+        (STORAGE, "GET", ""),
+        (STORAGE, "POST", r#"{"key":"late","value":"old-sdk"}"#),
+        (
+            "/api/apps/wallet-walletconnect/relay-admission",
+            "POST",
+            "{}",
+        ),
+    ] {
+        let response = f
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .header(HOST, &f.addr)
+                    .header("origin", "null")
+                    .header("x-elastos-home-token", &f.connector)
+                    .header("if-match", "\"stale\"")
+                    .header(CONTENT_TYPE, "application/json")
+                    .uri(path)
+                    .method(method)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+        statuses.push((method, path, response.status()));
+        let body = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        assert_eq!(
+            body.as_ref(),
+            b"WalletConnect session changed. Close this window and open WalletConnect again."
+        );
+    }
+    assert!(
+        statuses
+            .iter()
+            .all(|(_, _, status)| *status == StatusCode::CONFLICT),
+        "stale revisions must return 409: {statuses:?}"
+    );
+    assert_eq!(f.route(&f.connector, STORAGE, None).await.1, json!({}));
+    assert_eq!(
+        f.route(
+            &f.connector,
+            STORAGE,
+            Some(json!({"key":"fresh","value":"current-sdk"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}

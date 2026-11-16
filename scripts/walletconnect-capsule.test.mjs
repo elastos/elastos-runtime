@@ -137,3 +137,12 @@ test('consumed signature completion failure asks the app for a new request',asyn
   const r=await exerciseWalletConnect('signature-completion-refused');
   assert.equal(r.error,messages.signatureError);
 });
+
+test('round18 ownership asks for the five-minute challenge deadline',async()=>{
+  const r=await exerciseWalletConnect('link');assert.equal(r.error,undefined);
+  assert.equal(r.calls.find(c=>c.method==='personal_sign').expiry,300);
+});
+test('round18 signature completion preserves the expired-window recovery',async()=>{
+  const r=await exerciseWalletConnect('signature-completion-window-expired');
+  assert.equal(r.error,'This wallet window expired. Close it and open WalletConnect again.');
+});
