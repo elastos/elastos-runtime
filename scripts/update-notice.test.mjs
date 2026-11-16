@@ -48,7 +48,8 @@ async function fixture() {
     }
     if (url.pathname === "/api/apps/inbox/summary") {
       const entries = state.entry ? [state.entry] : [];
-      jsonResponse(response, {notifications:{entries,attention_count:0,unread_count:entries.filter(e=>!e.read).length}});return true;
+      if(state.approval)entries.push({id:"contact-request:fixture",kind:"contact_request",source_app:"people",severity:"attention",read:false,action_ref:{app:"inbox",action_id:"contact-accept-request:fixture"}});
+      jsonResponse(response, {notifications:{entries,attention_count:state.approval?1:0,unread_count:entries.filter(e=>!e.read).length}});return true;
     }
     if (url.pathname === "/api/apps/inbox/actions") {
       let body="";for await (const part of request) body+=part;const action=JSON.parse(body);state.actions.push(action);
@@ -114,6 +115,10 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       const badge=gui.locator("#toolbar-inbox-count");
       await badge.waitFor();assert.equal(await badge.textContent(),"1");
       assert.equal(await gui.locator("#control-centre-approvals-detail").textContent(),"None","information is excluded from approvals");
+      f.state.approval=true;await gui.evaluate(()=>refreshFixture());
+      assert.equal(await badge.textContent(),"1","the bell retains attention-first counting");
+      assert.equal(await gui.locator("#control-centre-approvals-detail").textContent(),"1 pending");
+      f.state.approval=false;await gui.evaluate(()=>refreshFixture());
       await gui.evaluate(()=>fixture.windows.openTarget("inbox"));
       const inbox=gui.frameLocator('iframe.window-frame[title="Inbox"]');
       await inbox.getByRole("button",{name:"Open System",exact:true}).waitFor();

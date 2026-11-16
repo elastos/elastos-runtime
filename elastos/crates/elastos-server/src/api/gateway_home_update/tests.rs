@@ -1740,27 +1740,47 @@ async fn update_notice_state_defaults_admin_switch_and_explicit_repair() {
         std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
     );
-    std::fs::write(&path, b"broken").unwrap();
-    assert_eq!(notice::preference(dir.path())["enabled"], false);
-    assert_eq!(notice::preference(dir.path())["readable"], false);
-    assert!(notice_list(&app, &inbox).await.is_empty());
-    let (_, summary) =
-        home_test_get_json(&app, UPDATE_APPLY_ROUTE, &owner.system_token, "null").await;
-    assert_eq!(
-        summary["runtime_update"]["background_checks"],
-        notice::preference(dir.path())
-    );
-    let (status, settings) = home_test_post_json(
-        &app,
-        route,
-        &owner.system_token,
-        "null",
-        json!({"enabled":true}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(settings["enabled"], true);
-    assert_eq!(notice_list(&app, &inbox).await.len(), 1);
+    for corrupt in [
+        b"broken".to_vec(),
+        Vec::new(),
+        b"{\"schema\":\"unknown\"}".to_vec(),
+        vec![b' '; 64 * 1024 + 1],
+    ] {
+        std::fs::write(&path, corrupt).unwrap();
+        assert_eq!(notice::preference(dir.path())["enabled"], false);
+        assert_eq!(notice::preference(dir.path())["readable"], false);
+        assert!(notice_list(&app, &inbox).await.is_empty());
+        let (_, summary) =
+            home_test_get_json(&app, UPDATE_APPLY_ROUTE, &owner.system_token, "null").await;
+        assert_eq!(
+            summary["runtime_update"]["background_checks"],
+            notice::preference(dir.path())
+        );
+        let (status, _) = home_test_post_json(
+            &app,
+            route,
+            &owner.system_token,
+            "null",
+            json!({"enabled":false}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "only explicit enable repairs unreadable state"
+        );
+        let (status, settings) = home_test_post_json(
+            &app,
+            route,
+            &owner.system_token,
+            "null",
+            json!({"enabled":true}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(settings["enabled"], true);
+        assert_eq!(notice_list(&app, &inbox).await.len(), 1);
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -1907,6 +1927,14 @@ async fn update_notice_queued_recovery_missing_host_and_installed_are_shared_vie
             "queue cleared without a new check"
         );
     }
+    let journal = dir.path().join(".elastos.update-journal.json");
+    std::fs::write(&journal, b"{}").unwrap();
+    assert!(
+        notice_list(&app, &inbox).await.is_empty(),
+        "pending installation recovery"
+    );
+    std::fs::remove_file(&journal).unwrap();
+    assert_eq!(notice_list(&app, &inbox).await.len(), 1);
     let status_path = dir.path().join("update-controller/status.json");
     let original = std::fs::read(&status_path).unwrap();
     let mut status: Value = serde_json::from_slice(&original).unwrap();
