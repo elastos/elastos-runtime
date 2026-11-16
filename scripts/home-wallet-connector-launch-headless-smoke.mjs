@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
@@ -620,6 +620,15 @@ try {
       assert(await homeGui.locator('.window[data-target="wallet-walletconnect"]').count() === 1,
         "returning to WalletConnect keeps its original window");
       assert(frameFor(page, target) === connector, "WalletConnect return preserves its requesting frame");
+      if (process.env.WALLETCONNECT_SCREENSHOTS) {
+        mkdirSync(process.env.WALLETCONNECT_SCREENSHOTS, {recursive:true});
+        for (const theme of ["dark", "light"]) {
+          for (const frame of page.frames()) {
+            await frame.evaluate(theme => { document.documentElement.dataset.elTheme = theme; }, theme);
+          }
+          await page.screenshot({path:join(process.env.WALLETCONNECT_SCREENSHOTS, `r6-home-return-${theme}.png`)});
+        }
+      }
     }
 
     const connectorClose = homeGui.locator(
