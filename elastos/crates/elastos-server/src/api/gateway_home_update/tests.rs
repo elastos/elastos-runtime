@@ -2418,7 +2418,7 @@ async fn update_notice_folder_failure_gives_action_that_can_work() {
             let settings = notice::preference(dir.path());
             assert_eq!(settings["enabled"], false);
             assert_eq!(settings["readable"], false);
-            assert_eq!(settings["message"], "Background checks are off because Home cannot use Local/Shared/System/Updates. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.");
+            assert_eq!(settings["message"], "Background checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.");
             let (status, _) = home_test_post_json(&app, "/api/apps/system/update-background",
                 &owner.system_token, "null", json!({"enabled":true})).await;
             assert_eq!(status, StatusCode::CONFLICT);
