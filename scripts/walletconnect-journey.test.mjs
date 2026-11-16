@@ -48,7 +48,8 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     const wallet=page.frameLocator('#wallet'),inbox=page.frameLocator('#inbox');
-    const shot=async(name)=>{if(evidence)await page.screenshot({path:`${evidence}/${name}.png`});};
+    const screenshotNames=new Set((process.env.WALLETCONNECT_SCREENSHOT_NAMES||'').split(',').filter(Boolean));
+    const shot=async(name)=>{if(evidence&&(!screenshotNames.size||screenshotNames.has(name)))await page.screenshot({path:`${evidence}/${name}.png`});};
     const theme=async value=>{for(const frame of page.frames())if(frame!==page.mainFrame())await frame.evaluate(value=>document.documentElement.dataset.elTheme=value,value);};
     await wallet.locator('#wallet-connect').click();
     await wallet.locator('#wallet-status').filter({hasText:permissionText}).waitFor();

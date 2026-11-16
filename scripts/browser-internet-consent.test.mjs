@@ -541,6 +541,30 @@ test("WalletConnect Inbox keeps requests pending, uses passkey consent and separ
   } finally {await browser.close();await f.close();}
 });
 
+test("Browser and WalletConnect confirmations keep Cancel as default after a previous Turn Off", async t => {
+  for (const service of ["browser", "walletconnect"]) await t.test(service, async () => {
+    const f=await fixture(service);const browser=await chromium.launch({headless:true});
+    try {
+      f.state.consent="granted";
+      const page=await browser.newPage({viewport:{width:1280,height:844}});
+      await page.goto(f.url+"?app=inbox");
+      const frame=page.frameLocator("iframe");
+      const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn Off",exact:true});
+      const dialog=frame.locator(`#${service}-internet-confirm`);
+      await off.click();await dialog.getByRole("button",{name:"Turn Off",exact:true}).click();
+      await frame.locator("#entry-detail").getByRole("button",{name:"Allow",exact:true}).click();
+      await off.click();
+      assert.equal(await dialog.locator(":focus").innerText(),"Cancel");
+      const approvals=await page.evaluate(()=>window.approvals.length);
+      await screen(page,`${service}-confirm-again`);
+      await page.keyboard.press("Escape");await dialog.waitFor({state:"hidden"});
+      assert.equal(f.state.consent,"granted","Escape preserves access after an earlier confirmation");
+      assert.equal(await page.evaluate(()=>window.approvals.length),approvals,"Escape does not request a passkey");
+      await page.close();
+    } finally {await browser.close();await f.close();}
+  });
+});
+
 test("566a Return after Don't Allow or Turn Off continues once after Inbox passkey Allow", async t => {
   const f=await fixture();const browser=await chromium.launch({headless:true});
   try {
