@@ -149,7 +149,10 @@ function homeSummary() {
     services: {},
     notifications: [],
     desktop_objects: [],
-    capsule_catalog: [],
+    capsule_catalog: { capsules: Object.keys(connectorTokens).map(name => ({
+      name, launch_target: name, launchable: true,
+      window_policy: JSON.parse(readFileSync(join(repoRoot, "capsules", name, "capsule.json"), "utf8")).window_policy,
+    })) },
     capsule_interfaces: [],
     targets: [{
       target: "wallet",

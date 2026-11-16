@@ -372,7 +372,9 @@ const OPAQUE_CAPSULE_ORIGIN = "null";
 const HOME_AGENT_TARGET_ID = "assistant";
 const MAX_SESSION_WINDOWS = 24;
 function isSingleWindowTarget(targetId, summary = shellState.currentSummary) {
-  return targetId === "wallet-walletconnect" || targetById(summary, targetId)?.window_policy === "single";
+  const target = targetById(summary, targetId)
+    || summary?.capsule_catalog?.capsules?.find(capsule => capsule.launchable && capsule.launch_target === targetId);
+  return target?.window_policy === "single";
 }
 
 /** Hybrid supplies a blank window. Multiple capsules own selection-aware
@@ -381,7 +383,7 @@ function isSingleWindowTarget(targetId, summary = shellState.currentSummary) {
 export function supportsMenuNewWindow(targetId) {
   if (targetId === "browser") return false;
   const policy = targetById(shellState.currentSummary, targetId)?.window_policy;
-  return policy !== "single" && policy !== "multiple";
+  return !isSingleWindowTarget(targetId) && policy !== "multiple";
 }
 const WALLET_CONNECTOR_TARGETS = new Set([
   "wallet-metamask",
