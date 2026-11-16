@@ -23,6 +23,7 @@ let linkedAccounts = [];
 let recoveryAction;
 let launchExpired = false;
 let ownerConsentNeeded = false;
+let connectionNeedsReplacement = false;
 const clearMemory = installWalletConnectStorage(window);
 const runtimeOrigin = new URL(import.meta.url).origin;
 const api = (resource, init={}) => fetchJson(resource.startsWith('/api/') ? runtimeOrigin+resource : `${runtimeOrigin}/api/apps/${CONNECTOR_ID}/${resource}`, {
@@ -130,7 +131,7 @@ function boot() {
     try {
       await requestCapsuleWalletEffect({kind:'disconnect'});
       if (epoch === actionEpoch) { connectionState = undefined; showStatus('Disconnected. Linked accounts stay in Wallet.','muted'); }
-    } catch (error) { if (epoch === actionEpoch) showStatus(errorMessage(error),error.tone || 'error'); }
+    } catch (error) { if (epoch === actionEpoch) { connectionNeedsReplacement = Boolean(error.freshConnection);renderConnection();showStatus(errorMessage(error),error.tone || 'error'); } }
     finally { renderConnection();checkConnection().catch(()=>{}); }
   });
   connectButton?.addEventListener("click", () => onConnect());
@@ -162,17 +163,18 @@ function renderConnection() {
     return;
   }
   const needsOwner = ownerConsentNeeded && permissionStatus !== 'granted';
-  for (const button of requestsNode.querySelectorAll('[data-wallet-request-sign]')) { button.disabled = hostEffectInFlight || needsOwner;button.hidden = needsOwner; }
   const session = connectionState?.session;
+  const replace = connectionNeedsReplacement && Boolean(session);
+  for (const button of requestsNode.querySelectorAll('[data-wallet-request-sign]')) { button.disabled = hostEffectInFlight || needsOwner || replace;button.hidden = needsOwner || replace; }
   const linked = session && sessionIsLinked(session);
-  connectButton.hidden = needsOwner || hostEffectInFlight || Boolean(linked);
+  connectButton.hidden = needsOwner || hostEffectInFlight || Boolean(linked) && !replace;
   connectButton.disabled = hostEffectInFlight;
-  document.querySelector('#wallet-finish').hidden = needsOwner || hostEffectInFlight || !session || Boolean(linked);
-  document.querySelector('#wallet-disconnect').hidden = hostEffectInFlight || !linked;
+  document.querySelector('#wallet-finish').hidden = needsOwner || hostEffectInFlight || replace || !session || Boolean(linked);
+  document.querySelector('#wallet-disconnect').hidden = hostEffectInFlight || replace || !linked;
   document.querySelector('#wallet-cancel').hidden = !(hostEffectInFlight || pendingEffect) || Boolean(document.querySelector('dialog[open]'));
   const label = hostEffectInFlight
     ? currentPhase === 'starting' || currentPhase === 'idle' ? 'Preparing connection' : 'Waiting for phone'
-    : needsOwner ? 'Owner approval needed' : linked ? `Linked · ${chainLabel(session.chain)}` : session ? 'Linking unfinished'
+    : needsOwner ? 'Owner approval needed' : replace ? 'New connection needed' : linked ? `Linked · ${chainLabel(session.chain)}` : session ? 'Linking unfinished'
     : connectionState?.removed ? 'Phone connection removed' : connectionState?.expired ? 'Phone connection expired' : 'Ready to connect';
   const node = document.querySelector('#wallet-connection');
   if (node.textContent !== label) node.textContent = label;
@@ -199,6 +201,7 @@ async function copyConnectionLink(uri,{signal}) {
 async function onConnect({fresh = true} = {}) {
   if (hostEffectInFlight || launchExpired) return;
   const epoch = ++actionEpoch;
+  connectionNeedsReplacement = false;
   currentPhase = 'starting';
   showStatus(fresh ? 'Preparing a new connection.' : 'Open your wallet app on your phone to finish linking.','muted');
   try {
@@ -208,7 +211,7 @@ async function onConnect({fresh = true} = {}) {
     notifyHomeSummaryChanged();
     await refreshWalletState();
   } catch (error) {
-    if (epoch === actionEpoch) showStatus(errorMessage(error),error.tone || 'error');
+    if (epoch === actionEpoch) { connectionNeedsReplacement = Boolean(error.freshConnection);renderConnection();showStatus(errorMessage(error),error.tone || 'error'); }
   } finally {
     if (epoch === actionEpoch) { renderConnection();checkConnection().catch(()=>{}); }
   }
@@ -373,7 +376,7 @@ async function onRequestClick(event) {
     notifyHomeSummaryChanged();
     await refreshWalletState();
   } catch (error) {
-    if (epoch === actionEpoch) showStatus(errorMessage(error), error.tone || "error");
+    if (epoch === actionEpoch) { connectionNeedsReplacement = Boolean(error.freshConnection);renderConnection();showStatus(errorMessage(error), error.tone || "error"); }
     await refreshWalletState().catch(() => {});
   } finally {
     setButtonBusy(button, false);
@@ -409,7 +412,11 @@ async function requestCapsuleWalletEffect(action) {
   } finally {
     if (epoch === actionEpoch) {
       hostEffectInFlight = false;currentPhase = 'idle';
-      try { connectionState = await connector.effect({kind:'status'}); } catch {}
+      try {
+        connectionState = await connector.effect({kind:'status'});
+        permissionStatus = connectionState.permission.status;
+        if (permissionStatus === 'granted') ownerConsentNeeded = false;
+      } catch {}
       renderConnection();watchConnection();
     }
     await refreshWalletState().catch(() => {});
@@ -466,7 +473,7 @@ async function fetchJson(url, init) {
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     if (detail.trim() === "Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.") {
-      ownerConsentNeeded = true;renderConnection();
+      ownerConsentNeeded = true;permissionStatus = 'off';permissionPending = false;renderConnection();watchConnection();
       throw Object.assign(new Error('The Home owner can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
     }
     if (response.status === 403) { launchExpired = true;renderConnection();watchConnection(); }

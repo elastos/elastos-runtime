@@ -256,7 +256,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await wallet.locator('#wallet-status').filter({hasText:message}).waitFor();
       assert.equal(await wallet.locator('#wallet-status').getAttribute('data-tone'),'muted');
       if(!linking)await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
-      if(scope!=='proposal')await wallet.locator('#wallet-connection').filter({hasText:/^(?:Linked ·|Linking unfinished$)/}).waitFor();
+      if(scope!=='proposal')await wallet.locator('#wallet-connection').filter({hasText:/^(?:Linked ·|Linking unfinished$|New connection needed$)/}).waitFor();
       for(const value of ['dark','light']){await theme(value);await shot(`r17-${scope}-${ending}-${value}`);}
       if(!linking) {
         assert.equal(approvalRequests[0].status,'approved','handoff consumes the pending request');
@@ -280,7 +280,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
         await walletFrame.evaluate(()=>{const button=document.createElement('button');button.dataset.walletRequestSign='approval-fixture';document.querySelector('#wallet-requests').append(button);button.click();});
       } else await wallet.locator('[data-wallet-request-sign]').click();
       await wallet.locator('#wallet-status').filter({hasText:key==='unsupported'?messages.unsupportedNetwork('137'):messages.unapprovedNetwork('Base')}).waitFor();
-      await wallet.locator('#wallet-connection').filter({hasText:/^(?:Linked ·|Linking unfinished$)/}).waitFor();
+      await wallet.locator('#wallet-connection').filter({hasText:/^(?:Linked ·|Linking unfinished$|New connection needed$)/}).waitFor();
       assert.equal(approvalRequests[0].status,'pending','unsupported network stays available for rejection in Wallet');
       for(const value of ['dark','light']){await theme(value);await shot(`r16-${key}-${value}`);}
     }
@@ -292,7 +292,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
     assert.equal(approvalRequests[0].status,'approved');
     assert.equal(await wallet.locator('#wallet-status').getAttribute('data-tone'),'muted');
-    await wallet.locator('#wallet-connection').filter({hasText:/^(?:Linked ·|Linking unfinished$)/}).waitFor();
+    await wallet.locator('#wallet-connection').filter({hasText:/^(?:Linked ·|Linking unfinished$|New connection needed$)/}).waitFor();
     for(const value of ['dark','light']){await theme(value);await shot(`r16-post-handoff-network-${value}`);}
     // A Home return while the phone is waiting must render a disabled Review.
     approvalRequests=[freshRequest()];await reload();
