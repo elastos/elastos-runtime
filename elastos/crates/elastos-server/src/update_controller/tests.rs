@@ -5291,6 +5291,442 @@ async fn system_update_with_symlinked_binary_parent() {
     restarting_network_update(true).await;
 }
 
+/// A native fixture is needed here: a shell wrapper's current_exe is its interpreter.
+/// Link the real library built by Cargo, rather than extracting the startup code.
+fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
+    let harness = std::env::current_exe().unwrap();
+    // Cargo keeps dependency libraries in build-dir and uplifts the test binary
+    // to target-dir. Use the same build-dir as this repository's Cargo config.
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .unwrap();
+    let build = std::env::var_os("CARGO_BUILD_BUILD_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repository.join("target-build"));
+    let profile = harness
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap();
+    let dependencies = build.join(profile).join("deps");
+    let library = |name: &str| {
+        let prefix = format!("lib{name}-");
+        let candidates: Vec<_> = fs::read_dir(&dependencies)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(&prefix)
+                    && path.extension() == Some(OsStr::new("rlib"))
+            })
+            .collect();
+        assert_eq!(
+            candidates.len(),
+            1,
+            "one current {name} library: {candidates:?}"
+        );
+        candidates.into_iter().next().unwrap()
+    };
+    let source = directory.join("linked-start.rs");
+    let output = directory.join("linked-start");
+    let test = |name: &str| format!("{}::{name}", module_path!().split_once("::").unwrap().1);
+    fs::write(
+        &source,
+        format!(
+            r#"
+use std::os::unix::process::CommandExt;
+fn main() {{
+    let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--version") {{
+        println!("elastos {version}");
+        return;
+    }}
+    if args.get(1).map(String::as_str) == Some("--current-exe") {{
+        println!("{{}}", std::env::current_exe().unwrap().display());
+        return;
+    }}
+    let test = if args.get(1).map(String::as_str) == Some("__update-controller") {{
+        if std::env::var_os("LINKED_START_RECOVERY_ONLY").is_some() {{
+            println!("retained recovery controller entered");
+            return;
+        }}
+        std::env::set_var("LINKED_START_RECEIPT", &args[3]);
+        {controller:?}
+    }} else if std::env::var("ELASTOS_UPDATE_CONTROLLER_HOST").as_deref() == Ok("1") {{
+        std::env::set_var("RESTART_FIXTURE_VERSION", {version:?});
+        {home:?}
+    }} else {{
+        eprintln!("fixture current_exe: {{}}", std::env::current_exe().unwrap().display());
+        elastos_server::update_controller::resume_restart_recovery().unwrap();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+            .block_on(elastos_server::update_controller::enter_browser_home()).unwrap();
+        eprintln!("controller skipped at startup path comparison");
+        std::process::exit(42);
+    }};
+    panic!("fixture exec: {{}}", std::process::Command::new({harness:?})
+        .args(["--exact", test, "--ignored", "--nocapture"]).exec());
+}}
+"#,
+            controller = test("linked_start_controller_fixture"),
+            home = test("restart_home_fixture"),
+            harness = harness.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let compiled = std::process::Command::new("rustc")
+        .arg(&source)
+        .args(["--edition=2021", "-C", "debuginfo=0", "-L"])
+        .arg(format!("dependency={}", dependencies.display()))
+        .arg("--extern")
+        .arg(format!(
+            "elastos_server={}",
+            library("elastos_server").display()
+        ))
+        .arg("--extern")
+        .arg(format!("tokio={}", library("tokio").display()))
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    fs::read(output).unwrap()
+}
+
+pub(crate) struct LinkedStartFixture {
+    fixture: PrivateFixture,
+    alias: PathBuf,
+    listener: tokio::net::UnixListener,
+    process: Option<child::OwnedChild>,
+    stream: Option<tokio::net::UnixStream>,
+}
+
+impl Drop for LinkedStartFixture {
+    fn drop(&mut self) {
+        self.stream.take();
+        self.process.take();
+    }
+}
+
+impl LinkedStartFixture {
+    pub(crate) fn new(record_link: bool) -> Self {
+        let fixture = PrivateFixture::new();
+        let binary = linked_start_binary(&fixture.data, "0.7.0");
+        crate::test_support::write_from_child(&fixture.binary, binary, 0o755);
+        let home = fixture.data.join("capsules/home");
+        fs::create_dir_all(home.join("browser")).unwrap();
+        fixture.file(&home.join("capsule.json"), br#"{"schema":"elastos.capsule/v1","name":"home","version":"0.1.0","description":"Linked start fixture","author":"fixture","role":"app","type":"data","entrypoint":"browser/index.html"}"#, 0o600);
+        fixture.file(
+            &home.join("browser/index.html"),
+            b"linked start Home",
+            0o600,
+        );
+        fixture.publish_installed_release_with_components(br#"{"schema":"elastos.components/v1","capsules":{},"profiles":{},"external":{"home":{"install_path":"capsules/home","platforms":{}}}}"#);
+        let alias = fixture.data.join("linked-bin");
+        symlink(&fixture.data, &alias).unwrap();
+        let alias = alias.join("installed-runtime");
+        if record_link {
+            let mut sources = load_trusted_sources(&fixture.data).unwrap();
+            sources.sources[0].install_path = alias.to_str().unwrap().into();
+            crate::sources::save_trusted_sources(&fixture.data, &sources).unwrap();
+        }
+        // Until the fixture Home reports its listener, readiness uses a closed
+        // ephemeral port, so this test never probes the operator's Home port.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        write_private(&fixture.data.join("readiness-port"), &port).unwrap();
+        let listener =
+            tokio::net::UnixListener::bind(fixture.data.join("linked-start.sock")).unwrap();
+        Self {
+            fixture,
+            alias,
+            listener,
+            process: None,
+            stream: None,
+        }
+    }
+
+    pub(crate) fn data(&self) -> &Path {
+        &self.fixture.data
+    }
+
+    pub(crate) async fn start(&mut self) {
+        use tokio::io::AsyncReadExt;
+        let mut exited =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child()).unwrap();
+        let mut command = tokio::process::Command::new(&self.alias);
+        command
+            .args(["home", "--browser"])
+            .env_remove(HOST_ENV)
+            .env("HOME", &self.fixture.data)
+            .current_dir(&self.fixture.data);
+        // default_data_dir appends elastos to XDG_DATA_HOME.
+        command.env("XDG_DATA_HOME", self.fixture.data.join("xdg"));
+        fs::create_dir_all(self.fixture.data.join("xdg")).unwrap();
+        let data_link = self.fixture.data.join("xdg/elastos");
+        if !data_link.exists() {
+            symlink(&self.fixture.data, data_link).unwrap();
+        }
+        self.process = Some(child::OwnedChild::spawn(&mut command).unwrap());
+        let accepted = tokio::time::timeout(READY_TIMEOUT, async {
+            loop {
+                tokio::select! {
+                    accepted = self.listener.accept() => break accepted,
+                    _ = exited.recv() => {
+                        assert!(self.process.as_ref().unwrap().observed_exit().unwrap().is_none(),
+                            "fresh linked start skipped the controller at the startup path comparison");
+                    }
+                }
+            }
+        }).await;
+        let (mut stream, _) = accepted
+            .expect("fresh linked start must reach the controller")
+            .unwrap();
+        assert_eq!(stream.read_u8().await.unwrap(), b'R');
+        self.stream = Some(stream);
+        assert!(status(self.data()).unwrap().is_some());
+    }
+
+    pub(crate) async fn stop(&mut self) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        if let Some(mut stream) = self.stream.take() {
+            stream.write_all(b"S").await.unwrap();
+            assert_eq!(stream.read_u8().await.unwrap(), b'S');
+        }
+        if let Some(mut process) = self.process.take() {
+            process.stop().await.unwrap();
+        }
+    }
+
+    pub(crate) async fn update(&mut self, version: &str) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let binary = linked_start_binary(&self.fixture.data, version);
+        let components = fs::read(self.fixture.data.join("components.json")).unwrap();
+        let descriptor =
+            |bytes: &[u8]| json!({"cid":raw_cid(bytes),"sha256":digest(bytes),"size":bytes.len()});
+        let release = signed(
+            json!({"schema":"elastos.release/v1","version":version,"channel":"stable","platforms":{(crate::update::detect_release_platform()):{"binary":descriptor(&binary),"components":descriptor(&components)}}}),
+            "elastos.release.v1",
+        );
+        let head = signed(
+            json!({"schema":"elastos.release.head/v1","version":version,"channel":"stable","latest_release_cid":raw_cid(&release),"release_sha256":digest(&release)}),
+            "elastos.release.head.v1",
+        );
+        let (_, mut request, _) = choice_fixture();
+        request.current_version = load_trusted_sources(self.data()).unwrap().sources[0]
+            .installed_version
+            .clone();
+        request.new_version = version.into();
+        request.head_cid = raw_cid(&head);
+        request.release_cid = raw_cid(&release);
+        let items = std::collections::BTreeMap::from([
+            (raw_cid(&head), head),
+            (raw_cid(&release), release),
+            (raw_cid(&binary), binary),
+            (raw_cid(&components), components),
+        ]);
+        let payloads = self.data().join("linked-start-payloads");
+        fs::create_dir_all(&payloads).unwrap();
+        for (cid, bytes) in items {
+            fs::write(payloads.join(cid), bytes).unwrap();
+        }
+        write_private(&self.data().join("linked-start-update.json"), &request).unwrap();
+        let stream = self.stream.as_mut().unwrap();
+        stream.write_all(b"U").await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(READY_TIMEOUT, stream.read_u8())
+                .await
+                .unwrap()
+                .unwrap(),
+            b'U'
+        );
+        let source = load_trusted_sources(self.data()).unwrap().sources.remove(0);
+        assert_eq!(source.installed_version, version);
+        assert_eq!(Path::new(&source.install_path), self.fixture.binary);
+    }
+}
+
+#[tokio::test]
+#[ignore = "controller process for linked startup tests"]
+async fn linked_start_controller_fixture() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let path = PathBuf::from(std::env::var_os("LINKED_START_RECEIPT").unwrap());
+    child::watch_parent().unwrap();
+    let receipt: Receipt = read_private_json(&path).unwrap();
+    let directory = receipt.data_dir.join(DIRECTORY);
+    let _lease = inherited_or_new_lease(&directory).unwrap();
+    validate_receipt(&receipt).unwrap();
+    let mut controller = Controller {
+        receipt,
+        directory,
+        child: None,
+        request: None,
+        previous_binary_sha256: String::new(),
+        previous_version: String::new(),
+        generation: String::new(),
+        host_ready: false,
+        carrier: None,
+        carrier_close: None,
+        download_meter: Default::default(),
+        test_readiness: None,
+    };
+    controller.start_initial().await.unwrap();
+    let data = controller.receipt.data_dir.clone();
+    let mut stream = tokio::net::UnixStream::connect(data.join("linked-start.sock"))
+        .await
+        .unwrap();
+    stream.write_all(b"R").await.unwrap();
+    while stream.read_u8().await.unwrap() == b'U' {
+        let request: UpdateRequest =
+            read_private_json(&data.join("linked-start-update.json")).unwrap();
+        let payloads = data.join("linked-start-payloads");
+        let fetch: crate::update::FetchFn = Box::new(move |cid| {
+            let bytes = fs::read(payloads.join(cid)).unwrap();
+            Box::pin(async move { Ok(bytes) })
+        });
+        controller.previous_binary_sha256 = digest(&fs::read(&controller.receipt.binary).unwrap());
+        controller.previous_version = request.current_version.clone();
+        controller.request = Some(request.clone());
+        write_private(&controller.directory.join(ACTIVE_REQUEST), &request).unwrap();
+        let result =
+            crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut controller)
+                .await;
+        controller.publish_apply_result(&result).unwrap();
+        result.unwrap();
+        controller.finish_request().unwrap();
+        stream.write_all(b"U").await.unwrap();
+    }
+    controller.stop_child().await.unwrap();
+    stream.write_all(b"S").await.unwrap();
+}
+
+#[tokio::test]
+async fn linked_path_first_start_keeps_controller() {
+    let mut fixture = LinkedStartFixture::new(true);
+    fixture.start().await;
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn linked_path_current_exe_matches_platform_contract() {
+    let fixture = LinkedStartFixture::new(true);
+    let output = tokio::process::Command::new(&fixture.alias)
+        .arg("--current-exe")
+        .output()
+        .await
+        .unwrap();
+    assert!(output.status.success());
+    let current = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        current, fixture.alias,
+        "_NSGetExecutablePath preserves the linked parent"
+    );
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        current, fixture.fixture.binary,
+        "/proc/self/exe resolves the linked parent"
+    );
+    assert_eq!(fs::canonicalize(current).unwrap(), fixture.fixture.binary);
+}
+
+#[tokio::test]
+async fn linked_path_different_binary_is_refused() {
+    let fixture = LinkedStartFixture::new(true);
+    let other = fixture.data().join("different-runtime");
+    fs::copy(&fixture.fixture.binary, &other).unwrap();
+    // Even identical signed bytes at another path do not own this installation.
+    let xdg = fixture.data().join("xdg");
+    fs::create_dir(&xdg).unwrap();
+    symlink(fixture.data(), xdg.join("elastos")).unwrap();
+    let output = tokio::process::Command::new(other)
+        .args(["home", "--browser"])
+        .env_remove(HOST_ENV)
+        .env("HOME", fixture.data())
+        .env("XDG_DATA_HOME", xdg)
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!fixture.fixture.directory.join(RECEIPT).exists());
+    assert!(status(fixture.data()).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn linked_path_restart_recovery_keeps_controller() {
+    use crate::install_transaction::ReleaseFile;
+    let fixture = LinkedStartFixture::new(false);
+    publish_retained_receipt(&fixture.fixture);
+    let binary = fs::read(&fixture.fixture.binary).unwrap();
+    let components = fs::read(fixture.data().join("components.json")).unwrap();
+    let sources = fs::read(fixture.data().join("sources.json")).unwrap();
+    let head = fs::read(installation_release_head_path(fixture.data())).unwrap();
+    let release = fs::read(installation_release_manifest_path(fixture.data())).unwrap();
+    let transaction = InstallTransaction::acquire(fixture.data(), &fixture.fixture.binary).unwrap();
+    transaction
+        .prepare(&[
+            (ReleaseFile::RuntimeBinary, &binary),
+            (ReleaseFile::Components, &components),
+            (ReleaseFile::Sources, &sources),
+            (ReleaseFile::ReleaseHead, &head),
+            (ReleaseFile::ReleaseManifest, &release),
+        ])
+        .unwrap();
+    let receipt: Receipt = read_private_json(&fixture.fixture.directory.join(RECEIPT)).unwrap();
+    transaction
+        .prepare_restart(RestartPlan {
+            request_id: "c".repeat(32),
+            controller_sha256: receipt.controller_sha256,
+            launch_plan_sha256: receipt.launch_sha256,
+            support_sha256: digest(b"fixture support"),
+            support_paths: Default::default(),
+            previous_version: "0.7.0".into(),
+            candidate_version: "0.7.0".into(),
+            previous_binary_sha256: digest(&binary),
+        })
+        .unwrap();
+    drop(transaction);
+    let xdg = fixture.data().join("xdg");
+    fs::create_dir(&xdg).unwrap();
+    symlink(fixture.data(), xdg.join("elastos")).unwrap();
+    let output = tokio::process::Command::new(&fixture.alias)
+        .args(["home", "--browser"])
+        .env_remove(HOST_ENV)
+        .env("HOME", fixture.data())
+        .env("XDG_DATA_HOME", xdg)
+        .env("LINKED_START_RECOVERY_ONLY", "1")
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("retained recovery controller entered")
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Finishing the interrupted Home restart.")
+    );
+}
+
 async fn restarting_network_update(symlinked_parent: bool) {
     let config_file = crate::collaboration_startup::COLLABORATION_STARTUP_CONFIG_FILE;
     for outcome in [
