@@ -1,10 +1,10 @@
 {
   "sdk_package": "@walletconnect/ethereum-provider",
   "sdk_version": "2.23.9",
-  "sdk_sha256": "6a1a6932f267610b3f9a235ee3fcdbe5e778b1c9c6a86b76140b0f6ddc4edf04",
+  "sdk_sha256": "3b60bb5f67459c604563e7efb3e847ec8b6c745c54deb33c576f8ffda5518edb",
   "dependency_lock_sha256": "a12af83d3f92729c8bf06ff21505973a68c01d9fe08e157d837adc6c4b08833d",
   "source_sha256": {
-    "adapter.mjs": "95b8e12191b41dc13ff087a306233b0c23eb0570bac4bc8764cac59bb479e2f9",
+    "adapter.mjs": "016f5849cf9cb58b818f4c762149cd8dc287c23a1042f15b9fe989203660bbbb",
     "runtime-storage.mjs": "3e3d746baf073b0b0704b97a2bd7cdc67931fdb13ea08578d5c3ad4b2c7a81d0",
     "runtime-websocket.mjs": "f463ce31919dd3065f3d547f28c71bc28d8a001686956f8f25d976d693a28397",
     "../vendor-walletconnect-adapter.sh": "adc5ef76c22b3698d733f8039dafc0bd5593c319f07261f613681308a4089546"

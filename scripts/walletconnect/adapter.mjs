@@ -57,17 +57,16 @@ export async function restoreWalletConnectEvm(options) {
     finally { initializing = undefined; }
   }
   if (retired) { stopCore(ownedCore,provider); retireRuntime(); throw new Error("WalletConnect adapter retired."); }
-  if (options.signal?.aborted) {
-    await disconnectWalletConnectEvm(options);
-    options.signal.throwIfAborted();
-  }
+  options.signal?.throwIfAborted();
+  // Runtime owns this adapter's relay-only networking. The optional website
+  // reputation service uses direct HTTP/iframes, which this capsule cannot
+  // reach. Its shared abort controller can strand restored requests before
+  // publish. Return the protocol's empty optional attestation instead.
+  if (ownedCore.verify) ownedCore.verify.register = async () => "";
   // init() restores a live session from Runtime storage. Reopen its transport
   // instead of asking the phone to approve another pairing after a restart.
   if (!provider.signer.client.core.relayer.connected) await provider.signer.client.core.relayer.transportOpen();
-  if (options.signal?.aborted) {
-    await disconnectWalletConnectEvm(options);
-    options.signal.throwIfAborted();
-  }
+  options.signal?.throwIfAborted();
   return provider;
 }
 

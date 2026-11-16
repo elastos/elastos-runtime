@@ -20,6 +20,7 @@ let actionEpoch = 0;
 let currentPhase = 'idle';
 let connectionState;
 let linkedAccounts = [];
+let accountsLoaded = false;
 let recoveryAction;
 let launchExpired = false;
 let ownerConsentNeeded = false;
@@ -60,7 +61,7 @@ function watchConnection() {
   connectionTimer = window.setInterval(checkConnection, interval);
 }
 async function checkConnection() {
-  if (launchExpired || !frameHomeToken) return;
+  if (launchExpired || !frameHomeToken || !accountsLoaded) return;
   if (pendingEffect && (!pendingEffect.requestId || !Number.isFinite(pendingEffect.expiresAt) || pendingEffect.expiresAt <= Date.now())) pendingEffect = undefined;
   if (connectionCheckInFlight) { watchConnection(); return; }
   connectionCheckInFlight = true;
@@ -239,10 +240,13 @@ async function refreshWalletState() {
     ? requestSummary.approval_requests
     : [];
   linkedAccounts = accounts;
+  const firstAccounts = !accountsLoaded;
+  accountsLoaded = true;
   renderAccounts(accounts);
   renderRequests(requests);
   renderConnection();
   setState(accounts.length > 0 ? `${accounts.length} linked` : "0 linked");
+  if (firstAccounts) checkConnection().catch(()=>{});
 }
 
 function renderAccounts(accounts) {

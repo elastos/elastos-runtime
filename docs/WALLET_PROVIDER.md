@@ -267,6 +267,11 @@ A connector can load the current revision, retain a returned result or retry
 cleanup. Relay use and storage writes require
 the current revision. Home owns window orchestration.
 
+The relay-only adapter returns an empty optional Reown Verify website
+attestation. That service uses direct HTTP and iframes outside Runtime's relay
+route. Runtime verifies the linking signature and each approval binding; a
+phone wallet may show the Home origin as unverified.
+
 Mode A connects a phone wallet to sign Runtime challenges and approved requests.
 Mode B, where external dApps use ElastOS as a WalletConnect wallet, requires its
 own security decision. The phone holds signing keys and confirms each request.

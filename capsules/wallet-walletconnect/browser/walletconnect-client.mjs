@@ -227,9 +227,11 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
     const attempt = new AbortController();
     generation++;
     operation = attempt;
-    restoreAttempt?.abort(muted(stopped));
     const signal = attempt.signal;
     try {
+    // Reuse waits for the adapter that owns the saved session. Only reset()
+    // retires it; aborting restore here can disconnect Review's own provider.
+    if (!(action.kind === 'link' && action.fresh) && restoring) await waitFor(restoring,signal);
     removed = false;
     if (action.kind === 'link' && action.fresh) await reset(muted(stopped),attempt);
     signal.throwIfAborted();

@@ -191,7 +191,10 @@ that as `unknown_purpose`, so the app can ask for a Home reload.
 
 The purpose policy is closed. Browser may read or write bounded `text/plain`
 for `browser.text`. Wallet may write addresses and Wallet Recovery Keys.
-MetaMask, UniSat, and WalletConnect may write linked Wallet addresses. Library
+MetaMask, UniSat, and WalletConnect may write linked Wallet addresses.
+WalletConnect may also write a pairing link, bounded to 2048 UTF-8 bytes, for
+opening a wallet on the same computer. Home confirms that write through its
+own Clipboard prompt. Library
 may write resource URIs and bounded technical identifiers under separate
 purposes; Documents may write resource URIs. No non-Browser target may read
 the OS Clipboard, and no caller-supplied purpose widens its target's policy.

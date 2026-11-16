@@ -91,6 +91,7 @@ test('round19 Review during saved-session restore waits for the same live adapte
  t.after(()=>release());await r.reopen({ready:false});await restoring;
  await r.frame.getByRole('button',{name:'Review',exact:true}).click();release();
  await r.frame.locator('#wallet-status').filter({hasText:'Request signed.'}).waitFor({timeout:15000});
+ assert.equal(await r.frame.locator('iframe').count(),0,'optional website attestation has no direct frame route');
  assert.equal(r.fixture.state.completed,1);assert.equal(r.peer.trace.some(event=>event.kind==='deleted'),false,'restoring for Review keeps the phone session');
 });
 
