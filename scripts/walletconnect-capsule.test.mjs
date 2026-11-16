@@ -24,7 +24,7 @@ test('a reset creates a fresh SDK API while old SDK writes keep their stale revi
   const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
   let revision='"0"',loads=0,disconnects=0;const sessions=[];
   const signer=`0x${'12'.repeat(20)}`;
-  const provider={chainId:20,session:{namespaces:{eip155:{chains:['eip155:20']}}},on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture-signature'};
+  const provider={chainId:20,session:{namespaces:{eip155:{chains:['eip155:20'],accounts:[`eip155:20:${signer}`]}}},on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture-signature'};
   const api=async(path,input)=>{
     if(path==='wallet/config')return {walletconnect:{project_id:'fixture-project',storage_revision:revision}};
     if(path==='internet')return {status:'granted'};
@@ -51,7 +51,7 @@ test('a stalled old SDK disconnect cannot block a new storage generation',async 
   t.mock.timers.enable({apis:['setTimeout']});
   const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
   let revision='"0"',loads=0;const signer=`0x${'12'.repeat(20)}`;
-  const provider={chainId:20,session:{namespaces:{eip155:{chains:['eip155:20']}}},on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture'};
+  const provider={chainId:20,session:{namespaces:{eip155:{chains:['eip155:20'],accounts:[`eip155:20:${signer}`]}}},on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture'};
   const api=async path=>path==='wallet/config'?{walletconnect:{project_id:'fixture',storage_revision:revision}}:
     path==='internet'?{status:'granted'}:path.endsWith('/challenge')?{message:'fixture',expires_at:Date.now()/1000+600|0}:{};
   const client=createWalletConnectClient({api,origin:'http://localhost',loadAdapter:async()=>{loads++;return {
@@ -76,7 +76,7 @@ test('late send reports dismissal without claiming completion',async()=>{
 
 test('an unapproved request network stops before the phone and before handoff',async()=>{
   const r=await exerciseWalletConnect('unapproved-network');
-  assert.equal(r.error,'This request is for Base, which your wallet did not approve. Connect again and approve Base.');
+  assert.equal(r.error,'This request is for Base, which your wallet did not approve. Select Disconnect, then Connect wallet, and approve Base in your phone wallet.');
   assert.equal(sent(r).length,0);assert.equal(r.routes.filter(call=>call.path.endsWith('/approve')).length,0);
 });
 test('an unknown SDK error stays in the console and gives a safe recovery message',async t=>{
@@ -84,4 +84,22 @@ test('an unknown SDK error stays in the console and gives a safe recovery messag
   const r=await exerciseWalletConnect('sdk-unknown');
   assert.equal(r.error,'The wallet connection failed. Select Connect wallet to try again.');
   assert.deepEqual(logs,[['WalletConnect SDK:','Opaque SDK failure fixture']]);
+});
+
+for (const scope of ['signature','transaction','link','proposal']) for (const code of [4001,5000,5001,5002,5003]) test(`${scope} phone decline ${code} is muted and true`,async()=>{
+  const r=await exerciseWalletConnect(`${scope}-phone-declined:${code}`);
+  assert.equal(r.error, ['link','proposal'].includes(scope)
+    ? 'You declined the connection in your phone wallet. Select Connect wallet to try again.'
+    : 'You declined this in your phone wallet. Nothing was signed or sent.');
+  assert.equal(r.tone,'muted');assert.equal(completed(r).length,0);
+});
+for (const scope of ['signature','transaction']) test(`${scope} phone expiry is muted and retryable`,async()=>{
+  const r=await exerciseWalletConnect(`${scope}-phone-expired`);
+  assert.equal(r.error,'Your phone wallet did not answer in time. Nothing was signed or sent. Select the request again to retry.');
+  assert.equal(r.tone,'muted');assert.equal(completed(r).length,0);
+});
+for (const [scenario,name] of [['listed-without-account','Ethereum'],['unknown-network','an unsupported network (137)']]) test(`${scenario} stops before handoff`,async()=>{
+  const r=await exerciseWalletConnect(scenario);
+  assert.equal(r.error,`This request is for ${name}, which your wallet did not approve. Select Disconnect, then Connect wallet, and approve ${name} in your phone wallet.`);
+  assert.equal(sent(r).length,0);assert.equal(r.routes.filter(c=>c.path.endsWith('/approve')).length,0);
 });

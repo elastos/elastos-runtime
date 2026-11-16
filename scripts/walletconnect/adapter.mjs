@@ -74,12 +74,23 @@ export async function connectWalletConnectEvm(options) {
   };
   provider.on("display_uri", display);
   document.body.append(dialog);
+  // EthereumProvider.connect rebuilds proposal errors from message alone. Keep
+  // the wallet's code before that public wrapper drops it (pinned SDK 2.23.9).
+  const signerConnect = provider.signer.connect;
+  let proposalError;
+  provider.signer.connect = async function (...args) {
+    try { return await signerConnect.apply(this, args); }
+    catch (error) { proposalError = error; throw error; }
+  };
   let timer;
   try {
     timer = setTimeout(() => stop(new Error("The QR code expired. Select Connect wallet for a new one.")), 180000);
     await Promise.race([provider.connect(), cancelled]);
     return provider;
+  } catch (error) {
+    throw proposalError && error?.message === proposalError.message ? proposalError : error;
   } finally {
+    provider.signer.connect = signerConnect;
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", abort);
     provider.removeListener("display_uri", display);
