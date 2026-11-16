@@ -185,6 +185,11 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await page.waitForResponse(response=>response.url().endsWith('/api/apps/wallet-walletconnect/internet')&&response.request().method()==='GET');
       assert.equal(verified,2,`${reason} clears the saved action`);
     }
+    status='requested';requestId++;issuedAt=Math.floor(Date.now()/1000);await reload();
+    await walletFrame.waitForFunction(()=>window.fixtureIntervals.at(-1)===1000);
+    status='granted';
+    await walletFrame.waitForFunction(()=>window.fixtureIntervals.at(-1)===5000);
+    assert.equal(verified,2,'a restored permission request polls promptly without a saved action');
     approvalRequests=[{request_id:'approval-fixture',connector_id:'wallet-walletconnect',proof_type:'siwe',intent:'browser_personal_sign',status:'pending',address:'0x'+'12'.repeat(20),reason:'Fixture review',chain_namespace:'eip155:20',expires_at:Math.floor(Date.now()/1000)+600}];
     status='off';await reload();await wallet.locator('#wallet-connect').click();
     await wallet.locator('#wallet-status').filter({hasText:permissionText}).waitFor();await page.evaluate(()=>inbox.style.display='none');
@@ -209,7 +214,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await walletFrame.evaluate(({key,error})=>{delete window.phoneFailure;delete window.proposalFailure;window[key]=error;},{key,error});
       await (kind==='link'?wallet.locator('#wallet-connect'):wallet.locator('[data-wallet-request-sign]')).click();await wallet.locator('#wallet-status').filter({hasText:message}).waitFor();
       assert.equal(await wallet.locator('#wallet-status').getAttribute('data-tone'),'muted');
-      if(name!=='connection-decline')await wallet.locator('#wallet-connection').filter({hasText:'Connected'}).waitFor();
+      if(name!=='connection-decline')await wallet.locator('#wallet-connection').filter({hasText:/^Connected$/}).waitFor();
       for(const value of ['dark','light']){await theme(value);await shot(`r15-${name}-${value}`);}
     }
     assert.deepEqual(errors,[]);

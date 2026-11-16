@@ -28,10 +28,11 @@ window.addEventListener('message', event => {
 });
 let connectionTimer;
 let connectionInterval;
+let permissionPending = false;
 let connectionRevision;
 function watchConnection() {
   if (!frameHomeToken || typeof window.setInterval !== "function") return;
-  const interval = pendingEffect || document.querySelector('dialog[open]') ? 1000 : 5000;
+  const interval = pendingEffect || permissionPending || document.querySelector('dialog[open]') ? 1000 : 5000;
   if (connectionTimer && connectionInterval === interval) return;
   window.clearInterval(connectionTimer);
   connectionInterval = interval;
@@ -42,6 +43,7 @@ function watchConnection() {
     try {
       const saved = pendingEffect;
       const current = await connector.effect({ kind: "status" });
+      permissionPending = current.permission.status === "requested" && Boolean(current.permission.request);
       if (saved && pendingEffect === saved && (!saved.requestId || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now() || current.permission.request?.id !== saved.requestId
         || !['requested','granted'].includes(current.permission.status))) pendingEffect = undefined;
       if (current.permission.status === 'granted' && pendingEffect && pendingEffect === saved && !hostEffectInFlight) {
@@ -262,6 +264,7 @@ async function requestCapsuleWalletEffect(action) {
   try {
     if (['link','approve'].includes(action.kind)) {
       const consent = await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
+      permissionPending = consent.status === 'requested' && Boolean(consent.request);
       if (consent.status !== 'granted') {
         pendingEffect = {requestId:consent.request?.id, expiresAt:(consent.request?.issued_at + 1800) * 1000, run: action.kind === 'link' ? onConnect : () => {
           const button = [...requestsNode.querySelectorAll('[data-wallet-request-sign]')].find(node => node.dataset.walletRequestSign === action.approvalRequestId);
