@@ -37,6 +37,18 @@ pub(super) async fn home_launch(
             Json(serde_json::json!({ "error": "invalid Home target" })),
         ));
     }
+    let renewed_browser_token = gateway_home_token::renew_browser_launch_for_home(
+        &state.data_dir,
+        &headers,
+        target,
+        &context,
+    )
+    .map_err(|_| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"Home could not renew Browser authority"})),
+        )
+    })?;
 
     // Configuration owns connector availability. Refuse a hidden connector
     // before package repair.
@@ -150,13 +162,16 @@ pub(super) async fn home_launch(
         .viewer
         .as_deref()
         .unwrap_or(target_summary.target.as_str());
-    let token = issue_home_projection_launch_token_with_context(
-        &state.data_dir,
-        &target_summary.target,
-        executable_actor,
-        &context,
-    )
-    .map_err(home_projection_token_error)?;
+    let token = match renewed_browser_token {
+        Some(token) => token,
+        None => issue_home_projection_launch_token_with_context(
+            &state.data_dir,
+            &target_summary.target,
+            executable_actor,
+            &context,
+        )
+        .map_err(home_projection_token_error)?,
+    };
     let expires_at = gateway_home_token::require_carried_home_launch_token(
         &state.data_dir,
         &token,

@@ -624,12 +624,15 @@ try {
     );
 
     if (target === "wallet-walletconnect") {
+      await homeGui.locator('.window[data-target="wallet-walletconnect"] [data-action="minimize"]').click();
       await wallet.evaluate(() => document.querySelector('[data-wallet-open-method="wallet-walletconnect"]').click());
       await waitFor(() => state.launches["wallet-walletconnect"] === 2, 5000, "WalletConnect return launch");
       await page.waitForTimeout(300);
       assert(await homeGui.locator('.window[data-target="wallet-walletconnect"]').count() === 1,
         "returning to WalletConnect keeps its original window");
       assert(frameFor(page, target) === connector, "WalletConnect return preserves its requesting frame");
+      const returned = await homeWindowSnapshot(homeGui, target);
+      assert(!returned.hidden && returned.active, "WalletConnect return restores and activates its requesting window");
       if (process.env.WALLETCONNECT_SCREENSHOTS) {
         mkdirSync(process.env.WALLETCONNECT_SCREENSHOTS, {recursive:true});
         for (const theme of ["dark", "light"]) {

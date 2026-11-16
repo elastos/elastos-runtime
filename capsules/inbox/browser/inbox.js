@@ -501,27 +501,33 @@
       return card;
     }
 
-    function confirmBrowserInternetOff() {
-      const dialog = document.querySelector("#browser-internet-confirm");
+    function confirmInternetOff(service = "browser") {
+      const dialog = document.querySelector(`#${service}-internet-confirm`);
       return new Promise(resolve => {
+        dialog.returnValue = "cancel";
         dialog.addEventListener("close", () => resolve(dialog.returnValue === "off"), {once:true});
         dialog.showModal();dialog.querySelector('[value="cancel"]').focus();
       });
     }
 
-    async function allowBrowserInternet(actionId) {
+    async function allowInternet(actionId, service = "browser") {
+      const walletconnect = service === "walletconnect";
+      const path = walletconnect ? "/api/apps/wallet-walletconnect/internet" : "/api/apps/browser/internet";
       setButtonsDisabled(true);
       try {
-        const current = actionId ? await api("/api/apps/browser/internet")
-          : await api("/api/apps/browser/internet", {method:"POST",body:JSON.stringify({action:"request"})});
-        const expected = "browser-internet-allow:" + current.request?.request_id;
+        const current = actionId ? await api(path)
+          : await api(path, {method:"POST",body:JSON.stringify({action:"request"})});
+        const expected = `${service}-internet-allow:` + (walletconnect ? current.request?.id : current.request?.request_id);
         if (current.status !== "requested" || (actionId && actionId !== expected)) {
           throw new Error("This request has changed. Refresh Inbox and review the current request.");
         }
-        const stepUpToken = await requestPasskeyStepUp("browser.internet.grant", current.request);
+        const stepUpToken = await requestPasskeyStepUp(`${service}.internet.grant`, current.request);
         await inboxAction(expected, {step_up_token:stepUpToken});
-        setStatus("Browser can open websites.");await loadInbox();notifyHome();
-        window.top.postMessage({type:"home:focus-browser",homeToken:state.homeToken},homeParentOrigin);
+        if (!walletconnect) setStatus("Browser can open websites.");
+        await loadInbox();notifyHome();
+        window.top.postMessage(walletconnect
+          ? {type:"home:open-target",homeToken:state.homeToken,target:"wallet-walletconnect",query:{}}
+          : {type:"home:focus-browser",homeToken:state.homeToken,requestId:current.request.request_id},homeParentOrigin);
       } finally {setButtonsDisabled(false);}
     }
 
@@ -529,40 +535,30 @@
       const actionId = entry.action_ref && entry.action_ref.action_id;
       if (entry.kind === "walletconnect_internet_request" || entry.kind === "walletconnect_internet_decision") {
         const path = "/api/apps/wallet-walletconnect/internet";
-        const act = async (id, operation) => {
-          if (operation === "walletconnect.internet.revoke") {
-            const dialog = document.querySelector("#walletconnect-internet-confirm");
-            const confirmed = await new Promise(resolve => {
-              dialog.returnValue = "cancel";
-              dialog.addEventListener("close", () => resolve(dialog.returnValue === "off"), {once:true});
-              dialog.showModal(); dialog.querySelector('[value="cancel"]').focus();
-            });
-            if (!confirmed) return;
-          }
+        const turnOff = async () => {
+          if (!await confirmInternetOff("walletconnect")) return;
           setButtonsDisabled(true);
           try {
-            const current = await api(path, id ? undefined : {method:"POST",body:JSON.stringify({action:"request"})});
-            if (!id) id = "walletconnect-internet-allow:" + current.request?.id;
-            const stepUpToken = current.status === "revoked" ? undefined : await requestPasskeyStepUp(operation, current.request);
-            await inboxAction(id, { step_up_token: stepUpToken });
+            const current = await api(path);
+            const stepUpToken = current.status === "revoked" ? undefined : await requestPasskeyStepUp("walletconnect.internet.revoke", current.request);
+            await inboxAction(actionId, { step_up_token: stepUpToken });
             await loadInbox(); notifyHome();
-            if (operation === 'walletconnect.internet.grant') window.top.postMessage({type:'home:open-target',homeToken:state.homeToken,target:'wallet-walletconnect',query:{}},homeParentOrigin);
           } finally { setButtonsDisabled(false); }
         };
         if (actionId?.startsWith("walletconnect-internet-allow:")) {
           actions.appendChild(createActionButton("Don't Allow", actionId.replace("-allow:", "-deny:")));
-          actions.appendChild(createButton("Allow", () => act(actionId, "walletconnect.internet.grant"), "primary"));
+          actions.appendChild(createButton("Allow", () => allowInternet(actionId, "walletconnect"), "primary"));
         } else if (actionId?.startsWith("walletconnect-internet-turn-off:")) {
-          actions.appendChild(createButton("Turn Off", () => act(actionId, "walletconnect.internet.revoke"), "danger"));
+          actions.appendChild(createButton("Turn Off", turnOff, "danger"));
         } else {
-          actions.appendChild(createButton("Allow", () => act(null, "walletconnect.internet.grant"), "primary"));
+          actions.appendChild(createButton("Allow", () => allowInternet(null, "walletconnect"), "primary"));
         }
         return;
       }
       if (entry.kind === "browser_internet_decision") {
         if (actionId?.startsWith("browser-internet-turn-off:")) {
           actions.appendChild(createButton("Turn Off", async () => {
-            if (!await confirmBrowserInternetOff()) return;
+            if (!await confirmInternetOff()) return;
             setButtonsDisabled(true);
             try {
               const current = await api("/api/apps/browser/internet");
@@ -572,7 +568,7 @@
             } finally { setButtonsDisabled(false); }
           }, "danger"));
         } else if (actionId === "browser-internet-request") {
-          actions.appendChild(createButton("Allow", () => allowBrowserInternet(), "primary"));
+          actions.appendChild(createButton("Allow", () => allowInternet(), "primary"));
         }
         return;
       }
@@ -586,7 +582,7 @@
 
       if (typeof actionId === "string" && actionId.startsWith("browser-internet-allow:")) {
         actions.appendChild(createActionButton("Don't Allow", actionId.replace("browser-internet-allow:", "browser-internet-deny:")));
-        actions.appendChild(createButton("Allow", () => allowBrowserInternet(actionId), "primary"));
+        actions.appendChild(createButton("Allow", () => allowInternet(actionId), "primary"));
       } else if (typeof actionId === "string" && actionId.startsWith("room-approve-request:")) {
         actions.appendChild(createActionButton("Approve", actionId, "primary"));
         actions.appendChild(createActionButton("Deny", "room-deny-request:" + actionId.slice("room-approve-request:".length), "danger"));

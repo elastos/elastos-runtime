@@ -57,6 +57,9 @@ import {
   MAX_EXTERNAL_LINK_LENGTH,
 } from "./home-external-link.js?v=download-progress-20261112";
 
+// Home binds the permission return to the verified Browser frame that asked.
+let browserInternetRequester = null;
+
 const SUMMARY_REFRESH_DEBOUNCE_MS = 150;
 const SUMMARY_REFRESH_RETRY_MS = 700;
 const HOME_EVENTS_WAIT_MS = 25_000;
@@ -555,7 +558,7 @@ async function showHostAuthGate(options = {}) {
   await unlockReady;
 }
 
-async function launchHomeTarget(target, query = {}) {
+async function launchHomeTarget(target, query = {}, { renewHomeToken = "" } = {}) {
   const pickerOwner = target === "library" && query.pickerRequestId
     ? [...launchedAppContexts.values()].map((context) => context.pickerRequest)
       .find((record) => record?.id === query.pickerRequestId && currentLibraryPicker(record))
@@ -574,6 +577,7 @@ async function launchHomeTarget(target, query = {}) {
     ? createHomeBackgroundImageReader() : null;
   const launched = await fetchJson("/api/apps/home/launch", {
     method: "POST",
+    ...(renewHomeToken ? { headers: { "x-elastos-browser-renew-token": renewHomeToken } } : {}),
     body: JSON.stringify(body),
   });
   if (launched?.attach_kind === "iframe") {
@@ -665,7 +669,7 @@ function settleBrowserAuthorityRenewal(record, result) {
   }
   window.clearTimeout(record.timeout);
   pendingBrowserAuthorityRenewals.delete(record.requestId);
-  if (result.ok) {
+  if (result.ok && record.frameToken !== result.freshHomeToken) {
     retireLaunchedAppContext(record.frameToken);
   }
   postBrowserAuthorityRenewalResult(record, result);
@@ -812,9 +816,9 @@ function handleBrowserAuthorityRenewalResult(context, message) {
     message.reason !== "" ||
     !message.freshHomeToken ||
     message.freshHomeToken === record.oldHomeToken ||
-    oldContext?.targetId !== "browser" ||
-    oldContext.browserInstance !== record.browserInstance ||
-    oldContext.source !== record.source ||
+    (oldContext ? (oldContext.targetId !== "browser" ||
+      oldContext.browserInstance !== record.browserInstance || oldContext.source !== record.source)
+      : record.frameToken !== message.freshHomeToken || freshContext?.source !== record.source) ||
     freshContext?.targetId !== "browser" ||
     freshContext.browserInstance !== record.browserInstance
   ) {
@@ -1914,7 +1918,19 @@ window.addEventListener("message", (event) => {
       return;
     }
     const query = data.query && typeof data.query === "object" ? data.query : {};
-    launchHomeTarget(target, query)
+    let renewHomeToken = "";
+    if (Object.hasOwn(data, "renewHomeToken")) {
+      const old = launchedAppContexts.get(data.renewHomeToken);
+      if (context.targetId !== HOME_GUI_SHELL_ID || target !== "browser" ||
+          !hasExactMessageKeys(data, ["type", "requestId", "target", "query", "homeToken", "renewHomeToken"]) ||
+          typeof data.renewHomeToken !== "string" || !data.renewHomeToken || data.renewHomeToken.length > 4096 ||
+          old?.targetId !== "browser" || !old.source || old.browserInstance !== query.browser_instance) {
+        replyToShellRequest(event, requestId, null, new Error("Home denied the Browser renewal"));
+        return;
+      }
+      renewHomeToken = data.renewHomeToken;
+    }
+    launchHomeTarget(target, query, { renewHomeToken })
       .then((launched) => replyToShellRequest(event, requestId, launched))
       .catch((error) => replyToShellRequest(event, requestId, null, error));
     return;
@@ -2150,8 +2166,12 @@ window.addEventListener("message", (event) => {
   }
   if (data.type === "home:focus-browser") {
     if (context.kind === "app-frame" && context.targetId === "inbox"
-      && hasExactMessageKeys(data, ["type", "homeToken"])) {
-      postToActiveShell({type:"home:gui-command", command:"focus-browser"});
+      && hasExactMessageKeys(data, ["type", "homeToken", "requestId"])
+      && typeof data.requestId === "string" && data.requestId.length > 0 && data.requestId.length <= 256) {
+      postToActiveShell({type:"home:gui-command", command:"focus-browser",
+        ...(browserInternetRequester?.requestId === data.requestId
+          ? {browserInstance:browserInternetRequester.browserInstance} : {})});
+      browserInternetRequester = null;
     }
     return;
   }
@@ -2175,11 +2195,25 @@ window.addEventListener("message", (event) => {
     console.warn("home ignored an app's Browser open with a query", context.targetId);
     return;
   }
-  if (["browser", "wallet-walletconnect"].includes(context.targetId) && target === "inbox") {
+  if (context.targetId === "browser" && target === "inbox") {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
       || !data.query || typeof data.query !== "object" || Array.isArray(data.query)
-      || Object.keys(data.query).length !== 1
-      || data.query.notification_id !== (context.targetId === "browser" ? "browser-internet:permission" : "walletconnect-internet:permission")) return;
+      || !hasExactMessageKeys(data.query, data.query.browser_request_id === undefined
+        ? ["notification_id"] : ["notification_id", "browser_request_id"])
+      || data.query.notification_id !== "browser-internet:permission") return;
+    if (data.query.browser_request_id !== undefined) {
+      if (typeof data.query.browser_request_id !== "string" || !data.query.browser_request_id
+        || data.query.browser_request_id.length > 256) return;
+      if (context.browserInstance && browserInternetRequester?.requestId !== data.query.browser_request_id) {
+        browserInternetRequester = {requestId:data.query.browser_request_id, browserInstance:context.browserInstance};
+      }
+    }
+  }
+  if (context.targetId === "wallet-walletconnect" && target === "inbox") {
+    if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      || !data.query || typeof data.query !== "object" || Array.isArray(data.query)
+      || !hasExactMessageKeys(data.query, ["notification_id"])
+      || data.query.notification_id !== "walletconnect-internet:permission") return;
   }
   if (context.targetId === "chat-room" && ["people", "inbox"].includes(target)) {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
@@ -2218,7 +2252,9 @@ window.addEventListener("message", (event) => {
     });
     return;
   }
-  const query = data.query && typeof data.query === "object" ? data.query : {};
+  const query = context.targetId === "browser" && target === "inbox"
+    ? {notification_id: "browser-internet:permission"}
+    : data.query && typeof data.query === "object" ? data.query : {};
   if (target === "library" && query.mode && query.mode !== "browse") {
     Promise.resolve().then(() => openLibraryPicker(context, data)).catch((error) => {
       replyToShellRequest(event, data.requestId, null, error);
@@ -2311,6 +2347,16 @@ function homeMessageContext(event, data) {
       return null;
     }
     launched.source = event.source;
+    if (launched.targetId === "browser" && launched.browserInstance) {
+      // A renewal keeps the same document and its Home-owned associations.
+      for (const [oldToken, old] of launchedAppContexts) {
+        if (oldToken !== homeToken && old.targetId === "browser" && old.source === event.source &&
+            old.browserInstance === launched.browserInstance) {
+          transferFrameAssociations(old, launched, homeToken);
+          retireLaunchedAppContext(oldToken);
+        }
+      }
+    }
   } else if (launched.source !== event.source) {
     return null;
   }
