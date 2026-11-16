@@ -10,7 +10,7 @@ const {WebSocketServer} = walletConnectFixtureRequire('ws');
 export function walletConnectRelayFixture(server) {
     const relay = new WebSocketServer({server});
     const subscriptions = new Map(),messages = new Map();let id=1;const methods=[];
-    const deliver = (socket,topic,message) => socket.send(JSON.stringify({jsonrpc:'2.0',id:id++,method:'irn_subscription',params:{id:`fixture-${topic}`,data:{topic,message,publishedAt:Date.now()}}}));
+    const deliver = (socket,topic,entry) => socket.send(JSON.stringify({jsonrpc:'2.0',id:id++,method:'irn_subscription',params:{id:`fixture-${topic}`,data:{topic,...entry,publishedAt:Date.now()}}}));
     relay.on('connection',socket => socket.on('message',raw => {
       const rpc = JSON.parse(String(raw));
       if (rpc.token) {socket.send('{"ready":true}');return;}
@@ -30,15 +30,17 @@ export function walletConnectRelayFixture(server) {
       }
       if (rpc.method === 'wc_approveSession') {
         for (const [topic,message] of [[rpc.params.pairingTopic,rpc.params.sessionProposalResponse],[rpc.params.sessionTopic,rpc.params.sessionSettlementRequest]]) {
-          if(!messages.has(topic))messages.set(topic,[]);messages.get(topic).push(message);
-          for(const peer of subscriptions.get(topic)||[])if(peer!==socket&&peer.readyState===1)deliver(peer,topic,message);
+          const entry={message,attestation:rpc.params.attestation};
+          if(!messages.has(topic))messages.set(topic,[]);messages.get(topic).push(entry);
+          for(const peer of subscriptions.get(topic)||[])if(peer!==socket&&peer.readyState===1)deliver(peer,topic,entry);
         }
       }
       if (rpc.method.endsWith('publish') || rpc.method === 'wc_proposeSession') {
         const topic = rpc.params.topic || rpc.params.pairingTopic;
         const message = rpc.params.message || rpc.params.sessionProposal;
-        if(!messages.has(topic))messages.set(topic,[]);messages.get(topic).push(message);
-        for(const peer of subscriptions.get(topic)||[])if(peer!==socket&&peer.readyState===1)deliver(peer,topic,message);
+        const entry={message,attestation:rpc.params.attestation};
+        if(!messages.has(topic))messages.set(topic,[]);messages.get(topic).push(entry);
+        for(const peer of subscriptions.get(topic)||[])if(peer!==socket&&peer.readyState===1)deliver(peer,topic,entry);
       }
       socket.send(JSON.stringify({jsonrpc:'2.0',id:rpc.id,result}));
     }));

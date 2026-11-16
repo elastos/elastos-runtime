@@ -32,7 +32,7 @@ async function refresh(r){await r.frame.evaluate(()=>window.dispatchEvent(new Ev
 async function qr(r){await r.frame.locator('#wallet-connect').click();await r.frame.locator('dialog[open] canvas').waitFor({timeout:25000});}
 async function copyLink(r){await r.frame.getByRole('button',{name:'Copy connection link',exact:true}).click();await r.frame.getByText('Connection link copied. Open it in your wallet app.',{exact:true}).waitFor();return r.page.evaluate(()=>window.copied);}
 async function pair(r){await r.peer.pair(await copyLink(r));}
-async function linked(r){await r.frame.locator('#wallet-state').filter({hasText:'1 linked'}).waitFor({timeout:25000});}
+async function linked(r){await r.frame.locator('#wallet-status').filter({hasText:'Approval method added.'}).waitFor({timeout:25000});await r.frame.locator('#wallet-state').filter({hasText:'1 linked'}).waitFor({timeout:25000});}
 async function waiting(r,before){await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>before,'phone request');}
 async function approval(r,id,intent='credential'){
  r.fixture.state.approvals=[{request_id:id,status:'pending',address:r.peer.address,chain_namespace:'eip155:8453',intent,proof_type:'siwe',connector_id:'wallet-walletconnect',reason:'Review this test message',expires_at:Math.floor(Date.now()/1000)+600}];
