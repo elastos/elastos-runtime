@@ -5395,7 +5395,8 @@ fn linked_path_helper_unresolvable_current_keeps_controller_off() {
     assert_eq!(decision, None);
 }
 
-/// Cargo reports the candidate example executable; no library-file lookup is used.
+/// Cargo reports the candidate native executable. Omit debug information so
+/// its signed payload fits the same Carrier content bound as a release.
 fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
     static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _build = BUILD.lock().unwrap();
@@ -5419,7 +5420,7 @@ fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
     let test = |name: &str| format!("{}::{name}", module_path!().split_once("::").unwrap().1);
     let output = std::process::Command::new(env!("CARGO"))
         .current_dir(repository)
-        .args(["build", "--manifest-path"])
+        .args(["rustc", "--manifest-path"])
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
         .args([
             "-p",
@@ -5434,6 +5435,7 @@ fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
             "--profile",
         ])
         .arg(profile)
+        .args(["--", "-C", "strip=debuginfo"])
         .env_remove("CARGO_MAKEFLAGS")
         .env("ELASTOS_LINKED_FIXTURE_VERSION", version)
         .env("ELASTOS_LINKED_FIXTURE_TEST_EXE", &harness)
@@ -5467,7 +5469,13 @@ fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
             }
         })
         .expect("Cargo built the linked startup fixture executable");
-    fs::read(executable).unwrap()
+    let binary = fs::read(executable).unwrap();
+    assert!(
+        binary.len() <= elastos_common::MAX_WHOLE_CONTENT_BYTES,
+        "linked-start fixture exceeds Carrier's whole-content bound ({} bytes)",
+        binary.len()
+    );
+    binary
 }
 
 pub(crate) struct LinkedStartFixture {
@@ -5691,7 +5699,9 @@ async fn linked_start_controller_fixture() {
         assert!(!path_present(&active).unwrap());
         fs::rename(queued, active).unwrap();
         File::open(&controller.directory).unwrap().sync_all().unwrap();
-        controller.publish("staging", "Checking the signed update.").unwrap();
+        controller
+            .publish("staging", "Checking the signed update.")
+            .unwrap();
         let result = controller.apply().await;
         controller.publish_apply_result(&result).unwrap();
         result.unwrap_or_else(|error| panic!("linked fixture update failed: {error:#}"));
