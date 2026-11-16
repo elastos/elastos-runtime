@@ -61,7 +61,7 @@ function watchConnection() {
       }
       if (permissionStatus !== previousPermission || saved && permissionStatus === 'granted') {
         if (permissionStatus === 'refused') showStatus("Internet access for WalletConnect was refused. Select Allow in Inbox, then Connect wallet.", "muted");
-        if (permissionStatus === 'granted' && (saved || ['requested','refused','revoked'].includes(previousPermission))) showStatus("Internet access is allowed. Select Connect wallet to continue.", "muted");
+        if (permissionStatus === 'granted' && !hostEffectInFlight && (saved || ['requested','refused','revoked'].includes(previousPermission))) showStatus("Internet access is allowed. Select Connect wallet to continue.", "muted");
       }
       document.querySelector("#wallet-connection").textContent = current.status === "connected" ? "Connected" : "Disconnected";
       if (current.status === "connected" && connectionRevision !== undefined && connectionRevision !== current.revision) {
