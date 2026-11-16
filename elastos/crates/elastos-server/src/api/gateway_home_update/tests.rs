@@ -1886,6 +1886,7 @@ async fn update_notice_task_simulated_clock_spread_wake_failures_and_restart_off
             1,
             "found before System opened"
         );
+        cache.lock().await.expire_response();
         notice_tick(&clock, 1360 + 21600 + 3599).await;
         assert_eq!(calls.load(Ordering::SeqCst), 1, "six hours plus spread");
         // Expire only System's monotonic response TTL; worker schedule uses wall time.
@@ -1931,6 +1932,7 @@ async fn update_notice_task_simulated_clock_spread_wake_failures_and_restart_off
                 .await;
             });
             tokio::task::yield_now().await;
+            cache.lock().await.expire_response();
             notice_tick(&clock, clock.load(Ordering::SeqCst) + 100000).await;
             assert_eq!(
                 calls.load(Ordering::SeqCst),
@@ -2098,6 +2100,7 @@ async fn update_notice_task_signed_stable_test_head_unreachable_and_normal_retri
             confirmed,
             "unreachable retains dated confirmation"
         );
+        cache.lock().await.expire_response();
         notice_tick(&wall, 1180 + 21600 + 3600).await;
         assert_eq!(
             calls.load(Ordering::SeqCst),
@@ -2119,6 +2122,7 @@ async fn update_notice_task_signed_stable_test_head_unreachable_and_normal_retri
             .as_str()
             .unwrap()
             .starts_with("Could not check"));
+        cache.lock().await.expire_response();
         notice_tick(&wall, 1180 + 43200 + 3600).await;
         assert_eq!(
             calls.load(Ordering::SeqCst),
@@ -2280,6 +2284,7 @@ async fn update_notice_unreadable_state_keeps_background_off_and_offer_hidden() 
                 .await;
             });
             tokio::task::yield_now().await;
+            cache.lock().await.expire_response();
             notice_tick(&wall, 100000).await;
             assert_eq!(calls.load(Ordering::SeqCst), 0);
             assert!(notice_list(&app, &inbox).await.is_empty());
