@@ -1,14 +1,36 @@
+const networks = new Map([[1,'Ethereum'],[20,'Elastos Smart Chain'],[8453,'Base'],[11155111,'Sepolia test network']]);
+const noSupportedNetwork = 'Your wallet did not approve a network this Home supports. Connect again and choose Ethereum, Elastos Smart Chain, Base or Sepolia in your wallet.';
+const connectionFailed = 'The wallet connection failed. Select Connect wallet to try again.';
+const approvedNetworks = provider => {
+  const namespace = provider.session?.namespaces?.eip155;
+  return new Set([...(namespace?.chains || []), ...(namespace?.accounts || []).map(account => account.split(':').slice(0,2).join(':'))]);
+};
 // This module runs only in the connector's opaque frame. Runtime owns approval authority.
 export function createWalletConnectClient({ api, origin, loadAdapter = () => import(`./vendor/reown-appkit.js?instance=${crypto.randomUUID()}`), clearMemory = () => {} }) {
-  let provider, adapter, activeRevision, sessionApi, generation = 0;
+  let provider, adapter, activeRevision, sessionApi, projectId, generation = 0;
+  const sdkError = error => {
+    console.error('WalletConnect SDK:', String(error?.message || error).split(projectId || '\0').join('[project]'));
+    return new Error(['Wallet connection cancelled.','The QR code expired. Select Connect wallet for a new one.'].includes(error?.message) ? error.message : connectionFailed);
+  };
+  const requireNetwork = namespace => {
+    if (!approvedNetworks(provider).has(namespace)) {
+      const name = networks.get(Number(namespace.split(':')[1])) || namespace;
+      throw new Error(`This request is for ${name}, which your wallet did not approve. Connect again and approve ${name}.`);
+    }
+  };
+  const request = async (input, expiry) => {
+    requireNetwork(`eip155:${provider.chainId}`);
+    try { return await provider.request(input, expiry); }
+    catch (error) { throw sdkError(error); }
+  };
   const address = async () => {
-    const accounts = await provider.request({method:'eth_accounts'});
+    const accounts = await request({method:'eth_accounts'});
     const value = accounts?.[0];
     if (!/^0x[0-9a-fA-F]{40}$/.test(value || '')) throw new Error('Select an account in your phone wallet.');
     return value;
   };
   const chain = async () => {
-    const value = await provider.request({method:'eth_chainId'});
+    const value = await request({method:'eth_chainId'});
     // The pinned WalletConnect provider returns a number; EIP-1193 wallets use hex.
     const id = typeof value === 'number' ? value
       : typeof value === 'string' && /^0x[0-9a-fA-F]+$/.test(value) ? Number(value) : NaN;
@@ -40,11 +62,17 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     sessionApi = (resource, init={}) => api(resource, ['storage','relay-admission'].includes(resource)
       ? {...init,headers:{...init.headers,'if-match':revision}} : init);
     adapter ??= await loadAdapter();
-    const current = await adapter.connectWalletConnectEvm({
+    projectId = config.walletconnect.project_id;
+    let current;
+    try { current = await adapter.connectWalletConnectEvm({
       contextKey:'wallet-walletconnect', projectId:config.walletconnect.project_id, chains:[1,20,8453,11155111], api:sessionApi,
       runtimeUrl:`${origin}/api/apps/wallet-walletconnect`, relayUrl:`${origin.replace(/^http/,'ws')}/api/apps/wallet-walletconnect/relay`,
-      metadata:{name:'ElastOS Home',description:'Runtime wallet approval',url:origin,icons:[]},
-    });
+      metadata:{name:'ElastOS Home',description:'Approve requests from your ElastOS Home',url:origin,icons:[]},
+    }); } catch (error) { throw sdkError(error); }
+    const approved = approvedNetworks(current);
+    const supported = [...networks.keys()].filter(id => approved.has(`eip155:${id}`));
+    if (!supported.length) { await disconnect(); throw new Error(noSupportedNetwork); }
+    if (!supported.includes(current.chainId)) current.signer.setDefaultChain(`eip155:${supported[0]}`);
     if (current !== provider) {
       provider = current;
       for (const name of ['accountsChanged','chainChanged','disconnect']) provider.on(name,()=>generation++);
@@ -78,7 +106,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
           || !Number.isSafeInteger(challenge.expires_at) || challenge.expires_at <= Date.now()/1000) throw new Error('Wallet changed or the challenge expired. Connect again.');
       };
       await check();
-      const signature = await provider.request({method:'personal_sign',params:[signData(challenge.message),signer]});
+      const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]});
       await check();
       await api('/api/auth/evm/verify',{method:'POST',body:JSON.stringify({message:challenge.message,signature})});
       return {status:'linked'};
@@ -87,6 +115,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     const path = `wallet/approvals/${encodeURIComponent(action.approvalRequestId)}`;
     const requests = (await api('wallet/approvals')).approval_requests || [];
     const review = requests.find(r=>r.request_id === action.approvalRequestId);
+    if (review) requireNetwork(review.chain_namespace);
     if (!review || review.status !== 'pending' || !same(review.address,signer) || review.chain_namespace !== namespace) throw new Error('Select the requested account and network in your phone wallet, then review again.');
     const ttl = review.expires_at - Math.ceil(Date.now()/1000);
     if (!Number.isSafeInteger(review.expires_at) || ttl <= 0 || review.intent === 'transaction_intent' && ttl < 300) throw new Error('Wallet request expires soon. Request a fresh review.');
@@ -106,8 +135,9 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     const expiry = await check();
     if (handoff.intent === 'transaction_intent') {
       const transaction = handoff.transaction;
+      if (transaction) requireNetwork(`eip155:${Number.parseInt(transaction.chainId,16)}`);
       if (!transaction || !same(transaction.from,signer) || `eip155:${Number.parseInt(transaction.chainId,16)}` !== namespace) throw new Error('Runtime returned an invalid transaction.');
-      const hash = await provider.request({method:'eth_sendTransaction',params:[transaction]},expiry);
+      const hash = await request({method:'eth_sendTransaction',params:[transaction]},expiry);
       if (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Wallet returned an invalid transaction hash. The wallet may have sent it. Check your wallet before sending again.');
       // A returned hash is retained even if the account, network or expiry changed while sending.
       let receipt;
@@ -117,7 +147,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     }
     if (handoff.signature_type !== 'personal_sign' || typeof handoff.message !== 'string') throw new Error('Runtime returned an invalid signature request.');
     const method = 'personal_sign';
-    const signature = await provider.request({method,params:[signData(handoff.message),signer]},expiry);
+    const signature = await request({method,params:[signData(handoff.message),signer]},expiry);
     await check();
     await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:'personal_sign'})});
     return {status:'completed',effect:'signature'};

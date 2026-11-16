@@ -11,7 +11,7 @@ export async function exerciseWalletConnect(scenario='valid') {
   const message=scenario==='link-uppercase-hex'?'0X4142':scenario==='link-odd-hex'?'0x123':'Runtime ownership proof · fixture';
   const change=()=>{changed=true;if(kind==='account-change-during-send')events.get('accountsChanged')?.([]);
     if(kind==='chain-change-during-send')events.get('chainChanged')?.('0x1');if(kind==='expired-during-send')Date.now=()=>clock()+601000;};
-  const provider={connected:true,session:{expiry:clock()/1000+3600,namespaces:{eip155:{methods:scenario==='typed-unavailable'?['personal_sign']:['personal_sign','eth_sendTransaction','eth_signTypedData_v4']}}},signer:{client:{core:{relayer:{connected:true}}}},
+  const provider={chainId:20,connected:true,session:{expiry:clock()/1000+3600,namespaces:{eip155:{chains:['eip155:1','eip155:20'],accounts:[`eip155:20:${address}`],methods:scenario==='typed-unavailable'?['personal_sign']:['personal_sign','eth_sendTransaction','eth_signTypedData_v4']}}},signer:{client:{core:{relayer:{connected:true}}}},
     on:(name,fn)=>events.set(name,fn),async request(input,expiry){calls.push({...input,expiry});
       if(input.method==='eth_accounts')return [scenario==='wrong-account'||changed&&kind==='account-change-during-send'?`0x${'ab'.repeat(20)}`:address];
       if(input.method==='eth_chainId'&&scenario.startsWith('numeric-chain'))return 20;

@@ -24,7 +24,7 @@ test('a reset creates a fresh SDK API while old SDK writes keep their stale revi
   const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
   let revision='"0"',loads=0,disconnects=0;const sessions=[];
   const signer=`0x${'12'.repeat(20)}`;
-  const provider={on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture-signature'};
+  const provider={chainId:20,session:{namespaces:{eip155:{chains:['eip155:20']}}},on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture-signature'};
   const api=async(path,input)=>{
     if(path==='wallet/config')return {walletconnect:{project_id:'fixture-project',storage_revision:revision}};
     if(path==='internet')return {status:'granted'};
@@ -51,7 +51,7 @@ test('a stalled old SDK disconnect cannot block a new storage generation',async 
   t.mock.timers.enable({apis:['setTimeout']});
   const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
   let revision='"0"',loads=0;const signer=`0x${'12'.repeat(20)}`;
-  const provider={on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture'};
+  const provider={chainId:20,session:{namespaces:{eip155:{chains:['eip155:20']}}},on(){},request:async({method})=>method==='eth_accounts'?[signer]:method==='eth_chainId'?'0x14':'fixture'};
   const api=async path=>path==='wallet/config'?{walletconnect:{project_id:'fixture',storage_revision:revision}}:
     path==='internet'?{status:'granted'}:path.endsWith('/challenge')?{message:'fixture',expires_at:Date.now()/1000+600|0}:{};
   const client=createWalletConnectClient({api,origin:'http://localhost',loadAdapter:async()=>{loads++;return {

@@ -16,8 +16,8 @@ export async function connectWalletConnectEvm(options) {
   provider ??= await EthereumProvider.init({
     projectId: options.projectId,
     customStoragePrefix: options.contextKey,
-    chains: [options.chains[0]],
-    optionalChains: options.chains.slice(1),
+    chains: [],
+    optionalChains: options.chains,
     methods: ["personal_sign", "eth_sendTransaction"],
     optionalMethods: [],
     disableProviderPing: true,
