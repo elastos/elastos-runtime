@@ -1812,8 +1812,6 @@ async fn update_notice_task_simulated_clock_spread_wake_failures_and_restart_off
     let dir = tempfile::tempdir().unwrap();
     let app = gateway_router(test_state(dir.path()));
     configure_update_summary(dir.path());
-    let owner = passkey_authority_with_name(dir.path(), Some("notice-clock"));
-    let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
     let clock = Arc::new(AtomicU64::new(1000));
     let calls = Arc::new(AtomicUsize::new(0));
     let cache = UPDATE_CHECK.get_or_init(|| tokio::sync::Mutex::new(UpdateCheckCache::default()));
@@ -1841,6 +1839,9 @@ async fn update_notice_task_simulated_clock_spread_wake_failures_and_restart_off
     assert_eq!(calls.load(Ordering::SeqCst), 0, "first spread applied");
     notice_tick(&clock, 1360).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // The task found the release before this Home had any account or login.
+    let owner = passkey_authority_with_name(dir.path(), Some("notice-clock"));
+    let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
     assert_eq!(
         notice_list(&app, &inbox).await.len(),
         1,
