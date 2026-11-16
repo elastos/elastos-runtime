@@ -500,6 +500,12 @@ try {
   );
   await waitFor(() => frameFor(page, "home-gui"), 15_000, "real Home GUI frame");
   const homeGui = frameFor(page, "home-gui");
+  const windowPolicy = await homeGui.evaluate(async () => {
+    const {supportsMenuNewWindow} = await import("./shell-windows.js?v=home-20261101d");
+    return {browser:supportsMenuNewWindow("browser"),library:supportsMenuNewWindow("library"),walletconnect:supportsMenuNewWindow("wallet-walletconnect")};
+  });
+  assert(windowPolicy.browser === false && windowPolicy.library === true && windowPolicy.walletconnect === false,
+    "real Home menu policy follows the projected capsule metadata", windowPolicy);
   await homeGui.locator('#launcher-toggle').click();
   await homeGui.locator('#launcher-grid [data-target="wallet"]').click();
   await waitFor(() => frameFor(page, "wallet"), 15_000, "real Wallet frame");

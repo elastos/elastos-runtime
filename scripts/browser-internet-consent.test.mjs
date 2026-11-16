@@ -39,6 +39,7 @@ async function screen(page, name) {
 async function fixture(service = "browser") {
   const walletconnect = service === "walletconnect";
   const prefix = walletconnect ? "walletconnect-internet" : "browser-internet";
+  const grantedId = walletconnect ? "fixture" : "fixture-grant";
   const kind = walletconnect ? "walletconnect_internet" : "browser_internet";
   const internetPath = walletconnect ? "/api/apps/wallet-walletconnect/internet" : "/api/apps/browser/internet";
   const state = {consent:"off", expired:false, grantedRequestId:"fixture", requests:0, reads:0, opens:[], actions:[]};
@@ -69,7 +70,7 @@ async function fixture(service = "browser") {
       if(input?.action === "revoke") {assert.equal(input.step_up_token,"fixture-step-up");state.consent="revoked";}
       if (input?.action === "end") {json({status:"ended"});return;}
       if (input?.action === "request") {state.requests++;state.consent="requested";state.expired=false;await state.requestBarrier;}
-      json({status:state.consent,request_id:state.consent==="granted"?state.grantedRequestId:undefined,request:state.expired?null:{resource:`elastos://${service}/internet`,grant_id:"fixture-grant",request_id:"fixture",text:consentText,expires_at:Math.floor(Date.now()/1000)+3600}});return;
+      json({status:state.consent,request_id:state.consent==="granted"?state.grantedRequestId:undefined,request:state.expired?null:{resource:`elastos://${service}/internet`,...(walletconnect?{id:"fixture",issued_at:1794312000}:{grant_id:"fixture-grant",request_id:"fixture"}),text:consentText,expires_at:Math.floor(Date.now()/1000)+3600}});return;
     }
     if (url.pathname === "/api/apps/inbox/summary") {
       const pending=state.consent === "requested";
@@ -77,7 +78,7 @@ async function fixture(service = "browser") {
       json({notifications:{unread_count:pending?1:0,attention_count:pending?1:0,entries:[{
         id:`${prefix}:permission`,source_app:walletconnect?"wallet-walletconnect":"browser",kind:`${kind}_${pending?"request":"decision"}`,
         title:pending?"Allow Browser to use the internet?":"Browser internet access",body,severity:pending?"attention":"info",read:!pending,created_at:1794312000,
-        action_ref:{app:"inbox",action_id:pending?`${prefix}-allow:fixture`:state.consent==="granted"?`${prefix}-turn-off:fixture-grant`:`${prefix}-request`},
+        action_ref:{app:"inbox",action_id:pending?`${prefix}-allow:fixture`:state.consent==="granted"?`${prefix}-turn-off:${grantedId}`:`${prefix}-request`},
       }]}});return;
     }
     if (url.pathname === "/api/apps/inbox/actions") {
@@ -85,7 +86,7 @@ async function fixture(service = "browser") {
       if(input.action_id === `${prefix}-allow:fixture`) {
         assert.equal(input.step_up_token,"fixture-step-up");state.consent="granted";
       } else if(input.action_id === `${prefix}-deny:fixture`) state.consent="refused";
-      else if(input.action_id === `${prefix}-turn-off:fixture-grant`) {assert.equal(input.step_up_token,"fixture-step-up");state.consent="revoked";}
+      else if(input.action_id === `${prefix}-turn-off:${grantedId}`) {assert.equal(input.step_up_token,"fixture-step-up");state.consent="revoked";}
       json({ok:true});return;
     }
     if (url.pathname === "/api/apps/browser/summary") {
@@ -342,14 +343,14 @@ test("Inbox manages active and off grants with confirmation, passkey and retaine
     const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn Off",exact:true});
     await off.waitFor({timeout:3000});await screen(page,"inbox-decided-allowed");
     await off.click();await frame.locator("dialog[open]").waitFor();
-    assert.equal(await frame.locator('dialog [value="cancel"]').evaluate(e=>e===document.activeElement),true);
+    assert.equal(await frame.locator('#browser-internet-confirm [value="cancel"]').evaluate(e=>e===document.activeElement),true);
     await screen(page,"inbox-confirm");
     await frame.getByRole("button",{name:"Cancel",exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>approvals),[]);assert.equal(f.state.consent,"granted");
-    await page.evaluate(()=>passkeyAllowed=false);await off.click();await frame.locator('dialog [value="off"]').click();
+    await page.evaluate(()=>passkeyAllowed=false);await off.click();await frame.locator('#browser-internet-confirm [value="off"]').click();
     await page.waitForFunction(()=>approvals.length===1);
     await frame.locator('#entry-detail button:not(:disabled)').waitFor();assert.equal(f.state.consent,"granted");assert.equal(f.state.actions.length,0);
-    await page.evaluate(()=>passkeyAllowed=true);await off.click();await frame.locator('dialog [value="off"]').click();
+    await page.evaluate(()=>passkeyAllowed=true);await off.click();await frame.locator('#browser-internet-confirm [value="off"]').click();
     await frame.locator("#entry-detail .entry-body").filter({hasText:/Browser cannot open websites. Turned off on/}).waitFor();
     assert.equal(f.state.requests,0);assert.equal(await frame.locator("#pending-count").innerText(),"0");await screen(page,"inbox-turned-off");
     await page.reload();await frame.locator("#entry-detail .entry-body").filter({hasText:/Turned off on/}).waitFor();
@@ -416,19 +417,32 @@ test("WalletConnect Inbox keeps requests pending, uses passkey consent and separ
       assert.equal(await frame.locator("#pending-count").innerText(),"0");
       assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant"]);
       await page.waitForFunction(()=>messages.some(m=>m.type==='home:open-target' && m.target==='wallet-walletconnect' && Object.keys(m.query).length===0));
-      await frame.getByRole("button",{name:"Turn Off",exact:true}).click();
-      await frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor({state:"hidden"});
+      const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn Off",exact:true});
+      await off.click();
+      const confirm=frame.locator("#walletconnect-internet-confirm");
+      assert.equal(await confirm.locator('[value="cancel"]').evaluate(e=>e===document.activeElement),true);
+      await confirm.getByRole("button",{name:"Cancel",exact:true}).click();
+      assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant"]);
+      await off.click();await confirm.getByRole("button",{name:"Turn Off",exact:true}).click();
+      await off.waitFor({state:"hidden"});
       assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant","walletconnect.internet.revoke"]);
       assert.equal(f.state.consent,"revoked");
+      await frame.locator("#entry-detail").getByRole("button",{name:"Allow",exact:true}).click();
+      await off.waitFor();
+      assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant","walletconnect.internet.revoke","walletconnect.internet.grant"]);
       await page.close();
     }
     f.state.consent="requested";f.state.actions=[];
     const page=await browser.newPage();await page.goto(f.url+"?app=inbox");
     const frame=page.frameLocator("iframe");
     await frame.getByRole("button",{name:"Don't Allow",exact:true}).click();
-    await frame.getByRole("button",{name:"Allow",exact:true}).waitFor({state:"hidden"});
+    const allow=frame.getByRole("button",{name:"Allow",exact:true});
+    await allow.waitFor();
     assert.equal(f.state.consent,"refused");
     assert.deepEqual(await page.evaluate(()=>approvals),[]);
+    await allow.click();
+    await frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
+    assert.equal(f.state.consent,"granted");
     await page.close();
   } finally {await browser.close();await f.close();}
 });
