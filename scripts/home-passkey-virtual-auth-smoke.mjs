@@ -26,6 +26,9 @@ import { runBrowserOperatorJourney } from "./lib/browser-journey-operator.mjs";
 import { qualificationOptions, createQualificationHarness, createQualificationCancellation, qualificationInteraction } from "./lib/browser-qualification-observer.mjs";
 import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
+import { cleanupVirtualPasskey, shouldRetainVirtualAuthProfile,
+  VIRTUAL_AUTH_PROFILE_CLEANUP_INSTRUCTION } from "./lib/virtual-auth-cleanup.mjs";
+
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
 const { chromium } = require("playwright");
 
@@ -5667,19 +5670,21 @@ async function main() {
       return cleanupResult || { skipped: !created?.created || !CLEANUP_PASSKEY };
     }
     cleanupAttempted = true;
-    assert(passkey?.proof_binding_id, "Test passkey cleanup needs its recorded proof binding");
-    // Sign-out invalidates the earlier Home token. Recover authority, then
-    // check ownership before revoking the one passkey created by this run.
-    const refreshed = await refreshCurrentHomeToken(page);
-    const cleanupToken = refreshed.ok && refreshed.homeToken
-      ? refreshed.homeToken : await signBackIn(page);
-    const authenticated = await currentPasskey(page, cleanupToken);
-    assert(
-      authenticated?.proof_binding_id === passkey.proof_binding_id,
-      "Cleanup authentication selected a different passkey; test credential retained",
-      { expected: passkey.proof_binding_id, current: authenticated?.proof_binding_id },
-    );
-    cleanupResult = await revokeCurrentPasskey(page, passkey.proof_binding_id, cleanupToken);
+    cleanupResult = await cleanupVirtualPasskey(created, async () => {
+      assert(passkey?.proof_binding_id, "Test passkey cleanup needs its recorded proof binding");
+      // Sign-out invalidates the earlier Home token. Recover authority, then
+      // check ownership before revoking the one passkey created by this run.
+      const refreshed = await refreshCurrentHomeToken(page);
+      const cleanupToken = refreshed.ok && refreshed.homeToken
+        ? refreshed.homeToken : await signBackIn(page);
+      const authenticated = await currentPasskey(page, cleanupToken);
+      assert(
+        authenticated?.proof_binding_id === passkey.proof_binding_id,
+        "Cleanup authentication selected a different passkey; test credential retained",
+        { expected: passkey.proof_binding_id, current: authenticated?.proof_binding_id },
+      );
+      return revokeCurrentPasskey(page, passkey.proof_binding_id, cleanupToken);
+    });
     return cleanupResult;
   }
   try {
@@ -5816,9 +5821,10 @@ async function main() {
     } catch (error) {
       credentialSaveError = String(error.message || error);
     }
-    const retainForRecovery = cleanupResult?.ok !== true && (
-      created?.created || (credentialStore.credential_count || 0) > 0 || credentialSaveError
-    );
+    const retainForRecovery = shouldRetainVirtualAuthProfile({
+      created, cleanup: cleanupResult,
+      credentialCount: credentialStore.credential_count || 0, credentialSaveError,
+    });
     if (retainForRecovery) {
       const recovery = {
         schema: "elastos.home.virtual-authenticator-recovery/v1",
@@ -5832,7 +5838,7 @@ async function main() {
         proof_binding_id: passkey?.proof_binding_id || null,
         cleanup: cleanupResult || { skipped: !CLEANUP_PASSKEY },
         failure,
-        cleanup_condition: "Keep this profile until its test passkey is revoked in Home. Set HOME_VIRTUAL_AUTH_PROFILE to this profile_dir and use the same HOME_URL to restore its authenticator.",
+        cleanup_condition: VIRTUAL_AUTH_PROFILE_CLEANUP_INSTRUCTION,
       };
       const recoveryPath = join(PROFILE_DIR, "elastos-virtual-authenticator-recovery.json");
       try {
@@ -5843,7 +5849,9 @@ async function main() {
         console.error(`Could not save recovery receipt: ${error.message || error}`);
         process.exitCode = 1;
       }
-      console.error("Virtual passkey profile retained until credential cleanup completes");
+      console.error(cleanupResult?.retained
+        ? "First owner passkey and virtual authenticator profile kept"
+        : "Virtual passkey profile retained until credential cleanup completes");
       console.error(JSON.stringify(redactSensitive({ recovery_path: recoveryPath, ...recovery }), null, 2));
     }
     await context.close().catch(() => {});

@@ -6496,10 +6496,21 @@ fn active_passkey(principal: &PrincipalRecord) -> bool {
         .is_some_and(|passkey| passkey.revoked_at.is_none())
 }
 
+#[derive(Debug)]
+pub(crate) struct LastAdminPasskeyRemovalDenied;
+
+impl std::fmt::Display for LastAdminPasskeyRemovalDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Add another admin passkey before removing this one.")
+    }
+}
+
+impl std::error::Error for LastAdminPasskeyRemovalDenied {}
+
 /// Removes one passkey in one auth write. The actor's passkey, the permission
 /// and the last-admin rule are checked under the same lock as the
-/// revocation, so two concurrent removals cannot both pass and leave guests
-/// without an admin. A passkey already revoked returns its record unchanged,
+/// revocation, so two concurrent removals cannot both pass and leave the Home
+/// without an admin passkey. A passkey already revoked returns its record unchanged,
 /// so a retry can finish removing its credential.
 pub fn revoke_passkey_for_actor(
     data_dir: &Path,
@@ -6541,9 +6552,8 @@ pub fn revoke_passkey_for_actor(
         };
         if target.role == RuntimePrincipalRole::Admin
             && !others().any(|principal| principal.role == RuntimePrincipalRole::Admin)
-            && others().next().is_some()
         {
-            anyhow::bail!("last admin passkey cannot be removed while guest passkeys remain");
+            return Err(LastAdminPasskeyRemovalDenied.into());
         }
         revoke_binding_in_state(state, proof_binding_id, revoked_at)
     })

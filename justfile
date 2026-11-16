@@ -240,6 +240,7 @@ product-ui-browser:
 product-ui-capsule-browser:
     cd elastos && cargo test --workspace content_sandbox_browser_capsule_scripts -- --ignored --nocapture
 
+# Virtual passkey smoke: keeps a first owner and its profile; removes created guests.
 product-ui-virtual-auth:
     HOME_VIRTUAL_AUTH_APP_MATRIX=1 node scripts/home-passkey-virtual-auth-smoke.mjs
 

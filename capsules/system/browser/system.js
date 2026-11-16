@@ -37,6 +37,8 @@ const uiSoundsInput = document.querySelector("#ui-sounds");
 const passkeyStatusNode = document.querySelector('[data-field="passkey-status"]');
 const accountListNode = document.querySelector("#account-list");
 const passkeyAddButton = document.querySelector("#passkey-add");
+const passkeyRemoveDialog = document.querySelector("#passkey-remove-dialog");
+const LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE = "Add another admin passkey before removing this one.";
 const recoveryDownloadButton = document.querySelector("#recovery-download");
 const recoveryProfileSetup = document.querySelector("#recovery-profile-setup");
 const recoveryProfileName = document.querySelector("#recovery-profile-name");
@@ -415,6 +417,7 @@ async function fetchJson(url, init) {
     const suffix = detail.trim() ? ` ${detail.trim()}` : ` ${response.statusText}`;
     const error = new Error(`request failed: ${response.status}${suffix}`);
     error.status = response.status;
+    error.detail = detail.trim();
     throw error;
   }
   return response.json();
@@ -2532,7 +2535,6 @@ function renderAccounts(accounts) {
   const body = document.createElement("tbody");
   for (const account of activeAccounts) {
     body.append(accountRow(account, {
-      activeCount: activeAccounts.length,
       adminPasskeyCount,
       adminAccountCount,
       currentPrincipalId,
@@ -2608,12 +2610,19 @@ function accountRow(passkey, listState = {}) {
   remove.textContent = "Remove";
   remove.dataset.passkeyRevoke = passkey.proof_binding_id || "";
   remove.dataset.current = passkey.current ? "true" : "false";
+  remove.dataset.accountName = readText(passkey.display_name);
+  remove.dataset.ownAccount = passkey.current || ownAccount ? "true" : "false";
   const protectsLastAdmin = readText(passkey.role) === "admin"
-    && Number(listState.adminPasskeyCount) <= 1
-    && Number(listState.activeCount) > 1;
+    && Number(listState.adminPasskeyCount) <= 1;
   remove.disabled = !remove.dataset.passkeyRevoke || !hasShellAccess() || protectsLastAdmin;
   if (protectsLastAdmin) {
-    remove.title = "Remove guest passkeys before removing the last admin.";
+    const explanation = document.createElement("p");
+    explanation.className = "passkey-removal-note";
+    explanation.id = `passkey-removal-${passkey.proof_binding_id}`;
+    explanation.textContent = LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE;
+    nameWrap.append(explanation);
+    remove.title = explanation.textContent;
+    remove.setAttribute("aria-describedby", explanation.id);
   }
   actions.append(remove);
 
@@ -2652,7 +2661,7 @@ async function onAccountListClick(event) {
     "[data-passkey-demote]",
     "[data-passkey-revoke]",
   ].join(", "));
-  if (!button || !hasShellAccess()) {
+  if (!button || button.disabled || !hasShellAccess() || passkeyRemoveDialog.open) {
     return;
   }
   const promote = Boolean(button.dataset.passkeyPromote);
@@ -2670,9 +2679,13 @@ async function onAccountListClick(event) {
     return;
   }
   const revokingCurrent = button.dataset.current === "true";
-  button.disabled = true;
-  showPasskeyStatus(promote || demote ? "Updating" : "Removing", "muted");
   try {
+    if (!promote && !demote && !await confirmPasskeyRemoval(button)) {
+      button.focus();
+      return;
+    }
+    button.disabled = true;
+    showPasskeyStatus(promote || demote ? "Updating" : "Removing", "muted");
     await fetchJson(`/api/auth/passkeys/${encodeURIComponent(proofBindingId)}/${action}`, {
       method: "POST",
       headers: shellHeaders(),
@@ -2687,9 +2700,40 @@ async function onAccountListClick(event) {
     }
     notifyHomeSummaryChanged();
   } catch (error) {
-    showPasskeyStatus(String(error.message || error), "error");
+    const lastAdminRefusal = !promote && !demote && error.status === 409
+      && error.detail === LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE;
+    showPasskeyStatus(String(lastAdminRefusal ? error.detail : error.message || error), "error");
     button.disabled = false;
+    if (error.status === 409) {
+      try {
+        await refreshAccountList();
+      } catch (refreshError) {
+        showPasskeyStatus(refreshError, "error");
+      }
+    }
   }
+}
+
+function confirmPasskeyRemoval(button) {
+  const ownAccount = button.dataset.ownAccount === "true";
+  const accountName = readText(button.dataset.accountName);
+  passkeyRemoveDialog.querySelector('[data-field="passkey-remove-person"]').textContent =
+    ownAccount ? "Remove your passkey from this Home?"
+      : accountName ? `Remove the passkey for ${accountName} from this Home?`
+        : "Remove this passkey from this Home?";
+  const currentNote = passkeyRemoveDialog.querySelector('[data-field="passkey-remove-current"]');
+  currentNote.hidden = button.dataset.current !== "true";
+  passkeyRemoveDialog.querySelector('[data-field="passkey-remove-copy"]').textContent =
+    ownAccount
+      ? "If a copy remains on your device, security key or in your password manager, you can delete it there."
+      : "If a copy remains on their device, security key or in their password manager, they can delete it there.";
+  passkeyRemoveDialog.returnValue = "cancel";
+  return new Promise((resolve) => {
+    passkeyRemoveDialog.addEventListener("close", () => {
+      resolve(passkeyRemoveDialog.returnValue === "remove");
+    }, { once: true });
+    passkeyRemoveDialog.showModal();
+  });
 }
 
 async function onPasskeyAdd() {
