@@ -5691,26 +5691,15 @@ async fn linked_start_controller_fixture() {
         let (_, server, serving) =
             crate::setup::tests::carrier_cid_source(&data, &source, items).await;
         queue_update(&data, request).unwrap();
-        // Keep the queued request lifecycle, but observe apply's full error
-        // before publish_apply_result reduces it to a user-facing message.
-        let queued = controller.directory.join(REQUEST);
-        controller.request = Some(read_private_json(&queued).unwrap());
-        let active = controller.directory.join(ACTIVE_REQUEST);
-        assert!(!path_present(&active).unwrap());
-        fs::rename(queued, active).unwrap();
-        File::open(&controller.directory)
-            .unwrap()
-            .sync_all()
-            .unwrap();
-        controller
-            .publish("staging", "Checking the signed update.")
-            .unwrap();
-        let result = controller.apply().await;
-        controller.publish_apply_result(&result).unwrap();
-        result.unwrap_or_else(|error| panic!("linked fixture update failed: {error:#}"));
-        assert!(controller.host_ready);
-        controller.finish_request().unwrap();
-        let update_status = status(&data).unwrap().unwrap();
+        let processed = controller.process_request().await;
+        let update_status = status(&data);
+        let keep_running = processed.unwrap_or_else(|error| {
+            panic!(
+                "linked fixture process_request failed: {error:#}; published status: {update_status:#?}"
+            )
+        });
+        assert!(keep_running, "published status: {update_status:#?}");
+        let update_status = update_status.unwrap().unwrap();
         assert_eq!(update_status.phase, "updated", "{update_status:#?}");
         server.close().await;
         serving.await.unwrap();
