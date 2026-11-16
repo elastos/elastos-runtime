@@ -198,6 +198,7 @@ const backgroundImage = createHomeBackgroundImage({
   onError: () => showBackgroundStatus("Home could not load the image. Close System and open it to retry.", "error"),
 });
 
+configureUpdateNotice();
 boot().catch((error) => {
   console.error("system boot failed", error);
   showError(error);
@@ -225,7 +226,6 @@ async function boot() {
   configureTechnicalDetails();
   configureDeviceDidCopy();
   configureRuntimeUpdate();
-  configureUpdateNotice();
   initialRecoveryState = (async () => {
     await refreshSystemSummary();
     await refreshActiveShell().catch((error) => showActiveShellStatus(String(error.message || error), "error"));
