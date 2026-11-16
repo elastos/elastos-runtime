@@ -22,55 +22,72 @@ const api = (resource, init={}) => fetchJson(resource.startsWith('/api/') ? runt
   ...init, headers:shellHeaders({...init.headers,'content-type':'application/json'}),
 });
 const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory});
-window.addEventListener('focus',()=>refreshWalletState().catch(()=>{}));
+window.addEventListener('focus',refreshReturnedWindow);
 window.addEventListener('message', event => {
   if (event.source !== window.parent || event.origin !== 'null' || event.data?.type !== 'elastos:shell-layout') return;
-  if (event.data.layout?.visible === true) refreshWalletState().catch(()=>{});
+  if (event.data.layout?.visible === true) refreshReturnedWindow();
 });
 let connectionTimer;
 let connectionInterval;
 let permissionPending = false;
 let permissionStatus;
 let connectionRevision;
+let connectionReturnPending = false;
 function watchConnection() {
   if (!frameHomeToken || typeof window.setInterval !== "function") return;
   const interval = pendingEffect || permissionPending || document.querySelector('dialog[open]') ? 1000 : 5000;
   if (connectionTimer && connectionInterval === interval) return;
   window.clearInterval(connectionTimer);
   connectionInterval = interval;
-  connectionTimer = window.setInterval(async () => {
-    if (pendingEffect && (!pendingEffect.requestId || !Number.isFinite(pendingEffect.expiresAt) || pendingEffect.expiresAt <= Date.now())) pendingEffect = undefined;
-    if (connectionCheckInFlight) { watchConnection(); return; }
-    connectionCheckInFlight = true;
-    try {
-      const saved = pendingEffect;
-      const current = await connector.effect({ kind: "status" });
-      const previousPermission = permissionStatus;
-      permissionStatus = current.permission.status;
-      permissionPending = current.permission.status === "requested" && Boolean(current.permission.request);
-      if (saved && pendingEffect === saved && (!saved.requestId || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now() || current.permission.request?.id !== saved.requestId
-        || !['requested','granted'].includes(current.permission.status))) pendingEffect = undefined;
-      if (current.permission.status === 'granted' && pendingEffect && pendingEffect === saved && !hostEffectInFlight) {
-        const resume = pendingEffect.run;
-        pendingEffect = undefined;
-        resume();
-        return;
-      }
-      if (current.permission.status === 'revoked' && (hostEffectInFlight || document.querySelector("#wallet-connection").textContent === "Connected")) {
-        showStatus("Internet access for WalletConnect was turned off. Select Connect wallet to ask again.", "muted");
-      }
-      if (permissionStatus !== previousPermission || saved && permissionStatus === 'granted') {
-        if (permissionStatus === 'refused') showStatus("Internet access for WalletConnect was refused. Select Allow in Inbox, then Connect wallet.", "muted");
-        if (permissionStatus === 'granted' && !hostEffectInFlight && (saved || ['requested','refused','revoked'].includes(previousPermission))) showStatus("Internet access is allowed. Select Connect wallet to continue.", "muted");
-      }
-      document.querySelector("#wallet-connection").textContent = current.status === "connected" ? "Connected" : "Disconnected";
-      if (current.status === "connected" && connectionRevision !== undefined && connectionRevision !== current.revision) {
-        showStatus("Wallet changed. Check the account and network on your phone.", "muted");
-      }
-      connectionRevision = current.revision;
-    } catch { document.querySelector("#wallet-connection").textContent = "Disconnected"; }
-    finally { connectionCheckInFlight = false; watchConnection(); }
-  }, interval);
+  connectionTimer = window.setInterval(checkConnection, interval);
+}
+async function checkConnection() {
+  if (!frameHomeToken) return;
+  if (pendingEffect && (!pendingEffect.requestId || !Number.isFinite(pendingEffect.expiresAt) || pendingEffect.expiresAt <= Date.now())) pendingEffect = undefined;
+  if (connectionCheckInFlight) { watchConnection(); return; }
+  connectionCheckInFlight = true;
+  try {
+    const saved = pendingEffect;
+    const current = await connector.effect({ kind: "status" });
+    const previousPermission = permissionStatus;
+    permissionStatus = current.permission.status;
+    permissionPending = current.permission.status === "requested" && Boolean(current.permission.request);
+    if (saved && pendingEffect === saved && (!saved.requestId || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now() || current.permission.request?.id !== saved.requestId
+      || !['requested','granted'].includes(current.permission.status))) pendingEffect = undefined;
+    if (current.permission.status === 'granted' && pendingEffect && pendingEffect === saved && !hostEffectInFlight) {
+      const resume = pendingEffect.run;
+      pendingEffect = undefined;
+      resume();
+      return;
+    }
+    if (current.permission.status === 'revoked' && (hostEffectInFlight || document.querySelector("#wallet-connection").textContent === "Connected")) {
+      showStatus("Internet access for WalletConnect was turned off. Select Connect wallet to ask again.", "muted");
+    }
+    if (permissionStatus !== previousPermission || saved && permissionStatus === 'granted') {
+      if (permissionStatus === 'refused') showStatus("Internet access for WalletConnect was refused. Select Allow in Inbox, then Connect wallet.", "muted");
+      if (permissionStatus === 'granted' && !hostEffectInFlight && (saved || ['requested','refused','revoked'].includes(previousPermission))) showStatus("Internet access is allowed. Select Connect wallet to continue.", "muted");
+    }
+    document.querySelector("#wallet-connection").textContent = current.status === "connected" ? "Connected" : "Disconnected";
+    if (current.status === "connected" && connectionRevision !== undefined && connectionRevision !== current.revision) {
+      showStatus("Wallet changed. Check the account and network on your phone.", "muted");
+    }
+    connectionRevision = current.revision;
+  } catch { document.querySelector("#wallet-connection").textContent = "Disconnected"; }
+  finally {
+    connectionCheckInFlight = false;
+    watchConnection();
+    if (connectionReturnPending) {
+      connectionReturnPending = false;
+      checkConnection().catch(()=>{});
+    }
+  }
+}
+function refreshReturnedWindow() {
+  refreshWalletState().catch(()=>{});
+  // A return after Inbox must observe access now, including when an older
+  // status read is still finishing. Coalesce returns into one fresh read.
+  if (connectionCheckInFlight) connectionReturnPending = true;
+  else checkConnection().catch(()=>{});
 }
 new MutationObserver(watchConnection).observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['open']});
 

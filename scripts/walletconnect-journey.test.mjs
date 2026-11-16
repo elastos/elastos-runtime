@@ -398,7 +398,7 @@ for (const ending of ['decline','expiry','cancel','disconnect']) for (const retu
 // The page, window module, client, adapter and pinned SDK are production code.
 for (const journey of ['A','B']) test(`round18 ${journey}: the open window recovers after Allow`, {timeout:90000}, async t => {
   let status='granted', revision=journey==='A'?11:12, keys={}, requestId='installed-request', polls=0;
-  const failures=[];
+  const failures=[];let holdStatus=false,releaseStatus,statusHeld;
   const consent=()=>({status,request:['requested','granted'].includes(status)?{
     id:requestId,issued_at:Math.floor(Date.now()/1000),resource:'elastos://walletconnect/internet',
     text:status==='granted'?'Stop WalletConnect relay access on this computer.':
@@ -406,9 +406,11 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
   }:null});
   const server=http.createServer(async(req,res)=>{
     const path=new URL(req.url,'http://fixture').pathname;
+    res.setHeader('access-control-allow-origin','null');res.setHeader('access-control-allow-headers','content-type,x-elastos-home-token,if-match');res.setHeader('access-control-allow-methods','GET,POST,DELETE,OPTIONS');if(req.method==='OPTIONS'){res.writeHead(204).end();return;}
     const json=value=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(value));};
-    if(path==='/') {res.setHeader('content-type','text/html');res.end('<iframe id="wallet" style="border:0;width:100%;height:96vh" src="/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(`http://127.0.0.1:${server.address().port}`)+'#home_token=fixture-wallet"></iframe>');return;}
-    if(path.endsWith('/internet')) {if(req.method==='GET')polls++;if(req.method==='POST'&&!['requested','granted'].includes(status)){status='requested';requestId='replacement-request';}json(consent());return;}
+    if(path==='/') {res.setHeader('content-type','text/html');res.end('<iframe id="home" sandbox="allow-scripts" style="border:0;width:100%;height:96vh" src="/shell"></iframe>');return;}
+    if(path==='/shell') {res.setHeader('content-type','text/html');res.end('<iframe id="wallet" style="border:0;width:100%;height:94vh" src="/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(`http://127.0.0.1:${server.address().port}`)+'#home_token=fixture-wallet"></iframe>');return;}
+    if(path.endsWith('/internet')) {if(req.method==='GET')polls++;if(req.method==='GET'&&holdStatus){holdStatus=false;const snapshot=consent();releaseStatus=()=>json(snapshot);statusHeld();return;}if(req.method==='POST'&&!['requested','granted'].includes(status)){status='requested';requestId='replacement-request';}json(consent());return;}
     if(path.endsWith('/wallet/config')) {json({walletconnect:{project_id:'fixture-project',storage_revision:`"${revision}"`}});return;}
     if(path.endsWith('/wallet/accounts')) {json({accounts:[]});return;}
     if(path.endsWith('/wallet/approvals')) {json({approval_requests:[]});return;}
@@ -436,7 +438,8 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
     const origin=`http://127.0.0.1:${server.address().port}`;
     await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
     await page.goto(origin);
-    const wallet=page.frameLocator('#wallet'),frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
+    const shell=page.frames().find(f=>f.url().endsWith('/shell'));
+    const wallet=page.frameLocator('#home').frameLocator('#wallet'),frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
     const text=()=>wallet.locator('#wallet-status').innerText();
     const nextPoll=async()=>{const before=polls;await page.waitForFunction(()=>true);for(let i=0;polls===before&&i<70;i++)await page.waitForTimeout(100);assert.ok(polls>before);await frame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,50)));};
     await wallet.locator('#wallet-connect').click();await wallet.locator('dialog[open] canvas').waitFor({timeout:20000});
@@ -453,8 +456,18 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       status='revoked';revision++;keys={};await wallet.locator('#wallet-status').filter({hasText:turnedOff}).waitFor({timeout:10000});
       assert.equal(await wallet.locator('dialog[open]').count(),0,'Turn Off removes the QR');
     }
-    status='granted';await nextPoll();
-    await t.test('Allow replaces the old permission sentence',async()=>assert.equal(await text(),'Internet access is allowed. Select Connect wallet to continue.'));
+    if(journey==='B') {
+      holdStatus=true;const held=new Promise(resolve=>statusHeld=resolve);
+      await shell.evaluate(()=>document.querySelector('#wallet').contentWindow.postMessage({type:'elastos:shell-layout',layout:{visible:true}},'*'));
+      await held;
+    }
+    status='granted';
+    await shell.evaluate(()=>document.querySelector('#wallet').contentWindow.postMessage({type:'elastos:shell-layout',layout:{visible:true}},'*'));
+    if(journey==='B')releaseStatus();
+    await t.test('Home return replaces the old permission sentence before the idle poll',async()=>{
+      await frame.waitForFunction(()=>document.querySelector('#wallet-status').textContent==='Internet access is allowed. Select Connect wallet to continue.',null,{timeout:2000});
+      assert.equal(await text(),'Internet access is allowed. Select Connect wallet to continue.');
+    });
     const before=methods.filter(m=>m==='wc_proposeSession').length;
     await wallet.locator('#wallet-connect:enabled').click();
     await t.test('one Connect produces a QR in the same window',async()=>{
