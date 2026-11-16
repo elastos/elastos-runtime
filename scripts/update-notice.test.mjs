@@ -76,7 +76,8 @@ async function fixture() {
     if (url.pathname === "/api/apps/system/update-background") {
       let body="";for await(const part of request)body+=part;const input=JSON.parse(body);
       state.writes.push({input,token:request.headers["x-elastos-home-token"]});
-      if(state.failWrite)jsonResponse(response,{error:"Save failed"},state.failStatus||409);
+      if(state.failWrite && state.failStatus==='drop')response.destroy();
+      else if(state.failWrite)jsonResponse(response,{error:"Save failed"},state.failStatus||409);
       else{state.settings=preference(input.enabled);jsonResponse(response,state.settings);}return true;
     }
     if(url.pathname.startsWith("/icons/")) {
@@ -99,6 +100,7 @@ async function fixture() {
 const screenshots = process.env.UPDATE_NOTICE_SCREENSHOTS;
 async function screen(page,name,wording=false) {
   if(!screenshots || (process.env.UPDATE_NOTICE_WORDING_ONLY && !wording))return;
+  if(process.env.UPDATE_NOTICE_WORDING_ROUND==='4' && name==='phone-invalid_version_text')return;
   const theme = name.startsWith("dark-") ? "dark" : "light";
   for (const frame of page.frames().slice(1)) await frame.evaluate(theme => window.elastosTheme?.set(theme), theme);
   await page.waitForTimeout(120);
@@ -257,6 +259,30 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.getByText("Sign in as the Home owner to change background checks.",{exact:true}).waitFor();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
+    }
+    for(const status of [500,'drop']) {
+      f.state.failStatus=status;
+      await system.locator("label.system-switch:has(#update-background-choice)").click();
+      await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
+      await system.getByText('Home did not answer. Try again.',{exact:true}).waitFor();
+      assert.equal(await system.getByText(copy('SAVE_ERROR'),{exact:true}).count(),0,'storage guidance belongs only to 409');
+      await screen(page,'phone-no-answer',true);
+    }
+    // Feedback belongs to the complete setting state, even when its words stay the same.
+    for(const field of ['enabled','readable','message']) {
+      const initial={...preference(false),message:copy('INVALID_VERSION_TEXT')};
+      f.state.settings=initial;f.state.failWrite=true;f.state.failStatus=409;
+      await page.reload();
+      await system.getByText(initial.message,{exact:true}).waitFor();
+      await system.locator("label.system-switch:has(#update-background-choice)").click();
+      await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
+      await system.getByText(copy('SAVE_ERROR'),{exact:true}).waitFor();
+      f.state.settings={...initial,[field]:field==='message'?copy('OFF_TEXT'):!initial[field]};
+      await page.evaluate(()=>document.querySelector('#system-frame').contentWindow.postMessage({
+        type:'elastos:runtime-events',schema:'elastos.home.runtime-events/v1',events:[],
+      },'*'));
+      await system.getByText(f.state.settings.message,{exact:true}).waitFor({timeout:5000});
+      assert.equal(await system.getByText(copy('SAVE_ERROR'),{exact:true}).count(),0,field+' change clears old feedback');
     }
     f.state.failWrite=false;f.state.settings=preference(false,false);await page.reload();
     await system.getByText(copy("UNREADABLE_TEXT"),{exact:true}).waitFor();

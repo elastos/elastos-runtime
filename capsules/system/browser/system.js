@@ -64,7 +64,7 @@ const deviceDidCopyButton = document.querySelector("#device-did-copy");
 const backgroundChoice = document.querySelector("#update-background-choice");
 let backgroundBusy = false;
 let backgroundSaveError = "";
-let backgroundSaveMessage = "";
+let backgroundSaveState = "";
 let focusUpdateRequested = false;
 const runtimeUpdateNode = document.querySelector("#runtime-update");
 const runtimeUpdateButton = document.querySelector("#runtime-update-apply");
@@ -3791,9 +3791,13 @@ function focusUpdateCard() {
   }
 }
 
+function backgroundSettingState(background) {
+  return JSON.stringify({ enabled: background?.enabled, readable: background?.readable, message: background?.message });
+}
+
 async function onBackgroundChange() {
   if (backgroundBusy || !backgroundChoice || !runtimeUpdate?.background_checks) return;
-  const messageAtSave = runtimeUpdate.background_checks.message;
+  const stateAtSave = backgroundSettingState(runtimeUpdate.background_checks);
   backgroundBusy = true;
   backgroundChoice.disabled = true;
   try {
@@ -3805,10 +3809,12 @@ async function onBackgroundChange() {
     renderUpdateNotice();
   } catch (error) {
     backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
-    backgroundSaveMessage = messageAtSave;
+    backgroundSaveState = stateAtSave;
     backgroundSaveError = error.status === 401 || error.status === 403
       ? "Sign in as the Home owner to change background checks."
-      : runtimeUpdate.background_checks.save_error;
+      : error.status === 409
+        ? runtimeUpdate.background_checks.save_error
+        : "Home did not answer. Try again.";
     renderUpdateNotice();
   } finally {
     backgroundBusy = false;
@@ -3823,7 +3829,7 @@ function configureUpdateNotice() {
 
 function renderUpdateNotice() {
   const background = runtimeUpdate?.background_checks;
-  if (background?.message !== backgroundSaveMessage) backgroundSaveError = "";
+  if (backgroundSettingState(background) !== backgroundSaveState) backgroundSaveError = "";
   const backgroundNode = document.querySelector("#update-background");
   if (backgroundNode) backgroundNode.hidden = runtimeUpdateNode.hidden || !background;
   if (background && backgroundChoice) {
