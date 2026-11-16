@@ -502,10 +502,12 @@ try {
   );
   await waitFor(() => frameFor(page, "home-gui"), 15_000, "real Home GUI frame");
   const homeGui = frameFor(page, "home-gui");
-  await homeGui.waitForFunction(async () => {
+  await homeGui.evaluate(async () => {
     const {shellState} = await import("./shell-core.js?v=home-20261101d");
-    return shellState.currentSummary?.capsule_catalog?.capsules?.some(capsule => capsule.launch_target === "wallet-walletconnect");
-  }, null, {timeout:15000});
+    window.connectorSmokeState = shellState;
+  });
+  await homeGui.waitForFunction(() => window.connectorSmokeState.currentSummary?.capsule_catalog?.capsules
+    ?.some(capsule => capsule.launch_target === "wallet-walletconnect"), null, {timeout:15000});
   const windowPolicy = await homeGui.evaluate(async () => {
     const {supportsMenuNewWindow} = await import("./shell-windows.js?v=home-20261101d");
     // Exercise the rule with fixed inputs; engine availability and summary timing are host-owned.
