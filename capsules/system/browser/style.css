@@ -422,6 +422,15 @@ code {
   margin-top: 12px;
 }
 
+#update-background .pc2-card-row {
+  flex-direction: row;
+  align-items: center;
+}
+
+#update-background-label {
+  min-width: 0;
+}
+
 #runtime-update-progress {
   margin-top: 10px;
 }

@@ -8209,6 +8209,59 @@ impl CarrierEndpointDrain {
         }
         task.take();
     }
+    // Update checking owns a finite drain. Abort and join the endpoint close
+    // itself, rather than leaving its task behind when a waiter times out.
+    async fn close_with_deadline(&self, deadline: Duration) -> Result<()> {
+        self.signal
+            .lock()
+            .expect("Carrier close signal poisoned")
+            .take();
+        let mut task = self.task.lock().await;
+        let Some(running) = task.as_mut() else {
+            return Ok(());
+        };
+        let result = match tokio::time::timeout(deadline, &mut *running).await {
+            Ok(result) => result.context("drain update check endpoint"),
+            Err(error) => {
+                warn!(
+                    timeout_seconds = deadline.as_secs(),
+                    "update check endpoint close timed out; cancelling drain"
+                );
+                running.abort();
+                let _ = running.await;
+                Err(anyhow::Error::new(error).context(crate::update::UpdateSourceUnavailable))
+            }
+        };
+        task.take();
+        result
+    }
+}
+
+#[cfg(test)]
+type TestClientClose = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+#[cfg(test)]
+tokio::task_local! {
+    static TEST_CLIENT_CLOSE: std::sync::Mutex<Option<TestClientClose>>;
+}
+
+#[cfg(test)]
+pub(crate) async fn with_test_client_close<T>(
+    close: impl std::future::Future<Output = ()> + Send + 'static,
+    work: impl std::future::Future<Output = T>,
+) -> T {
+    TEST_CLIENT_CLOSE
+        .scope(std::sync::Mutex::new(Some(Box::pin(close))), work)
+        .await
+}
+
+#[cfg(test)]
+pub(crate) async fn update_check_close_fixture(
+    close: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<()> {
+    CarrierEndpointDrain::new(close)
+        .close_with_deadline(Duration::from_secs(5))
+        .await
 }
 
 fn carrier_provider_invoke_message(
@@ -8393,7 +8446,14 @@ impl CarrierClient {
         timeout_secs: u64,
     ) -> Result<Self> {
         let closing = endpoint.clone();
-        let drain = CarrierEndpointDrain::new(async move { closing.close().await });
+        let close = async move { closing.close().await };
+        #[cfg(test)]
+        let close = TEST_CLIENT_CLOSE
+            .try_with(|fixture| fixture.lock().unwrap().take())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| Box::pin(close));
+        let drain = CarrierEndpointDrain::new(close);
         match Self::connect_known_endpoint(&endpoint, addr, timeout_secs).await {
             Ok(mut client) => {
                 client.owns_endpoint = true;
@@ -8416,6 +8476,17 @@ impl CarrierClient {
                 .close()
                 .await;
         }
+    }
+
+    pub(crate) async fn close_update_check(&self, deadline: Duration) -> Result<()> {
+        if self.owns_endpoint {
+            self.endpoint_drain
+                .as_ref()
+                .expect("owned Carrier endpoint retains its drain task")
+                .close_with_deadline(deadline)
+                .await?;
+        }
+        Ok(())
     }
 
     pub async fn connect(
@@ -11710,6 +11781,74 @@ pub(crate) mod tests {
         .await
         .expect("outer dial timeout did not finish endpoint shutdown");
         observer.close().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carrier_endpoint_update_check_close_deadline_joins_hung_task() {
+        let warning = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(std::sync::Mutex::new(warning.reopen().unwrap()))
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let (started, starting) = tokio::sync::oneshot::channel();
+        let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
+        let drain = Arc::new(CarrierEndpointDrain::new(async move {
+            let _lifetime = dropped;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        }));
+        let owner = drain.clone();
+        let close =
+            tokio::spawn(async move { owner.close_with_deadline(Duration::from_secs(5)).await });
+        starting.await.unwrap();
+        tokio::time::advance(Duration::from_millis(4999)).await;
+        assert!(!close.is_finished(), "close keeps its full deadline");
+        tokio::time::advance(Duration::from_millis(1)).await;
+        let error = tokio::time::timeout(Duration::from_millis(1), close)
+            .await
+            .expect("hung close ends at five seconds")
+            .unwrap()
+            .unwrap_err();
+        assert!(error.is::<crate::update::UpdateSourceUnavailable>());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), stopped)
+                .await
+                .expect("timed-out close must drop its future")
+                .is_err(),
+            "close future was dropped before returning"
+        );
+        assert!(drain.task.lock().await.is_none(), "no drain task remains");
+        let log = std::fs::read_to_string(warning.path()).unwrap();
+        assert_eq!(
+            log.matches("update check endpoint close timed out").count(),
+            1,
+            "{log}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carrier_endpoint_update_check_close_normal_finishes_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let drain = CarrierEndpointDrain::new(async move {
+            count.fetch_add(1, Ordering::SeqCst);
+        });
+        let before = tokio::time::Instant::now();
+        drain
+            .close_with_deadline(Duration::from_secs(5))
+            .await
+            .unwrap();
+        drain
+            .close_with_deadline(Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(tokio::time::Instant::now(), before);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(drain.task.lock().await.is_none());
     }
 
     #[tokio::test]

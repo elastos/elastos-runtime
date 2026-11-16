@@ -63,6 +63,11 @@ const technicalInspectDetailNode = document.querySelector("#technical-inspect-de
 const technicalInspectStatusNode = document.querySelector("#technical-inspect-status");
 const technicalInspectRefreshButton = document.querySelector("#technical-inspect-refresh");
 const deviceDidCopyButton = document.querySelector("#device-did-copy");
+const backgroundChoice = document.querySelector("#update-background-choice");
+let backgroundBusy = false;
+let backgroundSaveError = "";
+let backgroundSaveMessage = "";
+let focusUpdateRequested = false;
 const runtimeUpdateNode = document.querySelector("#runtime-update");
 const runtimeUpdateButton = document.querySelector("#runtime-update-apply");
 const runtimeUpdateProgressNode = document.querySelector("#runtime-update-progress");
@@ -197,6 +202,7 @@ const backgroundImage = createHomeBackgroundImage({
   onError: () => showBackgroundStatus("Home could not load the image. Close System and open it to retry.", "error"),
 });
 
+configureUpdateNotice();
 boot().catch((error) => {
   console.error("system boot failed", error);
   showError(error);
@@ -296,12 +302,14 @@ function configureHomeRecoverySave() {
           ok = await onRecoveryDownload({ isActive: () => active && frameHomeToken === apiHomeToken });
         } else if (data.action === "navigate" && query && typeof query === "object"
           && !Array.isArray(query)
-          && Object.keys(query).every(key => key === "settings" || key === "recovery")
+          && Object.keys(query).every(key => key === "settings" || key === "recovery" || key === "focus")
           && typeof query.settings === "string"
           && normalizedRequestedSettingsTab(query.settings) === query.settings
           && query.settings !== ""
           && (query.recovery === undefined || (query.recovery === "import" && query.settings === "security"))) {
           activateSettingsTab(query.settings);
+          focusUpdateRequested = false;
+          if (query.focus === "update" && query.settings === "about") focusUpdateCard();
           if (query.settings === "security") {
             (query.recovery === "import" ? recoveryImportInput
               : (recoveryProfileRequired ? recoveryProfileName : recoveryDownloadButton))?.focus();
@@ -454,6 +462,7 @@ function renderSystemSummary(systemSummary) {
   setRuntimeState(runtime);
   setSourceState(source);
   renderRuntimeUpdate(systemSummary.runtime_update);
+  renderUpdateNotice();
 }
 
 function setField(field, value, emptyText, titleValue) {
@@ -3815,6 +3824,59 @@ async function onSourceChannelChange() {
       scheduleRuntimeUpdateRefresh(0);
     }
   }
+}
+
+function focusUpdateCard() {
+  focusUpdateRequested = true;
+  if (runtimeUpdateNode && !runtimeUpdateNode.hidden) {
+    runtimeUpdateNode.scrollIntoView({ block: "center" });
+    runtimeUpdateNode.focus({ preventScroll: true });
+    focusUpdateRequested = false;
+  }
+}
+
+async function onBackgroundChange() {
+  if (backgroundBusy || !backgroundChoice || !runtimeUpdate?.background_checks) return;
+  const messageAtSave = runtimeUpdate.background_checks.message;
+  backgroundBusy = true;
+  backgroundChoice.disabled = true;
+  try {
+    const settings = await fetchRuntimeUpdateJson({
+      method: "POST", headers: shellHeaders({ "content-type": "application/json" }), body: JSON.stringify({ enabled: backgroundChoice.checked }),
+    }, "/api/apps/system/update-background");
+    backgroundSaveError = "";
+    renderRuntimeUpdate({ ...runtimeUpdate, background_checks: settings });
+    renderUpdateNotice();
+  } catch (error) {
+    backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
+    backgroundSaveMessage = messageAtSave;
+    backgroundSaveError = error.status === 401 || error.status === 403
+      ? "Sign in as the Home owner to change background checks."
+      : runtimeUpdate.background_checks.save_error;
+    renderUpdateNotice();
+  } finally {
+    backgroundBusy = false;
+    backgroundChoice.disabled = false;
+  }
+}
+
+function configureUpdateNotice() {
+  backgroundChoice?.addEventListener("change", onBackgroundChange);
+  if (requestedSettingsTab === "about" && readQueryParam("focus") === "update") focusUpdateRequested = true;
+}
+
+function renderUpdateNotice() {
+  const background = runtimeUpdate?.background_checks;
+  if (background?.message !== backgroundSaveMessage) backgroundSaveError = "";
+  const backgroundNode = document.querySelector("#update-background");
+  if (backgroundNode) backgroundNode.hidden = runtimeUpdateNode.hidden || !background;
+  if (background && backgroundChoice) {
+    backgroundChoice.checked = background.enabled === true;
+    backgroundChoice.disabled = backgroundBusy;
+    document.querySelector("#update-background-label").textContent = background.label;
+    document.querySelector("#update-background-message").textContent = backgroundSaveError || background.message;
+  }
+  if (focusUpdateRequested && !runtimeUpdateNode.hidden) focusUpdateCard();
 }
 
 function configureRuntimeUpdate() {

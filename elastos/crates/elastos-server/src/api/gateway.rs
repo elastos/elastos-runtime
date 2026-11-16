@@ -93,6 +93,8 @@ mod gateway_marketplace;
 mod gateway_model_remote;
 #[path = "gateway_model_service.rs"]
 mod gateway_model_service;
+#[path = "gateway_update_notice.rs"]
+mod gateway_update_notice;
 pub(in crate::api) use gateway_model_service::deny_grant_and_settle as deny_model_grant_and_settle;
 pub(crate) use gateway_model_service::{
     invoke as invoke_remote_model, model_grant_id, ModelServiceGrant, MODEL_AUTHORITY_TIMEOUT_CODE,
@@ -784,6 +786,10 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
             get(system_summary)
                 .post(system_update_apply)
                 .layer(DefaultBodyLimit::max(8 * 1024)),
+        )
+        .route(
+            "/api/apps/system/update-background",
+            post(gateway_update_notice::set_background).layer(DefaultBodyLimit::max(1024)),
         )
         .route(
             "/api/apps/system/update-channel",
