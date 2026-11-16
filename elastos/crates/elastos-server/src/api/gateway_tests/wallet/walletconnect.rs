@@ -1602,3 +1602,92 @@ async fn walletconnect_stale_revision_returns_conflict_through_real_routes() {
         StatusCode::OK
     );
 }
+
+#[tokio::test]
+async fn walletconnect_invalid_launch_precedes_stale_revision() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    let context = runtime_wallet_authority_for_app_token(
+        f.data.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &f.connector,
+    )
+    .home_launch_context();
+    let expired = gateway_home_token::issue_expired_home_launch_token_with_context(
+        f.data.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &context,
+    )
+    .unwrap();
+    for token in [&f.home, &f.inbox, &expired] {
+        for (path, method, body) in [
+            (STORAGE, "GET", ""),
+            (STORAGE, "POST", r#"{"key":"invalid","value":true}"#),
+            (
+                "/api/apps/wallet-walletconnect/relay-admission",
+                "POST",
+                "{}",
+            ),
+        ] {
+            let response = f
+                .app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .header(HOST, &f.addr)
+                        .header("origin", "null")
+                        .header("x-elastos-home-token", token)
+                        .header("if-match", "\"stale\"")
+                        .header(CONTENT_TYPE, "application/json")
+                        .uri(path)
+                        .method(method)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {path}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn walletconnect_revision_recheck_under_storage_lock_returns_conflict() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    let context = runtime_wallet_authority_for_app_token(
+        f.data.path(),
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        &f.connector,
+    )
+    .home_launch_context();
+    let revision =
+        gateway_walletconnect::storage_revision(f.data.path(), &context.principal_id).unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert(HOST, f.addr.parse().unwrap());
+    headers.insert("origin", "null".parse().unwrap());
+    headers.insert("x-elastos-home-token", f.connector.parse().unwrap());
+    headers.insert("if-match", revision.parse().unwrap());
+    let guard = f.state.walletconnect.inner.lock().await;
+    let mut request = Box::pin(gateway_walletconnect::storage(
+        State(f.state.clone()),
+        axum::http::Method::POST,
+        headers,
+        Ok(Json(
+            serde_json::from_value(json!({"key":"late","value":"old-sdk"})).unwrap(),
+        )),
+    ));
+    // The handler has exactly one await before its locked recheck. Poll it to
+    // that mutex, then change the revision without a clock or scheduling race.
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(request.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    gateway_walletconnect::clear_principal_storage(f.data.path(), &context.principal_id).unwrap();
+    drop(guard);
+    let response = request.await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+    assert_eq!(f.route(&f.connector, STORAGE, None).await.1, json!({}));
+}
