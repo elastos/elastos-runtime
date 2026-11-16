@@ -473,8 +473,9 @@
       <h2 id="passkey-remove-title">Remove passkey?</h2>
       <div id="passkey-remove-details">
         <p data-field="passkey-remove-person"></p>
+        <p data-field="passkey-remove-current" hidden>You are using this passkey in this window.</p>
         <p>All windows signed in with this passkey will be signed out.</p>
-        <p>The passkey will stay in that person’s password manager until they delete it there.</p>
+        <p data-field="passkey-remove-copy"></p>
       </div>
       <div class="passkey-remove-dialog-actions">
         <button class="system-button system-button-secondary" value="cancel" autofocus>Cancel</button>

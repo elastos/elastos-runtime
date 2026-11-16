@@ -10,7 +10,8 @@ const owner = { principal_id: "alex", proof_binding_id: "proof:passkey:alex", di
 const guest = { principal_id: "sam", proof_binding_id: "proof:passkey:sam", display_name: "Sam", role: "guest", current: false };
 
 async function fixture(run) {
-  let passkeys = [owner], role = "admin", theme = "light", refuse = false;
+  let passkeys = [owner], role = "admin", theme = "light", failure = null, afterFailurePasskeys = null;
+  let listReads = 0;
   const writes = [];
   const server = await startSystemFixtureServer({
     title: "Passkey removal",
@@ -22,12 +23,16 @@ async function fixture(run) {
         return true;
       }
       if (url.pathname === "/api/auth/passkeys") {
+        listReads++;
         jsonResponse(response, { passkeys });
         return true;
       }
-      if (url.pathname.endsWith("/revoke")) {
+      if (/\/(revoke|promote-admin|demote-guest)$/.test(url.pathname)) {
         writes.push({ path: url.pathname, method: request.method, token: request.headers["x-elastos-home-token"] });
-        if (refuse) textResponse(response, explanation, 409);
+        if (failure) {
+          if (afterFailurePasskeys) passkeys = afterFailurePasskeys;
+          textResponse(response, failure.body, failure.status);
+        }
         else {
           passkeys = passkeys.filter(passkey => !url.pathname.includes(encodeURIComponent(passkey.proof_binding_id)));
           jsonResponse(response, { status: "revoked" });
@@ -47,13 +52,14 @@ async function fixture(run) {
       passkeys = keys.map(key => ({ ...key }));
       role = options.role || "admin";
       theme = options.theme || "light";
-      refuse = options.refuse || false;
+      failure = options.failure || null;
+      afterFailurePasskeys = options.afterFailurePasskeys || null;
       await page.goto(`${server.baseUrl}/fixture?settings=account`);
       const frame = await page.locator("#system-frame").elementHandle().then(handle => handle.contentFrame());
       await frame.waitForSelector(".account-row");
       return frame;
     };
-    await run({ page, open, writes });
+    await run({ page, open, writes, listReads: () => listReads });
     assert.deepEqual(errors, []);
     assert.deepEqual(server.requestFailures, []);
   } finally {
@@ -83,7 +89,6 @@ test("System protects the last admin with or without guests, in both themes and 
         assert.equal(await remove.getAttribute("aria-describedby"), await note.getAttribute("id"));
         const bounds = await note.boundingBox();
         assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width);
-        await screenshot(page, `protected-${theme}-${width}`);
         // A synthetic click on a disabled control also has no effect.
         await remove.dispatchEvent("click");
         assert.equal(writes.length, 0);
@@ -99,7 +104,7 @@ test("System protects the last admin with or without guests, in both themes and 
   });
 });
 
-test("every allowed removal asks first, defaults to Cancel, and shows failures", async () => {
+test("every allowed removal asks first and returns focus after Cancel or Escape", async () => {
   await fixture(async ({ page, open, writes }) => {
     for (const theme of ["light", "dark"]) {
       for (const width of [1280, 390]) {
@@ -113,7 +118,7 @@ test("every allowed removal asks first, defaults to Cancel, and shows failures",
         assert.equal(writes.length, before);
         assert.match(await dialog.textContent(), /Remove the passkey for Sam from this Home\?/);
         assert.match(await dialog.textContent(), /All windows signed in with this passkey will be signed out\./);
-        assert.match(await dialog.textContent(), /password manager until they delete it there\./);
+        assert.match(await dialog.textContent(), /If a copy remains on their device, security key or in their password manager, they can delete it there\./);
         assert.equal(await dialog.getByRole("button", { name: "Cancel", exact: true }).evaluate(node => node === document.activeElement), true);
         const bounds = await dialog.boundingBox();
         assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width);
@@ -121,13 +126,16 @@ test("every allowed removal asks first, defaults to Cancel, and shows failures",
         await page.keyboard.press("Enter");
         await dialog.waitFor({ state: "hidden" });
         assert.equal(writes.length, before, "Enter takes the default Cancel action");
+        assert.equal(await remove.evaluate(node => node === document.activeElement), true);
         await remove.click();
         await page.keyboard.press("Escape");
         await dialog.waitFor({ state: "hidden" });
         assert.equal(writes.length, before);
+        assert.equal(await remove.evaluate(node => node === document.activeElement), true);
         await remove.click();
         await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
         assert.equal(writes.length, before);
+        assert.equal(await remove.evaluate(node => node === document.activeElement), true);
         await remove.click();
         await dialog.getByRole("button", { name: "Remove passkey", exact: true }).click();
         await frame.waitForFunction(() => document.querySelectorAll(".account-row").length === 1);
@@ -144,17 +152,72 @@ test("every allowed removal asks first, defaults to Cancel, and shows failures",
       await frame.locator(".passkey-remove").first().click();
       const dialog = frame.getByRole("dialog");
       await dialog.waitFor();
-      assert.match(await dialog.textContent(), /passkey for Alex/);
+      assert.match(await dialog.textContent(), /Remove your passkey from this Home\?/);
       assert.equal(writes.length, before);
       await dialog.getByRole("button", { name: "Remove passkey", exact: true }).click();
       await frame.waitForFunction(() => document.querySelector('[data-field="passkey-status"]').textContent === "Removed. Open Home to sign in.");
       assert.equal(writes.length, before + 1);
     }
-    const frame = await open([owner, guest], { refuse: true });
-    await frame.locator(".passkey-remove").last().click();
+  });
+});
+
+test("confirmation uses own and unnamed wording for device and hardware passkeys", async () => {
+  await fixture(async ({ page, open, writes }) => {
+    for (const theme of ["light", "dark"]) {
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        for (const state of ["current", "own-other", "unnamed"]) {
+          const other = state === "unnamed" ? { ...guest, display_name: "" }
+            : { ...owner, proof_binding_id: "proof:passkey:other", current: false };
+          const frame = await open([owner, other], { theme });
+          const remove = frame.locator(".passkey-remove").nth(state === "current" ? 0 : 1);
+          await remove.click();
+          const dialog = frame.getByRole("dialog");
+          await dialog.waitFor();
+          assert.equal(await dialog.locator('[data-field="passkey-remove-person"]').textContent(),
+            state === "unnamed" ? "Remove this passkey from this Home?" : "Remove your passkey from this Home?");
+          assert.equal(await dialog.locator('[data-field="passkey-remove-current"]').isVisible(), state === "current");
+          assert.match(await dialog.textContent(), state === "unnamed"
+            ? /their device, security key or in their password manager/ : /your device, security key or in your password manager/);
+          assert.doesNotMatch(await dialog.textContent(), /for Account|that person/);
+          if (state !== "own-other") await screenshot(page, `confirmation-${state}-${theme}-${width}`);
+          await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+          assert.equal(await remove.evaluate(node => node === document.activeElement), true);
+        }
+      }
+    }
+    assert.equal(writes.length, 0);
+  });
+});
+
+test("only the removal 409 shows its sentence and refreshes the stale list", async () => {
+  await fixture(async ({ page, open, writes, listReads }) => {
+    const otherOwnKey = { ...owner, proof_binding_id: "proof:passkey:replacement", current: false };
+    let frame = await open([owner, otherOwnKey], {
+      failure: { status: 409, body: explanation }, afterFailurePasskeys: [owner],
+    });
+    const before = listReads();
+    await frame.locator(".passkey-remove").first().click();
     await frame.getByRole("dialog").getByRole("button", { name: "Remove passkey", exact: true }).click();
-    await frame.waitForFunction(message => document.querySelector('[data-field="passkey-status"]').textContent === message, explanation);
-    assert.equal(await frame.locator(".account-row").count(), 2);
-    assert.equal(await frame.locator(".passkey-remove").last().isEnabled(), true);
+    await frame.waitForFunction(message => document.querySelector('[data-field="passkey-status"]').textContent === message
+      && document.querySelectorAll(".account-row").length === 1 && document.querySelector(".passkey-remove").disabled, explanation);
+    assert.ok(listReads() > before);
+    assert.equal(writes.length, 1);
+    for (const status of [403, 409, 500]) {
+      for (const action of ["remove", "promote", "demote"]) {
+        const target = { ...guest, role: action === "demote" ? "admin" : "guest" };
+        frame = await open([owner, target], { failure: { status, body: "private-server-detail /private/fixture-state" } });
+        const readsBefore = listReads();
+        const refreshed = status === 409 ? page.waitForResponse(response => response.url().endsWith("/api/auth/passkeys")) : null;
+        await frame.locator(`.passkey-${action}`).last().click();
+        if (action === "remove") await frame.getByRole("dialog").getByRole("button", { name: "Remove passkey", exact: true }).click();
+        await frame.waitForFunction(() => document.querySelector('[data-field="passkey-status"]').textContent === "Account action could not be completed.");
+        assert.doesNotMatch(await frame.locator('[data-field="passkey-status"]').textContent(), /private-server-detail|fixture-state/);
+        if (refreshed) {
+          await refreshed;
+          assert.ok(listReads() > readsBefore);
+        }
+      }
+    }
   });
 });

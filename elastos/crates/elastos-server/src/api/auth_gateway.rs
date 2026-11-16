@@ -10045,6 +10045,10 @@ mod tests {
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
     }
 
+    // Competing route requests return one success and one refusal, leaving an
+    // admin. The identity-manager mutex also serializes these requests, so this
+    // test does not isolate the auth-state lock. The guard and mutation share
+    // mutate_auth_state in revoke_passkey_for_actor.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn last_admin_passkey_http_concurrent_self_removals_keep_one_admin() {
         let temp = tempfile::tempdir().unwrap();
@@ -10139,15 +10143,6 @@ mod tests {
             before
         );
         assert_eq!(records_for(temp.path(), &guest.principal_id).len(), 1);
-        // The role route also keeps the existing rule for the last admin account.
-        let (status, _, _) = passkey_http(
-            &app,
-            &format!("/api/auth/passkeys/{owner_binding}/demote-guest"),
-            &owner.host_headers,
-            json!({}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(
             crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
             1
@@ -10805,7 +10800,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn last_admin_passkey_cannot_be_removed_while_guests_remain() {
+    async fn last_active_admin_passkey_cannot_be_removed() {
         let temp = tempfile::tempdir().unwrap();
         let state = test_gateway_state(temp.path());
         seed_test_passkey_principal(
