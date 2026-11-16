@@ -9819,6 +9819,31 @@ mod tests {
         }));
     }
 
+    async fn passkey_http(
+        app: &axum::Router,
+        path: &str,
+        headers: &HeaderMap,
+        body: Value,
+    ) -> (StatusCode, HeaderMap, Value) {
+        use tower::ServiceExt;
+        let mut request = axum::http::Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        request.headers_mut().extend(headers.clone());
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| json!(String::from_utf8_lossy(&bytes)));
+        (status, headers, body)
+    }
+
     // Reproduction on 5075c8476: exercise the HTTP handlers, including the
     // local first-owner path after the only credential has been removed.
     #[tokio::test]
@@ -9858,18 +9883,16 @@ mod tests {
             )
             .with_state(state.clone());
         let headers = home_token_headers(&grant.home_token);
-        let name = super::super::gateway::home_session_cookie_name(&headers).unwrap();
-        let cookie = format!("{name}={}", grant.home_token);
-        let (status, cleared, body) = guided_owner_http(
+        let (status, response_headers, body) = passkey_http(
             &app,
             &format!("/api/auth/passkeys/{}/revoke", grant.proof_binding_id),
-            &cookie,
+            &headers,
             json!({}),
         )
         .await;
         println!(
-            "removal: {status}; cookie: {}; body: {body}",
-            !cleared.is_empty()
+            "removal: {status}; clears cookie: {}; body: {body}",
+            response_headers.contains_key(SET_COOKIE)
         );
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["status"], "revoked");
