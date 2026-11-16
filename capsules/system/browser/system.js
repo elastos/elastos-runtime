@@ -225,6 +225,7 @@ async function boot() {
   configureTechnicalDetails();
   configureDeviceDidCopy();
   configureRuntimeUpdate();
+  configureUpdateNotice();
   initialRecoveryState = (async () => {
     await refreshSystemSummary();
     await refreshActiveShell().catch((error) => showActiveShellStatus(String(error.message || error), "error"));
@@ -455,6 +456,7 @@ function renderSystemSummary(systemSummary) {
   setRuntimeState(runtime);
   setSourceState(source);
   renderRuntimeUpdate(systemSummary.runtime_update);
+  renderUpdateNotice();
 }
 
 function setField(field, value, emptyText, titleValue) {
@@ -3795,6 +3797,7 @@ async function onBackgroundChange() {
       method: "POST", headers: shellHeaders({ "content-type": "application/json" }), body: JSON.stringify({ enabled: backgroundChoice.checked }),
     }, "/api/apps/system/update-background");
     renderRuntimeUpdate({ ...runtimeUpdate, background_checks: settings });
+    renderUpdateNotice();
   } catch (_error) {
     backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
     document.querySelector("#update-background-message").textContent = runtimeUpdate.background_checks.save_error;
@@ -3804,9 +3807,25 @@ async function onBackgroundChange() {
   }
 }
 
-function configureRuntimeUpdate() {
+function configureUpdateNotice() {
   backgroundChoice?.addEventListener("change", onBackgroundChange);
   if (requestedSettingsTab === "about") focusUpdateRequested = true;
+}
+
+function renderUpdateNotice() {
+  const background = runtimeUpdate?.background_checks;
+  const backgroundNode = document.querySelector("#update-background");
+  if (backgroundNode) backgroundNode.hidden = runtimeUpdateNode.hidden || !background;
+  if (background && backgroundChoice) {
+    backgroundChoice.checked = background.enabled === true;
+    backgroundChoice.disabled = backgroundBusy;
+    document.querySelector("#update-background-label").textContent = background.label;
+    document.querySelector("#update-background-message").textContent = background.message;
+  }
+  if (focusUpdateRequested && !runtimeUpdateNode.hidden) focusUpdateCard();
+}
+
+function configureRuntimeUpdate() {
   sourceChannelChoice?.addEventListener("change", onSourceChannelChange);
   runtimeUpdateButton?.addEventListener("click", onRuntimeUpdateApply);
   window.addEventListener("pagehide", () => {
@@ -3877,16 +3896,6 @@ function renderRuntimeUpdate(update) {
   if (!runtimeUpdateNode || !runtimeUpdateButton) return;
   const configured = runtimeUpdate?.configured === true;
   runtimeUpdateNode.hidden = !configured && !runtimeUpdatePending;
-  const background = runtimeUpdate?.background_checks;
-  const backgroundNode = document.querySelector("#update-background");
-  if (backgroundNode) backgroundNode.hidden = !configured || !background;
-  if (background && backgroundChoice) {
-    backgroundChoice.checked = background.enabled === true;
-    backgroundChoice.disabled = backgroundBusy;
-    document.querySelector("#update-background-label").textContent = background.label;
-    document.querySelector("#update-background-message").textContent = background.message;
-  }
-  if (focusUpdateRequested && !runtimeUpdateNode.hidden) focusUpdateCard();
   const controller = runtimeUpdate?.controller;
   const phase = readText(controller?.phase);
   // With a request of its own pending, only that request's result is this page's update finishing;
