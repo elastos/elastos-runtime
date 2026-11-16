@@ -1988,7 +1988,7 @@ mod tests {
         use tokio::io::AsyncBufReadExt;
         let dir = tempfile::tempdir().unwrap();
         let server = Endpoint::builder(iroh::endpoint::presets::Minimal)
-            .alpns(vec![crate::carrier::CARRIER_ALPN.to_vec()])
+            .alpns(vec![b"elastos/carrier/1".to_vec()])
             .bind()
             .await
             .unwrap();
