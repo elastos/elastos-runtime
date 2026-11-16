@@ -4786,7 +4786,9 @@ pub(in crate::api) fn auth_error_response(err: anyhow::Error) -> Response {
         )
             .into_response();
     }
-    if err.is::<RecoveryKitPreparationRefused>() {
+    if err.is::<RecoveryKitPreparationRefused>()
+        || err.is::<crate::auth::LastAdminPasskeyRemovalDenied>()
+    {
         return (StatusCode::CONFLICT, err.to_string()).into_response();
     }
     let text = err.to_string();
@@ -9855,11 +9857,8 @@ mod tests {
                 "/api/auth/passkeys/:proof_binding_id/demote-guest",
                 post(passkey_demote_guest),
             )
-            .route("/api/auth/passkeys/add/begin", post(passkey_add_begin))
-            .route(
-                "/api/auth/passkeys/add/complete",
-                post(passkey_add_complete),
-            )
+            .route("/api/auth/passkey/add/begin", post(passkey_add_begin))
+            .route("/api/auth/passkey/add/complete", post(passkey_add_complete))
             .route("/api/auth/owner-recovery/begin", post(owner_recovery_begin))
             .route(
                 "/api/auth/owner-recovery/complete",
@@ -9950,7 +9949,7 @@ mod tests {
         let app = passkey_removal_test_router(state.clone());
         let (status, _, begin) = passkey_http(
             &app,
-            "/api/auth/passkeys/add/begin",
+            "/api/auth/passkey/add/begin",
             &owner.host_headers,
             json!({
                 "schema": PASSKEY_ADD_BEGIN_REQUEST_SCHEMA, "app_token": owner.system_token,
@@ -9967,7 +9966,7 @@ mod tests {
         );
         let (status, _, added) = passkey_http(
             &app,
-            "/api/auth/passkeys/add/complete",
+            "/api/auth/passkey/add/complete",
             &owner.host_headers,
             json!({
                 "schema": PASSKEY_ADD_COMPLETE_REQUEST_SCHEMA, "app_token": owner.system_token,
@@ -10046,7 +10045,7 @@ mod tests {
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn last_admin_passkey_http_concurrent_self_removals_keep_one_admin() {
         let temp = tempfile::tempdir().unwrap();
         let first = passkey_add_account(
@@ -10068,13 +10067,87 @@ mod tests {
         let app = passkey_removal_test_router(test_gateway_state(temp.path()));
         let first_path = format!("/api/auth/passkeys/{first_binding}/revoke");
         let second_path = format!("/api/auth/passkeys/{second_binding}/revoke");
-        let (first_result, second_result) = tokio::join!(
-            passkey_http(&app, &first_path, &first.host_headers, json!({})),
-            passkey_http(&app, &second_path, &second.host_headers, json!({})),
-        );
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let attempts = [
+            (first_path, first.host_headers),
+            (second_path, second.host_headers),
+        ]
+        .map(|(path, headers)| {
+            let app = app.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                passkey_http(&app, &path, &headers, json!({})).await
+            })
+        });
+        let [first, second] = attempts;
+        let (first_result, second_result) = (first.await.unwrap(), second.await.unwrap());
         let mut statuses = [first_result.0, second_result.0];
         statuses.sort();
         assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
+        assert_eq!(
+            crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn last_admin_passkey_http_refuses_with_guests_and_revoked_admins() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = passkey_add_account(
+            temp.path(),
+            "owner",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let guest = passkey_add_account(
+            temp.path(),
+            "guest",
+            crate::auth::RuntimePrincipalRole::Guest,
+        );
+        let former_admin = passkey_add_account(
+            temp.path(),
+            "former-admin",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let owner_binding = records_for(temp.path(), &owner.principal_id)[0]
+            .proof_binding_id
+            .clone();
+        let former_binding = records_for(temp.path(), &former_admin.principal_id)[0]
+            .proof_binding_id
+            .clone();
+        let app = passkey_removal_test_router(test_gateway_state(temp.path()));
+        let (status, _, body) = passkey_http(
+            &app,
+            &format!("/api/auth/passkeys/{former_binding}/revoke"),
+            &owner.host_headers,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let before = std::fs::read(crate::auth::auth_state_path(temp.path()).unwrap()).unwrap();
+        let (status, _, body) = passkey_http(
+            &app,
+            &format!("/api/auth/passkeys/{owner_binding}/revoke"),
+            &owner.host_headers,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body, "Add another admin passkey before removing this one.");
+        assert_eq!(
+            std::fs::read(crate::auth::auth_state_path(temp.path()).unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(records_for(temp.path(), &guest.principal_id).len(), 1);
+        // The role route also keeps the existing rule for the last admin account.
+        let (status, _, _) = passkey_http(
+            &app,
+            &format!("/api/auth/passkeys/{owner_binding}/demote-guest"),
+            &owner.host_headers,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(
             crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
             1
@@ -10779,7 +10852,7 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert!(err.contains("last admin passkey cannot be removed"));
+        assert_eq!(err, "Add another admin passkey before removing this one.");
         assert!(crate::auth::is_auth_session_active(
             temp.path(),
             &admin.session_id,

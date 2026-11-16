@@ -468,6 +468,20 @@
 
     <p class="system-error" hidden></p>
   </main>
+  <dialog id="passkey-remove-dialog" aria-labelledby="passkey-remove-title" aria-describedby="passkey-remove-details">
+    <form method="dialog">
+      <h2 id="passkey-remove-title">Remove passkey?</h2>
+      <div id="passkey-remove-details">
+        <p data-field="passkey-remove-person"></p>
+        <p>All windows signed in with this passkey will be signed out.</p>
+        <p>The passkey will stay in that person’s password manager until they delete it there.</p>
+      </div>
+      <div class="passkey-remove-dialog-actions">
+        <button class="system-button system-button-secondary" value="cancel" autofocus>Cancel</button>
+        <button class="system-button" value="remove">Remove passkey</button>
+      </div>
+    </form>
+  </dialog>
   <script src="./system-tabs.js?v=download-progress-20261112"></script>
   <script type="module" src="./system.js?v=download-progress-20261112"></script>
 </body>

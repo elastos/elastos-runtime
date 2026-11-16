@@ -37,6 +37,7 @@ const uiSoundsInput = document.querySelector("#ui-sounds");
 const passkeyStatusNode = document.querySelector('[data-field="passkey-status"]');
 const accountListNode = document.querySelector("#account-list");
 const passkeyAddButton = document.querySelector("#passkey-add");
+const passkeyRemoveDialog = document.querySelector("#passkey-remove-dialog");
 const recoveryDownloadButton = document.querySelector("#recovery-download");
 const recoveryProfileSetup = document.querySelector("#recovery-profile-setup");
 const recoveryProfileName = document.querySelector("#recovery-profile-name");
@@ -415,6 +416,7 @@ async function fetchJson(url, init) {
     const suffix = detail.trim() ? ` ${detail.trim()}` : ` ${response.statusText}`;
     const error = new Error(`request failed: ${response.status}${suffix}`);
     error.status = response.status;
+    error.detail = detail.trim();
     throw error;
   }
   return response.json();
@@ -2532,7 +2534,6 @@ function renderAccounts(accounts) {
   const body = document.createElement("tbody");
   for (const account of activeAccounts) {
     body.append(accountRow(account, {
-      activeCount: activeAccounts.length,
       adminPasskeyCount,
       adminAccountCount,
       currentPrincipalId,
@@ -2608,12 +2609,18 @@ function accountRow(passkey, listState = {}) {
   remove.textContent = "Remove";
   remove.dataset.passkeyRevoke = passkey.proof_binding_id || "";
   remove.dataset.current = passkey.current ? "true" : "false";
+  remove.dataset.accountName = label;
   const protectsLastAdmin = readText(passkey.role) === "admin"
-    && Number(listState.adminPasskeyCount) <= 1
-    && Number(listState.activeCount) > 1;
+    && Number(listState.adminPasskeyCount) <= 1;
   remove.disabled = !remove.dataset.passkeyRevoke || !hasShellAccess() || protectsLastAdmin;
   if (protectsLastAdmin) {
-    remove.title = "Remove guest passkeys before removing the last admin.";
+    const explanation = document.createElement("p");
+    explanation.className = "passkey-removal-note";
+    explanation.id = `passkey-removal-${passkey.proof_binding_id}`;
+    explanation.textContent = "Add another admin passkey before removing this one.";
+    nameWrap.append(explanation);
+    remove.title = explanation.textContent;
+    remove.setAttribute("aria-describedby", explanation.id);
   }
   actions.append(remove);
 
@@ -2652,7 +2659,7 @@ async function onAccountListClick(event) {
     "[data-passkey-demote]",
     "[data-passkey-revoke]",
   ].join(", "));
-  if (!button || !hasShellAccess()) {
+  if (!button || button.disabled || !hasShellAccess() || passkeyRemoveDialog.open) {
     return;
   }
   const promote = Boolean(button.dataset.passkeyPromote);
@@ -2671,8 +2678,12 @@ async function onAccountListClick(event) {
   }
   const revokingCurrent = button.dataset.current === "true";
   button.disabled = true;
-  showPasskeyStatus(promote || demote ? "Updating" : "Removing", "muted");
   try {
+    if (!promote && !demote && !await confirmPasskeyRemoval(button.dataset.accountName)) {
+      button.disabled = false;
+      return;
+    }
+    showPasskeyStatus(promote || demote ? "Updating" : "Removing", "muted");
     await fetchJson(`/api/auth/passkeys/${encodeURIComponent(proofBindingId)}/${action}`, {
       method: "POST",
       headers: shellHeaders(),
@@ -2687,9 +2698,21 @@ async function onAccountListClick(event) {
     }
     notifyHomeSummaryChanged();
   } catch (error) {
-    showPasskeyStatus(String(error.message || error), "error");
+    showPasskeyStatus(String(error.detail || error.message || error), "error");
     button.disabled = false;
   }
+}
+
+function confirmPasskeyRemoval(accountName) {
+  passkeyRemoveDialog.querySelector('[data-field="passkey-remove-person"]').textContent =
+    `Remove the passkey for ${accountName} from this Home?`;
+  passkeyRemoveDialog.returnValue = "cancel";
+  return new Promise((resolve) => {
+    passkeyRemoveDialog.addEventListener("close", () => {
+      resolve(passkeyRemoveDialog.returnValue === "remove");
+    }, { once: true });
+    passkeyRemoveDialog.showModal();
+  });
 }
 
 async function onPasskeyAdd() {
