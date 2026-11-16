@@ -30,6 +30,7 @@ window.addEventListener('message', event => {
 let connectionTimer;
 let connectionInterval;
 let permissionPending = false;
+let permissionStatus;
 let connectionRevision;
 function watchConnection() {
   if (!frameHomeToken || typeof window.setInterval !== "function") return;
@@ -44,6 +45,8 @@ function watchConnection() {
     try {
       const saved = pendingEffect;
       const current = await connector.effect({ kind: "status" });
+      const previousPermission = permissionStatus;
+      permissionStatus = current.permission.status;
       permissionPending = current.permission.status === "requested" && Boolean(current.permission.request);
       if (saved && pendingEffect === saved && (!saved.requestId || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now() || current.permission.request?.id !== saved.requestId
         || !['requested','granted'].includes(current.permission.status))) pendingEffect = undefined;
@@ -55,6 +58,10 @@ function watchConnection() {
       }
       if (current.permission.status === 'revoked' && (hostEffectInFlight || document.querySelector("#wallet-connection").textContent === "Connected")) {
         showStatus("Internet access for WalletConnect was turned off. Select Connect wallet to ask again.", "muted");
+      }
+      if (permissionStatus !== previousPermission) {
+        if (permissionStatus === 'refused') showStatus("Internet access for WalletConnect was refused. Select Allow in Inbox, then Connect wallet.", "muted");
+        if (permissionStatus === 'granted' && ['requested','refused','revoked'].includes(previousPermission)) showStatus("Internet access is allowed. Select Connect wallet to continue.", "muted");
       }
       document.querySelector("#wallet-connection").textContent = current.status === "connected" ? "Connected" : "Disconnected";
       if (current.status === "connected" && connectionRevision !== undefined && connectionRevision !== current.revision) {

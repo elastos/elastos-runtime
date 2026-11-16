@@ -38,7 +38,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     // The pinned SDK creates an Error for its deadline; wallet replies are JSON objects.
     if (error instanceof Error && error.code === 6 && error.message === 'Request expired. Please try again.') return Object.assign(new Error(walletConnectMessages[`${prefix}Timeout`]), {tone:'muted'});
     const message = localError && [walletConnectMessages.cancelled,'The QR code expired. Select Connect wallet for a new one.','Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'].includes(error?.message) ? error.message : walletConnectMessages[`${prefix}Error`];
-    return Object.assign(new Error(message), {tone:message === walletConnectMessages.cancelled ? 'error' : 'muted'});
+    return Object.assign(new Error(message), {tone:'muted'});
   };
   const requireNetwork = namespace => {
     const id = namespace.split(':')[1];
@@ -143,7 +143,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
           || !Number.isSafeInteger(challenge.expires_at) || challenge.expires_at <= Date.now()/1000) throw new Error('Wallet changed or the challenge expired. Select Connect wallet to try again.');
       };
       await check();
-      const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]}, undefined, 'ownership');
+      const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]}, 300, 'ownership');
       await check();
       await api('/api/auth/evm/verify',{method:'POST',body:JSON.stringify({message:challenge.message,signature})});
       return {status:'linked'};
@@ -188,7 +188,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     const signature = await request({method,params:[signData(handoff.message),signer]},expiry);
     await check();
     try { await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:'personal_sign'})}); }
-    catch { throw Object.assign(new Error(walletConnectMessages.signatureError), {tone:'muted'}); }
+    catch (error) { if (error.message === 'This wallet window expired. Close it and open WalletConnect again.') throw error; throw Object.assign(new Error(walletConnectMessages.signatureError), {tone:'muted'}); }
     return {status:'completed',effect:'signature'};
   }};
 }

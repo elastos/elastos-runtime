@@ -14,6 +14,9 @@ export async function connectWalletConnectEvm(options) {
   currentApi = options.api;
   configureRuntime({ url: options.relayUrl, authorize: () => options.api("relay-admission", { method: "POST" }) });
   options.signal?.throwIfAborted();
+  // The pinned SDK shares Core across module imports. A new adapter must own
+  // its Core and revision-bound API; keep the stable prefix for stored sessions.
+  if (!provider) delete globalThis[`_walletConnectCore_${options.contextKey}`];
   provider ??= await EthereumProvider.init({
     projectId: options.projectId,
     customStoragePrefix: options.contextKey,

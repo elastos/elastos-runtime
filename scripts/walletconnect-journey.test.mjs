@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import {execFileSync} from 'node:child_process';
 import {readFileSync,mkdirSync} from 'node:fs';
 import {extname,resolve,relative} from 'node:path';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
@@ -407,7 +408,7 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       json(keys);return;
     }
     const match=path.match(/^\/apps\/(wallet-walletconnect|home)\/(.*)$/);
-    if(match){const root=resolve('capsules',match[1],match[2].startsWith('vendor/')?'':'browser');const file=resolve(root,match[2]||'index.html');assert.ok(!relative(root,file).startsWith('..'));res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html'})[extname(file)]||'application/octet-stream');res.end(readFileSync(file));return;}
+    if(match){const root=resolve('capsules',match[1],match[2].startsWith('vendor/')?'':'browser');const file=resolve(root,match[2]||'index.html');assert.ok(!relative(root,file).startsWith('..'));res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html'})[extname(file)]||'application/octet-stream');res.end(process.env.WALLETCONNECT_SOURCE_REF?execFileSync('git',['show',`${process.env.WALLETCONNECT_SOURCE_REF}:${relative(process.cwd(),file)}`],{maxBuffer:4*1024*1024}):readFileSync(file));return;}
     res.writeHead(404).end();
   });
   const {relay,methods}=walletConnectRelayFixture(server);
@@ -425,6 +426,8 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
     await wallet.locator('#wallet-connect').click();await wallet.locator('dialog[open] canvas').waitFor({timeout:20000});
     if(journey==='A') {
       await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
+      await wallet.locator('#wallet-status').filter({hasText:messages.cancelled}).waitFor();
+      await t.test('own Cancel has neutral tone',async()=>assert.equal(await wallet.locator('#wallet-status').getAttribute('data-tone'),'muted'));
       status='revoked';revision++;keys={};
       await wallet.locator('#wallet-connect:enabled').click();
       await wallet.locator('#wallet-status').filter({hasText:permissionText}).waitFor();
@@ -442,10 +445,11 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       await wallet.locator('dialog[open] canvas').waitFor({timeout:15000});
       assert.equal(methods.filter(m=>m==='wc_proposeSession').length,before+1);
       assert.equal(page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/')),frame);
-      if(process.env.WALLETCONNECT_SCREENSHOTS){mkdirSync(process.env.WALLETCONNECT_SCREENSHOTS,{recursive:true});for(const theme of ['dark','light']){await frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);await page.screenshot({path:`${process.env.WALLETCONNECT_SCREENSHOTS}/r18-${journey}-allowed-qr-${theme}.png`});}}
+      if(process.env.WALLETCONNECT_SCREENSHOTS){mkdirSync(process.env.WALLETCONNECT_SCREENSHOTS,{recursive:true});for(const theme of ['dark','light']){await frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);await page.waitForTimeout(200);await frame.waitForFunction(()=>{const c=document.querySelector('dialog[open] canvas');return c&&c.getContext('2d').getImageData(0,0,c.width,c.height).data.some((v,i)=>i%4===0&&v<10);});await page.screenshot({path:`${process.env.WALLETCONNECT_SCREENSHOTS}/r18-${journey}-allowed-qr-${theme}.png`});}}
     });
     await t.test('Cancel has neutral tone',async()=>{
       if(await wallet.locator('dialog[open]').count())await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
+      await wallet.locator('#wallet-status').filter({hasText:messages.cancelled}).waitFor({timeout:3000});
       assert.equal(await text(),messages.cancelled);assert.equal(await wallet.locator('#wallet-status').getAttribute('data-tone'),'muted');
     });
     // A stale SDK is still fenced by the exact installed response, rather than
