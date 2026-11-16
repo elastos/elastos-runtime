@@ -27,3 +27,23 @@ test('round19 a failed storage DELETE prevents a second SDK from sharing the sto
   await client.effect({kind:'link'});
   assert.equal(loaded,2,'a confirmed storage revision change permits the replacement SDK');
 });
+
+test('round19 an older off reply cannot cancel a newer granted phone request',async()=>{
+  const address='0x'+'12'.repeat(20);let internetReads=0,releaseOld,releasePhone,phoneReady;
+  const reachedPhone=new Promise(resolve=>{phoneReady=resolve;});
+  const provider={chainId:1,connected:true,session:{expiry:Date.now()/1000+3600,namespaces:{eip155:{accounts:[`eip155:1:${address}`]}}},signer:{client:{core:{relayer:{connected:true}}}},on(){},async request({method}){
+    if(method==='eth_accounts')return [address];if(method==='eth_chainId')return 1;
+    return new Promise(resolve=>{releasePhone=resolve;phoneReady();});
+  }};
+  const api=async(path)=>{
+    if(path==='internet')return ++internetReads===1?new Promise(resolve=>{releaseOld=resolve;}):{status:'granted'};
+    if(path==='wallet/config')return {walletconnect:{project_id:'fixture-project',storage_revision:'"0"'}};
+    if(path.endsWith('/challenge'))return {message:'New ownership',expires_at:Math.floor(Date.now()/1000)+300};
+    return {};
+  };
+  const client=createWalletConnectClient({api,origin:'http://localhost',loadAdapter:async()=>({connectWalletConnectEvm:async()=>provider,disconnectWalletConnectEvm:async()=>{}})});
+  const old=client.effect({kind:'status'});
+  const link=client.effect({kind:'link'}).then(value=>({value}),error=>({error:error.message}));
+  await reachedPhone;releaseOld({status:'revoked'});await old;releasePhone('0x'+'ab'.repeat(65));
+  const result=await link;assert.equal(result.error,undefined);assert.equal(result.value.status,'linked');
+});
