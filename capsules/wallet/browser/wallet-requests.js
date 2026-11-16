@@ -140,6 +140,7 @@ export function createWalletRequests({
     }
     const openMethod = event.target && event.target.closest("[data-wallet-open-method]");
     if (openMethod) {
+      event.stopPropagation();
       openApprovalMethod(readText(openMethod.dataset.walletOpenMethod));
     }
   }

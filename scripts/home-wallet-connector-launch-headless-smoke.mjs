@@ -30,6 +30,7 @@ const state = {
     "wallet-walletconnect": 0,
   },
   connectorEffects: 0,
+  approvalRequests: [],
   homeStateWrites: [],
   serverErrors: [],
 };
@@ -66,6 +67,7 @@ function contentType(path) {
     ".css": "text/css; charset=utf-8",
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
     ".json": "application/json; charset=utf-8",
     ".png": "image/png",
     ".svg": "image/svg+xml",
@@ -259,7 +261,7 @@ async function handleApi(req, res, url) {
     }
     json(res, 200, {
       wallet_accounts: { accounts: [], default_accounts: [] },
-      wallet_approvals: { approval_requests: [] },
+      wallet_approvals: { approval_requests: state.approvalRequests },
       approval_methods: { walletconnect: { available: true } },
     });
     return true;
@@ -289,7 +291,7 @@ async function handleApi(req, res, url) {
       if (!requireToken(req, token, res)) {
         return true;
       }
-      json(res, 200, { approval_requests: [] });
+      json(res, 200, { approval_requests: state.approvalRequests.filter(request => request.connector_id === target) });
       return true;
     }
   }
@@ -506,10 +508,13 @@ try {
   }, null, {timeout:15000});
   const windowPolicy = await homeGui.evaluate(async () => {
     const {supportsMenuNewWindow} = await import("./shell-windows.js?v=home-20261101d");
-    return {browser:supportsMenuNewWindow("browser"),library:supportsMenuNewWindow("library"),walletconnect:supportsMenuNewWindow("wallet-walletconnect")};
+    // Exercise the rule with fixed inputs; engine availability and summary timing are host-owned.
+    const summary = {targets:[{target:"library",window_policy:"hybrid"}],capsule_catalog:{capsules:
+      ["wallet-metamask","wallet-unisat","wallet-walletconnect"].map(launch_target => ({launch_target,launchable:true,window_policy:"single"}))}};
+    return Object.fromEntries(["browser","library","wallet-metamask","wallet-unisat","wallet-walletconnect"].map(target => [target,supportsMenuNewWindow(target,summary)]));
   });
-  assert(windowPolicy.browser === false && windowPolicy.library === true && windowPolicy.walletconnect === false,
-    "real Home menu policy follows the projected capsule metadata", windowPolicy);
+  assert(JSON.stringify(windowPolicy) === JSON.stringify({browser:false,library:true,"wallet-metamask":true,"wallet-unisat":true,"wallet-walletconnect":false}),
+    "only WalletConnect reuses a connector window; Browser and Library keep their menu rules", windowPolicy);
   await homeGui.locator('#launcher-toggle').click();
   await homeGui.locator('#launcher-grid [data-target="wallet"]').click();
   await waitFor(() => frameFor(page, "wallet"), 15_000, "real Wallet frame");
@@ -623,7 +628,24 @@ try {
       `${target} click attached more than one connector window`,
     );
 
+    if (target === "wallet-metamask") {
+      state.approvalRequests = [{request_id:"metamask-second",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"Second MetaMask request",chain_namespace:"eip155:20",expires_at:Math.floor(Date.now()/1000)+600}];
+      // Wallet's real request card opens the second request while the first connector stays open.
+      await homeGui.evaluate(() => document.querySelector('.window[data-target="wallet"] iframe').contentWindow.postMessage({type:'elastos:wallet-refresh'},'*'));
+      await homeGui.locator('.window[data-target="wallet"] .window-head').click({position:{x:80,y:14}});
+      await wallet.getByRole('button',{name:'Close settings',exact:true}).click();
+      await wallet.getByRole('button',{name:'Open MetaMask',exact:true}).click();
+      await waitFor(() => page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).length === 2,5000,'fresh MetaMask request window');
+      const fresh = page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).find(frame=>frame!==connector);
+      await fresh.getByText('Second MetaMask request',{exact:true}).waitFor();
+      assert(await connector.getByText('Second MetaMask request',{exact:true}).count() === 0,'original MetaMask frame retains its load-time list');
+      await homeGui.locator('.window[data-target="wallet-metamask"] [data-action="close"]').last().click();
+      state.approvalRequests = [];
+      await wallet.locator('#wallet-settings-open').click();
+      await homeGui.locator('.window[data-target="wallet-metamask"] .window-head').click({position:{x:80,y:14}});
+    }
     if (target === "wallet-walletconnect") {
+      state.approvalRequests = [{request_id:"wc-return",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"New request on Home return",chain_namespace:"eip155:20"}];
       await homeGui.locator('.window[data-target="wallet-walletconnect"] [data-action="minimize"]').click();
       await wallet.evaluate(() => document.querySelector('[data-wallet-open-method="wallet-walletconnect"]').click());
       await waitFor(() => state.launches["wallet-walletconnect"] === 2, 5000, "WalletConnect return launch");
@@ -633,13 +655,20 @@ try {
       assert(frameFor(page, target) === connector, "WalletConnect return preserves its requesting frame");
       const returned = await homeWindowSnapshot(homeGui, target);
       assert(!returned.hidden && returned.active, "WalletConnect return restores and activates its requesting window");
+      await connector.getByText('New request on Home return',{exact:true}).waitFor();
+      // Returning to an already visible frame also refreshes, without a click inside it.
+      state.approvalRequests[0].reason = 'Another request on Home return';
+      await wallet.evaluate(() => document.querySelector('[data-wallet-open-method="wallet-walletconnect"]').click());
+      await connector.getByText('Another request on Home return',{exact:true}).waitFor();
+      assert(await homeGui.locator('.window[data-target="wallet-walletconnect"]').count() === 1,'visible return keeps one WalletConnect frame');
+      state.approvalRequests = [];
       if (process.env.WALLETCONNECT_SCREENSHOTS) {
         mkdirSync(process.env.WALLETCONNECT_SCREENSHOTS, {recursive:true});
         for (const theme of ["dark", "light"]) {
           for (const frame of page.frames()) {
             await frame.evaluate(theme => { document.documentElement.dataset.elTheme = theme; }, theme);
           }
-          await page.screenshot({path:join(process.env.WALLETCONNECT_SCREENSHOTS, `r6-home-return-${theme}.png`)});
+          await page.screenshot({path:join(process.env.WALLETCONNECT_SCREENSHOTS, `r15-home-return-${theme}.png`)});
         }
       }
     }
@@ -686,9 +715,9 @@ try {
   assert(state.launches["home-gui"] === 1, "Home launched multiple GUI roots", state);
   assert(state.launches.wallet === 1, "Home launched Wallet more than once", state);
   assert(
-    state.launches["wallet-metamask"] === 1 &&
-      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 2,
-    "one Wallet click did not produce exactly one Runtime connector launch",
+    state.launches["wallet-metamask"] === 2 &&
+      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 3,
+    "each Wallet open must produce one Runtime connector launch",
     state,
   );
   assert(
@@ -741,8 +770,8 @@ try {
     "forged, substituted, or wrong-source descriptor attached a connector window",
   );
   assert(
-    state.launches["wallet-metamask"] === 1 &&
-      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 2,
+    state.launches["wallet-metamask"] === 2 &&
+      state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 3,
     "descriptor rejection invoked the generic Runtime launch path",
     state,
   );
@@ -771,7 +800,7 @@ try {
     "Home GUI accepted a replayed authorized attachment descriptor",
   );
   assert(
-    state.launches["wallet-metamask"] === 1,
+    state.launches["wallet-metamask"] === 2,
     "authorized attachment replay invoked Runtime launch",
     state,
   );

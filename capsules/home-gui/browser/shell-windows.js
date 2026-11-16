@@ -53,6 +53,7 @@ import {
   toggleFullscreenStage,
   windowVisibleOnActiveSpace,
 } from "./shell-stages.js?v=home-20261101d";
+import { postShellLayout, shellLayout, capsuleFrameVisible } from "./shell-capsule-layout.js?v=home-20261101d";
 import { showAssistantFace } from "./shell-assistant-face.js?v=home-20261101d";
 
 let windowHooks = null;
@@ -373,17 +374,17 @@ const HOME_AGENT_TARGET_ID = "assistant";
 const MAX_SESSION_WINDOWS = 24;
 function isSingleWindowTarget(targetId, summary = shellState.currentSummary) {
   const target = targetById(summary, targetId)
-    || summary?.capsule_catalog?.capsules?.find(capsule => capsule.launchable && capsule.launch_target === targetId);
+    || (targetId === "wallet-walletconnect" ? summary?.capsule_catalog?.capsules?.find(capsule => capsule.launchable && capsule.launch_target === targetId) : undefined);
   return target?.window_policy === "single";
 }
 
 /** Hybrid supplies a blank window. Multiple capsules own selection-aware
  * commands; absent policy retains the existing generic menu behavior.
  * Browser has one window (one live Browser page per user), so no New Window. */
-export function supportsMenuNewWindow(targetId) {
+export function supportsMenuNewWindow(targetId, summary = shellState.currentSummary) {
   if (targetId === "browser") return false;
-  const policy = targetById(shellState.currentSummary, targetId)?.window_policy;
-  return !isSingleWindowTarget(targetId) && policy !== "multiple";
+  const policy = targetById(summary, targetId)?.window_policy;
+  return !isSingleWindowTarget(targetId, summary) && policy !== "multiple";
 }
 const WALLET_CONNECTOR_TARGETS = new Set([
   "wallet-metamask",
@@ -1934,7 +1935,14 @@ async function launchBrowserTargetWindow(targetId, options = {}) {
     }
   }
   if (shellState.windows.get(entry.id) !== entry) throw new Error("App window was closed");
-  if (!options.restoredPlacement) activateWindowEntry(entry);
+  if (!options.restoredPlacement) {
+    if (targetId === "wallet-walletconnect" && options.authorizedLaunch) {
+      activateWindowEntry(entry);
+      const frame = entry.node.querySelector(".window-frame");
+      if (frame) postShellLayout(frame.contentWindow, { ...shellLayout(), visible: capsuleFrameVisible(frame) });
+    }
+    else focusWindow(entry.id);
+  }
   if (targetId === SYSTEM_APP_ID && Object.keys(options.query || {}).length > 0) {
     const ok = await requestSystemWindow(entry, "navigate", options.query);
     if (!ok) throw new Error("System could not open the requested settings");

@@ -22,16 +22,29 @@ const api = (resource, init={}) => fetchJson(resource.startsWith('/api/') ? runt
 });
 const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory});
 window.addEventListener('focus',()=>refreshWalletState().catch(()=>{}));
+window.addEventListener('message', event => {
+  if (event.source !== window.parent || event.origin !== 'null' || event.data?.type !== 'elastos:shell-layout') return;
+  if (event.data.layout?.visible === true) refreshWalletState().catch(()=>{});
+});
 let connectionTimer;
+let connectionInterval;
 let connectionRevision;
 function watchConnection() {
-  if (!frameHomeToken || connectionTimer || typeof window.setInterval !== "function") return;
+  if (!frameHomeToken || typeof window.setInterval !== "function") return;
+  const interval = pendingEffect || document.querySelector('dialog[open]') ? 1000 : 5000;
+  if (connectionTimer && connectionInterval === interval) return;
+  window.clearInterval(connectionTimer);
+  connectionInterval = interval;
   connectionTimer = window.setInterval(async () => {
-    if (connectionCheckInFlight) return;
+    if (pendingEffect && (!pendingEffect.requestId || !Number.isFinite(pendingEffect.expiresAt) || pendingEffect.expiresAt <= Date.now())) pendingEffect = undefined;
+    if (connectionCheckInFlight) { watchConnection(); return; }
     connectionCheckInFlight = true;
     try {
+      const saved = pendingEffect;
       const current = await connector.effect({ kind: "status" });
-      if (current.permission.status === 'granted' && pendingEffect && !hostEffectInFlight) {
+      if (saved && pendingEffect === saved && (!saved.requestId || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now() || current.permission.request?.id !== saved.requestId
+        || !['requested','granted'].includes(current.permission.status))) pendingEffect = undefined;
+      if (current.permission.status === 'granted' && pendingEffect && pendingEffect === saved && !hostEffectInFlight) {
         const resume = pendingEffect.run;
         pendingEffect = undefined;
         resume();
@@ -46,9 +59,10 @@ function watchConnection() {
       }
       connectionRevision = current.revision;
     } catch { document.querySelector("#wallet-connection").textContent = "Disconnected"; }
-    finally { connectionCheckInFlight = false; }
-  }, 1000);
+    finally { connectionCheckInFlight = false; watchConnection(); }
+  }, interval);
 }
+new MutationObserver(watchConnection).observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['open']});
 
 const homeClipboard = createHomeClipboardClient({
   targetId: CONNECTOR_ID,
@@ -241,17 +255,19 @@ async function onRequestClick(event) {
 }
 
 async function requestCapsuleWalletEffect(action) {
-  if (action.kind === 'disconnect') pendingEffect = undefined;
+  pendingEffect = undefined;
+  watchConnection();
   if (!frameHomeToken || hostEffectInFlight) throw new Error('A wallet request is already active.');
   hostEffectInFlight = true;
   try {
     if (['link','approve'].includes(action.kind)) {
       const consent = await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
       if (consent.status !== 'granted') {
-        pendingEffect = {run: action.kind === 'link' ? onConnect : () => {
+        pendingEffect = {requestId:consent.request?.id, expiresAt:(consent.request?.issued_at + 1800) * 1000, run: action.kind === 'link' ? onConnect : () => {
           const button = [...requestsNode.querySelectorAll('[data-wallet-request-sign]')].find(node => node.dataset.walletRequestSign === action.approvalRequestId);
           if (button) return onRequestClick({target:button});
         }};
+        watchConnection();
         window.top.postMessage({type:'home:open-target',target:'inbox',query:{notification_id:'walletconnect-internet:permission'},homeToken:frameHomeToken},homeOrigin);
         throw Object.assign(new Error('WalletConnect needs internet access. Answer the request in Inbox. If it is no longer there, select Connect wallet to ask again.'), {tone:'muted'});
       }
@@ -282,7 +298,7 @@ function chainLabel(value) {
     case "eip155:11155111": return "Sepolia test network";
     default: {
       const chainId = readText(value).replace(/^eip155:/, "");
-      return chainId ? `EVM ${chainId}` : "EVM";
+      return chainId ? `an unsupported network (${chainId})` : "an unsupported network";
     }
   }
 }
