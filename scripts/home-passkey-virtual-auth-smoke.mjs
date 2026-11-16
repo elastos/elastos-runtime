@@ -2123,7 +2123,7 @@ async function captureBrowserWindowIdentity(appFrame) {
   const windowId = await section.getAttribute("data-window-id");
   assert(typeof windowId === "string" && /^[A-Za-z0-9:_-]{1,128}$/.test(windowId),
     "Exact Browser window has no stable identity");
-  const route = await iframe.getAttribute("src") || "";
+  const route = await iframe.getAttribute("data-route") || await iframe.getAttribute("src") || "";
   const token = assertIsolatedLaunchRoute(route, "browser");
   const instance = new URL(route, HOME_URL).searchParams.get("browser_instance") || "";
   const parent = appFrame.parentFrame();
