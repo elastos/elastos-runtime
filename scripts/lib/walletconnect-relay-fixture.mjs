@@ -1,5 +1,10 @@
 import {createRequire} from 'node:module';
-const {WebSocketServer} = createRequire(new URL('../walletconnect/package.json',import.meta.url))('ws');
+import {existsSync} from 'node:fs';
+import {join} from 'node:path';
+import {behaviourInputsDir} from '../product-smoke-browser.mjs';
+const cached = join(behaviourInputsDir(),'walletconnect/package.json');
+export const walletConnectFixtureRequire = createRequire(existsSync(cached) ? cached : new URL('../walletconnect/package.json',import.meta.url));
+const {WebSocketServer} = walletConnectFixtureRequire('ws');
 
 // Implements only the pinned SDK relay messages, within a disposable local test.
 export function walletConnectRelayFixture(server) {

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # The one behaviour suite: CI test-behaviour, `just test-behaviour` and the
 # local pre-push gate all run this file.
-#   test-behaviour.sh inputs  installs the pinned Browser test inputs (network)
+#   test-behaviour.sh inputs  installs the pinned Browser and wallet test inputs (network)
 #   test-behaviour.sh         runs the suite offline; the spec reporter ends
 #                             with the failing tests by name
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 inputs="${BEHAVIOUR_INPUTS:-${RUNNER_TEMP:-${HOME}/.cache/elastos-runtime}/behaviour}"
-browser="${inputs}/browser" core="${inputs}/core"
+browser="${inputs}/browser" core="${inputs}/core" walletconnect="${inputs}/walletconnect"
 installed() { # prefix package version
   [ "$(node -p "try { require('$1/node_modules/$2/package.json').version } catch { '' }")" = "$3" ]
 }
@@ -18,6 +18,13 @@ if [ "${1:-}" = inputs ]; then
     npm install --prefix "$browser" --no-save --package-lock=false playwright@1.60.0
   if ! installed "$core" playwright-core 1.59.1 || ! installed "$core" node 24.21.0; then
     npm install --prefix "$core" --no-save --package-lock=false playwright-core@1.59.1 node@24.21.0
+  fi
+  # The scripted wallet uses the same locked graph as the shipped adapter.
+  if ! installed "$walletconnect" @walletconnect/sign-client 2.23.9 ||
+      ! cmp -s scripts/walletconnect/package-lock.json "$walletconnect/package-lock.json"; then
+    mkdir -p "$walletconnect"
+    cp scripts/walletconnect/package.json scripts/walletconnect/package-lock.json "$walletconnect/"
+    npm ci --prefix "$walletconnect" --ignore-scripts --no-audit --no-fund
   fi
   # Tests use both SDK pins; keep both browser builds in the shared cache.
   # The 1.60 pin installs the headless shell. Default headless launches use it.
