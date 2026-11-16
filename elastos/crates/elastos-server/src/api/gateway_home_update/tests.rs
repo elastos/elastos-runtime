@@ -2631,3 +2631,69 @@ async fn update_notice_hung_close_deadline_releases_shared_worker() {
     })
     .await;
 }
+
+#[tokio::test(start_paused = true)]
+async fn update_notice_task_switch_off_while_foreign_policy_worker_drains() {
+    with_test_check_cache(async {
+        use std::sync::{
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+            Arc,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        configure_update_summary(dir.path());
+        let app = gateway_router(test_state(dir.path()));
+        let owner = passkey_authority_with_name(dir.path(), Some("notice-switch-off-during-check"));
+        let cache = update_check_cache();
+        let (_, _, old_key) = update_inputs(dir.path()).unwrap();
+        let (release, waiting) = tokio::sync::oneshot::channel();
+        cache
+            .lock()
+            .await
+            .read(old_key, std::time::Instant::now(), || async move {
+                waiting.await.unwrap();
+                CheckOutcome::Rejected
+            })
+            .await;
+        let mut config = crate::sources::load_trusted_sources(dir.path()).unwrap();
+        config.sources[0].channel = "canary".into();
+        crate::sources::save_trusted_sources(dir.path(), &config).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let wall = Arc::new(AtomicU64::new(1000));
+        let clock = wall.clone();
+        let task = notice::start_with(
+            dir.path().into(),
+            cache.clone(),
+            move || clock.load(Ordering::SeqCst),
+            || 0,
+            move |_, _, _| {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { CheckOutcome::Rejected }
+            },
+        );
+        tokio::task::yield_now().await;
+        notice_tick(&wall, 1180).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let (status, _) = home_test_post_json(
+            &app,
+            "/api/apps/system/update-background",
+            &owner.system_token,
+            "null",
+            json!({"enabled":false}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        release.send(()).unwrap();
+        notice_tick(&wall, 1180).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "switch-off must prevent the new policy worker after the older worker drains"
+        );
+        cache.lock().await.expire_response();
+        notice_tick(&wall, 100000).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "later turns stay off");
+        task.shutdown().await;
+    })
+    .await;
+}
