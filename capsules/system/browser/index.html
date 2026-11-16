@@ -416,9 +416,13 @@
                   <div data-field="update-publisher-row"><dt>Publisher</dt><dd data-field="update-publisher"></dd></div>
                 </dl>
                 <div id="update-background" hidden>
-                  <label class="pc2-card-row"><span id="update-background-label"></span>
-                    <input id="update-background-choice" type="checkbox" role="switch" aria-describedby="update-background-message">
-                  </label>
+                  <div class="pc2-card-row">
+                    <label id="update-background-label" for="update-background-choice"></label>
+                    <label class="system-switch">
+                      <input id="update-background-choice" type="checkbox" role="switch" aria-labelledby="update-background-label" aria-describedby="update-background-message">
+                      <span class="system-switch-track" aria-hidden="true"></span>
+                    </label>
+                  </div>
                   <p id="update-background-message" class="pc2-card-sublabel" role="status"></p>
                 </div>
                 <button id="runtime-update-apply" class="pc2-btn pc2-btn-secondary" type="button" hidden disabled>Update and restart Home</button>

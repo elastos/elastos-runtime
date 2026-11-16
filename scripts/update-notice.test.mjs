@@ -61,8 +61,10 @@ async function fixture() {
     }
     if (url.pathname === "/api/apps/system/summary") {
       const summary=makeSystemSummary(makeAppearanceRecord());summary.access.role=state.guest?"guest":"admin";
+      summary.runtime.version="0.7.0";
+      summary.source={configured:true,name:"Home publisher",channel:"stable",installed_version:"0.7.0",mode:"release",update_checks_allowed:true};
       summary.runtime_update=state.guest?null:{configured:true,available:true,can_apply:true,current_version:"0.7.0",new_version:"0.7.1",changes:notes,
-        publisher:"Home publisher",background_checks:state.settings,controller:{phase:"ready"}};
+        publisher:"Home publisher", publisher_did:"did:key:fixture", source_name:"Home publisher", channel:"stable", head_cid:release, release_cid:release, background_checks:state.settings,controller:{phase:"ready"}};
       jsonResponse(response,summary);return true;
     }
     if (url.pathname === "/api/apps/system/update-background") {
@@ -129,18 +131,20 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await gui.evaluate(()=>refreshFixture());await badge.waitFor({state:"hidden"});
       await screen(page,`${theme}-inbox-read`);
       await inbox.getByRole("button",{name:"Open System",exact:true}).click();
+      assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==="home:open-target").at(-1)).then(m=>({target:m.target,query:m.query})), {target:"system",query:{settings:"about"}});
       const system=gui.frameLocator('iframe.window-frame[title="System"]');
       await system.locator("#runtime-update").waitFor();
       await system.locator("#update-background-choice").waitFor();
+      await system.getByRole("button",{name:"Update and restart Home",exact:true}).waitFor();
       assert.equal(await system.locator("#update-background-message").textContent(),copy("ON_TEXT"));
       await system.locator("#runtime-update").evaluate(node=>{if(document.activeElement!==node)throw new Error("update card did not receive focus");});
       await screen(page,`${theme}-system-from-entry-on`);
-      await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).uncheck();
+      await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.getByText(copy("OFF_TEXT"),{exact:true}).waitFor({timeout:3000});
       assert.deepEqual(f.state.writes.at(-1).input,{enabled:false});
       assert.ok(f.state.writes.at(-1).token);
       await screen(page,`${theme}-switch-off`);
-      await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).check();
+      await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.getByText(copy("ON_TEXT"),{exact:true}).waitFor();
       await screen(page,`${theme}-switch-on`);
       // The same live System window navigates from another tab to About.
@@ -159,14 +163,17 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     const system=page.frameLocator("#system-frame");
     await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).waitFor();
     f.state.failWrite=true;
-    await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).click();
+    await system.locator("label.system-switch:has(#update-background-choice)").click();
     await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).waitFor();
     await system.getByText(copy("SAVE_ERROR"),{exact:true}).waitFor();
     assert.equal(await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).isChecked(),true);
     f.state.failWrite=false;f.state.settings=preference(false,false);await page.reload();
     await system.getByText(copy("UNREADABLE_TEXT"),{exact:true}).waitFor();
-    await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).check();await system.getByText(copy("ON_TEXT"),{exact:true}).waitFor();
+    await system.locator("label.system-switch:has(#update-background-choice)").click();await system.getByText(copy("ON_TEXT"),{exact:true}).waitFor();
     await screen(page,"phone-switch-repaired");
+    await system.locator("#update-background-choice").focus();
+    await page.keyboard.press("Space");
+    await system.getByText(copy("OFF_TEXT"),{exact:true}).waitFor();
     f.state.guest=true;await page.reload();
     await system.locator("#runtime-update").waitFor({state:"hidden"});
     assert.deepEqual(f.requestFailures,[]);
