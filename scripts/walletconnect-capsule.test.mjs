@@ -94,7 +94,7 @@ for (const scope of ['signature','transaction','link','proposal']) for (const co
 });
 for (const scope of ['signature','transaction','link','proposal']) for (const [ending,key] of [['expired','Timeout'],['error:-32000','Error'],['error:5100','Error']]) test(`${scope} phone ${ending} gives a working next step`,async()=>{
   const r=await exerciseWalletConnect(`${scope}-phone-${ending}`);
-  assert.equal(r.error,messages[`${['link','proposal'].includes(scope)?'link':scope}${key}`]);
+  assert.equal(r.error,scope==='proposal'&&ending==='expired'?'The QR code expired. Select Connect wallet for a new one.':messages[`${['link','proposal'].includes(scope)?'link':scope}${key}`]);
   assert.equal(r.tone,'muted');assert.equal(completed(r).length,0);
 });
 for (const scope of ['signature','transaction']) for (const ending of ['declined:4001','expired','error:-32000','error:5100']) test(`${scope} second Review after ${ending} cannot dispatch again`,async()=>{
@@ -118,9 +118,22 @@ test('a network change after handoff cannot offer rejection of a consumed signat
   assert.equal(r.tone,'muted');
 });
 
-for (const scope of ['signature','transaction','link','proposal']) for (const code of [-32000,5100]) for (const alias of ['expired-text','cancelled-text']) test(`coded wallet errors stay contextual: ${scope} ${code} ${alias}`,async()=>{
+for (const scope of ['signature','transaction','link','proposal']) for (const code of [-32000,5100,6]) for (const alias of ['expired-text','cancelled-text']) test(`coded wallet errors stay contextual: ${scope} ${code} ${alias}`,async()=>{
   const r=await exerciseWalletConnect(`${scope}-phone-error:${code}:${alias}`);
   assert.equal(r.error,messages[`${['link','proposal'].includes(scope)?'link':scope}Error`]);
   assert.equal(r.tone,'muted');assert.equal(completed(r).length,0);
   if(['signature','transaction'].includes(scope)){assert.equal(r.status,'approved');assert.equal(r.secondError,messages.consumed);}
+});
+
+for(const scope of ['signature','transaction','link','proposal'])test(`uncoded wallet expiry-text replies stay contextual: ${scope}`,async()=>{
+  const r=await exerciseWalletConnect(`${scope}-phone-error:uncoded:expired-text`);
+  assert.equal(r.error,messages[`${['link','proposal'].includes(scope)?'link':scope}Error`]);
+});
+for(const change of ['account-change-during-send','approved-chain-change-during-send','expired-during-send'])test(`consumed signature recovery after ${change} asks for a new request`,async()=>{
+  const r=await exerciseWalletConnect(`signature-${change}`);
+  assert.equal(r.error,messages.consumed);
+});
+test('consumed signature completion failure asks the app for a new request',async()=>{
+  const r=await exerciseWalletConnect('signature-completion-refused');
+  assert.equal(r.error,messages.signatureError);
 });

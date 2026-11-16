@@ -5,7 +5,7 @@ export async function exerciseWalletConnect(scenario='valid') {
   const clock=Date.now, calls=[],routes=[],events=new Map(); let changed=false, memoryCleared=false, status=scenario==='approved'?'approved':'pending';
   const signatureIntent=scenario.startsWith('signature-') || scenario.startsWith('typed') || scenario==='unsupported' || scenario==='protected-content';
   const intent=scenario.startsWith('typed')?'browser_typed_data_sign':scenario==='unsupported'?'unavailable_intent':scenario==='protected-content'?'protected_content_rights_signature':signatureIntent?'browser_personal_sign':'transaction_intent';
-  const kind=scenario.replace(/^signature-/,'');
+  const kind=scenario.replace(/^signature-/,'').replace(/^approved-/,'');
   const lifetime=scenario==='signature-short'?180:scenario==='long-request'?1800:600;
   const signature=`0x${'ab'.repeat(65)}`;
   const message=scenario==='link-uppercase-hex'?'0X4142':scenario==='link-odd-hex'?'0x123':'Runtime ownership proof · fixture';
@@ -15,10 +15,12 @@ export async function exerciseWalletConnect(scenario='valid') {
   const expiredMessage = 'Request expired. Please try again.';
   const phoneError = () => {
     if (scenario.includes('phone-declined:')) throw {code:Number(scenario.split(':')[1]),message:'User rejected.'};
-    if (scenario.includes('phone-error:')) throw {code:Number(scenario.split(':')[1]),message:scenario.endsWith(':expired-text')?expiredMessage:scenario.endsWith(':cancelled-text')?messages.cancelled:'Private wallet error fixture'};
-    if (scenario.includes('phone-expired')) throw new Error(expiredMessage);
+    if (scenario.includes('phone-error:')) throw {...(scenario.split(':')[1]==='uncoded'?{}:{code:Number(scenario.split(':')[1])}),message:scenario.endsWith(':expired-text')?expiredMessage:scenario.endsWith(':cancelled-text')?messages.cancelled:'Private wallet error fixture'};
+    if (scenario.includes('phone-expired')) throw scenario.startsWith('proposal-')
+      ? new Error('The QR code expired. Select Connect wallet for a new one.')
+      : Object.assign(new Error(expiredMessage),{code:6});
   };
-  const provider={chainId:20,connected:true,session:{expiry:clock()/1000+3600,namespaces:{eip155:{chains:['eip155:1','eip155:20'],accounts:[`eip155:20:${address}`],methods:scenario==='typed-unavailable'?['personal_sign']:['personal_sign','eth_sendTransaction','eth_signTypedData_v4']}}},signer:{client:{core:{relayer:{connected:true}}}},
+  const provider={chainId:20,connected:true,session:{expiry:clock()/1000+3600,namespaces:{eip155:{chains:['eip155:1','eip155:20'],accounts:[`eip155:20:${address}`,...(scenario==='signature-approved-chain-change-during-send'?[`eip155:1:${address}`]:[])],methods:scenario==='typed-unavailable'?['personal_sign']:['personal_sign','eth_sendTransaction','eth_signTypedData_v4']}}},signer:{client:{core:{relayer:{connected:true}}}},
     on:(name,fn)=>events.set(name,fn),async request(input,expiry){calls.push({...input,expiry});
       if(input.method==='eth_accounts')return [scenario==='wrong-account'||changed&&kind==='account-change-during-send'?`0x${'ab'.repeat(20)}`:address];
       if(input.method==='eth_chainId'&&scenario.startsWith('numeric-chain'))return 20;
@@ -43,7 +45,7 @@ export async function exerciseWalletConnect(scenario='valid') {
       binding:{principal_id:'fixture',requested_by_actor:'documents',account_id:'fixture-account',chain_namespace:'eip155:20',payload_hash:payloadHash,
       expires_at:scenario==='expired'?1:Math.floor(clock()/1000)+lifetime}};}
     if(path.endsWith('/complete')){const body=JSON.parse(input.body);assert.equal(body.payload_hash,payloadHash);assert.equal(body.signer,address);
-      if(scenario==='completion-refused')throw new Error('Completion refused');return {receipt_status:scenario==='dismissed-during-send'?'sent_after_dismissal':'completed'};}
+      if(kind==='completion-refused')throw new Error('Completion refused');return {receipt_status:scenario==='dismissed-during-send'?'sent_after_dismissal':'completed'};}
     throw new Error('Unexpected Runtime resource');
   };
   const client=createWalletConnectClient({api,origin:'http://localhost:61180',clearMemory:()=>{memoryCleared=true;},

@@ -113,7 +113,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await walletFrame.evaluate(()=>window.r14Expire());
     await wallet.locator('#wallet-status').filter({hasText:'The QR code expired. Select Connect wallet for a new one.'}).waitFor({timeout:20000});
     assert.equal(await wallet.locator('dialog').count(),0);
-    for(const value of ['dark','light']){await theme(value);await shot(`r10-expired-${value}`);}
+    for(const value of ['dark','light']){await theme(value);await shot(`r17-proposal-qr-expired-${value}`);}
     await walletFrame.evaluate(()=>{window.setTimeout=window.r14NativeTimeout;});
     await wallet.locator('#wallet-connect').click();
     await wallet.locator('dialog[open] canvas').waitFor({timeout:20000});
@@ -225,21 +225,22 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     // Capture the real client error rendering with a deterministic phone wallet.
     status='granted';await reload();
     const freshRequest = (intent='browser_personal_sign',chain='eip155:20') => ({request_id:'approval-fixture',connector_id:'wallet-walletconnect',proof_type:'siwe',intent,status:'pending',address:'0x'+'12'.repeat(20),reason:'Fixture review',chain_namespace:chain,expires_at:Math.floor(Date.now()/1000)+600});
-    const endings=[['decline',{code:4001,message:'User rejected.'},'Declined'],['timeout',{message:'Request expired. Please try again.'},'Timeout'],['error-32000',{code:-32000,message:'Private library text'},'Error'],['error5100',{code:5100,message:'Private library text'},'Error']];
-    for(const scope of ['proposal','ownership','signature','transaction']) for(const [ending,error,suffix] of endings){
+    const endings=[['decline',{code:4001,message:'User rejected.'},'Declined'],['timeout',{code:6,message:'Request expired. Please try again.'},'Timeout',true],['error-32000',{code:-32000,message:'Private library text'},'Error'],['error5100',{code:5100,message:'Private library text'},'Error']];
+    for(const scope of ['proposal','ownership','signature','transaction']) for(const [ending,error,suffix,sdkError] of endings){
       const linking=['proposal','ownership'].includes(scope);
       const key=scope==='proposal'?'proposalFailure':'phoneFailure';
-      const message=messages[`${linking&&suffix!=='Declined'?'link':scope}${suffix}`];
+      const phoneError=scope==='proposal'&&ending==='timeout'?{message:'The QR code expired. Select Connect wallet for a new one.'}:error;
+      const message=scope==='proposal'&&ending==='timeout'?phoneError.message:messages[`${linking&&suffix!=='Declined'?'link':scope}${suffix}`];
       approvalRequests=linking?[]:[freshRequest(scope==='transaction'?'transaction_intent':'browser_personal_sign')];
       await reload();
-      await walletFrame.evaluate(({key,error})=>{window[key]=error;},{key,error});
+      await walletFrame.evaluate(({key,error,sdkError})=>{window[key]=sdkError?Object.assign(new Error(error.message),error.code===undefined?{}:{code:error.code}):error;},{key,error:phoneError,sdkError});
       const review=wallet.locator('[data-wallet-request-sign]');
       await (linking?wallet.locator('#wallet-connect'):review).click();
       await wallet.locator('#wallet-status').filter({hasText:message}).waitFor();
       assert.equal(await wallet.locator('#wallet-status').getAttribute('data-tone'),'muted');
       if(!linking)await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
       if(scope!=='proposal')await wallet.locator('#wallet-connection').filter({hasText:/^Connected$/}).waitFor();
-      for(const value of ['dark','light']){await theme(value);await shot(`r16-${scope}-${ending}-${value}`);}
+      for(const value of ['dark','light']){await theme(value);await shot(`r17-${scope}-${ending}-${value}`);}
       if(!linking) {
         assert.equal(approvalRequests[0].status,'approved','handoff consumes the pending request');
         if(scope==='transaction')assert.equal(await wallet.locator('.wallet-request p').textContent(),messages.transactionRecovery);
@@ -316,3 +317,62 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     assert.deepEqual(errors,[]);
   } finally {await browser?.close();for(const socket of relay.clients)socket.terminate();await new Promise(resolve=>relay.close(resolve));server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
+
+// Exercise the real window module while Runtime changes its list during a link or disconnect.
+for (const ending of ['decline','expiry','cancel','disconnect']) for (const returning of ['focus','Home']) {
+  test(`request controls recover after ${ending} and ${returning} return`,{timeout:20000},async()=>{
+    const pending=id=>({request_id:id,connector_id:'wallet-walletconnect',proof_type:'siwe',intent:'browser_personal_sign',status:'pending',address:'0x'+'12'.repeat(20),reason:id,chain_namespace:'eip155:20',expires_at:Math.floor(Date.now()/1000)+600});
+    let requests=[pending('first')];
+    const server=http.createServer((req,res)=>{
+      const path=new URL(req.url,'http://localhost').pathname;
+      const json=value=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(value));};
+      if(path==='/'){res.setHeader('content-type','text/html');res.end('<iframe id="wallet" style="width:100%;height:800px" src="/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(`http://127.0.0.1:${server.address().port}`)+'#home_token=fixture-window"></iframe>');return;}
+      if(path.endsWith('/internet'))return json({status:'granted'});
+      if(path.endsWith('/wallet/config'))return json({walletconnect:{project_id:'fixture-project',storage_revision:'"0"'}});
+      if(path.endsWith('/wallet/accounts'))return json({accounts:[]});
+      if(path.endsWith('/wallet/approvals'))return json({approval_requests:requests});
+      if(path.endsWith('/challenge'))return json({message:'Fixture ownership',expires_at:Math.floor(Date.now()/1000)+600});
+      if(path.endsWith('/verify')||path.endsWith('/storage'))return json({});
+      const match=path.match(/^\/apps\/(wallet-walletconnect|home)\/(.*)$/);
+      if(match){const root=resolve('capsules',match[1],'browser');const file=resolve(root,match[2]||'index.html');assert.ok(!relative(root,file).startsWith('..'));res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html'})[extname(file)]||'application/octet-stream');res.end(readFileSync(file));return;}
+      res.writeHead(404).end();
+    });
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
+    let browser;
+    try {
+      const {chromium}=await importProductSmokePlaywright();browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});const page=await browser.newPage();
+      await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
+      await page.route('**/vendor/reown-appkit.js?*',route=>route.fulfill({contentType:'text/javascript',body:`
+        const provider={chainId:20,connected:true,session:{expiry:Date.now()/1000+3600,namespaces:{eip155:{accounts:['eip155:20:0x'+'12'.repeat(20)]}}},signer:{client:{core:{relayer:{connected:true}}}},on(){},async request({method}){return method==='eth_accounts'?['0x'+'12'.repeat(20)]:method==='eth_chainId'?20:'0x'+'ab'.repeat(65);}};
+        export async function connectWalletConnectEvm(){
+          if(window.holdLink){const dialog=document.createElement('dialog'),cancel=document.createElement('button');cancel.textContent='Cancel';dialog.append(cancel);document.body.append(dialog);dialog.showModal();try{await new Promise((resolve,reject)=>{window.endLink=reject;cancel.onclick=()=>reject(new Error('Wallet connection cancelled.'));});}finally{dialog.remove();}}
+          return provider;
+        }
+        export async function disconnectWalletConnectEvm(){if(window.holdDisconnect)await new Promise(resolve=>window.endDisconnect=resolve);}
+      `}));
+      await page.goto(origin);const frame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));const wallet=page.frameLocator('#wallet');
+      await wallet.locator('[data-wallet-request-sign="first"]:enabled').waitFor();
+      if(ending==='disconnect'){
+        await wallet.locator('#wallet-connect').click();await wallet.locator('#wallet-status').filter({hasText:'Approval method added.'}).waitFor();
+        await frame.evaluate(()=>window.holdDisconnect=true);await wallet.locator('#wallet-disconnect').click();await frame.waitForFunction(()=>!!window.endDisconnect);
+      }else{
+        await frame.evaluate(()=>window.holdLink=true);await wallet.locator('#wallet-connect').click();await wallet.locator('dialog[open]').waitFor();
+      }
+      await frame.evaluate(returning=>{if(returning==='focus')window.dispatchEvent(new Event('focus'));else window.dispatchEvent(new MessageEvent('message',{source:window.parent,origin:'null',data:{type:'elastos:shell-layout',layout:{visible:true}}}));},returning);
+      await wallet.locator('[data-wallet-request-sign="first"]:disabled').waitFor();
+      // Runtime may change the list while the window is waiting. Ending the action must fetch it again.
+      requests=[pending('next'),{...pending('unsupported'),chain_namespace:'eip155:137'},{...pending('sent'),intent:'transaction_intent',status:'approved'}];
+      if(ending==='disconnect')await frame.evaluate(()=>window.endDisconnect());
+      else if(ending==='cancel')await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
+      else await frame.evaluate(ending=>window.endLink(ending==='decline'?{code:4001,message:'User rejected.'}:new Error('The QR code expired. Select Connect wallet for a new one.')),ending);
+      await wallet.locator('#wallet-status').filter({hasText:ending==='disconnect'?'Disconnected. Linked accounts stay in Wallet.':ending==='cancel'?messages.cancelled:ending==='expiry'?'The QR code expired. Select Connect wallet for a new one.':messages.proposalDeclined}).waitFor();
+      // Wait for a possible final refresh, then inspect without any extra focus or visibility event.
+      await wallet.locator('#wallet-connect:enabled').waitFor();await frame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,100)));
+      assert.equal(await wallet.locator('[data-wallet-request-sign="first"]').count(),0,'ending the action refreshes the stale list');
+      assert.equal(await wallet.locator('[data-wallet-request-sign="next"]').isEnabled(),true,'the pending request is ready for Review');
+      assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),1,'unsupported and approved requests have their own recovery controls');
+      assert.equal(await wallet.getByText(messages.pendingUnsupportedNetwork('137'),{exact:true}).count(),1);
+      assert.equal(await wallet.getByText(messages.transactionRecovery,{exact:true}).count(),1);
+    }finally{await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+  });
+}

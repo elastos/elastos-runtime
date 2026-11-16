@@ -287,7 +287,10 @@ async function requestCapsuleWalletEffect(action) {
       }
     }
     return await connector.effect(action);
-  } finally { hostEffectInFlight = false; }
+  } finally {
+    hostEffectInFlight = false;
+    await refreshWalletState().catch(() => {});
+  }
 }
 
 function walletIntentLabel(intent) {

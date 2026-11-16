@@ -35,7 +35,8 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     const localError = error?.code === undefined;
     if ([4001,5000,5001,5002,5003].includes(Number(error?.code))) return Object.assign(new Error(
       walletConnectMessages[`${context}Declined`]), {tone:'muted'});
-    if (localError && error?.message === 'Request expired. Please try again.') return Object.assign(new Error(walletConnectMessages[`${prefix}Timeout`]), {tone:'muted'});
+    // The pinned SDK creates an Error for its deadline; wallet replies are JSON objects.
+    if (error instanceof Error && error.code === 6 && error.message === 'Request expired. Please try again.') return Object.assign(new Error(walletConnectMessages[`${prefix}Timeout`]), {tone:'muted'});
     const message = localError && [walletConnectMessages.cancelled,'The QR code expired. Select Connect wallet for a new one.','Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'].includes(error?.message) ? error.message : walletConnectMessages[`${prefix}Error`];
     return Object.assign(new Error(message), {tone:message === walletConnectMessages.cancelled ? 'error' : 'muted'});
   };
@@ -166,7 +167,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
       || binding.chain_namespace !== namespace || !/^0x[0-9a-fA-F]{64}$/.test(handoff.payload_hash || '')) throw new Error('Runtime returned an invalid wallet binding.');
     const check = async () => {
       if (!same(await address(),signer) || await chain() !== namespace || generation !== revision
-        || !Number.isSafeInteger(binding.expires_at) || binding.expires_at <= Date.now()/1000) throw new Error('Wallet request changed or expired. Request a new review.');
+        || !Number.isSafeInteger(binding.expires_at) || binding.expires_at <= Date.now()/1000) throw Object.assign(new Error(walletConnectMessages.consumed), {tone:'muted'});
       return Math.min(600,Math.max(binding.expires_at-Math.ceil(Date.now()/1000),300));
     };
     const expiry = await check();
@@ -186,7 +187,8 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     const method = 'personal_sign';
     const signature = await request({method,params:[signData(handoff.message),signer]},expiry);
     await check();
-    await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:'personal_sign'})});
+    try { await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:'personal_sign'})}); }
+    catch { throw Object.assign(new Error(walletConnectMessages.signatureError), {tone:'muted'}); }
     return {status:'completed',effect:'signature'};
   }};
 }
