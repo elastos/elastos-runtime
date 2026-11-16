@@ -11757,7 +11757,7 @@ pub(crate) mod tests {
     #[tokio::test(start_paused = true)]
     async fn carrier_endpoint_update_check_close_deadline_joins_hung_task() {
         let (started, starting) = tokio::sync::oneshot::channel();
-        let (dropped, stopped) = tokio::sync::oneshot::channel();
+        let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
         let drain = Arc::new(CarrierEndpointDrain::new(async move {
             let _lifetime = dropped;
             let _ = started.send(());

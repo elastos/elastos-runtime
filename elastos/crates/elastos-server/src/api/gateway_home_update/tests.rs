@@ -2407,7 +2407,7 @@ async fn update_notice_task_shutdown_joins_blocked_check_and_start_stops() {
         let clock = wall.clone();
         let cache = update_check_cache();
         let (started, starting) = tokio::sync::oneshot::channel();
-        let (dropped, stopped) = tokio::sync::oneshot::channel();
+        let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
         let signals = std::sync::Mutex::new(Some((started, dropped)));
         let task = notice::start_with(
             dir.path().into(),
@@ -2581,7 +2581,7 @@ async fn update_notice_hung_close_deadline_releases_shared_worker() {
         let (_, source, key) = update_inputs(dir.path()).unwrap();
         let worker_cache = cache.clone();
         let (started, starting) = tokio::sync::oneshot::channel();
-        let (dropped, stopped) = tokio::sync::oneshot::channel();
+        let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
         let worker = tokio::spawn(async move {
             UpdateCheckCache::check_and_store(&worker_cache, key, || async move {
                 let result = crate::carrier::update_check_close_fixture(async move {
