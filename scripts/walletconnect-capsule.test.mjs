@@ -117,3 +117,10 @@ test('a network change after handoff cannot offer rejection of a consumed signat
   assert.doesNotMatch(r.error,/Reject|approve.*phone|review again/i);
   assert.equal(r.tone,'muted');
 });
+
+for (const scope of ['signature','transaction','link','proposal']) for (const code of [-32000,5100]) for (const alias of ['expired-text','cancelled-text']) test(`coded wallet errors stay contextual: ${scope} ${code} ${alias}`,async()=>{
+  const r=await exerciseWalletConnect(`${scope}-phone-error:${code}:${alias}`);
+  assert.equal(r.error,messages[`${['link','proposal'].includes(scope)?'link':scope}Error`]);
+  assert.equal(r.tone,'muted');assert.equal(completed(r).length,0);
+  if(['signature','transaction'].includes(scope)){assert.equal(r.status,'approved');assert.equal(r.secondError,messages.consumed);}
+});

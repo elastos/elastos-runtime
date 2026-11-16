@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createWalletConnectClient } from '../../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
+import { createWalletConnectClient, walletConnectMessages as messages } from '../../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 export const address = `0x${'12'.repeat(20)}`, payloadHash=`0x${'34'.repeat(32)}`, transactionHash=`0x${'56'.repeat(32)}`;
 export async function exerciseWalletConnect(scenario='valid') {
   const clock=Date.now, calls=[],routes=[],events=new Map(); let changed=false, memoryCleared=false, status=scenario==='approved'?'approved':'pending';
@@ -12,10 +12,11 @@ export async function exerciseWalletConnect(scenario='valid') {
   const change=()=>{changed=true;if(kind==='account-change-during-send')events.get('accountsChanged')?.([]);
     if(kind==='chain-change-during-send'){provider.chainId=1;events.get('chainChanged')?.('0x1');}
     if(kind==='unsupported-chain-after-sign'){provider.chainId=137;events.get('chainChanged')?.('0x89');}if(kind==='expired-during-send')Date.now=()=>clock()+601000;};
+  const expiredMessage = 'Request expired. Please try again.';
   const phoneError = () => {
     if (scenario.includes('phone-declined:')) throw {code:Number(scenario.split(':')[1]),message:'User rejected.'};
-    if (scenario.includes('phone-error:')) throw {code:Number(scenario.split(':')[1]),message:'Private wallet error fixture'};
-    if (scenario.includes('phone-expired')) throw new Error('Request expired. Please try again.');
+    if (scenario.includes('phone-error:')) throw {code:Number(scenario.split(':')[1]),message:scenario.endsWith(':expired-text')?expiredMessage:scenario.endsWith(':cancelled-text')?messages.cancelled:'Private wallet error fixture'};
+    if (scenario.includes('phone-expired')) throw new Error(expiredMessage);
   };
   const provider={chainId:20,connected:true,session:{expiry:clock()/1000+3600,namespaces:{eip155:{chains:['eip155:1','eip155:20'],accounts:[`eip155:20:${address}`],methods:scenario==='typed-unavailable'?['personal_sign']:['personal_sign','eth_sendTransaction','eth_signTypedData_v4']}}},signer:{client:{core:{relayer:{connected:true}}}},
     on:(name,fn)=>events.set(name,fn),async request(input,expiry){calls.push({...input,expiry});

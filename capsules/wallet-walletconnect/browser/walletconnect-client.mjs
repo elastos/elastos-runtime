@@ -18,6 +18,7 @@ export const walletConnectMessages = {
   unsupportedNetwork: id => `${unavailableNetwork(id)} Open Wallet to check your requests and activity.`,
   pendingUnsupportedNetwork: id => `${unavailableNetwork(id)} Reject this request in Wallet.`,
   unapprovedNetwork: name => `This wallet connection has no approved account on ${name}. Select Disconnect, then Connect wallet to choose an account and network.`,
+  cancelled: 'Wallet connection cancelled.',
 };
 export const isWalletConnectNetwork = namespace => networks.has(Number(String(namespace).split(':')[1]));
 const approvedNetworks = provider => {
@@ -31,11 +32,12 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     console.error('WalletConnect SDK:', String(error?.message || error).split(projectId || '\0').join('[project]'));
     const linking = ['proposal','ownership'].includes(context);
     const prefix = linking ? 'link' : context;
+    const localError = error?.code === undefined;
     if ([4001,5000,5001,5002,5003].includes(Number(error?.code))) return Object.assign(new Error(
       walletConnectMessages[`${context}Declined`]), {tone:'muted'});
-    if (error?.message === 'Request expired. Please try again.') return Object.assign(new Error(walletConnectMessages[`${prefix}Timeout`]), {tone:'muted'});
-    const message = ['Wallet connection cancelled.','The QR code expired. Select Connect wallet for a new one.','Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'].includes(error?.message) ? error.message : walletConnectMessages[`${prefix}Error`];
-    return Object.assign(new Error(message), {tone:message === 'Wallet connection cancelled.' ? 'error' : 'muted'});
+    if (localError && error?.message === 'Request expired. Please try again.') return Object.assign(new Error(walletConnectMessages[`${prefix}Timeout`]), {tone:'muted'});
+    const message = localError && [walletConnectMessages.cancelled,'The QR code expired. Select Connect wallet for a new one.','Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'].includes(error?.message) ? error.message : walletConnectMessages[`${prefix}Error`];
+    return Object.assign(new Error(message), {tone:message === walletConnectMessages.cancelled ? 'error' : 'muted'});
   };
   const requireNetwork = namespace => {
     const id = namespace.split(':')[1];
