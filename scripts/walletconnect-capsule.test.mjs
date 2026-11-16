@@ -84,7 +84,7 @@ test('an unknown SDK error stays in the console and gives a safe recovery messag
   const logs=[];t.mock.method(console,'error',(...args)=>logs.push(args));
   const r=await exerciseWalletConnect('sdk-unknown');
   assert.equal(r.error,messages.transactionError);
-  assert.deepEqual(logs,[['WalletConnect SDK:','Opaque SDK failure fixture']]);
+  assert.deepEqual(logs,[['WalletConnect SDK:','transaction','local']]);
 });
 
 for (const scope of ['signature','transaction','link','proposal']) for (const code of [4001,5000,5001,5002,5003]) test(`${scope} phone decline ${code} is muted and true`,async()=>{
