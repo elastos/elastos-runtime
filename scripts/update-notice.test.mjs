@@ -195,6 +195,33 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       assert.deepEqual(errors,[]);
       await page.close();
     }
+    // Exercise the entry and ordinary About journey at phone width as well.
+    {
+      f.state.entry=notice();f.state.holdReads=false;f.state.settings=preference(true);
+      const phone=await browser.newPage({viewport:{width:390,height:844}});
+      phone.setDefaultTimeout(8000);
+      await phone.goto(f.baseUrl+"/notice");
+      const gui=await phone.locator('#gui').elementHandle().then(h=>h.contentFrame());
+      await gui.waitForFunction(()=>window.fixture);
+      await gui.evaluate(()=>fixture.windows.openTarget('inbox'));
+      const inbox=gui.frameLocator('iframe.window-frame[title="Inbox"]');
+      await inbox.locator('.entry-row').first().click();
+      await inbox.getByRole('button',{name:'Open System',exact:true}).click();
+      const system=gui.frameLocator('iframe.window-frame[title="System"]');
+      await system.locator('#runtime-update').waitFor();
+      await system.locator('#runtime-update').evaluate(node=>{
+        if(document.activeElement!==node)throw new Error('phone entry did not focus update');
+      });
+      await screen(phone,'phone-system-from-entry');
+      await system.locator('button[data-settings=account]').evaluate(node=>node.click());
+      await gui.locator('#control-centre-this-device').evaluate(node=>node.click());
+      await system.locator('#runtime-update').waitFor();
+      await system.locator('#runtime-update').evaluate(node=>{
+        if(document.activeElement===node)throw new Error('phone About focused update');
+      });
+      await screen(phone,'phone-system-control-centre');
+      await phone.close();
+    }
     const page=await browser.newPage({viewport:{width:390,height:844}});
     await page.goto(f.baseUrl+"/fixture?settings=about");
     const system=page.frameLocator("#system-frame");
