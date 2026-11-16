@@ -1569,9 +1569,29 @@ async fn update_notice_real_inbox_accounts_lifecycle_and_shared_system_view() {
         (&alice_inbox, "dismiss", StatusCode::OK),
         (&guest_inbox, "dismiss", StatusCode::FORBIDDEN),
     ] {
-        let (status, _) =
-            home_test_post_json(&app, "/api/apps/inbox/actions", token, "null", action(kind)).await;
-        assert_eq!(status, expected);
+        let response = app
+            .clone()
+            .oneshot(
+                test_browser_request("localhost:61180", "null")
+                    .method("POST")
+                    .uri("/api/apps/inbox/actions")
+                    .header("x-elastos-home-token", token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(action(kind).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            expected,
+            "{kind}: {}",
+            String::from_utf8_lossy(&body)
+        );
         if kind == "read" {
             assert_eq!(notice_list(&app, &alice_inbox).await[0]["read"], true);
         }
