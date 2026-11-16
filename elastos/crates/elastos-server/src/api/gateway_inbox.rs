@@ -109,6 +109,10 @@ pub(super) async fn append_inbox_requests(
         notifications.attention_count += usize::from(card.severity == "attention");
         notifications.entries.push(card);
     }
+    if let Some(card) = gateway_update_notice::notification(&state.data_dir, context).await {
+        notifications.unread_count += usize::from(!card.read);
+        notifications.entries.push(card);
+    }
     append_wallet_approval_notifications(notifications, wallet_approvals);
     // Runtime capability requests are the admin's to answer.
     if ensure_admin_context(&state.data_dir, context).is_ok() {
@@ -390,7 +394,17 @@ async fn dispatch_inbox_action(
         )
         .await;
     }
+    if action_id.starts_with("notification-read:home-update:")
+        || action_id.starts_with("notification-dismiss:home-update:")
+    {
+        return gateway_update_notice::acknowledge(&state.data_dir, context, action_id).await;
+    }
     let data_dir = &state.data_dir;
+    if action_id.starts_with("notification-read:home-update:")
+        || action_id.starts_with("notification-dismiss:home-update:")
+    {
+        return gateway_update_notice::acknowledge(data_dir, context, action_id).await;
+    }
     // Entries one account owns, such as its direct messages, change only for
     // that account.
     let viewer = super::gateway_home_system::load_profile_authority_for_context(data_dir, context)?

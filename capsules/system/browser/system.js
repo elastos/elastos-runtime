@@ -61,6 +61,9 @@ const technicalInspectDetailNode = document.querySelector("#technical-inspect-de
 const technicalInspectStatusNode = document.querySelector("#technical-inspect-status");
 const technicalInspectRefreshButton = document.querySelector("#technical-inspect-refresh");
 const deviceDidCopyButton = document.querySelector("#device-did-copy");
+const backgroundChoice = document.querySelector("#update-background-choice");
+let backgroundBusy = false;
+let focusUpdateRequested = false;
 const runtimeUpdateNode = document.querySelector("#runtime-update");
 const runtimeUpdateButton = document.querySelector("#runtime-update-apply");
 const runtimeUpdateProgressNode = document.querySelector("#runtime-update-progress");
@@ -300,6 +303,7 @@ function configureHomeRecoverySave() {
           && query.settings !== ""
           && (query.recovery === undefined || (query.recovery === "import" && query.settings === "security"))) {
           activateSettingsTab(query.settings);
+          if (query.settings === "about") focusUpdateCard();
           if (query.settings === "security") {
             (query.recovery === "import" ? recoveryImportInput
               : (recoveryProfileRequired ? recoveryProfileName : recoveryDownloadButton))?.focus();
@@ -3773,7 +3777,36 @@ async function onSourceChannelChange() {
   }
 }
 
+function focusUpdateCard() {
+  focusUpdateRequested = true;
+  if (runtimeUpdateNode && !runtimeUpdateNode.hidden) {
+    runtimeUpdateNode.scrollIntoView({ block: "center" });
+    runtimeUpdateNode.focus({ preventScroll: true });
+    focusUpdateRequested = false;
+  }
+}
+
+async function onBackgroundChange() {
+  if (backgroundBusy || !backgroundChoice || !runtimeUpdate?.background_checks) return;
+  backgroundBusy = true;
+  backgroundChoice.disabled = true;
+  try {
+    const settings = await api("/api/apps/system/update-background", {
+      method: "POST", body: JSON.stringify({ enabled: backgroundChoice.checked }),
+    });
+    renderRuntimeUpdate({ ...runtimeUpdate, background_checks: settings });
+  } catch (_error) {
+    backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
+    document.querySelector("#update-background-message").textContent = "Home could not save background checks. Try again.";
+  } finally {
+    backgroundBusy = false;
+    backgroundChoice.disabled = false;
+  }
+}
+
 function configureRuntimeUpdate() {
+  backgroundChoice?.addEventListener("change", onBackgroundChange);
+  if (requestedSettingsTab === "about") focusUpdateRequested = true;
   sourceChannelChoice?.addEventListener("change", onSourceChannelChange);
   runtimeUpdateButton?.addEventListener("click", onRuntimeUpdateApply);
   window.addEventListener("pagehide", () => {
@@ -3844,6 +3877,16 @@ function renderRuntimeUpdate(update) {
   if (!runtimeUpdateNode || !runtimeUpdateButton) return;
   const configured = runtimeUpdate?.configured === true;
   runtimeUpdateNode.hidden = !configured && !runtimeUpdatePending;
+  const background = runtimeUpdate?.background_checks;
+  const backgroundNode = document.querySelector("#update-background");
+  if (backgroundNode) backgroundNode.hidden = !configured || !background;
+  if (background && backgroundChoice) {
+    backgroundChoice.checked = background.enabled === true;
+    backgroundChoice.disabled = backgroundBusy;
+    document.querySelector("#update-background-label").textContent = background.label;
+    document.querySelector("#update-background-message").textContent = background.message;
+  }
+  if (focusUpdateRequested && !runtimeUpdateNode.hidden) focusUpdateCard();
   const controller = runtimeUpdate?.controller;
   const phase = readText(controller?.phase);
   // With a request of its own pending, only that request's result is this page's update finishing;

@@ -160,6 +160,8 @@ struct CachedCheck {
     key: UpdateCheckKey,
     completed_at: std::time::Instant,
     check: Option<crate::operator_control::OperatorUpdateCheck>,
+    unavailable: bool,
+    observed_at: u64,
 }
 
 struct RunningCheck {
@@ -172,38 +174,52 @@ pub(super) enum UpdateCheckSnapshot {
     Completed(Option<Box<crate::operator_control::OperatorUpdateCheck>>),
 }
 
+pub(super) enum CheckOutcome {
+    Confirmed(crate::operator_control::OperatorUpdateCheck),
+    Unavailable,
+    Rejected,
+}
+
+impl From<Option<crate::operator_control::OperatorUpdateCheck>> for CheckOutcome {
+    fn from(check: Option<crate::operator_control::OperatorUpdateCheck>) -> Self {
+        check.map(Self::Confirmed).unwrap_or(Self::Rejected)
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct ConfirmedOffer {
+    key: UpdateCheckKey,
+    pub(super) check: crate::operator_control::OperatorUpdateCheck,
+    pub(super) observed_at: u64,
+}
+
 #[derive(Default)]
 pub(super) struct UpdateCheckCache {
     completed: Option<CachedCheck>,
     running: Option<RunningCheck>,
+    confirmed: Option<ConfirmedOffer>,
 }
 
 impl UpdateCheckCache {
+    #[cfg(test)]
+    pub(super) fn expire_response(&mut self) {
+        self.completed = None;
+    }
+
     /// A request only joins a task which has already finished. Policy changes
     /// keep the current worker until it drains, then admit one new worker.
-    pub(super) async fn read<F>(
+    pub(super) async fn read<F, O>(
         &mut self,
         key: UpdateCheckKey,
         now: std::time::Instant,
         work: impl FnOnce() -> F,
     ) -> UpdateCheckSnapshot
     where
-        F: std::future::Future<Output = Option<crate::operator_control::OperatorUpdateCheck>>
-            + Send
-            + 'static,
+        F: std::future::Future<Output = O> + Send + 'static,
+        O: Into<CheckOutcome> + Send + 'static,
     {
-        if self
-            .running
-            .as_ref()
-            .is_some_and(|running| running.task.is_finished())
-        {
-            let running = self.running.take().expect("finished update check is owned");
-            self.completed = Some(running.task.await.unwrap_or(CachedCheck {
-                key: running.key,
-                completed_at: now,
-                check: None,
-            }));
-        }
+        self.collect_finished(now).await;
+        self.reconcile_key(&key);
         if let Some(completed) = self.completed.as_ref().filter(|completed| {
             completed.key == key
                 && now.saturating_duration_since(completed.completed_at)
@@ -217,33 +233,148 @@ impl UpdateCheckCache {
             self.running = Some(RunningCheck {
                 key,
                 task: tokio::spawn(async move {
-                    let check = check.await;
+                    let outcome = check.await.into();
+                    let unavailable = matches!(outcome, CheckOutcome::Unavailable);
+                    let check = match outcome {
+                        CheckOutcome::Confirmed(check) => Some(check),
+                        _ => None,
+                    };
                     CachedCheck {
                         key: task_key,
                         completed_at: std::time::Instant::now(),
                         check,
+                        unavailable,
+                        observed_at: gateway_update_notice::now_secs(),
                     }
                 }),
             });
         }
         UpdateCheckSnapshot::Checking
     }
+
+    pub(super) async fn cancel_for_home(
+        cache: &tokio::sync::Mutex<Self>,
+        data_dir: &std::path::Path,
+    ) {
+        let task = {
+            let mut cache = cache.lock().await;
+            if cache
+                .running
+                .as_ref()
+                .is_some_and(|running| running.key.data_dir == data_dir)
+            {
+                cache.running.take().map(|running| running.task)
+            } else {
+                None
+            }
+        };
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+
+    async fn collect_finished(&mut self, now: std::time::Instant) {
+        if self
+            .running
+            .as_ref()
+            .is_some_and(|running| running.task.is_finished())
+        {
+            let running = self.running.take().expect("finished update check is owned");
+            let completed = running.task.await.unwrap_or(CachedCheck {
+                key: running.key,
+                completed_at: now,
+                check: None,
+                unavailable: false,
+                observed_at: gateway_update_notice::now_secs(),
+            });
+            if let Some(check) = &completed.check {
+                self.confirmed = Some(ConfirmedOffer {
+                    key: completed.key.clone(),
+                    check: check.clone(),
+                    observed_at: completed.observed_at,
+                });
+            } else if !completed.unavailable {
+                self.confirmed = None;
+            }
+            self.completed = Some(completed);
+        }
+    }
+
+    fn reconcile_key(&mut self, key: &UpdateCheckKey) {
+        if self
+            .confirmed
+            .as_ref()
+            .is_some_and(|offer| offer.key != *key)
+        {
+            self.confirmed = None;
+        }
+    }
+
+    // Await outside the mutex: System keeps its non-blocking read contract.
+    pub(super) async fn check_and_store<F, O>(
+        cache: &tokio::sync::Mutex<Self>,
+        key: UpdateCheckKey,
+        work: impl FnOnce() -> F,
+    ) where
+        F: std::future::Future<Output = O> + Send + 'static,
+        O: Into<CheckOutcome> + Send + 'static,
+    {
+        if matches!(
+            cache
+                .lock()
+                .await
+                .read(key.clone(), std::time::Instant::now(), work)
+                .await,
+            UpdateCheckSnapshot::Completed(_)
+        ) {
+            return;
+        }
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let mut cache = cache.lock().await;
+            cache.collect_finished(std::time::Instant::now()).await;
+            cache.reconcile_key(&key);
+            if cache.running.is_none() {
+                return;
+            }
+        }
+    }
+
+    pub(super) async fn confirmed_offer(
+        &mut self,
+        key: &UpdateCheckKey,
+        source: &crate::sources::TrustedSource,
+    ) -> Option<ConfirmedOffer> {
+        self.collect_finished(std::time::Instant::now()).await;
+        self.reconcile_key(key);
+        if self
+            .confirmed
+            .as_ref()
+            .is_some_and(|offer| !check_matches_source(source, &offer.check))
+        {
+            self.confirmed = None;
+        }
+        self.confirmed.clone()
+    }
 }
 
-static UPDATE_CHECK: std::sync::OnceLock<tokio::sync::Mutex<UpdateCheckCache>> =
+pub(super) static UPDATE_CHECK: std::sync::OnceLock<tokio::sync::Mutex<UpdateCheckCache>> =
     std::sync::OnceLock::new();
 
-fn source_policy_sha256(config: &crate::sources::TrustedSourcesConfig) -> Option<String> {
+pub(super) fn source_policy_sha256(
+    config: &crate::sources::TrustedSourcesConfig,
+) -> Option<String> {
     Some(hex::encode(Sha256::digest(
         serde_json::to_vec(config).ok()?,
     )))
 }
 
-async fn check_current_policy(
+pub(super) async fn check_current_policy(
     data_dir: std::path::PathBuf,
     policy_sha256: String,
     source: crate::sources::TrustedSource,
-) -> Option<crate::operator_control::OperatorUpdateCheck> {
+) -> CheckOutcome {
     let policy_matches = || {
         crate::sources::load_trusted_sources(&data_dir)
             .ok()
@@ -251,12 +382,19 @@ async fn check_current_policy(
             .is_some_and(|current| current == policy_sha256)
     };
     if !policy_matches() {
-        return None;
+        return CheckOutcome::Rejected;
     }
-    let check = crate::operator_control::gather_local_update_check(&data_dir)
-        .await
-        .ok()?;
-    (policy_matches() && check_matches_source(&source, &check)).then_some(check)
+    let result = crate::operator_control::gather_local_update_check(&data_dir).await;
+    if !policy_matches() {
+        return CheckOutcome::Rejected;
+    }
+    match result {
+        Ok(check) if check_matches_source(&source, &check) => CheckOutcome::Confirmed(check),
+        Err(error) if error.is::<crate::update::UpdateSourceUnavailable>() => {
+            CheckOutcome::Unavailable
+        }
+        _ => CheckOutcome::Rejected,
+    }
 }
 
 pub(super) fn check_matches_source(
@@ -283,37 +421,28 @@ pub(super) async fn system_runtime_update_summary(
     .await
 }
 
-pub(super) async fn system_runtime_update_summary_with_cache<F>(
+pub(super) async fn system_runtime_update_summary_with_cache<F, O>(
     data_dir: &std::path::Path,
     context: &HomeLaunchTokenContext,
     cache: &tokio::sync::Mutex<UpdateCheckCache>,
     work: impl FnOnce(std::path::PathBuf, String, crate::sources::TrustedSource) -> F,
 ) -> Option<serde_json::Value>
 where
-    F: std::future::Future<Output = Option<crate::operator_control::OperatorUpdateCheck>>
-        + Send
-        + 'static,
+    F: std::future::Future<Output = O> + Send + 'static,
+    O: Into<CheckOutcome> + Send + 'static,
 {
     if require_admin_principal(data_dir, context).is_err() {
         return None;
     }
-    let controller = crate::update_controller::status(data_dir).ok()??;
-    let config = crate::sources::load_trusted_sources(data_dir).ok()?;
-    let source = config.default_source()?;
-    if source.installed_version.is_empty() || source.publisher_dids.is_empty() {
-        return None;
-    }
+    let (controller, source, key) = update_inputs(data_dir)?;
     if crate::update::installed_release_version(&source.installed_version).is_err() {
         return Some(serde_json::json!({
             "configured":true, "checking":false, "available":false, "can_apply":false,
             "current_version":source.installed_version,
             "message":crate::update::InvalidInstalledVersion.to_string(),
+            "background_checks": gateway_update_notice::preference(data_dir),
         }));
     }
-    let key = UpdateCheckKey {
-        data_dir: data_dir.into(),
-        source_policy_sha256: source_policy_sha256(&config)?,
-    };
     let worker_key = key.clone();
     let worker_source = source.clone();
     let snapshot = cache
@@ -332,6 +461,40 @@ where
         UpdateCheckSnapshot::Checking => None,
         UpdateCheckSnapshot::Completed(check) => check.as_deref(),
     };
+    update_account_view(data_dir, context, &controller, &source, check, checking)
+}
+
+pub(super) fn update_inputs(
+    data_dir: &std::path::Path,
+) -> Option<(
+    crate::update_controller::UpdateStatus,
+    crate::sources::TrustedSource,
+    UpdateCheckKey,
+)> {
+    let controller = crate::update_controller::status(data_dir).ok()??;
+    let config = crate::sources::load_trusted_sources(data_dir).ok()?;
+    let source = config.default_source()?.clone();
+    if source.installed_version.is_empty() || source.publisher_dids.is_empty() {
+        return None;
+    }
+    let key = UpdateCheckKey {
+        data_dir: data_dir.into(),
+        source_policy_sha256: source_policy_sha256(&config)?,
+    };
+    Some((controller, source, key))
+}
+
+pub(super) fn update_account_view(
+    data_dir: &std::path::Path,
+    context: &HomeLaunchTokenContext,
+    controller: &crate::update_controller::UpdateStatus,
+    source: &crate::sources::TrustedSource,
+    check: Option<&crate::operator_control::OperatorUpdateCheck>,
+    checking: bool,
+) -> Option<serde_json::Value> {
+    if require_admin_principal(data_dir, context).is_err() {
+        return None;
+    }
     // A refused release can never install; offer again only when a different one appears.
     let refused = match check {
         Some(crate::operator_control::OperatorUpdateCheck {
@@ -356,6 +519,7 @@ where
         );
     Some(serde_json::json!({
         "configured":true,
+        "background_checks": gateway_update_notice::preference(data_dir),
         "checking":checking,
         "available":available,
         "can_apply":can_apply,

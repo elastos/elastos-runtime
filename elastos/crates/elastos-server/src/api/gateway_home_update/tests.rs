@@ -1491,3 +1491,382 @@ async fn system_update_failures_explain_the_cause_without_private_error_details(
         assert!(!message.contains("private"));
     }
 }
+
+// Notice fixtures reuse System's offered release, controller and account setup.
+use super::super::gateway_home_update::{update_inputs, CheckOutcome, UPDATE_CHECK};
+use super::super::gateway_update_notice as notice;
+
+async fn notice_seed(data_dir: &std::path::Path, outcome: CheckOutcome) {
+    let cache = UPDATE_CHECK.get_or_init(|| tokio::sync::Mutex::new(UpdateCheckCache::default()));
+    // Expire the short System response cache, while keeping confirmed history.
+    cache.lock().await.expire_response();
+    let (_, _, key) = update_inputs(data_dir).unwrap();
+    UpdateCheckCache::check_and_store(cache, key, || async { outcome }).await;
+}
+
+async fn notice_list(app: &Router, token: &str) -> Vec<Value> {
+    let (status, body) = home_test_get_json(app, "/api/apps/inbox/summary", token, "null").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["notifications"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["kind"] == "home_update_available")
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn update_notice_real_inbox_accounts_lifecycle_and_shared_system_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    configure_update_summary(dir.path());
+    let alice = passkey_authority_with_name(dir.path(), Some("notice-alice"));
+    let bob = passkey_authority_with_name(dir.path(), Some("notice-bob"));
+    let guest = passkey_authority_with_name_role(
+        dir.path(),
+        Some("notice-guest"),
+        crate::auth::RuntimePrincipalRole::Guest,
+    );
+    let alice_inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &alice);
+    let bob_inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &bob);
+    let guest_inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &guest);
+    for version_status in [
+        crate::operator_control::UpdateVersionStatus::Current,
+        crate::operator_control::UpdateVersionStatus::InstalledNewer,
+    ] {
+        let mut check = cached_offer();
+        check.version_status = version_status;
+        check.update_available = false;
+        notice_seed(dir.path(), CheckOutcome::Confirmed(check)).await;
+        assert!(notice_list(&app, &alice_inbox).await.is_empty());
+    }
+    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    // No System GET has occurred. Inbox uses the confirmed offer, never discovery.
+    let entries = notice_list(&app, &alice_inbox).await;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["id"], format!("home-update:{TEST_CIDV0}"));
+    assert_eq!(entries[0]["source_app"], "system");
+    assert_eq!(entries[0]["severity"], "info");
+    assert_eq!(entries[0]["read"], false);
+    assert!(entries[0]["action_ref"].is_null());
+    assert!(entries[0]["created_at"].as_u64().unwrap() > 0);
+    assert!(notice_list(&app, &guest_inbox).await.is_empty());
+    let (_, summary) =
+        home_test_get_json(&app, UPDATE_APPLY_ROUTE, &alice.system_token, "null").await;
+    assert_eq!(summary["runtime_update"]["can_apply"], true);
+    assert_eq!(summary["runtime_update"]["release_cid"], TEST_CIDV0);
+    let action =
+        |kind: &str| json!({"action_id":format!("notification-{kind}:home-update:{TEST_CIDV0}")});
+    for (token, kind, expected) in [
+        (&alice_inbox, "read", StatusCode::OK),
+        (&alice_inbox, "dismiss", StatusCode::OK),
+        (&guest_inbox, "dismiss", StatusCode::FORBIDDEN),
+    ] {
+        let (status, _) =
+            home_test_post_json(&app, "/api/apps/inbox/actions", token, "null", action(kind)).await;
+        assert_eq!(status, expected);
+        if kind == "read" {
+            assert_eq!(notice_list(&app, &alice_inbox).await[0]["read"], true);
+        }
+    }
+    assert!(notice_list(&app, &alice_inbox).await.is_empty());
+    assert_eq!(notice_list(&app, &bob_inbox).await.len(), 1);
+    // A restart loses offers, not acknowledgement; the next check restores it.
+    *UPDATE_CHECK.get().unwrap().lock().await = UpdateCheckCache::default();
+    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    assert!(notice_list(&app, &alice_inbox).await.is_empty());
+    assert_eq!(notice_list(&app, &bob_inbox).await.len(), 1);
+    let mut higher = cached_offer();
+    higher.latest_version = "0.7.2".into();
+    higher.release_cid = Some(TEST_CIDV1.into());
+    notice_seed(dir.path(), CheckOutcome::Confirmed(higher)).await;
+    assert_eq!(notice_list(&app, &alice_inbox).await.len(), 1);
+    assert_eq!(notice_list(&app, &bob_inbox).await.len(), 1);
+    let path = notice::state_path(dir.path()).unwrap();
+    let state: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(state["release_cid"], TEST_CIDV1);
+    assert_eq!(state["accounts"], json!({}));
+    assert!(state.get("offer").is_none());
+    assert_update_stays_unqueued(dir.path());
+    let mut config = crate::sources::load_trusted_sources(dir.path()).unwrap();
+    config.sources[0].installed_version = "0.7.2".into();
+    crate::sources::save_trusted_sources(dir.path(), &config).unwrap();
+    assert!(notice_list(&app, &alice_inbox).await.is_empty());
+    assert!(notice_list(&app, &bob_inbox).await.is_empty());
+}
+
+#[tokio::test]
+async fn update_notice_reconciles_live_refusal_queue_failure_channel_and_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    configure_update_summary(dir.path());
+    let owner = passkey_authority_with_name(dir.path(), Some("notice-owner"));
+    let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
+    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    assert_eq!(notice_list(&app, &inbox).await.len(), 1);
+    let path = dir.path().join("update-controller/status.json");
+    let original: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for phase in [
+        "staging",
+        "downloading",
+        "verifying",
+        "restarting",
+        "failed",
+    ] {
+        let mut status = original.clone();
+        status["phase"] = json!(phase);
+        std::fs::write(&path, serde_json::to_vec(&status).unwrap()).unwrap();
+        assert_eq!(
+            notice_list(&app, &inbox).await.len(),
+            usize::from(phase == "failed"),
+            "{phase}"
+        );
+    }
+    std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+    crate::update_controller::record_refused_release(
+        &dir.path().join("update-controller"),
+        &serde_json::from_value({
+            let mut request = update_intent();
+            request.as_object_mut().unwrap().remove("action");
+            request.as_object_mut().unwrap().remove("request_id");
+            request["id"] = json!("c".repeat(32));
+            request
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        notice_list(&app, &inbox).await.is_empty(),
+        "live refusal without another check"
+    );
+    for field in ["channel", "connect_ticket"] {
+        configure_update_summary(dir.path());
+        notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+        let mut config = crate::sources::load_trusted_sources(dir.path()).unwrap();
+        if field == "channel" {
+            config.sources[0].channel = "canary".into();
+        } else {
+            config.sources[0].connect_ticket = "changed-source".into();
+        }
+        crate::sources::save_trusted_sources(dir.path(), &config).unwrap();
+        assert!(notice_list(&app, &inbox).await.is_empty(), "{field}");
+        // Switching back cannot resurrect a dropped offer.
+        configure_update_summary(dir.path());
+        assert!(notice_list(&app, &inbox).await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn update_notice_typed_failures_preserve_only_unreachable_confirmed_offer() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    configure_update_summary(dir.path());
+    let owner = passkey_authority_with_name(dir.path(), Some("notice-failure"));
+    let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
+    *UPDATE_CHECK
+        .get_or_init(|| tokio::sync::Mutex::new(UpdateCheckCache::default()))
+        .lock()
+        .await = UpdateCheckCache::default();
+    notice_seed(dir.path(), CheckOutcome::Unavailable).await;
+    assert!(notice_list(&app, &inbox).await.is_empty());
+    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    let first = notice_list(&app, &inbox).await;
+    notice_seed(dir.path(), CheckOutcome::Unavailable).await;
+    assert_eq!(notice_list(&app, &inbox).await, first);
+    let (_, summary) =
+        home_test_get_json(&app, UPDATE_APPLY_ROUTE, &owner.system_token, "null").await;
+    assert_eq!(summary["runtime_update"]["can_apply"], false);
+    assert!(summary["runtime_update"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("Could not check"));
+    notice_seed(dir.path(), CheckOutcome::Rejected).await;
+    assert!(
+        notice_list(&app, &inbox).await.is_empty(),
+        "Stable refusal of Test head also maps to Rejected"
+    );
+}
+
+#[tokio::test]
+async fn update_notice_state_defaults_admin_switch_and_explicit_repair() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    configure_update_summary(dir.path());
+    let owner = passkey_authority_with_name(dir.path(), Some("notice-settings"));
+    let guest = passkey_authority_with_name_role(
+        dir.path(),
+        Some("notice-settings-guest"),
+        crate::auth::RuntimePrincipalRole::Guest,
+    );
+    let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
+    assert_eq!(notice::preference(dir.path())["enabled"], true);
+    let route = "/api/apps/system/update-background";
+    for (token, expected) in [
+        (&guest.system_token, StatusCode::FORBIDDEN),
+        (&owner.people_token, StatusCode::UNAUTHORIZED),
+    ] {
+        let (status, _) =
+            home_test_post_json(&app, route, token, "null", json!({"enabled":false})).await;
+        assert_eq!(status, expected);
+    }
+    let (status, _) = home_test_post_json(
+        &app,
+        route,
+        &owner.system_token,
+        "null",
+        json!({"enabled":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    notice_seed(dir.path(), CheckOutcome::Confirmed(cached_offer())).await;
+    assert_eq!(
+        notice_list(&app, &inbox).await.len(),
+        1,
+        "off keeps confirmed entry"
+    );
+    let path = notice::state_path(dir.path()).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    std::fs::write(&path, b"broken").unwrap();
+    assert_eq!(notice::preference(dir.path())["enabled"], false);
+    assert_eq!(notice::preference(dir.path())["readable"], false);
+    assert!(notice_list(&app, &inbox).await.is_empty());
+    let (_, summary) =
+        home_test_get_json(&app, UPDATE_APPLY_ROUTE, &owner.system_token, "null").await;
+    assert_eq!(
+        summary["runtime_update"]["background_checks"],
+        notice::preference(dir.path())
+    );
+    let (status, settings) = home_test_post_json(
+        &app,
+        route,
+        &owner.system_token,
+        "null",
+        json!({"enabled":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(settings["enabled"], true);
+    assert_eq!(notice_list(&app, &inbox).await.len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn update_notice_task_simulated_clock_spread_wake_failures_and_restart_off() {
+    use std::sync::{
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    configure_update_summary(dir.path());
+    let owner = passkey_authority_with_name(dir.path(), Some("notice-clock"));
+    let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
+    let clock = Arc::new(AtomicU64::new(1000));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let cache = UPDATE_CHECK.get_or_init(|| tokio::sync::Mutex::new(UpdateCheckCache::default()));
+    *cache.lock().await = UpdateCheckCache::default();
+    let (stop, receiver) = tokio::sync::watch::channel(false);
+    let path = dir.path().to_path_buf();
+    let now = clock.clone();
+    let count = calls.clone();
+    let worker = tokio::spawn(async move {
+        notice::run(
+            path,
+            cache,
+            receiver,
+            || now.load(Ordering::SeqCst),
+            || 3600,
+            move |_, _, _| {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { CheckOutcome::Confirmed(cached_offer()) }
+            },
+        )
+        .await;
+    });
+    async fn tick(clock: &AtomicU64, now: u64) {
+        clock.store(now, Ordering::SeqCst);
+        tokio::time::advance(std::time::Duration::from_secs(30)).await;
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(std::time::Duration::from_millis(50)).await;
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+    }
+    tokio::task::yield_now().await;
+    tick(&clock, 1359).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "first spread applied");
+    tick(&clock, 1360).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        notice_list(&app, &inbox).await.len(),
+        1,
+        "found before System opened"
+    );
+    tick(&clock, 1360 + 21600 + 3599).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "six hours plus spread");
+    // Expire only System's monotonic response TTL; worker schedule uses wall time.
+    tokio::time::advance(std::time::Duration::from_secs(31)).await;
+    cache.lock().await.expire_response();
+    tick(&clock, 900000).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "one check after long sleep"
+    );
+    tick(&clock, 900030).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "no catch-up burst");
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    let (status, _) = home_test_post_json(
+        &app,
+        "/api/apps/system/update-background",
+        &owner.system_token,
+        "null",
+        json!({"enabled":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    for _ in 0..2 {
+        let (stop, receiver) = tokio::sync::watch::channel(false);
+        let path = dir.path().to_path_buf();
+        let now = clock.clone();
+        let count = calls.clone();
+        let worker = tokio::spawn(async move {
+            notice::run(
+                path,
+                cache,
+                receiver,
+                || now.load(Ordering::SeqCst),
+                || 0,
+                move |_, _, _| {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    async { CheckOutcome::Rejected }
+                },
+            )
+            .await;
+        });
+        tokio::task::yield_now().await;
+        tick(&clock, clock.load(Ordering::SeqCst) + 100000).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "persisted off across restart"
+        );
+        stop.send(true).unwrap();
+        worker.await.unwrap();
+    }
+    cache.lock().await.expire_response();
+    let (_, summary) =
+        home_test_get_json(&app, UPDATE_APPLY_ROUTE, &owner.system_token, "null").await;
+    assert_eq!(
+        summary["runtime_update"]["checking"], true,
+        "System still starts its check while background is off"
+    );
+    UpdateCheckCache::cancel_for_home(cache, dir.path()).await;
+}

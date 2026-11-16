@@ -889,7 +889,7 @@ function desktopObjectsSignature(summary) {
 }
 
 /* About ElastOS: window-chrome close, verified runtime version, and an
-   honest update path (System About owns check/install — no fake badges). */
+   checked update path (System About owns installation; Inbox supplies checked badges). */
 let aboutOverlayBound = false;
 let homeGuiFullscreenControlBound = false;
 

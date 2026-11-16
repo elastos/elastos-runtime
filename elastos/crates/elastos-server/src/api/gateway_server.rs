@@ -180,6 +180,7 @@ async fn start_gateway_server_with_shutdown(
     if let Some(on_ready) = on_ready {
         on_ready(&home_url);
     }
+    let update_notice = super::gateway_update_notice::start(data_dir.clone());
     let connections = axum_server::Handle::new();
     let server = axum_server::Server::<SocketAddr>::from_listener(listener)
         .handle(connections.clone())
@@ -206,6 +207,7 @@ async fn start_gateway_server_with_shutdown(
     while connections.connection_count() != 0 {
         tokio::task::yield_now().await;
     }
+    update_notice.shutdown().await;
     browser_lifecycle_reconciler.cancel();
     let reconciliation_result = browser_lifecycle_reconciler.join().await;
     // Finish any synchronous spawn/registration before retiring this owner or

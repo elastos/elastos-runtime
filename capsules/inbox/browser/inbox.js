@@ -387,7 +387,7 @@
     }
 
     function pendingRequestEntries() {
-      return state.entries.filter((entry) => entry && entry.kind !== "service_access_grant" && entry.kind !== "hosted_route_history" && entry.kind !== "browser_internet_decision");
+      return state.entries.filter((entry) => entry && entry.kind !== "home_update_available" && entry.kind !== "service_access_grant" && entry.kind !== "hosted_route_history" && entry.kind !== "browser_internet_decision");
     }
 
     function renderInbox() {
@@ -456,7 +456,7 @@
       title.textContent = inboxEntryText(entry, "title", "Request");
       const time = document.createElement("span");
       time.className = "entry-row-time";
-      time.textContent = entry.created_at ? formatInboxTime(entry.created_at) : "";
+      time.textContent = entry.created_at ? formatInboxTime(entry.created_at, entry.kind) : "";
       top.append(title, time);
 
       const snippet = document.createElement("span");
@@ -486,7 +486,7 @@
       title.textContent = inboxEntryText(entry, "title", "Request");
       const time = document.createElement("span");
       time.className = "entry-row-time";
-      time.textContent = entry.created_at ? formatInboxTime(entry.created_at) : "";
+      time.textContent = entry.created_at ? formatInboxTime(entry.created_at, entry.kind) : "";
       top.append(title, time);
 
       const snippet = document.createElement("span");
@@ -527,6 +527,11 @@
 
     function fillEntryActions(actions, entry) {
       const actionId = entry.action_ref && entry.action_ref.action_id;
+      if (entry.kind === "home_update_available") {
+        actions.appendChild(createButton("Open System", () => openSource("system", { settings: "about" })));
+        actions.appendChild(createActionButton("Dismiss", "notification-dismiss:" + entry.id));
+        return;
+      }
       if (entry.kind === "browser_internet_decision") {
         if (actionId?.startsWith("browser-internet-turn-off:")) {
           actions.appendChild(createButton("Turn Off", async () => {
@@ -643,7 +648,7 @@
       time.className = "entry-time";
       if (entry.created_at) {
         time.dateTime = new Date(entry.created_at * 1000).toISOString();
-        time.textContent = formatInboxTime(entry.created_at);
+        time.textContent = formatInboxTime(entry.created_at, entry.kind);
       }
 
       const bodyText = inboxEntryText(entry, "body", "This request needs your review.");
@@ -907,7 +912,11 @@
       });
     }
 
-    function formatInboxTime(createdAt) {
+    function formatInboxTime(createdAt, kind) {
+      if (kind === "home_update_available") {
+        return new Intl.DateTimeFormat([], { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+          .format(new Date(Number(createdAt) * 1000));
+      }
       const ageSeconds = Math.max(0, Math.floor(Date.now() / 1000) - Number(createdAt || 0));
       if (ageSeconds < 60) {
         return "just now";

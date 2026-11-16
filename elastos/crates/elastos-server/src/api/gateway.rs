@@ -79,6 +79,8 @@ mod gateway_home_system_ai_provider;
 mod gateway_home_terminal;
 #[path = "gateway_home_token.rs"]
 mod gateway_home_token;
+#[path = "gateway_update_notice.rs"]
+mod gateway_update_notice;
 #[path = "gateway_home_update.rs"]
 mod gateway_home_update;
 #[path = "gateway_home_wallet_connector.rs"]
@@ -784,6 +786,10 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
             get(system_summary)
                 .post(system_update_apply)
                 .layer(DefaultBodyLimit::max(8 * 1024)),
+        )
+        .route(
+            "/api/apps/system/update-background",
+            post(gateway_update_notice::set_background).layer(DefaultBodyLimit::max(1024)),
         )
         .route(
             "/api/apps/system/update-channel",

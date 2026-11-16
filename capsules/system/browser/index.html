@@ -404,7 +404,7 @@
                   <div><dt>Device identity</dt><dd></dd></div>
                 </dl>
               </div>
-              <div id="runtime-update" class="pc2-group-row" hidden>
+              <div id="runtime-update" class="pc2-group-row" tabindex="-1" hidden>
                 <div class="pc2-card-label" data-field="update-heading">Home update</div>
                 <p id="runtime-update-status" class="pc2-card-sublabel" role="status" aria-live="polite"></p>
                 <div id="runtime-update-progress" hidden></div>
@@ -415,6 +415,12 @@
                 <dl class="system-fields runtime-update-fields" data-field="update-offer" hidden>
                   <div data-field="update-publisher-row"><dt>Publisher</dt><dd data-field="update-publisher"></dd></div>
                 </dl>
+                <div id="update-background" hidden>
+                  <label class="pc2-card-row"><span id="update-background-label"></span>
+                    <input id="update-background-choice" type="checkbox" role="switch" aria-describedby="update-background-message">
+                  </label>
+                  <p id="update-background-message" class="pc2-card-sublabel" role="status"></p>
+                </div>
                 <button id="runtime-update-apply" class="pc2-btn pc2-btn-secondary" type="button" hidden disabled>Update and restart Home</button>
               </div>
               <div class="pc2-group-row">
