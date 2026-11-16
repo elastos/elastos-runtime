@@ -102,6 +102,12 @@ fn allowed_launch_key(key: &std::ffi::OsStr) -> bool {
         .any(|allowed| key == std::ffi::OsStr::new(allowed))
 }
 
+fn installed_runtime(install_path: &str, current: std::io::Result<PathBuf>) -> Option<PathBuf> {
+    let current = fs::canonicalize(current.ok()?).ok()?;
+    let installed = fs::canonicalize(install_path).ok()?;
+    (installed == current).then_some(current)
+}
+
 /// `elastos home --browser` hands a pending Home restart recovery to the retained
 /// update controller, which proves the old generation gone before starting Home.
 pub fn resume_restart_recovery() -> Result<()> {
@@ -112,12 +118,10 @@ pub fn resume_restart_recovery() -> Result<()> {
     let Some(source) = load_trusted_sources(&data)?.default_source().cloned() else {
         return Ok(());
     };
-    let current = std::env::current_exe()?;
-    if source.install_path.is_empty() || Path::new(&source.install_path) != current {
+    let Some(binary) = installed_runtime(&source.install_path, std::env::current_exe()) else {
         return Ok(());
-    }
+    };
     let data = fs::canonicalize(data)?;
-    let binary = fs::canonicalize(current)?;
     let Some(handoff) = restart_recovery_handoff(&data, &binary)? else {
         return Ok(());
     };
@@ -768,12 +772,10 @@ pub async fn enter_browser_home() -> Result<()> {
     let Some(source) = load_trusted_sources(&data)?.default_source().cloned() else {
         return Ok(());
     };
-    let current = std::env::current_exe()?;
-    if source.install_path.is_empty() || Path::new(&source.install_path) != current {
+    let Some(binary) = installed_runtime(&source.install_path, std::env::current_exe()) else {
         return Ok(());
-    }
+    };
     let data = fs::canonicalize(data)?;
-    let binary = fs::canonicalize(current)?;
     if !crate::install_transaction::InstallTransaction::has_pending_recovery(&binary) {
         repair_installed_support(&data, &binary, &source).await?;
     }
@@ -1378,30 +1380,38 @@ impl Controller {
             {
                 bail!("Home stopped. Start Home again.");
             }
-            let path = self.directory.join(REQUEST);
-            if path_present(&path)? {
-                let request: UpdateRequest = read_private_json(&path)?;
-                anyhow::ensure!(
-                    !path_present(&self.directory.join(ACTIVE_REQUEST))?,
-                    "An earlier update requires recovery."
-                );
-                fs::rename(&path, self.directory.join(ACTIVE_REQUEST))?;
-                File::open(&self.directory)?.sync_all()?;
-                self.request = Some(request);
-                self.publish("staging", "Checking the signed update.")?;
-                let result = self.apply().await;
-                self.publish_apply_result(&result)?;
-                if !self.host_ready {
-                    return result;
-                }
-                // A pre-activation refusal keeps the current Home and recovery owner
-                // alive. Only a settled transaction can retire its consumed request.
-                if !InstallTransaction::has_pending_recovery(&self.receipt.binary) {
-                    self.finish_request()?;
-                }
+            if !self.process_request().await? {
+                return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    /// Process one queued request; false ends the controller's serving loop.
+    async fn process_request(&mut self) -> Result<bool> {
+        let path = self.directory.join(REQUEST);
+        if path_present(&path)? {
+            let request: UpdateRequest = read_private_json(&path)?;
+            anyhow::ensure!(
+                !path_present(&self.directory.join(ACTIVE_REQUEST))?,
+                "An earlier update requires recovery."
+            );
+            fs::rename(&path, self.directory.join(ACTIVE_REQUEST))?;
+            File::open(&self.directory)?.sync_all()?;
+            self.request = Some(request);
+            self.publish("staging", "Checking the signed update.")?;
+            let result = self.apply().await;
+            self.publish_apply_result(&result)?;
+            if !self.host_ready {
+                return result.map(|()| false);
+            }
+            // A pre-activation refusal keeps the current Home and recovery owner
+            // alive. Only a settled transaction can retire its consumed request.
+            if !InstallTransaction::has_pending_recovery(&self.receipt.binary) {
+                self.finish_request()?;
+            }
+        }
+        Ok(true)
     }
 
     async fn apply(&mut self) -> Result<()> {

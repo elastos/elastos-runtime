@@ -13,6 +13,36 @@ const CHANNEL_ROUTE: &str = "/api/apps/system/update-channel";
 const CHANNEL_OPERATION: &str = "system.source.switch-channel";
 
 #[tokio::test]
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_fresh_start_after_update_keeps_summary_and_updates_again() {
+    let mut fixture = crate::update_controller::tests::LinkedStartFixture::new(true);
+    let owner = passkey_authority_with_name(fixture.data(), Some("owner"));
+    let context = HomeLaunchTokenContext {
+        principal_id: owner.principal_id,
+        session_id: owner.session_id,
+        proof_binding_id: Some(owner.proof_binding_id),
+        grant_id: owner.grant_id,
+    };
+    fixture.start().await;
+    fixture.update("0.7.1").await;
+    fixture.stop().await;
+    // The update saved the physical path. A later launch still uses linked-bin.
+    fixture.start().await;
+    let summary = system_runtime_update_summary_with_cache(
+        fixture.data(),
+        &context,
+        &tokio::sync::Mutex::new(UpdateCheckCache::default()),
+        |_, _, _| async { None },
+    )
+    .await
+    .expect("System keeps its update summary after a fresh linked start");
+    assert_eq!(summary["configured"], true);
+    assert_eq!(summary["current_version"], "0.7.1");
+    fixture.update("0.7.2").await;
+    fixture.stop().await;
+}
+
+#[tokio::test]
 async fn system_channel_choice_requires_owner_and_exact_fresh_approval() {
     let dir = tempfile::tempdir().unwrap();
     let app = gateway_router(test_state(dir.path()));
