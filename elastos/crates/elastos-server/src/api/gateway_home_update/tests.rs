@@ -13,7 +13,8 @@ const CHANNEL_ROUTE: &str = "/api/apps/system/update-channel";
 const CHANNEL_OPERATION: &str = "system.source.switch-channel";
 
 #[tokio::test]
-async fn linked_path_fresh_start_after_update_keeps_summary_and_updates_again() {
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_fresh_start_after_update_keeps_summary_and_updates_again() {
     let mut fixture = crate::update_controller::tests::LinkedStartFixture::new(true);
     let owner = passkey_authority_with_name(fixture.data(), Some("owner"));
     let context = HomeLaunchTokenContext {

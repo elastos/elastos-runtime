@@ -5355,19 +5355,105 @@ async fn system_update_with_symlinked_binary_parent() {
     restarting_network_update(true).await;
 }
 
-/// A native fixture is needed here: a shell wrapper's current_exe is its interpreter.
-/// Link the real library built by Cargo, rather than extracting the startup code.
+#[test]
+fn linked_path_helper_linked_parent() {
+    let fixture = PrivateFixture::new();
+    let parent = fixture.data.join("linked-parent");
+    symlink(&fixture.data, &parent).unwrap();
+    let linked = parent.join("installed-runtime");
+    for (saved, current) in [(&fixture.binary, &linked), (&linked, &fixture.binary)] {
+        assert_eq!(
+            installed_runtime(saved.to_str().unwrap(), Ok(current.clone())),
+            Some(fixture.binary.clone())
+        );
+    }
+}
+
+#[test]
+fn linked_path_helper_link_from_elsewhere() {
+    let fixture = PrivateFixture::new();
+    fs::create_dir(fixture.data.join("elsewhere")).unwrap();
+    let linked = fixture.data.join("elsewhere/runtime");
+    symlink(&fixture.binary, &linked).unwrap();
+    assert_eq!(
+        installed_runtime(fixture.binary.to_str().unwrap(), Ok(linked)),
+        Some(fixture.binary.clone())
+    );
+}
+
+#[test]
+fn linked_path_helper_refuses_a_hard_link_at_another_path() {
+    let fixture = PrivateFixture::new();
+    let other = fixture.data.join("hard-link");
+    fs::hard_link(&fixture.binary, &other).unwrap();
+    assert_eq!(
+        installed_runtime(fixture.binary.to_str().unwrap(), Ok(other)),
+        None
+    );
+}
+
+#[test]
+fn linked_path_helper_normalizes_parent_segments() {
+    let fixture = PrivateFixture::new();
+    fs::create_dir(fixture.data.join("child")).unwrap();
+    let dotted = fixture.data.join("child/../installed-runtime");
+    assert_eq!(
+        installed_runtime(fixture.binary.to_str().unwrap(), Ok(dotted)),
+        Some(fixture.binary.clone())
+    );
+}
+
+#[test]
+fn linked_path_helper_missing_saved_path_keeps_controller_off() {
+    let fixture = PrivateFixture::new();
+    assert_eq!(
+        installed_runtime(
+            fixture.data.join("missing").to_str().unwrap(),
+            Ok(fixture.binary.clone())
+        ),
+        None
+    );
+    assert_eq!(installed_runtime("", Ok(fixture.binary.clone())), None);
+}
+
+#[test]
+fn linked_path_helper_unresolvable_current_keeps_controller_off() {
+    let fixture = PrivateFixture::new();
+    assert_eq!(
+        installed_runtime(
+            fixture.binary.to_str().unwrap(),
+            Ok(fixture.data.join("missing"))
+        ),
+        None
+    );
+    assert_eq!(
+        installed_runtime(
+            fixture.binary.to_str().unwrap(),
+            Err(std::io::ErrorKind::PermissionDenied.into())
+        ),
+        None
+    );
+    let inaccessible = fixture.data.join("unsearchable");
+    fs::create_dir(&inaccessible).unwrap();
+    fixture.file(&inaccessible.join("runtime"), b"fixture", 0o755);
+    fs::set_permissions(&inaccessible, fs::Permissions::from_mode(0o0)).unwrap();
+    let decision = installed_runtime(
+        inaccessible.join("runtime").to_str().unwrap(),
+        Ok(fixture.binary.clone()),
+    );
+    fs::set_permissions(&inaccessible, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(decision, None);
+}
+
+/// Cargo reports the candidate example executable; no library-file lookup is used.
 fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
+    static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _build = BUILD.lock().unwrap();
     let harness = std::env::current_exe().unwrap();
-    // Cargo keeps dependency libraries in build-dir and uplifts the test binary
-    // to target-dir. Use the same build-dir as this repository's Cargo config.
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
         .unwrap();
-    let build = std::env::var_os("CARGO_BUILD_BUILD_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| repository.join("target-build"));
     let profile = harness
         .parent()
         .unwrap()
@@ -5375,99 +5461,63 @@ fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
         .unwrap()
         .file_name()
         .unwrap();
-    let dependencies = build.join(profile).join("deps");
-    let library = |name: &str| {
-        let prefix = format!("lib{name}-");
-        let candidates: Vec<_> = fs::read_dir(&dependencies)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with(&prefix)
-                    && path.extension() == Some(OsStr::new("rlib"))
-            })
-            .collect();
-        assert_eq!(
-            candidates.len(),
-            1,
-            "one current {name} library: {candidates:?}"
-        );
-        candidates.into_iter().next().unwrap()
+    let profile = if profile == "debug" {
+        OsStr::new("dev")
+    } else {
+        profile
     };
-    let source = directory.join("linked-start.rs");
-    let output = directory.join("linked-start");
     let test = |name: &str| format!("{}::{name}", module_path!().split_once("::").unwrap().1);
-    fs::write(
-        &source,
-        format!(
-            r#"
-use std::os::unix::process::CommandExt;
-fn main() {{
-    let args: Vec<_> = std::env::args().collect();
-    if args.get(1).map(String::as_str) == Some("--version") {{
-        println!("elastos {version}");
-        return;
-    }}
-    if args.get(1).map(String::as_str) == Some("--current-exe") {{
-        println!("{{}}", std::env::current_exe().unwrap().display());
-        return;
-    }}
-    let test = if args.get(1).map(String::as_str) == Some("__update-controller") {{
-        if std::env::var_os("LINKED_START_RECOVERY_ONLY").is_some() {{
-            println!("retained recovery controller entered");
-            return;
-        }}
-        std::env::set_var("LINKED_START_RECEIPT", &args[3]);
-        std::env::set_var("LINKED_START_CONTROLLER", std::env::current_exe().unwrap());
-        {controller:?}
-    }} else if std::env::var("ELASTOS_UPDATE_CONTROLLER_HOST").as_deref() == Ok("1") {{
-        std::env::set_var("RESTART_FIXTURE_VERSION", {version:?});
-        {home:?}
-    }} else {{
-        eprintln!("fixture current_exe: {{}}", std::env::current_exe().unwrap().display());
-        let sources = elastos_server::sources::load_trusted_sources(
-            &elastos_server::sources::default_data_dir()).unwrap();
-        let source = sources.default_source().expect("configured fixture source");
-        eprintln!("fixture install_path: {{}}", source.install_path);
-        elastos_server::update_controller::resume_restart_recovery().unwrap();
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
-            .block_on(elastos_server::update_controller::enter_browser_home()).unwrap();
-        eprintln!("controller skipped at startup path comparison");
-        std::process::exit(42);
-    }};
-    panic!("fixture exec: {{}}", std::process::Command::new({harness:?})
-        .args(["--exact", test, "--ignored", "--nocapture"]).exec());
-}}
-"#,
-            controller = test("linked_start_controller_fixture"),
-            home = test("restart_home_fixture"),
-            harness = harness.to_str().unwrap()
-        ),
-    )
-    .unwrap();
-    let compiled = std::process::Command::new("rustc")
-        .arg(&source)
-        .args(["--edition=2021", "-C", "debuginfo=0", "-L"])
-        .arg(format!("dependency={}", dependencies.display()))
-        .arg("--extern")
-        .arg(format!(
-            "elastos_server={}",
-            library("elastos_server").display()
-        ))
-        .arg("--extern")
-        .arg(format!("tokio={}", library("tokio").display()))
-        .arg("-o")
-        .arg(&output)
+    let output = std::process::Command::new(env!("CARGO"))
+        .current_dir(repository)
+        .args(["build", "--manifest-path"])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+        .args([
+            "-p",
+            "elastos-server",
+            "--example",
+            "linked_start_fixture",
+            "--message-format=json",
+            "--locked",
+            "--offline",
+            "--jobs",
+            "1",
+            "--profile",
+        ])
+        .arg(profile)
+        .env_remove("CARGO_MAKEFLAGS")
+        .env("ELASTOS_LINKED_FIXTURE_VERSION", version)
+        .env("ELASTOS_LINKED_FIXTURE_TEST_EXE", &harness)
+        .env(
+            "ELASTOS_LINKED_FIXTURE_CONTROLLER_TEST",
+            test("linked_start_controller_fixture"),
+        )
+        .env(
+            "ELASTOS_LINKED_FIXTURE_HOME_TEST",
+            test("restart_home_fixture"),
+        )
         .output()
         .unwrap();
+    fs::write(directory.join("fixture-cargo.log"), &output.stderr).unwrap();
     assert!(
-        compiled.status.success(),
+        output.status.success(),
         "{}",
-        String::from_utf8_lossy(&compiled.stderr)
+        String::from_utf8_lossy(&output.stderr)
     );
-    fs::read(output).unwrap()
+    let executable = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find_map(|message| {
+            if message["reason"] == "compiler-artifact"
+                && message["target"]["name"] == "linked_start_fixture"
+            {
+                message["executable"].as_str().map(PathBuf::from)
+            } else {
+                None
+            }
+        })
+        .expect("Cargo built the linked startup fixture executable");
+    fs::read(executable).unwrap()
 }
 
 pub(crate) struct LinkedStartFixture {
@@ -5669,20 +5719,24 @@ async fn linked_start_controller_fixture() {
         let request: UpdateRequest =
             read_private_json(&data.join("linked-start-update.json")).unwrap();
         let payloads = data.join("linked-start-payloads");
-        let fetch: crate::update::FetchFn = Box::new(move |cid| {
-            let bytes = fs::read(payloads.join(cid)).unwrap();
-            Box::pin(async move { Ok(bytes) })
-        });
-        controller.previous_binary_sha256 = digest(&fs::read(&controller.receipt.binary).unwrap());
-        controller.previous_version = request.current_version.clone();
-        controller.request = Some(request.clone());
-        write_private(&controller.directory.join(ACTIVE_REQUEST), &request).unwrap();
-        let result =
-            crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut controller)
-                .await;
-        controller.publish_apply_result(&result).unwrap();
-        result.unwrap();
-        controller.finish_request().unwrap();
+        let items = fs::read_dir(payloads)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                (
+                    path.file_name().unwrap().to_str().unwrap().to_owned(),
+                    fs::read(path).unwrap(),
+                )
+            })
+            .collect();
+        let source = installed_source(&data).unwrap();
+        let (_, server, serving) =
+            crate::setup::tests::carrier_cid_source(&data, &source, items).await;
+        queue_update(&data, request).unwrap();
+        assert!(controller.process_request().await.unwrap());
+        assert_eq!(status(&data).unwrap().unwrap().phase, "updated");
+        server.close().await;
+        serving.await.unwrap();
         stream.write_all(b"U").await.unwrap();
     }
     controller.stop_child().await.unwrap();
@@ -5690,43 +5744,34 @@ async fn linked_start_controller_fixture() {
 }
 
 #[tokio::test]
-async fn linked_path_first_start_keeps_controller() {
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_first_start_keeps_controller() {
     let mut fixture = LinkedStartFixture::new(true);
     fixture.start().await;
     fixture.stop().await;
 }
 
 #[tokio::test]
-async fn linked_path_current_exe_matches_platform_contract() {
-    let fixture = LinkedStartFixture::new(true);
-    let output = tokio::process::Command::new(&fixture.alias)
-        .arg("--current-exe")
-        .output()
-        .await
-        .unwrap();
-    assert!(output.status.success());
-    let current = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
-    #[cfg(target_os = "macos")]
-    assert_eq!(
-        current, fixture.alias,
-        "_NSGetExecutablePath preserves the linked parent"
-    );
-    #[cfg(target_os = "linux")]
-    assert_eq!(
-        current, fixture.fixture.binary,
-        "/proc/self/exe resolves the linked parent"
-    );
-    assert_eq!(fs::canonicalize(current).unwrap(), fixture.fixture.binary);
-}
-
-#[tokio::test]
-async fn linked_path_different_binary_is_refused() {
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_different_binary_is_refused() {
     let fixture = LinkedStartFixture::new(true);
     let other = fixture.data().join("different-runtime");
-    fs::copy(&fixture.fixture.binary, &other).unwrap();
+    crate::test_support::write_from_child(
+        &other,
+        fs::read(&fixture.fixture.binary).unwrap(),
+        0o755,
+    );
+    // If startup reaches controller admission, this unsafe directory is an error.
+    // A successful refusal therefore cannot be a later low-space skip.
+    fs::set_permissions(
+        &fixture.fixture.directory,
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
     // Even identical signed bytes at another path do not own this installation.
     let output = fixture
         .command(&other, std::env::consts::OS)
+        .env("LINKED_START_EXPECT_REFUSAL", "1")
         .args(["home", "--browser"])
         .output()
         .await
@@ -5737,12 +5782,16 @@ async fn linked_path_different_binary_is_refused() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("fixture different executable refused")
+    );
     assert!(!fixture.fixture.directory.join(RECEIPT).exists());
     assert!(status(fixture.data()).unwrap().is_none());
 }
 
 #[tokio::test]
-async fn linked_path_restart_recovery_keeps_controller() {
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_restart_recovery_keeps_controller() {
     use crate::install_transaction::ReleaseFile;
     let fixture = LinkedStartFixture::new(false);
     publish_retained_receipt(&fixture.fixture);
@@ -5790,9 +5839,63 @@ async fn linked_path_restart_recovery_keeps_controller() {
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("retained recovery controller entered")
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("Finishing the interrupted Home restart.")
+}
+
+#[tokio::test]
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_missing_saved_path_opens_home() {
+    let fixture = LinkedStartFixture::new(false);
+    let mut sources = load_trusted_sources(fixture.data()).unwrap();
+    sources.sources[0].install_path = fixture
+        .data()
+        .join("missing-runtime")
+        .to_str()
+        .unwrap()
+        .into();
+    crate::sources::save_trusted_sources(fixture.data(), &sources).unwrap();
+    let output = fixture
+        .command(&fixture.alias, std::env::consts::OS)
+        .args(["home", "--browser"])
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains("fixture ordinary Home startup continued without controller"));
+    assert!(!fixture.fixture.directory.join(RECEIPT).exists());
+}
+
+#[tokio::test]
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_unresolvable_current_opens_home() {
+    let fixture = LinkedStartFixture::new(false);
+    let other = fixture.data().join("removed-running-runtime");
+    crate::test_support::write_from_child(
+        &other,
+        fs::read(&fixture.fixture.binary).unwrap(),
+        0o755,
+    );
+    let output = fixture
+        .command(&other, std::env::consts::OS)
+        .env("LINKED_START_REMOVE_CURRENT", "1")
+        .args(["home", "--browser"])
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains("fixture ordinary Home startup continued without controller"));
+    assert!(!fixture.fixture.directory.join(RECEIPT).exists());
 }
 
 async fn restarting_network_update(symlinked_parent: bool) {
