@@ -70,3 +70,15 @@ test('round19 a guest asks the Home owner and waits for the owner to allow acces
  r.fixture.setPermission('granted');await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));
  await r.frame.locator('#wallet-connect:visible').waitFor({timeout:3000});
 });
+
+test('round19 an approval on another network offers a working new-connection action',{timeout:60000},async t=>{
+ const r=await setup(t);await r.link();
+ r.fixture.state.accounts.push({address:r.peer.address,chain_namespace:'eip155:1',connector_id:'wallet-walletconnect',proof_type:'siwe'});
+ r.fixture.state.approvals=[{request_id:'other-network',status:'pending',address:r.peer.address,chain_namespace:'eip155:1',intent:'credential',proof_type:'siwe',connector_id:'wallet-walletconnect',expires_at:Math.floor(Date.now()/1000)+600}];
+ await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await r.frame.getByRole('button',{name:'Review',exact:true}).click();
+ await r.frame.locator('#wallet-status').filter({hasText:'no approved account on Ethereum'}).waitFor();
+ assert.equal(await r.frame.locator('#wallet-connect').isVisible(),true);
+ assert.equal(await r.frame.locator('#wallet-disconnect').isVisible(),false);
+ assert.equal(await r.frame.getByRole('button',{name:'Review',exact:true}).count(),0);
+ await r.frame.locator('#wallet-connect').click();await r.frame.locator('dialog[open]').waitFor({timeout:15000});
+});
