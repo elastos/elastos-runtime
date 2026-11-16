@@ -97,9 +97,12 @@ export async function connectWalletConnectEvm(options) {
   copyStatus.hidden = true;
   const copyLifetime = new AbortController();
   dialog.append(title, text, canvas, copy, cancel, copyStatus);
+  let removed = false;
+  const removeDialog = () => { if (!removed) { removed = true; copyLifetime.abort(); dialog.remove(); } };
   let rejectCancel;
   const cancelled = new Promise((_, reject) => { rejectCancel = reject; });
   const stop = (error = new Error("Wallet connection cancelled.")) => {
+    removeDialog();
     rejectCancel(error);
     provider.signer.abortPairingAttempt();
     provider.signer.client.core.relayer.transportClose().catch(() => {});
@@ -145,7 +148,7 @@ export async function connectWalletConnectEvm(options) {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", abort);
     provider.removeListener("display_uri", display);
-    dialog.remove();
+    removeDialog();
   }
 }
 
