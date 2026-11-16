@@ -13,6 +13,7 @@ const requestsNode = document.querySelector("#wallet-requests");
 const frameHomeToken = readLaunchToken();
 const homeOrigin = readQueryParam("home_origin");
 let hostEffectInFlight = false;
+let walletStateRevision = 0;
 let pendingEffect;
 let connectionCheckInFlight = false;
 const clearMemory = installWalletConnectStorage(window);
@@ -114,6 +115,7 @@ async function refreshWalletState() {
     showStatus("Open from Wallet to review approval requests.", "error");
     return;
   }
+  const revision = ++walletStateRevision;
   const [accountSummary, requestSummary] = await Promise.all([
     fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/accounts`, {
       headers: shellHeaders(),
@@ -122,6 +124,7 @@ async function refreshWalletState() {
       headers: shellHeaders(),
     }),
   ]);
+  if (revision !== walletStateRevision) return;
   const accounts = Array.isArray(accountSummary?.accounts) ? accountSummary.accounts : [];
   const requests = Array.isArray(requestSummary?.approval_requests)
     ? requestSummary.approval_requests
@@ -208,7 +211,7 @@ function requestCard(request) {
   }
   if (!isWalletConnectNetwork(request.chain_namespace)) {
     const recovery = document.createElement('p');
-    recovery.textContent = walletConnectMessages.unsupportedNetwork(readText(request.chain_namespace).split(':')[1]);
+    recovery.textContent = walletConnectMessages.pendingUnsupportedNetwork(readText(request.chain_namespace).split(':')[1]);
     card.append(main,recovery);
     return card;
   }

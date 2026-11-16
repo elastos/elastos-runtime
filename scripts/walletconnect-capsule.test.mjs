@@ -77,7 +77,7 @@ test('late send reports dismissal without claiming completion',async()=>{
 
 test('an unapproved request network stops before the phone and before handoff',async()=>{
   const r=await exerciseWalletConnect('unapproved-network');
-  assert.equal(r.error,'This request is for Base, which your wallet did not approve. Select Disconnect, then Connect wallet, and approve Base in your phone wallet.');
+  assert.equal(r.error,messages.unapprovedNetwork('Base'));
   assert.equal(sent(r).length,0);assert.equal(r.routes.filter(call=>call.path.endsWith('/approve')).length,0);
 });
 test('an unknown SDK error stays in the console and gives a safe recovery message',async t=>{
@@ -105,7 +105,15 @@ for (const scope of ['signature','transaction']) for (const ending of ['declined
 });
 for (const [scenario,name] of [['listed-without-account','Ethereum'],['unknown-network',null]]) test(`${scenario} stops before handoff`,async()=>{
   const r=await exerciseWalletConnect(scenario);
-  if(name)assert.match(r.error,/This request is for Ethereum/);
+  if(name)assert.equal(r.error,messages.unapprovedNetwork('Ethereum'));
   else assert.equal(r.error,messages.unsupportedNetwork('137'));
   assert.equal(sent(r).length,0);assert.equal(r.routes.filter(c=>c.path.endsWith('/approve')).length,0);
+});
+
+test('a network change after handoff cannot offer rejection of a consumed signature',async()=>{
+  const r=await exerciseWalletConnect('signature-unsupported-chain-after-sign');
+  assert.equal(r.status,'approved');assert.equal(completed(r).length,0);
+  assert.equal(r.calls.filter(c=>c.method==='personal_sign').length,1);
+  assert.doesNotMatch(r.error,/Reject|approve.*phone|review again/i);
+  assert.equal(r.tone,'muted');
 });

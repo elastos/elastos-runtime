@@ -1,5 +1,6 @@
 const networks = new Map([[1,'Ethereum'],[20,'Elastos Smart Chain'],[8453,'Base'],[11155111,'Sepolia test network']]);
 const noSupportedNetwork = 'Your wallet did not approve a network this Home supports. Select Connect wallet and choose Ethereum, Elastos Smart Chain, Base or Sepolia in your phone wallet.';
+const unavailableNetwork = id => `WalletConnect in this Home does not offer network ${id}.`;
 // Shared with capsule and SDK journey tests so copy has one source.
 export const walletConnectMessages = {
   proposalDeclined: 'Your phone wallet declined the connection request. Select Connect wallet to try again.',
@@ -14,7 +15,9 @@ export const walletConnectMessages = {
   transactionError: 'Home could not confirm this transaction. Check your phone wallet and Wallet activity before you send again.',
   consumed: 'This request is no longer available for review here. Check your phone wallet and Wallet activity before you ask the app for a new request.',
   transactionRecovery: 'Check your phone wallet and Wallet activity before you send again.',
-  unsupportedNetwork: id => `This Home does not offer network ${id}. Reject this request in Wallet.`,
+  unsupportedNetwork: id => `${unavailableNetwork(id)} Open Wallet to check your requests and activity.`,
+  pendingUnsupportedNetwork: id => `${unavailableNetwork(id)} Reject this request in Wallet.`,
+  unapprovedNetwork: name => `This wallet connection has no approved account on ${name}. Select Disconnect, then Connect wallet to choose an account and network.`,
 };
 export const isWalletConnectNetwork = namespace => networks.has(Number(String(namespace).split(':')[1]));
 const approvedNetworks = provider => {
@@ -39,7 +42,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     if (!isWalletConnectNetwork(namespace)) throw Object.assign(new Error(walletConnectMessages.unsupportedNetwork(id)), {tone:'muted'});
     if (!approvedNetworks(provider).has(namespace)) {
       const name = networks.get(Number(id));
-      throw new Error(`This request is for ${name}, which your wallet did not approve. Select Disconnect, then Connect wallet, and approve ${name} in your phone wallet.`);
+      throw Object.assign(new Error(walletConnectMessages.unapprovedNetwork(name)), {tone:'muted'});
     }
   };
   const request = async (input, expiry, context = 'signature') => {

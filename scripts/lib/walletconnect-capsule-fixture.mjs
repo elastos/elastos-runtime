@@ -10,7 +10,8 @@ export async function exerciseWalletConnect(scenario='valid') {
   const signature=`0x${'ab'.repeat(65)}`;
   const message=scenario==='link-uppercase-hex'?'0X4142':scenario==='link-odd-hex'?'0x123':'Runtime ownership proof · fixture';
   const change=()=>{changed=true;if(kind==='account-change-during-send')events.get('accountsChanged')?.([]);
-    if(kind==='chain-change-during-send')events.get('chainChanged')?.('0x1');if(kind==='expired-during-send')Date.now=()=>clock()+601000;};
+    if(kind==='chain-change-during-send'){provider.chainId=1;events.get('chainChanged')?.('0x1');}
+    if(kind==='unsupported-chain-after-sign'){provider.chainId=137;events.get('chainChanged')?.('0x89');}if(kind==='expired-during-send')Date.now=()=>clock()+601000;};
   const phoneError = () => {
     if (scenario.includes('phone-declined:')) throw {code:Number(scenario.split(':')[1]),message:'User rejected.'};
     if (scenario.includes('phone-error:')) throw {code:Number(scenario.split(':')[1]),message:'Private wallet error fixture'};
