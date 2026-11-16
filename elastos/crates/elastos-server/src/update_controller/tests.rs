@@ -5359,6 +5359,8 @@ fn main() {{
             return;
         }}
         std::env::set_var("LINKED_START_RECEIPT", &args[3]);
+        std::env::set_var("LINKED_START_CONTROLLER_SHA256",
+            elastos_server::runtime_control::sha256_file(&std::env::current_exe().unwrap()).unwrap());
         {controller:?}
     }} else if std::env::var("ELASTOS_UPDATE_CONTROLLER_HOST").as_deref() == Ok("1") {{
         std::env::set_var("RESTART_FIXTURE_VERSION", {version:?});
@@ -5575,7 +5577,12 @@ async fn linked_start_controller_fixture() {
     let receipt: Receipt = read_private_json(&path).unwrap();
     let directory = receipt.data_dir.join(DIRECTORY);
     let _lease = inherited_or_new_lease(&directory).unwrap();
-    validate_receipt(&receipt).unwrap();
+    // The native image measured itself before execing this libtest helper.
+    assert_eq!(
+        std::env::var("LINKED_START_CONTROLLER_SHA256").unwrap(),
+        receipt.controller_sha256
+    );
+    validate_retained_receipt(&receipt).unwrap();
     let mut controller = Controller {
         receipt,
         directory,
