@@ -9819,6 +9819,94 @@ mod tests {
         }));
     }
 
+    // Reproduction on 5075c8476: exercise the HTTP handlers, including the
+    // local first-owner path after the only credential has been removed.
+    #[tokio::test]
+    async fn last_admin_passkey_http_lockout_reproduction() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_gateway_state(temp.path());
+        let mut credential = test_credential();
+        credential.rp_id = "localhost".into();
+        store_test_credential(temp.path(), credential.clone());
+        seed_test_passkey_principal(
+            &state,
+            &credential,
+            "http://localhost:61180",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let grant = issue_passkey_session_grant(
+            &state,
+            "identity-test",
+            &credential,
+            "http://localhost:61180",
+            true,
+            "lockout reproduction",
+        )
+        .unwrap();
+        let app = axum::Router::new()
+            .route(
+                "/api/auth/passkeys/{proof_binding_id}/revoke",
+                axum::routing::post(passkey_revoke),
+            )
+            .route(
+                "/api/auth/passkey/authenticate/begin",
+                axum::routing::post(passkey_authenticate_begin),
+            )
+            .route(
+                "/api/auth/passkey/register/begin",
+                axum::routing::post(passkey_register_begin),
+            )
+            .with_state(state.clone());
+        let headers = home_token_headers(&grant.home_token);
+        let name = super::super::gateway::home_session_cookie_name(&headers).unwrap();
+        let cookie = format!("{name}={}", grant.home_token);
+        let (status, cleared, body) = guided_owner_http(
+            &app,
+            &format!("/api/auth/passkeys/{}/revoke", grant.proof_binding_id),
+            &cookie,
+            json!({}),
+        )
+        .await;
+        println!(
+            "removal: {status}; cookie: {}; body: {body}",
+            !cleared.is_empty()
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "revoked");
+        assert!(!crate::auth::is_auth_session_active(
+            temp.path(),
+            &grant.session_id,
+            crate::auth::now_ts(),
+        )
+        .unwrap());
+        let (status, _, body) =
+            guided_owner_http(&app, "/api/auth/passkey/authenticate/begin", "", json!({})).await;
+        println!("sign-in: {status}; body: {body}");
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body, "No registered credentials. Register first.");
+        let (status, _, body) = guided_owner_http(
+            &app,
+            "/api/auth/passkey/register/begin",
+            "",
+            json!({"intent": {"purpose": "create", "public_name": "Owner"}}),
+        )
+        .await;
+        println!("first-owner setup: {status}; body: {body}");
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, "guest passkey registration is disabled");
+        assert_eq!(
+            crate::auth::active_passkey_principal_count(temp.path()).unwrap(),
+            0
+        );
+        assert_eq!(
+            crate::auth::load_auth_state(temp.path())
+                .unwrap()
+                .principals
+                .len(),
+            1
+        );
+    }
+
     #[tokio::test]
     async fn passkey_revoke_removes_credential_and_revokes_current_session() {
         let temp = tempfile::tempdir().unwrap();
