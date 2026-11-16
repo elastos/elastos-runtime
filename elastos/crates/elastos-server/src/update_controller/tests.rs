@@ -5698,7 +5698,10 @@ async fn linked_start_controller_fixture() {
         let active = controller.directory.join(ACTIVE_REQUEST);
         assert!(!path_present(&active).unwrap());
         fs::rename(queued, active).unwrap();
-        File::open(&controller.directory).unwrap().sync_all().unwrap();
+        File::open(&controller.directory)
+            .unwrap()
+            .sync_all()
+            .unwrap();
         controller
             .publish("staging", "Checking the signed update.")
             .unwrap();
