@@ -256,8 +256,16 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     await system.getByText(copy("OFF_TEXT"),{exact:true}).waitFor();
     await screen(page,"phone-switch-off");
     for(const stateName of ['INVALID_VERSION_TEXT','FOLDER_TEXT']) {
-      f.state.settings={...preference(stateName==='INVALID_VERSION_TEXT'),message:copy(stateName)};
+      f.state.settings={...preference(stateName==='INVALID_VERSION_TEXT',stateName!=='FOLDER_TEXT'),message:copy(stateName)};
       await page.reload();await system.getByText(copy(stateName),{exact:true}).waitFor();
+      if(stateName==='FOLDER_TEXT') {
+        f.state.failWrite=true;f.state.failStatus=409;
+        await system.locator("label.system-switch:has(#update-background-choice)").click();
+        await system.locator('#update-background-choice:not(:checked):not(:disabled)').waitFor({state:'attached'});
+        await system.getByText(copy("FOLDER_TEXT"),{exact:true}).waitFor();
+        assert.equal(await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).isChecked(),false);
+        f.state.failWrite=false;
+      }
       await screen(page,`phone-${stateName.toLowerCase()}`);
     }
     f.state.guest=true;await page.reload();

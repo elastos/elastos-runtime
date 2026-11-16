@@ -3806,7 +3806,9 @@ async function onBackgroundChange() {
     backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
     backgroundSaveError = error.status === 401 || error.status === 403
       ? "Sign in as the Home owner to change background checks."
-      : runtimeUpdate.background_checks.save_error;
+      : runtimeUpdate.background_checks.readable === false
+        ? runtimeUpdate.background_checks.message
+        : runtimeUpdate.background_checks.save_error;
     document.querySelector("#update-background-message").textContent = backgroundSaveError;
   } finally {
     backgroundBusy = false;

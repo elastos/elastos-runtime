@@ -337,7 +337,7 @@ impl UpdateCheckCache {
     {
         let mut work = Some(work);
         loop {
-            let mut finished = {
+            let (mut finished, running_key) = {
                 let mut cache = cache.lock().await;
                 if matches!(
                     cache
@@ -349,16 +349,21 @@ impl UpdateCheckCache {
                 ) {
                     return;
                 }
-                cache
-                    .running
-                    .as_ref()
-                    .expect("pending check has a worker")
-                    .finished
-                    .clone()
+                let running = cache.running.as_ref().expect("pending check has a worker");
+                (running.finished.clone(), running.key.clone())
             };
-            // A channel close means completion, cancellation or panic. Re-read
-            // the cache to join it and, if needed, start work for the new key.
+            // Joining a result completes this turn even if the short System
+            // response expires before the waiter resumes (for example after sleep).
             let _ = finished.changed().await;
+            cache
+                .lock()
+                .await
+                .collect_finished(std::time::Instant::now())
+                .await;
+            if running_key == key {
+                return;
+            }
+            // A different policy's worker drained; admit this policy next.
         }
     }
 
@@ -733,4 +738,49 @@ pub(super) fn choice_matches(
         && request.new_version == check.latest_version
         && Some(request.head_cid.as_str()) == check.head_cid.as_deref()
         && Some(request.release_cid.as_str()) == check.release_cid.as_deref()
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn update_notice_completed_worker_returns_after_response_ttl_expires() {
+        let cache = std::sync::Arc::new(tokio::sync::Mutex::new(UpdateCheckCache::default()));
+        let key = UpdateCheckKey {
+            data_dir: "fixture-home".into(),
+            source_policy_sha256: "fixture-policy".into(),
+        };
+        let (started, starting) = tokio::sync::oneshot::channel();
+        let (release, waiting) = tokio::sync::oneshot::channel();
+        let worker_cache = cache.clone();
+        let worker = tokio::spawn(async move {
+            UpdateCheckCache::check_and_store(&worker_cache, key, || async move {
+                let _ = started.send(());
+                waiting.await.unwrap();
+                CheckOutcome::Unavailable
+            })
+            .await;
+        });
+        starting.await.unwrap();
+        // Hold collection until the completed response has aged. This models
+        // a suspended waiter without sleeping for the response's real TTL.
+        let mut held = cache.lock().await;
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while !held.running.as_ref().unwrap().task.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        held.collect_finished(std::time::Instant::now()).await;
+        held.completed.as_mut().unwrap().completed_at =
+            std::time::Instant::now() - std::time::Duration::from_secs(CHECK_CACHE_SECONDS + 1);
+        drop(held);
+        tokio::time::timeout(std::time::Duration::from_secs(1), worker)
+            .await
+            .expect("completed check returns even after System response expires")
+            .expect("completion must not invoke its consumed work again");
+    }
 }
