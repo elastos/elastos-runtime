@@ -88,7 +88,7 @@ async function fixture() {
       assert.ok(!match[2].includes(".."));
       const name=match[2]||"index.html";
       const bytes=await readFile(new URL(`capsules/${match[1]}/browser/${name}`,root));
-      const type=name.endsWith(".js")||name.endsWith(".mjs")?"text/javascript":name.endsWith(".css")?"text/css":name.endsWith(".html")?"text/html":"application/octet-stream";
+      const type=name.endsWith(".js")||name.endsWith(".mjs")?"text/javascript":name.endsWith(".css")?"text/css":name.endsWith(".html")?"text/html":name.endsWith(".svg")?"image/svg+xml":"application/octet-stream";
       response.writeHead(200,{"content-type":type,"access-control-allow-origin":"*"});response.end(bytes);return true;
     }
     return false;
@@ -212,6 +212,7 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await system.locator('#runtime-update').evaluate(node=>{
         if(document.activeElement!==node)throw new Error('phone entry did not focus update');
       });
+      await gui.waitForFunction(()=>[...document.querySelectorAll('.window-traffic-lights img')].every(img=>img.complete&&img.naturalWidth>0));
       await screen(phone,'phone-system-from-entry');
       await system.locator('button[data-settings=account]').evaluate(node=>node.click());
       await gui.locator('#control-centre-this-device').evaluate(node=>node.click());
