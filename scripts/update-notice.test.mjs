@@ -100,7 +100,6 @@ async function fixture() {
 const screenshots = process.env.UPDATE_NOTICE_SCREENSHOTS;
 async function screen(page,name,wording=false) {
   if(!screenshots || (process.env.UPDATE_NOTICE_WORDING_ONLY && !wording))return;
-  if(process.env.UPDATE_NOTICE_WORDING_ROUND==='4' && name==='phone-invalid_version_text')return;
   const theme = name.startsWith("dark-") ? "dark" : "light";
   for (const frame of page.frames().slice(1)) await frame.evaluate(theme => window.elastosTheme?.set(theme), theme);
   await page.waitForTimeout(120);
@@ -264,7 +263,7 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       f.state.failStatus=status;
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
-      await system.getByText('Home did not answer. Try again.',{exact:true}).waitFor();
+      await system.getByText('Home could not confirm the setting change. Try again.',{exact:true}).waitFor();
       assert.equal(await system.getByText(copy('SAVE_ERROR'),{exact:true}).count(),0,'storage guidance belongs only to 409');
       await screen(page,'phone-no-answer',true);
     }
