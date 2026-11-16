@@ -233,6 +233,11 @@ export function createHomeClipboardPrompt({
       "Continue to copy this linked Wallet address to this device clipboard.",
       "Copy",
     ],
+    "wallet-walletconnect:wallet.connection-link:write": [
+      "Copy wallet connection link?",
+      "Copy this link to connect a wallet on this computer.",
+      "Copy link",
+    ],
     "library:resource.uri:write": [
       "Copy Library resource link?",
       "Continue to copy this resource URI to this device clipboard.",
