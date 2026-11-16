@@ -161,12 +161,8 @@ pub(super) async fn notification(
     data_dir: &Path,
     context: &HomeLaunchTokenContext,
 ) -> Option<HomeNotificationEntrySummary> {
-    notification_with_cache(
-        data_dir,
-        context,
-        update::UPDATE_CHECK.get_or_init(|| tokio::sync::Mutex::new(UpdateCheckCache::default())),
-    )
-    .await
+    let cache = update::update_check_cache();
+    notification_with_cache(data_dir, context, &cache).await
 }
 
 pub(super) async fn notification_with_cache(
@@ -263,18 +259,17 @@ pub(super) struct UpdateNoticeTask {
 pub(super) fn start(data_dir: PathBuf) -> UpdateNoticeTask {
     let (shutdown, receiver) = tokio::sync::watch::channel(false);
     let task = tokio::spawn(async move {
-        let cache = update::UPDATE_CHECK
-            .get_or_init(|| tokio::sync::Mutex::new(UpdateCheckCache::default()));
+        let cache = update::update_check_cache();
         run(
             data_dir.clone(),
-            cache,
+            &cache,
             receiver,
             now_secs,
             || rand::Rng::gen_range(&mut rand::thread_rng(), 0..=3600),
             update::check_current_policy,
         )
         .await;
-        UpdateCheckCache::cancel_for_home(cache, &data_dir).await;
+        UpdateCheckCache::cancel_for_home(&cache, &data_dir).await;
     });
     UpdateNoticeTask { shutdown, task }
 }

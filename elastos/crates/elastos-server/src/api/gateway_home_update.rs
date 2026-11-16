@@ -361,8 +361,35 @@ impl UpdateCheckCache {
     }
 }
 
-pub(super) static UPDATE_CHECK: std::sync::OnceLock<tokio::sync::Mutex<UpdateCheckCache>> =
+static UPDATE_CHECK: std::sync::OnceLock<std::sync::Arc<tokio::sync::Mutex<UpdateCheckCache>>> =
     std::sync::OnceLock::new();
+
+#[cfg(test)]
+tokio::task_local! {
+    static TEST_CHECK_CACHE: std::sync::Arc<tokio::sync::Mutex<UpdateCheckCache>>;
+}
+
+// A route fixture represents a separate Home process. Its account and task
+// journeys share one cache, while parallel fixtures retain their own state.
+#[cfg(test)]
+pub(super) async fn with_test_check_cache<T>(future: impl std::future::Future<Output = T>) -> T {
+    TEST_CHECK_CACHE
+        .scope(
+            std::sync::Arc::new(tokio::sync::Mutex::new(UpdateCheckCache::default())),
+            future,
+        )
+        .await
+}
+
+pub(super) fn update_check_cache() -> std::sync::Arc<tokio::sync::Mutex<UpdateCheckCache>> {
+    #[cfg(test)]
+    if let Ok(cache) = TEST_CHECK_CACHE.try_with(std::sync::Arc::clone) {
+        return cache;
+    }
+    UPDATE_CHECK
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(UpdateCheckCache::default())))
+        .clone()
+}
 
 pub(super) fn source_policy_sha256(
     config: &crate::sources::TrustedSourcesConfig,
@@ -423,13 +450,8 @@ pub(super) async fn system_runtime_update_summary(
     data_dir: &std::path::Path,
     context: &HomeLaunchTokenContext,
 ) -> Option<serde_json::Value> {
-    system_runtime_update_summary_with_cache(
-        data_dir,
-        context,
-        UPDATE_CHECK.get_or_init(|| tokio::sync::Mutex::new(UpdateCheckCache::default())),
-        check_current_policy,
-    )
-    .await
+    let cache = update_check_cache();
+    system_runtime_update_summary_with_cache(data_dir, context, &cache, check_current_policy).await
 }
 
 pub(super) async fn system_runtime_update_summary_with_cache<F, O>(
