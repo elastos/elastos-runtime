@@ -405,6 +405,17 @@ pub(in crate::api) fn connector_launch_authority(
     runtime_wallet_authority(&launch)
 }
 
+#[derive(Debug)]
+struct StaleRevision;
+impl std::fmt::Display for StaleRevision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "WalletConnect session changed. Close this window and open WalletConnect again.",
+        )
+    }
+}
+impl std::error::Error for StaleRevision {}
+
 fn connector_authority(
     state: &GatewayState,
     headers: &HeaderMap,
@@ -418,9 +429,7 @@ fn connector_authority(
         .unwrap_or("\"0\"")
         != storage_revision(&state.data_dir, authority.verified_context().principal_id())?
     {
-        anyhow::bail!(
-            "WalletConnect session changed. Close this window and open WalletConnect again."
-        );
+        return Err(StaleRevision.into());
     }
     Ok(authority)
 }
@@ -482,6 +491,9 @@ pub(super) async fn admission(State(state): State<GatewayState>, headers: Header
 fn private_response<T: Serialize>(result: anyhow::Result<T>) -> Response {
     let mut response = match result {
         Ok(value) => Json(value).into_response(),
+        Err(error) if error.is::<StaleRevision>() => {
+            (StatusCode::CONFLICT, error.to_string()).into_response()
+        }
         Err(error) => system_error_response(error),
     };
     response
