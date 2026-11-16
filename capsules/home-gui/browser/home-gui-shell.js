@@ -213,8 +213,11 @@ function handleGuiCommand(message) {
     return ok;
   }
   if (command === "focus-browser") {
-    if (!hasExactKeys(message, ["type", "command"])) return false;
-    return focusOpenBrowserWindow();
+    if (!hasExactKeys(message, message.browserInstance === undefined
+      ? ["type", "command"] : ["type", "command", "browserInstance"])) return false;
+    if (message.browserInstance !== undefined && (typeof message.browserInstance !== "string"
+      || !message.browserInstance || message.browserInstance.length > 256)) return false;
+    return focusOpenBrowserWindow(message.browserInstance);
   }
   if (command === "open-target") {
     return openHomeGuiTarget(message.target, { query: message.query || {} });
@@ -463,7 +466,7 @@ bindHomeGuiInteractions({
     postToHome({ type: "home:refresh-summary" });
   },
   launchTarget: (target, query, options) =>
-    requestHome("home:launch-target", { target, query }, options),
+    requestHome("home:launch-target", { target, query, ...(options?.renewHomeToken ? { renewHomeToken: options.renewHomeToken } : {}) }, options),
   signOut: () => requestHome("home:sign-out"),
 });
 setHomeGuiMounted(true);

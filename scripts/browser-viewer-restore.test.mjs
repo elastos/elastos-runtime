@@ -1,3 +1,4 @@
+import { navigateBrowserAddress } from "../capsules/browser/browser/browser-address-navigation.js";
 import { startBrowser } from "../capsules/browser/browser/browser-startup.js";
 import { browserInternetGranted, normalizeUrl, sameBrowserStreamTarget, isBrowserErrorUrl, visibleAddressForUrl } from "../capsules/browser/browser/browser-runtime-api.js";
 import assert from 'node:assert/strict';
@@ -336,7 +337,7 @@ function continuationHarness({ continuation = 'approved', cleanupPending = false
   Object.assign(h.state, {
     params: new URLSearchParams({url: 'https://requested.invalid/approved-new'}),
     DEFAULT_URL: 'https://default.invalid/', addressInput: {blur() {}},
-    browserInternetAllowed: true, currentInternetConsent: null, pendingInternetNavigation: null,
+    browserInternetAllowed: true, browserInternetInterrupted: false, currentInternetConsent: null, pendingInternetNavigation: null,
     internetRequestPromise: null, internetRequestedUrl: '', finishInternetPollWait: null,
     browserInternetPollTimer: 0, browserInternetGranted, normalizeUrl, sameBrowserStreamTarget,
     isBrowserErrorUrl, visibleAddressForUrl, clearAddressDraft() {}, statusTimer: 0,
@@ -349,6 +350,7 @@ function continuationHarness({ continuation = 'approved', cleanupPending = false
     renderInternetConsent(consent) {
       h.state.currentInternetConsent = consent;
       h.state.browserInternetAllowed = consent.status === 'granted';
+      if (!h.state.browserInternetAllowed) h.state.browserInternetInterrupted = true;
     },
   });
   const fetch = h.state.fetchJson;
@@ -365,22 +367,22 @@ function continuationHarness({ continuation = 'approved', cleanupPending = false
     if (continuation === 'cancelled') h.state.pendingInternetNavigation = null;
     queueMicrotask(resolve); return 1;
   }};
-  for (const name of ['requestInternetNavigation', 'checkBrowserInternet', 'currentBrowserUrl', 'navigateAddress']) {
+  for (const name of ['requestInternetNavigation', 'checkBrowserInternet', 'currentBrowserUrl']) {
     vm.runInContext(declaration(name), h.state);
   }
+  h.state.navigateAddress = value => navigateBrowserAddress(h.state, value);
   return {...h, value, navigations, opens};
 }
 
-test('approved continuation navigates the real recovered page once through address navigation', async () => {
+test('approved continuation opens a fresh connection once after restored internet access', async () => {
   const h = continuationHarness();
   await startBrowser(h.state);
-  assert.deepEqual(h.navigations, [{page: 'page-one', type: 'browser_command', command: 'navigate', url: 'https://requested.invalid/approved-new'}]);
-  assert.deepEqual(h.opens, []);
+  assert.deepEqual(h.navigations, []);
+  assert.deepEqual(h.opens, ['https://requested.invalid/approved-new']);
   assert.equal(h.state.internetContinuationUrl, null);
-  assert.equal(h.state.currentPage.page_id, 'page-one');
   await startBrowser(h.state);
-  assert.equal(h.navigations.length, 1);
-  assert.deepEqual(h.opens, []);
+  assert.deepEqual(h.navigations, []);
+  assert.deepEqual(h.opens, ['https://requested.invalid/approved-new']);
 });
 
 for (const continuation of ['none', 'expired', 'cancelled']) test(`${continuation} continuation with recoverable ownership never navigates`, async () => {

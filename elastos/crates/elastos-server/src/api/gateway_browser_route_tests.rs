@@ -11741,6 +11741,105 @@ async fn browser_internet_summary_never_creates_or_renews_a_request() {
 }
 
 #[tokio::test]
+async fn browser_internet_expired_request_keeps_inbox_allow_with_fresh_passkey() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = passkey_authority(dir.path());
+    let browser = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &owner);
+    let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
+    let app = gateway_router(internet_test_state(dir.path()));
+    let (_, pending) = internet_route(
+        &app,
+        &browser,
+        "/api/apps/browser/internet",
+        Some(json!({"action":"request"})),
+    )
+    .await;
+    let old_step = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(
+        dir.path(),
+        &inbox,
+        INBOX_CAPSULE_ID,
+        "browser.internet.grant",
+        &pending["request"],
+    )
+    .unwrap();
+    let path = dir.path().join("browser-internet.json");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["expires_at"] = json!(0);
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let (_, summary) = internet_route(&app, &inbox, "/api/apps/inbox/summary", None).await;
+    let entry = summary["notifications"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "browser-internet:permission")
+        .expect("expired Browser request keeps an Allow entry in Inbox");
+    assert_eq!(entry["kind"], "browser_internet_decision");
+    assert_eq!(entry["action_ref"]["action_id"], "browser-internet-request");
+    assert_eq!(entry["body"], "This expired request was made.");
+    assert_eq!(summary["notifications"]["unread_count"], 0);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+        record,
+        "reading Inbox does not renew the request"
+    );
+    let old_action = format!(
+        "browser-internet-allow:{}",
+        pending["request"]["request_id"].as_str().unwrap()
+    );
+    let (status, _) = internet_route(
+        &app,
+        &inbox,
+        "/api/apps/inbox/actions",
+        Some(json!({"action_id":old_action,"step_up_token":old_step})),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "expiry still blocks the old Allow");
+    let (_, fresh) = internet_route(
+        &app,
+        &inbox,
+        "/api/apps/browser/internet",
+        Some(json!({"action":"request"})),
+    )
+    .await;
+    assert_ne!(
+        fresh["request"]["request_id"],
+        pending["request"]["request_id"]
+    );
+    let action = format!(
+        "browser-internet-allow:{}",
+        fresh["request"]["request_id"].as_str().unwrap()
+    );
+    let (status, _) = internet_route(
+        &app,
+        &inbox,
+        "/api/apps/inbox/actions",
+        Some(json!({"action_id":action})),
+    )
+    .await;
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "fresh Allow still requires a passkey"
+    );
+    let step = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(
+        dir.path(),
+        &inbox,
+        INBOX_CAPSULE_ID,
+        "browser.internet.grant",
+        &fresh["request"],
+    )
+    .unwrap();
+    let (status, result) = internet_route(
+        &app,
+        &inbox,
+        "/api/apps/inbox/actions",
+        Some(json!({"action_id":action,"step_up_token":step})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+}
+
+#[tokio::test]
 async fn browser_internet_grant_identifies_the_answered_request_for_continuation() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
@@ -11870,4 +11969,235 @@ async fn browser_internet_inbox_manages_exact_grant_and_optional_app() {
         .unwrap()
         .iter()
         .any(|e| e["id"] == "browser-internet:permission"));
+}
+
+#[tokio::test]
+async fn browser_home_renewal_keeps_launch_page_and_close_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let authority = passkey_authority(dir.path());
+    let state = browser_engine_attached_test_state(dir.path()).await;
+    let manifest_path = dir.path().join("capsules/browser/capsule.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["type"] = json!("web-projection");
+    manifest["runtime_abi"] = json!("elastos.runtime-projection/v1");
+    manifest["bus_contract"] = json!("elastos.runtime-projection/v1");
+    manifest["execution"] = json!("web-projection");
+    manifest["projections"] = json!(["web"]);
+    std::fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let home = app_token_for_authority(dir.path(), HOME_CAPSULE_ID, &authority);
+    let browser_instance = "browser:0123456789abcdef0123456789abcdef";
+    // Browser launches use a supported host explicitly; this test runs on Linux x86-64 too.
+    let launch_app = Router::new()
+        .route(
+            "/api/apps/home/launch",
+            axum::routing::post(|state, headers, input| async move {
+                home_launch(state, headers, input, "darwin-arm64").await
+            }),
+        )
+        .with_state(state.clone());
+    let app = gateway_router(state);
+    async fn launch(app: &Router, home: &str, previous: Option<&str>) -> String {
+        let mut request = test_browser_request("localhost:61180", "http://localhost:61180")
+            .method("POST")
+            .uri("/api/apps/home/launch")
+            .header("x-elastos-home-token", home)
+            .header(CONTENT_TYPE, "application/json");
+        if let Some(previous) = previous {
+            request = request.header("x-elastos-browser-renew-token", previous);
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                request
+                    .body(Body::from(json!({"target":"browser"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 32768)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&bytes)
+        );
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        body["route"]
+            .as_str()
+            .unwrap()
+            .split("#home_token=")
+            .nth(1)
+            .unwrap()
+            .to_string()
+    }
+    let owner_token = launch(&launch_app, &home, None).await;
+    let opened = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .method("POST")
+                .uri("/api/apps/browser/open")
+                .header("x-elastos-home-token", &owner_token)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "url": "glidefinance.io",
+                        "reason": "Browser refresh recovery",
+                        "browser_instance": browser_instance,
+                        "viewport": {"width": 900, "height": 520},
+                        "display_mode": "webrtc_remote_display",
+                        "guarantee_level": "mechanism_microvm"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let opened_status = opened.status();
+    let opened_body = axum::body::to_bytes(opened.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        opened_status,
+        StatusCode::OK,
+        "Browser open failed: {}",
+        String::from_utf8_lossy(&opened_body)
+    );
+    let opened: serde_json::Value = serde_json::from_slice(&opened_body).unwrap();
+    let page_id = opened["engine_page"]["page_id"].as_str().unwrap();
+    let cleanup_id = browser_cleanup_id(&opened);
+
+    let refreshed_token = launch(&launch_app, &home, Some(&owner_token)).await;
+    assert_ne!(
+        owner_token, refreshed_token,
+        "the credential changes even within the same second"
+    );
+    let launch_id = |token: &str| {
+        runtime_wallet_authority_for_app_token(dir.path(), BROWSER_CAPSULE_ID, token)
+            .verified_context()
+            .launch_id()
+            .to_string()
+    };
+    assert_eq!(
+        launch_id(&owner_token),
+        launch_id(&refreshed_token),
+        "renewal preserves the page, Internet-use and cleanup owner"
+    );
+    for (method, suffix, body) in [
+        ("GET", "status", None),
+        ("POST", "heartbeat", Some(json!({}))),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                test_browser_request("localhost:61180", "null")
+                    .method(method)
+                    .uri(format!("/api/apps/browser/pages/{page_id}/{suffix}"))
+                    .header("x-elastos-home-token", &refreshed_token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(body.map_or_else(Body::empty, |value| Body::from(value.to_string())))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "renewed {suffix}");
+    }
+    let foreign_token = launch(&launch_app, &home, None).await;
+    let foreign = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .uri("/api/apps/browser/summary?browser_instance=browser%3Afedcba9876543210fedcba9876543210")
+                .header("x-elastos-home-token", foreign_token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::OK);
+    let foreign: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(foreign.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(foreign["sessions"]["recoverable_page"].is_null());
+
+    let summary = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .uri(format!(
+                    "/api/apps/browser/summary?browser_instance={browser_instance}"
+                ))
+                .header("x-elastos-home-token", refreshed_token.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(summary.status(), StatusCode::OK);
+    let summary: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(summary.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(summary["sessions"]["recoverable_page"]["state"], "active");
+    assert_eq!(summary["sessions"]["recoverable_page"]["page_id"], page_id);
+    assert_eq!(
+        summary["sessions"]["recoverable_page"]["cleanup"]["id"],
+        cleanup_id
+    );
+
+    let wrong_instance_close = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .method("POST")
+                .uri(format!("/api/apps/browser/pages/{page_id}/close"))
+                .header("x-elastos-home-token", refreshed_token.clone())
+                .header(CONTENT_TYPE, "application/json")
+                .body(browser_close_body_with_instance(
+                    cleanup_id,
+                    Some("browser:fedcba9876543210fedcba9876543210"),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_instance_close.status(), StatusCode::NOT_FOUND);
+    assert_eq!(browser_page_session_count(dir.path()).await, 1);
+
+    let close = app
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .method("POST")
+                .uri(format!("/api/apps/browser/pages/{page_id}/close"))
+                .header("x-elastos-home-token", refreshed_token)
+                .header(CONTENT_TYPE, "application/json")
+                .body(browser_close_body_with_instance(
+                    cleanup_id,
+                    Some(browser_instance),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(close.status(), StatusCode::OK);
+    let close: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(close.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(close["browser_instance"], browser_instance);
+    assert_eq!(browser_page_session_count(dir.path()).await, 0);
+    assert_eq!(browser_engine_cleanup_obligation_count(dir.path()).await, 0);
+    assert_eq!(browser_stream_cleanup_obligation_count(dir.path()).await, 0);
 }

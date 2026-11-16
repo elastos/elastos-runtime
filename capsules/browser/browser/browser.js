@@ -1,3 +1,4 @@
+import { navigateBrowserAddress } from "./browser-address-navigation.js?v=browser-20261113a";
 import { startBrowser } from "./browser-startup.js?v=browser-20261110c";
 import { observeBrowserStage, createBrowserFrameFence } from "./browser-resize.js?v=browser-20261031d";
 import { createBrowserLocationController } from "./browser-location.js?v=browser-20260523b";
@@ -79,11 +80,11 @@ const BROWSER_AUTHORITY_RENEWAL_RETRY_DELAYS_MS = Object.freeze([
 const HOME_GUI_OPAQUE_ORIGIN = "null";
 const params = new URLSearchParams(window.location.search);
 const browserInstanceId = params.get("browser_instance") || "";
-const launchToken = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("home_token") || "";
+let launchToken = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("home_token") || "";
 const homeParentOrigin = params.get("home_origin") || "";
 const debugMetrics =
   params.get("debug") === "1" || params.get("metrics") === "1";
-const { fetchJson, requireViewer } = createRuntimeApi({ launchToken });
+const { fetchJson, requireViewer, setLaunchToken } = createRuntimeApi({ launchToken });
 const homeClipboard = createHomeClipboardClient({
   targetId: "browser",
   homeOrigin: homeParentOrigin,
@@ -184,10 +185,13 @@ let browserInternetPollingActive = true;
 let browserInternetPollTimer = 0;
 let finishInternetPollWait = null;
 let currentInternetConsent = null;
+let browserInternetInterrupted = false;
 let pendingInternetNavigation = null;
 let internetContinuationUrl = null;
 let internetRequestPromise = null;
 let internetRequestedUrl = "";
+let internetWaitingForStop = false;
+let internetRequestError = "";
 
 function stopInternetPolling() {
   browserInternetPollingActive = false;
@@ -203,6 +207,7 @@ function renderInternetConsent(consent) {
   const previousConsent = currentInternetConsent;
   currentInternetConsent = consent;
   const allowed = consent?.status === "granted";
+  if (!allowed) browserInternetInterrupted = true;
   const expired = consent?.status === "requested" && !consent.request;
   const off = expired || ["refused", "revoked"].includes(consent?.status);
   if (off || (pendingInternetNavigation && consent?.status === "requested"
@@ -210,12 +215,14 @@ function renderInternetConsent(consent) {
     pendingInternetNavigation = null;
   }
   browserInternetAllowed = allowed;
+  if (!allowed) internetContinuationUrl = null;
   renderPanel.hidden = !allowed;
   statusNode.hidden = !allowed;
   setLoading(allowed && document.body.dataset.loading === "true");
   document.querySelector("#browser-internet-request").hidden = allowed;
   document.querySelector("#browser-internet-value").textContent = `Internet access: ${allowed ? "Allowed" : "Off"}`;
   if (allowed) {
+    internetRequestError = "";
     if (previousConsent && previousConsent.status !== "granted" && !currentPage &&
         !pendingInternetNavigation && !internetContinuationUrl) {
       setLoading(false);
@@ -231,61 +238,110 @@ function renderInternetConsent(consent) {
     ? "Internet access is off for Browser." : waiting
     ? "Waiting for your answer in Inbox." : "Browser can't open websites yet";
   const hint = document.querySelector("#browser-internet-hint");
-  hint.hidden = off || waiting;
-  hint.textContent = "Type a website address to open it.";
+  hint.hidden = (off || waiting) && !internetWaitingForStop && !internetRequestError;
+  hint.textContent = internetWaitingForStop
+    ? "Browser is stopping internet access. Your request will open in Inbox when it stops."
+    : internetRequestError || "Type a website address to open it.";
   const button = document.querySelector("#browser-internet-review");
   button.hidden = !off && !waiting;
   button.textContent = off ? "Open Inbox" : "Show Request";
   button.dataset.off = String(off);
 }
 
-function showInternetRequest() {
-  openInternetControl("inbox", { notification_id: "browser-internet:permission" });
+function showInternetRequest(requestId = "") {
+  openInternetControl("inbox", { notification_id: "browser-internet:permission",
+    ...(requestId ? {browser_request_id:requestId} : {}) });
 }
 
 async function requestInternetNavigation(value) {
   if (!browserInternetPollingActive) return;
-  if (["refused", "revoked"].includes(currentInternetConsent?.status)) {
-    showInternetRequest();
-    return;
-  }
   // The URL belongs only to this live window; Home persists no continuation.
   internetRequestedUrl = normalizeUrl(value);
-  if (pendingInternetNavigation) pendingInternetNavigation.url = internetRequestedUrl;
+  pendingInternetNavigation = null;
+  internetRequestError = "";
   if (internetRequestPromise) return internetRequestPromise;
   internetRequestPromise = (async () => {
-    const consent = await fetchJson("/api/apps/browser/internet", {method:"POST",body:{action:"request"}});
+    let consent;
+    let stopWaitSignal;
+    while (browserInternetPollingActive && !homeWindowCloseInFlight && !homeWindowTerminalCloseConfirmed) {
+      try {
+        consent = await fetchJson("/api/apps/browser/internet", {method:"POST",body:{action:"request"}});
+        break;
+      } catch (error) {
+        if (isAuthoritySessionError(error)) throw error;
+        const stopping = await fetchJson("/api/apps/browser/internet");
+        if (stopping.status !== "revoked" || stopping.stop_pending !== true) throw error;
+        stopWaitSignal ||= AbortSignal.timeout(10_000);
+        internetWaitingForStop = true;
+        renderInternetConsent(stopping);
+        // Runtime owns the stop barrier. Retry this one action after it clears.
+        do {
+          await new Promise(resolve => window.setTimeout(resolve, 250));
+          if (!browserInternetPollingActive || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) return;
+          try {
+            consent = await fetchJson("/api/apps/browser/internet", {signal:stopWaitSignal});
+          } catch (error) {
+            if (stopWaitSignal.aborted) throw new Error("Browser is still stopping internet access. Try again in a moment.");
+            throw error;
+          }
+        } while (consent.stop_pending === true);
+      }
+    }
     if (!browserInternetPollingActive || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) return;
+    internetWaitingForStop = false;
     renderInternetConsent(consent);
     pendingInternetNavigation = {
       url: internetRequestedUrl, requestId: consent.request_id || consent.request?.request_id,
       expiresAt: consent.request?.expires_at || 0,
     };
-    if (consent.status !== "granted") showInternetRequest();
+    if (consent.status !== "granted") showInternetRequest(pendingInternetNavigation.requestId);
   })();
   try { await internetRequestPromise; }
-  finally { internetRequestPromise = null; }
+  catch (error) {
+    internetRequestError = friendlyOpenError(error);
+    throw error;
+  }
+  finally {
+    internetRequestPromise = null;
+    internetWaitingForStop = false;
+    if (browserInternetPollingActive && currentInternetConsent) renderInternetConsent(currentInternetConsent);
+  }
 }
 
-async function checkBrowserInternet(initialUrl) {
+async function checkBrowserInternet(initialUrl, { initialCheck = true } = {}) {
   let firstRead = true;
   while (browserInternetPollingActive && !homeWindowCloseInFlight && !homeWindowTerminalCloseConfirmed) {
-    const granted = await browserInternetGranted(fetchJson, (allowed, consent) => {
-      if (browserInternetPollingActive) renderInternetConsent(consent);
-    });
+    let granted = false;
+    let readSucceeded = false;
+    try {
+      granted = await browserInternetGranted(fetchJson, (_allowed, consent) => {
+        if (browserInternetPollingActive) renderInternetConsent(consent);
+      });
+      readSucceeded = true;
+    } catch (error) {
+      if (isAuthoritySessionError(error)) throw error;
+      // Keep the last Runtime state and retry this read on the next poll.
+    }
     if (!browserInternetPollingActive || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) return false;
     if (granted) {
       const pending = pendingInternetNavigation;
       pendingInternetNavigation = null;
-      if (firstRead) return true;
-      if (!pending || currentInternetConsent.request_id !== pending.requestId || (pending.expiresAt && pending.expiresAt * 1000 <= Date.now())) return false;
-      internetContinuationUrl = pending.url;
+      if (firstRead && !pending) return true;
+      if (!pending?.requestId || currentInternetConsent.request_id !== pending.requestId || (pending.expiresAt && pending.expiresAt * 1000 <= Date.now())) return false;
+      if (initialCheck) {
+        internetContinuationUrl = pending.url;
+      } else {
+        // Startup retains its continuation until page ownership is restored.
+        // Later navigation runs without delaying the next permission read.
+        navigateAddress(pending.url).catch(() => {});
+      }
       return true;
     }
-    if (firstRead && explicitBrowserOpen && !["refused", "revoked"].includes(currentInternetConsent?.status)) {
+    if (!initialCheck) return false;
+    if (readSucceeded && firstRead && explicitBrowserOpen && !["refused", "revoked"].includes(currentInternetConsent?.status)) {
       await requestInternetNavigation(initialUrl);
     }
-    firstRead = false;
+    if (readSucceeded) firstRead = false;
     await new Promise(resolve => {
       finishInternetPollWait = resolve;
       browserInternetPollTimer = window.setTimeout(resolve, 2000);
@@ -403,6 +459,7 @@ function postBrowserAuthorityRenewalRequest(reason) {
   const requestId = browserAuthorityRenewalRequestId();
   const record = {
     requestId,
+    homeToken: launchToken,
     reason,
     timeout: 0,
   };
@@ -451,7 +508,7 @@ function settleBrowserAuthorityRenewal(ok, reason) {
   }
   clearBrowserAuthorityRenewalRequest();
   if (ok) {
-    showStatus("Browser session refreshed. Reopening…", { sticky: true });
+    showStatus("Browser session refreshed.");
     return true;
   }
   scheduleBrowserAuthorityRenewalRetry(request.reason || reason);
@@ -476,7 +533,7 @@ function isHomeBrowserAuthorityRenewalResult(event) {
     ]) ||
     message.type !== BROWSER_AUTHORITY_RENEWAL_RESULT_TYPE ||
     message.requestId !== request.requestId ||
-    message.homeToken !== launchToken ||
+    message.homeToken !== request.homeToken ||
     message.browserInstance !== browserInstanceId ||
     typeof message.ok !== "boolean" ||
     typeof message.freshHomeToken !== "string" ||
@@ -489,7 +546,7 @@ function isHomeBrowserAuthorityRenewalResult(event) {
   return message.ok
     ? Boolean(
         message.freshHomeToken &&
-          message.freshHomeToken !== launchToken &&
+          message.freshHomeToken !== request.homeToken &&
           message.reason === "",
       )
     : message.freshHomeToken === "" && Boolean(message.reason);
@@ -2044,7 +2101,71 @@ function homeBrowserNavigateUrl(event) {
   }
 }
 
+let browserAuthorityCommit = null;
+async function commitBrowserAuthority(event) {
+  const data = event.data;
+  if (event.source !== window.parent || event.source === window.top || event.origin !== "null" ||
+      !hasExactMessageKeys(data, ["type", "requestId", "homeToken", "browserInstance", "freshHomeToken"]) ||
+      data.type !== "elastos.browser.authority-commit/v1" || data.homeToken !== launchToken ||
+      data.browserInstance !== browserInstanceId || typeof data.requestId !== "string" ||
+      !/^[A-Za-z0-9-]{1,128}$/.test(data.requestId) || typeof data.freshHomeToken !== "string" ||
+      !data.freshHomeToken || data.freshHomeToken.length > 4096 || data.freshHomeToken === launchToken ||
+      browserAuthorityCommit) return;
+  browserAuthorityCommit = data;
+  let ok = false;
+  try {
+    if (unloadCleanupStarted || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed || unsettledRuntimeOpen) {
+      throw new Error("Browser is finishing its current action. Try again in a moment.");
+    }
+    // Old-launch observations cannot retire a page during credential renewal.
+    stopPageStatusPolling();
+    stopPageHeartbeat();
+    const freshApi = createRuntimeApi({ launchToken: data.freshHomeToken });
+    const summary = await freshApi.fetchJson(`/api/apps/browser/summary?browser_instance=${encodeURIComponent(browserInstanceId)}&remote_services=0`,
+      { signal: AbortSignal.timeout(10000) });
+    const previousSummary = browserSummary || await window.__elastosBrowserRestoreBoot?.summaryPromise;
+    if (!previousSummary?.principal_id || summary?.principal_id !== previousSummary.principal_id) {
+      throw new Error("Browser account changed. Open Browser from Home to continue.");
+    }
+    const launchIdentity = token => {
+      try {
+        const payload = JSON.parse(atob(token.replace(/-/g, "+").replace(/_/g, "/"))).payload;
+        return /^launch:[a-f0-9]{32}$/.test(payload?.launch_id) ? payload.launch_id : "";
+      } catch { return ""; }
+    };
+    const previousIdentity = launchIdentity(launchToken);
+    if (!previousIdentity || previousIdentity !== launchIdentity(data.freshHomeToken)) {
+      throw new Error("Home could not refresh this Browser session. Update Home, then try again.");
+    }
+    if (unloadCleanupStarted || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) {
+      throw new Error("Browser closed during renewal.");
+    }
+    launchToken = data.freshHomeToken;
+    setLaunchToken(launchToken);
+    homeClipboard.setHomeToken(launchToken);
+    const url = new URL(location.href);
+    url.hash = new URLSearchParams({ home_token: launchToken }).toString();
+    history.replaceState(history.state, "", url);
+    window.top.postMessage({ type: "home:app-ready", homeToken: launchToken }, homeParentOrigin);
+    relaunchRequested = false;
+    ok = true;
+  } catch (error) {
+    showStatus(friendlyOpenError(error), { sticky: true });
+  } finally {
+    browserAuthorityCommit = null;
+    if (currentPage && browserInternetAllowed && !unloadCleanupStarted && !homeWindowCloseInFlight && !homeWindowTerminalCloseConfirmed) {
+      startPageHeartbeat();startPageStatusPolling();
+    }
+    event.source.postMessage({ type: "elastos.browser.authority-committed/v1", requestId: data.requestId,
+      homeToken: data.homeToken, browserInstance: browserInstanceId, freshHomeToken: data.freshHomeToken, ok }, "*");
+  }
+}
+
 window.addEventListener("message", (event) => {
+  if (event.data?.type === "elastos.browser.authority-commit/v1") {
+    void commitBrowserAuthority(event);
+    return;
+  }
   if (event.source === window.top && event.origin === homeParentOrigin &&
       event.data?.type === "elastos.home.authority.request/v1" && event.data.homeToken === launchToken &&
       Object.keys(event.data).sort().join(",") === "homeToken,type") {
@@ -2574,6 +2695,7 @@ async function requestRuntimeOpen(value, { history = "push" } = {}) {
       throw new Error("Browser could not use the selected connection.");
     }
     currentPage = openedPage;
+    browserInternetInterrupted = false;
     resetPageInputDelivery();
     currentPageGeneration = nextPageGeneration++;
     openedOwner = currentRuntimePageOwner();
@@ -2656,53 +2778,15 @@ async function requestRuntimeOpen(value, { history = "push" } = {}) {
 }
 
 async function navigateAddress(value) {
-  if (!browserInternetAllowed) return requestInternetNavigation(value);
-  const nextUrl = normalizeUrl(value);
-  const currentUrl = currentBrowserUrl();
-  const crossStreamTarget = !sameBrowserStreamTarget(currentUrl, nextUrl);
-  clearAddressDraft();
-  if (!currentPage?.page_id) {
-    return requestRuntimeOpen(nextUrl);
-  }
-  if (selectedBrowserEngineId !== currentBrowserEngineId) {
-    return requestRuntimeOpen(nextUrl);
-  }
-  if (selectedRemoteExitId !== currentRemoteExitId) {
-    return requestRuntimeOpen(nextUrl);
-  }
-  if (isBrowserErrorUrl(currentUrl)) {
-    showStatus(`Recovering ${visibleAddressForUrl(nextUrl)} in a fresh Browser session...`, {
-      sticky: true,
-    });
-    return requestRuntimeOpen(nextUrl);
-  }
-  addressInput.value = nextUrl;
-  addressInput.blur();
-  setLoading(true);
-  showStatus(`Opening ${visibleAddressForUrl(nextUrl)}...`, { sticky: true });
-  const openingStatus = statusNode.firstChild;
-  try {
-    const response = await sendBrowserInput(
-      { type: "browser_command", command: "navigate", url: nextUrl },
-      { history: "push" },
-    );
-    if (response?.accepted === true && statusNode.firstChild === openingStatus) {
-      window.clearTimeout(statusTimer);
-      statusNode.dataset.visible = "false";
-    }
-    startPageStatusPolling();
-  } catch (error) {
-    if (crossStreamTarget) {
-      showStatus(`Reopening ${visibleAddressForUrl(nextUrl)} in a fresh Browser session...`, {
-        sticky: true,
-      });
-      return requestRuntimeOpen(nextUrl);
-    }
-    showStatus(friendlyOpenError(error), { sticky: true });
-    throw error;
-  } finally {
-    setLoading(false);
-  }
+  return navigateBrowserAddress({
+    browserInternetAllowed, requestInternetNavigation, normalizeUrl, currentBrowserUrl,
+    sameBrowserStreamTarget, clearAddressDraft, currentPage, browserInternetInterrupted,
+    requestRuntimeOpen, selectedBrowserEngineId, currentBrowserEngineId, selectedRemoteExitId,
+    currentRemoteExitId, isBrowserErrorUrl, showStatus, visibleAddressForUrl,
+    addressInput, setLoading, statusNode, sendBrowserInput,
+    window, startPageStatusPolling, friendlyOpenError,
+    get statusTimer() { return statusTimer; },
+  }, value);
 }
 
 async function navigateBrowser(command) {
@@ -3127,9 +3211,7 @@ function watchInternetPermission() {
   if (!browserInternetPollingActive) return;
   browserInternetPollTimer = window.setTimeout(async () => {
     try {
-      await browserInternetGranted(fetchJson, (_allowed, consent) => {
-        if (browserInternetPollingActive) renderInternetConsent(consent);
-      });
+      await checkBrowserInternet(null, { initialCheck: false });
     } catch (_) { /* Keep the last Runtime state until the next read succeeds. */ }
     watchInternetPermission();
   }, 2000);
