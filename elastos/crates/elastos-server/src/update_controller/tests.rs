@@ -5359,8 +5359,7 @@ fn main() {{
             return;
         }}
         std::env::set_var("LINKED_START_RECEIPT", &args[3]);
-        std::env::set_var("LINKED_START_CONTROLLER_SHA256",
-            elastos_server::runtime_control::sha256_file(&std::env::current_exe().unwrap()).unwrap());
+        std::env::set_var("LINKED_START_CONTROLLER", std::env::current_exe().unwrap());
         {controller:?}
     }} else if std::env::var("ELASTOS_UPDATE_CONTROLLER_HOST").as_deref() == Ok("1") {{
         std::env::set_var("RESTART_FIXTURE_VERSION", {version:?});
@@ -5577,9 +5576,11 @@ async fn linked_start_controller_fixture() {
     let receipt: Receipt = read_private_json(&path).unwrap();
     let directory = receipt.data_dir.join(DIRECTORY);
     let _lease = inherited_or_new_lease(&directory).unwrap();
-    // The native image measured itself before execing this libtest helper.
+    // The native image recorded its executable before execing this libtest helper.
+    let native = PathBuf::from(std::env::var_os("LINKED_START_CONTROLLER").unwrap());
+    assert_eq!(fs::canonicalize(&native).unwrap(), receipt.controller);
     assert_eq!(
-        std::env::var("LINKED_START_CONTROLLER_SHA256").unwrap(),
+        crate::runtime_control::sha256_file(&native).unwrap(),
         receipt.controller_sha256
     );
     validate_retained_receipt(&receipt).unwrap();
