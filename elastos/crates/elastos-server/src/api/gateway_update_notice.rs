@@ -314,7 +314,8 @@ pub(super) async fn run<F, O>(
         if clock() < due || preference(&data_dir)["enabled"] != true {
             continue;
         }
-        due = clock().saturating_add(CHECK_INTERVAL + spread().min(MAX_SPREAD));
+        let delay = CHECK_INTERVAL + spread().min(MAX_SPREAD);
+        due = clock().saturating_add(delay);
         let Some((_, source, key)) = update::update_inputs(&data_dir) else {
             continue;
         };
@@ -327,7 +328,7 @@ pub(super) async fn run<F, O>(
         tokio::select! {
             biased;
             _ = shutdown.changed() => { return; }
-            _ = check => {}
+            _ = check => { due = clock().saturating_add(delay); }
         }
     }
 }

@@ -33,7 +33,7 @@ async function fixture() {
         let serial=0;
         for(const node of document.querySelectorAll('[data-home-gui-hidden-by-host]')) {node.hidden=false;node.inert=false;}
         import * as control from '/apps/home-gui/shell-control-centre.js';
-        const summary={targets:[{target:'system',title:'System'},{target:'inbox',title:'Inbox'}],notifications:{entries:[],unread_count:0,attention_count:0}};
+        const summary={targets:[{target:'system',title:'System',window_policy:'single'},{target:'inbox',title:'Inbox',window_policy:'single'}],notifications:{entries:[],unread_count:0,attention_count:0}};
         core.shellState.currentSummary=summary;
         core.pinTargetToTaskbar('system');core.pinTargetToTaskbar('inbox');
         windows.configureWindowHooks({clearIdentitySurface(){},refreshLauncherIfVisible(){},hideLauncher(){},renderDesktop(){},renderTaskbar(){surface.renderTaskbar(summary)},updateTaskbarState(){},syncMenubar(){},launchTarget:async(target,query={})=>({target,title:target==='system'?'System':'Inbox',attach_kind:'iframe',launch_status:'launched',route:'/apps/'+target+'/?'+new URLSearchParams({...query,home_origin:location.origin})+'#home_token='+btoa(JSON.stringify({payload:{launch_id:'launch:'+String(++serial).padStart(32,'0')}})).replace(/=+$/,'')})});
@@ -91,6 +91,9 @@ async function fixture() {
 const screenshots = process.env.UPDATE_NOTICE_SCREENSHOTS;
 async function screen(page,name) {
   if(!screenshots)return;
+  const theme = name.startsWith("dark-") ? "dark" : "light";
+  for (const frame of page.frames().slice(1)) await frame.evaluate(theme => window.elastosTheme?.set(theme), theme);
+  await page.waitForTimeout(120);
   await mkdir(screenshots,{recursive:true});
   await page.screenshot({path:`${screenshots}/${name}.png`});
 }
@@ -110,20 +113,23 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await badge.waitFor();assert.equal(await badge.textContent(),"1");
       assert.equal(await gui.locator("#control-centre-approvals-detail").textContent(),"None","information is excluded from approvals");
       await gui.evaluate(()=>fixture.windows.openTarget("inbox"));
-      const inbox=gui.frameLocator('iframe[title="Inbox"]');
+      const inbox=gui.frameLocator('iframe.window-frame[title="Inbox"]');
       await inbox.getByRole("button",{name:"Open System",exact:true}).waitFor();
+      assert.deepEqual(await inbox.locator("#entry-detail button").allTextContents(), ["Open System", "Dismiss"]);
       assert.equal(await inbox.locator("#pending-count").textContent(),"0");
       assert.equal(await inbox.locator("#review-count").textContent(),"0");
       await inbox.getByRole("button",{name:"Needs Review"}).click();
       assert.equal(await inbox.getByRole("button",{name:"Open System",exact:true}).count(),0);
       await inbox.getByRole("button",{name:/^All/}).click();
+      assert.equal(await inbox.locator(".entry-row-unread").count(),1);
       await screen(page,`${theme}-inbox-unread`);
       f.state.holdReads=false;f.state.releases.splice(0).forEach(r=>r());
       await page.waitForFunction(()=>true);
+      await inbox.locator(".entry-row-unread").waitFor({state:"hidden"});
       await gui.evaluate(()=>refreshFixture());await badge.waitFor({state:"hidden"});
       await screen(page,`${theme}-inbox-read`);
       await inbox.getByRole("button",{name:"Open System",exact:true}).click();
-      const system=gui.frameLocator('iframe[title="System"]');
+      const system=gui.frameLocator('iframe.window-frame[title="System"]');
       await system.locator("#runtime-update").waitFor();
       await system.locator("#update-background-choice").waitFor();
       assert.equal(await system.locator("#update-background-message").textContent(),copy("ON_TEXT"));
@@ -138,11 +144,11 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await system.getByText(copy("ON_TEXT"),{exact:true}).waitFor();
       await screen(page,`${theme}-switch-on`);
       // The same live System window navigates from another tab to About.
-      await system.getByText("Account",{exact:true}).first().click();
+      await system.locator("button[data-settings=account]").click();
       await gui.evaluate(()=>fixture.windows.openTarget("inbox"));
       await inbox.getByRole("button",{name:"Open System",exact:true}).click();
       await system.locator("#runtime-update").waitFor();
-      assert.equal(await gui.locator('iframe[title="System"]').count(),1);
+      assert.equal(await gui.locator('iframe.window-frame[title="System"]').count(),1);
       await system.locator("#runtime-update").evaluate(node=>{if(document.activeElement!==node)throw new Error("existing card did not receive focus");});
       await screen(page,`${theme}-system-already-open`);
       assert.deepEqual(errors,[]);
@@ -153,13 +159,13 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     const system=page.frameLocator("#system-frame");
     await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).waitFor();
     f.state.failWrite=true;
-    await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).uncheck();
+    await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).click();
     await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).waitFor();
     await system.getByText(copy("SAVE_ERROR"),{exact:true}).waitFor();
-    assert.equal(await system.getByRole("switch").isChecked(),true);
+    assert.equal(await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).isChecked(),true);
     f.state.failWrite=false;f.state.settings=preference(false,false);await page.reload();
     await system.getByText(copy("UNREADABLE_TEXT"),{exact:true}).waitFor();
-    await system.getByRole("switch").check();await system.getByText(copy("ON_TEXT"),{exact:true}).waitFor();
+    await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).check();await system.getByText(copy("ON_TEXT"),{exact:true}).waitFor();
     await screen(page,"phone-switch-repaired");
     f.state.guest=true;await page.reload();
     await system.locator("#runtime-update").waitFor({state:"hidden"});

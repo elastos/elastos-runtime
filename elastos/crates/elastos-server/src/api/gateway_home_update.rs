@@ -390,8 +390,15 @@ pub(super) async fn check_current_policy(
     if !policy_matches() {
         return CheckOutcome::Rejected;
     }
+    checked_outcome(&source, result)
+}
+
+pub(super) fn checked_outcome(
+    source: &crate::sources::TrustedSource,
+    result: anyhow::Result<crate::operator_control::OperatorUpdateCheck>,
+) -> CheckOutcome {
     match result {
-        Ok(check) if check_matches_source(&source, &check) => {
+        Ok(check) if check_matches_source(source, &check) => {
             CheckOutcome::Confirmed(Box::new(check))
         }
         Err(error) if error.is::<crate::update::UpdateSourceUnavailable>() => {

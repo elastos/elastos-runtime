@@ -1911,6 +1911,24 @@ fn public_key_from_did(did: &str) -> Result<iroh::PublicKey> {
         .map_err(|err| anyhow::anyhow!("invalid operator DID '{}': {}", did, err))
 }
 
+// Gateway journey tests use these existing signed heads and releases through
+// the real System verifier, with only network delivery replaced.
+#[cfg(test)]
+pub(crate) fn signed_update_check_fixture(
+    channel: &str,
+    subscription: &str,
+    installed: &str,
+) -> (TrustedSource, Result<OperatorUpdateCheck>) {
+    let (mut source, head, release) = tests::signed_check_fixture(
+        |payload| payload["channel"] = serde_json::json!(channel),
+        |payload| payload["channel"] = serde_json::json!(channel),
+    );
+    source.channel = subscription.into();
+    source.installed_version = installed.into();
+    let result = verified_update_check(&source, &head, &release);
+    (source, result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2009,7 +2027,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
-    fn signed_check_fixture(
+    pub(super) fn signed_check_fixture(
         change_release: impl FnOnce(&mut serde_json::Value),
         change_head: impl FnOnce(&mut serde_json::Value),
     ) -> (TrustedSource, crate::update::DiscoveredHead, Vec<u8>) {
