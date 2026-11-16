@@ -76,10 +76,8 @@ export async function connectWalletConnectEvm(options) {
   document.body.append(dialog);
   let timer;
   try {
-    await Promise.race([
-      provider.connect(), cancelled,
-      new Promise((_, reject) => { timer = setTimeout(() => { stop(new Error("The QR code expired. Select Connect wallet for a new one.")); }, 180000); }),
-    ]);
+    timer = setTimeout(() => stop(new Error("The QR code expired. Select Connect wallet for a new one.")), 180000);
+    await Promise.race([provider.connect(), cancelled]);
     return provider;
   } finally {
     clearTimeout(timer);
