@@ -15,7 +15,7 @@ const OFF_TEXT: &str = "Background checks are off; System checks for updates whi
 const SAVE_ERROR: &str = "Home could not save background checks. On the device that runs Home, check free disk space, write access and private ownership of Local/Shared/System/Updates and its .notice.lock file. Move notice.json aside if it is a folder, then try again.";
 const NOTICE_TITLE: &str = "Home update found";
 const NOTICE_BODY: &str = "Home {version} was found. Review the update in System.";
-const FOLDER_TEXT: &str = "Background checks are off because Home cannot use Local/Shared/System/Updates. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to your account, then turn this on.";
+const FOLDER_TEXT: &str = "Background checks are off because Home cannot use Local/Shared/System/Updates. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
 const INVALID_VERSION_TEXT: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
 const UNREADABLE_TEXT: &str = "Background checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json, then turn this on.";
 
