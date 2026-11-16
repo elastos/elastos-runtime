@@ -30,6 +30,9 @@ impl PrivateFixture {
             binary,
         };
         fixture.file(&fixture.binary, b"signed fixture Runtime", 0o755);
+        // Until a fixture Home reports its listener, readiness uses port zero
+        // instead of probing the operator's Home port.
+        write_private(&fixture.data.join("readiness-port"), &0u16).unwrap();
         fixture
     }
 
@@ -5362,6 +5365,10 @@ fn main() {{
         {home:?}
     }} else {{
         eprintln!("fixture current_exe: {{}}", std::env::current_exe().unwrap().display());
+        let sources = elastos_server::sources::load_trusted_sources(
+            &elastos_server::sources::default_data_dir()).unwrap();
+        let source = sources.default_source().expect("configured fixture source");
+        eprintln!("fixture install_path: {{}}", source.install_path);
         elastos_server::update_controller::resume_restart_recovery().unwrap();
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
             .block_on(elastos_server::update_controller::enter_browser_home()).unwrap();
@@ -5438,14 +5445,6 @@ impl LinkedStartFixture {
             sources.sources[0].install_path = alias.to_str().unwrap().into();
             crate::sources::save_trusted_sources(&fixture.data, &sources).unwrap();
         }
-        // Until the fixture Home reports its listener, readiness uses a closed
-        // ephemeral port, so this test never probes the operator's Home port.
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        write_private(&fixture.data.join("readiness-port"), &port).unwrap();
         let listener =
             tokio::net::UnixListener::bind(fixture.data.join("linked-start.sock")).unwrap();
         Self {
@@ -5461,23 +5460,32 @@ impl LinkedStartFixture {
         &self.fixture.data
     }
 
+    fn command(&self, binary: &Path, platform: &str) -> tokio::process::Command {
+        let suffix = match platform {
+            "macos" => "Library/Application Support/elastos",
+            "linux" => "xdg/elastos",
+            other => panic!("unsupported linked-start fixture platform: {other}"),
+        };
+        let data_link = self.fixture.data.join(suffix);
+        fs::create_dir_all(data_link.parent().unwrap()).unwrap();
+        if !data_link.exists() {
+            symlink(&self.fixture.data, data_link).unwrap();
+        }
+        let mut command = tokio::process::Command::new(binary);
+        command
+            .env_remove(HOST_ENV)
+            .env("HOME", &self.fixture.data)
+            .env("XDG_DATA_HOME", self.fixture.data.join("xdg"))
+            .current_dir(&self.fixture.data);
+        command
+    }
+
     pub(crate) async fn start(&mut self) {
         use tokio::io::AsyncReadExt;
         let mut exited =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child()).unwrap();
-        let mut command = tokio::process::Command::new(&self.alias);
-        command
-            .args(["home", "--browser"])
-            .env_remove(HOST_ENV)
-            .env("HOME", &self.fixture.data)
-            .current_dir(&self.fixture.data);
-        // default_data_dir appends elastos to XDG_DATA_HOME.
-        command.env("XDG_DATA_HOME", self.fixture.data.join("xdg"));
-        fs::create_dir_all(self.fixture.data.join("xdg")).unwrap();
-        let data_link = self.fixture.data.join("xdg/elastos");
-        if !data_link.exists() {
-            symlink(&self.fixture.data, data_link).unwrap();
-        }
+        let mut command = self.command(&self.alias, std::env::consts::OS);
+        command.args(["home", "--browser"]);
         self.process = Some(child::OwnedChild::spawn(&mut command).unwrap());
         let accepted = tokio::time::timeout(READY_TIMEOUT, async {
             loop {
@@ -5485,11 +5493,12 @@ impl LinkedStartFixture {
                     accepted = self.listener.accept() => break accepted,
                     _ = exited.recv() => {
                         assert!(self.process.as_ref().unwrap().observed_exit().unwrap().is_none(),
-                            "fresh linked start skipped the controller at the startup path comparison");
+                            "linked startup exited before the controller handshake");
                     }
                 }
             }
-        }).await;
+        })
+        .await;
         let (mut stream, _) = accepted
             .expect("fresh linked start must reach the controller")
             .unwrap();
@@ -5647,14 +5656,9 @@ async fn linked_path_different_binary_is_refused() {
     let other = fixture.data().join("different-runtime");
     fs::copy(&fixture.fixture.binary, &other).unwrap();
     // Even identical signed bytes at another path do not own this installation.
-    let xdg = fixture.data().join("xdg");
-    fs::create_dir(&xdg).unwrap();
-    symlink(fixture.data(), xdg.join("elastos")).unwrap();
-    let output = tokio::process::Command::new(other)
+    let output = fixture
+        .command(&other, std::env::consts::OS)
         .args(["home", "--browser"])
-        .env_remove(HOST_ENV)
-        .env("HOME", fixture.data())
-        .env("XDG_DATA_HOME", xdg)
         .output()
         .await
         .unwrap();
@@ -5702,14 +5706,9 @@ async fn linked_path_restart_recovery_keeps_controller() {
         })
         .unwrap();
     drop(transaction);
-    let xdg = fixture.data().join("xdg");
-    fs::create_dir(&xdg).unwrap();
-    symlink(fixture.data(), xdg.join("elastos")).unwrap();
-    let output = tokio::process::Command::new(&fixture.alias)
+    let output = fixture
+        .command(&fixture.alias, std::env::consts::OS)
         .args(["home", "--browser"])
-        .env_remove(HOST_ENV)
-        .env("HOME", fixture.data())
-        .env("XDG_DATA_HOME", xdg)
         .env("LINKED_START_RECOVERY_ONLY", "1")
         .output()
         .await
