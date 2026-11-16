@@ -16,12 +16,26 @@ let hostEffectInFlight = false;
 let walletStateRevision = 0;
 let pendingEffect;
 let connectionCheckInFlight = false;
+let actionEpoch = 0;
+let currentPhase = 'idle';
+let connectionState;
+let linkedAccounts = [];
+let recoveryAction;
 const clearMemory = installWalletConnectStorage(window);
 const runtimeOrigin = new URL(import.meta.url).origin;
 const api = (resource, init={}) => fetchJson(resource.startsWith('/api/') ? runtimeOrigin+resource : `${runtimeOrigin}/api/apps/${CONNECTOR_ID}/${resource}`, {
   ...init, headers:shellHeaders({...init.headers,'content-type':'application/json'}),
 });
-const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory});
+const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory,copyLink:copyConnectionLink,onPhase:phase=>{
+  currentPhase = phase;
+  if (phase === 'pairing') showStatus('Scan the QR code with your wallet app, or copy the connection link. Approve the connection there.','muted');
+  if (phase === 'ownership') showStatus('Open your wallet app on your phone and sign the linking message. If an older request is still open, decline it first.','muted');
+  if (phase === 'signature') showStatus('Open your wallet app on your phone and review the signature request.','muted');
+  if (phase === 'transaction') showStatus('Open your wallet app on your phone and review the transaction.','muted');
+  renderConnection();
+  if (phase === 'changed') refreshReturnedWindow();
+  else if (['ownership','signature','transaction'].includes(phase)) checkConnection().catch(()=>{});
+}});
 window.addEventListener('focus',refreshReturnedWindow);
 window.addEventListener('message', event => {
   if (event.source !== window.parent || event.origin !== 'null' || event.data?.type !== 'elastos:shell-layout') return;
@@ -35,7 +49,7 @@ let connectionRevision;
 let connectionReturnPending = false;
 function watchConnection() {
   if (!frameHomeToken || typeof window.setInterval !== "function") return;
-  const interval = pendingEffect || permissionPending || document.querySelector('dialog[open]') ? 1000 : 5000;
+  const interval = pendingEffect || permissionPending || hostEffectInFlight || permissionStatus && permissionStatus !== 'granted' || document.querySelector('dialog[open]') ? 1000 : 5000;
   if (connectionTimer && connectionInterval === interval) return;
   window.clearInterval(connectionTimer);
   connectionInterval = interval;
@@ -48,7 +62,9 @@ async function checkConnection() {
   connectionCheckInFlight = true;
   try {
     const saved = pendingEffect;
+    const epoch = actionEpoch;
     const current = await connector.effect({ kind: "status" });
+    if (epoch !== actionEpoch && current.permission.status === 'granted') return;
     const previousPermission = permissionStatus;
     permissionStatus = current.permission.status;
     permissionPending = current.permission.status === "requested" && Boolean(current.permission.request);
@@ -60,19 +76,23 @@ async function checkConnection() {
       resume();
       return;
     }
-    if (current.permission.status === 'revoked' && (hostEffectInFlight || document.querySelector("#wallet-connection").textContent === "Connected")) {
+    if (current.permission.status === 'revoked' && (hostEffectInFlight || Boolean(connectionState?.session))) {
       showStatus("Internet access for WalletConnect was turned off. Select Connect wallet to ask again.", "muted");
     }
     if (permissionStatus !== previousPermission || saved && permissionStatus === 'granted') {
-      if (permissionStatus === 'refused') showStatus("Internet access for WalletConnect was refused. Select Allow in Inbox, then Connect wallet.", "muted");
-      if (permissionStatus === 'granted' && !hostEffectInFlight && (saved || ['requested','refused','revoked'].includes(previousPermission))) showStatus("Internet access is allowed. Select Connect wallet to continue.", "muted");
+      if (permissionStatus === 'refused') showStatus(`Internet access for WalletConnect was refused. The Home owner can select Allow in Inbox. Then ${recoveryStep()}.`, "muted");
+      if (permissionStatus === 'granted' && !hostEffectInFlight && (saved || ['requested','refused','revoked'].includes(previousPermission))) showStatus(`Internet access is allowed. ${recoveryStep(true)}.`, "muted");
     }
-    document.querySelector("#wallet-connection").textContent = current.status === "connected" ? "Connected" : "Disconnected";
-    if (current.status === "connected" && connectionRevision !== undefined && connectionRevision !== current.revision) {
-      showStatus("Wallet changed. Check the account and network on your phone.", "muted");
+    const previous = connectionState;
+    connectionState = current;
+    renderConnection();
+    if (!hostEffectInFlight && current.permission.status === 'granted') {
+      if (current.removed && !previous?.removed) showStatus('Your phone wallet removed this connection. Select Connect wallet for a new QR code.','muted');
+      else if (current.expired && !previous?.expired) showStatus('This phone connection expired. Select Connect wallet for a new QR code.','muted');
+      else if (current.session && !sessionIsLinked(current.session) && (!previous?.session || previous.revision !== current.revision)) showStatus(`Linking ${current.session.name} is unfinished. Open its app on your phone and select Finish linking, or select Connect wallet for a new QR code.`,'muted');
     }
     connectionRevision = current.revision;
-  } catch { document.querySelector("#wallet-connection").textContent = "Disconnected"; }
+  } catch (error) { if (!hostEffectInFlight) showStatus(errorMessage(error),error.tone || 'muted'); }
   finally {
     connectionCheckInFlight = false;
     watchConnection();
@@ -89,7 +109,7 @@ function refreshReturnedWindow() {
   if (connectionCheckInFlight) connectionReturnPending = true;
   else checkConnection().catch(()=>{});
 }
-new MutationObserver(watchConnection).observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['open']});
+new MutationObserver(()=>{watchConnection();renderConnection();}).observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['open']});
 
 const homeClipboard = createHomeClipboardClient({
   targetId: CONNECTOR_ID,
@@ -102,33 +122,82 @@ boot();
 
 function boot() {
   document.querySelector("#wallet-disconnect")?.addEventListener("click", async () => {
-    try { await requestCapsuleWalletEffect({ kind: "disconnect" }); document.querySelector("#wallet-connection").textContent = "Disconnected"; showStatus("Disconnected. Linked accounts stay in Wallet.", "muted"); }
-    catch (error) { showStatus(errorMessage(error), error.tone || "error"); }
+    const epoch = ++actionEpoch;
+    try {
+      await requestCapsuleWalletEffect({kind:'disconnect'});
+      if (epoch === actionEpoch) { connectionState = undefined; showStatus('Disconnected. Linked accounts stay in Wallet.','muted'); }
+    } catch (error) { if (epoch === actionEpoch) showStatus(errorMessage(error),error.tone || 'error'); }
+    finally { renderConnection();checkConnection().catch(()=>{}); }
   });
-  connectButton?.addEventListener("click", onConnect);
+  connectButton?.addEventListener("click", () => onConnect());
+  document.querySelector('#wallet-finish')?.addEventListener('click',()=>onConnect({fresh:false}));
+  document.querySelector('#wallet-cancel')?.addEventListener('click',cancelWalletWait);
   accountsNode?.addEventListener("click", onAccountClick);
   requestsNode?.addEventListener("click", onRequestClick);
   watchConnection();
+  checkConnection().catch(()=>{});
   setState("0 linked");
   refreshWalletState().catch((error) => {
     showStatus(errorMessage(error), error.tone || "error");
   });
 }
 
-async function onConnect() {
-  setButtonBusy(connectButton, true);
-  showStatus("Connecting. If a QR code appears, scan it with your phone wallet, then approve the request on your phone.", "muted");
+function sessionIsLinked(session) {
+  return linkedAccounts.some(account=>account.chain_namespace === session.chain && readText(account.address).toLowerCase() === readText(session.address).toLowerCase());
+}
+function recoveryStep(capital = false) {
+  const review = recoveryAction?.kind === 'approve' && [...requestsNode.querySelectorAll('[data-wallet-request-sign]')].some(node=>node.dataset.walletRequestSign === recoveryAction.approvalRequestId);
+  const text = review ? 'select Review on your request to continue' : 'select Connect wallet to continue';
+  return capital ? text[0].toUpperCase()+text.slice(1) : text;
+}
+function renderConnection() {
+  const session = connectionState?.session;
+  const linked = session && sessionIsLinked(session);
+  connectButton.hidden = hostEffectInFlight || Boolean(linked);
+  connectButton.disabled = hostEffectInFlight;
+  document.querySelector('#wallet-finish').hidden = hostEffectInFlight || !session || Boolean(linked);
+  document.querySelector('#wallet-disconnect').hidden = hostEffectInFlight || !linked;
+  document.querySelector('#wallet-cancel').hidden = !(hostEffectInFlight || pendingEffect) || Boolean(document.querySelector('dialog[open]'));
+  const label = hostEffectInFlight
+    ? currentPhase === 'starting' || currentPhase === 'idle' ? 'Preparing connection' : 'Waiting for phone'
+    : linked ? `Linked · ${chainLabel(session.chain)}` : session ? 'Linking unfinished'
+    : connectionState?.removed ? 'Phone connection removed' : connectionState?.expired ? 'Phone connection expired' : 'Ready to connect';
+  const node = document.querySelector('#wallet-connection');
+  if (node.textContent !== label) node.textContent = label;
+}
+async function cancelWalletWait() {
+  ++actionEpoch;
+  pendingEffect = undefined;
   try {
-    await requestCapsuleWalletEffect({ kind: "link" });
-    document.querySelector("#wallet-connection").textContent = "Connected";
-    watchConnection();
-    showStatus("Approval method added.", "success");
+    await connector.effect({kind:'cancel'});
+    connectionState = undefined;
+    showStatus(recoveryAction?.intent === 'transaction_intent' ? `Home stopped waiting. ${walletConnectMessages.transactionRecovery}` : 'Home stopped waiting for your wallet. Select Connect wallet for a new QR code.','muted');
+  } catch (error) { showStatus(errorMessage(error),error.tone || 'muted'); }
+  finally { hostEffectInFlight = false;currentPhase = 'idle';renderConnection();watchConnection();refreshWalletState().catch(()=>{}); }
+}
+async function copyConnectionLink(uri,{signal}) {
+  signal.throwIfAborted();
+  if (!homeClipboard.canRequest()) throw new Error('Home Clipboard is unavailable.');
+  const requestId = homeClipboard.newRequestId();
+  const cancel = ()=>homeClipboard.cancel(requestId);
+  signal.addEventListener('abort',cancel,{once:true});
+  try { await homeClipboard.writeText(uri,{purpose:'wallet.connection-link',requestId});signal.throwIfAborted(); }
+  finally { signal.removeEventListener('abort',cancel); }
+}
+async function onConnect({fresh = true} = {}) {
+  const epoch = ++actionEpoch;
+  currentPhase = 'starting';
+  showStatus(fresh ? 'Preparing a new connection.' : 'Open your wallet app on your phone to finish linking.','muted');
+  try {
+    await requestCapsuleWalletEffect({kind:'link',fresh});
+    if (epoch !== actionEpoch) return;
+    showStatus('Approval method added.','success');
     notifyHomeSummaryChanged();
     await refreshWalletState();
   } catch (error) {
-    showStatus(errorMessage(error), error.tone || "error");
+    if (epoch === actionEpoch) showStatus(errorMessage(error),error.tone || 'error');
   } finally {
-    setButtonBusy(connectButton, false);
+    if (epoch === actionEpoch) { renderConnection();checkConnection().catch(()=>{}); }
   }
 }
 
@@ -153,8 +222,10 @@ async function refreshWalletState() {
   const requests = Array.isArray(requestSummary?.approval_requests)
     ? requestSummary.approval_requests
     : [];
+  linkedAccounts = accounts;
   renderAccounts(accounts);
   renderRequests(requests);
+  renderConnection();
   setState(accounts.length > 0 ? `${accounts.length} linked` : "0 linked");
 }
 
@@ -164,7 +235,7 @@ function renderAccounts(accounts) {
   }
   accountsNode.replaceChildren();
   if (accounts.length === 0) {
-    accountsNode.append(emptyNode("No connected accounts."));
+    accountsNode.append(emptyNode("No linked accounts."));
     return;
   }
   for (const account of accounts) {
@@ -178,7 +249,7 @@ function accountCard(account) {
   const main = document.createElement("div");
   main.className = "wallet-account-main";
   const title = document.createElement("strong");
-  title.textContent = `Connected wallet · ${chainLabel(account?.chain_namespace)}`;
+  title.textContent = `Linked wallet · ${chainLabel(account?.chain_namespace)}`;
   const address = document.createElement("code");
   const addressText = readText(account?.address);
   address.className = "wallet-address";
@@ -245,6 +316,7 @@ function requestCard(request) {
   sign.textContent = "Review";
   sign.disabled = hostEffectInFlight;
   sign.dataset.walletRequestSign = readText(request?.request_id);
+  sign.dataset.walletRequestIntent = readText(request?.intent);
   card.append(main, sign);
   return card;
 }
@@ -272,10 +344,13 @@ async function onRequestClick(event) {
   if (!button || !approvalRequestId) {
     return;
   }
+  const epoch = ++actionEpoch;
+  currentPhase = "starting";
   setButtonBusy(button, true);
   showStatus("Preparing request.", "muted");
   try {
-    const result = await requestCapsuleWalletEffect({ kind: "approve", approvalRequestId });
+    const result = await requestCapsuleWalletEffect({ kind: "approve", approvalRequestId, intent:button.dataset.walletRequestIntent });
+    if (epoch !== actionEpoch) return;
     watchConnection();
     showStatus(
       result.message || (result.effect === "transaction" ? "Transaction sent." : "Request signed."),
@@ -284,7 +359,7 @@ async function onRequestClick(event) {
     notifyHomeSummaryChanged();
     await refreshWalletState();
   } catch (error) {
-    showStatus(errorMessage(error), error.tone || "error");
+    if (epoch === actionEpoch) showStatus(errorMessage(error), error.tone || "error");
     await refreshWalletState().catch(() => {});
   } finally {
     setButtonBusy(button, false);
@@ -292,27 +367,35 @@ async function onRequestClick(event) {
 }
 
 async function requestCapsuleWalletEffect(action) {
+  const epoch = actionEpoch;
+  recoveryAction = action;
   pendingEffect = undefined;
   watchConnection();
   if (!frameHomeToken || hostEffectInFlight) throw new Error('A wallet request is already active.');
   hostEffectInFlight = true;
+  renderConnection();
+  watchConnection();
   try {
     if (['link','approve'].includes(action.kind)) {
       const consent = await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
       permissionPending = consent.status === 'requested' && Boolean(consent.request);
       if (consent.status !== 'granted') {
-        pendingEffect = {requestId:consent.request?.id, expiresAt:(consent.request?.issued_at + 1800) * 1000, run: action.kind === 'link' ? onConnect : () => {
+        pendingEffect = {requestId:consent.request?.id, expiresAt:(consent.request?.issued_at + 1800) * 1000, action, run: action.kind === 'link' ? ()=>onConnect({fresh:action.fresh !== false}) : () => {
           const button = [...requestsNode.querySelectorAll('[data-wallet-request-sign]')].find(node => node.dataset.walletRequestSign === action.approvalRequestId);
           if (button) return onRequestClick({target:button});
         }};
         watchConnection();
         window.top.postMessage({type:'home:open-target',target:'inbox',query:{notification_id:'walletconnect-internet:permission'},homeToken:frameHomeToken},homeOrigin);
-        throw Object.assign(new Error('WalletConnect needs internet access. Answer the request in Inbox. If it is no longer there, select Connect wallet to ask again.'), {tone:'muted'});
+        throw Object.assign(new Error('WalletConnect needs internet access. The Home owner can allow it in Inbox. Then continue here.'), {tone:'muted'});
       }
     }
     return await connector.effect(action);
   } finally {
-    hostEffectInFlight = false;
+    if (epoch === actionEpoch) {
+      hostEffectInFlight = false;currentPhase = 'idle';
+      try { connectionState = await connector.effect({kind:'status'}); } catch {}
+      renderConnection();watchConnection();
+    }
     await refreshWalletState().catch(() => {});
   }
 }
@@ -366,6 +449,7 @@ async function fetchJson(url, init) {
   const response = await fetch(url, init);
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
+    if (detail.trim() === "Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.") throw Object.assign(new Error('The Home owner can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
     throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open WalletConnect again.' : detail.trim() || 'ElastOS could not complete this request. Try again.');
   }
   return response.json();
