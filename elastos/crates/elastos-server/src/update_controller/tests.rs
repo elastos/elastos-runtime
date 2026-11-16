@@ -3481,7 +3481,7 @@ async fn restart_scenario(
     let interpreter = fixture.data.join("previous-interpreter");
     symlink("/bin/sh", &interpreter).unwrap();
     let previous = format!(
-        "#!{}\n{}",
+        "#!{}\nif [ -f previous-launcher-fail ]; then /bin/rm previous-launcher-fail; printf 'fixture launcher exited before Home entry\\n' >&2; exit 19; fi\n{}",
         interpreter.display(),
         fixture_home_exec(&format!("RESTART_FIXTURE_READY_DELAY={previous_delay}"))
     );
@@ -4032,23 +4032,84 @@ async fn repeated_previous_start_failure_keeps_recovery_files_and_says_so() {
     assert!(controller.child.is_none());
     assert!(InstallTransaction::has_pending_recovery(&fixture.binary));
     assert!(fixture.directory.join(ACTIVE_REQUEST).exists());
-    assert_eq!(
-        fs::read_to_string(fixture.data.join("previous-starts"))
-            .unwrap()
-            .lines()
-            .count(),
-        3
-    );
     let log = fs::read_to_string(fixture.directory.join(RUNTIME_LOG)).unwrap();
-    assert_eq!(log.matches("=== Home 0.7.0 rollback start;").count(), 3);
-    assert_eq!(log.matches("fixture previous start refused").count(), 3);
+    let entries = fs::read_to_string(fixture.data.join("previous-starts"))
+        .unwrap_or_else(|error| panic!("{error}; child log:\n{log}"))
+        .lines()
+        .count();
+    if entries != 3 {
+        eprintln!("Fixture entered {entries} of 3 controller attempts. Child log:\n{log}");
+    }
+    // Count the controller's attempts, including a launcher that exits before
+    // it enters restart_home_fixture. The entry marker counts only that subset.
+    assert_eq!(
+        log.matches("=== Home 0.7.0 rollback start;").count(),
+        3,
+        "{log}"
+    );
+    assert_eq!(
+        entries,
+        log.matches("fixture previous start refused").count(),
+        "{log}"
+    );
+    assert!((1..=3).contains(&entries), "{log}");
     for (path, bytes) in &old {
         assert_eq!(&fs::read(path).unwrap(), bytes, "{}", path.display());
     }
     // Not a dead end: once the cause is gone, the next run recovers.
     fs::remove_file(fixture.data.join("previous-fail")).unwrap();
     let controller = retained_controller(&fixture);
-    assert_recovered(&fixture, controller, &old, 4).await;
+    assert_recovered(&fixture, controller, &old, entries + 1).await;
+}
+
+#[tokio::test]
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_repeated_previous_start_failure_counts_a_launcher_exit_before_fixture_entry(
+) {
+    let (fixture, old) = dead_previous_start().await;
+    // Both develop and this branch have replaced the initial sentinel by this
+    // private, nonzero listener port before a rollback or recovery is attempted.
+    let port: u16 = read_private_json(&fixture.data.join("readiness-port")).unwrap();
+    assert_ne!(port, 0);
+    assert_eq!(
+        fs::read_to_string(fixture.data.join("previous-starts"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    fixture.file(&fixture.data.join("previous-launcher-fail"), b"", 0o600);
+    let mut controller = retained_controller(&fixture);
+    assert!(controller.reconcile_pending().await.is_err());
+    assert!(controller.child.is_none());
+    let log = fs::read_to_string(fixture.directory.join(RUNTIME_LOG)).unwrap();
+    assert_eq!(
+        log.matches("=== Home 0.7.0 rollback start;").count(),
+        3,
+        "{log}"
+    );
+    assert_eq!(
+        log.matches("fixture launcher exited before Home entry")
+            .count(),
+        1,
+        "{log}"
+    );
+    assert_eq!(
+        log.matches("fixture previous start refused").count(),
+        2,
+        "{log}"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.data.join("previous-starts"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+    eprintln!("fixture proof: 3 controller attempts, 1 launcher exit before entry, 2 Rust entries; readiness port is nonzero");
+    assert!(InstallTransaction::has_pending_recovery(&fixture.binary));
+    fs::remove_file(fixture.data.join("previous-fail")).unwrap();
+    assert_recovered(&fixture, retained_controller(&fixture), &old, 3).await;
 }
 
 #[tokio::test]
