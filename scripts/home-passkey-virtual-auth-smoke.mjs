@@ -26,7 +26,7 @@ import { runBrowserOperatorJourney } from "./lib/browser-journey-operator.mjs";
 import { qualificationOptions, createQualificationHarness, createQualificationCancellation, qualificationInteraction } from "./lib/browser-qualification-observer.mjs";
 import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
-import { cleanupVirtualPasskey, shouldRetainVirtualAuthProfile,
+import { cleanupVirtualPasskey, shouldRetainVirtualAuthProfile, retainedFirstOwnerProfileMessage,
   VIRTUAL_AUTH_PROFILE_CLEANUP_INSTRUCTION } from "./lib/virtual-auth-cleanup.mjs";
 
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
@@ -5849,8 +5849,8 @@ async function main() {
         console.error(`Could not save recovery receipt: ${error.message || error}`);
         process.exitCode = 1;
       }
-      console.error(cleanupResult?.retained
-        ? "First owner passkey and virtual authenticator profile kept"
+      console.error(created?.created && created.mode === "admin"
+        ? retainedFirstOwnerProfileMessage(PROFILE_DIR)
         : "Virtual passkey profile retained until credential cleanup completes");
       console.error(JSON.stringify(redactSensitive({ recovery_path: recoveryPath, ...recovery }), null, 2));
     }
