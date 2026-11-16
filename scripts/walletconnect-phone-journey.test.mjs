@@ -93,3 +93,13 @@ test('round19 Review during saved-session restore waits for the same live adapte
  await r.frame.locator('#wallet-status').filter({hasText:'Request signed.'}).waitFor({timeout:15000});
  assert.equal(r.fixture.state.completed,1);assert.equal(r.peer.trace.some(event=>event.kind==='deleted'),false,'restoring for Review keeps the phone session');
 });
+
+test('round19 a delayed account list cannot describe an already linked session as unfinished',{timeout:60000},async t=>{
+ const r=await setup(t);await r.link();await r.page.goto('about:blank');let release,entered;
+ const held=new Promise(resolve=>{release=resolve;}),reading=new Promise(resolve=>{entered=resolve;});
+ await r.page.route('**/wallet/accounts',async route=>{entered();await held;await route.continue();});t.after(()=>release());
+ await r.reopen({ready:false});await reading;await delay(8000);
+ const before=await r.frame.locator('#wallet-status').innerText();release();
+ await r.frame.locator('#wallet-connection').filter({hasText:'Linked · Base'}).waitFor({timeout:15000});
+ assert.doesNotMatch(before,/linking.*unfinished/i);assert.doesNotMatch(await r.frame.locator('#wallet-status').innerText(),/linking.*unfinished/i);
+});
