@@ -683,6 +683,8 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
         })
         .await
         .unwrap();
+    assert_eq!(summary["background_checks"]["message"],
+        "Background checks are paused because the installed Home version is invalid. Ask the Home owner to repair the installation.");
     assert_eq!(summary["available"], false);
     assert_eq!(summary["can_apply"], false);
     assert!(summary["message"]
@@ -1713,6 +1715,7 @@ async fn update_notice_typed_failures_preserve_only_unreachable_confirmed_offer(
         assert!(notice_list(&app, &inbox).await.is_empty());
         notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
         let first = notice_list(&app, &inbox).await;
+        assert_eq!(first.len(), 1, "retention starts with a real entry");
         notice_seed(dir.path(), CheckOutcome::Unavailable).await;
         assert_eq!(notice_list(&app, &inbox).await, first);
         let (_, summary) =
@@ -2166,10 +2169,35 @@ async fn update_notice_task_shares_one_worker_with_system_and_skips_sleep_backlo
         tokio::task::yield_now().await;
         notice_tick(&wall, 1180).await;
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let context = HomeLaunchTokenContext {
+            principal_id: owner.principal_id.clone(),
+            session_id: owner.session_id.clone(),
+            proof_binding_id: Some(owner.proof_binding_id.clone()),
+            grant_id: owner.grant_id.clone(),
+        };
         for _ in 0..3 {
-            let (_, summary) =
-                home_test_get_json(&app, UPDATE_APPLY_ROUTE, &owner.system_token, "null").await;
-            assert_eq!(summary["runtime_update"]["checking"], true);
+            let count = calls.clone();
+            let ready = release.clone();
+            let summary = system_runtime_update_summary_with_cache(
+                dir.path(),
+                &context,
+                &cache,
+                move |_, _, _| {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        ready.notified().await;
+                        CheckOutcome::from(Some(cached_offer()))
+                    }
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(summary["checking"], true);
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "System shares the background worker"
+            );
             assert!(notice_list(&app, &inbox).await.is_empty());
         }
         notice_tick(&wall, 900000).await;
@@ -2274,6 +2302,305 @@ async fn update_notice_confirmed_offer_rechecks_source_fields_without_discovery(
             assert!(notice_list(&app, &inbox).await.is_empty(), "{field}");
         }
         assert_update_stays_unqueued(dir.path());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn update_notice_first_confirmation_date_survives_rechecks_and_rejection() {
+    with_test_check_cache(async {
+        let dir = tempfile::tempdir().unwrap();
+        configure_update_summary(dir.path());
+        let app = gateway_router(test_state(dir.path()));
+        let owner = passkey_authority_with_name(dir.path(), Some("notice-first-date"));
+        let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
+        notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
+        let first = notice_list(&app, &inbox).await;
+        assert_eq!(first.len(), 1);
+        // A real second boundary gives the next confirmation a later wall date.
+        // This test checks wall-clock metadata, not the scheduling clock.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        for outcome in [
+            CheckOutcome::from(Some(cached_offer())),
+            CheckOutcome::Unavailable,
+            CheckOutcome::Rejected,
+            CheckOutcome::from(Some(cached_offer())),
+        ] {
+            let confirmed = matches!(outcome, CheckOutcome::Confirmed(_));
+            notice_seed(dir.path(), outcome).await;
+            if confirmed {
+                let entries = notice_list(&app, &inbox).await;
+                assert_eq!(entries.len(), 1);
+                assert_eq!(
+                    entries[0]["created_at"], first[0]["created_at"],
+                    "first date stays fixed"
+                );
+                assert_eq!(entries[0]["body"], first[0]["body"]);
+            }
+        }
+        let mut higher = cached_offer();
+        higher.release_cid = Some(TEST_CIDV1.into());
+        higher.latest_version = "0.7.2".into();
+        notice_seed(dir.path(), CheckOutcome::from(Some(higher))).await;
+        let entries = notice_list(&app, &inbox).await;
+        assert_eq!(entries.len(), 1);
+        assert_ne!(
+            entries[0]["created_at"], first[0]["created_at"],
+            "a new release has its own date"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn update_notice_folder_failure_gives_action_that_can_work() {
+    with_test_check_cache(async {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap(); configure_update_summary(dir.path());
+        let app = gateway_router(test_state(dir.path()));
+        let owner = passkey_authority_with_name(dir.path(), Some("notice-folder"));
+        let path = notice::state_path(dir.path()).unwrap();
+        assert_eq!(notice::preference(dir.path())["enabled"], true);
+        for target in [path.parent().unwrap().to_path_buf(), path.parent().unwrap().join(".notice.lock")] {
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let settings = notice::preference(dir.path());
+            assert_eq!(settings["enabled"], false);
+            assert_eq!(settings["readable"], false);
+            assert_eq!(settings["message"], "Background checks are off because Home cannot use their settings folder. Ask the Home owner to repair the folder permissions.");
+            let (status, _) = home_test_post_json(&app, "/api/apps/system/update-background",
+                &owner.system_token, "null", json!({"enabled":true})).await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            let mode = if target.is_dir() { 0o700 } else { 0o600 };
+            std::fs::set_permissions(target, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+    }).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn update_notice_task_shutdown_joins_blocked_check_and_start_stops() {
+    with_test_check_cache(async {
+        use std::sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        configure_update_summary(dir.path());
+        notice::start(dir.path().into()).shutdown().await;
+        let wall = Arc::new(AtomicU64::new(1000));
+        let clock = wall.clone();
+        let cache = update_check_cache();
+        let (started, starting) = tokio::sync::oneshot::channel();
+        let (dropped, stopped) = tokio::sync::oneshot::channel();
+        let signals = std::sync::Mutex::new(Some((started, dropped)));
+        let task = notice::start_with(
+            dir.path().into(),
+            cache.clone(),
+            move || clock.load(Ordering::SeqCst),
+            || 0,
+            move |_, _, _| {
+                let (started, dropped) = signals.lock().unwrap().take().unwrap();
+                async move {
+                    let _lifetime = dropped;
+                    let _ = started.send(());
+                    std::future::pending::<CheckOutcome>().await
+                }
+            },
+        );
+        tokio::task::yield_now().await;
+        notice_tick(&wall, 1180).await;
+        starting.await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), task.shutdown())
+            .await
+            .expect("shutdown joins a blocked check");
+        assert!(stopped.await.is_err(), "worker future has been dropped");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))),
+        )
+        .await
+        .expect("worker slot accepts the next check");
+    })
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn update_notice_task_policy_change_mid_check_runs_new_choice_same_turn() {
+    for field in ["channel", "source"] {
+        with_test_check_cache(async {
+            use std::sync::{
+                atomic::{AtomicU64, AtomicUsize, Ordering},
+                Arc,
+            };
+            let dir = tempfile::tempdir().unwrap();
+            configure_update_summary(dir.path());
+            let cache = update_check_cache();
+            let (_, old_source, old_key) = update_inputs(dir.path()).unwrap();
+            let (release, waiting) = tokio::sync::oneshot::channel();
+            cache
+                .lock()
+                .await
+                .read(old_key.clone(), std::time::Instant::now(), || async move {
+                    waiting.await.unwrap();
+                    CheckOutcome::Rejected
+                })
+                .await;
+            let mut config = crate::sources::load_trusted_sources(dir.path()).unwrap();
+            if field == "channel" {
+                config.sources[0].channel = "canary".into();
+            } else {
+                config.sources[0].connect_ticket = "new-source".into();
+            }
+            crate::sources::save_trusted_sources(dir.path(), &config).unwrap();
+            let (_, _, next_key) = update_inputs(dir.path()).unwrap();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let count = calls.clone();
+            let wall = Arc::new(AtomicU64::new(1000));
+            let clock = wall.clone();
+            let task = notice::start_with(
+                dir.path().into(),
+                cache.clone(),
+                move || clock.load(Ordering::SeqCst),
+                || 0,
+                move |_, policy, source| {
+                    assert_ne!(policy, old_key.source_policy_sha256);
+                    assert_eq!(policy, next_key.source_policy_sha256);
+                    if field == "channel" {
+                        assert_ne!(source.channel, old_source.channel);
+                    } else {
+                        assert_ne!(source.connect_ticket, old_source.connect_ticket);
+                    }
+                    count.fetch_add(1, Ordering::SeqCst);
+                    async { CheckOutcome::Rejected }
+                },
+            );
+            tokio::task::yield_now().await;
+            notice_tick(&wall, 1180).await;
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "waits for old policy worker"
+            );
+            release.send(()).unwrap();
+            notice_tick(&wall, 1180).await;
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "new choice checked in this turn: {field}"
+            );
+            task.shutdown().await;
+        })
+        .await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn update_notice_task_policy_changes_during_own_check_are_rechecked_same_turn() {
+    with_test_check_cache(async {
+        use std::sync::{
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+            Arc,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        configure_update_summary(dir.path());
+        let cache = update_check_cache();
+        let wall = Arc::new(AtomicU64::new(1000));
+        let clock = wall.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let ready = release.clone();
+        let task = notice::start_with(
+            dir.path().into(),
+            cache.clone(),
+            move || clock.load(Ordering::SeqCst),
+            || 0,
+            move |_, _, _| {
+                let first = count.fetch_add(1, Ordering::SeqCst) == 0;
+                let ready = ready.clone();
+                async move {
+                    if first {
+                        ready.notified().await;
+                    }
+                    CheckOutcome::Rejected
+                }
+            },
+        );
+        tokio::task::yield_now().await;
+        notice_tick(&wall, 1180).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let mut config = crate::sources::load_trusted_sources(dir.path()).unwrap();
+        config.sources[0].channel = "canary".into();
+        crate::sources::save_trusted_sources(dir.path(), &config).unwrap();
+        release.notify_one();
+        notice_tick(&wall, 1180).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "changed policy runs before next six-hour turn"
+        );
+        task.shutdown().await;
+    })
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn update_notice_hung_close_deadline_releases_shared_worker() {
+    with_test_check_cache(async {
+        let dir = tempfile::tempdir().unwrap();
+        configure_update_summary(dir.path());
+        let app = gateway_router(test_state(dir.path()));
+        let owner = passkey_authority_with_name(dir.path(), Some("notice-close-deadline"));
+        let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
+        notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
+        let first = notice_list(&app, &inbox).await;
+        assert_eq!(first.len(), 1);
+        let cache = update_check_cache();
+        cache.lock().await.expire_response();
+        let (_, source, key) = update_inputs(dir.path()).unwrap();
+        let worker_cache = cache.clone();
+        let (started, starting) = tokio::sync::oneshot::channel();
+        let (dropped, stopped) = tokio::sync::oneshot::channel();
+        let worker = tokio::spawn(async move {
+            UpdateCheckCache::check_and_store(&worker_cache, key, || async move {
+                let result = crate::carrier::update_check_close_fixture(async move {
+                    let _lifetime = dropped;
+                    let _ = started.send(());
+                    std::future::pending::<()>().await;
+                })
+                .await;
+                super::super::gateway_home_update::checked_outcome(
+                    &source,
+                    result.map(|()| cached_offer()),
+                )
+            })
+            .await;
+        });
+        starting.await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        tokio::time::timeout(std::time::Duration::from_millis(1), worker)
+            .await
+            .expect("deadline frees background waiter")
+            .unwrap();
+        assert!(stopped.await.is_err());
+        assert_eq!(
+            notice_list(&app, &inbox).await,
+            first,
+            "typed unavailable keeps first offer"
+        );
+        let (_, summary) =
+            home_test_get_json(&app, UPDATE_APPLY_ROUTE, &owner.system_token, "null").await;
+        assert_eq!(summary["runtime_update"]["checking"], false);
+        assert!(summary["runtime_update"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Could not check"));
+        cache.lock().await.expire_response();
+        notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
+        assert_eq!(
+            notice_list(&app, &inbox).await,
+            first,
+            "next normal check completes"
+        );
     })
     .await;
 }

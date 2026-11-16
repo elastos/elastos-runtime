@@ -15,6 +15,8 @@ const OFF_TEXT: &str = "Background checks are off; System checks for updates whi
 const SAVE_ERROR: &str = "Home could not save background checks. Try again.";
 const NOTICE_TITLE: &str = "Home update found";
 const NOTICE_BODY: &str = "Home {version} was found. Review the update in System.";
+const FOLDER_TEXT: &str = "Background checks are off because Home cannot use their settings folder. Ask the Home owner to repair the folder permissions.";
+const INVALID_VERSION_TEXT: &str = "Background checks are paused because the installed Home version is invalid. Ask the Home owner to repair the installation.";
 const UNREADABLE_TEXT: &str = "Background checks are off because Home could not read their settings. Turn this on to save new settings.";
 
 #[derive(Default, Serialize, Deserialize)]
@@ -102,10 +104,29 @@ fn write_state(path: &Path, state: &NoticeState) -> anyhow::Result<()> {
 }
 
 pub(super) fn preference(data_dir: &Path) -> serde_json::Value {
-    let state = locked_path(data_dir).and_then(|(path, _lock)| read_state(&path));
+    let locked = locked_path(data_dir);
+    let folder_usable = locked.is_ok();
+    let state = locked.and_then(|(path, _lock)| read_state(&path));
     let enabled = state.as_ref().is_ok_and(|state| state.background_checks);
+    let invalid_version = crate::sources::load_trusted_sources(data_dir)
+        .ok()
+        .and_then(|config| config.default_source().cloned())
+        .is_some_and(|source| {
+            crate::update::installed_release_version(&source.installed_version).is_err()
+        });
+    let message = if !folder_usable {
+        FOLDER_TEXT
+    } else if state.is_err() {
+        UNREADABLE_TEXT
+    } else if enabled && invalid_version {
+        INVALID_VERSION_TEXT
+    } else if enabled {
+        ON_TEXT
+    } else {
+        OFF_TEXT
+    };
     serde_json::json!({"enabled":enabled, "readable":state.is_ok(), "label":SWITCH_LABEL,
-        "save_error": SAVE_ERROR, "message":if state.is_err() { UNREADABLE_TEXT } else if enabled { ON_TEXT } else { OFF_TEXT }})
+        "save_error": SAVE_ERROR, "message": message})
 }
 
 #[derive(Deserialize)]
@@ -257,18 +278,29 @@ pub(super) struct UpdateNoticeTask {
 }
 
 pub(super) fn start(data_dir: PathBuf) -> UpdateNoticeTask {
+    start_with(
+        data_dir,
+        update::update_check_cache(),
+        now_secs,
+        || rand::Rng::gen_range(&mut rand::thread_rng(), 0..=3600),
+        update::check_current_policy,
+    )
+}
+
+pub(super) fn start_with<F, O>(
+    data_dir: PathBuf,
+    cache: std::sync::Arc<tokio::sync::Mutex<UpdateCheckCache>>,
+    clock: impl Fn() -> u64 + Send + 'static,
+    spread: impl FnMut() -> u64 + Send + 'static,
+    work: impl Fn(PathBuf, String, crate::sources::TrustedSource) -> F + Send + Sync + 'static,
+) -> UpdateNoticeTask
+where
+    F: std::future::Future<Output = O> + Send + 'static,
+    O: Into<update::CheckOutcome> + Send + 'static,
+{
     let (shutdown, receiver) = tokio::sync::watch::channel(false);
     let task = tokio::spawn(async move {
-        let cache = update::update_check_cache();
-        run(
-            data_dir.clone(),
-            &cache,
-            receiver,
-            now_secs,
-            || rand::Rng::gen_range(&mut rand::thread_rng(), 0..=3600),
-            update::check_current_policy,
-        )
-        .await;
+        run(data_dir.clone(), &cache, receiver, clock, spread, work).await;
         UpdateCheckCache::cancel_for_home(&cache, &data_dir).await;
     });
     UpdateNoticeTask { shutdown, task }
@@ -311,19 +343,33 @@ pub(super) async fn run<F, O>(
         }
         let delay = CHECK_INTERVAL + spread().min(MAX_SPREAD);
         due = clock().saturating_add(delay);
-        let Some((_, source, key)) = update::update_inputs(&data_dir) else {
-            continue;
-        };
-        if crate::update::installed_release_version(&source.installed_version).is_err() {
-            continue;
+        loop {
+            let Some((_, source, key)) = update::update_inputs(&data_dir) else {
+                break;
+            };
+            if crate::update::installed_release_version(&source.installed_version).is_err() {
+                break;
+            }
+            let check = UpdateCheckCache::check_and_store(cache, key.clone(), || {
+                work(
+                    key.data_dir.clone(),
+                    key.source_policy_sha256.clone(),
+                    source,
+                )
+            });
+            tokio::select! {
+                biased;
+                _ = shutdown.changed() => { return; }
+                _ = check => {}
+            }
+            if preference(&data_dir)["enabled"] != true {
+                break;
+            }
+            if update::update_inputs(&data_dir).is_some_and(|(_, _, current)| current != key) {
+                continue;
+            }
+            break;
         }
-        let check = UpdateCheckCache::check_and_store(cache, key.clone(), || {
-            work(key.data_dir, key.source_policy_sha256, source)
-        });
-        tokio::select! {
-            biased;
-            _ = shutdown.changed() => { return; }
-            _ = check => { due = clock().saturating_add(delay); }
-        }
+        due = clock().saturating_add(delay);
     }
 }

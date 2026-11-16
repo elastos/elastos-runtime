@@ -528,7 +528,7 @@
     function fillEntryActions(actions, entry) {
       const actionId = entry.action_ref && entry.action_ref.action_id;
       if (entry.kind === "home_update_available") {
-        actions.appendChild(createButton("Open System", () => openSource("system", { settings: "about" })));
+        actions.appendChild(createButton("Open System", () => openSource("system", { settings: "about", focus: "update" })));
         actions.appendChild(createActionButton("Dismiss", "notification-dismiss:" + entry.id));
         return;
       }

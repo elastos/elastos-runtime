@@ -167,6 +167,7 @@ struct CachedCheck {
 struct RunningCheck {
     key: UpdateCheckKey,
     task: tokio::task::JoinHandle<CachedCheck>,
+    finished: tokio::sync::watch::Receiver<()>,
 }
 
 pub(super) enum UpdateCheckSnapshot {
@@ -200,6 +201,7 @@ pub(super) struct UpdateCheckCache {
     completed: Option<CachedCheck>,
     running: Option<RunningCheck>,
     confirmed: Option<ConfirmedOffer>,
+    first_seen: std::collections::BTreeMap<String, u64>,
 }
 
 impl UpdateCheckCache {
@@ -232,9 +234,13 @@ impl UpdateCheckCache {
         if self.running.is_none() {
             let task_key = key.clone();
             let check = work();
+            let (completion, finished) = tokio::sync::watch::channel(());
             self.running = Some(RunningCheck {
                 key,
+                finished,
                 task: tokio::spawn(async move {
+                    // Closing the channel wakes every waiter, including on panic or abort.
+                    let _completion = completion;
                     let outcome = check.await.into();
                     let unavailable = matches!(outcome, CheckOutcome::Unavailable);
                     let check = match outcome {
@@ -277,11 +283,9 @@ impl UpdateCheckCache {
     }
 
     async fn collect_finished(&mut self, now: std::time::Instant) {
-        if self
-            .running
-            .as_ref()
-            .is_some_and(|running| running.task.is_finished())
-        {
+        if self.running.as_ref().is_some_and(|running| {
+            running.task.is_finished() || running.finished.has_changed().is_err()
+        }) {
             let running = self.running.take().expect("finished update check is owned");
             let completed = running.task.await.unwrap_or(CachedCheck {
                 key: running.key,
@@ -291,10 +295,19 @@ impl UpdateCheckCache {
                 observed_at: gateway_update_notice::now_secs(),
             });
             if let Some(check) = &completed.check {
+                let observed_at = check
+                    .release_cid
+                    .as_ref()
+                    .map_or(completed.observed_at, |cid| {
+                        *self
+                            .first_seen
+                            .entry(cid.clone())
+                            .or_insert(completed.observed_at)
+                    });
                 self.confirmed = Some(ConfirmedOffer {
                     key: completed.key.clone(),
                     check: check.clone(),
-                    observed_at: completed.observed_at,
+                    observed_at,
                 });
             } else if !completed.unavailable {
                 self.confirmed = None;
@@ -322,24 +335,30 @@ impl UpdateCheckCache {
         F: std::future::Future<Output = O> + Send + 'static,
         O: Into<CheckOutcome> + Send + 'static,
     {
-        if matches!(
-            cache
-                .lock()
-                .await
-                .read(key.clone(), std::time::Instant::now(), work)
-                .await,
-            UpdateCheckSnapshot::Completed(_)
-        ) {
-            return;
-        }
+        let mut work = Some(work);
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            let mut cache = cache.lock().await;
-            cache.collect_finished(std::time::Instant::now()).await;
-            cache.reconcile_key(&key);
-            if cache.running.is_none() {
-                return;
-            }
+            let mut finished = {
+                let mut cache = cache.lock().await;
+                if matches!(
+                    cache
+                        .read(key.clone(), std::time::Instant::now(), || {
+                            work.take().expect("one worker per policy")()
+                        })
+                        .await,
+                    UpdateCheckSnapshot::Completed(_)
+                ) {
+                    return;
+                }
+                cache
+                    .running
+                    .as_ref()
+                    .expect("pending check has a worker")
+                    .finished
+                    .clone()
+            };
+            // A channel close means completion, cancellation or panic. Re-read
+            // the cache to join it and, if needed, start work for the new key.
+            let _ = finished.changed().await;
         }
     }
 

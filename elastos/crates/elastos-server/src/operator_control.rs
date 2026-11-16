@@ -47,6 +47,7 @@ const OPERATOR_AUDIT_FILE: &str = "operator-control-audit.jsonl";
 const OPERATOR_REQUEST_LOG_FILE: &str = "operator-control-requests.jsonl";
 const OPERATOR_CONNECT_TIMEOUT_SECS: u64 = 10;
 const OPERATOR_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+const OPERATOR_UPDATE_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_UPDATE_METADATA_BYTES: usize = 256 * 1024;
 /// A signed operator request is an action, a request id and small arguments.
 /// It is read before the signature is checked, so it stays small and quick.
@@ -155,15 +156,22 @@ pub struct OperatorUpdateCheck {
 /// task retains the close future until the short-lived endpoint has drained.
 struct OperatorCarrierDrain {
     signal: Option<tokio::sync::oneshot::Sender<()>>,
-    task: Option<tokio::task::JoinHandle<()>>,
+    task: Option<tokio::task::JoinHandle<Result<()>>>,
 }
 
 impl OperatorCarrierDrain {
     fn new(close: impl std::future::Future<Output = ()> + Send + 'static) -> Self {
+        Self::with_result(async move {
+            close.await;
+            Ok(())
+        })
+    }
+
+    fn with_result(close: impl std::future::Future<Output = Result<()>> + Send + 'static) -> Self {
         let (signal, shutdown) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
             let _ = shutdown.await;
-            close.await;
+            close.await
         });
         Self {
             signal: Some(signal),
@@ -177,7 +185,7 @@ impl OperatorCarrierDrain {
             .take()
             .expect("Carrier drain task remains owned")
             .await
-            .context("drain temporary operator Carrier client")
+            .context("drain temporary operator Carrier client")?
     }
 }
 
@@ -191,6 +199,17 @@ impl OperatorCarrierSession {
         let client = Arc::new(client);
         let closing = client.clone();
         let drain = OperatorCarrierDrain::new(async move { closing.close().await });
+        Self { client, drain }
+    }
+
+    fn for_update_check(client: crate::carrier::CarrierClient) -> Self {
+        let client = Arc::new(client);
+        let closing = client.clone();
+        let drain = OperatorCarrierDrain::with_result(async move {
+            closing
+                .close_update_check(OPERATOR_UPDATE_CLOSE_TIMEOUT)
+                .await
+        });
         Self { client, drain }
     }
 
@@ -535,7 +554,7 @@ pub async fn gather_local_update_check(data_dir: &Path) -> Result<OperatorUpdate
             source.name
         )
     }).context(crate::update::UpdateSourceUnavailable)?;
-    let session = OperatorCarrierSession::new(client);
+    let session = OperatorCarrierSession::for_update_check(client);
     let result = tokio::time::timeout(
         OPERATOR_UPDATE_CHECK_TIMEOUT,
         gather_update_check_with_client(&session.client, &source),

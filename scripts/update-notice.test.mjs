@@ -136,13 +136,24 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await gui.evaluate(()=>refreshFixture());await badge.waitFor({state:"hidden"});
       await screen(page,`${theme}-inbox-read`);
       await inbox.getByRole("button",{name:"Open System",exact:true}).click();
-      assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==="home:open-target").at(-1)).then(m=>({target:m.target,query:m.query})), {target:"system",query:{settings:"about"}});
+      assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.type==="home:open-target").at(-1)).then(m=>({target:m.target,query:m.query})), {target:"system",query:{settings:"about",focus:"update"}});
       const system=gui.frameLocator('iframe.window-frame[title="System"]');
       await system.locator("#runtime-update").waitFor();
       await system.locator("#update-background-choice").waitFor();
       await system.getByRole("button",{name:"Update and restart Home",exact:true}).waitFor();
       assert.equal(await system.locator("#update-background-message").textContent(),copy("ON_TEXT"));
       await system.locator("#runtime-update").evaluate(node=>{if(document.activeElement!==node)throw new Error("update card did not receive focus");});
+      await system.locator("#update-background").evaluate(node=>{
+        const button=document.querySelector('#runtime-update-apply');
+        assertLayout(node, button);
+        function assertLayout(row, button) {
+          if(row.parentElement===button.parentElement)throw new Error('switch remains inside offer');
+          if(row.getBoundingClientRect().top<button.getBoundingClientRect().bottom)throw new Error('switch must be below button');
+          const label=document.querySelector('#update-background-label');
+          const neighbour=document.querySelector('[data-field="update-heading"]');
+          if(getComputedStyle(label).fontSize!==getComputedStyle(neighbour).fontSize)throw new Error('switch label differs from settings size');
+        }
+      });
       await screen(page,`${theme}-system-from-entry-on`);
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.getByText(copy("OFF_TEXT"),{exact:true}).waitFor({timeout:3000});
@@ -160,6 +171,22 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       assert.equal(await gui.locator('iframe.window-frame[title="System"]').count(),1);
       await system.locator("#runtime-update").evaluate(node=>{if(document.activeElement!==node)throw new Error("existing card did not receive focus");});
       await screen(page,`${theme}-system-already-open`);
+      // Control Centre uses its real This device handler, both with System
+      // open and with a fresh window. About keeps its ordinary focus.
+      for (const fresh of [false,true]) {
+        if(fresh)await gui.evaluate(()=>{
+          const entry=[...fixture.core.shellState.windows.values()].find(e=>e.targetId==='system');
+          fixture.windows.closeWindow(entry.id);
+        });
+        else await system.locator("button[data-settings=account]").click();
+        await page.waitForTimeout(800); // Home suppresses repeated launch gestures.
+        await gui.locator('#control-centre-this-device').evaluate(node=>node.click());
+        await system.locator('#runtime-update').waitFor();
+        await system.locator('#runtime-update').evaluate(node=>{
+          if(document.activeElement===node)throw new Error('ordinary About focused update card');
+        });
+        await screen(page,`${theme}-system-control-centre-${fresh?'closed':'open'}`);
+      }
       assert.deepEqual(errors,[]);
       await page.close();
     }
@@ -172,13 +199,29 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).waitFor();
     await system.getByText(copy("SAVE_ERROR"),{exact:true}).waitFor();
     assert.equal(await system.getByRole("switch",{name:copy("SWITCH_LABEL")}).isChecked(),true);
+    await page.waitForTimeout(5300);
+    await system.getByText(copy("SAVE_ERROR"),{exact:true}).waitFor();
     f.state.failWrite=false;f.state.settings=preference(false,false);await page.reload();
     await system.getByText(copy("UNREADABLE_TEXT"),{exact:true}).waitFor();
     await system.locator("label.system-switch:has(#update-background-choice)").click();await system.getByText(copy("ON_TEXT"),{exact:true}).waitFor();
+    await system.locator('#update-background').evaluate(row=>{
+      const button=document.querySelector('#runtime-update-apply');
+      if(row.parentElement===button.parentElement || row.getBoundingClientRect().top<button.getBoundingClientRect().bottom)throw new Error('phone switch is part of offer');
+      const bounds=row.getBoundingClientRect();
+      if(bounds.right>innerWidth || bounds.left<0)throw new Error('phone switch overflows');
+      if(getComputedStyle(document.querySelector('#update-background-label')).fontSize!=='13px')throw new Error('phone label size');
+    });
+    await screen(page,"phone-switch-on");
     await screen(page,"phone-switch-repaired");
     await system.locator("#update-background-choice").focus();
     await page.keyboard.press("Space");
     await system.getByText(copy("OFF_TEXT"),{exact:true}).waitFor();
+    await screen(page,"phone-switch-off");
+    for(const stateName of ['INVALID_VERSION_TEXT','FOLDER_TEXT']) {
+      f.state.settings={...preference(stateName==='INVALID_VERSION_TEXT'),message:copy(stateName)};
+      await page.reload();await system.getByText(copy(stateName),{exact:true}).waitFor();
+      await screen(page,`phone-${stateName.toLowerCase()}`);
+    }
     f.state.guest=true;await page.reload();
     await system.locator("#runtime-update").waitFor({state:"hidden"});
     assert.deepEqual(f.requestFailures,[]);
