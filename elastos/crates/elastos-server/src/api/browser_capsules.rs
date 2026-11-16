@@ -1590,10 +1590,12 @@ mod tests {
             "/../../../capsules/wallet-walletconnect/vendor/reown-appkit.js"
         ));
         let hash = hex::encode(Sha256::digest(sdk));
-        assert_eq!(
-            hash,
-            "6cff318e63fa0b8c9cc7ee95ce92d5a5470df6cd742a8ad8c2033ce829bb1895"
-        );
+        let adapter: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../capsules/wallet-walletconnect/vendor/adapter.json"
+        )))
+        .unwrap();
+        assert_eq!(Some(hash.as_str()), adapter["sdk_sha256"].as_str());
         fs::create_dir_all(capsule.join("vendor")).unwrap();
         fs::write(capsule.join("vendor/reown-appkit.js"), sdk).unwrap();
         fs::write(capsule.join("vendor/adapter.json"), "private provenance").unwrap();
