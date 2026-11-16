@@ -7,7 +7,7 @@ import {walletConnectFixtureRequire as require} from './walletconnect-relay-fixt
 const root=fileURLToPath(new URL('../..',import.meta.url));
 const {recoverMessageAddress}=require('viem');
 export async function windowFixture() {
- const state={permission:'granted',revision:0,keys:{},accounts:[],approvals:[],verified:0,completed:0,calls:[],deleteFails:false};
+ const state={permission:'granted',revision:0,keys:{},accounts:[],approvals:[],verified:0,completed:0,calls:[],deleteFails:false,guest:false,expiredLaunch:false};
  const server=http.createServer(async(req,res)=>{
   const path=new URL(req.url,'http://localhost').pathname;res.setHeader('access-control-allow-origin','*');res.setHeader('access-control-allow-headers','content-type,x-elastos-home-token,if-match');res.setHeader('access-control-allow-methods','GET,POST,DELETE,OPTIONS');if(req.method==='OPTIONS'){res.writeHead(204).end();return;}
   const json=(body,code=200)=>{res.writeHead(code,{'content-type':'application/json'}).end(JSON.stringify(body));};
@@ -17,7 +17,10 @@ export async function windowFixture() {
    if(d.type==='home:clipboard-request'){window.copied=d.text;e.source.postMessage({type:'home:clipboard-result',schema:'elastos.home.clipboard.result/v1',targetId:d.targetId,homeToken:d.homeToken,parentOrigin:location.origin,generation:d.generation,requestId:d.requestId,operation:d.operation,purpose:d.purpose,ok:true},'*');}});</script>`);return;}
    if(path.startsWith('/api/')) {
     state.calls.push({path,method:req.method,revision:req.headers['if-match']});
+    if(state.expiredLaunch){res.writeHead(403).end('Launch expired');return;}
+    if(state.guest&&path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted'){res.writeHead(403).end("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.");return;}
     let input='';for await(const chunk of req)input+=chunk;const body=input?JSON.parse(input):{};
+    if(path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted')state.permission='requested';
     if(path.endsWith('/internet'))return json({status:state.permission,request:{id:'request-1',issued_at:Math.floor(Date.now()/1000)}});
     if(path.endsWith('/wallet/config'))return json({walletconnect:{project_id:'fixture-project',storage_revision:JSON.stringify(String(state.revision))}});
     if(path.endsWith('/relay-admission'))return json({token:'fixture-admission'});

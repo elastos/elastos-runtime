@@ -11,7 +11,7 @@ async function setup(t){
  const page=await browser.newPage();await page.route('**/*',r=>new URL(r.request().url()).origin===fixture.origin?r.continue():r.abort());
  t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();});
  let frame;
- const reopen=async()=>{await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await frame.locator('#wallet-requests').getByText('No approval requests.',{exact:true}).waitFor();return frame;};
+ const reopen=async({ready=true}={})=>{await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));if(ready)await frame.locator('#wallet-requests').getByText('No approval requests.',{exact:true}).waitFor();return frame;};
  await reopen();
  const pair=async()=>{
   await frame.locator('dialog[open] canvas').waitFor({timeout:20000});let uri;
@@ -56,4 +56,17 @@ test('round19 disconnect stops the retired SDK heartbeat and its pulse listeners
  const remaining=await r.frame.evaluate(()=>({cleared:window.retiredIntervalCleared,listeners:window.retiredCore.heartbeat.events.eventNames().reduce((n,k)=>n+window.retiredCore.heartbeat.events.listenerCount(k),0)}));assert.deepEqual(remaining,{cleared:true,listeners:0});
  const count=r.fixture.state.calls.length;await r.frame.evaluate(()=>{for(const name of window.retiredCore.heartbeat.events.eventNames())window.retiredCore.heartbeat.events.emit(name);window.dispatchEvent(new Event('offline'));window.dispatchEvent(new Event('online'));});await delay(6000);
  assert.equal(r.fixture.state.calls.slice(count).some(e=>e.path.endsWith('/relay-admission')||e.path.endsWith('/storage')&&e.method==='POST'),false,'retired SDK sends no admission or storage write');
+});
+
+test('round19 an expired window offers its working Close recovery instead of wallet actions',{timeout:30000},async t=>{
+ const r=await setup(t);r.fixture.state.expiredLaunch=true;await r.reopen({ready:false});
+ await r.frame.locator('#wallet-status').filter({hasText:'This wallet window expired. Close it and open WalletConnect again.'}).waitFor({timeout:10000});
+ assert.equal(await r.frame.locator('button:visible').count(),0);
+});
+test('round19 a guest asks the Home owner and waits for the owner to allow access',{timeout:30000},async t=>{
+ const r=await setup(t);r.fixture.setPermission('off');r.fixture.state.guest=true;await r.frame.locator('#wallet-connect').click();
+ await r.frame.locator('#wallet-status').filter({hasText:'The Home owner can allow WalletConnect internet access in Inbox.'}).waitFor({timeout:10000});
+ assert.equal(await r.frame.locator('#wallet-connect').isVisible(),false,'the guest cannot send the owner consent request');
+ r.fixture.setPermission('granted');await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));
+ await r.frame.locator('#wallet-connect:visible').waitFor({timeout:3000});
 });
