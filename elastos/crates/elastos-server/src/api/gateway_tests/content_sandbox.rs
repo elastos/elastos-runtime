@@ -684,6 +684,10 @@ async fn content_sandbox_browser_walletconnect_sdk() {
     for path in ["vendor/package-lock.json", "vendor/other.js"] {
         std::fs::write(capsule.join(path), "private fixture").unwrap();
     }
+    let adapter: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repo.join("capsules/wallet-walletconnect/vendor/adapter.json")).unwrap(),
+    )
+    .unwrap();
     let config = dir.path().join(WALLETCONNECT_CONFIG_PATH);
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     std::fs::write(
@@ -693,7 +697,7 @@ async fn content_sandbox_browser_walletconnect_sdk() {
             "project_id": "fixture-project",
             "sdk_package": WALLETCONNECT_SDK_PACKAGE,
             "sdk_version": "2.23.9",
-            "sdk_sha256": "6cff318e63fa0b8c9cc7ee95ce92d5a5470df6cd742a8ad8c2033ce829bb1895",
+            "sdk_sha256": adapter["sdk_sha256"],
         }))
         .unwrap(),
     )
