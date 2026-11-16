@@ -109,13 +109,13 @@ pub(super) async fn append_inbox_requests(
         notifications.attention_count += usize::from(card.severity == "attention");
         notifications.entries.push(card);
     }
-    if let Some(card) = gateway_update_notice::notification(&state.data_dir, context).await {
-        notifications.unread_count += usize::from(!card.read);
-        notifications.entries.push(card);
-    }
     append_wallet_approval_notifications(notifications, wallet_approvals);
     // Runtime capability requests are the admin's to answer.
     if ensure_admin_context(&state.data_dir, context).is_ok() {
+        if let Some(card) = gateway_update_notice::notification(&state.data_dir, context).await {
+            notifications.unread_count += usize::from(!card.read);
+            notifications.entries.push(card);
+        }
         if let Ok(capability_requests) = runtime_capability_pending_requests(&state.data_dir).await
         {
             append_runtime_capability_notifications(notifications, capability_requests);

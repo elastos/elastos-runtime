@@ -1522,7 +1522,13 @@ async fn update_notice_real_inbox_accounts_lifecycle_and_shared_system_view() {
     let app = gateway_router(test_state(dir.path()));
     configure_update_summary(dir.path());
     let alice = passkey_authority_with_name(dir.path(), Some("notice-alice"));
-    let bob = passkey_authority_with_name(dir.path(), Some("notice-bob"));
+    let bob = passkey_authority_with_name_role_credential(
+        dir.path(),
+        Some("notice-bob"),
+        crate::auth::RuntimePrincipalRole::Admin,
+        "notice-bob-passkey",
+    );
+    assert_ne!(alice.principal_id, bob.principal_id);
     let guest = passkey_authority_with_name_role(
         dir.path(),
         Some("notice-guest"),
@@ -1928,7 +1934,13 @@ async fn update_notice_queued_recovery_missing_host_and_installed_are_shared_vie
     let app = gateway_router(test_state(dir.path()));
     configure_update_summary(dir.path());
     let owner = passkey_authority_with_name(dir.path(), Some("notice-eligibility"));
-    let other = passkey_authority_with_name(dir.path(), Some("notice-eligibility-other"));
+    let other = passkey_authority_with_name_role_credential(
+        dir.path(),
+        Some("notice-eligibility-other"),
+        crate::auth::RuntimePrincipalRole::Admin,
+        "notice-other-passkey",
+    );
+    assert_ne!(owner.principal_id, other.principal_id);
     let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &owner);
     let other_inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &other);
     notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
