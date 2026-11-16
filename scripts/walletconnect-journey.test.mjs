@@ -5,10 +5,12 @@ import {readFileSync,mkdirSync} from 'node:fs';
 import {extname,resolve,relative} from 'node:path';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 import {walletConnectRelayFixture} from './lib/walletconnect-relay-fixture.mjs';
+import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const permissionText = 'WalletConnect needs internet access. Answer the request in Inbox. If it is no longer there, select Connect wallet to ask again.';
 const turnedOff = 'Internet access for WalletConnect was turned off. Select Connect wallet to ask again.';
 // API and passkey responses are fixtures. All app markup, scripts, CSS and SDK are real.
-test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{timeout:120000},async()=>{
+test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{timeout:240000},async()=>{
+  let permissionPosts=0;
   let status='off',requestId=0,issuedAt=Math.floor(Date.now()/1000),passkeys=0,failSummary=false,keys={},verified=0,completions=0,approvalRequests=[];
   const consent=()=>({status,request:['requested','granted'].includes(status)?{id:String(requestId),issued_at:issuedAt,text:'Fixture consent'}:null});
   const actions=[];
@@ -23,12 +25,12 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       window.events=[];addEventListener('message',e=>{events.push(e.data.type);if(e.data.type==='elastos.home.passkey-step-up.request/v1'){fetch('/passkey',{method:'POST'});e.source.postMessage({type:'elastos.home.passkey-step-up.result/v1',requestId:e.data.requestId,stepUpToken:'fixture-step-up'},location.origin);}
       if(e.data.type==='home:open-target'){if(e.data.target==='inbox'){inbox.src='/apps/inbox/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-inbox';inbox.style.display='block';}else if(e.data.target==='wallet-walletconnect'){inbox.style.display='none';wallet.contentWindow.focus();}}});</script>`);return;}
       if(path==='/passkey'){passkeys++;json({});return;}
-      if(path==='/api/apps/wallet-walletconnect/internet'){if(req.method==='POST'&&status!=='granted'&&status!=='requested'){status='requested';requestId++;issuedAt=Math.floor(Date.now()/1000);}json(consent());return;}
+      if(path==='/api/apps/wallet-walletconnect/internet'){if(req.method==='POST')permissionPosts++;if(req.method==='POST'&&status!=='granted'&&status!=='requested'){status='requested';requestId++;issuedAt=Math.floor(Date.now()/1000);}json(consent());return;}
       if(path==='/api/apps/wallet-walletconnect/wallet/config'){json({walletconnect:{project_id:'fixture-project',storage_revision:'"0"'}});return;}
       if(path.endsWith('/wallet/accounts')){if(failSummary){res.writeHead(500);res.end();}else json({accounts:[]});return;}
-      if(path.endsWith('/wallet/approvals')){json({approval_requests:approvalRequests});return;}
-      if(path.endsWith('/wallet/approvals/approval-fixture/complete')){completions++;json({});return;}
-      if(path.endsWith('/wallet/approvals/approval-fixture/approve')){json({handoff:{request_id:'approval-fixture',intent:'browser_personal_sign',payload_hash:'0x'+'34'.repeat(32),signer:'0x'+'12'.repeat(20),signature_type:'personal_sign',message:'Fixture review'},binding:{payload_hash:'0x'+'34'.repeat(32),chain_namespace:'eip155:20',expires_at:Math.floor(Date.now()/1000)+600}});return;}
+      if(path.endsWith('/wallet/approvals')){json({approval_requests:approvalRequests.filter(r=>r.status==='pending'||r.status==='approved'&&r.intent==='transaction_intent')});return;}
+      if(path.includes('/wallet/approvals/')&&path.endsWith('/complete')){const approvalId=decodeURIComponent(path.split('/').at(-2));const request=approvalRequests.find(r=>r.request_id===approvalId);if(request?.status!=='approved'){json({},409);return;}request.status='completed';completions++;json({});return;}
+      if(path.includes('/wallet/approvals/')&&path.endsWith('/approve')){const approvalId=decodeURIComponent(path.split('/').at(-2));const request=approvalRequests.find(r=>r.request_id===approvalId);if(request?.status!=='pending'){json({},409);return;}request.status='approved';json({handoff:{request_id:request.request_id,intent:request.intent,transaction:{from:'0x'+'12'.repeat(20),chainId:'0x14',to:'0x'+'78'.repeat(20),value:'0x1'},payload_hash:'0x'+'34'.repeat(32),signer:'0x'+'12'.repeat(20),signature_type:'personal_sign',message:'Fixture review'},binding:{payload_hash:'0x'+'34'.repeat(32),chain_namespace:'eip155:20',expires_at:Math.floor(Date.now()/1000)+600}});return;}
       if(path.endsWith('/api/auth/evm/challenge')){json({message:'Fixture ownership',expires_at:Math.floor(Date.now()/1000)+600});return;}
       if(path.endsWith('/api/auth/evm/verify')){verified++;json({});return;}
       if(path.endsWith('/relay-admission')){json({token:'fixture-admission'});return;}
@@ -56,7 +58,10 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const screenshotNames=new Set((process.env.WALLETCONNECT_SCREENSHOT_NAMES||'').split(',').filter(Boolean));
     const shot=async(name)=>{if(evidence&&(!screenshotNames.size||screenshotNames.has(name)))await page.screenshot({path:`${evidence}/${name}.png`});};
     const theme=async value=>{for(const frame of page.frames())if(frame!==page.mainFrame())await frame.evaluate(value=>document.documentElement.dataset.elTheme=value,value);};
+    const guardCase=process.env.WALLETCONNECT_GUARD_CASE;
     const initialWalletFrame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));
+    const walletFrame=initialWalletFrame;
+    if(!guardCase) {
     await wallet.locator('#wallet-requests').getByText('No approval requests.',{exact:true}).waitFor();
     assert.deepEqual(await initialWalletFrame.evaluate(()=>window.fixtureIntervals),[5000],'idle uses the earlier five-second interval');
     await wallet.locator('#wallet-connect').click();
@@ -102,7 +107,6 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await wallet.locator('dialog[open] canvas').waitFor({timeout:20000});
     // Accelerate only the app's 180s deadline; the SDK and production handler stay real.
     await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
-    const walletFrame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));
     await walletFrame.evaluate(()=>{const native=window.r14NativeTimeout=setTimeout;window.setTimeout=(fn,ms,...args)=>{if(ms===180000)window.r14Expire=fn;return native(fn,ms,...args);};});
     await wallet.locator('#wallet-connect').click();
     await wallet.locator('dialog[open] canvas').waitFor({timeout:20000});
@@ -134,12 +138,14 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     for(const value of ['dark','light']){await theme(value);await shot(`r16-error-${value}`);}
     assert.deepEqual(errors,[]);
     assert.equal(actions.filter(action=>action.action_id.includes('-turn-off:')).length,1);
+    }
     // Keep the app/client real; this stand-in wallet settles ownership immediately.
     // It lets the next checks place a click between Allow and the next permission poll.
     await page.route('**/vendor/reown-appkit.js?*', route=>route.fulfill({contentType:'text/javascript',body:`
       const provider={chainId:20,connected:true,session:{expiry:Date.now()/1000+3600,namespaces:{eip155:{accounts:['eip155:20:0x'+'12'.repeat(20)]}}},
         signer:{client:{core:{relayer:{connected:true}}}},on(){},request:async({method})=>{
           if(method==='eth_accounts')return ['0x'+'12'.repeat(20)];if(method==='eth_chainId')return 20;
+          if(window.phoneWait)await new Promise(resolve=>window.finishPhone=resolve);
           if(window.phoneFailure)throw window.phoneFailure;return '0x'+'ab'.repeat(65);
         }};
       export const connectWalletConnectEvm=async()=>{if(window.proposalFailure)throw window.proposalFailure;return provider;};
@@ -152,6 +158,13 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await wallet.locator('#wallet-requests').getByText(approvalRequests.length?'Fixture review':'No approval requests.',{exact:true}).waitFor();
       await page.evaluate(()=>inbox.style.display='none');
     };
+    const settlePermission = async () => {
+      await walletFrame.waitForFunction(()=>window.fixtureIntervals.at(-1)===5000);
+      await page.waitForResponse(response=>response.url().endsWith('/api/apps/wallet-walletconnect/internet')&&response.request().method()==='GET');
+      // Count admission posts as well as completions: a wrongly resumed effect starts here.
+      await walletFrame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,100)));
+    };
+    if(!guardCase || guardCase==='double-run') {
     // Matching Allow resumes once; a new Connect click consumes the old saved action first.
     status='off';await reload();await wallet.locator('#wallet-connect').click();
     await wallet.locator('#wallet-status').filter({hasText:permissionText}).waitFor();await page.evaluate(()=>inbox.style.display='none');
@@ -159,14 +172,18 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await wallet.locator('#wallet-connect').click();
     await wallet.locator('#wallet-status').filter({hasText:'Approval method added.'}).waitFor();
     assert.equal(verified,1);
-    await page.waitForResponse(response=>response.url().endsWith('/api/apps/wallet-walletconnect/internet')&&response.request().method()==='GET');
+    const oncePosts=permissionPosts;
+    await settlePermission();
+    assert.equal(permissionPosts,oncePosts,'double-run: saved Connect cannot start another permission post');
     assert.equal(verified,1,'Connect before the first Allow poll consumes the saved action');
     // An uninterrupted request continues once from its matching Allow.
     status='off';await reload();await wallet.locator('#wallet-connect').click();
     await wallet.locator('#wallet-status').filter({hasText:permissionText}).waitFor();await page.evaluate(()=>inbox.style.display='none');status='granted';
     await wallet.locator('#wallet-status').filter({hasText:'Approval method added.'}).waitFor();
     assert.equal(verified,2);
-    for(const reason of ['refused','revoked','expired','replacement','disconnect','new-link']) {
+    }
+    const expectedVerified=verified;
+    for(const reason of ['refused','revoked','expired','replacement','disconnect','new-link'].filter(reason=>!guardCase||reason===guardCase)) {
       status='off';await reload();await wallet.locator('#wallet-connect').click();
       await wallet.locator('#wallet-status').filter({hasText:permissionText}).waitFor();await page.evaluate(()=>inbox.style.display='none');
       if(reason==='disconnect')await wallet.locator('#wallet-disconnect').click();
@@ -177,15 +194,19 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       else if(reason==='new-link') {
         // A fresh link starts while the first permission is still pending.
         await wallet.locator('#wallet-connect').click();
+        await wallet.locator('#wallet-connect:enabled').waitFor();
         requestId++; // A later grant of the earlier entry cannot match this new request.
       } else {
         status=reason;
         await page.waitForResponse(async response=>response.url().endsWith('/api/apps/wallet-walletconnect/internet')&&response.request().method()==='GET'&&(await response.json()).status===reason);
       }
+      const beforePosts=permissionPosts;
       status='granted';
-      await page.waitForResponse(response=>response.url().endsWith('/api/apps/wallet-walletconnect/internet')&&response.request().method()==='GET');
-      assert.equal(verified,2,`${reason} clears the saved action`);
+      await settlePermission();
+      assert.equal(permissionPosts,beforePosts,`${reason} clears the saved action before a permission post`);
+      assert.equal(verified,expectedVerified,`${reason} clears the saved action`);
     }
+    if(guardCase){console.log(`saved-action guard ${guardCase}: PASS`);return;}
     status='requested';requestId++;issuedAt=Math.floor(Date.now()/1000);await reload();
     await walletFrame.waitForFunction(()=>window.fixtureIntervals.at(-1)===1000);
     status='granted';
@@ -203,21 +224,70 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     approvalRequests=[];
     // Capture the real client error rendering with a deterministic phone wallet.
     status='granted';await reload();
-    const messages=[
-      ['connection-decline','link','proposalFailure',{code:5000,message:'User rejected.'},'You declined the connection in your phone wallet. Select Connect wallet to try again.'],
-      ['ownership-decline','link','phoneFailure',{code:4001,message:'User rejected.'},'You declined the connection in your phone wallet. Select Connect wallet to try again.'],
-      ['request-decline','approve','phoneFailure',{code:5000,message:'User rejected.'},'You declined this in your phone wallet. Nothing was signed or sent.'],
-      ['phone-timeout','approve','phoneFailure',{message:'Request expired. Please try again.'},'Your phone wallet did not answer in time. Nothing was signed or sent. Select the request again to retry.'],
-    ];
-    for(const [name,kind,key,error,message] of messages){
-      approvalRequests=kind==='approve'?[{request_id:'approval-fixture',connector_id:'wallet-walletconnect',proof_type:'siwe',intent:'browser_personal_sign',status:'pending',address:'0x'+'12'.repeat(20),reason:'Fixture review',chain_namespace:'eip155:20',expires_at:Math.floor(Date.now()/1000)+600}]:[];
+    const freshRequest = (intent='browser_personal_sign',chain='eip155:20') => ({request_id:'approval-fixture',connector_id:'wallet-walletconnect',proof_type:'siwe',intent,status:'pending',address:'0x'+'12'.repeat(20),reason:'Fixture review',chain_namespace:chain,expires_at:Math.floor(Date.now()/1000)+600});
+    const endings=[['decline',{code:4001,message:'User rejected.'},'Declined'],['timeout',{message:'Request expired. Please try again.'},'Timeout'],['error-32000',{code:-32000,message:'Private library text'},'Error'],['error5100',{code:5100,message:'Private library text'},'Error']];
+    for(const scope of ['proposal','ownership','signature','transaction']) for(const [ending,error,suffix] of endings){
+      const linking=['proposal','ownership'].includes(scope);
+      const key=scope==='proposal'?'proposalFailure':'phoneFailure';
+      const message=messages[`${linking&&suffix!=='Declined'?'link':scope}${suffix}`];
+      approvalRequests=linking?[]:[freshRequest(scope==='transaction'?'transaction_intent':'browser_personal_sign')];
       await reload();
-      await walletFrame.evaluate(({key,error})=>{delete window.phoneFailure;delete window.proposalFailure;window[key]=error;},{key,error});
-      await (kind==='link'?wallet.locator('#wallet-connect'):wallet.locator('[data-wallet-request-sign]')).click();await wallet.locator('#wallet-status').filter({hasText:message}).waitFor();
+      await walletFrame.evaluate(({key,error})=>{window[key]=error;},{key,error});
+      const review=wallet.locator('[data-wallet-request-sign]');
+      await (linking?wallet.locator('#wallet-connect'):review).click();
+      await wallet.locator('#wallet-status').filter({hasText:message}).waitFor();
       assert.equal(await wallet.locator('#wallet-status').getAttribute('data-tone'),'muted');
-      if(name!=='connection-decline')await wallet.locator('#wallet-connection').filter({hasText:/^Connected$/}).waitFor();
-      for(const value of ['dark','light']){await theme(value);await shot(`r15-${name}-${value}`);}
+      if(!linking)await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
+      if(scope!=='proposal')await wallet.locator('#wallet-connection').filter({hasText:/^Connected$/}).waitFor();
+      for(const value of ['dark','light']){await theme(value);await shot(`r16-${scope}-${ending}-${value}`);}
+      if(!linking) {
+        assert.equal(approvalRequests[0].status,'approved','handoff consumes the pending request');
+        if(scope==='transaction')assert.equal(await wallet.locator('.wallet-request p').textContent(),messages.transactionRecovery);
+        else assert.equal(await wallet.locator('.wallet-request').count(),0,'consumed signature leaves the list');
+        // Dispatch the stale Review once more through the actual click handler.
+        const posts=permissionPosts;
+        await walletFrame.evaluate(()=>{const button=document.createElement('button');button.dataset.walletRequestSign='approval-fixture';document.querySelector('#wallet-requests').append(button);button.click();});
+        await wallet.locator('#wallet-status').filter({hasText:messages.consumed}).waitFor();
+        await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
+        assert.equal(permissionPosts,posts+1,'second Review reaches admission once but cannot dispatch to the phone');
+        for(const value of ['dark','light']){await theme(value);await shot(`r16-consumed-${scope}-${ending}-${value}`);}
+      }
     }
+    for(const [chain,key] of [['eip155:137','unsupported'],['eip155:8453','unapproved']]) {
+      approvalRequests=[freshRequest('browser_personal_sign',chain)];await reload();
+      if(key==='unsupported') {
+        await wallet.locator('.wallet-request p').filter({hasText:messages.unsupportedNetwork('137')}).waitFor();
+        assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),0,'an unoffered network has no dead Review action');
+        // An older rendered control also gets the same safe explanation.
+        await walletFrame.evaluate(()=>{const button=document.createElement('button');button.dataset.walletRequestSign='approval-fixture';document.querySelector('#wallet-requests').append(button);button.click();});
+      } else await wallet.locator('[data-wallet-request-sign]').click();
+      await wallet.locator('#wallet-status').filter({hasText:key==='unsupported'?messages.unsupportedNetwork('137'):'This request is for Base'}).waitFor();
+      await wallet.locator('#wallet-connection').filter({hasText:/^Connected$/}).waitFor();
+      assert.equal(approvalRequests[0].status,'pending','unsupported network stays available for rejection in Wallet');
+      for(const value of ['dark','light']){await theme(value);await shot(`r16-${key}-${value}`);}
+    }
+    // A Home return while the phone is waiting must render a disabled Review.
+    approvalRequests=[freshRequest()];await reload();
+    await walletFrame.evaluate(()=>window.phoneWait=true);
+    await wallet.locator('[data-wallet-request-sign]').click();
+    await walletFrame.waitForFunction(()=>typeof window.finishPhone==='function');
+    // Use the same origin-bound message that Home sends when it returns this window.
+    await walletFrame.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{source:window.parent,origin:'null',data:{type:'elastos:shell-layout',layout:{visible:true}}})));
+    await wallet.locator('#wallet-requests').getByText('No approval requests.',{exact:true}).waitFor();
+    // Another pending request can appear during this wait, but its Review stays disabled.
+    approvalRequests.push({...freshRequest(),request_id:'approval-next'});await walletFrame.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{source:window.parent,origin:'null',data:{type:'elastos:shell-layout',layout:{visible:true}}})));
+    await wallet.locator('[data-wallet-request-sign="approval-next"]:disabled').waitFor();
+    assert.equal(approvalRequests.find(r=>r.request_id==='approval-fixture').status,'approved','Home return preserves the consumed request');
+    assert.equal(await wallet.locator('[data-wallet-request-sign="approval-fixture"]').count(),0);
+    await walletFrame.evaluate(()=>{window.phoneFailure={code:4001,message:'User rejected.'};window.finishPhone();});
+    await wallet.locator('#wallet-status').filter({hasText:messages.signatureDeclined}).waitFor();
+    await wallet.locator('[data-wallet-request-sign="approval-next"]:enabled').waitFor();
+    await walletFrame.evaluate(()=>{delete window.phoneWait;delete window.phoneFailure;});
+    await wallet.locator('[data-wallet-request-sign="approval-next"]').click();
+    await wallet.locator('#wallet-status').filter({hasText:'Request signed.'}).waitFor();
+    await wallet.locator('#wallet-requests').getByText('No approval requests.',{exact:true}).waitFor();
+    assert.equal(completions,2,'the next request works after the phone reply ends');
+    assert.equal(approvalRequests.find(r=>r.request_id==='approval-next').status,'completed');
     assert.deepEqual(errors,[]);
   } finally {await browser?.close();for(const socket of relay.clients)socket.terminate();await new Promise(resolve=>relay.close(resolve));server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });

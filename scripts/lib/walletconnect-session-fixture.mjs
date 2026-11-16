@@ -2,6 +2,7 @@
 import { createWalletConnectClient } from './walletconnect-client.mjs';
 const keys = Object.create(null);
 window.requests = [];
+let approvalStatus='pending';
 const api = async (path, input) => {
   if (path === 'wallet/config') return {walletconnect:{project_id:'fixture-project',storage_revision:'"0"'}};
   if (path === 'internet') return {status:'granted'};
@@ -11,8 +12,8 @@ const api = async (path, input) => {
     else if (input?.body) { const {key,value} = JSON.parse(input.body); if (value === null) delete keys[key]; else keys[key] = value; }
     return structuredClone(keys);
   }
-  if (path === 'wallet/approvals') return {approval_requests:[{request_id:'fixture-sign',status:'pending',address:'0x'+'12'.repeat(20),chain_namespace:'eip155:8453',intent:'browser_personal_sign',expires_at:Math.floor(Date.now()/1000)+600}]};
-  if (path.endsWith('/approve')) return {handoff:{request_id:'fixture-sign',payload_hash:'0x'+'34'.repeat(32),signer:'0x'+'12'.repeat(20),intent:'browser_personal_sign',signature_type:'personal_sign',message:'Fixture signing request'},binding:{payload_hash:'0x'+'34'.repeat(32),chain_namespace:'eip155:8453',expires_at:Math.floor(Date.now()/1000)+600}};
+  if (path === 'wallet/approvals') return {approval_requests:approvalStatus==='pending'?[{request_id:'fixture-sign',status:approvalStatus,address:'0x'+'12'.repeat(20),chain_namespace:'eip155:8453',intent:'browser_personal_sign',expires_at:Math.floor(Date.now()/1000)+600}]:[]};
+  if (path.endsWith('/approve')) {if(approvalStatus!=='pending')throw new Error('request consumed');approvalStatus='approved';return {handoff:{request_id:'fixture-sign',payload_hash:'0x'+'34'.repeat(32),signer:'0x'+'12'.repeat(20),intent:'browser_personal_sign',signature_type:'personal_sign',message:'Fixture signing request'},binding:{payload_hash:'0x'+'34'.repeat(32),chain_namespace:'eip155:8453',expires_at:Math.floor(Date.now()/1000)+600}};}
   if (path.endsWith('/challenge')) { window.challenge = JSON.parse(input.body); return {message:'Test Home ownership',expires_at:Math.floor(Date.now()/1000)+600}; }
   if (path.endsWith('/verify')) return {};
   throw new Error('Unexpected fixture resource');
@@ -38,3 +39,5 @@ const client = createWalletConnectClient({api,origin:location.origin,loadAdapter
 window.done = client.effect(new URLSearchParams(location.search).get('action') === 'approve' ? {kind:'approve',approvalRequestId:'fixture-sign'} : {kind:'link'}).then(result => { window.result = result; }, error => { window.error = error.message; window.errorTone = error.tone; });
 window.relink = () => client.effect({kind:'link'});
 window.cleanup = () => client.effect({kind:'disconnect'});
+
+window.reviewAgain = () => client.effect({kind:'approve',approvalRequestId:'fixture-sign'}).catch(error=>error.message);

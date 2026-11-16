@@ -1,5 +1,5 @@
 import { installWalletConnectStorage } from './walletconnect-storage.mjs';
-import { createWalletConnectClient } from './walletconnect-client.mjs';
+import { createWalletConnectClient, walletConnectMessages, isWalletConnectNetwork } from './walletconnect-client.mjs';
 import {
   createHomeClipboardClient,
 } from "/apps/home/home-clipboard-client.js?v=home-20260726a";
@@ -202,7 +202,13 @@ function requestCard(request) {
   main.append(title, meta, reason);
   if (request.status === 'approved' && request.intent === 'transaction_intent') {
     const recovery = document.createElement('p');
-    recovery.textContent = 'Check your phone wallet. It may have sent this transaction. Check Wallet activity before you send again.';
+    recovery.textContent = walletConnectMessages.transactionRecovery;
+    card.append(main,recovery);
+    return card;
+  }
+  if (!isWalletConnectNetwork(request.chain_namespace)) {
+    const recovery = document.createElement('p');
+    recovery.textContent = walletConnectMessages.unsupportedNetwork(readText(request.chain_namespace).split(':')[1]);
     card.append(main,recovery);
     return card;
   }
@@ -210,6 +216,7 @@ function requestCard(request) {
   sign.className = "wallet-button";
   sign.type = "button";
   sign.textContent = "Review";
+  sign.disabled = hostEffectInFlight;
   sign.dataset.walletRequestSign = readText(request?.request_id);
   card.append(main, sign);
   return card;
@@ -251,6 +258,7 @@ async function onRequestClick(event) {
     await refreshWalletState();
   } catch (error) {
     showStatus(errorMessage(error), error.tone || "error");
+    await refreshWalletState().catch(() => {});
   } finally {
     setButtonBusy(button, false);
   }

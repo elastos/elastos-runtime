@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { exerciseWalletConnect,transactionHash } from './lib/walletconnect-capsule-fixture.mjs';
+import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const sent = r=>r.calls.filter(c=>c.method==='eth_sendTransaction');
 const completed = r=>r.routes.filter(c=>c.path.endsWith('/complete'));
 test('opaque capsule sends the exact Runtime transaction once',async()=>{const r=await exerciseWalletConnect();assert.equal(r.error,undefined);assert.equal(sent(r).length,1);assert.equal(completed(r).length,1);});
@@ -82,24 +83,29 @@ test('an unapproved request network stops before the phone and before handoff',a
 test('an unknown SDK error stays in the console and gives a safe recovery message',async t=>{
   const logs=[];t.mock.method(console,'error',(...args)=>logs.push(args));
   const r=await exerciseWalletConnect('sdk-unknown');
-  assert.equal(r.error,'The wallet connection failed. Select Connect wallet to try again.');
+  assert.equal(r.error,messages.transactionError);
   assert.deepEqual(logs,[['WalletConnect SDK:','Opaque SDK failure fixture']]);
 });
 
 for (const scope of ['signature','transaction','link','proposal']) for (const code of [4001,5000,5001,5002,5003]) test(`${scope} phone decline ${code} is muted and true`,async()=>{
   const r=await exerciseWalletConnect(`${scope}-phone-declined:${code}`);
-  assert.equal(r.error, ['link','proposal'].includes(scope)
-    ? 'You declined the connection in your phone wallet. Select Connect wallet to try again.'
-    : 'You declined this in your phone wallet. Nothing was signed or sent.');
+  assert.equal(r.error,messages[`${scope==='link'?'ownership':scope}Declined`]);
   assert.equal(r.tone,'muted');assert.equal(completed(r).length,0);
 });
-for (const scope of ['signature','transaction']) test(`${scope} phone expiry is muted and retryable`,async()=>{
-  const r=await exerciseWalletConnect(`${scope}-phone-expired`);
-  assert.equal(r.error,'Your phone wallet did not answer in time. Nothing was signed or sent. Select the request again to retry.');
+for (const scope of ['signature','transaction','link','proposal']) for (const [ending,key] of [['expired','Timeout'],['error:-32000','Error'],['error:5100','Error']]) test(`${scope} phone ${ending} gives a working next step`,async()=>{
+  const r=await exerciseWalletConnect(`${scope}-phone-${ending}`);
+  assert.equal(r.error,messages[`${['link','proposal'].includes(scope)?'link':scope}${key}`]);
   assert.equal(r.tone,'muted');assert.equal(completed(r).length,0);
 });
-for (const [scenario,name] of [['listed-without-account','Ethereum'],['unknown-network','an unsupported network (137)']]) test(`${scenario} stops before handoff`,async()=>{
+for (const scope of ['signature','transaction']) for (const ending of ['declined:4001','expired','error:-32000','error:5100']) test(`${scope} second Review after ${ending} cannot dispatch again`,async()=>{
+  const r=await exerciseWalletConnect(`${scope}-phone-${ending}`);
+  assert.equal(r.status,'approved');assert.equal(r.secondError,messages.consumed);
+  assert.equal(r.routes.filter(c=>c.path.endsWith('/approve')).length,1);
+  assert.equal(r.calls.filter(c=>['personal_sign','eth_sendTransaction'].includes(c.method)).length,1);
+});
+for (const [scenario,name] of [['listed-without-account','Ethereum'],['unknown-network',null]]) test(`${scenario} stops before handoff`,async()=>{
   const r=await exerciseWalletConnect(scenario);
-  assert.equal(r.error,`This request is for ${name}, which your wallet did not approve. Select Disconnect, then Connect wallet, and approve ${name} in your phone wallet.`);
+  if(name)assert.match(r.error,/This request is for Ethereum/);
+  else assert.equal(r.error,messages.unsupportedNetwork('137'));
   assert.equal(sent(r).length,0);assert.equal(r.routes.filter(c=>c.path.endsWith('/approve')).length,0);
 });

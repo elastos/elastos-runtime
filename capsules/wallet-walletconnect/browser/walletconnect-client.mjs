@@ -1,6 +1,22 @@
 const networks = new Map([[1,'Ethereum'],[20,'Elastos Smart Chain'],[8453,'Base'],[11155111,'Sepolia test network']]);
 const noSupportedNetwork = 'Your wallet did not approve a network this Home supports. Select Connect wallet and choose Ethereum, Elastos Smart Chain, Base or Sepolia in your phone wallet.';
-const connectionFailed = 'The wallet connection failed. Select Connect wallet to try again.';
+// Shared with capsule and SDK journey tests so copy has one source.
+export const walletConnectMessages = {
+  proposalDeclined: 'Your phone wallet declined the connection request. Select Connect wallet to try again.',
+  ownershipDeclined: 'Your phone wallet declined the ownership signature. Select Connect wallet to try again.',
+  linkTimeout: 'Your phone wallet did not answer in time. Select Connect wallet to try again.',
+  linkError: 'Home could not finish linking. Select Connect wallet to try again.',
+  signatureDeclined: 'Your phone wallet declined this signature request. Ask the app to send a new request.',
+  signatureTimeout: 'Your phone wallet did not answer in time. Ask the app to send a new signature request.',
+  signatureError: 'Home could not finish this signature request. Ask the app to send a new request.',
+  transactionDeclined: 'Your phone wallet declined this transaction. Check your phone wallet and Wallet activity before you send again.',
+  transactionTimeout: 'Your phone wallet did not answer in time. Check your phone wallet and Wallet activity before you send again.',
+  transactionError: 'Home could not confirm this transaction. Check your phone wallet and Wallet activity before you send again.',
+  consumed: 'This request is no longer available for review here. Check your phone wallet and Wallet activity before you ask the app for a new request.',
+  transactionRecovery: 'Check your phone wallet and Wallet activity before you send again.',
+  unsupportedNetwork: id => `This Home does not offer network ${id}. Reject this request in Wallet.`,
+};
+export const isWalletConnectNetwork = namespace => networks.has(Number(String(namespace).split(':')[1]));
 const approvedNetworks = provider => {
   const namespace = provider.session?.namespaces?.eip155;
   return new Set([...(namespace?.accounts || []).map(account => account.split(':').slice(0,2).join(':'))]);
@@ -8,25 +24,28 @@ const approvedNetworks = provider => {
 // This module runs only in the connector's opaque frame. Runtime owns approval authority.
 export function createWalletConnectClient({ api, origin, loadAdapter = () => import(`./vendor/reown-appkit.js?instance=${crypto.randomUUID()}`), clearMemory = () => {} }) {
   let provider, adapter, activeRevision, sessionApi, projectId, pairing, generation = 0;
-  const sdkError = (error, linking = false) => {
+  const sdkError = (error, context = 'proposal') => {
     console.error('WalletConnect SDK:', String(error?.message || error).split(projectId || '\0').join('[project]'));
-    if ([4001,5000,5001,5002,5003].includes(Number(error?.code))) return Object.assign(new Error(linking
-      ? 'You declined the connection in your phone wallet. Select Connect wallet to try again.'
-      : 'You declined this in your phone wallet. Nothing was signed or sent.'), {tone:'muted'});
-    if (error?.message === 'Request expired. Please try again.') return Object.assign(new Error('Your phone wallet did not answer in time. Nothing was signed or sent. Select the request again to retry.'), {tone:'muted'});
-    const message = ['Wallet connection cancelled.','The QR code expired. Select Connect wallet for a new one.','Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'].includes(error?.message) ? error.message : connectionFailed;
-    return Object.assign(new Error(message), {tone:message.startsWith('The QR code expired.') || message.startsWith('Internet access for WalletConnect was turned off.') ? 'muted' : 'error'});
+    const linking = ['proposal','ownership'].includes(context);
+    const prefix = linking ? 'link' : context;
+    if ([4001,5000,5001,5002,5003].includes(Number(error?.code))) return Object.assign(new Error(
+      walletConnectMessages[`${context}Declined`]), {tone:'muted'});
+    if (error?.message === 'Request expired. Please try again.') return Object.assign(new Error(walletConnectMessages[`${prefix}Timeout`]), {tone:'muted'});
+    const message = ['Wallet connection cancelled.','The QR code expired. Select Connect wallet for a new one.','Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'].includes(error?.message) ? error.message : walletConnectMessages[`${prefix}Error`];
+    return Object.assign(new Error(message), {tone:message === 'Wallet connection cancelled.' ? 'error' : 'muted'});
   };
   const requireNetwork = namespace => {
+    const id = namespace.split(':')[1];
+    if (!isWalletConnectNetwork(namespace)) throw Object.assign(new Error(walletConnectMessages.unsupportedNetwork(id)), {tone:'muted'});
     if (!approvedNetworks(provider).has(namespace)) {
-      const name = networks.get(Number(namespace.split(':')[1])) || `an unsupported network (${namespace.split(':')[1]})`;
+      const name = networks.get(Number(id));
       throw new Error(`This request is for ${name}, which your wallet did not approve. Select Disconnect, then Connect wallet, and approve ${name} in your phone wallet.`);
     }
   };
-  const request = async (input, expiry, linking = false) => {
+  const request = async (input, expiry, context = 'signature') => {
     requireNetwork(`eip155:${provider.chainId}`);
     try { return await provider.request(input, expiry); }
-    catch (error) { throw sdkError(error, linking); }
+    catch (error) { throw sdkError(error, context); }
   };
   const address = async () => {
     const accounts = await request({method:'eth_accounts'});
@@ -77,13 +96,13 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
       metadata:{name:'ElastOS Home',description:'Approve requests from your ElastOS Home',url:origin,icons:[]},
     });
       attempt.signal.throwIfAborted();
-    } catch (error) { throw sdkError(error, true); }
+    } catch (error) { throw sdkError(error, 'proposal'); }
     finally { if (pairing === attempt) pairing = undefined; }
     const approved = approvedNetworks(current);
     const supported = [...networks.keys()].filter(id => approved.has(`eip155:${id}`));
     if (!supported.length) { await disconnect(); throw new Error(noSupportedNetwork); }
     try { if (!supported.includes(current.chainId)) current.signer.setDefaultChain(`eip155:${supported[0]}`); }
-    catch (error) { throw sdkError(error, true); }
+    catch (error) { throw sdkError(error, 'proposal'); }
     if (current !== provider) {
       provider = current;
       for (const name of ['accountsChanged','chainChanged','disconnect']) provider.on(name,()=>generation++);
@@ -118,7 +137,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
           || !Number.isSafeInteger(challenge.expires_at) || challenge.expires_at <= Date.now()/1000) throw new Error('Wallet changed or the challenge expired. Select Connect wallet to try again.');
       };
       await check();
-      const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]}, undefined, true);
+      const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]}, undefined, 'ownership');
       await check();
       await api('/api/auth/evm/verify',{method:'POST',body:JSON.stringify({message:challenge.message,signature})});
       return {status:'linked'};
@@ -127,8 +146,9 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
     const path = `wallet/approvals/${encodeURIComponent(action.approvalRequestId)}`;
     const requests = (await api('wallet/approvals')).approval_requests || [];
     const review = requests.find(r=>r.request_id === action.approvalRequestId);
-    if (review) requireNetwork(review.chain_namespace);
-    if (!review || review.status !== 'pending' || !same(review.address,signer) || review.chain_namespace !== namespace) throw new Error('Select the requested account and network in your phone wallet, then review again.');
+    if (!review || review.status !== 'pending') throw Object.assign(new Error(walletConnectMessages.consumed), {tone:'muted'});
+    requireNetwork(review.chain_namespace);
+    if (!same(review.address,signer) || review.chain_namespace !== namespace) throw new Error('Select the requested account and network in your phone wallet, then review again.');
     const ttl = review.expires_at - Math.ceil(Date.now()/1000);
     if (!Number.isSafeInteger(review.expires_at) || ttl <= 0 || review.intent === 'transaction_intent' && ttl < 300) throw new Error('Wallet request expires soon. Request a fresh review.');
     const supported = ['auth_challenge','browser_personal_sign','browser_typed_data_sign','capability_grant','credential','publish_envelope','protected_content_rights_signature','transaction_intent','revocation'];
@@ -149,7 +169,7 @@ export function createWalletConnectClient({ api, origin, loadAdapter = () => imp
       const transaction = handoff.transaction;
       if (transaction) requireNetwork(`eip155:${Number.parseInt(transaction.chainId,16)}`);
       if (!transaction || !same(transaction.from,signer) || `eip155:${Number.parseInt(transaction.chainId,16)}` !== namespace) throw new Error('Runtime returned an invalid transaction.');
-      const hash = await request({method:'eth_sendTransaction',params:[transaction]},expiry);
+      const hash = await request({method:'eth_sendTransaction',params:[transaction]},expiry,'transaction');
       if (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Wallet returned an invalid transaction hash. The wallet may have sent it. Check your wallet before sending again.');
       // A returned hash is retained even if the account, network or expiry changed while sending.
       let receipt;
