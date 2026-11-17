@@ -252,7 +252,10 @@ impl LaunchPlan {
             // Older releases can read the unchanged receipt schema and accept
             // home --browser with this controller-owned marker. The retained
             // controller consumes --no-open before previous-release restoration.
-            .env("ELASTOS_UPDATE_RESTART", if restart || no_open { "1" } else { "0" });
+            .env(
+                "ELASTOS_UPDATE_RESTART",
+                if restart || no_open { "1" } else { "0" },
+            );
         Ok(command)
     }
 

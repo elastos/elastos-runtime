@@ -1086,7 +1086,10 @@ fn home_browser_no_open_receipt_is_readable_by_the_previous_runtime() {
         let bytes = serde_json::to_vec(&launch).unwrap();
         let previous: PreviousLaunchPlan = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(serde_json::to_vec(&previous).unwrap(), bytes);
-        assert_eq!(digest(&serde_json::to_vec(&previous).unwrap()), launch.sha256().unwrap());
+        assert_eq!(
+            digest(&serde_json::to_vec(&previous).unwrap()),
+            launch.sha256().unwrap()
+        );
     }
 }
 
@@ -1094,8 +1097,13 @@ fn home_browser_no_open_receipt_is_readable_by_the_previous_runtime() {
 fn home_browser_no_open_launch_plan_is_explicit_and_legacy_compatible() {
     for no_open in [false, true] {
         let launch = LaunchPlan::capture_environment(
-            [(OsString::from("ELASTOS_SERVICE"), OsString::from("1")),
-             (OsString::from("ELASTOS_UPDATE_RESTART"), OsString::from("1"))],
+            [
+                (OsString::from("ELASTOS_SERVICE"), OsString::from("1")),
+                (
+                    OsString::from("ELASTOS_UPDATE_RESTART"),
+                    OsString::from("1"),
+                ),
+            ],
             PathBuf::from("/Home fixture"),
             no_open,
         );
@@ -1112,19 +1120,29 @@ fn home_browser_no_open_launch_plan_is_explicit_and_legacy_compatible() {
         assert_eq!(retained.args, expected);
         assert_eq!(retained.sha256().unwrap(), launch.sha256().unwrap());
         for restarting in [false, true] {
-            let command = retained.command(Path::new("/legacy/elastos"), &"c".repeat(32), restarting).unwrap();
-            assert_eq!(command.as_std().get_args().collect::<Vec<_>>(),
-                       [OsStr::new("home"), OsStr::new("--browser")]);
-            let marker = command.as_std().get_envs()
+            let command = retained
+                .command(Path::new("/legacy/elastos"), &"c".repeat(32), restarting)
+                .unwrap();
+            assert_eq!(
+                command.as_std().get_args().collect::<Vec<_>>(),
+                [OsStr::new("home"), OsStr::new("--browser")]
+            );
+            let marker = command
+                .as_std()
+                .get_envs()
                 .find(|(key, _)| *key == OsStr::new("ELASTOS_UPDATE_RESTART"))
                 .and_then(|(_, value)| value);
-            assert_eq!(marker, Some(OsStr::new(if no_open || restarting { "1" } else { "0" })));
+            assert_eq!(
+                marker,
+                Some(OsStr::new(if no_open || restarting { "1" } else { "0" }))
+            );
         }
         if !no_open {
             // Old receipts omit no_open; preserving their bytes preserves the journal binding.
             let old = serde_json::to_vec(&json!({
                 "args": value["args"], "environment": value["environment"], "cwd": value["cwd"]
-            })).unwrap();
+            }))
+            .unwrap();
             let old: LaunchPlan = serde_json::from_slice(&old).unwrap();
             assert!(!old.args.contains(&BASE64.encode(b"--no-open")));
             assert_eq!(old.sha256().unwrap(), launch.sha256().unwrap());
@@ -1141,7 +1159,8 @@ fn launch_capture_and_restart_preserve_carrier_mdns_choice() {
                 OsString::from(value),
             )
         });
-        let launch = LaunchPlan::capture_environment(environment, PathBuf::from("/Home fixture"), false);
+        let launch =
+            LaunchPlan::capture_environment(environment, PathBuf::from("/Home fixture"), false);
         for restarting in [false, true] {
             let command = launch
                 .command(
@@ -3925,7 +3944,13 @@ async fn home_browser_no_open_survives_installed_update() {
                 fixture_home_exec("RESTART_FIXTURE_ROLE=candidate RESTART_FIXTURE_VERSION=0.7.1")),
             0, None, no_open,
         ).await;
-        let result = crate::update::run_restarting_update(&fixture.data, &fetch, request.head_cid, &mut owner).await;
+        let result = crate::update::run_restarting_update(
+            &fixture.data,
+            &fetch,
+            request.head_cid,
+            &mut owner,
+        )
+        .await;
         owner.controller.publish_apply_result(&result).unwrap();
         result.unwrap();
         assert_eq!(status(&fixture.data).unwrap().unwrap().phase, "updated");
@@ -3938,15 +3963,37 @@ async fn home_browser_no_open_survives_installed_update() {
 #[tokio::test]
 async fn home_browser_no_open_survives_previous_release_and_cold_recovery() {
     for no_open in [false, true] {
-        let RestartScenario { fixture, mut owner, request, fetch, .. } = restart_scenario_with_no_open(
-            crash_candidate, 0, Some(Duration::from_secs(3)), no_open,
-        ).await;
+        let RestartScenario {
+            fixture,
+            mut owner,
+            request,
+            fetch,
+            ..
+        } = restart_scenario_with_no_open(
+            crash_candidate,
+            0,
+            Some(Duration::from_secs(3)),
+            no_open,
+        )
+        .await;
         fixture.file(&fixture.data.join("previous-fail"), b"", 0o600);
-        let result = crate::update::run_restarting_update(&fixture.data, &fetch, request.head_cid, &mut owner).await;
+        let result = crate::update::run_restarting_update(
+            &fixture.data,
+            &fetch,
+            request.head_cid,
+            &mut owner,
+        )
+        .await;
         owner.controller.publish_apply_result(&result).unwrap();
         assert!(result.is_err());
-        assert_eq!(InstallTransaction::acquire(&fixture.data, &fixture.binary).unwrap().restart_record().unwrap().phase,
-                   RestartPhase::PreviousRunning);
+        assert_eq!(
+            InstallTransaction::acquire(&fixture.data, &fixture.binary)
+                .unwrap()
+                .restart_record()
+                .unwrap()
+                .phase,
+            RestartPhase::PreviousRunning
+        );
         assert!(owner.controller.child.is_none());
         fs::remove_file(fixture.data.join("previous-fail")).unwrap();
         let mut recovered = retained_controller(&fixture);
@@ -3961,11 +4008,17 @@ async fn home_browser_no_open_survives_previous_release_and_cold_recovery() {
 
 fn assert_launch_observations(fixture: &PrivateFixture, no_open: bool, starts: usize) {
     let observed = fs::read_to_string(fixture.data.join("launch-observations")).unwrap();
-    let mut expected = vec![format!("{} unset home --browser", if no_open { "1" } else { "0" })];
+    let mut expected = vec![format!(
+        "{} unset home --browser",
+        if no_open { "1" } else { "0" }
+    )];
     expected.extend((1..starts).map(|_| "1 unset home --browser".to_string()));
     assert_eq!(observed.lines().collect::<Vec<_>>(), expected);
     let receipt: Receipt = read_private_json(&fixture.directory.join(RECEIPT)).unwrap();
-    assert_eq!(receipt.launch.args.contains(&BASE64.encode(b"--no-open")), no_open);
+    assert_eq!(
+        receipt.launch.args.contains(&BASE64.encode(b"--no-open")),
+        no_open
+    );
     validate_retained_receipt(&receipt).unwrap();
 }
 

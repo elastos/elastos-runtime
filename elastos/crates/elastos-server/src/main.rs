@@ -2667,7 +2667,11 @@ mod tests {
             vec!["elastos", "home", "--no-open", "--browser"],
         ] {
             let result = super::Cli::try_parse_from(&args);
-            assert!(result.is_ok(), "{args:?}: {:?}", result.err().map(|error| error.to_string()));
+            assert!(
+                result.is_ok(),
+                "{args:?}: {:?}",
+                result.err().map(|error| error.to_string())
+            );
         }
         for args in [
             vec!["elastos", "home", "--no-open"],
@@ -2694,7 +2698,12 @@ mod tests {
         use std::io::IsTerminal;
 
         let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-        for args in [Vec::new(), vec!["home"], vec!["home", "--browser"], vec!["home", "--browser", "--no-open"]] {
+        for args in [
+            Vec::new(),
+            vec!["home"],
+            vec!["home", "--browser"],
+            vec!["home", "--browser", "--no-open"],
+        ] {
             let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
             assert_eq!(super::should_isolate_process_group(&args), !interactive);
         }
