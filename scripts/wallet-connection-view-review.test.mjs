@@ -113,3 +113,11 @@ test('10: independent oracles detect real source mutations',async t=>{
     }finally{await rm(scratch,{recursive:true,force:true});}
   });
 });
+
+test('9: freezing a returned view preserves caller-owned result mutability',()=>{
+  const walletResult={disposition:null,receipt:null};
+  const input={window:'metamask',stage:'ready',walletResult};
+  const view=connectionView(input);
+  assert.notEqual(view.walletResult,walletResult);assert(Object.isFrozen(view.walletResult));
+  assert.equal(Object.isFrozen(walletResult),false);assert.equal(Object.isFrozen(input),false);
+});

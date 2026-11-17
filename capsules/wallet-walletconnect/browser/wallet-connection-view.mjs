@@ -154,7 +154,7 @@ export function connectionView(input) {
   });
   const action = a => ({ id: a.id, label: parts(a.label), primary: a === screen.primary || a === screen.requestAction, quiet: a.quiet });
   let notice = screen.notice || '';
-  const result=input.walletResult||{disposition:null,receipt:null};
+  const result=input.walletResult?clone(input.walletResult):{disposition:null,receipt:null};
   requireValue(plain(result)&&Object.keys(result).length===2&&[null,'answered','declined','refused','failed'].includes(result.disposition)&&[null,'recorded','recording_failed'].includes(result.receipt),'closed wallet result');
   const knownNotSent=['declined','refused'].includes(result.disposition);
   requireValue(!knownNotSent||!summary?.transaction||['transaction-declined','transaction-access-error'].includes(stage),'known transaction outcome stage');
