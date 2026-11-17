@@ -617,8 +617,17 @@ ID decide the action, not an old notification payload. Inbox uses the existing
 owner/passkey confirmation and grant/revoke routes. Selecting Allow in an off
 state obtains or creates a fresh requested record through the existing route,
 reads its current ID, then obtains the exact fresh proof and answers that ID.
-A stale action cannot approve a replacement record. No new generic permission
-or decision API is introduced.
+A stale action cannot approve a replacement record. For recovery from a saved
+off/expired entry, Inbox posts exactly `{action:"request",expected_entry_id:id}`
+to the existing internet route, using the ID from that entry's action reference.
+Under the existing consent lock, Runtime requires that exact saved ID and an
+eligible off/expired state before creating the new question. A replaced ID,
+granted state or unfinished cleanup returns conflict and requires refresh.
+Two concurrent recoveries therefore prepare at most one question; the stale
+caller cannot silently adopt it. The connector's existing `{action:"request"}`
+path remains the explicit new-attempt path, with its current authority checks.
+Only Inbox's saved-entry recovery requires `expected_entry_id`; Browser's body
+stays unchanged. No new generic permission or decision API is introduced.
 
 | Status | Runtime state / entry kind | Action retained in Inbox | Connector result |
 | --- | --- | --- | --- |
@@ -668,7 +677,7 @@ a precondition of a new connection.
 | Status | Required named test | Where it runs / lane |
 | --- | --- | --- |
 | After this work | `n5_permission_entry_all_states` | Runtime/Inbox/Wallet lane: server producer plus real Inbox module; all six rows, exact entry/action IDs, stale ID, restart, owner versus guest and decision counts. |
-| After this work | `n5_allow_after_refusal_off_expiry` | Runtime/Inbox/Wallet lane: real Inbox and gateway journey; each off state creates/uses a fresh proof for the current question and returns the same window to readiness. |
+| After this work | `n5_allow_after_refusal_off_expiry` | Runtime/Inbox/Wallet lane: real Inbox and gateway journey; each off state atomically binds `expected_entry_id`, uses a fresh proof for the new question and returns the same window to readiness; concurrent recovery and stale saved-entry IDs cannot adopt a replacement question. |
 | After this work | `n5_cleanup_blocks_allow_until_complete` | Runtime and WalletConnect lanes: failed Turn Off, retry and socket completion retain recovery and prevent a new session until cleanup finishes. |
 | After this work | `n5_retired_intent_never_resumes` | WalletConnect window lane, real controller/client modules and headless Inbox return: refusal, revoke, expiry, Cancel, reopen/reload and a delayed old read never resend. Same active intent resumes exactly once. |
 
