@@ -29,7 +29,9 @@ before closing its page. In a unit test, use `control.assertNoViolations()`.
 An unrecorded method, parameter, extra request or wrong call order is added to
 `control.violations` before it throws. Product code can catch the exception;
 the final helper still fails the test. Violations carry method/case metadata,
-rather than untrusted request parameters. JSON object key order is immaterial; array order and values
+rather than untrusted request parameters. Both public RPC entries also record
+synchronous argument and serialization failures before product code can catch them.
+JSON object key order is immaterial; array order and values
 are exact. Tests supply the recorded message/transaction parameters. This tool
 does not sign a new Runtime challenge or validate a link. The Runtime lane
 must use a matching recorded proof fixture for a joined link test.

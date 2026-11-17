@@ -71,6 +71,29 @@ test('F3 caught provider exceptions leave a visible violation', async () => {
   replay.dispose();
 });
 
+for (const [name, scenario, call] of [
+  ['missing EVM argument', 'metamask-before-access', (provider) => provider.request()],
+  ['null EVM argument', 'metamask-before-access', (provider) => provider.request(null)],
+  ['symbol EVM method', 'metamask-before-access', (provider) => provider.request({ method: Symbol('invalid') })],
+  ['unserializable EVM parameters', 'metamask-before-access', (provider) => provider.request({ method: 'eth_accounts', params: [1n] })],
+  ['unserializable UniSat parameters', 'unisat-before-access', (provider) => provider.getAccounts(1n)],
+]) {
+  test(`F3 public entry records ${name} before product code catches it`, async () => {
+    const input = await replayInput(scenario);
+    const page = new EventTarget(); page.CustomEvent = CustomEvent;
+    const replay = installScriptedExtension(input, page);
+    let provider = page.unisat;
+    if (!provider) {
+      page.addEventListener('eip6963:announceProvider', ({ detail }) => provider = detail.provider);
+      page.dispatchEvent(new Event('eip6963:requestProvider')); await replay.advance(1000);
+    }
+    try { call(provider); } catch { /* Product code may catch an entry error too. */ }
+    assert.equal(replay.violations.length, 1);
+    assert.throws(() => replay.assertNoViolations(), /violations/);
+    replay.dispose();
+  });
+}
+
 test('F4 UniSat has no EIP-1193 request member', async () => {
   const input = await replayInput('unisat-before-access');
   const page = new EventTarget(); page.CustomEvent = CustomEvent;

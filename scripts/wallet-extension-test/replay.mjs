@@ -15,6 +15,14 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
     violations.push({ reason, ...fields });
     throw new Error(reason);
   }
+  function invoke(provider, call) {
+    const before = violations.length;
+    try { return call(); } catch (error) {
+      // Argument extraction/serialization can fail before request() records it.
+      if (violations.length === before) violations.push({ reason: 'Invalid wallet invocation', provider });
+      throw error;
+    }
+  }
   function providerId(id) {
     if (!Object.hasOwn(fixture.providerBindings, id)) return violate('Unmapped recorded provider', { provider: id });
     return fixture.providerBindings[id];
@@ -90,9 +98,12 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
       for (const key of inventory?.keys || []) provider[key] = undefined;
       Object.assign(provider, flags);
       if (id === 'unisat') {
-        for (const method of inventory.methods) provider[method] = (...params) => request(id, method, params);
+        for (const method of inventory.methods) provider[method] = (...params) => invoke(id, () => request(id, method, params));
       } else {
-        provider.request = ({ method, params = [] }) => request(id, method, params);
+        provider.request = (args) => invoke(id, () => {
+          const { method, params = [] } = args;
+          return request(id, method, params);
+        });
         if (inventory?.keys.includes('on')) provider.on = eventMethods.on;
       }
       providers.set(id, provider);

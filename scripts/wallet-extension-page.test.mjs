@@ -38,6 +38,20 @@ test('caught page errors remain visible to the test through the control helper',
   } finally { await browser.close(); }
 });
 
+test('caught malformed EVM page calls remain visible through the control helper', async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.addInitScript(installScriptedExtension, await replayInput('metamask-before-access'));
+    await page.goto('data:text/html,<script>addEventListener("eip6963:announceProvider",e=>window.wallet=e.detail.provider); dispatchEvent(new Event("eip6963:requestProvider"));</script>');
+    await page.evaluate(() => __walletReplay.advance(1000));
+    await page.evaluate(() => { try { wallet.request(); } catch { window.productRecovered = true; } });
+    assert.equal(await page.evaluate(() => productRecovered), true);
+    assert.equal(await page.evaluate(() => __walletReplay.violations.length), 1);
+    await assert.rejects(page.evaluate(() => __walletReplay.assertNoViolations()), /Wallet replay violations/);
+  } finally { await browser.close(); }
+});
+
 test('headless UniSat waits through unlock and approval, with recorded public event order', async () => {
   const browser = await chromium.launch({ headless: true });
   try {
