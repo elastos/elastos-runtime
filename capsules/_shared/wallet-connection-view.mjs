@@ -80,11 +80,13 @@ export function reduceAlternative(row) {
     && s.paymentPending === false && s.ready === true && s.targetConfigured === true;
 }
 
-export function reduceConnection(input, { message, safetyMessage, summary, otherSummaries = [], audience, alternative, nowSeconds } = {}) {
+export function reduceConnection(input, { message, safetyMessage, summary, otherSummaries = [], contextSummary, audience, alternative, nowSeconds } = {}) {
   const connector = `wallet-${input.window}`;
   let provider = message?.snapshot ? reduceProvider(message.snapshot) : null;
   if (safetyMessage?.snapshot && provider) provider.paymentPending = reduceProvider(safetyMessage.snapshot).paymentPending;
   const request = summary ? reduceSummary(summary, { connector, audience }) : null;
+  const context=contextSummary?reduceSummary(contextSummary,{connector,audience}):null;
+  const requestContext=context?{id:context.id,app:context.app,actor:context.actor,site:context.site}:null;
   let stage = input.stage;
   if (input.window === 'unisat' && provider?.networkIssue) {
     const issue = { bitcoin_testnet: request ? 'testnet' : 'changed', fractal: 'fractal', unrecognized: 'unknown' }[provider.networkIssue];
@@ -116,7 +118,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
     const networks={'eip155:1':'Ethereum','eip155:8453':'Base','eip155:20':'Elastos Smart Chain','bip122:000000000019d6689c085ae165831e93':'Bitcoin'};
     account={name:providerCopy[provider.providerId]||'Your wallet',mark:provider.providerId==='unisat'?'unisat':provider.providerId==='io.metamask'?'metamask':'wallet',connection:null,accounts:[{address:provider.firstAccount,networks:[networks[provider.network]||'Selected network']}]};
   }
-  return connectionView({ ...input, stage, provider, summary: request, account, waitSeconds, walletResult, alternativeAllowed: reduceAlternative(alternative),
+  return connectionView({ ...input, stage, provider, summary: request, requestContext, account, waitSeconds, walletResult, alternativeAllowed: reduceAlternative(alternative),
     otherRequests: otherSummaries.map(s => reduceSummary(s, { connector, audience })).filter(Boolean) });
 }
 
@@ -134,7 +136,7 @@ function accountDisplay(account, window, summary) {
 }
 
 export function connectionView(input) {
-  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay'];
+  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext'];
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
   const { window, stage } = input;
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
@@ -143,6 +145,10 @@ export function connectionView(input) {
   requireValue(!provider?.providerId || (window === 'unisat' ? provider.providerId === 'unisat' : window === 'metamask' ? provider.providerId !== 'unisat' : true), 'provider belongs to window');
   requireValue(!provider || (window === 'unisat' ? provider.alternatives.length === 0 : provider.alternatives.every(p=>p!=='unisat')), 'provider alternatives belong to window');
   const summary = input.summary ? summaryProjection(input.summary) : null;
+  const context=input.requestContext?clone(input.requestContext):null;
+  requireValue(!context||plain(context)&&Object.keys(context).length===4&&['id','app','actor','site'].every(k=>Object.hasOwn(context,k))&&bounded(context.id,256)&&context.id.length>0&&bounded(context.app,128)&&bounded(context.actor,128)&&(context.site===null||context.actor==='browser'&&displayOrigin(context.site)===context.site),'closed request context');
+  requireValue(!context||!summary||context.id===summary.id&&context.app===summary.app&&context.actor===summary.actor&&context.site===summary.site,'one request identity per card');
+  const requestId=summary?.id||context?.id||null;
   const transactionDisplay = input.transactionDisplay ? clone(input.transactionDisplay) : null;
   if(transactionDisplay)requireValue(summary?.transaction && plain(transactionDisplay) && Object.keys(transactionDisplay).length===4 && bounded(transactionDisplay.destination,128) && bounded(transactionDisplay.network,80) && (transactionDisplay.amount===null&&transactionDisplay.asset===null || bounded(transactionDisplay.amount,80)&&/^[0-9]+(?:\.[0-9]+)?$/.test(transactionDisplay.amount)&&bounded(transactionDisplay.asset,16)), 'closed computed transaction display');
   requireValue(!screen.request || summary && bounded(summary.id,256) && bounded(summary.app,128) && bounded(summary.detail,2048) && ['Sign a message','Sign typed data','Send transaction'].includes(summary.title) && (summary.site===null || displayOrigin(summary.site)===summary.site), 'reduced selected request summary');
@@ -152,7 +158,7 @@ export function connectionView(input) {
   const name = account?.name || providerCopy[provider?.providerId] || brands[window];
   const home = displayOrigin(input.homeOrigin);
   requireValue(input.targetNetwork===undefined||bounded(input.targetNetwork,80),'requested network label');
-  const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: summary?.app || 'Browser', site: summary?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
+  const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: summary?.app || context?.app || 'Browser', site: summary?.site || context?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
   const parts = text => (text || '').split(/(\{\{(?:wallet|alternative|app|site|home|network)\}\})/).filter(Boolean).map(value => {
     const key = value.match(/^\{\{(.+)\}\}$/)?.[1];
     return key ? { kind: key === 'alternative' ? 'wallet' : key, text: values[key] } : { kind: 'copy', text: value };
@@ -172,11 +178,13 @@ export function connectionView(input) {
   if(actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${screen.status||''} ${notice}`))notice=`Close this window. ${notice}`.trim();
   const unknownRecovery=safety===null && !knownNotSent && unknownRecoveryStages.has(stage);
   if(unknownRecovery){
-    notice='Close this window. Home cannot tell whether another window has payment work. Check your wallet and Wallet activity before trying again.';
+    notice=summary?.transaction&&stage==='request-busy'?'Close this window. The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Wallet activity before trying again.':'Close this window. An operation may still be waiting in {{wallet}}. Home cannot tell whether another window has payment work. Check your wallet and Wallet activity before trying again.';
     actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over').map(a=>({...a,primary:a.id==='close-window',quiet:a.id==='close-window'?false:a.quiet}));
     const close=actions.find(a=>a.id==='close-window')||{id:'close-window',label:parts('Close window'),primary:true,quiet:false};
     actions=[close,...actions.filter(a=>a.id!=='close-window')];
   }
+  const unknownLinkRecovery=safety===null&&stage==='link-error';
+  if(unknownLinkRecovery){notice='Close this window. Check your wallet and Wallet activity before trying again.';actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
   if(stage==='disconnecting')notice='Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed')notice+=' Home cannot save that answer.';
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
@@ -188,13 +196,17 @@ export function connectionView(input) {
   }
   const consumedSend = summary && summary.status !== 'pending' && actions.some(a=>a.id==='send-request');
   if(consumedSend){actions=actions.filter(a=>!['send-request','open-wallet'].includes(a.id));actions.unshift({id:'open-wallet',label:parts('Review in Wallet'),primary:true,quiet:false});outcome=parts('Review this request in Wallet.');}
-  const approvalSite = screen.request && !screen.requestPicker && summary?.site && actions.some(a=>approves(a.id));
+  const approvalSite = !screen.requestPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
   if(approvalSite&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});
-  let focus = approvalSite || unknownRecovery ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
+  let focus = approvalSite || unknownRecovery || unknownLinkRecovery ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
   let focusKey=null;
-  if(input.previousFocus?.stage===stage && !approvalSite && !answered && !screen.qr){
-    const previous=input.previousFocus;
-    if(bounded(previous.action,40)&&bounded(previous.key,256)&&['copy-address','select-request',...actions.map(a=>a.id)].includes(previous.action)){focus=previous.action;focusKey=previous.key;}
+  const previous=input.previousFocus;
+  const sameCard=previous?.window===window&&previous.stage===stage&&previous.requestId===requestId;
+  const legacyFocus=previous?.stage===stage&&!approvalSite&&!answered&&!screen.qr;
+  if((sameCard||legacyFocus)&&!screen.qr){
+    if(sameCard&&previous.action===null)focus=null;
+    else if(bounded(previous.action,40)&&bounded(previous.key,512)&&['copy-address','select-request',...actions.map(a=>a.id)].includes(previous.action)){focus=previous.action;focusKey=previous.key;}
+    else if(sameCard&&['outcome','accounts'].includes(previous.action))focus=previous.action;
   }
   if (screen.qr) actions = [{id:'copy-link',label:parts('Copy link'),primary:false,quiet:false},{id:'cancel',label:parts('Cancel'),primary:false,quiet:false}];
   const wait = screen.wait && !answered && !screen.requestPicker && !consumedSend ? input.waitSeconds : null;
@@ -204,10 +216,10 @@ export function connectionView(input) {
   const choices = screen.choices ? (input.otherRequests || []).slice(0, screen.choices === 3 ? 2 : 1).map(summaryProjection) : [];
   if (screen.requestPicker && summary) choices.unshift(summary);
   const view = {
-    window, stage, title: brands[window], account, selectedAccount: !!screen.selectedAccount,
+    window, stage, requestId, context, title: brands[window], account, selectedAccount: !!screen.selectedAccount,
     showAccount: !!screen.account, requiredAccount: !!screen.requiredAccount, disconnect: screen.disconnect !== false && window === 'walletconnect',
     request: screen.request ? summary : null, transactionDisplay, choices, picker: !!screen.requestPicker,
-    queueCount: screen.queueCount ? (input.otherRequests?.length||0)+(screen.afterAnswer?0:1) : 0, status: outcome, notice: parts(notice), afterNote: parts(screen.afterActionsNote),
+    queueCount: screen.queueCount ? (input.otherRequests?.length||0)+(screen.afterAnswer?0:1) : 0, status: outcome, notice: parts(notice.trim()), afterNote: parts(screen.afterActionsNote),
     wait: wait === null ? null : `Time left: ${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, '0')}`,
     actions, focus, focusKey, answered, walletResult:result, paymentRisk: transactionRisk, compact: input.compact === true,
     qrData: screen.qr ? input.qrData : null, panel: window === 'panel',
@@ -253,16 +265,16 @@ export function renderConnection(document, view) {
   const button = a => { const b = el('button', a.label, `el-button${a.primary ? ' el-button-primary' : ''}${a.quiet ? ' connection-quiet' : ''}`); b.type = 'button'; b.tabIndex = 0; b.dataset.action = a.id; b.dataset.focusKey=a.key||a.id; return b; };
   const short = a => a.startsWith('bc1') ? `${a.slice(0,8)}…${a.slice(-6)}` : `${a.slice(0,6)}…${a.slice(-4)}`;
   const root = el('main', null, `connection-window${view.panel ? ' connection-panel' : ''}${view.compact ? ' connection-compact' : ''}`);
-  const approvalSite = view.request?.site && !view.picker && view.actions.some(a=>approves(a.id));
+  const approvalSite = (view.request?.site||view.context?.site) && !view.picker && view.actions.some(a=>approves(a.id));
   if(approvalSite)root.classList.add('connection-approval-window');
-  root.dataset.state = view.stage;
+  root.dataset.state = view.stage;root.dataset.window=view.window;root.dataset.requestId=view.requestId||'';root.dataset.scrollKey='root';
   const heading = el('header', null, 'connection-heading');
   if (!view.panel) heading.append(icon(view.window));
   heading.append(el('h1', view.title)); root.append(heading);
   const status = el('p', view.status, 'connection-status'); status.dataset.focus = 'outcome'; status.tabIndex = -1; status.setAttribute('role','status');
   if(view.window==='walletconnect'&&!view.request&&!view.showAccount&&view.account&&view.status.some(p=>p.kind==='wallet'))status.prepend(icon('wallet'));
   status.setAttribute('aria-live','polite'); status.setAttribute('aria-atomic','true');
-  const content = el('div', null, 'connection-content');
+  const content = el('div', null, 'connection-content');content.dataset.scrollKey='content';
   const feedback = el('section', null, 'connection-feedback');
   const controls = el('div', null, 'connection-actions');
   for (const a of view.actions) controls.append(button(a));
@@ -291,15 +303,15 @@ export function renderConnection(document, view) {
     const site=el('bdi',null,'connection-isolated connection-site');site.dir='auto';
     const authority=origin.indexOf('://')+3, labels=origin.slice(authority).split('.'), tail=labels.splice(Math.max(0,labels.length-3));
     site.append(document.createTextNode(origin.slice(0,authority)));
-    const label=(value,parent)=>{parent.append(el('span',value,'connection-host-label'));};
-    for(const value of labels){label(value,site);site.append(document.createTextNode('.'),el('wbr'));}
+    const label=(value,parent,dot=false)=>{const part=el('span',null,'connection-host-label');part.append(document.createTextNode(value.slice(0,-1)),el('span',value.slice(-1)+(dot?'.':''),'connection-host-label-last'));parent.append(part);if(dot)parent.append(el('wbr'));};
+    for(const value of labels)label(value,site,true);
     const end=el('span',null,'connection-host-end'),endText=el('span',null,'connection-host-end-text');
-    tail.forEach((value,i)=>{if(i)endText.append(document.createTextNode('.'),el('wbr'));label(value,endText);});end.append(endText);
+    tail.forEach((value,i)=>label(value,endText,i<tail.length-1));end.append(endText);
     site.append(end);row.append(site);return row;
   }
   function requestIdentity(request, card, decision = false) {
     card.dataset.requestId = request.id;
-    const identity=el('div',null,'connection-identity');
+    const identity=el('div',null,'connection-identity');identity.dataset.scrollKey='request:'+request.id;
     const context=el('div',null,'connection-context');
     if(!request.site||request.app!=='Browser'){const app=el('bdi',request.app,'connection-isolated connection-app');app.dir='auto';context.append(app);}
     if(request.site&&!decision)context.append(siteIdentity(request.site));
@@ -327,13 +339,14 @@ export function renderConnection(document, view) {
     let destination=content;
     if(view.request&&!view.picker){const card=el('article',null,'connection-card connection-request');const identity=requestIdentity(view.request,card,approvalSite);
       if(view.account){const a=el('div',null,'connection-request-account');if(view.window==='walletconnect')a.append(icon('wallet'));const parts=[];if(view.requiredAccount)parts.push({kind:'copy',text:'Required account · '});if(view.account.name!==view.title)parts.push({kind:'wallet',text:view.account.name},{kind:'copy',text:' · '});parts.push({kind:'address',text:short(view.account.accounts[0].address)},{kind:'copy',text:' · '},...view.account.accounts[0].networks.flatMap((network,i)=>[...(i?[{kind:'copy',text:' · '}]:[]),{kind:'network',text:network}]));a.append(el('span',parts));identity.append(a);}content.append(card);destination=card;}
+    if(view.context&&!view.request){const card=el('article',null,'connection-card connection-request');card.dataset.requestId=view.context.id;const identity=el('div',null,'connection-identity');identity.dataset.scrollKey='context:'+view.context.id;const context=el('div',null,'connection-context');if(!view.context.site||view.context.app!=='Browser'){const app=el('bdi',view.context.app,'connection-isolated connection-app');app.dir='auto';context.append(app);}if(view.context.site&&!approvalSite)context.append(siteIdentity(view.context.site));identity.append(context);card.append(identity);content.append(card);destination=card;}
     if(view.queueCount){const queue=el('div',null,'connection-queue');queue.append(el('h2',`${view.queueCount} requests waiting`));if(!view.picker)queue.append(button({id:'view-requests',label:isolated('View requests','copy'),quiet:true}));content.prepend(queue);}
     if(approvalSite){
       const top=el('div',null,'connection-card-start');top.append(el('p','More below.','connection-more'),button(view.actions.find(a=>a.id==='close-window')));root.insertBefore(top,heading);
       if(view.status.length)destination.prepend(status);
       if(wait)destination.append(wait);if(notice)destination.append(notice);
       const other=el('div',null,'connection-actions');for(const a of view.actions.filter(a=>!approves(a.id)&&a.id!=='close-window'))other.append(button(a));destination.append(other);
-      const unit=el('section',null,'connection-approval-unit');unit.append(siteIdentity(view.request.site));
+      const unit=el('section',null,'connection-approval-unit');unit.append(siteIdentity(view.request?.site||view.context.site));
       const approve=el('div',null,'connection-actions connection-approve-actions');for(const a of view.actions.filter(a=>approves(a.id)))approve.append(button(a));unit.append(approve);destination.append(unit);
     }else if(!view.compact){if(view.status.length&&!status.parentNode){if(view.request)destination.prepend(status);else root.append(status);}if(wait)destination.append(wait);if(notice)destination.append(notice);destination.append(controls);}
     else{if(notice)destination.append(notice);if(view.status.length)feedback.append(status);if(wait)feedback.append(wait);feedback.append(controls);}
@@ -344,4 +357,52 @@ export function renderConnection(document, view) {
   if(view.compact&&!approvalSite)root.append(feedback);
   if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');const title=el('h2','WalletConnect');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan this QR Code with your phone'),el('p','Or paste the copied link into a wallet app on this computer.'));if(!view.compact)dialog.append(controls);content.append(dialog);}
   return root;
+}
+
+
+/** Read only this rendered window's presentation state; the caller owns the snapshot. */
+export function captureConnectionPresentation(root) {
+  const active=root.ownerDocument.activeElement,owned=root.contains(active);
+  const action=owned?(active.dataset.action||active.dataset.focus||null):null;
+  const key=owned?(active.dataset.focusKey||action):null;
+  return {window:root.dataset.window,stage:root.dataset.state,requestId:root.dataset.requestId||null,action,key,
+    scrollTop:root.scrollTop,scrollLeft:root.scrollLeft,
+    scrolls:[root,...root.querySelectorAll('[data-scroll-key]')].map(e=>({key:e.dataset.scrollKey,top:e.scrollTop,left:e.scrollLeft}))};
+}
+
+function updateMoreCue(root) {
+  const cue=root.querySelector('.connection-more');if(!cue)return;
+  const more=root.scrollTop+root.clientHeight<root.scrollHeight-0.5;
+  cue.style.visibility=more?'visible':'hidden';cue.setAttribute('aria-hidden',String(!more));
+}
+
+function installPresentation(root,view,snapshot) {
+  const buttons=[...root.querySelectorAll('button')];
+  const target=(action,key)=>key&&buttons.find(b=>b.dataset.focusKey===key)||buttons.find(b=>b.dataset.action===action)||[...root.querySelectorAll('[data-focus]')].find(e=>e.dataset.focus===action);
+  const focus=snapshot?(snapshot.action===null?null:target(snapshot.action,snapshot.key)):target(view.focus,view.focusKey);
+  focus?.focus({preventScroll:true});
+  if(snapshot){for(const row of snapshot.scrolls){const e=[root,...root.querySelectorAll('[data-scroll-key]')].find(e=>e.dataset.scrollKey===row.key);if(e){e.scrollTop=row.top;e.scrollLeft=row.left;}}}
+  else {root.scrollTop=0;root.scrollLeft=0;}
+  const update=()=>updateMoreCue(root),win=root.ownerDocument.defaultView;
+  const revealApproval=event=>{if((event.key==='Enter'||event.key===' ')&&approves(event.target.dataset.action))event.target.scrollIntoView({block:'end',inline:'nearest'});};
+  root.addEventListener('keydown',revealApproval,true);root.addEventListener('scroll',update);const observer=win?.ResizeObserver?new win.ResizeObserver(update):null;
+  if(observer){observer.observe(root);const content=root.querySelector('.connection-content');if(content)observer.observe(content);}
+  root.ownerDocument.fonts?.addEventListener('loadingdone',update);update();
+  return ()=>{root.removeEventListener('keydown',revealApproval,true);root.removeEventListener('scroll',update);observer?.disconnect();root.ownerDocument.fonts?.removeEventListener('loadingdone',update);};
+}
+
+/** Mount only inside the caller's container. Pass its previous return value on redraw. */
+export function mountConnection(container,view,previous=null) {
+  requireValue(renderedViews.has(view),'mountConnection requires a connectionView result from this module');
+  const old=previous?.root,valid=old?.parentNode===container&&renderedViews.has(previous.view);
+  const same=valid&&previous.view.window===view.window&&previous.view.stage===view.stage&&previous.view.requestId===view.requestId;
+  const snapshot=same?captureConnectionPresentation(old):null;
+  const markupKey=v=>JSON.stringify(Object.fromEntries(Object.entries(v).filter(([k])=>!['wait','focus','focusKey'].includes(k))));
+  if(same&&!!previous.view.wait===!!view.wait&&markupKey(previous.view)===markupKey(view)){
+    const wait=old.querySelector('.connection-wait');if(wait&&wait.textContent!==view.wait)wait.textContent=view.wait;
+    updateMoreCue(old);return {root:old,view,dispose:previous.dispose,reused:true};
+  }
+  if(valid)previous.dispose();
+  const root=renderConnection(container.ownerDocument,view);container.replaceChildren(root);
+  return {root,view,dispose:installPresentation(root,view,snapshot),reused:false};
 }

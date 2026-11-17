@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {existsSync} from 'node:fs';
 import {writeFile} from 'node:fs/promises';
 import {browserFixture,playwright,temporaryProof} from './lib/wallet-connection-browser-fixture.mjs';
-import {observeApproval,assertApprovalGeometry,assertApprovalPaint,approvalIds} from './lib/wallet-connection-approval-oracle.mjs';
+import {observeApproval,assertApprovalGeometry,assertApprovalPaint,assertEverySiteLinePaint,approvalIds} from './lib/wallet-connection-approval-oracle.mjs';
 import {states,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
 
 // Playwright 1.60 waits for document.fonts by default; this suite must capture the fallback paint before releasing the font route.
@@ -27,8 +27,8 @@ async function mount(page,{window='metamask',origin=origins[7],long=true,compact
  args[0].account.name=long?'W'.repeat(40):row.local.account.name;
  args[1].summary={...args[1].summary,capsule_id:unnamed?'unlabelled-app':'browser',requesting_app_name:unnamed?undefined:long?'A'.repeat(128):'Browser',requesting_origin:origin,reason:long?'R'.repeat(2048):'Sign in to the app.'};
  return page.evaluate(async args=>{
-  const {reduceConnection,renderConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
-  const view=reduceConnection(...args),mount=document.querySelector('#mount');mount.replaceChildren(renderConnection(document,view));
+  const {reduceConnection,mountConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
+  const view=reduceConnection(...args),mount=document.querySelector('#mount');window.mountedConnection?.dispose();window.mountedConnection=mountConnection(mount,view);
   const root=mount.firstChild;root.scrollTop=0;window.approvalActivations=[];
   root.addEventListener('click',event=>{const button=event.target.closest('button');if(!button||!['send-request','connect','restore-access','send-message','finish'].includes(button.dataset.action))return;
    const site=root.querySelector('.connection-site'),walker=document.createTreeWalker(site,NodeFilter.SHOW_TEXT);let node,last;while(node=walker.nextNode())if(node.length)last=node;
@@ -48,7 +48,7 @@ async function sweep(page){
   const root=document.querySelector('main'),site=root.querySelector('.connection-site');const walker=document.createTreeWalker(site,NodeFilter.SHOW_TEXT);let node,last;while(node=walker.nextNode())if(node.length)last=node;
   const range=document.createRange();range.setStart(last,last.length-1);range.setEnd(last,last.length);const max=root.scrollHeight-root.clientHeight,visible=[];
   for(let y=0;y<=max;y++){ root.scrollTop=y;const end=range.getBoundingClientRect();const buttons=[...root.querySelectorAll('button')].filter(b=>ids.includes(b.dataset.action));
-   for(const b of buttons){const box=b.getBoundingClientRect();if(box.bottom>0&&box.top<innerHeight){if(end.top<-.5||end.bottom>innerHeight+.5||box.top<end.bottom-.5||box.top-end.bottom>30)throw new Error('approval visible without final site line at scroll '+y);visible.push(y);}}
+   for(const b of buttons){const box=b.getBoundingClientRect();if(box.bottom>0&&box.top<innerHeight){if(end.top<-.5||end.bottom>innerHeight+.5||box.top<end.bottom-.5||box.top-end.bottom>8)throw new Error('approval visible without final site line at scroll '+y);visible.push(y);}}
   }return {max,visible:[...new Set(visible)]};
  },approvalIds);
  assert(samples.visible.length,'approving control is reachable');
@@ -88,16 +88,16 @@ for(const engine of ['chromium','webkit']){
      await mount(f.page,{window,origin:origins[i],compact:scale===2||width<=360});
      const fontBefore=await f.page.evaluate(family=>[...document.fonts].find(f=>f.family===family)?.status,delayedFamily);assert(fontBefore&&fontBefore!=='loaded','font response is withheld through fallback paint');
      const opening=await check(f.page);assert.equal(opening.origin,origins[i]);assert.equal(opening.scrollTop,0);
-     const measured=await sweep(f.page);
+     const measured=await sweep(f.page);measured.siteLinesPainted=await assertEverySiteLinePaint(f.page);
      if(requested&&scale===1&&width!==390&&[6,7,8].includes(i)){await f.page.screenshot({path:`${proof.path}/${window}-approval-${i===6?'253':i===7?'135':'lookalike'}-${width}x${height}-end-${engine}.png`});await f.page.evaluate(()=>{document.querySelector('main').scrollTop=0;});await f.page.screenshot({path:`${proof.path}/${window}-approval-${i===6?'253':i===7?'135':'lookalike'}-${width}x${height}-start-${engine}.png`});}
-     await f.releaseFont();const fontAfter=await f.page.evaluate(family=>[...document.fonts].find(f=>f.family===family)?.status,delayedFamily);assert.equal(fontAfter,'loaded','real web font arrives after fallback paint');await check(f.page,{paint:false});
+     await f.releaseFont();const fontAfter=await f.page.evaluate(family=>[...document.fonts].find(f=>f.family===family)?.status,delayedFamily);assert.equal(fontAfter,'loaded','real web font arrives after fallback paint');await check(f.page,{paint:false});measured.loadedFontLinesPainted=await assertEverySiteLinePaint(f.page);
      const events=await activate(f.page,{width:Math.floor((width===320?360:320)/scale),height:Math.floor((height===182?596:182)/scale)});
      receipts.push({window,width,height,scale,origin:origins[i],fontBefore,fontAfter,...measured,events});
      }catch(error){error.stack=`${engine}/${window}/${width}x${height}/zoom${scale}/origin${origins[i].length}:\n${error.stack}`;throw error;}
     }
    }finally{await f.close();}
   };
-  if(engine==='chromium')await Promise.all([1,2].map(runScale));else for(const scale of [1,2])await runScale(scale);
+  for(const scale of [1,2])await runScale(scale);
   const f=await browserFixture(engine);try{await mount(f.page,{unnamed:true,long:false,compact:false});assert.equal(await f.page.locator('.connection-app').textContent(),'Requesting app');if(requested)await f.page.screenshot({path:`${proof.path}/unnamed-app-${engine}.png`});}finally{await f.close();}
   assert.equal(receipts.length,ciSmoke?48:240);
   await writeFile(`${proof.path}/approval-${engine}.json`,JSON.stringify(receipts,null,2)+'\n');

@@ -201,3 +201,8 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-host-end-text { display:block; }
 
 .connection-computed-value { unicode-bidi:isolate; overflow-wrap:anywhere; }
+
+/* Each dot stays with the preceding label; only an oversized label can wrap inside. */
+.connection-host-label-last { display:inline-block; white-space:nowrap; }
+/* Reserve this short line so toggling the cue cannot change the scroll range. */
+.connection-more { visibility:hidden; }

@@ -154,3 +154,5 @@ await import('./wallet-connection-view-layout.test.mjs');
 // Keep the 180-second Rust harness bounded; the standalone file runs all 480 cases.
 process.env.WALLET_VIEW_BROWSER_SMOKE='1';
 await import('./wallet-connection-view-origin.test.mjs');
+
+await import('./wallet-connection-view-round4.test.mjs');

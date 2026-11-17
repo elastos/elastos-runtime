@@ -1,0 +1,495 @@
+{
+  "sourceCommit": "805ee5dda47993855b394197fb44ccc29e4eb771",
+  "source": "Pinned control inventory, matched to the design state receipt. This is presentation data, not a message fixture.",
+  "minimumSiteFontPx": 13,
+  "minimumContrast": 4.5,
+  "maximumDecisionGapPx": 8,
+  "stages": [
+    {
+      "window": "walletconnect",
+      "stage": "nothing-saved",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 263
+    },
+    {
+      "window": "walletconnect",
+      "stage": "internet-ready",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 269
+    },
+    {
+      "window": "walletconnect",
+      "stage": "qr-cancelled",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 272
+    },
+    {
+      "window": "walletconnect",
+      "stage": "qr-expired",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 273
+    },
+    {
+      "window": "walletconnect",
+      "stage": "connection-declined",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 274
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-declined",
+      "actions": [
+        "finish"
+      ],
+      "kind": "context",
+      "designLine": 276
+    },
+    {
+      "window": "walletconnect",
+      "stage": "saved-unlinked",
+      "actions": [
+        "finish"
+      ],
+      "kind": "context",
+      "designLine": 279
+    },
+    {
+      "window": "walletconnect",
+      "stage": "wallet-removed",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 282
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-waiting",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 285
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-multiple",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 286
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-waiting",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 294
+    },
+    {
+      "window": "walletconnect",
+      "stage": "disconnected",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 312
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-error",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 315
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-selected-second",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 317
+    },
+    {
+      "window": "walletconnect",
+      "stage": "guest-ready",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 320
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-late-ignored",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 323
+    },
+    {
+      "window": "walletconnect",
+      "stage": "focus",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 324
+    },
+    {
+      "window": "metamask",
+      "stage": "ready",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 330
+    },
+    {
+      "window": "metamask",
+      "stage": "ready-multiple",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 331
+    },
+    {
+      "window": "metamask",
+      "stage": "connection-declined",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 338
+    },
+    {
+      "window": "metamask",
+      "stage": "link-declined",
+      "actions": [
+        "send-message"
+      ],
+      "kind": "context",
+      "designLine": 339
+    },
+    {
+      "window": "metamask",
+      "stage": "link-late-ignored",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 342
+    },
+    {
+      "window": "metamask",
+      "stage": "account-unavailable",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 343
+    },
+    {
+      "window": "metamask",
+      "stage": "site-access-ended",
+      "actions": [
+        "restore-access"
+      ],
+      "kind": "context",
+      "designLine": 344
+    },
+    {
+      "window": "metamask",
+      "stage": "request-network-declined",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 348
+    },
+    {
+      "window": "metamask",
+      "stage": "request-waiting",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 351
+    },
+    {
+      "window": "metamask",
+      "stage": "request-multiple",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 352
+    },
+    {
+      "window": "metamask",
+      "stage": "request-unsendable",
+      "actions": [
+        "connect"
+      ],
+      "kind": "request",
+      "designLine": 353
+    },
+    {
+      "window": "metamask",
+      "stage": "request-typed-data",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 354
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-waiting",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 361
+    },
+    {
+      "window": "metamask",
+      "stage": "link-error",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 371
+    },
+    {
+      "window": "metamask",
+      "stage": "request-selected-second",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 373
+    },
+    {
+      "window": "metamask",
+      "stage": "access-wrong-account",
+      "actions": [
+        "connect"
+      ],
+      "kind": "request",
+      "designLine": 377
+    },
+    {
+      "window": "metamask",
+      "stage": "extension-late-ignored",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 381
+    },
+    {
+      "window": "metamask",
+      "stage": "focus",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 382
+    },
+    {
+      "window": "unisat",
+      "stage": "ready",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 388
+    },
+    {
+      "window": "unisat",
+      "stage": "connection-declined",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 395
+    },
+    {
+      "window": "unisat",
+      "stage": "link-declined",
+      "actions": [
+        "send-message"
+      ],
+      "kind": "context",
+      "designLine": 396
+    },
+    {
+      "window": "unisat",
+      "stage": "link-late-ignored",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 399
+    },
+    {
+      "window": "unisat",
+      "stage": "account-unavailable",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 400
+    },
+    {
+      "window": "unisat",
+      "stage": "network-changed",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 401
+    },
+    {
+      "window": "unisat",
+      "stage": "network-fractal",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 402
+    },
+    {
+      "window": "unisat",
+      "stage": "network-unknown",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 403
+    },
+    {
+      "window": "unisat",
+      "stage": "request-waiting",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 405
+    },
+    {
+      "window": "unisat",
+      "stage": "request-multiple",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 406
+    },
+    {
+      "window": "unisat",
+      "stage": "request-unsendable",
+      "actions": [
+        "connect"
+      ],
+      "kind": "request",
+      "designLine": 407
+    },
+    {
+      "window": "unisat",
+      "stage": "link-error",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 417
+    },
+    {
+      "window": "unisat",
+      "stage": "request-selected-second",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 419
+    },
+    {
+      "window": "unisat",
+      "stage": "extension-late-ignored",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 427
+    },
+    {
+      "window": "unisat",
+      "stage": "focus",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "designLine": 428
+    }
+  ],
+  "pickerExceptions": [
+    {
+      "window": "walletconnect",
+      "stage": "request-list",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 316
+    },
+    {
+      "window": "metamask",
+      "stage": "request-list",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 372
+    },
+    {
+      "window": "unisat",
+      "stage": "request-list",
+      "actions": [
+        "send-request"
+      ],
+      "kind": "request",
+      "designLine": 418
+    }
+  ],
+  "styleSource": {
+    "design": "58aaafe6db48f8a3600f1e3bb8312499405502fc:capsules/_shared/wallet-connection-view.css:22",
+    "token": "capsules/wallet-metamask/browser/elastos-ui.css:51",
+    "contrast": "Main round-four acceptance: minimum 4.5:1",
+    "gap": "Main round-four acceptance: maximum 8 CSS pixels"
+  },
+  "inputSource": "Provisional boundary projections over the imported shared site-wallet-metamask summary; generated request IDs, origins and reasons exercise limits. Context rows are window-local stages supplied with a Runtime summary context, not new protocol producers."
+}
