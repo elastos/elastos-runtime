@@ -96,6 +96,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
     if(disposition==='answered'&&settled.receipt==='recorded'&&stage!=='transaction-late-result')stage='transaction-done';
   }
   const deadlines = [request?.expiresAt, Number.isSafeInteger(message?.deadlineAt) ? Math.floor(message.deadlineAt / 1000) : null].filter(Number.isSafeInteger);
+  requireValue(!deadlines.length||Number.isSafeInteger(nowSeconds),'explicit clock for contract deadline');
   const waitSeconds = deadlines.length && Number.isSafeInteger(nowSeconds) ? Math.max(0, Math.min(...deadlines) - nowSeconds) : input.waitSeconds;
   let account=input.account;
   if(!account && screens[input.window]?.[stage]?.selectedAccount && provider?.firstAccount){

@@ -116,6 +116,11 @@ test('waits use the earliest shared deadline and an explicit clock, never a new 
   assert.equal(fixtureView(row,{sharedFixture:fixture}).wait,'Time left: 0:10');
 });
 
+test('a canonical deadline refuses a local wait substitute when the clock is absent',()=>{
+  const message=shared.messages.find(r=>r.id==='progress-waiting_signature').message;
+  assert.throws(()=>reduceConnection({window:'metamask',stage:'extension-wait',waitSeconds:123},{message}),/explicit clock/);
+});
+
 test('snapshot enums match the contract, and first account is captured only once',()=>{
   const snapshot=structuredClone(shared.messages.find(r=>r.id==='state-io.metamask').message.snapshot);
   for(const access of ['unknown','available','empty','lost'])assert.equal(reduceProvider({...snapshot,access}).access,access);
