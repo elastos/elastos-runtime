@@ -19,23 +19,36 @@ export function createWalletRequests({
   requestsPanelNode,
   shellHeaders,
   showStatus,
+  clearRequestSelection = () => {},
 }) {
+  let acknowledgement = null;
+  let visibleRequests = [];
+
   function renderRequests(requests, focusRequestId = "") {
     if (!requestsNode) {
       return false;
     }
     requestsNode.replaceChildren();
+    visibleRequests = requests;
+    const displayed = acknowledgement
+      ? [...requests.filter(r => readText(r.request_id) !== acknowledgement.request_id), acknowledgement]
+      : requests;
     if (requestsPanelNode) {
-      requestsPanelNode.hidden = requests.length === 0;
+      requestsPanelNode.hidden = displayed.length === 0;
     }
-    requestsNode.hidden = requests.length === 0;
+    requestsNode.hidden = displayed.length === 0;
     let focused = null;
-    for (const request of requests) {
+    for (const request of displayed) {
       const card = requestCard(request, readText(request.request_id) === focusRequestId);
       if (readText(request.request_id) === focusRequestId) {
         focused = card;
       }
       requestsNode.append(card);
+    }
+    if (acknowledgement) {
+      const result = requestsNode.querySelector?.('[role="status"]');
+      result?.focus();
+      result?.scrollIntoView({ block: "nearest" });
     }
     if (focused) {
       window.setTimeout(() => focused.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
@@ -48,6 +61,7 @@ export function createWalletRequests({
     const approvedTransaction = request.status === "approved" && request.intent === "transaction_intent";
     const accountAccess = readText(request.intent) === "browser_account_access";
     const accountAccessReview = accountAccess ? requestAccountAccessReview(request.review) : null;
+    const answered = typeof request.localAcknowledgement === "string";
     const card = document.createElement("article");
     card.className = "wallet-request";
     card.classList.toggle("wallet-request-focused", focused);
@@ -57,19 +71,29 @@ export function createWalletRequests({
     main.append(
       textNode("strong", accountAccess ? "Browser account access" : requestTitle(request)),
       textNode("span", `${readText(request.capsule_id) || "Capsule"} · ${shortAddress(request.address)}`),
-      textNode("small", readText(request.reason) || "Approval requested."),
-      textNode("small", requestTiming(request), "wallet-request-time"),
+      textNode("small", accountAccess ? "Browser requests account access." : readText(request.reason) || "Approval requested."),
     );
+    const site = requestSite(request.requesting_origin);
+    if (site) main.append(site);
+    if (!answered) main.append(textNode("small", requestTiming(request), "wallet-request-time"));
     if (accountAccessReview) {
       main.append(accountAccessReview);
     }
-    if (approvedTransaction) {
+    if (approvedTransaction && !answered) {
       main.append(textNode("small", "Check your connected wallet before sending again. Dismiss closes this request; it does not cancel a transaction in your wallet."));
     }
     card.append(main);
 
     const actions = document.createElement("div");
     actions.className = "wallet-request-actions";
+    if (answered) {
+      const outcome = textNode("p", request.localAcknowledgement, "wallet-request-outcome");
+      outcome.setAttribute?.("role", "status");
+      outcome.setAttribute?.("tabindex", "-1");
+      actions.append(outcome);
+      card.append(actions);
+      return card;
+    }
     const connectorId = readText(request.connector_id);
     if (approvedTransaction) {
       // Keep an unfinished external send visible without offering another handoff.
@@ -111,8 +135,6 @@ export function createWalletRequests({
       if (!text) return;
       fields.append(textNode("dt", label), textNode("dd", text));
     };
-    appendField("Origin", review.origin);
-    appendField("Page", review.page_url);
     appendField("Permission", review.permission);
     appendField("Account", review.account_id);
     appendField("Address", review.address);
@@ -121,6 +143,19 @@ export function createWalletRequests({
     appendField("Access expires", review.grant_expires_at);
     details.append(fields);
     return details;
+  }
+
+  function requestSite(origin) {
+    if (typeof origin !== "string" || origin.length > 512
+      || !/^https?:\/\/(?:[a-z0-9.-]+|\[[a-f0-9:]+\])(?::[0-9]{1,5})?$/.test(origin)) return null;
+    const row = document.createElement("div");
+    row.className = "wallet-request-site";
+    const value = textNode("span", origin, "wallet-request-origin");
+    value.dir = "auto";
+    // Assignment remains compatible with the lightweight DOM used by unit tests.
+    value.setAttribute?.("dir", "auto");
+    row.append(textNode("small", "Site reported by Browser"), value);
+    return row;
   }
 
   function openPendingReview() {
@@ -189,11 +224,15 @@ export function createWalletRequests({
         headers: shellHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({ reason: button.dataset.walletApprovedTransaction === "true" ? "Dismissed in Wallet" : "Rejected in Wallet" }),
       });
-      showStatus(result?.receipt_status === "dismissed"
+      const message = result?.receipt_status === "dismissed"
         ? "Request dismissed. Check your connected wallet before sending again."
-        : "Request rejected.", "success");
+        : "Request rejected.";
+      const request = visibleRequests.find(r => readText(r.request_id) === requestId);
+      if (request) acknowledgement = { ...request, request_id: requestId, localAcknowledgement: message };
+      clearRequestSelection();
       notifyHomeSummaryChanged();
       await refreshWalletState();
+      showStatus(message, "success");
     } catch (error) {
       showStatus(String(error.message || error), "error");
     } finally {

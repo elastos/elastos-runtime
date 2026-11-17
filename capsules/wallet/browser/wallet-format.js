@@ -71,6 +71,7 @@ export function accountName(account, index) {
   if (label) {
     return label;
   }
+  if (!isPasskeyManagedAccount(account)) return walletDisplay(account).name;
   const connectorId = readText(account.connector_id);
   if (connectorId === "wallet-walletconnect") {
     return index === 0 ? "Connected Account" : "WalletConnect Account";
@@ -307,7 +308,14 @@ export function isPasskeyManagedAccount(account) {
 }
 
 export function isManagedRequest(request) {
-  return request.proof_type === "managed_evm" || request.proof_type === "managed_btc_p2wpkh";
+  return !request.connector_id && (request.proof_type === "managed_evm" || request.proof_type === "managed_btc_p2wpkh");
+}
+
+export function walletDisplay(account) {
+  const name = account?.wallet_display_name;
+  const valid = typeof name === "string" && name.length > 0
+    && [...name].length <= 40 && new TextEncoder().encode(name).length <= 160;
+  return { name: valid ? name : "Your wallet", mark: valid && ["wallet", "metamask", "unisat"].includes(account.wallet_mark) ? account.wallet_mark : "wallet" };
 }
 
 export function isBitcoinProofRequest(request) {

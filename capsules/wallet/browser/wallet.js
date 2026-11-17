@@ -149,6 +149,7 @@ const {
   pendingWalletRequests,
   renderRequests,
 } = createWalletRequests({
+  clearRequestSelection: () => { reviewWalletRequestId = ""; },
   fetchJson,
   notifyHomeSummaryChanged,
   openApprovalMethod,
@@ -548,9 +549,9 @@ function renderWalletReviewRequests() {
     : pending;
   const focusedRequestVisible = renderRequests(reviewRequests, reviewWalletRequestId);
   if (reviewWalletRequestId && focusedRequestVisible) {
-    showStatus("Review and approve this request in Wallet.", "muted");
+    showStatus("Review this request.", "muted");
   } else if (reviewWalletRequestId) {
-    showStatus("This request is unavailable. Choose another request in Inbox.", "muted");
+    showStatus("This request is unavailable. Return to the app and ask for a new request.", "muted");
   }
 }
 
@@ -754,6 +755,7 @@ function renderHeroAccount(accounts) {
   }
   if (accountCardNameNode) {
     accountCardNameNode.textContent = account.name;
+    accountCardNameNode.dir = "auto";
   }
   if (accountCardNetworkNode) {
     accountCardNetworkNode.textContent = networkText;

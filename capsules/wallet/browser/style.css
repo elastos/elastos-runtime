@@ -2124,3 +2124,17 @@ textarea {
     transform: translateX(-50%);
   }
 }
+.wallet-request-origin {
+  display: block;
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
+.wallet-display-name, .wallet-card-name, #wallet-account-card-name {
+  unicode-bidi: isolate;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+  max-width: 100%;
+}
+.wallet-request-outcome { margin: 0; }

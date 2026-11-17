@@ -12,6 +12,8 @@
       filter: "all",
       requestedSelectionId: requestedNotificationId.trim(),
       selectedId: requestedNotificationId.trim(),
+      walletconnectInternet: null,
+      readGeneration: 0,
     };
 
     const elements = {
@@ -242,6 +244,18 @@
       const response = await fetch(path, request);
       if (!response.ok) {
         const text = await response.text();
+        let conflict = false;
+        try {
+          const body = JSON.parse(text);
+          conflict = response.status === 409 && body.schema === "elastos.home.wallet-connector.effect.error/v1"
+            && body.code === "conflict" && Object.keys(body).length === 2;
+        } catch (_) {}
+        if (conflict) {
+          await loadInbox();
+          const error = new Error("This request has changed. Refresh Inbox and review the current request.");
+          error.status = 409;
+          throw error;
+        }
         const error = new Error(publicInboxText(text, "Inbox could not complete the request."));
         error.status = response.status;
         throw error;
@@ -317,8 +331,16 @@
     }
 
     async function loadInbox() {
+      const generation = ++state.readGeneration;
       const payload = await api("/api/apps/inbox/summary");
-      state.entries = inboxEntries(payload);
+      const entries = inboxEntries(payload);
+      let permission = null;
+      if (entries.some(e => e.kind === "walletconnect_internet_request" || e.kind === "walletconnect_internet_decision")) {
+        try { permission = await api("/api/apps/wallet-walletconnect/internet"); } catch (_) {}
+      }
+      if (generation !== state.readGeneration) return;
+      state.entries = entries;
+      state.walletconnectInternet = permission;
       renderInbox();
       markVisibleRead();
       notifyHome();
@@ -498,6 +520,8 @@
       fillEntryActions(actions, entry);
 
       card.append(top, snippet, actions);
+      const site = walletRequestSite(entry);
+      if (site) card.insertBefore(site, actions);
       return card;
     }
 
@@ -519,6 +543,7 @@
           : await api(path, {method:"POST",body:JSON.stringify({action:"request"})});
         const expected = `${service}-internet-allow:` + (walletconnect ? current.request?.id : current.request?.request_id);
         if (current.status !== "requested" || (actionId && actionId !== expected)) {
+          await loadInbox();
           throw new Error("This request has changed. Refresh Inbox and review the current request.");
         }
         const stepUpToken = await requestPasskeyStepUp(`${service}.internet.grant`, current.request);
@@ -545,12 +570,13 @@
             await loadInbox(); notifyHome();
           } finally { setButtonsDisabled(false); }
         };
-        if (actionId?.startsWith("walletconnect-internet-allow:")) {
+        if (entry.kind === "walletconnect_internet_request" && actionId?.startsWith("walletconnect-internet-allow:")) {
           actions.appendChild(createActionButton("Don't Allow", actionId.replace("-allow:", "-deny:")));
           actions.appendChild(createButton("Allow", () => allowInternet(actionId, "walletconnect"), "primary"));
         } else if (actionId?.startsWith("walletconnect-internet-turn-off:")) {
-          actions.appendChild(createButton("Turn Off", turnOff, "danger"));
-        } else {
+          const cleaning = state.walletconnectInternet?.status === "revoked";
+          actions.appendChild(createButton(cleaning ? "Finish disconnecting" : "Turn Off", turnOff, "danger"));
+        } else if (entry.kind === "walletconnect_internet_decision") {
           actions.appendChild(createButton("Allow", () => allowInternet(null, "walletconnect"), "primary"));
         }
         return;
@@ -684,6 +710,23 @@
       actions.className = "entry-actions";
       fillEntryActions(actions, entry);
       elements.entryDetail.append(titleRow, time, body, actions);
+      const site = walletRequestSite(entry);
+      if (site) elements.entryDetail.insertBefore(site, actions);
+    }
+
+    function walletRequestSite(entry) {
+      const origin = entry.requesting_origin;
+      if (entry.kind !== "wallet_approval_request" || typeof origin !== "string" || origin.length > 512
+        || !/^https?:\/\/(?:[a-z0-9.-]+|\[[a-f0-9:]+\])(?::[0-9]{1,5})?$/.test(origin)) return null;
+      const row = document.createElement("p");
+      const label = document.createElement("small");
+      label.textContent = "Site reported by Browser";
+      const value = document.createElement("span");
+      value.textContent = origin;
+      value.dir = "auto";
+      value.style.cssText = "display:block;unicode-bidi:isolate;overflow-wrap:anywhere";
+      row.append(label, value);
+      return row;
     }
 
     function createFactList(text) {
@@ -734,8 +777,11 @@
     async function runAction(actionId) {
       setButtonsDisabled(true);
       try {
-        await inboxAction(actionId);
+        const outcome = await inboxAction(actionId);
         await loadInbox();
+        if (actionId.startsWith("wallet-reject-request:")) {
+          setStatus(outcome.message || "Request rejected.");
+        }
       } catch (error) {
         if (error && error.status === 503) {
           try {

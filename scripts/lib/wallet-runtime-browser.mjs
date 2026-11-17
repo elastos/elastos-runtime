@@ -31,14 +31,14 @@ export async function runtimeView(t, app, state = {}) {
       const input = request.postDataJSON();
       calls.push({ path: url.pathname, method: request.method(), input });
       if (url.pathname === "/api/apps/inbox/summary") return json({ notifications: { entries: state.entries, attention_count: state.entries.filter(e => e.severity === "attention").length, unread_count: state.entries.filter(e => !e.read).length } });
-      if (url.pathname === "/api/apps/wallet/summary") return json({ wallet_accounts: { accounts: state.accounts, default_accounts: [] }, wallet_approvals: { approval_requests: state.approvals }, approval_methods: { walletconnect: { available: true } } });
+      if (url.pathname === "/api/apps/wallet/wallet/summary") return json({ wallet_accounts: { accounts: state.accounts, default_accounts: [] }, wallet_approvals: { approval_requests: state.approvals }, approval_methods: { walletconnect: { available: true } } });
       if (url.pathname === "/api/apps/wallet-walletconnect/internet") {
         if (input?.action === "request") {
           if (state.guest) return json({ error: "owner required" }, 403);
           if (state.cleanup) return json({ error: "cleanup required" }, 409);
           state.permission = "requested";
         }
-        return json({ status: state.permission, request: ["requested", "granted"].includes(state.permission) ? question() : null });
+        return json({ status: state.permission === "cleanup" ? "revoked" : state.permission, request: ["requested", "granted"].includes(state.permission) ? question() : null });
       }
       if (url.pathname === "/api/apps/inbox/actions") {
         if (state.conflict) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
