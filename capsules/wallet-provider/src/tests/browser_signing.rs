@@ -44,7 +44,10 @@ fn browser_personal_sign_is_a_typed_approval_request() {
                 address: address.clone(),
                 proof_type: "siwe".into(),
                 label: None,
-            },
+
+                provider_id: None,
+                wallet_peer_name: None,
+},
         ),
         Response::Ok { .. }
     ));
@@ -240,7 +243,10 @@ fn external_browser_personal_sign_completion_accepts_hex_decoded_signature() {
                 address: address.clone(),
                 proof_type: "siwe".into(),
                 label: None,
-            },
+
+                provider_id: None,
+                wallet_peer_name: None,
+},
         ),
         Response::Ok { .. }
     ));

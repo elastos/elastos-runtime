@@ -6,7 +6,10 @@ fn external_request(provider: &mut WalletProvider, principal: &str) -> String {
         invoke_wallet(provider, principal, "wallet-metamask", WalletProviderOperationV2::LinkVerifiedAccount {
             proof_binding_id: "proof:eip155:20:0xabc".into(), chain_namespace: "eip155:20".into(),
             address: "0xabc".into(), proof_type: "siwe".into(), label: None,
-        }), Response::Ok { .. }
+
+            provider_id: None,
+            wallet_peer_name: None,
+}), Response::Ok { .. }
     ));
     match invoke_wallet(provider, principal, "documents", WalletProviderOperationV2::RequestApproval {
         account_id: "wallet:eip155:20:0xabc".into(), chain_namespace: "eip155:20".into(),
@@ -67,5 +70,77 @@ fn n3_direct_external_approve_refused_provider() {
             other => panic!("expected external refusal: {other:?}"),
         }
         assert_eq!(provider.store.approval_requests, before);
+    }
+}
+
+fn link_metadata(provider: &mut WalletProvider, principal: &str, actor: &str, metadata: Value) -> Response {
+    let mut operation = json!({"kind":"link_verified_account", "params": {
+        "proof_binding_id":"proof:eip155:20:0xabc", "chain_namespace":"eip155:20",
+        "address":"0xabc", "proof_type":"siwe", "label":"My account"
+    }});
+    for (key, value) in metadata.as_object().unwrap() {
+        operation["params"][key] = value.clone();
+    }
+    // Use the production Bus decoder, including its strict parameter shape.
+    let operation: WalletProviderOperationV2 = serde_json::from_value(operation).unwrap();
+    invoke_wallet(provider, principal, actor, operation)
+}
+
+#[test]
+fn n4_metadata_bound_to_verified_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal = "person:local:alice";
+    for actor in ["wallet-metamask", "wallet-unisat", "wallet-walletconnect"] {
+        let metadata = match actor {
+            "wallet-metamask" => json!({"provider_id":"io.metamask"}),
+            "wallet-unisat" => json!({"provider_id":"unisat"}),
+            _ => json!({"wallet_peer_name":"Meta\u{202e}Mask"}),
+        };
+        let expected = if actor == "wallet-unisat" { "UniSat" } else { "MetaMask" };
+        match link_metadata(&mut provider, principal, actor, metadata) {
+            Response::Ok { data: Some(data) } => {
+                assert_eq!(data["account"]["wallet_display_name"], expected);
+                assert_eq!(data["account"]["wallet_mark"], if actor == "wallet-walletconnect" { "wallet" } else if actor == "wallet-unisat" { "unisat" } else { "metamask" });
+            }
+            other => panic!("expected linked display: {other:?}"),
+        }
+    }
+    let original = serde_json::to_value(&provider.store).unwrap();
+    for (actor, metadata, expected) in [
+        ("wallet-metamask", json!({"wallet_peer_name":"Trusted"}), "denied"),
+        ("wallet-walletconnect", json!({"provider_id":"io.metamask"}), "denied"),
+        ("wallet-unisat", json!({"provider_id":"io.metamask"}), "denied"),
+        ("wallet-walletconnect", json!({"wallet_peer_name":"a".repeat(1025)}), "invalid_request"),
+    ] {
+        match link_metadata(&mut provider, principal, actor, metadata) {
+            Response::Error { code, .. } => assert_eq!(code, expected),
+            other => panic!("expected metadata refusal: {other:?}"),
+        }
+        assert_eq!(serde_json::to_value(&provider.store).unwrap(), original);
+    }
+}
+
+#[test]
+fn n4_old_record_and_reopened_window_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal = "person:local:alice";
+    assert!(matches!(link_metadata(&mut provider, principal, "wallet-walletconnect", json!({"wallet_peer_name":"Trust Wallet"})), Response::Ok { .. }));
+    let mut provider = init_provider(dir.path());
+    match invoke_wallet(&mut provider, principal, "wallet", WalletProviderOperationV2::ListAccounts { include_revoked: false }) {
+        Response::Ok { data: Some(data) } => assert_eq!(data["accounts"][0]["wallet_display_name"], "Trust Wallet"),
+        other => panic!("expected stored display: {other:?}"),
+    }
+    provider.store.accounts[0].provider_id = None;
+    provider.store.accounts[0].connector_id = Some("wallet-metamask".into());
+    provider.store.accounts[0].wallet_display_name = Some("MetaMask".into());
+    provider.store.accounts[0].wallet_mark = Some("metamask".into());
+    match invoke_wallet(&mut provider, principal, "wallet", WalletProviderOperationV2::ListAccounts { include_revoked: false }) {
+        Response::Ok { data: Some(data) } => {
+            assert!(data["accounts"][0].get("wallet_display_name").is_none());
+            assert_eq!(data["accounts"][0]["wallet_mark"], "wallet");
+        }
+        other => panic!("expected fallback: {other:?}"),
     }
 }

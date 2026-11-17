@@ -38,7 +38,12 @@ impl WalletProvider {
 
     fn account_summary(&self, account: &LinkedAccount) -> Value {
         let (signing_available, signing_status) = self.account_signing_status(account);
-        json!({
+        let display = elastos_wallet_contract::wallet_display_identity(
+            account.connector_id.as_deref().unwrap_or_default(),
+            account.provider_id.as_deref(),
+            if account.connector_id.as_deref() == Some("wallet-walletconnect") { account.wallet_display_name.as_deref() } else { None },
+        );
+        let mut summary = json!({
             "account_id": account.account_id,
             "principal_id": account.principal_id,
             "proof_binding_id": account.proof_binding_id,
@@ -51,7 +56,11 @@ impl WalletProvider {
             "revoked_at": account.revoked_at,
             "signing_available": signing_available,
             "signing_status": signing_status,
-        })
+        });
+        if let Some(id) = display.provider_id { summary["provider_id"] = json!(id); }
+        if let Some(name) = display.wallet_display_name { summary["wallet_display_name"] = json!(name); }
+        if account.connector_id.is_some() { summary["wallet_mark"] = json!(display.wallet_mark); }
+        summary
     }
 
     fn account_signing_status(&self, account: &LinkedAccount) -> (bool, &'static str) {
@@ -166,6 +175,9 @@ impl WalletProvider {
             Err(err) => return Response::error("storage_error", err),
         };
         let account = LinkedAccount {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
             account_id: new_account_id,
             principal_id: input.principal_id,
             proof_binding_id: format!("proof:wallet:managed:{}:{}", input.chain_namespace, address),
@@ -312,6 +324,9 @@ impl WalletProvider {
             .map(|account| account.linked_at)
             .unwrap_or(now);
         let account = LinkedAccount {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
             account_id: expected_account_id.clone(),
             principal_id: input.principal_id,
             proof_binding_id: format!(
@@ -408,9 +423,23 @@ impl WalletProvider {
         if let Err(err) = input.validate() {
             return Response::error("invalid_request", err);
         }
+        if let Err(code) = elastos_wallet_contract::validate_wallet_display_fields(
+            input.connector_id.as_deref().unwrap_or_default(),
+            input.provider_id.as_deref(), input.wallet_peer_name.as_deref(),
+        ) {
+            return Response::error(code, "wallet display metadata is invalid for this connector");
+        }
+        let display = elastos_wallet_contract::wallet_display_identity(
+            input.connector_id.as_deref().unwrap_or_default(),
+            input.provider_id.as_deref(), input.wallet_peer_name.as_deref(),
+        );
+        let previous = self.store.clone();
         let now = now_ts();
         let account_id = account_id(&input.chain_namespace, &input.address);
         let account = LinkedAccount {
+            provider_id: display.provider_id,
+            wallet_display_name: display.wallet_display_name,
+            wallet_mark: Some(display.wallet_mark.into()),
             account_id: account_id.clone(),
             principal_id: input.principal_id,
             proof_binding_id: input.proof_binding_id,
@@ -426,14 +455,18 @@ impl WalletProvider {
         if let Some(existing) = self.store.accounts.iter_mut().find(|existing| {
             existing.principal_id == account.principal_id && existing.account_id == account_id
         }) {
-            *existing = account.clone();
+            let mut relinked = account.clone();
+            relinked.label = existing.label.clone();
+            *existing = relinked;
         } else {
             self.store.accounts.push(account.clone());
         }
         if let Err(err) = self.save() {
+            self.recover_store_after_save_failure(previous);
             return Response::error("storage_error", err);
         }
-        Response::ok(json!({ "account": account }))
+        let stored = self.store.accounts.iter().find(|a| a.principal_id == account.principal_id && a.account_id == account.account_id).expect("linked account was stored");
+        Response::ok(json!({ "account": self.account_summary(stored) }))
     }
 
     pub(super) fn revoke_account(&mut self, principal_id: &str, account_id: &str) -> Response {

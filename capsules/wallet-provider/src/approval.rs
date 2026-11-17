@@ -672,6 +672,9 @@ impl WalletProvider {
                 return Response::error("invalid_request", err);
             }
             let account = LinkedAccount {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
                 account_id: request_snapshot.account_id.clone(),
                 principal_id: request_snapshot.principal_id.clone(),
                 proof_binding_id: request_snapshot.proof_binding_id.clone(),

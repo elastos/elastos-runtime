@@ -203,7 +203,10 @@ fn link_external_evm_account(
             address: address.clone(),
             proof_type: "siwe".into(),
             label: Some("External signer".into()),
-        },
+
+            provider_id: None,
+            wallet_peer_name: None,
+},
     ) {
         Response::Ok { .. } => (account_id, address),
         other => panic!("expected linked external EVM account, got {other:?}"),
@@ -364,7 +367,10 @@ fn protected_content_rights_managed_and_external_sign_identical_canonical_result
             address: external_address.clone(),
             proof_type: "siwe".into(),
             label: None,
-        },
+
+            provider_id: None,
+            wallet_peer_name: None,
+},
     ) {
         Response::Ok { .. } => {}
         other => panic!("expected external account link, got {other:?}"),

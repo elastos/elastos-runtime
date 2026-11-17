@@ -611,6 +611,12 @@ struct SystemWalletAccountSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     connector_id: Option<String>,
     linked_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wallet_display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wallet_mark: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

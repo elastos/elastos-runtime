@@ -94,6 +94,8 @@ pub struct EvmChallengeResponse {
 pub struct EvmVerifyRequest {
     pub message: String,
     pub signature: String,
+    #[serde(default)]
+    pub wallet_peer_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -4196,6 +4198,9 @@ pub(in crate::api) async fn evm_verify_for_wallet_link(
         context,
         authority,
     } = link;
+    elastos_wallet_contract::validate_wallet_display_fields(
+        &app, None, input.wallet_peer_name.as_deref(),
+    ).map_err(|code| anyhow::anyhow!("{code}: invalid wallet display metadata"))?;
     let session_proof_binding_id = context
         .proof_binding_id
         .clone()
@@ -4314,7 +4319,10 @@ pub(in crate::api) async fn evm_verify_for_wallet_link(
             address,
             proof_type: proof_type.clone(),
             label: None,
-        },
+
+            provider_id: None,
+            wallet_peer_name: input.wallet_peer_name.clone(),
+},
     )
     .await?;
     crate::auth::append_audit_event(
@@ -4529,7 +4537,10 @@ pub(in crate::api) async fn btc_verify_for_wallet_link(
             address,
             proof_type,
             label: None,
-        },
+
+            provider_id: None,
+            wallet_peer_name: None,
+},
     )
     .await?;
     crate::auth::append_audit_event(

@@ -19,7 +19,10 @@ fn approval_completion_fails_closed_before_approval_or_with_wrong_hash() {
                 address: "0xabc".into(),
                 proof_type: "siwe".into(),
                 label: None,
-            },
+
+                provider_id: None,
+                wallet_peer_name: None,
+},
         ),
         Response::Ok { .. }
     ));
@@ -221,7 +224,10 @@ fn signature_request_rejects_explicit_account_on_incompatible_chain() {
                 address: "0xabc".into(),
                 proof_type: "siwe".into(),
                 label: None,
-            },
+
+                provider_id: None,
+                wallet_peer_name: None,
+},
         ),
         Response::Ok { .. }
     ));
@@ -263,7 +269,10 @@ fn rejects_path_like_identifiers() {
             address: "0xabc".into(),
             proof_type: "siwe".into(),
             label: None,
-        },
+
+            provider_id: None,
+            wallet_peer_name: None,
+},
     ) {
         Response::Error { code, .. } => assert_eq!(code, "invalid_request"),
         other => panic!("expected invalid request, got {other:?}"),
@@ -293,7 +302,10 @@ fn account_operations_fail_before_init() {
                 address: "0xabc".into(),
                 proof_type: "siwe".into(),
                 label: None,
-            },
+
+                provider_id: None,
+                wallet_peer_name: None,
+},
         ),
         invoke_wallet(
             &mut provider,

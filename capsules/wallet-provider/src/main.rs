@@ -202,7 +202,10 @@ impl WalletProvider {
                 address,
                 proof_type,
                 label,
-            } => self.link_account(LinkAccountInput {
+
+                provider_id,
+                wallet_peer_name,
+} => self.link_account(LinkAccountInput {
                 principal_id: principal_id.to_string(),
                 proof_binding_id: proof_binding_id.clone(),
                 chain_namespace: chain_namespace.clone(),
@@ -210,6 +213,8 @@ impl WalletProvider {
                 proof_type: proof_type.clone(),
                 connector_id: Some(actor.to_string()),
                 label: label.clone(),
+                provider_id: provider_id.clone(),
+                wallet_peer_name: wallet_peer_name.clone(),
             }),
             WalletProviderOperationV2::RevokeAccount { account_id } => {
                 self.revoke_account(principal_id, account_id)

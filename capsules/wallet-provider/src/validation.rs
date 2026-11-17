@@ -3,6 +3,8 @@ use elastos_auth::{normalize_evm_address, validate_evm_address, validate_siwe_or
 use sha2::Digest;
 
 pub(super) struct LinkAccountInput {
+    pub(super) provider_id: Option<String>,
+    pub(super) wallet_peer_name: Option<String>,
     pub(super) principal_id: String,
     pub(super) proof_binding_id: String,
     pub(super) chain_namespace: String,

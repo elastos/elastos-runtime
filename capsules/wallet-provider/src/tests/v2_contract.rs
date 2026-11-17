@@ -573,7 +573,10 @@ fn connector_handoff_requires_the_stored_actor_and_runtime_session() {
                 address: "0xabc".into(),
                 proof_type: "siwe".into(),
                 label: None,
-            },
+
+                provider_id: None,
+                wallet_peer_name: None,
+},
         ),
         Response::Ok { .. }
     ));
