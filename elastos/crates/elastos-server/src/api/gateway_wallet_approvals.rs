@@ -610,7 +610,9 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
 pub(in crate::api::gateway) fn wallet_request_display_origin(
     record: &serde_json::Value,
 ) -> Option<String> {
-    if record.get("schema")?.as_str()? != "elastos.wallet.approval_request/v1" { return None; }
+    if record.get("schema")?.as_str()? != "elastos.wallet.approval_request/v1" {
+        return None;
+    }
     if record.get("requested_by_actor")?.as_str()? != BROWSER_CAPSULE_ID {
         return None;
     }

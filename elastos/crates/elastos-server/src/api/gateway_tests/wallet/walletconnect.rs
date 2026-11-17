@@ -443,25 +443,72 @@ async fn n5_permission_entry_all_states_producer() {
 #[tokio::test]
 async fn n5_inbox_action_by_kind_and_409_routes() {
     let f = Fixture::new().await;
-    let (_, pending) = f.route(&f.connector, INTERNET, Some(json!({"action":"request"}))).await;
-    let path = f.data.path().join("ElastOS/SystemServices/WalletConnect/internet.json");
+    let (_, pending) = f
+        .route(&f.connector, INTERNET, Some(json!({"action":"request"})))
+        .await;
+    let path = f
+        .data
+        .path()
+        .join("ElastOS/SystemServices/WalletConnect/internet.json");
     let before = std::fs::read(&path).unwrap();
-    let current_action = format!("walletconnect-internet-allow:{}", pending["request"]["id"].as_str().unwrap());
-    let mut old_question = pending["request"].clone(); old_question["id"] = json!("consent:previous");
-    let stale_proof = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(f.data.path(), &f.inbox, INBOX_CAPSULE_ID, gateway_walletconnect::GRANT, &old_question).unwrap();
-    let expired_proof = gateway_passkey_step_up::issue_passkey_step_up_token_at_for_test(f.data.path(), &f.inbox, INBOX_CAPSULE_ID, gateway_walletconnect::GRANT, &pending["request"], now_ts().saturating_sub(181)).unwrap();
+    let current_action = format!(
+        "walletconnect-internet-allow:{}",
+        pending["request"]["id"].as_str().unwrap()
+    );
+    let mut old_question = pending["request"].clone();
+    old_question["id"] = json!("consent:previous");
+    let stale_proof = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(
+        f.data.path(),
+        &f.inbox,
+        INBOX_CAPSULE_ID,
+        gateway_walletconnect::GRANT,
+        &old_question,
+    )
+    .unwrap();
+    let expired_proof = gateway_passkey_step_up::issue_passkey_step_up_token_at_for_test(
+        f.data.path(),
+        &f.inbox,
+        INBOX_CAPSULE_ID,
+        gateway_walletconnect::GRANT,
+        &pending["request"],
+        now_ts().saturating_sub(181),
+    )
+    .unwrap();
     for (action_id, proof) in [
-        ("walletconnect-internet-allow:stale".to_string(), "invalid-proof".to_string()),
-        (current_action.clone(), stale_proof), (current_action.clone(), expired_proof),
+        (
+            "walletconnect-internet-allow:stale".to_string(),
+            "invalid-proof".to_string(),
+        ),
+        (current_action.clone(), stale_proof),
+        (current_action.clone(), expired_proof),
     ] {
-        let (status, body) = f.route(&f.inbox, "/api/apps/inbox/actions", Some(json!({"action_id":action_id, "step_up_token":proof}))).await;
+        let (status, body) = f
+            .route(
+                &f.inbox,
+                "/api/apps/inbox/actions",
+                Some(json!({"action_id":action_id, "step_up_token":proof})),
+            )
+            .await;
         assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(body, json!({"schema":"elastos.home.wallet-connector.effect.error/v1","code":"conflict"}));
+        assert_eq!(
+            body,
+            json!({"schema":"elastos.home.wallet-connector.effect.error/v1","code":"conflict"})
+        );
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
     for proof in ["", "invalid-proof"] {
-        let (status, _) = f.route(&f.inbox, "/api/apps/inbox/actions", Some(json!({"action_id":current_action, "step_up_token":proof}))).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "missing or malformed proof keeps its authority refusal");
+        let (status, _) = f
+            .route(
+                &f.inbox,
+                "/api/apps/inbox/actions",
+                Some(json!({"action_id":current_action, "step_up_token":proof})),
+            )
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "missing or malformed proof keeps its authority refusal"
+        );
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 }

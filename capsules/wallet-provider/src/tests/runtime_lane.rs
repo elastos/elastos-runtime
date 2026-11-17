@@ -353,14 +353,22 @@ fn old_provider_call(dir: &Path, request: &WalletProviderRequestV2) -> Value {
 #[ignore = "Linux command supplies the provider built from pinned v2.0.1 bde18c7bae"]
 fn n4_update_201_undo_preserves_accounts() {
     let dir = tempfile::tempdir().unwrap();
-    let mut provider = init_provider(dir.path());
+    drop(init_provider(dir.path()));
     let principal = "person:local:alice";
-    let old_link = wallet_request(&wallet_context(principal, "wallet-metamask"), WalletProviderOperationV2::LinkVerifiedAccount {
-        proof_binding_id:"proof:eip155:20:0xabc".into(), chain_namespace:"eip155:20".into(), address:"0xabc".into(), proof_type:"siwe".into(),
-        label:Some("My old account".into()), provider_id:None, wallet_peer_name:None,
-    });
+    let old_link = wallet_request(
+        &wallet_context(principal, "wallet-metamask"),
+        WalletProviderOperationV2::LinkVerifiedAccount {
+            proof_binding_id: "proof:eip155:20:0xabc".into(),
+            chain_namespace: "eip155:20".into(),
+            address: "0xabc".into(),
+            proof_type: "siwe".into(),
+            label: Some("My old account".into()),
+            provider_id: None,
+            wallet_peer_name: None,
+        },
+    );
     assert_eq!(old_provider_call(dir.path(), &old_link)["status"], "ok");
-    provider = init_provider(dir.path());
+    let mut provider = init_provider(dir.path());
     assert!(provider.store.accounts[0].wallet_display_name.is_none());
     external_request(&mut provider, principal);
     assert!(matches!(
@@ -372,10 +380,23 @@ fn n4_update_201_undo_preserves_accounts() {
         ),
         Response::Ok { .. }
     ));
-    assert!(matches!(invoke_wallet(&mut provider, principal, "wallet-walletconnect", WalletProviderOperationV2::LinkVerifiedAccount {
-        proof_binding_id:"proof:eip155:20:0xdef".into(), chain_namespace:"eip155:20".into(), address:"0xdef".into(), proof_type:"siwe".into(),
-        label:Some("New account".into()), provider_id:None, wallet_peer_name:Some("Trust Wallet".into()),
-    }), Response::Ok { .. }));
+    assert!(matches!(
+        invoke_wallet(
+            &mut provider,
+            principal,
+            "wallet-walletconnect",
+            WalletProviderOperationV2::LinkVerifiedAccount {
+                proof_binding_id: "proof:eip155:20:0xdef".into(),
+                chain_namespace: "eip155:20".into(),
+                address: "0xdef".into(),
+                proof_type: "siwe".into(),
+                label: Some("New account".into()),
+                provider_id: None,
+                wallet_peer_name: Some("Trust Wallet".into()),
+            }
+        ),
+        Response::Ok { .. }
+    ));
     assert!(matches!(
         invoke_wallet(
             &mut provider,
@@ -402,8 +423,15 @@ fn n4_update_201_undo_preserves_accounts() {
     );
     assert_eq!(old_provider_call(dir.path(), &request)["status"], "ok");
     let mut updated = init_provider(dir.path());
-    assert_eq!(updated.store.accounts.len(), 2, "Undo reads the old account and the account linked after update");
-    assert_eq!(updated.store.accounts[1].account_id, "wallet:eip155:20:0xdef");
+    assert_eq!(
+        updated.store.accounts.len(),
+        2,
+        "Undo reads the old account and the account linked after update"
+    );
+    assert_eq!(
+        updated.store.accounts[1].account_id,
+        "wallet:eip155:20:0xdef"
+    );
     assert!(
         updated.storage_key == before_key,
         "Undo preserves the fixture key"
@@ -452,11 +480,23 @@ fn n4_bus_mixed_version_optional_metadata() {
         },
     );
     assert_eq!(old_provider_call(dir.path(), &legacy)["status"], "ok");
-    let legacy_link = wallet_request(&context, WalletProviderOperationV2::LinkVerifiedAccount {
-        proof_binding_id:"proof:eip155:20:0xabc".into(), chain_namespace:"eip155:20".into(), address:"0xabc".into(), proof_type:"siwe".into(),
-        label:None, provider_id:None, wallet_peer_name:None,
-    });
-    assert_eq!(old_provider_call(dir.path(), &legacy_link)["status"], "ok", "absent optional metadata keeps the old link shape");
+    let legacy_link = wallet_request(
+        &context,
+        WalletProviderOperationV2::LinkVerifiedAccount {
+            proof_binding_id: "proof:eip155:20:0xabc".into(),
+            chain_namespace: "eip155:20".into(),
+            address: "0xabc".into(),
+            proof_type: "siwe".into(),
+            label: None,
+            provider_id: None,
+            wallet_peer_name: None,
+        },
+    );
+    assert_eq!(
+        old_provider_call(dir.path(), &legacy_link)["status"],
+        "ok",
+        "absent optional metadata keeps the old link shape"
+    );
     let bytes = std::fs::read(provider.store_path.as_ref().unwrap()).unwrap();
     let metadata: WalletProviderOperationV2 = serde_json::from_value(json!({"kind":"link_verified_account", "params":{
         "proof_binding_id":"proof:eip155:20:0xabc", "chain_namespace":"eip155:20", "address":"0xabc", "proof_type":"siwe", "wallet_peer_name":"Trust Wallet"

@@ -49,10 +49,14 @@ static PASSKEY_STEP_UP_STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 #[derive(Debug)]
 struct StaleStepUp(&'static str);
 impl std::fmt::Display for StaleStepUp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(self.0) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
 }
 impl std::error::Error for StaleStepUp {}
-pub(super) fn step_up_is_stale(error: &anyhow::Error) -> bool { error.downcast_ref::<StaleStepUp>().is_some() }
+pub(super) fn step_up_is_stale(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<StaleStepUp>().is_some()
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

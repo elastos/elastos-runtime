@@ -24,6 +24,10 @@ export async function runtimeView(t, app, state = {}) {
     account_id:r.account_id, chain_namespace:r.chain_namespace, address:r.address, proof_type:r.proof_type, connector_id:r.connector_id,
     linked_at:Math.floor(Date.now()/1000), signing_available:true, signing_status:r.proof_type?.startsWith("managed_") ? "managed_key_available" : "external_connector_available",
   }])).values()];
+  state.entries = state.entries.map(e => ({ created_at:Math.floor(Date.now()/1000), ...e,
+    action_ref:e.action_ref ? { app:e.kind === "wallet_approval_request" ? "wallet" : "inbox", ...e.action_ref } : null }));
+  if (app === "wallet") state.accounts = state.accounts.map(a => ({ linked_at:Math.floor(Date.now()/1000), signing_available:true,
+    signing_status:a.proof_type?.startsWith("managed_") ? "managed_key_available" : "external_connector_available", ...a }));
   state.permission ||= "off";
   state.cleanup ??= state.permission === "cleanup";
   state.question ||= "consent:current";
@@ -39,7 +43,7 @@ export async function runtimeView(t, app, state = {}) {
       const input = request.postDataJSON();
       calls.push({ path: url.pathname, method: request.method(), input });
       if (url.pathname === "/api/apps/inbox/summary") return json({ notifications: { entries: state.entries, attention_count: state.entries.filter(e => e.severity === "attention").length, unread_count: state.entries.filter(e => !e.read).length } });
-      if (url.pathname === "/api/apps/wallet/wallet/summary") return json({ wallet_accounts: { accounts: state.accounts, default_accounts: [] }, wallet_approvals: { approval_requests: state.approvals }, approval_methods: { walletconnect: { available: true } } });
+      if (url.pathname === "/api/apps/wallet/wallet/summary") return json({ wallet_accounts: { available:true, accounts: state.accounts, default_accounts: [] }, wallet_approvals: { available:true, pending_count:state.approvals.filter(r => r.status === "pending").length, approval_requests: state.approvals }, approval_methods: { walletconnect: { available: true } } });
       if (url.pathname === "/api/apps/wallet-walletconnect/internet") {
         if (input?.action === "request") {
           if (state.guest) return json({ error: "owner required" }, 403);

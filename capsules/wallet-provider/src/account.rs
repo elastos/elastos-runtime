@@ -93,7 +93,9 @@ impl WalletProvider {
         let mut record = serde_json::to_value(account).expect("linked account serializes");
         for field in ["provider_id", "wallet_display_name", "wallet_mark"] {
             record.as_object_mut().unwrap().remove(field);
-            if let Some(value) = display.get(field) { record[field] = value.clone(); }
+            if let Some(value) = display.get(field) {
+                record[field] = value.clone();
+            }
         }
         record
     }

@@ -236,7 +236,11 @@ pub(super) async fn answer(
                     &request(&c)?,
                 )
                 .map_err(|error| {
-                    if gateway_passkey_step_up::step_up_is_stale(&error) { anyhow::Error::from(ConsentConflict) } else { error }
+                    if gateway_passkey_step_up::step_up_is_stale(&error) {
+                        anyhow::Error::from(ConsentConflict)
+                    } else {
+                        error
+                    }
                 })?;
                 c.status = if stopping { "revoked" } else { "granted" }.into();
                 c.cleanup_pending = stopping;

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { runtimeView, permissionEntry, packets } from "./lib/wallet-runtime-browser.mjs";
 
-const requestFixture = () => ({ ...packets.n7PrivateSummaries.find(f => f.id === "site-wallet").summary,
+const requestFixture = () => ({ ...packets.n7PrivateSummaries.find(f => f.id === "site-wallet").summary, created_at:Math.floor(Date.now()/1000),
   chain_namespace: "eip155:20", expires_at: Math.floor(Date.now() / 1000) + 600 });
 
 test("n5_permission_entry_all_states: Inbox existing routes", async t => {
@@ -45,7 +45,7 @@ test("n5_inbox_action_by_kind_and_409: decision and conflict", async t => {
 
 test("n3_reject_dismiss_acknowledgement: Wallet cards", async t => {
   for (const dismissed of [false, true]) await t.test(dismissed ? "Dismiss" : "Reject", async t => {
-    const request = { ...packets.n7PrivateSummaries.find(f => f.id === "site-wallet").summary,
+    const request = { ...requestFixture(),
       status: dismissed ? "approved" : "pending", intent: dismissed ? "transaction_intent" : "browser_personal_sign",
       connector_id: dismissed ? "wallet-walletconnect" : "wallet-metamask", expires_at: Math.floor(Date.now() / 1000) + 600 };
     const r = await runtimeView(t, "wallet", { approvals: [request] });
