@@ -29,6 +29,11 @@ are exact. Tests supply the recorded message/transaction parameters. This tool
 does not sign a new Runtime challenge or validate a link. The Runtime lane
 must use a matching recorded proof fixture for a joined link test.
 
+`metamask-silent-check` supplies recorded account and chain reads. Keep the
+required-method test passing when changing scenarios: a provider fact needs
+both its account read and its network read. Scenario parity alone checks only
+the cases that were selected and cannot detect an omitted method.
+
 The person controls are `approves`, `declines`, `closes the prompt`,
 `does nothing`, `unlocks`, `switches account`, and `removes access`.
 An optional second argument selects the recording case ID when calls overlap.

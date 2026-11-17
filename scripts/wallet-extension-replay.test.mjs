@@ -13,6 +13,17 @@ function pageSurface() {
   return page;
 }
 const canon = (id) => id === 'metamask' ? 'io.metamask' : id;
+test('every recorded-provider silent read has a scenario and an original reply', async () => {
+  const { fixture } = await replayInput('metamask-silent-check');
+  const methods = new Set(Object.values(scenarios).flatMap((s) => s.calls.map((plan) => {
+    const call = finalCall(fixture.cases.find((c) => c.id === plan.id));
+    return `${canon(call.target || call.kind)}:${call.method}`;
+  })));
+  for (const method of ['io.metamask:eth_accounts', 'io.metamask:eth_chainId',
+    'unisat:getAccounts', 'unisat:getChain', 'unisat:getNetwork']) {
+    assert.ok(methods.has(method), `Missing recorded silent read: ${method}`);
+  }
+});
 function errorShape(error) {
   return { constructor: error.constructor.name, code: error.code, message: error.message,
     data: error.data ?? null, own_properties: Object.getOwnPropertyNames(error) };

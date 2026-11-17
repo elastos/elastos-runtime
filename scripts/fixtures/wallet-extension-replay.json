@@ -91,6 +91,82 @@
       ]
     },
     {
+      "id": "MM-5-after-switch-accounts",
+      "status": "observed",
+      "snapshots": [
+        {
+          "call": {
+            "id": "MM-5-after-switch-accounts",
+            "kind": "metamask",
+            "method": "eth_accounts",
+            "params": [],
+            "started_at_ms": 393748.80000019073,
+            "state": "fulfilled",
+            "value": [
+              "0xd15c713c6cbaf1e86dd34e411c8ac7a54021d8db"
+            ],
+            "elapsed_ms": 16.899999618530273
+          },
+          "events": [
+            {
+              "provider": "metamask",
+              "name": "connect",
+              "payload": {
+                "chainId": "0x1"
+              },
+              "at_ms": 11860.300000190735,
+              "since_call_ms": -381888.5
+            },
+            {
+              "provider": "metamask",
+              "name": "accountsChanged",
+              "payload": [
+                "0xd15c713c6cbaf1e86dd34e411c8ac7a54021d8db"
+              ],
+              "at_ms": 235645.10000038147,
+              "since_call_ms": -158103.69999980927
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "MM-8-preflight-chain",
+      "status": "observed",
+      "snapshots": [
+        {
+          "call": {
+            "id": "MM-8-preflight-chain",
+            "kind": "metamask",
+            "method": "eth_chainId",
+            "params": [],
+            "started_at_ms": 331522.30000019073,
+            "state": "fulfilled",
+            "value": "0xaa36a7",
+            "elapsed_ms": 21
+          },
+          "events": [
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0x2105",
+              "at_ms": 263074.19999980927,
+              "since_call_ms": -68448.10000038147
+            },
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0xaa36a7",
+              "at_ms": 294104.60000038147,
+              "since_call_ms": -37417.699999809265
+            }
+          ],
+          "waited_ms": 25160.099999427795,
+          "observed_at_ms": 356682.39999961853
+        }
+      ]
+    },
+    {
       "id": "MM-2-ignore",
       "status": "observed",
       "snapshots": [

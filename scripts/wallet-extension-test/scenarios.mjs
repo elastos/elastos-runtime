@@ -5,6 +5,7 @@ const mm = 'MM-1-initial';
 const both = 'R2-BOTH-discovery';
 export const scenarios = {
   'metamask-before-access': scenario(mm, [call('MM-2-accounts')]),
+  'metamask-silent-check': scenario(mm, [call('MM-5-after-switch-accounts'), call('MM-8-preflight-chain')]),
   'metamask-connect-late': scenario(mm, [call('MM-2-ignore', 'approves')]),
   'metamask-connect-declined': scenario(mm, [call('MM-2-reject', 'declines')]),
   'metamask-second-connect': scenario(mm, [call('MM-2-ignore', 'approves'), call('MM-4-second-connect')]),
