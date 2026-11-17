@@ -7,6 +7,11 @@ import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "../pro
 
 export const packets = JSON.parse(await readFile(new URL("../fixtures/wallet-connector-v2-messages.json", import.meta.url)));
 const root = process.env.WALLET_RUNTIME_SOURCE ? pathToFileURL(`${process.env.WALLET_RUNTIME_SOURCE}/`) : new URL("../../", import.meta.url);
+const proofHead = process.env.WALLET_RUNTIME_SCREENS ? execFileSync("git", ["rev-parse", "HEAD"], { cwd:root, encoding:"utf8" }).trim() : null;
+function checkProofSource() {
+  if (proofHead && (execFileSync("git", ["rev-parse", "HEAD"], { cwd:root, encoding:"utf8" }).trim() !== proofHead
+    || execFileSync("git", ["status", "--porcelain"], { cwd:root, encoding:"utf8" }).trim())) throw new Error("Source changed during rendered proof");
+}
 const types = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html", ".png": "image/png", ".woff2": "font/woff2", ".svg": "image/svg+xml" };
 const consentText = "WalletConnect needs the internet to link this Home to your phone wallet. The WalletConnect service that carries the messages can see this computer's internet address. Your keys stay in your phone wallet, and you approve each request there. You can turn this off at any time here in Inbox.";
 
@@ -114,6 +119,7 @@ export async function runtimeView(t, app, state = {}) {
   await frame.locator(app === "inbox" ? "#inbox-shell" : ".wallet-shell").waitFor();
   return { page, frame, calls, state, errors, async capture(name) {
     if (!process.env.WALLET_RUNTIME_SCREENS) return;
+    checkProofSource();
     if (app === "inbox") await frame.locator("#refresh:enabled").waitFor();
     await mkdir(process.env.WALLET_RUNTIME_SCREENS, { recursive: true });
     const files = {};
@@ -128,16 +134,31 @@ export async function runtimeView(t, app, state = {}) {
     try { receipt = JSON.parse(await readFile(receiptPath, "utf8")); } catch (_) {}
     for (const theme of ["light", "dark"]) {
       await frame.locator("html").evaluate((_, theme) => window.elastosTheme.set(theme), theme);
-      const facts = await frame.locator("html").evaluate(() => ({ theme: window.elastosTheme.resolved(), width: innerWidth, height: innerHeight }));
+      const facts = await frame.locator("html").evaluate(async () => {
+        await document.fonts.ready;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const finite = () => document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity && a.playState === "running");
+        let timer;
+        try {
+          await Promise.race([
+            Promise.all(finite().map(a => a.finished.catch(() => {}))),
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Theme transitions did not settle")), 5000); }),
+          ]);
+        } finally { clearTimeout(timer); }
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const running = finite().length;
+        if (running) throw new Error("Theme transition still running at capture");
+        return { theme:window.elastosTheme.resolved(), width:innerWidth, height:innerHeight, finite_animations:running };
+      });
       if (facts.theme !== theme) throw new Error("Screenshot theme does not match its filename");
       const file = name.replace("-light-", `-${theme}-`);
-      await frame.locator("html").evaluate(() => document.fonts.ready);
-      const bytes = await page.screenshot({ animations: "disabled", path: `${process.env.WALLET_RUNTIME_SCREENS}/${file}` });
+      const bytes = await page.screenshot({ animations: "allow", path: `${process.env.WALLET_RUNTIME_SCREENS}/${file}` });
       receipt.screens[file] = { ...facts, sha256: createHash("sha256").update(bytes).digest("hex"), files,
         commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
         tree: execFileSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: root, encoding: "utf8" }).trim(),
         browser: browser.version(), node: process.version };
     }
+    checkProofSource();
     await writeFile(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
   } };
 }
