@@ -2733,7 +2733,9 @@ mod tests {
         }
         let marker = format!("\"{}{}\"", "ELASTOS_UPDATE_", "RESTART");
         let mut sites = Vec::new();
-        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
         for entry in std::fs::read_dir(crates).unwrap() {
             let source = entry.unwrap().path().join("src");
             if source.is_dir() {
