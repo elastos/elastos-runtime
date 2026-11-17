@@ -288,6 +288,8 @@ test("n3_reject_dismiss_acknowledgement: Inbox consecutive decisions and stale l
   await r.frame.getByRole("button", { name:"Refresh", exact:true }).click();
   await r.frame.locator("#refresh:enabled").waitFor();
   assert.equal(await r.frame.locator("#pending-count").textContent(), "0", "a stale list cannot reopen either confirmed decision");
-  assert.equal(await r.frame.locator(".entry-row").count(), 1, "only the last acknowledgement remains listed");
+  assert.equal(await r.frame.locator(".entry-row").count(), 0, "neither answered request returns to the pending list");
+  assert.equal(await r.frame.locator('#entry-detail [role="status"]').textContent(), "Request rejected.");
+  assert.equal(await r.frame.getByText("Sign message second.", { exact:true }).count(), 1, "the last acknowledgement keeps the selected request's identity");
   assert.deepEqual(r.errors, []);
 });
