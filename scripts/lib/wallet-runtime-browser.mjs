@@ -67,7 +67,8 @@ export async function runtimeView(t, app, state = {}) {
         if (state.conflict) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
         let message = "WalletConnect internet choice saved.";
         if (input.action_id?.startsWith("walletconnect-internet-allow:")) {
-          if (state.permission !== "requested" || input.action_id !== `walletconnect-internet-allow:${state.question}` || input.step_up_token !== "fixture-proof") return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
+          if (state.permission !== "requested" || input.action_id !== `walletconnect-internet-allow:${state.question}`) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
+          if (input.step_up_token !== "fixture-proof") return json({ error:"passkey proof required" }, 403);
           state.permission = "granted";
           state.entries = [permissionEntry("granted", state.question)];
         } else if (input.action_id?.startsWith("walletconnect-internet-deny:")) {
