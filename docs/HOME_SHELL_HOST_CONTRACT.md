@@ -232,333 +232,498 @@ succeeds.
 
 ### Injected wallet connector effects (N2)
 
-**Today.** Opaque MetaMask/Brave and UniSat frames ask the trusted top-level
-Home page to use injected providers. `home:wallet-connector-effect` with schema
-`elastos.home.wallet-connector-effect/v1` accepts exactly `link` or `approve`
-with `approvalRequestId`. The host checks the registered frame and connector
-launch token. Runtime separately validates Home's same-origin authority and the
-carried connector token for the same principal, session, proof and grant.
-Runtime issues challenges, consumes handoffs and verifies completion through
-the private Wallet Bus. WalletConnect uses its own configured capsule adapter;
-this extension edge does not run its SDK.
+**Today.** The v1 edge accepts link and approve from registered MetaMask/Brave
+and UniSat frames. Home selects the unique `io.metamask` provider, then the
+unique `com.brave.wallet` alternative; UniSat uses `window.unisat`. Discovery
+has a 32-entry bound and rejects conflicts. Home forwards bounded error text,
+checks account/network after consuming approval, and can finish an answer after
+the window's separate 60-second timer. WalletConnect runs its SDK in its own
+opaque capsule. The following v2 rules are build requirements.
 
-**Today.** The host prefers the unique `io.metamask` EIP-6963 provider, then the
-unique `com.brave.wallet` provider. Discovery is capped at 32 entries and
-conflicting identities fail closed. UniSat comes from top-level `window.unisat`.
-The host returns error text, has frame-local busy state, and consumes approval
-before account/network checks. The windows have separate 60-second timers.
-Provider-state events, silent checks, progress and local stop are build work.
+#### N2 readiness and authority renewal
 
-#### N2 closed messages
+**After this work.** All three connector documents install their listeners
+first. After document load they send `home:wallet-connector-hello` to top-level
+Home. Schema is `elastos.home.wallet-connector-hello/v2`; exact keys are `type`,
+`schema`, `connectorId`, `connectorToken`, `parentOrigin`, `documentNonce`.
+`documentNonce` is one crypto-random UUID per document, shared with that
+window's N1 selection protocol. Home validates the registered WindowProxy,
+`Origin: null`, exact target/token, parent origin and unexpired launch record.
+It answers `home:wallet-connector-ready`, schema
+`elastos.home.wallet-connector-ready/v2`, with exactly `type`, `schema`,
+`connectorId`, `documentNonce`, `generation`. Generation is crypto-random,
+16–128 ASCII characters from `[A-Za-z0-9_-]`.
 
-**After this work.** Only `wallet-metamask` and `wallet-unisat` may use this
-edge. Keep the effect message type and use schema
-`elastos.home.wallet-connector-effect/v2`. Its exact keys are `type`, `schema`,
+**After this work.** The same hello nonce in the same frame-load epoch returns
+the same generation. A new nonce retires the previous registration and fences
+its effects; its outstanding provider call stays busy. Home also retires on
+each frame-element load after the initial Runtime-routed document load;
+about:blank does not establish a registration. The document sends
+hello after its load task, and retries at 0, 500, 1,000 and 1,500 ms. A load
+fence requires a fresh hello in the new load epoch; an old document's retired
+nonce cannot revive its registration. Retain at most 64 retired nonce
+tombstones per launched frame until frame removal or launch expiry; at capacity
+require closing/reopening that frame rather than forgetting a live tombstone. Home answers only to the current source,
+never by a registration-time push into `about:blank`.
+
+**After this work.** At two seconds without ready, or on a v1-schema reply, the
+window shows fixed `unsupported_version` reload instruction text and hides its
+new N1 controls. It keeps listening: a valid late ready for its current nonce
+removes that guidance and enables the rows. No effect or new N1 row runs before
+ready, and no v1 fallback effect runs. WalletConnect receives this handshake
+for navigation but remains excluded from the injected-provider effect set.
+
+**After this work.** Renewal under the existing frame-authority renewal
+protocol keeps document nonce, generation, used IDs and in-flight effect. Home uses the context's current token on each Runtime call;
+a closure cannot keep using the old token. Renewal must preserve principal,
+session, proof, grant and actor; a change is retirement, not renewal. An expired
+current launch retires registration and fences effects/events. Renewal after
+expiry starts a new registration and never resumes an old effect.
+
+#### N2 exact messages and results
+
+**After this work.** `home:wallet-connector-effect` uses schema
+`elastos.home.wallet-connector-effect/v2`. Exact keys: `type`, `schema`,
 `requestId`, `connectorId`, `connectorToken`, `parentOrigin`, `generation`,
-`action`. Reject extra keys, arrays in place of objects and unbounded values.
-`connectorId` must equal the Runtime launch record, not select an actor.
-`connectorToken` must equal that record's current token. `parentOrigin` must
-match Home's origin. A fresh, unpredictable generation belongs to one frame
-registration and changes on retirement/replacement. Request IDs and generations
-are 16 to 128 ASCII characters from `[A-Za-z0-9_-]`, generated with browser
-crypto. Each accepted request ID is used once in that generation.
+`action`. Effect IDs are crypto-random 16–128 ASCII characters from
+`[A-Za-z0-9_-]`. Canonical account/request selectors use
+`[A-Za-z0-9:._-]{1,256}` without trimming, decoding or coercion. IDs select
+records and carry no authority. Home accepts only these exact action variants:
 
-| Status | Exact action | Allowed effect and reported stages |
+| Status | Action | Meaning |
 | --- | --- | --- |
-| After this work | `{kind:"check"}` | Silent discovery and bounded account/network reads; `checking`, then `finished`. It opens neither an account prompt nor a signing prompt, creates no challenge and consumes no request. During a busy call it returns the last snapshot with `busy:true` without calling the provider. |
-| After this work | `{kind:"link"}` | On the person's explicit action: `checking`, `choosing_account`, `waiting_signature`, `verifying`, `finished`. Home requests site accounts and signs only Runtime's single-use ownership challenge. |
-| After this work | `{kind:"approve",approvalRequestId:id}` | `checking`, optionally `choosing_account` or `choosing_network`, `waiting_signature` or `waiting_transaction`, `verifying`, `finished`. Runtime selects the stored request and exact payload. |
-| After this work | `{kind:"stop",effectRequestId:id}` | Ends only this frame generation's matching local wait. Returns `finished`; the target wait receives `stopped`. It has no extension revoke, disconnect, request rejection or transaction cancellation effect. A missing/already-ended target returns `request_unavailable`. |
+| After this work | `{kind:"check"}` or `{kind:"check",accountId:id}` | Silent read for a new link, or membership of the Runtime-resolved linked account. No prompt, challenge, handoff or link. |
+| After this work | `{kind:"link"}` or `{kind:"link",accountId:id}` | Ordinary Connect wallet; the optional selector restores the same canonical account. Runtime admission precedes the first prompting call. |
+| After this work | `{kind:"approve",approvalRequestId:id}` | Resolve the canonical pending request, preflight, consume once, then perform its one typed payload effect. |
+| After this work | `{kind:"stop",effectRequestId:id}` | Stop this generation's matching local wait. It does not withdraw a wallet prompt or reject a Home request. |
 
-**After this work.** `approvalRequestId` uses the N1 request-ID rule below;
-`effectRequestId` uses the effect request-ID rule. No action accepts a provider
-method, RPC parameters, network configuration, message, transaction, signature
-or caller-selected deadline. Home accepts messages only from the registered
-opaque `WindowProxy`, with `Origin: null`, the live generation and matching
-launch context. Runtime checks current capabilities at each effect endpoint,
-including completion; a browser check does not replace this validation. The
-same validation applies to check and stop. Unregistered messages are ignored.
-A registered caller with an invalid envelope receives only a fixed failure.
+**After this work.** Windows own person-visible Connect/Send/Stop controls.
+Home cannot prove a click inside an opaque frame; capability checks and the
+outside wallet's own confirmation remain the effect guards. A frame supplies
+no method, parameters, message, signature, transaction or deadline. Restoring
+access uses Connect wallet, which requests accounts; Check access stays silent.
+A connector gives reload instructions only. Home/browser controls own reload;
+there is no connector reload message.
 
-**After this work.** On validated frame readiness Home sends
-`home:wallet-connector-ready`, schema `elastos.home.wallet-connector-ready/v2`,
-with exactly `type`, `schema`, `connectorId`, `generation`. Results use type
-`home:wallet-connector-effect-result`, schema
-`elastos.home.wallet-connector-effect-result/v2`, and exactly `type`, `schema`,
-`connectorId`, `generation`, `requestId`, `stage`, `deadlineAt`, `snapshot`,
-`outcome`, `waitEnd`, `dispatch`. Progress has `outcome:null`; a final result
-has `stage:"finished"` and one outcome below. `waitEnd` is `null`, `user` or
-`deadline`; `dispatch` is `not_sent`, `handed_off`, `sent` or `unknown`.
-`sent` means the provider call was made, not that the wallet accepted it.
-Only Runtime completion can establish link/approval success. `deadlineAt` is a
-positive safe integer while a timed effect is active, otherwise `null`. A
-schema/authority rejection returns the empty snapshot (`null` provider/network,
-empty accounts/alternatives, `unknown` availability/access, `busy:false`); clients
-ignore that placeholder snapshot. A valid busy refusal returns the last bounded
-cached snapshot with `busy:true`, without another provider call. Cached facts
-remain non-authoritative. Clients validate all fields,
-the exact Home source/origin, generation and request ID before rendering.
+**After this work.** Results use type `home:wallet-connector-effect-result`,
+schema `elastos.home.wallet-connector-effect-result/v2`, and exactly these
+11 keys: `type`, `schema`, `connectorId`, `generation`, `requestId`, `stage`,
+`deadlineAt`, `snapshot`, `outcome`, `waitEnd`, `dispatch`. `outcome:null` means
+progress; a non-null outcome is final. There is no `finished` stage. The final
+`stage` is the last stage reached, so it also supplies the ended phase without
+a redundant `endedStage` field. Home posts a stage before its associated call.
 
-**After this work.** A snapshot has exactly `providerId`, `alternatives`,
-`availability`, `accounts`, `network`, `access`, `busy`. `providerId` is
-`io.metamask`, `com.brave.wallet`, `unisat` or `null`; alternatives contain only
-the other eligible stable identifier for that same connector, at most one.
-UniSat has no alternative in this set. The stable identifier,
-not EIP-6963's reload-dependent UUID, names the wallet. UUID and object identity
-remain page-local conflict checks. Announced identity is self-asserted, not
-extension authentication. Conflicts, duplicate identities and discovery
-overflow return `failed`; Home does not silently choose another provider.
-A vanished provider is checked again before another effect. Re-announcement
-cannot prove that a disabled/re-enabled extension reinjected into the page.
-Brave's configured-wallet behavior still requires real-wallet evidence.
-
-**After this work.** `availability` is `found`, `absent`, `unavailable` or
-`unknown`. `unavailable` requires a positive host fact that this enclosing
-window cannot run these extensions, such as the native desktop wrapper's
-fixed WebView configuration. A missing provider alone yields `absent`, with
-one recovery instruction covering installation, disabled access and private
-windows. An unclassified host remains `unknown`. Host classification takes an
-explicit platform/host input owned by Home; a capsule cannot supply it.
-The bare WebKit absence recording proves absence, not this classification.
-Check again uses `check`; installing in Home's Browser cannot equip the
-browser enclosing Home. A control named Check access still uses this silent
-check. If restoring access needs a prompt, the person uses the extension's own
-site controls or an explicit link ceremony; a verified relink updates the same
-canonical account rather than adding a duplicate. The contract adds neither a
-prompting check variant nor a fifth effect kind. A connector can give reload
-instructions; actual reload uses Home-owned or browser controls, not a new
-connector reload message. WalletConnect navigation uses N1.
-
-**After this work.** `accounts` is a validated list of at most 32 canonical
-addresses, each at most 128 ASCII bytes; overflow or malformed data fails the
-snapshot. EVM comparison is case-insensitive; Bitcoin comparison follows the
-address encoding. `network` is a canonical `eip155:<positive decimal chain id>` with a safe-integer
-chain ID,
-Bitcoin's mainnet BIP-122 namespace, or `null` for unknown/unsupported values.
-UniSat must identify `getChain().enum === "BITCOIN_MAINNET"`; `livenet` alone
-is insufficient. Testnet and Fractal remain unsupported. EVM network changes
-are facts; a supported change alone is not an error. `access` is `unknown`,
-`available`, `empty` or `lost`. `lost` means a previously nonempty site-account
-list became empty in this page, not a proven cause of that change.
-
-**After this work.** Home forwards only these typed, validated facts and fixed
-codes. It never forwards extension error text, announced names/icons, error
-`data`, arbitrary strings, provider objects, signatures or payloads. Display
-names and marks come from [N4](WALLET_PROVIDER.md#n4-wallet-name-and-mark).
-Site-permitted EVM accounts are not the wallet's global selection. For approval,
-Home uses the requested address if it is in the site's permitted list; for a
-new link it uses the first returned permitted address and shows that choice.
-An account switch does not change a stored link. Empty accounts cannot prove
-lock or revocation. The recordings establish no reliable lock classifier;
-the window may instruct the person to unlock/check the wallet while waiting,
-but may not assert a `locked` fact.
-
-| Status | Closed final outcome | Meaning / producer |
+| Status | Stage | Associated work |
 | --- | --- | --- |
-| After this work | `done` | Check completed, or Runtime verified link/approval completion. A stop acknowledges its local effect only. |
-| After this work | `declined` | The active provider call returned numeric `4001`; Home reports decline without inferring a native close-button action. |
-| After this work | `account_not_authorized` | The canonical required account is unavailable in the site-account read. This reports unavailable access, with lock/permission cause left unknown. |
-| After this work | `request_not_authorized` | The active wallet call returned numeric `4100`: the wallet did not allow this request. That code alone identifies neither an account-selection error nor whether account or method permission failed. |
-| After this work | `account_mismatch` | The signer returned for a link/proof changed from the bound account before dispatch/verification. A request account absent from the site list uses `account_not_authorized`. |
-| After this work | `unknown_network` | An unresolved numeric `4902` after the fixed Runtime-configured switch/add sequence, an unsupported UniSat chain, or a network Home cannot safely identify/configure. |
-| After this work | `host_busy` | Home already has a call to this provider in flight, or the frame's bounded admission capacity is full. Use neutral local-busy guidance; this alone proves no wallet prompt. |
-| After this work | `wallet_busy` | The active wallet call returned numeric `-32002`. The recorded MetaMask connect case can say a wallet request is already open. Signing queues and UniSat's concurrent-connect anomaly are prevented by serialization, not assumed to return that code. |
-| After this work | `no_wallet` | No usable allowed provider was found here; installation/disable/private causes remain unknown. |
-| After this work | `extensions_unavailable` | Positive enclosing-host fact as specified above. |
-| After this work | `stopped` | Home ended the local wait by user action or its deadline. An extension prompt may remain open. |
-| After this work | `access_removed` | Previously available site accounts became empty. The window explains that access is no longer available and asks the person to check the wallet; lock and removal remain possible causes. |
-| After this work | `unsupported_request` | The stored intent has no supported typed effect on this connector; leave it available for rejection in Wallet. |
-| After this work | `request_expired`, `request_unavailable` | Runtime says expiry passed, or the selected request/stop target is absent, answered, consumed or outside this context. |
-| After this work | `invalid_request`, `denied`, `replay`, `retired` | Exact shape/bounds, authority, used ID, or frame lifecycle check failed respectively. |
-| After this work | `unsupported_kind`, `unsupported_version` | A valid registered caller asked for an unknown action kind or schema. No provider/Runtime mutation is made. |
-| After this work | `failed` | All other failures, including malformed provider output, disconnected-provider codes or an unclassified error. Fixed local wording; no guessed insufficient-funds cause. |
+| After this work | `checking` | Runtime admission/read, discovery and silent reads. |
+| After this work | `choosing_account` | Every `eth_requestAccounts` or UniSat `requestAccounts`, including when an empty list requires access. This does not assert that a chooser is visible; the wallet may ask to unlock. |
+| After this work | `choosing_network` | The existing Runtime-configured EVM switch/add sequence. |
+| After this work | `waiting_signature` | The ownership-challenge or request payload signature call. |
+| After this work | `waiting_transaction` | The transaction send call. |
+| After this work | `verifying` | Runtime verifies proof or records completion. |
 
-#### N2 ordering, deadlines and lifetime
+**After this work.** `dispatch` starts `not_sent`. Account reads, account
+prompts and network prompts never change it. Approval becomes `handed_off`
+when Runtime handoff returns. It becomes `sent` only at the ownership/payload
+signature or transaction send call boundary. That means the call was made,
+not that a signature, broadcast or chain confirmation succeeded. Only a
+transaction whose payload call was made and whose wait ended by stop/expiry
+uses `unknown`. `waitEnd` is non-null only with `outcome:"stopped"`: `user` or
+`deadline`. Final effect results retain the last absolute `deadlineAt`.
 
-**After this work.** Home serializes all calls to a selected wallet provider
-across connector frames in this Home page, including silent reads. It sends one
-call at a time. There is one active link/approval per frame; the cached check
-and matching stop remain available during that effect. A rejected concurrent attempt is not queued. Another Home tab or
-browser has its own page state; Runtime's one-shot handoff still arbitrates the
-same request. Home cannot promise a cross-tab extension mutex.
+**After this work.** Check always ends at `stage:"checking"`,
+`dispatch:"not_sent"`, `waitEnd:null`, with its original two-second deadline.
+A busy check returns `outcome:"done"`, `snapshot.busy:true` from this
+registration's bounded cache; it makes no provider call. It still spends a
+request ID. Stop has all 11 keys: its own correlation ID, `stage:"checking"`,
+`deadlineAt:null`, the current bounded snapshot, `outcome:"done"`,
+`waitEnd:null`, `dispatch:"not_sent"`. The target effect separately ends
+`stopped` with its last stage/deadline/dispatch. A missing or already-ended stop
+target returns `request_unavailable` in that same stop shape.
 
-**After this work.** Before consuming approval, Home reads the canonical request
-with `POST /api/apps/home/wallet-connector/approvals/:request_id/preflight`.
-This is a fixed read adapter within N2's existing authority, not another capsule
-kind or capability. Its exact body is the existing Runtime envelope: `schema`
-(`elastos.home.wallet-connector.effect.request/v1`), `connector_id`,
-`connector_token`. It uses the same Home-plus-connector validation as handoff.
-The exact response keys are `schema`
-(`elastos.home.wallet-connector.effect.result/v1`), `action`
-(`approval_preflight`), `connector_id`, `request_id`, `request`, `evm_chains`.
-`request` has exactly `request_id`, `status`, `intent`, `account_id`, `address`,
-`chain_namespace`, `payload_hash`, `expires_at`. Runtime resolves the principal,
-session, proof and grant internally and returns only that connector's matching
-request. The hash is the same hash that handoff will bind; expiry is epoch
-seconds. `evm_chains` uses the existing bounded Runtime chain-configuration
-shape. This response stays in Home; the frame gets only its typed progress and
-snapshot. The read creates no challenge, consumes nothing and returns no
-signing payload. Unavailable, answered, expired and wrong-connector requests
-produce a fixed failure before any provider prompt.
+**After this work.** Unregistered sources and invalid correlation IDs receive
+no reply. A registered caller with a valid ID but malformed envelope gets a
+fixed `invalid_request` result at `checking`, deadline null, empty snapshot,
+waitEnd null and dispatch not_sent. Clients ignore failure-placeholder facts.
+A valid busy refusal carries cached facts with the actual provider-busy flag;
+capacity exhaustion alone may return host_busy with busy false. Every non-admitted link/approve refusal uses checking, deadline null, waitEnd
+null and dispatch not_sent. Unknown schema/kind gets unsupported_version/kind;
+extra keys get invalid_request. A v2 Home
+answers an identifiable v1 effect caller in its exact v1 error shape (`type`,
+`schema`, `requestId`, `connectorId`, `error`) with constant text
+`Reload Home to continue.` and zero effects. New clients treat any such v1
+reply as unsupported_version, without rendering its text.
 
-**After this work.** Home checks supported intent, site-permitted account and
-network before handoff. An explicit Send may request account access or the
-existing Runtime-selected EVM switch/add sequence first; check never prompts.
-Network configuration comes only from Runtime. Re-read account/network after
-any prompt, then recheck request state and bindings at atomic handoff. Empty
-accounts, decline, mismatches, unsupported networks and preflight timeout leave
-the request pending while its TTL allows. Home rechecks the typed handoff
-against the preflight snapshot before the one signing or send call; a race
-after handoff is an uncertain consumed request, not a retry. Runtime verifies
-signer, payload hash, connector and expiry on completion.
+#### N2 provider facts and closed outcomes
 
-**After this work.** At acceptance Home fixes one absolute `deadlineAt` in epoch
-milliseconds: at most 60 seconds from acceptance for the entire link/approve
-effect, at most two seconds for check, and earlier if launch, stored request or
-challenge expiry requires it. Discovery, account choice, network choice,
-signing and progress never restart the clock. Newly learned earlier expiry
-can only shorten it. Home enforces the elapsed bound with a monotonic clock;
-windows render the same deadline. Stop is immediate local control. A provider
-promise may outlive this deadline: Home fences continuation after every await,
-keeps the provider busy until that promise settles, and drops late signatures
-and ownership proofs before verification. No later challenge, handoff, sign or
-send may start for that retired effect. Already-committed Runtime work remains
-authoritative; a reply arriving late cannot erase its receipt.
+**After this work.** Snapshot keys are exactly `providerId`, `alternatives`,
+`availability`, `firstAccount`, `requiredAccountAvailable`, `network`,
+`networkIssue`, `access`, `busy`. Empty facts are null provider/account/network,
+empty alternatives, unknown availability/access, null membership/networkIssue,
+and the known busy Boolean. A fresh registration during another frame's busy
+call gets these empty facts with busy true, not the older frame's account data.
+Caches remain confined to their verified principal/session/connector and
+canonical selector. They are observations, not signing authority.
 
-**After this work.** Once a transaction call was dispatched, stop/timeout leaves
-`dispatch:unknown` and a Result unknown view. It never re-enables Send for that
-consumed ID. A late transaction hash is retained only long enough to attempt
-the existing Runtime completion under its original bindings and TTL; if Runtime
-refuses it, success remains unknown and the person checks the outside wallet.
-This does not extend an injected connector's completion TTL. WalletConnect's
-existing different receipt rule is owned by
-[Wallet Provider](WALLET_PROVIDER.md#first-shippable-slice). Late completion
-refreshes authoritative state only; it does not reopen or resolve a retired UI
-wait. Home reload cannot recover an extension promise and cannot prove that
-an outside transaction stopped.
+**After this work.** `providerId` is `io.metamask`, `com.brave.wallet`, `unisat`
+or null. The MetaMask connector may report only its selected MetaMask/Brave
+provider and at most the other eligible EVM identifier in `alternatives`.
+UniSat has no alternative in this set. A MetaMask check learns nothing about
+UniSat or another connector's extensions. MetaMask remains preferred when both
+EVM providers exist; a Brave-linked account then may be unavailable to this
+selected provider. This is a known limit, not a wallet-selection API. Stable
+identifiers name providers; EIP-6963 UUIDs and object identity are page-local
+conflict checks, not reload-stable identity or cryptographic authentication.
 
-**After this work.** Home subscribes to selected provider `accountsChanged` and
-EVM `chainChanged` / UniSat `networkChanged` for the active frame lifetime.
-It sends unsolicited `home:wallet-connector-state` messages with schema
-`elastos.home.wallet-connector-state/v2`, exactly `type`, `schema`, `connectorId`,
-`generation`, `snapshot`. Validate event shapes and coalesce updates. A network
-event triggers a serialized silent reread; UniSat's raw network string is not
-a chain identity. During an outstanding provider call, mark affected snapshot
-fields unknown and schedule at most one reread after settlement; do not overlap
-calls. Events are hints, not authority or proof of lock, removal or signing.
-Before another effect Home reads current state again. Event changes never
-mint links or auto-send a request.
+**After this work.** `availability` is `found`, `absent`, `unknown` or
+`unavailable`. This head has no trusted wrapper fact for unavailable. In 2.0.2
+`extensions_unavailable` stays in the closed outcome list but has no producer;
+no lane infers it from user-agent strings, missing providers or Runtime host OS.
+Until a wrapper supplies a reviewed fact, use cause-neutral absence and the
+WalletConnect alternative. Configured Brave behavior is still unrecorded.
+Silent-method compatibility claims cover the recorded MetaMask/UniSat builds;
+Brave needs its own recording before acceptance.
 
-**After this work.** Discovery holds at most 32 provider entries for the page
-lifetime. Frame registration holds its token, generation, last validated
-snapshot and at most 64 used request IDs for five minutes. At capacity return `host_busy` for new effects until entries expire, keeping
-unexpired replay protection. Reserve capacity for the active effect's stop;
-repeating that stop has no further effect.
-One busy-provider record retains only the original binding, dispatch state and
-pending continuation until settlement or page unload; a stopped never-settling
-call remains busy. Challenge/payload/signature bytes live only during their
-needed step and are cleared at completion, failure or retirement. A pending
-transaction continuation may retain only its original completion binding until
-settlement or expiry. Home persists none of this in browser storage and logs
-no extension material. Frame close, sign-out and shell replacement remove
-subscriptions, tokens and UI snapshots and fence continuations; Runtime still
-owns durable accounts/requests/receipts. Page unload releases all page memory.
+**After this work.** Home bounds its private site-account array to 32 canonical
+addresses of at most 128 ASCII bytes each. Only `firstAccount` crosses the edge:
+the first permitted account for a new link, lower-case `0x` plus 40 lower-case
+hex digits for EVM, or a validated Bitcoin address (lower-case bech32; base58
+case preserved). `requiredAccountAvailable` is null with no selector; otherwise
+it is membership of the Runtime-resolved required address. The full array never
+crosses the edge. Account-to-confirm uses firstAccount from progress for a new
+link, or the canonical required account for restoration. Capture that account once for the attempt; later facts never retarget an
+active proof/request. EVM signing uses the bound requested address when it is
+still permitted, even if the array order changes. Cards get stored
+request/account details through their existing scoped Runtime reads.
 
-**After this work.** A registered caller asking an unknown kind/version gets
-the corresponding fixed outcome. A newer window waits at most two seconds for v2 readiness, then performs a
-harmless v2 check with that generation. An already-open v1 Home has no v2
-readiness. If it receives an unknown check/stop kind or v2 envelope, its current
-handler returns the fixed v1 denial. The client discards that reply text and
-uses `unsupported_version` reload guidance. Missing readiness or a missing
-handler gives the same guidance after two seconds. It never falls back to a
-v1 link/approve effect. The Clipboard purpose contract remains independent.
+| Status | Network read | `network` | `networkIssue` |
+| --- | --- | --- | --- |
+| After this work | Valid EVM chain ID | `eip155:<positive safe-integer decimal>` | null |
+| After this work | UniSat `getChain().enum` = `BITCOIN_MAINNET` | `bip122:000000000019d6689c085ae165831e93` | null |
+| After this work | `BITCOIN_TESTNET` | null | `bitcoin_testnet` |
+| After this work | `FRACTAL_BITCOIN_MAINNET` | null | `fractal` |
+| After this work | Any other/malformed UniSat enum | null | `unrecognized` |
+
+**After this work.** `getNetwork()` and network-event strings cannot identify
+Bitcoin mainnet. UniSat's three issue values stay distinct even if a design
+later groups their screens. EVM ordering-only account changes do not imply
+unavailability; membership decides. `access` is unknown, available, empty or
+lost. For MetaMask/Brave, previously confirmed required-account membership
+followed by an empty list yields lost/access_removed before the generic
+account_not_authorized outcome. Otherwise a missing required account yields
+account_not_authorized. UniSat empty accounts after linking always yield
+empty/account_not_authorized, rendered as account not available, with no cause
+claim. Lost resets only when a fresh read or prompted account response confirms
+required membership; changing selectors resets the observation baseline.
+
+| Status | Closed outcome | Meaning |
+| --- | --- | --- |
+| After this work | `done` | Check/control completed, or Runtime accepted proof/completion. |
+| After this work | `declined` | Numeric wallet 4001 in the reported stage; no claim about a native close button. |
+| After this work | `request_not_authorized` | Numeric 4100; no account/method cause inferred. |
+| After this work | `account_not_authorized`, `access_removed` | Account availability and precedence above; neither proves lock or revocation cause. |
+| After this work | `account_mismatch` | The proof signer changed from the bound signer. |
+| After this work | `unknown_network` | Unresolved 4902 after allowed switch/add, unsupported UniSat enum or invalid required network. |
+| After this work | `host_busy` | Local serialization/admission capacity; it proves no wallet prompt. |
+| After this work | `wallet_busy` | Actual -32002; the recorded connect case reports a request already open in the wallet. |
+| After this work | `no_wallet` | No usable allowed provider found here; installation/private/disable causes stay unknown. |
+| After this work | `extensions_unavailable` | Reserved; not producible in 2.0.2 without a reviewed wrapper fact. |
+| After this work | `stopped` | Person stopped, or authoritative wait expiry passed; a prompt can remain open. |
+| After this work | `unsupported_request`, `request_expired`, `request_unavailable` | Stored intent unsupported, expiry passed, or request/stop target unavailable. |
+| After this work | `invalid_request`, `denied`, `replay`, `retired` | Shape, authority, used-ID or registration-lifetime refusal. |
+| After this work | `unsupported_kind`, `unsupported_version` | Unknown action/schema; no effect. |
+| After this work | `failed` | All remaining errors, with fixed local wording. |
+
+**After this work.** Numeric codes, methods, error data and extension text stay
+inside Home and off screen. Failures cross only as the closed outcome and phase; snapshots contain the
+typed facts above. Provider objects, signatures, transaction hashes and
+payloads stay private.
+[N4](WALLET_PROVIDER.md#n4-wallet-name-and-mark) owns display identity.
+
+#### N2 Runtime admission, preflight and errors
+
+**After this work.** Every injected effect route requires Home's same-origin
+launch authority plus the carried connector token for the same principal,
+session, proof and grant, exact selected resource/actor, and Home authorizer.
+Check/stop/events use the page registration and expiry checks, not a claim that
+they make a Runtime call. Resolving an account selector uses the fixed scoped
+read below. WalletConnect may use only the N1 read, not injected effects.
+
+| Status | Fixed Runtime route | Exact body / success |
+| --- | --- | --- |
+| After this work | `POST /api/apps/home/wallet-connector/link/admit` | Base body `schema,connector_id,connector_token` plus `effect_request_id`. Result `schema,action:"link_admitted",connector_id,admission_id,expires_at`. |
+| After this work | `POST /api/apps/home/wallet-connector/accounts/:account_id/preflight` | Base body. Result `schema,action:"account_preflight",connector_id,account`; account has exactly `account_id,address,chain_namespace`. Active principal-owned link and matching connector required. |
+| After this work | `POST /api/apps/home/wallet-connector/approvals/:request_id/preflight` | Base body. Result `schema,action:"approval_preflight",connector_id,request_id,request,evm_chains`; request has exactly `request_id,status,intent,account_id,address,chain_namespace,payload_hash,expires_at`. Pending, unexpired, correct connector/session only. |
+
+**After this work.** Base schema is
+`elastos.home.wallet-connector.effect.request/v1`; success schema is
+`elastos.home.wallet-connector.effect.result/v1`. These reads stay in Home and
+return no signing payload to a frame. Network configuration is Runtime-owned.
+Admission precedes every link account prompt, requires an active proof binding,
+and binds the authority tuple and effect ID. An idempotent retry returns the
+same admission/expiry. One unconsumed admission per launch lineage is retained
+for at most 300 seconds; a fresh effect supersedes the older unused admission.
+Its challenge and verify bodies carry `admission_id`; challenge expiry cannot
+exceed admission expiry. Verification consumes proof/admission once and upserts
+the canonical account, so a late/replayed response cannot add it twice.
+[N4](WALLET_PROVIDER.md#n4-wallet-name-and-mark) names identity fields on verify
+and any completion that links an account.
+
+**After this work.** Approval preflight happens before any account/network
+prompt or handoff. If its site-account list is empty, Home requests account
+access, then rechecks required membership. It runs the existing approved EVM
+switch/add sequence before handoff and rechecks account/network after prompts.
+Wrong account/network, refusal, unsupported intent and expiry leave the request
+pending while its TTL allows. Runtime atomically rechecks the immutable request
+and consumes once. Home compares the handoff to preflight before its one payload
+call. A race after consumption does not permit a second handoff/send.
+
+**After this work.** Every `/api/apps/home/wallet-connector/*` failure, including
+JSON rejection and the N1 read, has exactly
+`{schema:"elastos.home.wallet-connector.effect.error/v1",code}`. No text/data or
+additional fields. HTTP/code pairs are fixed below. Home maps by recognized
+code, not English text or status alone; a missing/unknown/malformed body maps
+to failed. Error codes are not rendered to the person.
+
+| Status | HTTP | Runtime code | Home outcome |
+| --- | --- | --- | --- |
+| After this work | 400 | `invalid_request` | invalid_request |
+| After this work | 403 | `denied` | denied |
+| After this work | 404 | `request_unavailable` | request_unavailable |
+| After this work | 410 | `request_expired` | request_expired |
+| After this work | 422 | `unsupported_request` | unsupported_request |
+| After this work | 422 | `unknown_network` | unknown_network |
+| After this work | 409 | `conflict` | request_unavailable |
+| After this work | 409 | `unsupported_version` | unsupported_version |
+| After this work | 500 | `failed` | failed |
+
+#### N2 waiting, settlement and memory
+
+**After this work.** There is no 60-second link or approval timeout. Link has
+one absolute deadline: the earlier of Home acceptance plus 300 seconds and the
+Runtime admission/challenge expiry. Approval uses the stored request's own
+expiry. Silent check has two seconds. Stages, account choice and unlock never
+restart these clocks. Home posts checking immediately (deadline null until
+approval preflight supplies it), bounds each Runtime admission/read to two
+seconds, then reports the authoritative deadline in epoch milliseconds. A
+newly learned earlier proof expiry can shorten, never extend, the link deadline.
+
+**After this work.** A wallet answer received while Home still waits and the
+request/admission remains valid counts, including the recorded 77/112-second
+completions. Only stop or expiry ends that wait; expired/revoked launch authority
+also ends registration, with retired outcome. Launch expiry is separate from
+`deadlineAt`: timely same-authority renewal keeps the wait deadline and does not
+freeze it at the old token's expiry. If current authority expires first, Home
+retires the registration; a later renewal cannot revive that effect.
+
+**After this work.** Home sends stopped/waitEnd deadline at the deadline. With
+no first progress after two seconds, the window shows a communication warning
+and keeps Stop available; it neither cancels automatically nor retries. After
+known deadlineAt plus two seconds without a final result it displays the local
+expiry fallback, preserving request identity and uncertainty. Late authoritative
+receipts still refresh Runtime state. Stop or expiry fences every continuation
+before another challenge/handoff/sign/send or proof verification. Already
+accepted Runtime work can finish and its receipt remains authoritative.
+
+**After this work.** One provider call at a time is allowed across frames in
+this page, including reads; another tab still meets Runtime's one-shot gate.
+A stopped/expired pending provider promise holds its slot until settlement or
+page unload. A check during busy returns done with busy true from cache;
+link/approve return host_busy. Checks run only on open, focus return and explicit
+Check access, with no interval polling. Every accepted check, cached or not,
+spends one replay ID. Clients never reuse an ID in a document. Home keeps at
+most 64 IDs: inactive IDs for five minutes, active IDs pinned until the effect
+and its outstanding call settle plus five minutes. Reserve one slot for the
+active effect's stop; refuse new work instead of evicting live/pinned IDs.
+Runtime proof/admission consumption and handoff provide the durable replay
+fence independently of this bounded page cache.
+
+**After this work.** Home sends state messages on every busy transition to live registrations
+watching that same connector/provider, using each registration's own cache.
+Another connector receives none of these facts. Type
+is `home:wallet-connector-state`, schema
+`elastos.home.wallet-connector-state/v2`; exact keys are `type`, `schema`,
+`connectorId`, `documentNonce`, `generation`, `snapshot`, `settled`. Normally
+settled is null. If a stopped/expired provider call later settles, send exactly
+one advisory to its still-live original registration:
+`settled:{effectRequestId,result:"answered"|"declined"|"failed"}`. Answered means
+a successful provider return, declined means 4001, failed means all other
+settlement. The advisory carries no text, signature or hash, does not resolve
+the stopped wait again, and supplies the late-ignored design-state producer.
+A replacement/reloaded generation receives only busy release and fresh facts,
+not another generation's settled effect ID. With no live original generation,
+that advisory is dropped.
+
+**After this work.** Account/network events are validated hints. Home coalesces
+ordinary fact changes for 100 ms, preserving order of busy transitions and the
+one settlement advisory. EVM account ordering with unchanged membership and
+firstAccount still emits the new firstAccount if it changed; it is not rendered
+as loss of the required account. Network events schedule one serialized reread;
+UniSat event strings do not replace getChain identity. During a provider call,
+mark affected facts unknown and retain at most one reread. Events never link
+an account or send a request.
+
+**After this work.** Closing a frame stops its wait and registration but may
+retain one transaction-only completion continuation: the last current carried
+token plus immutable request/hash/authority binding. It may record a returned
+hash after close only while the same Home page, principal/session/proof/grant,
+Home authority, connector token and Runtime receipt TTL remain valid. It cannot
+make another provider call or handoff, and sends no reply to the closed frame.
+Sign-out, shell replacement, expired authority and page unload drop that token
+and continuation. A refused/late completion leaves Result unknown. This grants
+no new TTL; WalletConnect's existing distinct receipt rule remains in
+[Wallet Provider](WALLET_PROVIDER.md#first-shippable-slice).
+
+**After this work.** Discovery retains at most 32 page-local entries. Per-frame
+facts, nonce/generation, replay IDs and one effect are cleared on retirement;
+only the bounded nonce tombstones, provider-busy record and transaction
+exception above can outlive it. No browser storage or logs retain extension material. A never-settled
+call stays busy until page unload. Finish/reject the prompt in the wallet, or
+follow reload instructions; closing its tab alone is not proven cancellation.
 
 ### Wallet window navigation (N1)
 
-**Today.** Wallet opens the three connectors without a selected request ID.
-Inbox can return to WalletConnect with an empty query. WalletConnect can open
-only its exact internet entry in Inbox. Connector-to-Wallet/source-app routes
-are absent. Wallet accepts `wallet_request` but lacks the activity query.
+**Today.** Wallet launches connectors without a selected ID; Inbox can return
+to WalletConnect. WalletConnect can open its exact internet entry. New
+connector-to-Wallet/source-app rows and activity selection are build work.
 
-**After this work.** Extend only the rows below on `home:open-target`. All
-messages have exact keys `type`, `target`, `homeToken`, `query`, except the
-source-app row which also has `requestId`. Here `requestId` is the canonical
-Wallet request ID, not an effect-message correlation ID. IDs in all these rows
-match `[A-Za-z0-9:._-]{1,256}`, with no decoding, trimming or coercion. They are
-selectors, never authority. Existing no-query Wallet connect messages remain
-accepted only as the exact legacy empty-selection form. Runtime mints fresh
-target-scoped authority; the source frame's token stays private to Home.
+**After this work.** New requests use `home:open-target` with exact keys `type`,
+`target`, `query`, `homeToken`, `requestId`, `documentNonce`. Here requestId is a
+crypto-random navigation correlation ID, not a Wallet request selector. The
+source-app row also has `walletRequestId`. Canonical selectors use the N2
+256-character rule; navigation IDs/nonces use crypto UUIDs. Home binds source,
+opaque origin, live token and current document; connector callers also require
+v2 readiness. Existing exact legacy forms remain accepted only on today's rows.
 
-| Status | Source window | Target | Exact query / additional key | Home and target validation |
-| --- | --- | --- | --- | --- |
-| After this work | Inbox | Wallet | `{wallet_request:id}` | Read the principal's Runtime request, then select that ID. Existing Review in Wallet path. |
-| After this work | Wallet | `wallet-metamask`, `wallet-unisat`, `wallet-walletconnect` | `{}` to connect; `{wallet_request:id}` to review | For a selection, stored `connector_id` must equal target. Preserve ID through Runtime launch, attachment and frame query or checked existing-window delivery. |
-| After this work | Inbox | `wallet-walletconnect` | `{}` | Return after the exact internet decision; opens readiness, never resumes a dropped intent. |
-| After this work | Any of the three connectors | Wallet | `{wallet_request:id}` | Stored request must belong to this principal and source connector. Wallet shows that record or a fixed unavailable result, never silently selects another. |
-| After this work | Any of the three connectors | Wallet | `{tab:"activity"}` | Open the existing activity drawer even when requests remain pending. This row changes presentation only. |
-| After this work | `wallet-metamask` or `wallet-unisat` | `wallet-walletconnect` | `{}` | Start QR connection only if configured/launchable. Transfer no request or signing authority to the other connector. |
-| After this work | `wallet-walletconnect` | Inbox | `{notification_id:"walletconnect-internet:permission"}` | Exact existing internet entry only; no other notification ID. Permission behavior belongs to N5. |
-| After this work | Any of the three connectors | Runtime-recorded source app | `{}` plus top-level `requestId:id` | Home reads the canonical principal-owned request, checks its connector matches the sender and derives `target` from stored `capsule_id`. The supplied target is only an equality assertion. Launch the currently admitted app with empty query; transfer neither request payload nor automatic retry. |
+| Status | Source | Target | Exact query / extra selector |
+| --- | --- | --- | --- |
+| After this work | Inbox | Wallet | `{wallet_request:id}` |
+| After this work | Wallet | Any of the three connectors | `{}` to connect; `{wallet_request:id}` with stored connector_id equal to target |
+| After this work | Inbox | WalletConnect | `{}` after internet decision; readiness only, not a retired intent |
+| After this work | Any connector | Wallet | `{wallet_request:id}` belonging to this principal/source connector |
+| After this work | Any connector | Wallet | `{tab:"activity"}`; open actual drawer even with pending requests |
+| After this work | MetaMask or UniSat | WalletConnect | `{}`; configured target only, no request/authority transfer |
+| After this work | WalletConnect | Inbox | `{notification_id:"walletconnect-internet:permission"}` |
+| After this work | Any connector | Runtime-recorded source app | `{}` plus `walletRequestId:id`; supplied target is only an equality assertion |
 
-**After this work.** Each row checks the registered source WindowProxy,
-`Origin: null`, live source launch token and Runtime capability before launch.
-Missing records, wrong principal/connector/target, extra keys, arbitrary URLs,
-noncanonical IDs and unlaunchable targets fail closed with fixed recovery
-wording. A completed/expired record may select its result or source app while
-Runtime still retains it; it grants no new signing action. A missing source
-app returns an unavailable result and leaves Open Wallet available. Neither a
-label nor a caller-supplied URL can identify the source app.
+**After this work.** Home resolves every selected request with one fixed read:
+`POST /api/apps/home/wallet-connector/approvals/:request_id/navigation`.
+Exact body is `{schema:"elastos.home.wallet-connector.navigation.request/v1",
+source_id,source_token}`. The explicit source allow-list is wallet, inbox and
+the three connectors. Runtime validates same-origin Home authority and the
+carried source authority for the same principal/session/proof/grant. Connector
+sources must match the record's connector_id; Wallet/Inbox retain only their
+existing principal-scoped review rights. The response stays in Home and has
+exactly `schema:"elastos.home.wallet-connector.navigation.result/v1"`,
+`request_id`, `status`, `connector_id`, `capsule_id`. Connector ID may be null
+for a managed record. Status is pending, approved, completed, rejected or expired;
+dismissed WalletConnect transactions use rejected as today. Retained answered
+and expired records are readable for navigation; missing/pruned/foreign records
+all use HTTP 404/request_unavailable in the N2 error body. Navigation can
+read retained same-principal history from an earlier session, but cannot reuse
+that session's effect authority. This read returns no payload, signature or new
+signing authority and accepts WalletConnect as well as both injected connectors.
 
-**After this work.** Connector attachment validation must admit only the
-existing `home_origin` and optional validated `wallet_request` query, plus the
-existing token fragment. Reused windows acknowledge the exact selected ID with
-their current document nonce; failed delivery is visible. No sibling receives
-a source token. The GUI shell carries only validated presentation commands.
-N3 owns the request view and rejection behavior:
-[external account requests](WALLET_PROVIDER.md#n3-outside-wallet-requests).
+**After this work.** The asking app comes from stored requested_by_actor,
+projected as capsule_id. Source-app recovery derives the currently admitted
+catalog target from it; it never launches home, any Runtime-recognized shell,
+or the sender. It transfers an empty query, not a website URL or retry command.
+The window owns one navigation per visible press; Home cannot prove that press.
+Unlaunchable/missing targets leave Open Wallet recovery available.
+[N3](WALLET_PROVIDER.md#n3-requester-and-site-provenance) owns what cards can
+say about the asking app/site.
 
-#### N1/N2 enforcement, proof and review
+#### N1 existing-window delivery and refusals
 
-**After this work.** Home's extension lane owns N2 envelope checks, provider
-serialization and deadline/event handling in `home-wallet-connector-host.js`.
-The Runtime/Inbox/Wallet/navigation lane owns N1 in `home-shell-host.js` and
-Wallet, plus Runtime preflight/handoff/completion validation. The shared-view
-and window lanes consume these contracts. Tests import real modules; the
-scripted extension replays pinned recordings rather than invented lock/errors.
+**After this work.** The navigation lane owns `home-shell-host.js`, all
+`capsules/home-gui/browser/**` including `shell-windows.js` and
+`shell-wallet-rail.js`, Wallet and Inbox. It extends the existing Inbox/Wallet
+selection protocol, rather than inventing a connector-only delivery path.
+Each connector implements these exact target-substituted v1 messages:
 
-| Status | Required named tests | Run location / proof obligation |
+| Status | Direction | Exact keys / values |
 | --- | --- | --- |
-| After this work | `n2_closed_actions_and_frame_binding`, `n2_unknown_kind_and_old_home_reload` | Home lane, Node module tests plus headless opaque frames; forged source/token/generation, replay, extra fields and old-page probe cause zero provider effects. |
-| After this work | `n2_recorded_provider_facts`, `n2_account_network_events` | Home lane, real host module with recording replay; changed UUID, permitted versus global account, empty accounts, 4001/4100/-32002/4902, queued signatures, UniSat chain enum, 4100 without an account/method cause claim, and no lock inference. |
-| After this work | `n2_preflight_before_handoff` | Home and Runtime lanes, real modules and server tests; wrong/empty accounts, network refusal, stale request and timeout leave handoff count zero and pending state intact. A concurrent handoff wins at most once. |
-| After this work | `n2_one_deadline_stop_late_reply`, `n2_serializes_across_frames` | Home lane, controlled clocks and deferred provider replies; one 60-second budget across stages, stop at every await, late proof ignored, late transaction never resent, reopened frame returns `host_busy`, and only an actual -32002 returns `wallet_busy`. |
-| After this work | `n1_navigation_rows_and_near_misses`, `n1_request_id_survives_launch_and_reuse`, `n1_source_app_from_runtime_record` | Navigation lane, real Home/Wallet modules plus headless frames; exercise every row, reject adjacent invalid rows, open actual activity drawer with a pending request, substitute source app/ID, and test missing/unlaunchable records. |
-| After this work | `wallet_windows_state_producers_and_controls` | Shared-view and window lanes, built Home; import the design state list, reach every accepted state through its producer and press every control. Include no extension Disconnect and the actual selected/permitted account. |
+| After this work | Window to parent GUI | `home:app-ready`: type,homeToken,documentNonce; same nonce as hello |
+| After this work | GUI to window | `elastos.<target>.window-ready.request/v1`: type,homeToken,requestId |
+| After this work | Window to GUI | `elastos.<target>.window-ready.result/v1`: type,homeToken,requestId,documentNonce |
+| After this work | GUI to window | `elastos:<target>-chrome-command`: type,cmd,homeToken,requestId,documentNonce,sequence,expiresAt,query; cmd is review-request |
+| After this work | Window to GUI | `elastos.<target>.window.result/v1`: type,homeToken,requestId,documentNonce,ok |
+| After this work | Window to GUI on unload | `home:app-unloading`: type,homeToken,documentNonce |
 
-**After this work.** These are delivery test names, not existing PASS claims.
-Each lane records a fail-before/pass-after result for its new behavior; retain
-existing authority tests that already pass. Integration runs them through the
-behavior suite and the server/provider targets, then the installed journeys
-specified in [Wallet Provider](WALLET_PROVIDER.md#wallet-connection-integration-proof).
+**After this work.** Target is the exact capsule ID. Query is exactly
+`{wallet_request:id}` for connectors; Wallet also accepts `{tab:"activity"}`
+through its existing review-request command. Inbox keeps select-notification
+and notification_id. Validate exact source, opaque origin, token, nonce,
+strictly increasing safe-integer sequence, current frame/route and expiry.
+The absolute navigation budget is 15 seconds from Home acceptance, including
+the two-second Runtime read. GUI passes that same expiresAt (never a fresh
+15 seconds) through delivery. Cold launch and reuse both preserve the ID;
+attachment admits only home_origin, optional wallet_request and the token
+fragment. Failure/expiry blocks late delivery and automatic retry. Token/route renewal
+ends an unacknowledged navigation with delivery_failed; a late acknowledgement
+is ignored and the person may retry with current authority. An already accepted
+queued selection stays queued and uses the renewed token for its Runtime read.
+Reload/new nonce fails old delivery, while N2 renewal itself preserves the
+active wallet effect and generation.
 
-**After this work.** Out of scope: generic RPC, direct capsule networking,
-extension disconnect/revoke, automatic sends, a cross-browser lock, guessed
-wallet lock state, additional connectors/chains, general Inbox presentation,
-and new guest authority. Keep unproven states pending design/security disposition;
-only Anders can remove a promised state from scope.
+**After this work.** A selection received during an effect is queued once,
+acknowledged ok within the budget and visibly described as waiting for the
+current action. It never changes that effect's account, payload or ID. After
+the effect ends, re-read and display the queued record (or its unavailable
+result); Send is always a separate action. A busy provider can keep Send disabled
+after selection. The existing ok acknowledgement means selection accepted,
+including queued selection, not proof of display or approval.
 
-**After this work.** Human security review questions:
+**After this work.** Home answers the requesting source frame with type
+`home:open-target-result`, schema `elastos.home.open-target-result/v2`, exact
+keys `type,schema,requestId,documentNonce,ok,reason`. Successful reason is
+`accepted`; refusal reasons are `invalid_request`, `denied`,
+`request_unavailable`, `target_unavailable`, `unsupported_version`, `busy`,
+`delivery_failed`, `timeout`. Home sends timeout at 15 seconds. The source
+helper checks Home source/origin and its pending ID/nonce, then renders fixed
+local recovery wording for that reason. It falls back to the same timeout
+wording at 17 seconds if the reply is missing. Invalid IDs/unregistered sources
+get no reply. GUI also retains its existing delivery-failure feedback. Fixed source-helper
+copy is: invalid_request/denied, `Home could not open this destination.`;
+request_unavailable, `This request is unavailable. Open Wallet to check it.`;
+target_unavailable, `This app is unavailable. Open Wallet to check the request.`;
+unsupported_version, `Reload Home, then open this window again.`; busy,
+`Finish the current action, then try again.`; delivery_failed/timeout,
+`Could not open this destination. Try again.` Old Home cannot authorize new
+rows; v2 connector controls stay hidden without ready.
 
-- Does the v2 frame/generation binding and legacy probe preserve the existing
-  Home-plus-connector authority boundary at every entry?
-- Does the fixed preflight read expose only the request facts this connector
-  already has authority to read, with atomic handoff still deciding consumption?
-- Is the busy lifetime and late-transaction completion policy sufficient to
-  prevent duplicate sends after stop, reload and another frame's attempt?
-- Is the positive host signal used for `extensions_unavailable` trustworthy for
-  every supported wrapper, without treating provider absence as evidence?
-- Do the N1 rows derive source-app identity and fresh target authority solely
-  from Runtime records, including reused windows and expired requests?
+#### N1/N2 tests, ownership and review defaults
+
+**After this work.** Home's extension lane owns `home-wallet-connector-host.js`;
+Runtime/navigation owns the integration hooks in home-shell-host and all Rust.
+The shared-view/window lanes own clients. One fixture file,
+`scripts/fixtures/wallet-connector-v2-messages.json`, contains valid and invalid
+instances of every v2 hello/ready/effect/result/state/navigation-result message,
+plus their exact stage/dispatch and N1 query examples. The real Home module
+tests and every connector window test import that same file. It includes the
+N4 wire examples linked from [N4](WALLET_PROVIDER.md#n4-wallet-name-and-mark).
+The shared-view enabling commit owns this fixture file before build lanes
+start; Home and all windows consume it rather than creating local variants.
+The integrator reviews later fixture changes. Test authors retain existing
+guards and use real modules, not extracted source.
+
+| Status | Owner | Required named tests |
+| --- | --- | --- |
+| After this work | Home extension | `n2_closed_actions_and_frame_binding`, `n2_unknown_kind_and_old_home_reload`, `n2_recorded_provider_facts`, `n2_account_network_events`, `n2_one_deadline_stop_late_reply`, `n2_serializes_across_frames`, `n2_v2_message_fixtures_shared`, `n2_hello_reload_renewal`, `n2_v1_on_new_home`, `n2_check_never_prompts`, `n2_late_settlement_advisory`, `n2_final_result_phase_and_dispatch`, `n2_ready_handshake_and_authority_renewal`, `n2_stage_dispatch_table`, `n2_busy_release_and_late_settlement`, `n2_capacity_and_stop_reserve`, `n2_walletconnect_frame_refused` |
+| After this work | Home plus Runtime | `n2_preflight_before_handoff`, `n2_runtime_error_codes`, `n2_empty_accounts_prompt_on_send`, `n2_link_admission_before_prompt`, `n2_narrow_check_and_unisat_network_facts`, `n2_transaction_completion_after_frame_close` |
+| After this work | Navigation and GUI | `n1_navigation_rows_and_near_misses`, `n1_request_id_survives_launch_and_reuse`, `n1_source_app_from_runtime_record`, `n1_old_home_rows_unavailable`, `n1_selection_during_active_effect`, `n1_refusal_result_to_source`, `n1_source_app_excluded_targets`, `n1_navigation_read_all_connectors` |
+| After this work | Every connector/window and shared view | `wallet_windows_state_producers_and_controls`, `n2_v2_message_fixtures_shared`; import the same packets and reach the accepted design states through their actual producers |
+
+**After this work.** These names are lane obligations, not results. JS tests run
+in the behavior suite; server/provider tests run all targets under the shared
+lease and release CI. Pending real-recording cases are listed in
+[Wallet Provider](WALLET_PROVIDER.md#wallet-connection-integration-proof).
+Out of scope: generic RPC, cross-connector discovery, full account disclosure,
+connector reload authority, extension disconnect, new guest authority and
+additional signing methods. Irzhy reviews the existing dual authority boundary,
+the narrowed check and source-app row before code unless Anders waives. A wrapper
+signal and wider check disclosure remain human review questions; defaults are
+no unavailable producer and first-account/membership only.
 
 ## Passkeys And Sign-Out
 
