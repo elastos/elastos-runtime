@@ -207,3 +207,14 @@ for (const kind of ['metamask', 'unisat']) test(`${kind}: actual old Home with n
     }finally{await legacy.close();}
   }finally{await browser.close();}
 });
+
+for (const kind of ['metamask', 'unisat']) test(`${kind}: a failed Home read is distinct from expired authority`, async () => {
+  const browser = await playwright.chromium.launch({ headless: true });
+  try {
+    for (const [status, state] of [[503, 'link-error'], [403, 'window-expired']]) {
+      const f = await fixture(browser, kind, { readFailure: status });
+      try { await f.state(state); assert.equal(await f.top.evaluate(() => testState.effects.length), 0); }
+      finally { await f.close(); }
+    }
+  } finally { await browser.close(); }
+});

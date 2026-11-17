@@ -120,7 +120,7 @@ export function startExtensionWindow(kind, homeClipboard) {
           }
         }
         draw();
-      } catch { if (!operation && !uncertain && observedRevision === revision) { stage = 'window-expired'; draw(); } }
+      } catch (error) { if (!operation && !uncertain && observedRevision === revision) { stage = [401, 403].includes(error.status) ? 'window-expired' : 'link-error'; draw(); } }
       finally { refreshing = null; }
     })();
     return refreshing;
@@ -223,7 +223,7 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   async function fetchJson(url, init) {
     const response = await fetch(url, init);
-    if (!response.ok) throw new Error(`request failed: ${response.status}`);
+    if (!response.ok) { const error = new Error(`request failed: ${response.status}`); error.status = response.status; throw error; }
     return response.json();
   }
   function notifyHomeSummaryChanged() {

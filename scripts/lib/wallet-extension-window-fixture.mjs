@@ -36,7 +36,7 @@ function installProvider({ kind, address }) {
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   if (recording) {
@@ -79,6 +79,7 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:560
     if (url.pathname.endsWith('/home-clipboard-client.js')) return route.fulfill({ contentType: 'text/javascript', body: `export const createHomeClipboardClient=()=>({start(){},teardown(){},async writeText(value){window.top.postMessage({type:'fixture:copy',value},'http://extensions.test');}});` });
     if (url.pathname.includes('/api/')) {
       reads.push({ url: url.pathname, headers: route.request().headers() });
+      if (readFailure) return route.fulfill({ status: readFailure, json: { error: 'fixture read failure' } });
       const data = await top.evaluate(({ url, kind }) => {
         const s = testState;
         return url.endsWith('/accounts') ? { accounts: s.linked ? [{ address: s.address, connector_id: 'wallet-' + kind, chain_namespace: kind === 'metamask' ? 'eip155:1' : 'bip122:000000000019d6689c085ae165831e93' }] : [] } : { approval_requests: s.requests };
