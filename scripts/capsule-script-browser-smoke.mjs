@@ -148,3 +148,4 @@ try {
   await new Promise(resolve => foreign.close(resolve));
 }
 assert.deepEqual(failures, [], failures.join('\n'));
+await import('./home-fullscreen-browser.test.mjs');

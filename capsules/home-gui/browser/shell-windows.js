@@ -402,7 +402,7 @@ const SYSTEM_IFRAME_SANDBOX_EXTRAS = [
   "allow-top-navigation-by-user-activation",
   "allow-top-navigation-to-custom-protocols",
 ];
-const COMMON_IFRAME_ALLOW = ["autoplay", "fullscreen"];
+const COMMON_IFRAME_ALLOW = ["autoplay", "fullscreen *"];
 const pendingWindowLaunches = new Map();
 const pendingBrowserWindowCloses = new Map();
 const pendingDocumentsWindowCloses = new Map();
