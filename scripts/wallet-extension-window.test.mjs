@@ -292,6 +292,7 @@ for (const kind of ['metamask','unisat']) test(`${kind}: local picker, stopped l
     try{
       await stale.state('request-waiting');await stale.top.evaluate(()=>{testState.requests=[];});
       await stale.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await stale.state('request-unavailable');
+      await stale.top.evaluate(kind=>document.querySelector('iframe').contentWindow.postMessage({type:'home:wallet-connector-event',connectorId:'wallet-'+kind,event:kind==='metamask'?'chainChanged':'networkChanged',value:kind==='metamask'?'0x1':'livenet'},'*'),kind);await stale.state('request-unavailable');
       assert.equal(await stale.action('send-request').count(),0);
     }finally{await stale.close();}
   }finally{await browser.close();}
@@ -311,11 +312,15 @@ test('MetaMask: typed data and transaction wait, stop, failure, timeout and chan
         await f.state('transaction-waiting');
         await f.top.evaluate(mode=>{testState.mode=mode==='approve'||mode==='stop'||mode==='timeout'?'pending':'decline';},mode);
         await f.action('send-request').click();
-        if(mode==='decline'){await f.state('transaction-wallet-error');continue;}
+        if(mode==='decline'){
+          await f.state('transaction-wallet-error');
+          await f.top.evaluate(value=>{emitWallet('chainChanged','0x1');emitWallet('accountsChanged',[value]);},B);
+          await f.state('transaction-wallet-error');assert.equal(await f.action('send-request').count(),0);continue;
+        }
         await f.state('transaction-extension');
         await f.top.waitForFunction(()=>testState.pending.length>0);
-        if(mode==='timeout'){await f.top.clock.runFor(61000);await f.state('transaction-timeout');continue;}
-        if(mode==='stop'){await f.action('stop-waiting').click();await f.state('transaction-cancelled');}
+        if(mode==='timeout'){await f.top.clock.runFor(61000);await f.state('transaction-timeout');assert.equal(await f.action('close-window').count(),1);await f.top.evaluate(value=>emitWallet('accountsChanged',[value]),B);await f.state('transaction-timeout');assert.equal(await f.frame.locator('.connection-request-account').count(),0);continue;}
+        if(mode==='stop'){await f.action('stop-waiting').click();await f.state('transaction-cancelled');assert.equal(await f.action('close-window').count(),1);}
         await f.top.evaluate(value=>{emitWallet('accountsChanged',[value]);const pending=testState.pending.shift();pending.resolve(pending.result);},B);
         await f.state('transaction-done');
         assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);

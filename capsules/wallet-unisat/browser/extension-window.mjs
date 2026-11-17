@@ -15,7 +15,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   let hostEffectInFlight = false, hostRequestSequence = 0;
   let picked = false, linkObserved = false;
   let stage = 'ready', accounts = [], requests = [], selected = null;
-  let uncertain = false;
+  let uncertain = false, fixedOutcome = false;
   let operation = null, revision = 0, refreshing = null, disposed = false;
   let accountEvent = null, networkEvent = null, disconnected = false;
   let lastMarkup = '', lastView = null;
@@ -76,7 +76,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   function draw() {
     if (disposed) return;
     const changedDuringRequest = selected && (disconnected || accountEvent && !sameAccount(accountEvent[0], selected.address));
-    const view = connectionView({ window: kind, stage, account: changedDuringRequest && (operation || selected.status === 'completed') ? null : accountView(), summary: selected,
+    const view = connectionView({ window: kind, stage, account: changedDuringRequest && (operation || uncertain || fixedOutcome || selected.status === 'completed') ? null : accountView(), summary: selected,
       otherRequests: requests.map(r => reduceSummary(r, { connector: CONNECTOR_ID })).filter(r => r && r.id !== selected?.id),
       waitSeconds: remaining(), homeOrigin, alternativeAllowed: false });
     const root = renderConnection(document, view);
@@ -87,6 +87,13 @@ export function startExtensionWindow(kind, homeClipboard) {
     // These shared recovery paragraphs point to Check access, which the base
     // cannot perform. Keep the true outcome and working Close control.
     if (['extension-timeout', 'extension-cancelled', 'request-timeout', 'request-cancelled'].includes(stage)) root.querySelector('.connection-notice')?.remove();
+    if (kind === 'metamask' && stage === 'account-unavailable' && accountEvent?.length === 0) root.querySelector('.connection-notice')?.remove();
+    if (!root.querySelector('button:not(:disabled)') && frameHomeToken && homeOrigin && window.top !== window) {
+      // Reuse the shared Close control when this base lacks the screen's
+      // navigation capability. No inactive-window status is mounted.
+      const close = renderConnection(document, connectionView({ window: kind, stage: 'window-expired' })).querySelector('[data-action="close-window"]');
+      root.querySelector('.connection-actions')?.append(close);
+    }
     const markup = root.outerHTML.replace(/Time left: [0-9]+:[0-9]+/g, 'Time left:');
     if (markup === lastMarkup) {
       const wait = mount.querySelector('.connection-wait');
@@ -116,23 +123,23 @@ export function startExtensionWindow(kind, homeClipboard) {
         if (disposed) return;
         accounts = Array.isArray(a?.accounts) ? a.accounts : [];
         requests = (Array.isArray(r?.approval_requests) ? r.approval_requests : []).filter(signable);
-        if (!operation && !uncertain && observedRevision === revision) {
+        if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) {
           if (selected && !requests.some(request => request.request_id === selected.id)) {
-            if (['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage)) stage = 'request-unavailable';
+            if (['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage)) { stage = 'request-unavailable'; fixedOutcome = true; }
           } else {
             selected = reduceSummary(requests.find(r => r.request_id === selected?.id) || requests[0], { connector: CONNECTOR_ID });
             stage = chooseStage();
           }
         }
         draw();
-      } catch (error) { if (!operation && !uncertain && observedRevision === revision) { stage = [401, 403].includes(error.status) ? 'window-expired' : 'link-error'; draw(); } }
+      } catch (error) { if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) { stage = [401, 403].includes(error.status) ? 'window-expired' : 'link-error'; draw(); } }
       finally { refreshing = null; }
     })();
     return refreshing;
   }
 
   async function perform(action) {
-    if (operation || uncertain) return;
+    if (operation || uncertain || fixedOutcome && action.kind === 'approve') return;
     revision += 1;
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
@@ -153,6 +160,7 @@ export function startExtensionWindow(kind, homeClipboard) {
         if (refreshing) await refreshing;
         await refresh();
       } else {
+        fixedOutcome = true;
         requests = requests.filter(r => r.request_id !== selected.id);
         selected = { ...selected, status: 'completed' };
         stage = result.effect === 'transaction' ? 'transaction-done' : 'request-done';
@@ -161,6 +169,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     } catch (error) {
       if (disposed) return;
       revision += 1; operation = null;
+      if (action.kind === 'approve') fixedOutcome = true;
       const message = error.message;
       const prefix = action.kind === 'link' ? 'extension' : selected?.transaction ? 'transaction' : 'request';
       if (message === 'Wallet request timed out.') { uncertain = true; stage = `${prefix}-timeout`; }
@@ -186,10 +195,10 @@ export function startExtensionWindow(kind, homeClipboard) {
       const address = button.dataset.focusKey.slice('copy-address:'.length);
       button.disabled = true;
       homeClipboard.writeText(address, { purpose: 'wallet.address' }).catch(() => { button.focus(); }).finally(() => { button.disabled = false; });
-    } else if (action === 'view-requests') { picked = false; stage = 'request-list'; draw(); }
+    } else if (action === 'view-requests') { fixedOutcome = false; picked = false; stage = 'request-list'; draw(); }
     else if (action === 'select-request') {
       const id = button.dataset.focusKey.slice('select-request:'.length);
-      picked = true;
+      fixedOutcome = false; picked = true;
       selected = reduceSummary(requests.find(r => r.request_id === id), { connector: CONNECTOR_ID });
       stage = chooseStage(); draw();
     }
@@ -208,7 +217,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     else if (kind === 'unisat' && data.event === 'networkChanged' && ['livenet', 'testnet', 'unknown'].includes(data.value)) networkEvent = data.value;
     else return;
     revision += 1;
-    if (!operation && !uncertain) stage = chooseStage();
+    if (!operation && !uncertain && !fixedOutcome) stage = chooseStage();
     draw();
   }
 
@@ -216,7 +225,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   window.addEventListener('message', onWalletEvent);
   window.addEventListener('focus', refresh);
   const tick = window.setInterval(() => {
-    if (!operation && !uncertain && selected?.expiresAt !== null && selected?.expiresAt <= now() && ['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage)) stage = 'request-expired';
+    if (!operation && !uncertain && !fixedOutcome && selected?.expiresAt !== null && selected?.expiresAt <= now() && ['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage)) { stage = 'request-expired'; fixedOutcome = true; }
     if (operation || selected) draw();
   }, 1000);
   window.addEventListener('pagehide', () => {
