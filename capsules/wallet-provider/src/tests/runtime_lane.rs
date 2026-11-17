@@ -597,3 +597,57 @@ fn n7_old_records_update_undo() {
         );
     }
 }
+
+#[test]
+fn fix1_metadata_is_clean_at_rest_and_relink_keeps_user_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal = "person:local:alice";
+    assert!(matches!(link_metadata(&mut provider, principal, "wallet-walletconnect",
+        json!({"wallet_peer_name":"Trust\u{202e} Wallet"})), Response::Ok { .. }));
+    let id = provider.store.accounts[0].account_id.clone();
+    assert!(matches!(provider.rename_account(principal, &id, "Travel"), Response::Ok { .. }));
+    assert!(matches!(link_metadata(&mut provider, principal, "wallet-walletconnect",
+        json!({"wallet_peer_name":"New\u{202e} Wallet"})), Response::Ok { .. }));
+    let reopened = init_provider(dir.path());
+    assert_eq!(reopened.store.accounts.len(), 1);
+    assert_eq!(reopened.store.accounts[0].wallet_display_name.as_deref(), Some("New Wallet"));
+    assert_eq!(reopened.store.accounts[0].label.as_deref(), Some("Travel"));
+}
+
+#[test]
+fn fix1_metadata_failed_save_restores_previous_memory_and_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal = "person:local:alice";
+    assert!(matches!(link_metadata(&mut provider, principal, "wallet-walletconnect",
+        json!({"wallet_peer_name":"Original"})), Response::Ok { .. }));
+    let path = provider.store_path.clone().unwrap();
+    let disk = std::fs::read(&path).unwrap();
+    let before = serde_json::to_value(&provider.store).unwrap();
+    // A missing parent makes the real atomic writer fail, including as root.
+    provider.store_path = Some(dir.path().join("missing").join("wallet-state.json"));
+    assert!(matches!(link_metadata(&mut provider, principal, "wallet-walletconnect",
+        json!({"wallet_peer_name":"Changed"})), Response::Error { code, .. } if code == "storage_error"));
+    assert_eq!(serde_json::to_value(&provider.store).unwrap(), before);
+    assert_eq!(std::fs::read(&path).unwrap(), disk);
+    provider.store_path = Some(path);
+    assert_eq!(serde_json::to_value(init_provider(dir.path()).store).unwrap(), before);
+}
+
+#[test]
+fn fix1_real_provider_connector_rejection_is_owner_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal = "person:local:alice";
+    let id = external_request(&mut provider, principal);
+    let before = serde_json::to_value(&provider.store).unwrap();
+    for actor in ["wallet-walletconnect", "wallet-unisat"] {
+        assert!(matches!(invoke_wallet(&mut provider, principal, actor,
+            WalletProviderOperationV2::RejectApproval { request_id:id.clone(), reason:"Declined".into() }),
+            Response::Error { code, .. } if code == "invalid_request"));
+        assert_eq!(serde_json::to_value(&provider.store).unwrap(), before);
+    }
+    assert!(matches!(invoke_wallet(&mut provider, principal, "wallet-metamask",
+        WalletProviderOperationV2::RejectApproval { request_id:id, reason:"Declined".into() }), Response::Ok { .. }));
+}

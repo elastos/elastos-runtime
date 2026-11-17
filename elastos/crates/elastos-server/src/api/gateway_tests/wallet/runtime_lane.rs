@@ -155,6 +155,7 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
 
 #[tokio::test]
 async fn n3_direct_external_approve_refused_existing_routes() {
+    for proof_type in ["siwe", "managed_evm"] {
     for (actor, route, reason) in [
         (
             WALLET_CAPSULE_ID,
@@ -177,7 +178,7 @@ async fn n3_direct_external_approve_refused_existing_routes() {
         let token = projection_launch_token_for_authority_context(dir.path(), actor, &authority);
         let record = json!({"request_id":"request:external", "status":"pending", "intent":"credential", "requested_by_actor":"documents",
             "principal_id":authority.principal_id, "session_id":authority.session_id, "account_id":"account:external", "address":"0xabc",
-            "chain_namespace":"eip155:20", "resource":"elastos://wallet/sign", "reason":"Sign a credential", "proof_type":"siwe",
+            "chain_namespace":"eip155:20", "resource":"elastos://wallet/sign", "reason":"Sign a credential", "proof_type":proof_type,
             "connector_id":"wallet-metamask", "created_at":now_ts(), "expires_at":now_ts()+600});
         let provider = MockWalletProvider {
             challenges: TokioMutex::default(),
@@ -224,6 +225,7 @@ async fn n3_direct_external_approve_refused_existing_routes() {
         );
         assert_eq!(recorder.provider.approvals.lock().await[0], record);
     }
+    }
 }
 
 #[tokio::test]
@@ -250,7 +252,7 @@ async fn n7_browser_site_projection_all_surfaces_transactions() {
             projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
         let address = "0x1111111111111111111111111111111111111111";
         let account_id = format!("wallet:eip155:20:{address}");
-        let provider = MockWalletProvider {
+        let provider = Arc::new(MockWalletProvider {
             challenges: TokioMutex::default(),
             bitcoin_challenges: TokioMutex::default(),
             accounts: TokioMutex::new(vec![
@@ -260,9 +262,9 @@ async fn n7_browser_site_projection_all_surfaces_transactions() {
             ]),
             approvals: TokioMutex::default(),
             defaults: TokioMutex::default(),
-        };
+        });
         let app = gateway_router(
-            wallet_chain_test_state_with_wallet_provider(dir.path(), provider).await,
+            wallet_chain_test_state_with_shared_wallet_provider(dir.path(), provider.clone()).await,
         );
         let response = app.clone().oneshot(test_browser_request("localhost:61180", "null").uri("/api/apps/browser/wallet/request-transaction").method("POST")
             .header("x-elastos-home-token", browser).header(CONTENT_TYPE, "application/json")
@@ -292,6 +294,15 @@ async fn n7_browser_site_projection_all_surfaces_transactions() {
                 "https://shop.example"
             );
         }
+        // A valid local Browser payload alone cannot prove its Runtime effect binding.
+        let original = provider.approvals.lock().await[0].clone();
+        for field in ["wallet_request_sha256", "launch_id", "resource"] {
+            provider.approvals.lock().await[0][field] = json!("mismatched-binding");
+            let body = read_private(&app, &wallet, "/api/apps/wallet/wallet/summary").await;
+            assert!(body["wallet_approvals"]["approval_requests"][0].get("requesting_origin").is_none(), "{field}");
+            provider.approvals.lock().await[0] = original.clone();
+        }
+
     }
 }
 
