@@ -913,8 +913,10 @@ Each connector implements these exact target-substituted v1 messages:
 | After this work | Window to GUI on unload | `home:app-unloading`: type,homeToken,documentNonce |
 
 **After this work.** Target is the exact capsule ID. Query is exactly
-`{wallet_request:id}` for connectors; Wallet also accepts `{tab:"activity"}`
-through its existing review-request command. Inbox keeps select-notification
+`{wallet_request:id}` for connectors; Wallet accepts `{wallet_request:id}` or
+`{tab:"activity"}` through review-request. The trusted close-return path alone
+also generates `{tab:"accounts"}` under the fixed N1 close row; no connector
+navigation message supplies that query. Inbox keeps select-notification
 and notification_id. Validate exact source, opaque origin, token, nonce,
 strictly increasing safe-integer sequence, current frame/route and expiry.
 The absolute navigation budget is 15 seconds from Home acceptance, including
