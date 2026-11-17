@@ -33,6 +33,10 @@ must use a matching recorded proof fixture for a joined link test.
 required-method test passing when changing scenarios: a provider fact needs
 both its account read and its network read. Scenario parity alone checks only
 the cases that were selected and cannot detect an omitted method.
+The error inventory also compares all raw rejection shapes with the cases
+used by scenarios. `metamask-transaction-revoked` replays the captured
+permission-revocation cleanup error from MM-8-confirm. Its `removes access`
+control represents that cleanup, rather than a native Cancel-button trial.
 
 The person controls are `approves`, `declines`, `closes the prompt`,
 `does nothing`, `unlocks`, `switches account`, and `removes access`.
@@ -115,3 +119,8 @@ transaction error, or post-84-second signature-queue settlement. Tests may
 exercise structural contract refusal with the shared message file; they may
 claim recorded-provider acceptance only for the imported cases. Installed Home,
 desktop app, phone trials and network behavior remain with their product lanes.
+
+The stale disabled MetaMask capture contains a pending account prompt, not a
+direct silent-read timeout. `n2_stale_provider_check_and_reload_guidance` can
+use that pending call and Home's cached-busy check. A branch that asserts a
+direct stale `eth_accounts` timeout needs its own recording first.

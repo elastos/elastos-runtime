@@ -21,6 +21,7 @@ export const scenarios = {
   'metamask-network-declined': scenario(mm, [call('MM-7-known-reject', 'declines')]),
   'metamask-add-network-declined': scenario(mm, [call('MM-7-add-reject', 'declines')]),
   'metamask-transaction-declined': scenario(mm, [call('MM-8-reject', 'declines')]),
+  'metamask-transaction-revoked': scenario(mm, [call('MM-8-confirm', 'removes access')]),
   'metamask-native-connect-close': scenario(both, [call('R2-MM-native-connect-retry', 'closes the prompt')]),
   'metamask-native-sign-close': scenario(both, [call('R2-MM-native-sign-retry', 'closes the prompt')]),
   'metamask-side-panel-close': scenario(both, [call('R2-MM-native-connect-close', 'approves')]),

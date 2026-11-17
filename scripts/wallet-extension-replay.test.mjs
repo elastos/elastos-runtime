@@ -13,6 +13,8 @@ function pageSurface() {
   return page;
 }
 const canon = (id) => id === 'metamask' ? 'io.metamask' : id;
+const errorShapes = (cases) => [...new Set(cases.flatMap((c) => c.snapshots
+  .filter((s) => s.call?.state === 'rejected').map((s) => JSON.stringify(s.call.error))))].sort();
 test('every recorded-provider silent read has a scenario and an original reply', async () => {
   const { fixture } = await replayInput('metamask-silent-check');
   const methods = new Set(Object.values(scenarios).flatMap((s) => s.calls.map((plan) => {
@@ -23,6 +25,11 @@ test('every recorded-provider silent read has a scenario and an original reply',
     'unisat:getAccounts', 'unisat:getChain', 'unisat:getNetwork']) {
     assert.ok(methods.has(method), `Missing recorded silent read: ${method}`);
   }
+});
+test('all nine rejection shapes in the pinned capture have replay scenarios', async () => {
+  const { fixture } = await replayInput('metamask-transaction-revoked');
+  const planned = new Set(Object.values(scenarios).flatMap((s) => s.calls.map((p) => p.id)));
+  assert.equal(errorShapes(fixture.cases.filter((c) => planned.has(c.id))).length, 9);
 });
 function errorShape(error) {
   return { constructor: error.constructor.name, code: error.code, message: error.message,
@@ -263,6 +270,9 @@ test('original 160-case raw file matches every imported excerpt and pinned diges
   assert.deepEqual(importRecordings(bytes), fixture);
   const raw = JSON.parse(bytes);
   assert.equal(raw.cases.length, 160);
+  const planned = new Set(Object.values(scenarios).flatMap((s) => s.calls.map((p) => p.id)));
+  assert.deepEqual(errorShapes(fixture.cases.filter((c) => planned.has(c.id))), errorShapes(raw.cases),
+    'Every raw rejection shape must be exercised by a scenario, including cleanup rejections');
   // Compare all response values, error shapes and event histories directly to raw input.
   for (const c of fixture.cases) {
     const source = raw.cases.find((r) => r.id === c.id);

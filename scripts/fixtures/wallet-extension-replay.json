@@ -1016,6 +1016,154 @@
       ]
     },
     {
+      "id": "MM-8-confirm",
+      "status": "partial",
+      "snapshots": [
+        {
+          "call": {
+            "id": "MM-8-confirm",
+            "kind": "metamask",
+            "method": "eth_sendTransaction",
+            "params": [
+              {
+                "from": "0xd15c713c6cbaf1e86dd34e411c8ac7a54021d8db",
+                "to": "0xd15c713c6cbaf1e86dd34e411c8ac7a54021d8db",
+                "value": "0x0",
+                "gas": "0x5208",
+                "maxFeePerGas": "0x3b9aca00",
+                "maxPriorityFeePerGas": "0x3b9aca00",
+                "chainId": "0xaa36a7",
+                "data": "0x"
+              }
+            ],
+            "started_at_ms": 433133.89999961853,
+            "state": "pending"
+          },
+          "events": [
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0x2105",
+              "at_ms": 263074.19999980927,
+              "since_call_ms": -170059.69999980927
+            },
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0xaa36a7",
+              "at_ms": 294104.60000038147,
+              "since_call_ms": -139029.29999923706
+            }
+          ],
+          "waited_ms": 81437.30000019073,
+          "observed_at_ms": 514571.19999980927,
+          "phase": "ignored transaction >70 seconds"
+        },
+        {
+          "call": {
+            "id": "MM-8-confirm",
+            "kind": "metamask",
+            "method": "eth_sendTransaction",
+            "params": [
+              {
+                "from": "0xd15c713c6cbaf1e86dd34e411c8ac7a54021d8db",
+                "to": "0xd15c713c6cbaf1e86dd34e411c8ac7a54021d8db",
+                "value": "0x0",
+                "gas": "0x5208",
+                "maxFeePerGas": "0x3b9aca00",
+                "maxPriorityFeePerGas": "0x3b9aca00",
+                "chainId": "0xaa36a7",
+                "data": "0x"
+              }
+            ],
+            "started_at_ms": 433133.89999961853,
+            "state": "pending"
+          },
+          "events": [
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0x2105",
+              "at_ms": 263074.19999980927,
+              "since_call_ms": -170059.69999980927
+            },
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0xaa36a7",
+              "at_ms": 294104.60000038147,
+              "since_call_ms": -139029.29999923706
+            }
+          ],
+          "waited_ms": 124868.9000005722,
+          "observed_at_ms": 558002.8000001907,
+          "phase": "popup blank; alternate full-page confirmation route"
+        },
+        {
+          "call": {
+            "id": "MM-8-confirm",
+            "kind": "metamask",
+            "method": "eth_sendTransaction",
+            "params": [
+              {
+                "from": "0xd15c713c6cbaf1e86dd34e411c8ac7a54021d8db",
+                "to": "0xd15c713c6cbaf1e86dd34e411c8ac7a54021d8db",
+                "value": "0x0",
+                "gas": "0x5208",
+                "maxFeePerGas": "0x3b9aca00",
+                "maxPriorityFeePerGas": "0x3b9aca00",
+                "chainId": "0xaa36a7",
+                "data": "0x"
+              }
+            ],
+            "started_at_ms": 433133.89999961853,
+            "state": "rejected",
+            "error": {
+              "constructor": "Object",
+              "code": 4001,
+              "message": "MetaMask Tx Signature: User denied transaction signature.",
+              "data": {
+                "cause": "rejectAllApprovals"
+              },
+              "own_properties": [
+                "code",
+                "message",
+                "data",
+                "stack"
+              ]
+            },
+            "elapsed_ms": 228564.10000038147
+          },
+          "events": [
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0x2105",
+              "at_ms": 263074.19999980927,
+              "since_call_ms": -170059.69999980927
+            },
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0xaa36a7",
+              "at_ms": 294104.60000038147,
+              "since_call_ms": -139029.29999923706
+            },
+            {
+              "provider": "metamask",
+              "name": "accountsChanged",
+              "payload": [],
+              "at_ms": 661648.1999998093,
+              "since_call_ms": 228514.30000019073
+            }
+          ],
+          "waited_ms": 262910.80000019073,
+          "observed_at_ms": 696044.6999998093,
+          "phase": "unconfirmed pending before browser restart; both extension confirmation routes blank"
+        }
+      ]
+    },
+    {
       "id": "R2-BOTH-discovery",
       "status": "observed",
       "snapshots": [
