@@ -484,22 +484,13 @@ review object contains origin/page_url. A reason or resource string is not
 independent proof of a website identity.
 
 **After this work.** Cards name the requesting app from capsule_id and its
-Runtime catalog label, falling back to the bounded literal actor ID. For
-ordinary Browser signatures/transactions they may say Browser passed the
-request and that site details are unavailable. They cannot show example.org,
-This Home, a fixture site or a guessed URL as the verified requester. Existing
-validated account-access review.origin may be rendered as isolated plain text
-for that intent only. No site field is added in this release, and cards do not
-parse one out of reason, resource or a message to sign.
-
-**After this work.** A future general site display needs Runtime validation
-against the active Browser page and origin, bound to the requesting actor,
-principal/session, request ID and payload hash, then one reviewed typed
-projection shared by Inbox, Wallet and connectors. That is separate work.
-Recovery here opens the asking app with an empty query, not the website. Copy
-must say return to the requesting page in Browser where appropriate; Open
-example.org is unsupported. Home's ownership proof and an app's signing request
-remain distinct purposes; a fixture cannot turn one into the other.
+Runtime catalog label, falling back to the bounded literal actor ID.
+[N7](#n7-requesting-site-display) owns the recorded Browser site projection,
+including account access, absent metadata and its display-only trust label.
+Cards do not derive requester identity from reason, resource or a message to
+sign. Recovery opens the recorded asking app with an empty query, not a website;
+N7 changes no N1 destination. Home's ownership proof and an app's signing
+request remain distinct purposes; a fixture cannot turn one into the other.
 
 **Today.** Handoff changes pending to approved before the outside answer.
 Outside decline does not itself store Home rejection. Consumed message requests
@@ -723,6 +714,42 @@ branding retention through an old writer. Sasha and Irzhy review spoof-resistant
 presentation; brand marks for WalletConnect peers default to generic until a
 human decision.
 
+#### N4 pending requests after a new sign-in
+
+**Today.** ListApprovals filters pending records by principal, while connector
+handoff checks session_id. Inbox uses that same list. A new sign-in can
+therefore show an earlier session's Review control that fails at handoff.
+
+**After this work.** A pending request is offered only in its own Runtime
+session. ListApprovals uses the verified caller's session as well as principal;
+pending records with another or absent session_id are omitted even when
+include_resolved is true. Wallet, Inbox, connector feeds, pending/unread counts
+and the Wallet badge use this filtered projection. A new session gets no
+Review, Approve, Reject or Send for that record. This avoids offering an action
+that cannot work, without expiring a request that might still belong to a
+live session on another client.
+
+**After this work.** Keep the original stored record, session binding, status,
+hash and normal expiry/history pruning. Do not rebind, clone or automatically
+resubmit it. Its own still-authorized session keeps its existing rights.
+Resolved history remains history; the existing owner Dismiss rule for an
+already-approved WalletConnect transaction stays unchanged and grants no Send.
+A stale selection or direct review/preflight/handoff from another session is
+request_unavailable, not a server-failure journey. Home's N1/N2 adapters use
+their existing HTTP 404/request_unavailable body. Wallet/Inbox and windows
+show: "This request is unavailable. Return to the app and ask for a new request."
+The app must create a fresh ID under the current session; Home never carries
+the old request across sessions.
+
+**After this work.** n4_pending_requests_current_session_only is owned by
+Runtime/navigation: provider dispatch/all targets, gateway, Inbox, Wallet,
+badge and all connector selectors. It fails today on the principal-only list;
+it must prove same-principal/two-session and absent-session cases, count
+filtering, stale selection without a wallet call, unchanged stored records,
+owning-session access and the retained Dismiss exception. Update/Undo does not
+migrate sessions: 2.0.1 may again show its old unusable card after Undo, but still
+refuses cross-session handoff; re-update applies the filter again.
+
 ### N5 WalletConnect internet entry in Inbox
 
 **Today.** The single entry ID is walletconnect-internet:permission. After
@@ -798,6 +825,140 @@ Browser policy changes, hosted Exit selection, more relay hosts, a second switch
 and guest-to-owner request creation. Owner: Runtime/Inbox/Wallet/navigation lane,
 with the WalletConnect lane retaining the local intent sequence guard.
 
+### N7 requesting site display
+
+**Today.** Runtime's Browser signature producer stores optional origin and
+page_url in the private payload; Browser transactions carry them in their
+Runtime transaction intent. SystemWalletApprovalSummary omits a general site
+field. Browser account access already has a validated review.origin, but its
+siblings do not display the same site projection. Signing/transaction origins
+are recorded Browser input, not proof that a website was independently
+authenticated. N7 adds display context, not that proof.
+
+**After this work.** The one optional output field is `requesting_origin`,
+a string omitted when absent. Runtime/navigation owns it on each permitted
+SystemWalletApprovalSummary and the principal's private Inbox
+wallet_approval_request entry. It is available to that principal's Wallet and
+Inbox, and only to the connector matching the record's connector_id; managed
+requests have no connector recipient. Derive the audience from verified
+Runtime authority, never a caller-provided audience or principal. Apply the
+existing request visibility rules, including
+[N4's session filter](#n4-pending-requests-after-a-new-sign-in), before projection.
+
+**After this work.** No requesting_origin or new site label is copied into
+generic Home/shell summaries, badges, System/Chat/other-app notifications,
+another principal's response or another connector's feed. Shared DTOs default
+the field to absent for those audiences. Home remains a broker, not a site
+consumer: N1's navigation read and N2's envelopes keep their exact fields.
+Browser's existing private request/status bindings remain unchanged.
+
+**After this work.** One Runtime function,
+`wallet_request_display_origin(record)` in gateway_wallet_approvals.rs,
+produces the form for every permitted consumer. It reads only the immutable
+recorded payload.origin and recorded page_url. It accepts only the
+Runtime-produced Browser shapes below, with the verified stored
+requested_by_actor equal to browser and the producer's principal/session,
+account and chain bindings matching the stored request. Transaction effect
+bindings remain checked against Runtime's existing effect record. Metadata
+from another app is ineligible even if it copies these keys or schemas.
+
+| Status | Eligible request | Recorded source |
+| --- | --- | --- |
+| After this work | browser_personal_sign / browser_typed_data_sign | payload schema elastos.browser.wallet-signature-request/v1; matching method and existing request bindings |
+| After this work | Browser transaction_intent | payload schema elastos.chain.unsigned_transaction_intent/v1, source browser_wallet and its Runtime effect binding |
+| After this work | browser_account_access | payload schema elastos.browser.account-access-request/v1, permission eth_accounts and its existing record bindings |
+
+**After this work.** Missing, null or non-string recorded origin gives no field,
+even if page_url alone could suggest a site. Neither a reason/resource, a
+signature message, wallet peer name, client field/query nor a fixture label is
+a source. The helper respects the existing 32 KiB approval-payload bound before
+parsing page_url. Invalid display metadata is omitted; it does not reject or
+rewrite the approval, payload, payload hash, authority or original private data.
+Rejected metadata is not logged as raw origin/page_url.
+
+**After this work.** Source origin and output are each 1–512 ASCII bytes.
+Source must contain only an absolute HTTP(S) scheme and authority: no
+credentials (including an empty userinfo marker), backslash, whitespace/control,
+path (even a trailing slash), query or fragment. Runtime's existing url parser
+checks the host and consistency with the recorded page_url's origin, then
+origin().ascii_serialization() supplies lowercase scheme/DNS host, bracketed
+IPv6 and a port only when non-default (80 for HTTP, 443 for HTTPS). There is no
+DNS lookup. The private page_url may contain a path/query/fragment; none is
+projected. A mismatching or over-bound value gives no field, never truncation.
+
+**After this work.** Non-ASCII source origins are omitted. ASCII IDN A-labels
+such as xn--bcher-kva.example remain literal ASCII in the output and on every
+screen; neither the server nor a consumer decodes them to look-alike Unicode
+letters. No consumer has a second formatter, Unicode-host display or friendly
+site-name substitute. This prevents Unicode look-alikes being rendered as a
+different plain-ASCII site; it does not authenticate the site or detect every
+ASCII look-alike.
+
+| Status | Recorded origin / condition | requesting_origin |
+| --- | --- | --- |
+| After this work | https://Shop.Example:443 with matching page URL | https://shop.example |
+| After this work | http://localhost:8099 | http://localhost:8099 |
+| After this work | https://[2001:db8::1]:443 | https://[2001:db8::1] |
+| After this work | https://xn--bcher-kva.example | Same literal ASCII text |
+| After this work | https://bücher.example | absent |
+| After this work | https://user:pass@shop.example or https://@shop.example | absent |
+| After this work | https://shop.example/ or /pay, ?q or #fragment on the origin | absent |
+| After this work | More than 512 bytes, non-string, mismatch with page_url, or missing recorded origin | absent |
+| After this work | Non-Browser app with forged origin/requesting_origin | absent |
+
+**After this work.** Inbox, Wallet and the owning connector render that exact
+value as text in its own element, with dir=auto and unicode-bidi:isolate,
+separate from the trusted app name and untrusted request details. The default
+label is "Site reported by Browser". The full origin must be available before
+a decision; it is not replaced with a friendly or shortened host. It is never
+HTML/Markdown, an anchor, linkified text, a navigation target or a wallet/RPC
+parameter. Home, Runtime and connectors make no routing, permission, account,
+network, approval, signing or completion decision from this projection.
+Existing approval and account-access origin bindings stay as they are.
+
+**After this work.** Account-access cards use this same field for site identity,
+not a separately formatted review.origin or page_url. Existing review data
+remains for the existing account-access protocol, not as a display fallback.
+When the field is absent, show the requesting app only and omit the site row;
+never guess a site from other text. The site identity appears once per card;
+the existing generated account-access reason can use an intent-based sentence
+rather than repeat its embedded origin. Other request content is labelled as
+content from the app, not as site identity.
+
+**After this work.** No requesting_origin field is persisted or added to Bus
+operations, and no payload/schema/hash is migrated. On update from 2.0.1, an
+older record projects a site only when its existing eligible origin and page
+bindings pass the same helper; a record without them remains app-only. Requests
+created between update and Undo keep their ordinary JSON payload origin and
+page_url. 2.0.1 reads those same fields and preserves payload Value on save,
+but does not provide N7's display field. Re-update recomputes it if the record
+survives normal expiry/pruning. Undo never restores request authority or carries
+a request to another session. Installed round-trip proof remains required.
+
+| Status | Named test | Accountable owner / proof |
+| --- | --- | --- |
+| After this work | `n7_browser_site_projection_all_surfaces` | Runtime/navigation owns the joined Rust/Inbox/Wallet test; browser signatures and transactions appear in all three permitted places for each matching connector, managed requests in Inbox/Wallet only; every other audience has no new field/label |
+| After this work | `n7_site_absent_or_forged_origin` | Runtime/navigation; positive recorded-Browser control plus non-Browser, missing/invalid recorded origin, forged client/payload/query/reason values, wrong principal/connector and generic Home/System/Chat responses |
+| After this work | `n7_origin_form_and_ascii_vectors` | Runtime/navigation; every vector above, bounds, backslash/control cases, default/non-default ports, unchanged approval/hash and no raw credential logging |
+| After this work | `n7_account_access_uses_same_projection` | Runtime/navigation; same site in the sibling question, one site label, unchanged grant/step-up bindings, no display fallback to page_url |
+| After this work | `n7_old_records_update_undo` | Runtime/navigation owns fixtures; integration runs installed 2.0.1 update, create requests, Undo/save/re-update, missing-origin fallback and byte-preserved private data/bindings |
+| After this work | `n7_connector_site_rendering` | Shared-view lane owns MetaMask/UniSat consumer tests; WalletConnect-window lane owns its consumer run. All use the shared packet/summary fixtures and real modules, plain isolated text, literal A-labels and zero URL navigation |
+
+**After this work.** N7 adds no Browser method, chain or connector pairing.
+Producer journeys use supported Browser flows; all three connector renderers
+can be checked with the authorized summary shape without claiming a new
+Browser-to-UniSat signing/transaction flow.
+
+**After this work.** These new named tests must fail against today's omitted
+projection/consumer behavior before implementation and pass after it. JS runs
+in the behaviour suite; all affected Rust targets run in their lane's leased
+checks and release CI. Out of scope: website navigation, authenticated website
+branding, live-page attestation, new approval authority and new persistent
+request data. Human security question: may a recorded Browser origin be called
+a verified site without independent Browser-engine provenance? Irzhy with
+Anders answers; default is "Site reported by Browser", display only, with no
+verified-site claim.
+
 ### Wallet connection integration proof
 
 **After this work.** Names above and below are obligations. New behavior gets
@@ -836,7 +997,8 @@ not claim real-wallet compatibility.
 **After this work.** The scripted-extension lane's first fixture commit and
 the shared-view enabling commit precede the four build lanes. Their data,
 replay and presentation work can start after Main's contract diff check. N3
-review actions, N4 metadata, N5 consent and WalletConnect-window work do not
+review actions, N4 metadata/session visibility, N5 consent, N7 projection and
+WalletConnect-window work do not
 wait for the N1/N2 human review. In the Runtime/navigation lane, N1 navigation,
 the N2 shell bridge, N2 routes and the received-hash change wait for Irzhy's
 N1/N2 review or Anders's explicit waiver. Home-extension product code also

@@ -685,8 +685,10 @@ for a managed record. Status is pending, approved, completed, rejected or expire
 dismissed WalletConnect transactions use rejected as today. Retained answered
 and expired records are readable for navigation; missing/pruned/foreign records
 all use HTTP 404/request_unavailable in the N2 error body. Navigation can
-read retained same-principal history from an earlier session, but cannot reuse
-that session's effect authority. This read returns no payload, signature or new
+read retained same-principal resolved history from an earlier session, but
+earlier-session pending selections are unavailable under
+[N4](WALLET_PROVIDER.md#n4-pending-requests-after-a-new-sign-in). It cannot reuse
+an earlier session's effect authority. This read returns no payload, signature or new
 signing authority and accepts WalletConnect as well as both injected connectors.
 
 **After this work.** The asking app comes from stored requested_by_actor,
@@ -695,8 +697,9 @@ catalog target from it; it never launches home, any Runtime-recognized shell,
 or the sender. It transfers an empty query, not a website URL or retry command.
 The window owns one navigation per visible press; Home cannot prove that press.
 Unlaunchable/missing targets leave Open Wallet recovery available.
-[N3](WALLET_PROVIDER.md#n3-requester-and-site-provenance) owns what cards can
-say about the asking app/site.
+[N3](WALLET_PROVIDER.md#n3-requester-and-site-provenance) owns the asking app;
+[N7](WALLET_PROVIDER.md#n7-requesting-site-display) owns site display. Site text
+does not change these navigation rows or their Runtime-derived destinations.
 
 #### N1 existing-window delivery and refusals
 
@@ -822,6 +825,30 @@ its state machine. n2_shell_host_hooks_contract imports the real modules and
 tests each callback, failed post and current-token read, including preserving
 a transaction receipt across frame-only retirement.
 
+#### Connector request feedback in view
+
+**Today.** WalletConnect places wait/Cancel/status above its request list;
+showStatus updates text without bringing it into view. A scrolled request can
+complete while the person sees no result.
+
+**After this work.** In all three connector windows, after Review/Send,
+Stop/Cancel where offered, and every resulting success/decline/failure/unavailable
+state, the current wait with its available way out and then the outcome are
+in view without the person scrolling. This holds after list refresh/reflow and
+from a request at the bottom of a long scrolled list. The exit remains usable
+throughout the wait; status is associated with that request, not another card.
+The design chooses the layout and focus treatment.
+
+**After this work.** Test the actual app-frame viewport inside Home's smallest
+supported 320 by 220 outer window (including chrome deductions), the narrow
+phone window, both themes and both pinned Chromium/WebKit engines. Assert
+visible bounding boxes and operable controls after the action and after each
+asynchronous transition, not merely text present somewhere in the DOM.
+walletconnect_request_feedback_in_view is owned by the WalletConnect-window
+lane; extension_request_feedback_in_view is owned by shared view and runs
+both MetaMask/UniSat consumers. Installed evidence uses the exact built assets.
+This rule adds no control or layout design.
+
 #### N1/N2 tests, ownership and review defaults
 
 **After this work.** Home's extension lane owns `home-wallet-connector-host.js`;
@@ -835,7 +862,9 @@ The shared-view/window lanes own clients. One fixture file,
 instances of every v2 hello/ready/effect/result/state/navigation-result message,
 plus their exact stage/dispatch and N1 query examples. The real Home module
 tests and every connector window test import that same file. It includes the
-N4 wire examples linked from [N4](WALLET_PROVIDER.md#n4-wallet-name-and-mark).
+N4 wire examples linked from [N4](WALLET_PROVIDER.md#n4-wallet-name-and-mark)
+and N7 valid/invalid private summary examples linked from
+[N7](WALLET_PROVIDER.md#n7-requesting-site-display).
 The first commit of the scripted-extension enabling lane creates this fixture
 file, before the four build lanes start. That lane also owns the recorded
 provider replay used by n2_stale_provider_check_and_reload_guidance; the shared
@@ -849,6 +878,8 @@ guards and use real modules, not extracted source.
 | --- | --- | --- |
 | After this work | Home extension | `n2_closed_actions_and_frame_binding`, `n2_unknown_kind_and_old_home_reload`, `n2_recorded_provider_facts`, `n2_account_network_events`, `n2_one_deadline_stop_late_reply`, `n2_serializes_across_frames`, `n2_v2_message_fixtures_shared`, `n2_v1_on_new_home`, `n2_check_never_prompts`, `n2_ready_handshake_and_authority_renewal`, `n2_stage_dispatch_table`, `n2_busy_release_and_late_settlement`, `n2_capacity_and_stop_reserve`, `n2_walletconnect_frame_refused`, `n2_stale_provider_check_and_reload_guidance` |
 | After this work | Runtime/navigation (single accountable owner; Home extension contributes its module) | `n2_preflight_before_handoff`, `n2_runtime_error_codes`, `n2_empty_accounts_prompt_on_send`, `n2_link_admission_before_prompt`, `n2_narrow_check_and_unisat_network_facts`, `n2_transaction_completion_after_frame_close`, `n2_shell_host_hooks_contract` |
+| After this work | Runtime/navigation — N7 | Owns all Rust, Inbox and Wallet projection/consumer work and N7 producer/privacy/compatibility tests in [N7](WALLET_PROVIDER.md#n7-requesting-site-display); connector windows only render the field |
+| After this work | WalletConnect window / shared view | `walletconnect_request_feedback_in_view` (WalletConnect-window owner), `extension_request_feedback_in_view` (shared-view owner, MetaMask/UniSat consumers) |
 | After this work | Navigation and GUI | `n1_navigation_rows_and_near_misses`, `n1_request_id_survives_launch_and_reuse`, `n1_source_app_from_runtime_record`, `n1_old_home_rows_unavailable`, `n1_selection_during_active_effect`, `n1_refusal_result_to_source`, `n1_source_app_excluded_targets`, `n1_navigation_read_all_connectors` |
 | After this work | Every connector/window and shared view | `wallet_windows_state_producers_and_controls`, `n2_v2_message_fixtures_shared`; import the same packets and reach the accepted design states through their actual producers |
 
