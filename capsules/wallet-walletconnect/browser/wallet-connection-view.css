@@ -109,7 +109,7 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-copy { position:relative; height:28px; min-height:28px; padding:0 8px; }
 
 /* Names are returned display data, never part of a trusted sentence's layout. */
-.connection-isolated { display:inline-block; max-width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; unicode-bidi:isolate; vertical-align:bottom; line-height:1.5; }
+.connection-isolated { display:inline-grid; align-items:baseline; grid-template-columns:minmax(0,1fr); max-width:100%; min-width:0; overflow:visible; text-overflow:clip; white-space:nowrap; unicode-bidi:isolate; vertical-align:baseline; line-height:inherit; }
 .connection-wallet, .connection-app, .connection-home { max-width:min(18em, 65vw); }
 .connection-site-row { display:flex; flex-direction:column; gap:2px; margin-bottom:8px; font-size:var(--el-text-md); color:var(--el-muted); }
 .connection-site-row .connection-site { max-width:100%; overflow-wrap:anywhere; }
@@ -137,7 +137,7 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-compact .connection-dialog h2 { font-size:14px; margin:0; }
 .connection-compact .connection-dialog p { margin:2px 0; font-size:11px; }
 .connection-compact .connection-qr { width:56px; height:56px; }
-/* The identity scrolls in its own area; feedback and decisions keep their place. */
+/* Post-action waits and outcomes retain feedback outside scrolling identity. */
 .connection-window:not(.connection-panel) { height:100svh; min-height:0; }
 .connection-window:not(.connection-panel) > .connection-heading { flex-shrink:0; }
 .connection-window:not(.connection-panel) > .connection-content { min-height:0; display:flex; flex-direction:column; }
@@ -166,3 +166,38 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-identity { min-width:0; }
 .connection-request-choice > div { flex:1; }
 .connection-request-choice .connection-identity { overflow-wrap:anywhere; }
+
+/* Keep the clipping box inside the baseline-bearing isolated inline box. */
+.connection-isolated-text { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.connection-account-header .connection-heading img { width:36px; height:36px; }
+.connection-content > .connection-note { margin-top:16px; }
+.connection-host-label, .connection-host-end { display:inline-block; width:max-content; max-width:100%; white-space:normal; overflow-wrap:anywhere; vertical-align:baseline; }
+.connection-site-row .connection-site { display:block; line-height:1.5; }
+/* Main's rule: no measurement, independent pinning, or content after the decision. */
+.connection-approval-window { display:block; height:100svh; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.connection-approval-window > .connection-content { display:block; overflow:visible; }
+.connection-approval-window .connection-request { display:block; overflow:visible; }
+.connection-approval-window .connection-identity { overflow:visible; max-height:none; }
+.connection-approval-window .connection-heading { margin-top:8px; }
+.connection-card-start { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.connection-more { color:var(--el-muted); font-size:var(--el-text-md); }
+.connection-approval-unit { display:block; margin-top:8px; }
+.connection-approval-unit > .connection-site-row { display:block; margin:0 0 4px; }
+.connection-approve-actions { margin:0 !important; }
+.connection-approve-actions > button { margin:0; width:100%; }
+.connection-approval-window .connection-request > .connection-actions { margin:8px 0; }
+.connection-approval-window .connection-request-choice { margin-bottom:8px; }
+@media(max-width:280px) { body { min-width:0; } }
+.connection-approval-window { padding:16px 20px; }
+.connection-approval-window > .connection-heading { margin:0 0 12px; }
+.connection-approval-window .connection-card { padding:12px; }
+.connection-approval-window .connection-card-start .el-button { min-height:28px; }
+.connection-compact.connection-approval-window { padding:6px 8px; }
+.connection-compact.connection-approval-window > .connection-heading { margin:0 0 4px; }
+.connection-compact.connection-approval-window .connection-card { padding:8px; }
+.connection-compact.connection-approval-window .connection-card-start .el-button { min-height:24px; padding:2px 6px; font-size:12px; }
+.connection-site-row .connection-site { display:inline; }
+
+.connection-host-end-text { display:block; }
+
+.connection-computed-value { unicode-bidi:isolate; overflow-wrap:anywhere; }

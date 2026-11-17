@@ -1,19 +1,20 @@
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { resolve, extname, join } from 'node:path';
 import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
-import { states, contractStates, shared, pictures, pictureViewports, fixtureView, fixtureArguments } from './wallet-connection-view-fixtures.mjs';
+import { states, contractStates, unknownSafetyStates, shared, pictures, pictureViewports, fixtureView, fixtureArguments } from './wallet-connection-view-fixtures.mjs';
 import { layoutFailures, ruleFacts } from './lib/wallet-connection-view-rules.mjs';
 import { viewText } from '../capsules/_shared/wallet-connection-view.mjs';
 
 const playwright = requireProductSmokePlaywright();
-const proof = process.env.WALLET_VIEW_PROOF_DIR || await mkdtemp(join(tmpdir(),'wallet-view-render-'));
+const {temporaryProof}=await import('./lib/wallet-connection-browser-fixture.mjs');
+const proofDirectory=await temporaryProof('wallet-view-render-',process.env.WALLET_VIEW_PROOF_DIR);
+const proof=proofDirectory.path;
 const capture = process.env.WALLET_VIEW_CAPTURE === '1';
 const root = resolve(fileURLToPath(new URL('../',import.meta.url)));
 const sizes = [{name:'window',width:480,height:522},{name:'390',width:390,height:844},{name:'1280',width:1280,height:720},
@@ -22,7 +23,7 @@ const candidate=execFileSync('git',['rev-parse','HEAD','HEAD^{tree}'],{encoding:
 const results = [];
 const frameGeometry = {};
 const interactionChecks = [];
-await mkdir(proof, {recursive:true});
+test.after(()=>proofDirectory.cleanup());
 
 for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_view: render-only ${engine}, both themes and all states`, {skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in test-elastos content-sandbox browser job':false}, async () => {
   const browser = await playwright[engine].launch({headless:true});
@@ -59,7 +60,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
       const surface=size.compact?page.frames().find(f=>f.url()==='http://wallet-view.test/fixture'):page;
       const actualSize=size.compact?frameGeometry[engine][size.name]:size;
       let currentViewport=page.viewportSize();
-      for(const row of [...states,...contractStates]){
+      for(const row of [...states,...contractStates,...unknownSafetyStates]){
         const rowSize=size.compact?actualSize:pictureViewports[row.window][size.name];
         if(!size.compact&&(currentViewport.width!==rowSize.width||currentViewport.height!==rowSize.height)){await page.setViewportSize(rowSize);currentViewport=rowSize;}
         const view=fixtureView(row,{compact:!!size.compact});
@@ -81,13 +82,13 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           const shown=e=>{const b=box(e);return b.width>0&&b.height>0&&b.top>=-1&&b.left>=-1&&b.bottom<=Math.min(innerHeight,visibleFrame.visibleHeight??innerHeight)+1&&b.right<=Math.min(innerWidth,visibleFrame.visibleWidth??innerWidth)+1;};
           const controls=[...root.querySelectorAll('button')].map(b=>({id:b.dataset.action,label:b.textContent,primary:b.classList.contains('el-button-primary'),visible:shown(b),box:box(b)}));
           const feedback=[...root.querySelectorAll('.connection-wait,.connection-status')].filter(e=>e.textContent).map(e=>({text:e.textContent,visible:shown(e),box:box(e)}));
-          const names=[...root.querySelectorAll('.connection-isolated')].map(e=>({kind:e.classList.contains('connection-site')?'site':'name',textOverflow:getComputedStyle(e).textOverflow,text:e.textContent,dir:e.dir,bidi:getComputedStyle(e).unicodeBidi,overflow:getComputedStyle(e).overflowX,whiteSpace:getComputedStyle(e).whiteSpace}));
+          const names=[...root.querySelectorAll('.connection-isolated')].map(e=>({kind:e.classList.contains('connection-site')?'site':'name',textOverflow:getComputedStyle(e).textOverflow,text:e.textContent,dir:e.dir,bidi:getComputedStyle(e).unicodeBidi,overflow:getComputedStyle(e).overflowX,clipOverflow:e.querySelector('.connection-isolated-text')?getComputedStyle(e.querySelector('.connection-isolated-text')).overflowX:null,whiteSpace:getComputedStyle(e).whiteSpace}));
           let clicks=[];root.addEventListener('click',e=>{const b=e.target.closest('button');if(b)clicks.push(b.dataset.action);});
           const exit=controls.find(b=>b.visible&&['cancel','stop-waiting','close-window','start-over','open-wallet-activity','open-request-app','open-wallet','connect','finish','send-message','restore-access','inbox'].includes(b.id));
           if(exit)[...root.querySelectorAll('button')].find(b=>b.dataset.action===exit.id).click();
           return {headingBeforeFeedback:!root.querySelector('.connection-status')?.textContent||!root.querySelector('h1')?.checkVisibility()||root.querySelector('h1').getBoundingClientRect().top<=root.querySelector('.connection-status').getBoundingClientRect().top,controls,feedback,names,qrHeadingMark:root.querySelector('.connection-dialog h2 img')?.getAttribute('src'),paragraphs:[...root.querySelectorAll('p')].filter(p=>p.checkVisibility()).map(p=>p.textContent),focus:document.activeElement.dataset.action||document.activeElement.dataset.focus||null,text:root.innerText,links:root.querySelectorAll('a').length,clicks,identityScroll:[...root.querySelectorAll('.connection-identity')].some(e=>e.scrollHeight>e.clientHeight+1),background:getComputedStyle(document.body).backgroundColor,siteOutsideIdentity:!!root.querySelector('.connection-status .connection-site,.connection-notice .connection-site'),requestAccountIsolated:[...root.querySelectorAll('.connection-request-account')].every(e=>e.querySelector('.connection-address')||e.querySelector('.connection-isolated.connection-address')),actionDisplays:[...root.querySelectorAll('.connection-actions button')].map(b=>getComputedStyle(b).display),documentHeight:document.documentElement.scrollHeight,scrollWidth:root.scrollWidth,width:innerWidth};
         },{args:fixtureArguments(row,{compact:!!size.compact}),theme,visibleFrame:rowSize});
-        const key=`${engine}/${theme}/${size.name}/${row.designState}`;
+        const key=`${engine}/${theme}/${size.name}/${row.caseId||row.designState}`;
         try{
           if(size.name==='window'){assert(observed.documentHeight<=rowSize.height,key+': ordinary screen fits');assert(observed.controls.every(b=>b.visible),key+': all controls in view');assert(!observed.identityScroll,key+': ordinary identity needs no scroll');}
           assert.equal(observed.background,theme==='dark'?'rgb(11, 13, 16)':'rgb(238, 241, 246)',key+': designed app background');assert.equal(observed.headingBeforeFeedback,true,key+': trusted heading precedes status');assert.equal(observed.links,0,key+': zero navigation');assert.equal(observed.siteOutsideIdentity,false,key+': site once in identity');assert(observed.requestAccountIsolated,key+': isolated account address');assert(observed.actionDisplays.every(display=>display==='block'),key+': text spacing uses inline flow');
@@ -95,7 +96,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           const normalizedText=text=>text.replace(/\s+/g,' ').trim();
           for(const parts of [view.status,view.notice,view.afterNote])if(parts.length)assert(observed.paragraphs.some(text=>normalizedText(text)===normalizedText(viewText(parts))),key+': designed copy is rendered');
           assert.deepEqual(layoutFailures(view,observed,facts),[],key+': layout invariants');
-          if(view.wait&&observed.feedback.length){
+          if(facts.wait&&observed.feedback.length){
             const broken=structuredClone(observed);broken.feedback[0].visible=false;
             assert(layoutFailures(view,broken,facts).includes('feedback'),key+': broken geometry escaped');
           }
@@ -104,7 +105,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
             assert(layoutFailures(view,broken,facts).includes('isolation'),key+': broken isolation escaped');
           }
           assert(observed.scrollWidth<=rowSize.width+1,key+': horizontal overflow');
-          for(const name of observed.names){assert.equal(name.dir,'auto');assert.equal(name.bidi,'isolate');if(name.kind==='site'){assert.equal(name.whiteSpace,'normal');assert.notEqual(name.textOverflow,'ellipsis');}else{assert.equal(name.overflow,'hidden');assert.equal(name.whiteSpace,'nowrap');}}
+          for(const name of observed.names){assert.equal(name.dir,'auto');assert.equal(name.bidi,'isolate');if(name.kind==='site'){assert.equal(name.whiteSpace,'normal');assert.notEqual(name.textOverflow,'ellipsis');}else{assert.equal(name.clipOverflow,'hidden');assert.equal(name.whiteSpace,'nowrap');}}
           if(view.focus)assert.equal(observed.focus,view.focus,key+': focus');
           if(facts.wait||facts.answered||facts.needsExit){
             for(const f of observed.feedback)assert(f.visible,`${key}: feedback outside frame ${JSON.stringify(f)}`);
@@ -117,16 +118,20 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
             const text=label.replace(/^\[mark:[^\]]+\]\s*/,'').replace(/\s+/g,' ');
             return row.window==='panel'?text:text.replaceAll('MetaMask',view.account?.name||'MetaMask').replaceAll('UniSat',view.account?.name||'UniSat').replaceAll('Browser',view.request?.app||'Browser').replaceAll('Notes',view.request?.app||'Notes');
           };
-          const expectedControls=labels.map(s=>({label:normalized(s.replace(/ \[(primary|quiet secondary|bordered secondary)\]$/,'')),primary:s.endsWith('[primary]')}));
+          let expectedControls=labels.map(s=>({label:normalized(s.replace(/ \[(primary|quiet secondary|bordered secondary)\]$/,'')),primary:s.endsWith('[primary]')}));
+          const fallbackClose=!expectedControls.length&&row.window==='metamask'&&expected?.inventory.some(s=>s.startsWith('WalletConnect [primary]'))&&(facts.payment||facts.capability);
+          if(fallbackClose)expectedControls=[{label:'Close window',primary:true}];
+          if(facts.approval){const main=expectedControls.filter(c=>c.primary),other=expectedControls.filter(c=>!c.primary&&c.label!=='Close window');expectedControls=[{label:'Close window',primary:false},...other.filter(c=>c.label.startsWith('View request')),...other.filter(c=>!c.label.startsWith('View request')),...main];}
+          if(row.unknownSafety&&['link-busy','request-busy','extension-busy'].includes(row.stage))expectedControls=[{label:'Close window',primary:true},...expectedControls.filter(c=>!c.primary&&c.label!=='Close window')];
           if(row.stage==='disconnecting')expectedControls.push({label:'Close window',primary:true});
           const actual=observed.controls.map(b=>({label:b.label.replace(/\s+/g,' '),primary:b.primary}));
           assert.deepEqual(actual,expectedControls,key+': control order and main control');
-          const expectedFocus=facts.focus;
+          const expectedFocus=fallbackClose&&facts.focus||row.unknownSafety&&['link-busy','request-busy','extension-busy'].includes(row.stage)?'close-window':facts.focus;
           assert.equal(observed.focus,expectedFocus,key+': design focus, with answered-outcome override');
           if(observed.clicks.length)assert.equal(observed.clicks.length,1,key+': exit operable');
-          const item={engine,theme,size:size.name,window:row.window,stage:row.stage,controls:observed.controls.map(({id,label,primary})=>({id,label,primary})),focus:observed.focus,text:observed.text,result:'pass'};
+          const item={engine,theme,size:size.name,window:row.window,stage:row.stage,unknownSafety:!!row.unknownSafety,controls:observed.controls.map(({id,label,primary})=>({id,label,primary})),focus:observed.focus,text:observed.text,result:'pass'};
           results.push(item);
-          if(capture&&engine==='chromium'&&['window','390','1280'].includes(size.name))await page.screenshot({path:`${proof}/${row.window}-${row.stage}-${theme}-${size.name}.png`,fullPage:true});
+          if(capture&&engine==='chromium'&&['window','390','1280'].includes(size.name))await page.screenshot({path:`${proof}/${row.window}-${row.stage}${row.unknownSafety?'-unknown-safety':''}-${theme}-${size.name}.png`,fullPage:true});
         }catch(error){await writeFile(`${proof}/failure-${engine}.json`,JSON.stringify({key,view,observed},null,2));await page.screenshot({path:`${proof}/failure-${engine}.png`});throw error;}
       }
     }
@@ -173,4 +178,42 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
     const hash=createHash('sha256').update(await readFile(resolve(root,'capsules/_shared/wallet-connection-view.mjs'))).digest('hex');
     await writeFile(`${proof}/results.json`,JSON.stringify({head:candidate[0],tree:candidate[1],sourceSha256:hash,frameGeometry,interactionChecks,results},null,2)+'\n');
   }
+});
+
+for(const engine of ['chromium','webkit'])test(`isolated names share text baselines and linked screens retain their design spacing in ${engine}`,{skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in test-elastos content-sandbox browser job':false},async()=>{
+ const {browserFixture}=await import('./lib/wallet-connection-browser-fixture.mjs');
+ const f=await browserFixture(engine);
+ try{
+  const checks=[];
+  for(const name of ['metamask/request-waiting','metamask/request-done','unisat/request-declined','walletconnect/link-wait','metamask/linked','unisat/linked','walletconnect/transaction-declined']){
+   await f.page.evaluate(async args=>{const {reduceConnection,renderConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');document.querySelector('#mount').replaceChildren(renderConnection(document,reduceConnection(...args)));await document.fonts.ready;},fixtureArguments(states.find(r=>r.designState===name)));
+   const measured=await f.page.evaluate(()=>{
+    const baselines=[];
+    for(const bdi of document.querySelectorAll('p .connection-isolated,button .connection-isolated')){
+     if(bdi.classList.contains('connection-site'))continue;
+     const parent=bdi.closest('p,button'),walker=document.createTreeWalker(parent,NodeFilter.SHOW_TEXT);const own=document.createTreeWalker(bdi,NodeFilter.SHOW_TEXT);own.nextNode();if(!own.currentNode?.length)continue;
+     const range=document.createRange();range.setStart(own.currentNode,0);range.setEnd(own.currentNode,1);const nameBox=range.getBoundingClientRect();let node;
+     while(node=walker.nextNode())if(!node.parentElement.closest('bdi')&&node.textContent.trim()){
+      const index=node.textContent.search(/\S/);const copy=document.createRange();copy.setStart(node,index);copy.setEnd(node,index+1);const box=copy.getBoundingClientRect();const lineHeight=parseFloat(getComputedStyle(parent).lineHeight);
+      if(Math.abs(box.top-nameBox.top)<lineHeight*.7)baselines.push({text:parent.textContent,delta:Math.abs(box.top-nameBox.top)});
+     }
+    }
+    const mark=document.querySelector('.connection-account-header .connection-heading img')?.getBoundingClientRect();
+    const note=[...document.querySelectorAll('.connection-content > .connection-note')].at(-1),button=document.querySelector('.connection-content > .connection-actions [data-action="open-wallet"]');
+    return {baselines,mark:mark&&{width:mark.width,height:mark.height},gap:note&&button?note.getBoundingClientRect().top-button.getBoundingClientRect().bottom:null,computed:[...document.querySelectorAll('.connection-computed-detail')].map(e=>({text:e.textContent,hasAppLabel:!!e.querySelector('.connection-detail-label')})),app:[...document.querySelectorAll('.connection-context')].map(e=>e.textContent)};
+   });
+   if(name.includes('/request-')||name==='walletconnect/link-wait'){assert(measured.baselines.length,name+': baseline samples');assert(measured.baselines.every(b=>b.delta<=.5),name+': '+JSON.stringify(measured.baselines));}
+   if(name.endsWith('/linked')){assert.deepEqual(measured.mark,{width:36,height:36});if(name==='metamask/linked')assert(measured.gap>=8,'stop-sharing note has space after Open Wallet');}
+   if(name==='walletconnect/transaction-declined'){assert.equal(measured.computed.length,1);assert.equal(measured.computed[0].hasAppLabel,false);assert(!measured.computed[0].text.includes('From app:'));}
+   assert(measured.app.every(text=>!text.includes('BrowserSite reported by Browser:')&&!text.includes('Browser  Site reported')),'Browser shown once');
+   checks.push({name,...measured});
+  }
+  const peer=await f.page.evaluate(async()=>{
+   const {connectionView,renderConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
+   document.querySelector('#mount').replaceChildren(renderConnection(document,connectionView({window:'walletconnect',stage:'linked',localSafety:false,account:{name:'WalletConnect',mark:'metamask',connection:'WalletConnect',accounts:[{address:'0x1122334455667788990011223344556677889900',networks:['Ethereum']}]}})));
+   return {heading:document.querySelector('h1')?.textContent,peer:document.querySelector('.connection-account-name bdi')?.textContent,mark:document.querySelector('.connection-account-header img')?.getAttribute('src'),hint:document.querySelector('.connection-via')?.textContent};
+  });
+  assert.deepEqual(peer,{heading:'WalletConnect',peer:'WalletConnect',mark:'./connection-wallet.png',hint:undefined});
+  await writeFile(`${proof}/polish-${engine}.json`,JSON.stringify(checks,null,2)+'\n');
+ }finally{await f.close();}
 });

@@ -1,6 +1,6 @@
 // Fixed local copy and closed stage definitions. Design source: 58aaafe6db48f8a3600f1e3bb8312499405502fc.
 // This data grants no effect or navigation authority.
-export const screens = {
+const definitions = {
   "walletconnect": {
     "nothing-saved": {
       "notice": "Connect a wallet app with a QR code, then sign a message.",
@@ -2262,3 +2262,6 @@ export const screens = {
     }
   }
 };
+
+const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
+export const screens = freeze(definitions);

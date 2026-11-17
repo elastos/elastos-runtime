@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {temporaryDirectory} from './lib/wallet-connection-test-temp.mjs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -9,7 +9,7 @@ import { walletViewAssets, validateWalletViewAssets } from './check-product-data
 
 test('real release staging and archives carry identical inactive view bytes in all three capsules', () => {
   validateWalletViewAssets(resolve('.'));
-  const scratch=mkdtempSync(join(tmpdir(),'wallet-view-package-'));
+  const temporary=temporaryDirectory('wallet-view-package-'),scratch=temporary.path;
   const hashes={};
   try{
     for(const name of ['wallet-metamask','wallet-unisat','wallet-walletconnect']){
@@ -31,5 +31,5 @@ test('real release staging and archives carry identical inactive view bytes in a
     const receipt=process.env.WALLET_VIEW_PACKAGE_RECEIPT||join(scratch,'receipt.json');
     mkdirSync(dirname(receipt),{recursive:true});
     writeFileSync(receipt,JSON.stringify(hashes,null,2)+'\n');
-  }finally{rmSync(scratch,{recursive:true,force:true});}
+  }finally{temporary.cleanup();}
 });

@@ -1,3 +1,4 @@
+import {withTestView} from './lib/wallet-connection-test-module.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { connectionView, renderConnection, reduceConnection, viewText } from '../capsules/_shared/wallet-connection-view.mjs';
@@ -57,25 +58,14 @@ test('10: error-stage payment and account/request alternative guards have exerci
 });
 
 test('10: real guards filter injected reload and connector offers on error, request and account screens',async()=>{
-  const {screens}=await import('../capsules/_shared/wallet-connection-screens.mjs');
-  const error=structuredClone(state('metamask/link-error'));
-  error.summaryInput={...state('metamask/transaction-waiting').summaryInput};
-  const errorScreen=screens.metamask['link-error'];
-  const originalNotice=errorScreen.notice;
-  try{
-    errorScreen.notice='If the wallet will not open, use the browser Reload control.';
-    const v=fixtureView(error);
-    assert.doesNotMatch(viewText(v.notice),/reload/i,'error-stage payment guard');
-    assert.deepEqual(ruleFailures(v,{row:error,shared}),[]);
-  }finally{if(originalNotice===undefined)delete errorScreen.notice;else errorScreen.notice=originalNotice;}
-  for(const name of ['request-waiting','linked','site-access-ended']){
-    const row={...state('metamask/'+name),alternative:'extension-walletconnect-wallet-metamask'};
-    const screen=screens.metamask[name],old=screen.secondary;
-    try{
-      screen.secondary=[...(old||[]),{id:'use-walletconnect',label:'WalletConnect',quiet:true}];
-      assert(!fixtureView(row).actions.some(a=>a.id==='use-walletconnect'),name+': injected unavailable connector escaped');
-    }finally{if(old===undefined)delete screen.secondary;else screen.secondary=old;}
-  }
+  const {fixtureArguments}=await import('./wallet-connection-view-fixtures.mjs');
+  const error={...state('metamask/link-error'),summaryInput:state('metamask/transaction-waiting').summaryInput};
+  await withTestView({editScreens:s=>{s.metamask['link-error'].notice='If the wallet will not open, use the browser Reload control.';}},async module=>{
+    const view=module.reduceConnection(...fixtureArguments(error));assert.doesNotMatch(viewText(view.notice),/reload/i);assert.deepEqual(ruleFailures(view,{row:error,shared}),[]);
+  });
+  for(const name of ['request-waiting','linked','site-access-ended'])await withTestView({editScreens:s=>{s.metamask[name].secondary=[...(s.metamask[name].secondary||[]),{id:'use-walletconnect',label:'WalletConnect',quiet:true}];}},async module=>{
+    assert(!module.reduceConnection(...fixtureArguments(state('metamask/'+name))).actions.some(a=>a.id==='use-walletconnect'),name);
+  });
 });
 
 test('6: known app labels are local copy and absent labels use a sentence-safe fallback',async()=>{
@@ -84,34 +74,20 @@ test('6: known app labels are local copy and absent labels use a sentence-safe f
 });
 
 test('10: independent oracles detect real source mutations',async t=>{
-  const {mkdtemp,readFile,writeFile,rm}=await import('node:fs/promises');
-  const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {pathToFileURL}=await import('node:url');
-  const {fixtureArguments,pictures}=await import('./wallet-connection-view-fixtures.mjs');
-  const source=await readFile(new URL('../capsules/_shared/wallet-connection-view.mjs',import.meta.url),'utf8');
-  const definitions=await readFile(new URL('../capsules/_shared/wallet-connection-screens.mjs',import.meta.url),'utf8');
-  const mutations=[
-    {name:'answered request-done loses outcome focus',from:'request-(done|declined',to:'request-(declined',row:state('metamask/request-done'),rule:'answered'},
-    {name:'error-stage payment guard removed',from:'timeout|cancelled|reopened|error|removed',to:'timeout|cancelled|reopened|removed',row:{...state('metamask/link-error'),summaryInput:state('metamask/transaction-waiting').summaryInput},injectReload:true,rule:'payment'},
-    {name:'request connector guard removed',from:'screen.request || screen.account || screen.selectedAccount || ',to:'',row:state('metamask/request-waiting'),injectAlternative:true,rule:'capability'},
-    {name:'account connector guard removed',from:'screen.request || screen.account || screen.selectedAccount || ',to:'',row:state('metamask/site-access-ended'),injectAlternative:true,rule:'capability'},
-  ];
-  for(const mutation of mutations)await t.test(mutation.name,async()=>{
-    const scratch=await mkdtemp(join(tmpdir(),'wallet-view-mutation-'));
-    try{
-      assert(source.includes(mutation.from),'source mutation anchor');
-      await writeFile(join(scratch,'wallet-connection-view.mjs'),source.replace(mutation.from,mutation.to));
-      await writeFile(join(scratch,'wallet-connection-screens.mjs'),definitions);
-      const {screens}=await import(pathToFileURL(join(scratch,'wallet-connection-screens.mjs')));
-      const screen=screens[mutation.row.window][mutation.row.stage];
-      if(mutation.injectReload)screen.notice='If the wallet will not open, use the browser Reload control.';
-      if(mutation.injectAlternative)screen.secondary=[...(screen.secondary||[]),{id:'use-walletconnect',label:'WalletConnect',quiet:true}];
-      const mutant=await import(pathToFileURL(join(scratch,'wallet-connection-view.mjs')));
-      const view=mutant.reduceConnection(...fixtureArguments(mutation.row));
-      const failures=ruleFailures(view,{row:mutation.row,shared,expected:pictures.find(p=>p.window===mutation.row.window&&p.stage===mutation.row.stage)});
-      assert(failures.includes(mutation.rule),`${mutation.name} escaped: ${failures}`);
-      t.diagnostic(`${mutation.name}: caught by ${mutation.rule}`);
-    }finally{await rm(scratch,{recursive:true,force:true});}
-  });
+ const {fixtureArguments,pictures}=await import('./wallet-connection-view-fixtures.mjs');
+ const mutations=[
+  {name:'answered request-done loses outcome focus',from:'request-(done|declined',to:'request-(declined',row:state('metamask/request-done'),rule:'answered'},
+  {name:'error-stage payment guard removed',from:'timeout|cancelled|reopened|error|removed',to:'timeout|cancelled|reopened|removed',row:{...state('metamask/link-error'),summaryInput:state('metamask/transaction-waiting').summaryInput},injectReload:true,rule:'payment'},
+  {name:'request connector guard removed',from:'screen.request || screen.account || screen.selectedAccount || ',to:'',row:state('metamask/request-waiting'),injectAlternative:true,rule:'capability'},
+  {name:'account connector guard removed',from:'screen.request || screen.account || screen.selectedAccount || ',to:'',row:state('metamask/site-access-ended'),injectAlternative:true,rule:'capability'},
+ ];
+ for(const m of mutations)await t.test(m.name,async()=>withTestView({
+  mutateSource:source=>{assert(source.includes(m.from));return source.replace(m.from,m.to);},
+  editScreens:s=>{const screen=s[m.row.window][m.row.stage];if(m.injectReload)screen.notice='If the wallet will not open, use the browser Reload control.';if(m.injectAlternative)screen.secondary=[...(screen.secondary||[]),{id:'use-walletconnect',label:'WalletConnect',quiet:true}];},
+ },async module=>{
+  const view=module.reduceConnection(...fixtureArguments(m.row));const failures=ruleFailures(view,{row:m.row,shared,expected:pictures.find(p=>p.window===m.row.window&&p.stage===m.row.stage)});
+  assert(failures.includes(m.rule),m.name+' escaped');t.diagnostic(m.name+': caught by '+m.rule);
+ }));
 });
 
 test('9: freezing a returned view preserves caller-owned result mutability',()=>{

@@ -780,18 +780,25 @@
         },
         "waitSeconds": 599,
         "paymentPending": false,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -822,18 +829,25 @@
         },
         "waitSeconds": 299,
         "paymentPending": false,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -864,18 +878,25 @@
         },
         "waitSeconds": 598,
         "paymentPending": true,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -905,18 +926,25 @@
           ]
         },
         "paymentPending": false,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -946,18 +974,25 @@
           ]
         },
         "paymentPending": true,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -987,18 +1022,25 @@
           ]
         },
         "paymentPending": true,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -1028,18 +1070,25 @@
           ]
         },
         "paymentPending": true,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -1069,18 +1118,25 @@
           ]
         },
         "paymentPending": false,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -1110,18 +1166,25 @@
           ]
         },
         "paymentPending": true,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -1356,18 +1419,25 @@
           ]
         },
         "paymentPending": true,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -1728,18 +1798,25 @@
           ]
         },
         "paymentPending": false,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -2237,18 +2314,25 @@
             }
           ]
         },
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -2280,18 +2364,25 @@
             }
           ]
         },
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -2323,18 +2414,25 @@
             }
           ]
         },
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": null,
+          "asset": null,
+          "destination": "0x8bC4…391a",
+          "network": "Elastos Smart Chain"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction destination/network projection with unavailable amount"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "To 0x8bC4…391a · Elastos Smart Chain",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -2779,18 +2877,25 @@
           ]
         },
         "waitSeconds": 599,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -2823,18 +2928,25 @@
           ]
         },
         "waitSeconds": 598,
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -2866,18 +2978,25 @@
             }
           ]
         },
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -2909,18 +3028,25 @@
             }
           ]
         },
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -2952,18 +3078,25 @@
             }
           ]
         },
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -2995,18 +3128,25 @@
             }
           ]
         },
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -3038,18 +3178,25 @@
             }
           ]
         },
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -3364,18 +3511,25 @@
             }
           ]
         },
-        "producer": "window-local: produced by the window lane"
+        "producer": "window-local: produced by the window lane",
+        "transactionDisplay": {
+          "amount": "0.01",
+          "asset": "ETH",
+          "destination": "0x8bC4…391a",
+          "network": "Base"
+        }
       },
       "provisional": [
         "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: computed transaction amount, asset, destination and network projection"
       ],
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
         "intent": "transaction_intent",
         "capsule_id": "browser",
-        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "reason": "",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
@@ -5145,6 +5299,1028 @@
       "provider": "outcome-request_unavailable",
       "safety": "state-payment-false",
       "contractLine": 986
+    }
+  ],
+  "unknownSafetyStates": [
+    {
+      "id": "walletconnect/nothing-saved/unknown-safety",
+      "fixture": "walletconnect/nothing-saved",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/internet-pending/unknown-safety",
+      "fixture": "walletconnect/internet-pending",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/internet-refused/unknown-safety",
+      "fixture": "walletconnect/internet-refused",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/internet-off/unknown-safety",
+      "fixture": "walletconnect/internet-off",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/internet-expired/unknown-safety",
+      "fixture": "walletconnect/internet-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/internet-clearing/unknown-safety",
+      "fixture": "walletconnect/internet-clearing",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/internet-ready/unknown-safety",
+      "fixture": "walletconnect/internet-ready",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/preparing-qr/unknown-safety",
+      "fixture": "walletconnect/preparing-qr",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/qr-shown/unknown-safety",
+      "fixture": "walletconnect/qr-shown",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/qr-cancelled/unknown-safety",
+      "fixture": "walletconnect/qr-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/qr-expired/unknown-safety",
+      "fixture": "walletconnect/qr-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/connection-declined/unknown-safety",
+      "fixture": "walletconnect/connection-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/link-wait/unknown-safety",
+      "fixture": "walletconnect/link-wait",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/link-declined/unknown-safety",
+      "fixture": "walletconnect/link-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/link-timeout/unknown-safety",
+      "fixture": "walletconnect/link-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/link-cancelled/unknown-safety",
+      "fixture": "walletconnect/link-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/saved-unlinked/unknown-safety",
+      "fixture": "walletconnect/saved-unlinked",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/connection-expired/unknown-safety",
+      "fixture": "walletconnect/connection-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-connection-expired/unknown-safety",
+      "fixture": "walletconnect/request-connection-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/wallet-removed/unknown-safety",
+      "fixture": "walletconnect/wallet-removed",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/linked/unknown-safety",
+      "fixture": "walletconnect/linked",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/linked-multiple/unknown-safety",
+      "fixture": "walletconnect/linked-multiple",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-waiting/unknown-safety",
+      "fixture": "walletconnect/request-waiting",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-multiple/unknown-safety",
+      "fixture": "walletconnect/request-multiple",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-unsendable/unknown-safety",
+      "fixture": "walletconnect/request-unsendable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-expired/unknown-safety",
+      "fixture": "walletconnect/request-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-phone/unknown-safety",
+      "fixture": "walletconnect/request-phone",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-declined/unknown-safety",
+      "fixture": "walletconnect/request-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-timeout/unknown-safety",
+      "fixture": "walletconnect/request-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-done/unknown-safety",
+      "fixture": "walletconnect/request-done",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-cancelled/unknown-safety",
+      "fixture": "walletconnect/request-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-waiting/unknown-safety",
+      "fixture": "walletconnect/transaction-waiting",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-deadline/unknown-safety",
+      "fixture": "walletconnect/transaction-deadline",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-phone/unknown-safety",
+      "fixture": "walletconnect/transaction-phone",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-declined/unknown-safety",
+      "fixture": "walletconnect/transaction-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-timeout/unknown-safety",
+      "fixture": "walletconnect/transaction-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-cancelled/unknown-safety",
+      "fixture": "walletconnect/transaction-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-wallet-error/unknown-safety",
+      "fixture": "walletconnect/transaction-wallet-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-done/unknown-safety",
+      "fixture": "walletconnect/transaction-done",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-reopened/unknown-safety",
+      "fixture": "walletconnect/transaction-reopened",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-wallet-error/unknown-safety",
+      "fixture": "walletconnect/request-wallet-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-new-connection/unknown-safety",
+      "fixture": "walletconnect/request-new-connection",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-network-unsupported/unknown-safety",
+      "fixture": "walletconnect/request-network-unsupported",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-wallet-removed/unknown-safety",
+      "fixture": "walletconnect/request-wallet-removed",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-sent-wallet-removed/unknown-safety",
+      "fixture": "walletconnect/request-sent-wallet-removed",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-wallet-removed/unknown-safety",
+      "fixture": "walletconnect/transaction-wallet-removed",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-internet-off/unknown-safety",
+      "fixture": "walletconnect/request-internet-off",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-internet-pending/unknown-safety",
+      "fixture": "walletconnect/request-internet-pending",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/disconnecting/unknown-safety",
+      "fixture": "walletconnect/disconnecting",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/disconnected/unknown-safety",
+      "fixture": "walletconnect/disconnected",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/window-expired/unknown-safety",
+      "fixture": "walletconnect/window-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/guest-access/unknown-safety",
+      "fixture": "walletconnect/guest-access",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/link-error/unknown-safety",
+      "fixture": "walletconnect/link-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-list/unknown-safety",
+      "fixture": "walletconnect/request-list",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-selected-second/unknown-safety",
+      "fixture": "walletconnect/request-selected-second",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-next/unknown-safety",
+      "fixture": "walletconnect/request-next",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/transaction-late-result/unknown-safety",
+      "fixture": "walletconnect/transaction-late-result",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/guest-ready/unknown-safety",
+      "fixture": "walletconnect/guest-ready",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/link-busy/unknown-safety",
+      "fixture": "walletconnect/link-busy",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-busy/unknown-safety",
+      "fixture": "walletconnect/request-busy",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/link-late-ignored/unknown-safety",
+      "fixture": "walletconnect/link-late-ignored",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/focus/unknown-safety",
+      "fixture": "walletconnect/focus",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/ready/unknown-safety",
+      "fixture": "metamask/ready",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/ready-multiple/unknown-safety",
+      "fixture": "metamask/ready-multiple",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/extension-missing/unknown-safety",
+      "fixture": "metamask/extension-missing",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/extensions-unavailable/unknown-safety",
+      "fixture": "metamask/extensions-unavailable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/extension-wait/unknown-safety",
+      "fixture": "metamask/extension-wait",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/extension-timeout/unknown-safety",
+      "fixture": "metamask/extension-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/extension-cancelled/unknown-safety",
+      "fixture": "metamask/extension-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/link-wait/unknown-safety",
+      "fixture": "metamask/link-wait",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/connection-declined/unknown-safety",
+      "fixture": "metamask/connection-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/link-declined/unknown-safety",
+      "fixture": "metamask/link-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/link-timeout/unknown-safety",
+      "fixture": "metamask/link-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/link-cancelled/unknown-safety",
+      "fixture": "metamask/link-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/link-late-ignored/unknown-safety",
+      "fixture": "metamask/link-late-ignored",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/account-unavailable/unknown-safety",
+      "fixture": "metamask/account-unavailable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/site-access-ended/unknown-safety",
+      "fixture": "metamask/site-access-ended",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/connect-already-open/unknown-safety",
+      "fixture": "metamask/connect-already-open",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-access-error/unknown-safety",
+      "fixture": "metamask/request-access-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/transaction-access-error/unknown-safety",
+      "fixture": "metamask/transaction-access-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-network-declined/unknown-safety",
+      "fixture": "metamask/request-network-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-network-unknown/unknown-safety",
+      "fixture": "metamask/request-network-unknown",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/linked/unknown-safety",
+      "fixture": "metamask/linked",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-waiting/unknown-safety",
+      "fixture": "metamask/request-waiting",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-multiple/unknown-safety",
+      "fixture": "metamask/request-multiple",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-unsendable/unknown-safety",
+      "fixture": "metamask/request-unsendable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-typed-data/unknown-safety",
+      "fixture": "metamask/request-typed-data",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-expired/unknown-safety",
+      "fixture": "metamask/request-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-extension/unknown-safety",
+      "fixture": "metamask/request-extension",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-declined/unknown-safety",
+      "fixture": "metamask/request-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-timeout/unknown-safety",
+      "fixture": "metamask/request-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-done/unknown-safety",
+      "fixture": "metamask/request-done",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-cancelled/unknown-safety",
+      "fixture": "metamask/request-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/transaction-waiting/unknown-safety",
+      "fixture": "metamask/transaction-waiting",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/transaction-extension/unknown-safety",
+      "fixture": "metamask/transaction-extension",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/transaction-declined/unknown-safety",
+      "fixture": "metamask/transaction-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/transaction-timeout/unknown-safety",
+      "fixture": "metamask/transaction-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/transaction-cancelled/unknown-safety",
+      "fixture": "metamask/transaction-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/transaction-wallet-error/unknown-safety",
+      "fixture": "metamask/transaction-wallet-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/transaction-done/unknown-safety",
+      "fixture": "metamask/transaction-done",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-wallet-error/unknown-safety",
+      "fixture": "metamask/request-wallet-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-late-ignored/unknown-safety",
+      "fixture": "metamask/request-late-ignored",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/window-expired/unknown-safety",
+      "fixture": "metamask/window-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/link-error/unknown-safety",
+      "fixture": "metamask/link-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-list/unknown-safety",
+      "fixture": "metamask/request-list",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-selected-second/unknown-safety",
+      "fixture": "metamask/request-selected-second",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-next/unknown-safety",
+      "fixture": "metamask/request-next",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/transaction-late-result/unknown-safety",
+      "fixture": "metamask/transaction-late-result",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/other-ethereum-wallet/unknown-safety",
+      "fixture": "metamask/other-ethereum-wallet",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/access-wrong-account/unknown-safety",
+      "fixture": "metamask/access-wrong-account",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/link-busy/unknown-safety",
+      "fixture": "metamask/link-busy",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-busy/unknown-safety",
+      "fixture": "metamask/request-busy",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/extension-busy/unknown-safety",
+      "fixture": "metamask/extension-busy",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/extension-late-ignored/unknown-safety",
+      "fixture": "metamask/extension-late-ignored",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/focus/unknown-safety",
+      "fixture": "metamask/focus",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/ready/unknown-safety",
+      "fixture": "unisat/ready",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/extension-missing/unknown-safety",
+      "fixture": "unisat/extension-missing",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/extensions-unavailable/unknown-safety",
+      "fixture": "unisat/extensions-unavailable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/extension-wait/unknown-safety",
+      "fixture": "unisat/extension-wait",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/extension-timeout/unknown-safety",
+      "fixture": "unisat/extension-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/extension-cancelled/unknown-safety",
+      "fixture": "unisat/extension-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/link-wait/unknown-safety",
+      "fixture": "unisat/link-wait",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/connection-declined/unknown-safety",
+      "fixture": "unisat/connection-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/link-declined/unknown-safety",
+      "fixture": "unisat/link-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/link-timeout/unknown-safety",
+      "fixture": "unisat/link-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/link-cancelled/unknown-safety",
+      "fixture": "unisat/link-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/link-late-ignored/unknown-safety",
+      "fixture": "unisat/link-late-ignored",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/account-unavailable/unknown-safety",
+      "fixture": "unisat/account-unavailable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/network-changed/unknown-safety",
+      "fixture": "unisat/network-changed",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/network-fractal/unknown-safety",
+      "fixture": "unisat/network-fractal",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/network-unknown/unknown-safety",
+      "fixture": "unisat/network-unknown",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/linked/unknown-safety",
+      "fixture": "unisat/linked",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-waiting/unknown-safety",
+      "fixture": "unisat/request-waiting",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-multiple/unknown-safety",
+      "fixture": "unisat/request-multiple",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-unsendable/unknown-safety",
+      "fixture": "unisat/request-unsendable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-expired/unknown-safety",
+      "fixture": "unisat/request-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-extension/unknown-safety",
+      "fixture": "unisat/request-extension",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-declined/unknown-safety",
+      "fixture": "unisat/request-declined",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-timeout/unknown-safety",
+      "fixture": "unisat/request-timeout",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-done/unknown-safety",
+      "fixture": "unisat/request-done",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-cancelled/unknown-safety",
+      "fixture": "unisat/request-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-wallet-error/unknown-safety",
+      "fixture": "unisat/request-wallet-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-late-ignored/unknown-safety",
+      "fixture": "unisat/request-late-ignored",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/window-expired/unknown-safety",
+      "fixture": "unisat/window-expired",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/link-error/unknown-safety",
+      "fixture": "unisat/link-error",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-list/unknown-safety",
+      "fixture": "unisat/request-list",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-selected-second/unknown-safety",
+      "fixture": "unisat/request-selected-second",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-next/unknown-safety",
+      "fixture": "unisat/request-next",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-network-testnet/unknown-safety",
+      "fixture": "unisat/request-network-testnet",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-network-fractal/unknown-safety",
+      "fixture": "unisat/request-network-fractal",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-network-unknown/unknown-safety",
+      "fixture": "unisat/request-network-unknown",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/link-busy/unknown-safety",
+      "fixture": "unisat/link-busy",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-busy/unknown-safety",
+      "fixture": "unisat/request-busy",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/extension-busy/unknown-safety",
+      "fixture": "unisat/extension-busy",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/extension-late-ignored/unknown-safety",
+      "fixture": "unisat/extension-late-ignored",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/focus/unknown-safety",
+      "fixture": "unisat/focus",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/empty/unknown-safety",
+      "fixture": "panel/empty",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/empty-alt/unknown-safety",
+      "fixture": "panel/empty-alt",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/linked/unknown-safety",
+      "fixture": "panel/linked",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/linked-unisat/unknown-safety",
+      "fixture": "panel/linked-unisat",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/unconfigured/unknown-safety",
+      "fixture": "panel/unconfigured",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/linked-metamask/unknown-safety",
+      "fixture": "panel/linked-metamask",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/linked-unnamed/unknown-safety",
+      "fixture": "panel/linked-unnamed",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/empty-return/unknown-safety",
+      "fixture": "panel/empty-return",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/linked-return/unknown-safety",
+      "fixture": "panel/linked-return",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/linked-metamask-return/unknown-safety",
+      "fixture": "panel/linked-metamask-return",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "panel/linked-unisat-return/unknown-safety",
+      "fixture": "panel/linked-unisat-return",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/request-unavailable/unknown-safety",
+      "fixture": "walletconnect/request-unavailable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "metamask/request-unavailable/unknown-safety",
+      "fixture": "metamask/request-unavailable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "unisat/request-unavailable/unknown-safety",
+      "fixture": "unisat/request-unavailable",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
     }
   ]
 }
