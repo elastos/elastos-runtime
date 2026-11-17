@@ -1,5 +1,9 @@
 # Wallet Provider
 
+Status: unmarked sections describe **today**. N3, N4 and N5 distinguish
+**today** from **after this work**; future requirements are build contracts,
+not installed-product acceptance.
+
 `wallet-provider` is the blockchain-quadrant authority boundary for wallet
 proofs, account links, approvals, typed signatures, and transaction requests.
 It is not the Runtime root of identity and it is not an app SDK.
@@ -416,6 +420,300 @@ open, as does an explicit weaker-proof policy for `bitcoin_signed_message`.
 P2WSH, multisig, hardware-wallet-specific behavior, and any additional script
 types still need pinned vectors, wallet evidence, connector UX, and policy
 before they can be claimed as supported.
+
+## Wallet connection contracts
+
+**After this work.** Runtime decides authority and navigation facts;
+wallet-provider owns accounts, proof challenges, request state and receipts;
+Inbox owns the internet permission decision; Wallet owns account and request
+review; each connector window asks for its allowed effect. These contracts
+cover N3 to N5. [N1 and N2](HOME_SHELL_HOST_CONTRACT.md#injected-wallet-connector-effects-n2)
+own window navigation and the injected-provider edge, including their exact
+schemas, checks and outcomes. The existing
+[Clipboard edge](HOME_SHELL_HOST_CONTRACT.md#first-party-clipboard-edge) owns
+Copy link. These are the six additions authorized for this work; display state
+and request selection confer no additional authority.
+
+### N3 outside-wallet requests
+
+**Today.** `gateway_inbox.rs::append_wallet_approval_notifications` selects
+`wallet-review-request:<id>` only for `browser_account_access`. Other requests,
+including outside-wallet accounts, get `wallet-approve-request:<id>`. Inbox
+then offers Approve, Review in Wallet and Reject. Runtime's
+`approve_pending_managed_wallet_request` refuses a proof type that is not
+managed. Wallet's request view opens MetaMask or UniSat without the selected ID;
+it has no matching WalletConnect action. This is a routing gap, not permission
+to approve outside-wallet requests with a Home passkey.
+
+| Status | Runtime classification | Inbox behavior | Wallet behavior |
+| --- | --- | --- | --- |
+| After this work | `browser_account_access` | Keep `wallet-review-request:<id>`. | Keep its existing account-access review and decision. |
+| After this work | Managed proof type under the existing Runtime managed-account predicate | Keep the existing managed request action and fresh-passkey rule. | Keep managed approval/signing and Reject. |
+| After this work | Every other account proof type, including an external record with missing/unknown connector metadata | Emit `wallet-review-request:<id>` with `action_ref.app:"wallet"`. | Show the same request. Offer its known supported connector only when the stored binding allows it; otherwise explain that it cannot be sent and keep Reject while pending. |
+
+**After this work.** The notification keeps the existing
+`wallet-approval-request:<id>` identity, title, asking app and reason, with the
+current list/detail/rail presentation and counts. Inbox shows Review in Wallet
+as its sole action for an external request. Inbox keeps its current title, asking-app/reason body and list/detail/rail
+metadata. Wallet supplies the full account, network and deadline detail. No
+new review checkpoint or second approval record is created. General
+presentation, unread counts and action vocabulary remain owned by the wider
+Inbox work.
+
+**After this work.** Runtime's refusal of direct managed approval for external
+proofs stays on both Wallet and Inbox routes, even if a stale card or a caller
+still submits it. Changing the producer removes the failing control; server
+validation enforces the authority boundary. Review in Wallet uses N1's exact
+request selector. Wallet reads the canonical principal-owned record again,
+shows its purpose, source, reason, account, network and time, and opens the
+stored `connector_id` with that same ID. MetaMask's compatible provider may
+actually be Brave; its name follows N4. An unsupported request retains its
+summary and Reject path and has no Send action. Opening a connector does not
+consume the request; explicit Send follows the N2 preflight or WalletConnect's
+existing bound handoff checks.
+
+**Today.** Handoff changes pending to approved before the outside wallet
+answers. Completion creates the verified result. A wallet-side decline alone
+does not record a Home rejection. Consumed message requests leave the pending
+feed; WalletConnect approved transactions remain in Wallet with Dismiss under
+the receipt rules in [First Shippable Slice](#first-shippable-slice).
+
+**After this work.** Preserve that lifecycle. Wallet rejects a pending request
+through its existing Runtime action. The outside wallet owns decline of its
+prompt. Dismiss closes the eligible handed-off WalletConnect transaction in
+Home and leaves its outside result uncertain. Reject/Dismiss uses the exact
+selected ID, clears the answered selection before refresh, and retains its
+success acknowledgement. Activity is a separate next action through N1.
+Completion means Runtime accepted the receipt; a transaction hash alone proves
+neither chain confirmation nor payload execution. Reopened or refreshed views
+read Runtime state and offer no second send for a consumed ID.
+
+**After this work.** Enforcement and required tests for the Runtime/Inbox/Wallet/
+navigation lane:
+
+| Status | Required named test | Where it runs / what it proves |
+| --- | --- | --- |
+| After this work | `n3_external_inbox_review_action` | Server notification-producer test and real Inbox module test: all external proof/connector cases select Review in Wallet; managed and account-access cases retain their rules. No external Approve control. |
+| After this work | `n3_direct_external_approve_refused` | Server route tests for Wallet and Inbox with valid fresh passkey authority: outside-account approval still fails before signing/handoff. Retain the existing refusal tests. |
+| After this work | `n3_same_request_to_each_connector` | Real Wallet/Home/window modules and headless journey: each supported stored connector receives the selected ID; missing/unknown connector has Reject and no Send. Reopen, expiry and a second pending request cannot change selection silently. |
+| After this work | `n3_reject_dismiss_acknowledgement` | Real Wallet module plus provider tests: reject/dismiss once, clear selection before refresh, retain acknowledgement, then open Activity. Outside decline leaves the existing Home lifecycle unchanged. |
+
+**After this work.** Out of scope: the general Inbox presenter/count policy,
+a stored reviewed state, automatic rejection on outside decline, new signing
+methods, and a new source-app Bitcoin transaction API. In particular UniSat's
+current host handoff supports Bitcoin proof signing, not a Bitcoin transaction
+send. The all-connector transaction requirement remains an acceptance gap;
+the smallest safe alternative is Anders's explicit scope decision or a
+separately reviewed typed transaction contract before implementation.
+
+**After this work.** Human security review question: does Runtime classify every
+outside-account proof as review-only while both direct-approval entry paths
+still refuse it, including old records and stale Inbox cards?
+
+### N4 wallet name and mark
+
+**Today.** `LinkedAccount` stores `connector_id` and optional user `label`, not
+the outside wallet's display identity. WalletConnect keeps a cleaned peer name
+in live client state; Wallet uses local account-name fallbacks. A reopened
+window cannot rely on that live name. EIP-6963 names/icons and WalletConnect peer
+metadata are untrusted claims.
+
+**After this work.** Add only these optional display fields to linked-account
+storage and its existing principal-scoped account summaries. They are separate
+from the person's account `label`, proof identity and `connector_id`.
+
+| Status | Field | Stored value and source |
+| --- | --- | --- |
+| After this work | `wallet_display_name` | Cleaned name, at most 80 Unicode scalar values and 256 UTF-8 bytes. Home maps its selected extension's stable ID to the fixed name MetaMask, Brave Wallet or UniSat. WalletConnect supplies its peer's untrusted name at verified linking. |
+| After this work | `wallet_mark` | Optional exact key from `wallet`, `metamask`, `unisat`. The generic `wallet` key is the fallback. Runtime maps known extension IDs; an exact cleaned WalletConnect name `MetaMask` may select the bundled MetaMask mark as a display claim only. Other peer names use the generic mark. |
+
+**After this work.** Runtime and wallet-provider enforce the same bounds and
+cleaning before saving and when reading old/external records. First accept
+only a string of at most 1,024 UTF-8 bytes; absent, wrong-type or oversized input
+becomes absent display metadata while the valid ownership proof keeps its
+normal result. Remove all characters whose Unicode General_Category is `Cc` or `Cf`,
+including bidirectional controls and zero-width format characters. Collapse
+remaining Unicode whitespace runs to one ASCII space, trim, then truncate at a
+scalar boundary to both stored limits.
+An empty result is absent. Render it as text, never HTML, a URL, a selector or
+an asset path. Keep the account/address and verified Home source label separate
+from this name so the name cannot imply Runtime authority.
+
+**After this work.** The bundled map is `wallet` to `wallet/browser/icons/icon-64.png`,
+`metamask` to `wallet/browser/icons/metamask.png`, and `unisat` to
+`wallet/browser/icons/unisat.png`. Capsules package the required local assets;
+a key never becomes a remote fetch or cross-frame authority. Brave uses the
+generic mark until a new bundled mark is separately admitted. WalletConnect's
+own heading retains its existing connector mark; `wallet_mark` identifies the
+outside wallet, not the connection transport. Unknown keys render the generic
+mark. Adjacent text supplies the accessible name; the decorative image has
+empty alt text. Remote icons, SVG/data URLs and peer URLs are discarded.
+
+**After this work.** Bind metadata to the exact account and connector whose
+ownership proof was verified. Carry it through the existing typed linking
+path, including link completion through an approval where applicable; a failed
+proof or another principal/connector cannot overwrite it. There is no standalone
+metadata-write capability. A later verified relink may replace these display
+fields without changing a user label or creating a second account. Account
+lists, Wallet's connection section and reopened connector windows read the
+stored sanitized fields. Live unverified selection remains separate from a
+previously linked account. Removal/disconnect follows existing account/session
+ownership rules; display metadata grants no signing or internet authority.
+
+**After this work.** An older external record without these fields shows
+Your wallet with the generic Wallet mark and its known address/network. Keep
+any user account label as that account's label. Do not guess a peer brand from
+an address or assume `wallet-metamask` proves that MetaMask rather than Brave
+was selected in the past. New linking stores the actual selected identity.
+
+**After this work.** Update from 2.0.1 reads the old wallet store with both new
+fields absent by default. The update preserves account IDs, defaults, proof
+bindings, ownership, request states and key material. New fields stay optional;
+no display-only change may require a one-way store migration or new signing
+schema. Undo to 2.0.1 must load accounts linked before and after update and
+keep their existing supported operations working. The old provider may ignore
+and drop these optional display fields when it rewrites the store; a later
+update then uses the safe fallback. Preserving display branding through that
+old write is outside this contract; preserving account authority and data is
+a release gate. An old Home tab across update follows N2's reload negotiation.
+These compatibility requirements need exact-version installed proof; source
+Serde tolerance alone is insufficient.
+
+**After this work.** Enforcement and required tests for the Runtime/Wallet lane:
+
+| Status | Required named test | Where it runs / what it proves |
+| --- | --- | --- |
+| After this work | `n4_metadata_bounds_and_text_rendering` | Provider and server unit targets plus real Wallet/window modules: wrong types, 1,025-byte input, multibyte limits, controls, bidi text, HTML-like names and unknown mark keys all use bounded inert text/local assets. |
+| After this work | `n4_metadata_bound_to_verified_link` | Provider/server targets: failed, wrong-principal and wrong-connector links cannot change fields; successful link/relink covers each connector and keeps user labels. |
+| After this work | `n4_old_record_and_reopened_window` | Provider decode and real Wallet/connector modules: absent fields show the fallback; newly stored actual Brave/MetaMask/UniSat/peer identity survives reopening. |
+| After this work | `n4_update_201_undo_preserves_accounts` | Installed update/Undo job: old linked account, update, add link, close/reopen, Undo, perform an old-supported account operation that saves, update again. Compare accounts/defaults/proofs/requests and confirm safe metadata fallback after the old write. |
+
+**After this work.** Out of scope: remote branding, authenticated wallet-brand
+claims, a Brave mark addition, user-label changes, key migration, new guest
+linking policy, and retention guarantees for display fields in an old writer.
+
+**After this work.** Human security review questions:
+
+- Do bounded, cleaned peer names and the local mark map remain inert in every
+  account, connector and recovery view, without looking like a trusted Home label?
+- Does the installed update/Undo evidence prove account authority survives an
+  old provider write even when it drops the new optional display fields?
+
+### N5 WalletConnect internet entry in Inbox
+
+**Today.** Runtime keeps one owner-visible entry with ID
+`walletconnect-internet:permission`. Requested consent lasts 30 minutes.
+Allowed consent offers Turn Off. The notification producer omits `action_ref`
+after refusal, completed revocation or request expiry; Inbox already has Allow
+recovery code, but that code needs an action-bearing entry to be reached.
+Round 19 drops a connector's pending effect on refusal/revocation/expiry/Cancel
+and refreshes permission when Home returns the window.
+
+**After this work.** Keep that exact entry and its existing request/decision
+kinds. The Runtime producer retains an actionable reference for every saved
+state below, including after restart; absent consent becomes the single Asked
+entry only through the existing request path. The current consent record and
+ID decide the action, not an old notification payload. Inbox uses the existing
+owner/passkey confirmation and grant/revoke routes. Selecting Allow in an off
+state obtains or creates a fresh requested record through the existing route,
+reads its current ID, then obtains the exact fresh proof and answers that ID.
+A stale action cannot approve a replacement record. No new generic permission
+or decision API is introduced.
+
+| Status | Runtime state / entry kind | Action retained in Inbox | Connector result |
+| --- | --- | --- | --- |
+| After this work | Requested, unexpired / `walletconnect_internet_request` | Allow and Don't Allow for the current request | Waiting for your answer in Inbox; Show Request and local Cancel. Only a still-active matching intent may continue once after Allow. |
+| After this work | Granted / `walletconnect_internet_decision` | Turn Off | Connect wallet, plus Manage in Inbox; permission alone does not start a connection. |
+| After this work | Refused / `walletconnect_internet_decision` | Allow | Off; Open Inbox, then return for an explicit new action. |
+| After this work | Revoked, cleanup complete / `walletconnect_internet_decision` | Allow | Off; saved connection has been cleared. Linked Wallet accounts remain. |
+| After this work | Requested but past 30-minute expiry / `walletconnect_internet_decision` | Allow, obtaining a fresh question/ID before proof | Access request expired; Open Inbox, then explicit Connect/Send as applicable. |
+| After this work | Revoked with `cleanup_pending` or still-closing owned sockets / `walletconnect_internet_decision` | Turn Off again; Allow unavailable until cleanup completes | Off; finish clearing the connection in Inbox. A failed cleanup leaves this recovery action available. |
+
+**After this work.** Producer action IDs use the existing
+`walletconnect-internet-allow:<current-id>` or
+`walletconnect-internet-turn-off:<current-id>` families. An off/expired Allow
+reference opens the existing recovery path, not a direct stale grant. An
+answered/off entry is informational and excluded from pending counts under the
+current rule. Keep the exact-entry link valid in both list/detail navigation;
+no duplicate permission entry, switch in the connector, or new Inbox layout.
+Permission grant remains owner-authorized and passkey-bound. A guest can ask
+the owner, and has no Allow control or owner grant. First-run setup consent
+remains governed by the separate first-run authority decision.
+
+**After this work.** Follow Browser's current Inbox pattern: automatically open
+the request on a still-active attempt, Show Request while asked, Open Inbox
+while off, and a retained decision with Allow/Turn Off recovery. Keep these
+WalletConnect differences explicit: Cancel drops only the unsent local intent
+and leaves the question in Inbox; Turn Off also clears connection state and
+stops relay work; cleanup can need another Turn Off; Manage in Inbox lives
+beside Connect rather than Browser settings. The permission lasts independently
+of wallet-message/QR deadlines. Titles, decision dates, general notification
+focus and counts keep the existing presentation policy; broad alignment belongs
+to the wider Inbox work. The consent explains internet use, the relay service's
+visibility of this computer's internet address, wallet-owned keys and separate
+wallet approval. It calls the other application a wallet app, not a new
+product called phone wallet.
+
+**After this work.** Refusal, Turn Off, expiry or local Cancel retires the
+pending intent. A later Allow returns readiness and guidance, never runs that
+retired intent. Only the same unexpired question and still-active local intent
+may resume once. A delayed older permission read cannot replace a newer result
+or resurrect that intent. Reopening/reloading a connector requires explicit
+Connect/Send and rechecks the canonical Wallet request before handoff. Runtime
+revocation continues to fence late relay admissions/writes and cleanup remains
+a precondition of a new connection.
+
+**After this work.** Enforcement and required tests:
+
+| Status | Required named test | Where it runs / lane |
+| --- | --- | --- |
+| After this work | `n5_permission_entry_all_states` | Runtime/Inbox/Wallet lane: server producer plus real Inbox module; all six rows, exact entry/action IDs, stale ID, restart, owner versus guest and decision counts. |
+| After this work | `n5_allow_after_refusal_off_expiry` | Runtime/Inbox/Wallet lane: real Inbox and gateway journey; each off state creates/uses a fresh proof for the current question and returns the same window to readiness. |
+| After this work | `n5_cleanup_blocks_allow_until_complete` | Runtime and WalletConnect lanes: failed Turn Off, retry and socket completion retain recovery and prevent a new session until cleanup finishes. |
+| After this work | `n5_retired_intent_never_resumes` | WalletConnect window lane, real controller/client modules and headless Inbox return: refusal, revoke, expiry, Cancel, reopen/reload and a delayed old read never resend. Same active intent resumes exactly once. |
+
+**After this work.** Out of scope: Browser's permission implementation,
+general Inbox design/count/focus changes, hosted Exit selection, more relay
+hosts, a second permission control and guest authority changes.
+
+**After this work.** Human security review question: can each retained Allow
+path obtain only the owner's current passkey-bound decision while stale IDs,
+cleanup and a retired connector intent remain fenced?
+
+### Wallet connection integration proof
+
+**After this work.** Required test names above are obligations for the build
+lanes, not assertions that these tests exist or pass today. Each changed
+behavior needs a failing test on the pre-change real module and a passing test
+after the lane change. Preserve existing tests for already-enforced authority.
+Run JS module tests in the behavior suite; run the source gate and all test
+targets of touched server/provider packages. The release integrator runs the
+full Linux check and installed CI jobs for the combined candidate.
+
+| Status | Required integration test | Evidence / owner |
+| --- | --- | --- |
+| After this work | `wallet_connection_same_id_installed_journeys` | Integration lane: one ID through Inbox, Wallet, each connector and the outside wallet to a shown result for each supported message/transaction path. Start also from saved unfinished connection, pending Inbox question, handed-off request, busy provider, reopened frame and reloaded Home. Prove no duplicate send. |
+| After this work | `wallet_connection_real_wallets_and_webkit` | Integration lane: installed Home with scripted wallet over the real relay, real MetaMask and UniSat at least once, WebKit and native desktop. Record exact extension/engine versions, artifact hashes, declined/wrong-account/late replies and a real test-network transaction. Replay alone is not real-extension acceptance. |
+| After this work | `wallet_connection_expiry_reconnect_and_controls` | Integration and window lanes: saved connection past its actual seven-day expiry, wallet-side removal, network/account changes, every accepted design state reached by its real producer, every control pressed. Include focus, polite announcements and a human screen-reader pass. |
+
+**After this work.** The integration owner records source/tree, installed
+artifact parity, commands, results and human checks in the owning issue's one
+acceptance record. A different-family adversarial review covers all six narrow
+additions. Irzhy's N1/N2 contract review is required before product code;
+Anders decides whether to wait or waive. His network/session review precedes
+product acceptance, and Anders owns the final trial.
+The contracts confer no waiver. Whether guests may link extension wallets and
+what Home should say about a wallet's unverified-origin warning remain human
+policy decisions. No build lane resolves them by adding authority.
+
+**After this work.** Human security review questions:
+
+- May a guest link an extension wallet under the existing principal/grant model,
+  or must that journey remain gated until Anders approves a policy?
+- What exact Home guidance, if any, is safe when the outside wallet calls the
+  local Home origin unverified, given that Verify attestation remains absent?
+- Can the current UniSat proof-only effect meet the all-connector transaction
+  requirement, or does Anders require a separate reviewed transaction contract?
 
 ## Red Lines
 
