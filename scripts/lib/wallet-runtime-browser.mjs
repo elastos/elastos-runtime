@@ -45,14 +45,15 @@ export async function runtimeView(t, app, state = {}) {
     const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
     const plain = (body, status) => route.fulfill({ status, contentType:"text/plain", headers:cors, body });
     if (request.method() === "OPTIONS") return json({});
-    if (url.pathname === "/") return route.fulfill({ contentType: "text/html", body: `<!doctype html><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe id="app" sandbox="allow-scripts allow-forms" src="/apps/${app}/index.html?home_origin=https%3A%2F%2Fruntime.test&notification_id=${encodeURIComponent(state.notificationId || "")}&wallet_request=${encodeURIComponent(state.requestId || "")}#home_token=fixture-token"></iframe><script>window.messages=[];addEventListener('message',e=>{if(e.source!==document.getElementById('app')?.contentWindow||e.origin!=='null')return;messages.push(e.data);if(e.data.type==='elastos.home.passkey-step-up.request/v1')e.source.postMessage({type:'elastos.home.passkey-step-up.result/v1',requestId:e.data.requestId,stepUpToken:'fixture-proof'},'*')})</script>` });
+    if (url.pathname === "/") return route.fulfill({ contentType: "text/html", body: `<!doctype html><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe id="app" sandbox="allow-scripts allow-forms" src="/apps/${app}/index.html?home_origin=https%3A%2F%2Fruntime.test&notification_id=${encodeURIComponent(state.notificationId || "")}&presentation=${encodeURIComponent(state.presentation || 'window')}&wallet_request=${encodeURIComponent(state.requestId || "")}#home_token=fixture-token"></iframe><script>const fixturePasskeyError=${JSON.stringify(state.passkeyError || "")};window.messages=[];addEventListener('message',e=>{if(e.source!==document.getElementById('app')?.contentWindow||e.origin!=='null')return;messages.push(e.data);if(e.data.type==='elastos.home.passkey-step-up.request/v1')e.source.postMessage({type:'elastos.home.passkey-step-up.result/v1',requestId:e.data.requestId,...(fixturePasskeyError?{error:fixturePasskeyError}:{stepUpToken:'fixture-proof'})},'*')})</script>` });
     if (url.pathname.startsWith("/api/")) {
       if (request.headers()["x-elastos-home-token"] !== "fixture-token") return json({error:"missing fixture launch"}, 403);
       const input = request.postDataJSON();
       calls.push({ path: url.pathname, method: request.method(), input });
       if (url.pathname === "/api/apps/inbox/summary" && state.conflictSeen && state.summaryFailureAfterConflict) return route.abort("failed");
+      if (url.pathname === "/api/apps/inbox/summary" && state.beforeInboxSummary) await state.beforeInboxSummary();
       if (url.pathname === "/api/apps/inbox/summary") return json({ notifications: { entries: state.entries, attention_count: state.entries.filter(e => e.severity === "attention").length, unread_count: state.entries.filter(e => !e.read).length } });
-      if (url.pathname === "/api/apps/wallet/wallet/summary" && state.decisionComplete && state.summaryFailureAfterDecision === "unavailable") return json({ wallet_accounts:{available:true, accounts:state.accounts, default_accounts:[]}, wallet_approvals:{available:false, pending_count:0, approval_requests:[], note:"Wallet requests are unavailable."}, approval_methods:{} });
+      if (url.pathname === "/api/apps/wallet/wallet/summary" && (state.approvalsUnavailable || state.decisionComplete && state.summaryFailureAfterDecision === "unavailable")) return json({ wallet_accounts:{available:true, accounts:state.accounts, default_accounts:[]}, wallet_approvals:{available:false, pending_count:0, approval_requests:[], note:"Wallet requests are unavailable."}, approval_methods:{} });
       if (url.pathname === "/api/apps/wallet/wallet/summary" && state.decisionComplete && state.summaryFailureAfterDecision) return route.abort("failed");
       if (url.pathname === "/api/apps/wallet/wallet/summary") return json({ wallet_accounts: { available:true, accounts: state.accounts, default_accounts: [] }, wallet_approvals: { available:true, pending_count:state.approvals.filter(r => r.status === "pending").length, approval_requests: state.approvals }, approval_methods: { walletconnect: { available: true } } });
       if (url.pathname === "/api/apps/wallet-walletconnect/internet") {
@@ -117,7 +118,7 @@ export async function runtimeView(t, app, state = {}) {
           ...(dismissed ? { receipt_status:"dismissed", note:"Request dismissed. Check your connected wallet before sending again." } : {}) });
       }
       if (url.pathname === "/api/wallet/prices") return json({ prices: {}, unavailable: true });
-      if (url.pathname === "/api/provider/chain/balance") return json({ status: "unavailable" });
+      if (url.pathname === "/api/provider/chain/balance") return json(state.balance ? { status:"ok", data:{balance_hex:"0xde0b6b3a7640000"} } : { status: "unavailable" });
       if (url.pathname === "/api/apps/inbox/notifications/read") return json({});
       errors.push(`Unhandled fixture route: ${request.method()} ${url.pathname}`);
       return json({ error: "unsupported fixture route" }, 501);
