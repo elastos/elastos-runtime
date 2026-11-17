@@ -168,10 +168,23 @@ for (const engine of ['webkit', 'chromium']) {
         } else result[name].enterExit = 'permission refused';
       }
       t.diagnostic(JSON.stringify(result));
-      // Exercise self-navigation, not just a parent assigning iframe.src.
-      for (const frame of [app, shell]) {
+      // Wait for an enforced rejection from each frame's owner. A request
+      // counter alone could pass before a slow foreign navigation arrives.
+      for (const [owner, frame] of [[shell, app], [page, shell]]) {
+        await owner.evaluate(() => {
+          window.fullscreenNavigationRejections = [];
+          document.addEventListener('securitypolicyviolation', event => {
+            window.fullscreenNavigationRejections.push({
+              directive: event.effectiveDirective,
+              disposition: event.disposition,
+              blockedURI: event.blockedURI,
+            });
+          });
+        });
         await frame.evaluate(url => { location.href = url; }, foreignOrigin);
-        await page.waitForTimeout(150);
+        await owner.waitForFunction(origin => window.fullscreenNavigationRejections.some(event =>
+          event.directive === 'frame-src' && event.disposition === 'enforce' &&
+          new URL(event.blockedURI).origin === origin), foreignOrigin);
       }
       assert.equal(foreignRequests, beforeForeignNavigation, 'Home frame-src blocks foreign documents');
       assert.equal(result.shell.enabled, true, `${engine}: shell fullscreen permission`);
