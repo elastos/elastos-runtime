@@ -8,23 +8,25 @@ export const scenarios = {
   'metamask-silent-check': scenario(mm, [call('MM-5-after-switch-accounts'), call('MM-8-preflight-chain')]),
   'metamask-connect-late': scenario(mm, [call('MM-2-ignore', 'approves')]),
   'metamask-connect-declined': scenario(mm, [call('MM-2-reject', 'declines')]),
-  'metamask-second-connect': scenario(mm, [call('MM-2-ignore', 'approves'), call('MM-4-second-connect')]),
+  'metamask-second-connect': scenario(mm, [call('MM-2-ignore', 'approves'),
+    { ...call('MM-4-second-connect'), whilePending: 'MM-2-ignore' }]),
   'metamask-signatures-queued': scenario(mm, [call('MM-4-sign-first'), call('MM-4-sign-second')]),
   'metamask-sign-approved': scenario(mm, [call('MM-5-sign-approve', 'approves')]),
   'metamask-sign-declined': scenario(mm, [call('MM-5-sign-reject', 'declines')]),
   'metamask-account-unavailable': scenario(mm, [call('MM-5-unpermitted-real-account')]),
   'metamask-access-removed': scenario(mm, [call('MM-6-ui-removal-accounts'), call('MM-6-ui-removal-after-confirm')],
-    [{ id: 'MM-6-ui-removal-after-confirm', action: 'removes access', last: 1 }]),
+    [{ id: 'MM-6-ui-removal-after-confirm', action: 'removes access', indices: [2] }]),
   'metamask-switch-account': scenario(mm, [call('MM-6-switch-both-permitted')],
-    [{ id: 'MM-6-switch-both-permitted', action: 'switches account', last: 2 }]),
+    [{ id: 'MM-6-switch-both-permitted', action: 'switches account', indices: [4] }]),
   'metamask-unknown-network': scenario(mm, [call('MM-7-unknown')]),
   'metamask-network-declined': scenario(mm, [call('MM-7-known-reject', 'declines')]),
   'metamask-add-network-declined': scenario(mm, [call('MM-7-add-reject', 'declines')]),
   'metamask-transaction-declined': scenario(mm, [call('MM-8-reject', 'declines')]),
-  'metamask-transaction-revoked': scenario(mm, [call('MM-8-confirm', 'removes access')]),
+  'metamask-transaction-revoked': scenario(mm, [{ ...call('MM-8-confirm', 'removes access'), actor: 'page', cleanup: 'MM-9-revoke' }]),
   'metamask-native-connect-close': scenario(both, [call('R2-MM-native-connect-retry', 'closes the prompt')]),
   'metamask-native-sign-close': scenario(both, [call('R2-MM-native-sign-retry', 'closes the prompt')]),
-  'metamask-side-panel-close': scenario(both, [call('R2-MM-native-connect-close', 'approves')]),
+  'metamask-side-panel-close': { ...scenario(both, [call('R2-MM-native-connect-close', 'approves')]),
+    passiveActions: [{ action: 'closes side panel', id: 'R2-MM-native-connect-close' }] },
   'metamask-disabled-stale': scenario('R2-DISABLED-existing-document', [call('R2-DISABLED-old-mm-request')]),
   'metamask-transaction-receipt': scenario(both, [call('R2-MM-send-after-reconnect', 'approves'),
     { ...call('R2-MM-receipt-confirm'), afterReturn: 'R2-MM-send-after-reconnect' }]),
@@ -46,7 +48,7 @@ export const scenarios = {
   'unisat-testnet': scenario('US-10-presence', [call('US-11-testnet-network-real'), call('US-11-testnet-chain-real')]),
   'unisat-fractal': scenario('US-10-presence', [call('US-11-fractal-network'), call('US-11-fractal-chain')]),
   'unisat-switch-account': scenario('US-10-presence', [call('US-12-after-switch-accounts'), call('US-12-after-switch-sign', 'approves')],
-    [{ id: 'US-12-after-switch-accounts', action: 'switches account', last: 1 }]),
+    [{ id: 'US-12-after-switch-accounts', action: 'switches account', indices: [6] }]),
   'metamask-and-rabby': scenario(both, [call('R2-BOTH-legacy-read'), call('R2-BOTH-rabby-read'), call('R2-BOTH-mm-read'), call('R2-BOTH-call-metamask-announced', 'approves'), call('R2-BOTH-rabby-after-mm-direct')]),
   'rabby-legacy-chooser': scenario(both, [call('R2-BOTH-legacy-fresh-events', 'approves')]),
   'rabby-only': scenario('R2-DISABLED-fresh-document', [call('R2-DISABLED-legacy-fresh-events')]),
@@ -55,5 +57,5 @@ export const scenarios = {
 };
 
 export function caseIds(spec) {
-  return [...new Set([spec.discovery, ...spec.calls.map((x) => x.id), ...spec.events.map((x) => x.id)])];
+  return [...new Set([spec.discovery, ...spec.calls.flatMap((x) => [x.id, x.cleanup].filter(Boolean)), ...spec.events.map((x) => x.id)])];
 }

@@ -28,8 +28,11 @@ export const wireTypes = {
   hello: 'wallet-connector-hello', ready: 'wallet-connector-ready', effect: 'wallet-connector-effect',
   result: 'wallet-connector-effect-result', state: 'wallet-connector-state', navigation: 'open-target-result',
 };
+export const nestedKeys = {
+  snapshot: ['providerId', 'alternatives', 'availability', 'firstAccount', 'requiredAccountAvailable', 'network', 'networkIssue', 'access', 'busy'],
+};
 function snapshot(s, connector) {
-  if (!exact(s, ['providerId', 'alternatives', 'availability', 'firstAccount', 'requiredAccountAvailable', 'network', 'networkIssue', 'access', 'busy'])) return false;
+  if (!exact(s, nestedKeys.snapshot)) return false;
   const allowed = connector === 'wallet-unisat' ? ['unisat'] : ['io.metamask', 'com.brave.wallet'];
   if (!nullable(s.providerId, (p) => allowed.includes(p)) || !Array.isArray(s.alternatives) || s.alternatives.length > 1
     || s.alternatives.some((p) => !allowed.includes(p) || p === s.providerId) || (connector === 'wallet-unisat' && s.alternatives.length)) return false;

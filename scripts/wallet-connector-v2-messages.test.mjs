@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { messageDecision, queryValid, identityDecision, summarySiteDecision, wireKeys, wireTypes } from './wallet-extension-test/message-contract.mjs';
+import { messageDecision, queryValid, identityDecision, summarySiteDecision, wireKeys, wireTypes, nestedKeys } from './wallet-extension-test/message-contract.mjs';
 
 const fixture = JSON.parse(await readFile(new URL('./fixtures/wallet-connector-v2-messages.json', import.meta.url), 'utf8'));
 test('n2_v2_message_fixtures_shared: pinned text and every exact-key example', async () => {
@@ -35,12 +35,22 @@ test('n2_v2_message_fixtures_shared: pinned text and every exact-key example', a
     assert.ok(instances.some((x) => !x.valid), `${kind} invalid instance`);
     for (const instance of instances.filter((x) => x.valid)) assert.deepEqual(Object.keys(instance.message).sort(), [...wireKeys[kind]].sort(), instance.id);
   }
+  const snapshotStart = text.indexOf('Snapshot keys are exactly ');
+  assert.ok(snapshotStart >= 0);
+  const snapshotEnd = text.indexOf('. Empty facts', snapshotStart);
+  assert.ok(snapshotEnd > snapshotStart);
+  const snapshotKeys = [...text.slice(snapshotStart, snapshotEnd).matchAll(/`([^`]+)`/g)].flatMap((m) => m[1].split(','));
+  assert.deepEqual([...nestedKeys.snapshot].sort(), snapshotKeys.sort(), 'Snapshot keys come from the written contract');
+  for (const row of fixture.messages.filter((r) => r.valid && r.message.snapshot))
+    assert.deepEqual(Object.keys(row.message.snapshot).sort(), [...snapshotKeys].sort(), row.id);
   for (const row of fixture.messages) {
     const decision = messageDecision(row.message);
     assert.equal(decision, row.receiver, row.id);
     assert.equal(decision === 'accept', row.valid, row.id);
   }
   assert.equal(new Set(fixture.messages.map((x) => x.id)).size, fixture.messages.length);
+  assert.ok(fixture.messages.some((r) => !Object.values(wireTypes).some((type) => r.message.type === `home:${type}`)
+    && r.receiver === 'ignore' && !r.valid), 'Unknown top-level type has an explicit invalid example');
 });
 test('stage, dispatch and outcome coverage uses the same packets', () => {
   for (const stage of fixture.stages) assert.ok(fixture.messages.some((x) => x.valid && x.message.stage === stage), stage);

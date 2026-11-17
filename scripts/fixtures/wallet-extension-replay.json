@@ -29,6 +29,129 @@
       "Configured Brave Wallet, mobile WalletConnect and malformed UniSat chain enums have no replay."
     ]
   },
+  "providerBindings": {
+    "metamask": "io.metamask",
+    "io.metamask": "io.metamask",
+    "io.rabby": "io.rabby",
+    "unisat": "unisat",
+    "legacy": "legacy",
+    "window.ethereum": "legacy"
+  },
+  "surfaces": {
+    "unisat": {
+      "caseId": "US-10-presence",
+      "keys": [
+        "_events",
+        "_eventsCount",
+        "_maxListeners",
+        "tryDetectTab",
+        "initialize",
+        "keepAlive",
+        "_requestPromiseCheckVisibility",
+        "_handleBackgroundMessage",
+        "_request",
+        "requestAccounts",
+        "disconnect",
+        "getNetwork",
+        "switchNetwork",
+        "getChain",
+        "switchChain",
+        "getAccounts",
+        "getPublicKey",
+        "getBalance",
+        "getBalanceV2",
+        "getInscriptions",
+        "signMessage",
+        "multiSignMessage",
+        "verifyMessageOfBIP322Simple",
+        "signData",
+        "sendBitcoin",
+        "sendInscription",
+        "sendRunes",
+        "pushTx",
+        "signPsbt",
+        "signPsbts",
+        "pushPsbt",
+        "inscribeTransfer",
+        "getVersion",
+        "getBitcoinUtxos",
+        "keplr"
+      ],
+      "methods": [
+        "tryDetectTab",
+        "initialize",
+        "keepAlive",
+        "requestAccounts",
+        "disconnect",
+        "getNetwork",
+        "switchNetwork",
+        "getChain",
+        "switchChain",
+        "getAccounts",
+        "getPublicKey",
+        "getBalance",
+        "getBalanceV2",
+        "getInscriptions",
+        "signMessage",
+        "multiSignMessage",
+        "verifyMessageOfBIP322Simple",
+        "signData",
+        "sendBitcoin",
+        "sendInscription",
+        "sendRunes",
+        "pushTx",
+        "signPsbt",
+        "signPsbts",
+        "pushPsbt",
+        "inscribeTransfer",
+        "getVersion",
+        "getBitcoinUtxos"
+      ]
+    },
+    "legacy": {
+      "caseId": "R2-BOTH-legacy-shape",
+      "keys": [
+        "_events",
+        "_eventsCount",
+        "_maxListeners",
+        "chainId",
+        "selectedAddress",
+        "networkVersion",
+        "isRabby",
+        "isMetaMask",
+        "_isRabby",
+        "_isReady",
+        "_isConnected",
+        "_initialized",
+        "_isUnlocked",
+        "_isEip6963",
+        "eip6963ProviderDetails",
+        "_cacheRequestsBeforeReady",
+        "_cacheEventListenersBeforeReady",
+        "_state",
+        "_metamask",
+        "_requestPromise",
+        "_dedupePromise",
+        "_bcm",
+        "initialize",
+        "_requestPromiseCheckVisibility",
+        "_handleBackgroundMessage",
+        "isConnected",
+        "request",
+        "_request",
+        "requestInternalMethods",
+        "sendAsync",
+        "send",
+        "shimLegacy",
+        "on",
+        "_switchCurrentProvider",
+        "enable",
+        "net_version",
+        "_pushEventHandlers"
+      ],
+      "methods": null
+    }
+  },
   "cases": [
     {
       "id": "MM-1-initial",
@@ -640,6 +763,7 @@
               "since_call_ms": -28566.800000190735
             }
           ],
+          "action": "Disconnect in MetaMask own Permissions > localhost > Manage connected accounts",
           "waited_ms": 205.10000038146973,
           "observed_at_ms": 161128.4000005722
         }
@@ -687,6 +811,7 @@
               "since_call_ms": -307
             }
           ],
+          "action": "confirmed Disconnect in extension own settings",
           "waited_ms": 206.19999980926514,
           "observed_at_ms": 169401.30000019073
         }
@@ -757,6 +882,7 @@
               "since_call_ms": -675.6999998092651
             }
           ],
+          "action": "Granted Account 1 as well in extension settings, then selected Account 1 in account menu",
           "waited_ms": 205.10000038146973,
           "observed_at_ms": 188174.60000038147
         }
@@ -1160,6 +1286,53 @@
           "waited_ms": 262910.80000019073,
           "observed_at_ms": 696044.6999998093,
           "phase": "unconfirmed pending before browser restart; both extension confirmation routes blank"
+        }
+      ]
+    },
+    {
+      "id": "MM-9-revoke",
+      "status": "observed",
+      "snapshots": [
+        {
+          "call": {
+            "id": "MM-9-revoke",
+            "kind": "metamask",
+            "method": "wallet_revokePermissions",
+            "params": [
+              {
+                "eth_accounts": {}
+              }
+            ],
+            "started_at_ms": 661580.3000001907,
+            "state": "fulfilled",
+            "value": null,
+            "elapsed_ms": 111.39999961853027
+          },
+          "events": [
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0x2105",
+              "at_ms": 263074.19999980927,
+              "since_call_ms": -398506.10000038147
+            },
+            {
+              "provider": "metamask",
+              "name": "chainChanged",
+              "payload": "0xaa36a7",
+              "at_ms": 294104.60000038147,
+              "since_call_ms": -367475.69999980927
+            },
+            {
+              "provider": "metamask",
+              "name": "accountsChanged",
+              "payload": [],
+              "at_ms": 661648.1999998093,
+              "since_call_ms": 67.89999961853027
+            }
+          ],
+          "waited_ms": 263.8999996185303,
+          "observed_at_ms": 661844.1999998093
         }
       ]
     },
@@ -3074,7 +3247,77 @@
       "status": "observed",
       "snapshots": [
         {
-          "observation": {}
+          "observation": {
+            "keys": [
+              "_events",
+              "_eventsCount",
+              "_maxListeners",
+              "tryDetectTab",
+              "initialize",
+              "keepAlive",
+              "_requestPromiseCheckVisibility",
+              "_handleBackgroundMessage",
+              "_request",
+              "requestAccounts",
+              "disconnect",
+              "getNetwork",
+              "switchNetwork",
+              "getChain",
+              "switchChain",
+              "getAccounts",
+              "getPublicKey",
+              "getBalance",
+              "getBalanceV2",
+              "getInscriptions",
+              "signMessage",
+              "multiSignMessage",
+              "verifyMessageOfBIP322Simple",
+              "signData",
+              "sendBitcoin",
+              "sendInscription",
+              "sendRunes",
+              "pushTx",
+              "signPsbt",
+              "signPsbts",
+              "pushPsbt",
+              "inscribeTransfer",
+              "getVersion",
+              "getBitcoinUtxos",
+              "keplr"
+            ],
+            "methods": [
+              "tryDetectTab",
+              "initialize",
+              "keepAlive",
+              "requestAccounts",
+              "disconnect",
+              "getNetwork",
+              "switchNetwork",
+              "getChain",
+              "switchChain",
+              "getAccounts",
+              "getPublicKey",
+              "getBalance",
+              "getBalanceV2",
+              "getInscriptions",
+              "signMessage",
+              "multiSignMessage",
+              "verifyMessageOfBIP322Simple",
+              "signData",
+              "sendBitcoin",
+              "sendInscription",
+              "sendRunes",
+              "pushTx",
+              "signPsbt",
+              "signPsbts",
+              "pushPsbt",
+              "inscribeTransfer",
+              "getVersion",
+              "getBitcoinUtxos"
+            ],
+            "type": "object",
+            "constructor": "C"
+          }
         }
       ]
     },
@@ -5664,6 +5907,66 @@
               "gasPrice": "0x638f1ec5",
               "blockTimestamp": "0x6afbbaa3"
             }
+          }
+        }
+      ]
+    },
+    {
+      "id": "R2-BOTH-legacy-shape",
+      "status": "observed",
+      "snapshots": [
+        {
+          "observation": {
+            "keys": [
+              "_events",
+              "_eventsCount",
+              "_maxListeners",
+              "chainId",
+              "selectedAddress",
+              "networkVersion",
+              "isRabby",
+              "isMetaMask",
+              "_isRabby",
+              "_isReady",
+              "_isConnected",
+              "_initialized",
+              "_isUnlocked",
+              "_isEip6963",
+              "eip6963ProviderDetails",
+              "_cacheRequestsBeforeReady",
+              "_cacheEventListenersBeforeReady",
+              "_state",
+              "_metamask",
+              "_requestPromise",
+              "_dedupePromise",
+              "_bcm",
+              "initialize",
+              "_requestPromiseCheckVisibility",
+              "_handleBackgroundMessage",
+              "isConnected",
+              "request",
+              "_request",
+              "requestInternalMethods",
+              "sendAsync",
+              "send",
+              "shimLegacy",
+              "on",
+              "_switchCurrentProvider",
+              "enable",
+              "net_version",
+              "_pushEventHandlers"
+            ],
+            "isConnected": true,
+            "request_same": [
+              {
+                "rdns": "io.rabby",
+                "same_request": false
+              },
+              {
+                "rdns": "io.metamask",
+                "same_request": false
+              }
+            ]
           }
         }
       ]

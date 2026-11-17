@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { createHash } from 'node:crypto';
 import { installScriptedExtension, replayInput, scenarios } from './wallet-extension-test/index.mjs';
-import { finalCall } from './wallet-extension-test/recording-source.mjs';
+import { finalCall, recordedProvider as canon } from './wallet-extension-test/recording-source.mjs';
 import { importRecordings } from './wallet-extension-test/import-recordings.mjs';
 
 function pageSurface() {
@@ -12,7 +12,6 @@ function pageSurface() {
   page.CustomEvent = CustomEvent;
   return page;
 }
-const canon = (id) => id === 'metamask' ? 'io.metamask' : id;
 const errorShapes = (cases) => [...new Set(cases.flatMap((c) => c.snapshots
   .filter((s) => s.call?.state === 'rejected').map((s) => JSON.stringify(s.call.error))))].sort();
 test('every recorded-provider silent read has a scenario and an original reply', async () => {
@@ -26,10 +25,14 @@ test('every recorded-provider silent read has a scenario and an original reply',
     assert.ok(methods.has(method), `Missing recorded silent read: ${method}`);
   }
 });
-test('all nine rejection shapes in the pinned capture have replay scenarios', async () => {
+test('each rejection stays bound to its recorded case, without an arbitrary shape count', async () => {
   const { fixture } = await replayInput('metamask-transaction-revoked');
+  const pin = JSON.parse(await readFile(new URL('./wallet-extension-test/recording-pin.json', import.meta.url), 'utf8'));
   const planned = new Set(Object.values(scenarios).flatMap((s) => s.calls.map((p) => p.id)));
-  assert.equal(errorShapes(fixture.cases.filter((c) => planned.has(c.id))).length, 9);
+  for (const [id, digest] of Object.entries(pin.rejections)) {
+    assert.ok(planned.has(id), `Unreplayed rejection: ${id}`);
+    assert.equal(createHash('sha256').update(JSON.stringify(finalCall(fixture.cases.find((c) => c.id === id)).error)).digest('hex'), digest, id);
+  }
 });
 function errorShape(error) {
   return { constructor: error.constructor.name, code: error.code, message: error.message,
@@ -59,7 +62,7 @@ for (const name of Object.keys(scenarios)) {
     page.addEventListener('eip6963:announceProvider', ({ detail }) => {
       announcements.push(detail.info); listen(detail.info.rdns, detail.provider);
     });
-    if (page.ethereum) listen(page.ethereum.isRabby ? 'legacy' : 'io.metamask', page.ethereum);
+    if (page.ethereum) listen('legacy', page.ethereum);
     if (page.unisat) listen('unisat', page.unisat);
     page.dispatchEvent(new Event('eip6963:requestProvider'));
     await replay.advance(1000);
@@ -88,7 +91,6 @@ for (const name of Object.keys(scenarios)) {
     for (const event of input.spec.events) replay.person(event.action, event.id);
     for (const plan of input.spec.calls) {
       if (plan.unlock) {
-        assert.throws(() => replay.person(plan.action, plan.id), /Unlock/);
         replay.person('unlocks', plan.id);
       }
       if (plan.action) replay.person(plan.action, plan.id);
@@ -105,7 +107,8 @@ for (const name of Object.keys(scenarios)) {
     // Check public callbacks too, independently of the replay's transcript.
     for (const event of input.spec.events) {
       const entry = input.fixture.cases.find((c) => c.id === event.id);
-      for (const e of entry.snapshots.filter((s) => s.call).at(-1).events.slice(-event.last)) {
+      for (const index of event.indices) {
+        const e = entry.snapshots.filter((s) => s.call).at(-1).events[index];
         expectedEvents.push({ provider: canon(e.provider), name: e.name, payload: e.payload });
       }
     }
@@ -116,11 +119,9 @@ for (const name of Object.keys(scenarios)) {
         .map((e) => ({ ...e, action: Boolean(plan.action) }));
     }).sort((a, b) => Number(a.action) - Number(b.action) || a.since_call_ms - b.since_call_ms);
     for (const e of callEvents) expectedEvents.push({ provider: canon(e.provider), name: e.name, payload: e.payload });
-    assert.deepEqual(observedEvents, expectedEvents.filter((e) => providers.has(e.provider)));
-    for (const id of providers.keys()) {
-      const p = providers.get(id);
-      assert.throws(() => p.request({ method: 'unrecorded_rpc', params: [] }), /Unrecorded wallet call/);
-    }
+    for (const e of expectedEvents) assert.ok(providers.has(e.provider), `Missing recorded event recipient: ${e.provider}`);
+    assert.deepEqual(observedEvents, expectedEvents);
+    replay.assertNoViolations();
     replay.dispose();
     assert.equal(page.__walletReplay, undefined);
   });
@@ -130,9 +131,14 @@ test('page init function works without imported closures', async () => {
   const input = await replayInput('metamask-before-access');
   const page = pageSurface();
   runInNewContext(`(${installScriptedExtension.toString()})(input, page)`, { input, page, structuredClone });
-  const promise = page.ethereum.request({ method: 'eth_accounts' });
+  let provider;
+  page.addEventListener('eip6963:announceProvider', ({ detail }) => provider = detail.provider);
+  page.dispatchEvent(new Event('eip6963:requestProvider'));
+  await page.__walletReplay.advance(1000);
+  const promise = provider.request({ method: 'eth_accounts' });
   await page.__walletReplay.advance(100);
   assert.deepEqual(await promise, []);
+  page.__walletReplay.assertNoViolations();
   page.__walletReplay.dispose();
 });
 

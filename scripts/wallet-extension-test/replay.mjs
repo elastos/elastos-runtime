@@ -4,19 +4,28 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
   const copy = (x) => structuredClone(x);
   const entries = new Map(fixture.cases.map((x) => [x.id, x]));
   const last = (id) => entries.get(id).snapshots.filter((s) => s.call).at(-1);
-  const providerId = (id) => id === 'metamask' ? 'io.metamask' : id;
   const ordered = (x) => Array.isArray(x) ? x.map(ordered) : x !== null && typeof x === 'object'
     ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, ordered(x[k])])) : x;
   const listeners = new Map();
   const providers = new Map();
   const requests = [];
   const transcript = [];
+  const violations = [];
+  function violate(reason, fields = {}) {
+    violations.push({ reason, ...fields });
+    throw new Error(reason);
+  }
+  function providerId(id) {
+    if (!Object.hasOwn(fixture.providerBindings, id)) return violate('Unmapped recorded provider', { provider: id });
+    return fixture.providerBindings[id];
+  }
   const tasks = [];
   let now = 0;
   let serial = 0;
   const schedule = (at, fn) => tasks.push({ at, fn, serial: serial++ });
   function emit(provider, name, payload, caseId) {
     provider = providerId(provider);
+    if (!listeners.has(provider)) return violate('Recorded event has no installed provider', { provider, caseId });
     transcript.push({ kind: 'event', provider, name, payload: copy(payload), caseId });
     for (const fn of [...(listeners.get(provider)?.get(name) || [])]) fn(copy(payload));
   }
@@ -24,11 +33,13 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
   function request(provider, method, params) {
     const plan = plans.find((x) => !x.used && providerId(x.snapshot.call.target || x.snapshot.call.kind) === provider);
     if (!plan || plan.snapshot.call.method !== method || JSON.stringify(ordered(plan.snapshot.call.params)) !== JSON.stringify(ordered(params))) {
-      throw new Error(`Unrecorded wallet call: ${provider}.${method}`);
+      return violate(`Unrecorded wallet call: ${provider}.${method}`, { provider, method });
     }
     if (plan.afterReturn && !requests.some((r) => r.caseId === plan.afterReturn && r.state === 'fulfilled')) {
-      throw new Error('Wait for the earlier recorded answer before this call');
+      return violate('Wait for the earlier recorded answer before this call', { provider, method, caseId: plan.id });
     }
+    if (plan.whilePending && !requests.some((r) => r.caseId === plan.whilePending && r.state === 'pending'))
+      return violate('Earlier connect must still be pending', { provider, method, caseId: plan.id });
     plan.used = true;
     const c = plan.snapshot.call;
     const pending = { caseId: plan.id, provider, method, params: copy(params), startedAt: now,
@@ -70,15 +81,19 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
     if (!providers.has(id)) {
       const events = new Map();
       listeners.set(id, events);
-      const provider = { ...flags,
-        request: ({ method, params = [] }) => request(id, method, params),
+      const eventMethods = {
         on(name, fn) { if (!events.has(name)) events.set(name, new Set()); events.get(name).add(fn); return provider; },
         removeListener(name, fn) { events.get(name)?.delete(fn); return provider; },
       };
+      const inventory = id === 'unisat' ? fixture.surfaces.unisat : id === 'legacy' && observation.ethereum?.isRabby ? fixture.surfaces.legacy : null;
+      const provider = Object.create(eventMethods);
+      for (const key of inventory?.keys || []) provider[key] = undefined;
+      Object.assign(provider, flags);
       if (id === 'unisat') {
-        for (const method of ['getAccounts', 'requestAccounts', 'getNetwork', 'getChain', 'getPublicKey', 'signMessage', 'switchNetwork', 'switchChain']) {
-          provider[method] = (...params) => request(id, method, params);
-        }
+        for (const method of inventory.methods) provider[method] = (...params) => request(id, method, params);
+      } else {
+        provider.request = ({ method, params = [] }) => request(id, method, params);
+        if (inventory?.keys.includes('on')) provider.on = eventMethods.on;
       }
       providers.set(id, provider);
     }
@@ -93,9 +108,11 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
   }
   const ethereum = observation.ethereum;
   if (ethereum === 'object' || ethereum?.type === 'object' || ethereum?.isMetaMask) {
-    page.ethereum = ethereum?.isRabby ? getProvider('legacy', { isMetaMask: ethereum.isMetaMask, isRabby: true }) : getProvider('io.metamask', { isMetaMask: true });
+    // Round 1 measured presence only, not flags or identity with an announcement.
+    page.ethereum = getProvider('legacy', typeof ethereum === 'object'
+      ? Object.fromEntries(['isMetaMask', 'isRabby'].filter((key) => typeof ethereum[key] === 'boolean').map((key) => [key, ethereum[key]])) : {});
   }
-  if (observation.unisat === 'object' || spec.discovery === 'US-10-presence') page.unisat = getProvider('unisat');
+  if (observation.unisat === 'object' || observation.type === 'object' && Array.isArray(observation.methods)) page.unisat = getProvider('unisat');
   let discoveryUsed = false;
   function announce() {
     if (discoveryUsed) return; // The capture supplies one finite discovery history.
@@ -112,23 +129,36 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
   page.addEventListener('eip6963:requestProvider', announce);
   const usedEvents = new Set();
   const control = {
-    requests, transcript,
+    requests, transcript, violations,
+    assertNoViolations() {
+      for (const [id, provider] of providers) {
+        const inventory = id === 'unisat' ? fixture.surfaces.unisat : id === 'legacy' && observation.ethereum?.isRabby ? fixture.surfaces.legacy : null;
+        if (!inventory) continue;
+        if (JSON.stringify(Object.keys(provider).sort()) !== JSON.stringify([...inventory.keys].sort())) violate('Provider own keys differ from recording', { provider: id });
+        if (inventory.methods && JSON.stringify(Object.keys(provider).filter((key) => typeof provider[key] === 'function').sort()) !== JSON.stringify([...inventory.methods].sort()))
+          violate('Provider own methods differ from recording', { provider: id });
+      }
+      if (violations.length) throw new Error(`Wallet replay violations: ${JSON.stringify(violations)}`);
+    },
     get now() { return now; },
     person(action, caseId) {
       if (action === 'does nothing') return;
-      if (action === 'closes side panel' && spec.calls.some((x) => x.id === 'R2-MM-native-connect-close')) return;
+      const passive = spec.passiveActions?.find((x) => x.action === action && (!caseId || x.id === caseId));
+      if (passive && requests.some((r) => r.caseId === passive.id && r.state === 'pending')) return;
       const external = spec.events.find((e) => e.action === action && (!caseId || e.id === caseId));
       if (external && !usedEvents.has(external.id)) {
         usedEvents.add(external.id);
-        for (const e of (last(external.id).events || []).slice(-external.last)) emit(e.provider, e.name, e.payload, external.id);
+        for (const index of external.indices) {
+          const e = last(external.id).events[index]; emit(e.provider, e.name, e.payload, external.id);
+        }
         return;
       }
       const pending = requests.find((r) => r.state === 'pending' && !r.released && (!caseId || r.caseId === caseId) && (action === 'unlocks' ? !r.unlocked : r.action === action));
-      if (!pending) throw new Error(`Unrecorded person action: ${action}`);
+      if (!pending) return violate(`Unrecorded person action: ${action}`);
       if (action === 'unlocks') { pending.unlocked = true; return; }
-      if (!pending.unlocked) throw new Error('Unlock before approval');
+      if (!pending.unlocked) return violate('Unlock before approval', { caseId: pending.caseId });
       if (pending.after && !requests.some((r) => r.caseId === pending.after && r.state === 'fulfilled')) {
-        throw new Error('Finish the earlier queued prompt first');
+        return violate('Finish the earlier queued prompt first', { caseId: pending.caseId });
       }
       pending.released = true;
       pending.finish();

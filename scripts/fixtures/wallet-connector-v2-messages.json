@@ -2317,6 +2317,23 @@
         "connectorId": "wallet-metamask",
         "error": "Reload Home to continue."
       }
+    },
+    {
+      "id": "unknown-top-level-type",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-unknown",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "check"
+        }
+      }
     }
   ],
   "stages": [

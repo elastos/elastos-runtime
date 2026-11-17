@@ -20,11 +20,16 @@ await page.evaluate(() => __walletReplay.person('approves'));
 await page.evaluate(() => __walletReplay.advance(1000));
 const asked = await page.evaluate(() => __walletReplay.requests.map(
   ({ caseId, provider, method, params, state }) => ({ caseId, provider, method, params, state })));
+await page.evaluate(() => __walletReplay.assertNoViolations());
 ```
 
 `replayInput` accepts only names in `scenarios`. Each scenario lists a finite
-sequence per provider. A call with an unrecorded method, parameter, or extra
-request fails. JSON object key order is immaterial; array order and values
+sequence per provider. Every test ends with `await page.evaluate(() => __walletReplay.assertNoViolations())`
+before closing its page. In a unit test, use `control.assertNoViolations()`.
+An unrecorded method, parameter, extra request or wrong call order is added to
+`control.violations` before it throws. Product code can catch the exception;
+the final helper still fails the test. Violations carry method/case metadata,
+rather than untrusted request parameters. JSON object key order is immaterial; array order and values
 are exact. Tests supply the recorded message/transaction parameters. This tool
 does not sign a new Runtime challenge or validate a link. The Runtime lane
 must use a matching recorded proof fixture for a joined link test.
@@ -33,8 +38,9 @@ must use a matching recorded proof fixture for a joined link test.
 required-method test passing when changing scenarios: a provider fact needs
 both its account read and its network read. Scenario parity alone checks only
 the cases that were selected and cannot detect an omitted method.
-The error inventory also compares all raw rejection shapes with the cases
-used by scenarios. `metamask-transaction-revoked` replays the captured
+Each rejection is bound to its recording case through the generated pin.
+The raw check also compares the complete recorded rejection set; the test has
+no fixed shape count. `metamask-transaction-revoked` replays the captured
 permission-revocation cleanup error from MM-8-confirm. Its `removes access`
 control represents that cleanup, rather than a native Cancel-button trial.
 Receipt scenarios require the recorded send to return its hash before the
@@ -44,7 +50,9 @@ the raw clocks and the early-receipt refusal tests check this order.
 The person controls are `approves`, `declines`, `closes the prompt`,
 `does nothing`, `unlocks`, `switches account`, and `removes access`.
 An optional second argument selects the recording case ID when calls overlap.
-Only actions listed in the scenario are allowed. Locked scenarios require
+Only actions listed in the scenario are allowed. The importer checks every
+approval, decline, native close, unlock and account event against its case.
+A switch/removal event must match the account read that follows it. Locked scenarios require
 unlock followed by approval. `closes side panel` leaves the measured MetaMask
 side-panel call pending; `closes the prompt` is the recorded native notification
 close. A pending-only recording stays pending for all virtual time. The queued
@@ -57,8 +65,8 @@ time has already passed. Human waiting time in a recording is not a wallet
 timeout. The replay preserves observed event payloads and their order within
 the call interval. Negative `since_call_ms` values are earlier page history;
 later unrelated actions in a snapshot are also outside that interval. The
-account-switch and access-removal scenarios replay their specified history
-suffix only when the person performs the action.
+account-switch and access-removal scenarios replay their specified recorded event
+indices only when the person performs the action.
 
 Discovery is one finite recorded history per page. Dispatch
 `eip6963:requestProvider`, then advance time by 1000 ms to replay its
@@ -87,16 +95,28 @@ text changes fail the conformance check until the integrator reviews the data.
 Run the small checks:
 
 ```sh
-node --test scripts/wallet-connector-v2-messages.test.mjs scripts/wallet-extension-replay.test.mjs
+node --test scripts/wallet-connector-v2-messages.test.mjs scripts/wallet-extension-replay.test.mjs scripts/wallet-extension-review.test.mjs
 WALLET_EXTENSION_RAW=/path/to/original/recordings.json node --test scripts/wallet-extension-replay.test.mjs
 elastos-heavy node --test scripts/wallet-extension-page.test.mjs
 ```
 
-All three test files are also found by the repository behaviour suite's
+All four test files are also found by the repository behaviour suite's
 `scripts/*.test.mjs` glob. The raw-file check is skipped when its explicit input
 is absent; the bundled parity checks still run. To regenerate the bounded
-excerpts, run `node scripts/wallet-extension-test/import-recordings.mjs
-/path/to/original/recordings.json`, then review the diff and run the raw check.
+excerpts and their independent pin, run:
+
+```sh
+node scripts/wallet-extension-test/import-recordings.mjs /path/to/original/recordings.json
+WALLET_EXTENSION_RAW=/path/to/original/recordings.json node --test scripts/wallet-extension-replay.test.mjs
+```
+
+The importer accepts only the approved raw SHA-256. It validates provider names,
+source actions and account-event bindings before writing the fixture and
+`recording-pin.json`. That pin binds the exact fixture bytes, the compiled
+scenario mapping and each rejection's case ID. Refresh it only through the
+importer with the raw check, then review both diffs. The default run checks the
+pin even when the private raw file is absent. Raw capture changes require a
+reviewed source-digest update by the integrator.
 
 ## Recording limits and lane gates
 
@@ -127,3 +147,28 @@ The stale disabled MetaMask capture contains a pending account prompt, not a
 direct silent-read timeout. `n2_stale_provider_check_and_reload_guidance` can
 use that pending call and Home's cached-busy check. A branch that asserts a
 direct stale `eth_accounts` timeout needs its own recording first.
+
+## Measured surfaces and simulation differences
+
+UniSat's own keys and public method list come from US-10-presence. Its event
+methods live on the stand-in prototype, so the own-key list stays exact. The
+legacy Rabby own-key list comes from R2-BOTH-legacy-shape. Unknown internal
+values remain undefined, and unrecorded method calls fail through the violation
+list. The capture has no complete MetaMask or announced-Rabby key inventory,
+nor complete prototype/private-member types. Those stand-ins implement the
+measured request/event interface and recorded flags only. A passing test proves
+neither complete object reflection nor private API compatibility.
+
+| Difference | What a lane may conclude |
+| --- | --- |
+| Round-1 MetaMask records presence and announcements, but no isMetaMask flag or legacy/announced identity | Use the announced provider. The round-1 legacy object has no scripted RPC case; a pass proves neither a legacy fallback nor reference identity. |
+| Announcements occur once, after a request and only on virtual time; there is no unsolicited load/connect event | A pass covers the captured history, not real startup races or repeated/unprompted discovery. |
+| Early approval or decline still settles at the recorded total time; a later action settles immediately | A pass covers response order and recorded waits, not actual response latency or cancellation of a wallet prompt. |
+| Every new document/frame receives a fresh independent stand-in | A pass proves neither persistent extension state nor the stale-extension reload/reinjection journey. Record and model that journey before accepting it. |
+| removes access in metamask-transaction-revoked represents the page's wallet_revokePermissions cleanup, with actor:page in the scenario | A pass proves the measured cleanup rejection, not a person using MetaMask's Disconnect control. |
+
+A second MetaMask connect uses its recorded -32002 only while the first call
+is still pending. Calls after that precondition ends are scenario violations,
+rather than fabricated wallet errors. Legacy window.ethereum events reach the
+legacy object. An unmapped provider name stops import; parity never drops a
+recorded event because a recipient is missing.
