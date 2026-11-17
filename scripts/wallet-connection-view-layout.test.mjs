@@ -21,7 +21,7 @@ const frameGeometry = {};
 const interactionChecks = [];
 await mkdir(proof, {recursive:true});
 
-for (const engine of ['chromium','webkit']) await test(`extension_request_feedback_in_view: render-only ${engine}, both themes and all states`, async () => {
+for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_view: render-only ${engine}, both themes and all states`, async () => {
   const browser = await playwright[engine].launch({headless:true});
   try {
     const context = await browser.newContext({serviceWorkers:'block'});

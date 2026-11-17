@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { walletViewAssets, validateWalletViewAssets } from './check-product-data.mjs';
@@ -28,6 +28,8 @@ test('real release staging and archives carry identical inactive view bytes in a
       const controller=readFileSync(`capsules/${name}/browser/${name}.js`,'utf8');
       assert(!entry.includes('wallet-connection-view')&&!controller.includes('wallet-connection-view'),'live window stays on its existing controller');
     }
-    writeFileSync('/tmp/codex-runs/wallet-sharedview.package.json',JSON.stringify(hashes,null,2)+'\n');
+    const receipt=process.env.WALLET_VIEW_PACKAGE_RECEIPT||'/tmp/codex-runs/wallet-sharedview.package.json';
+    mkdirSync(dirname(receipt),{recursive:true});
+    writeFileSync(receipt,JSON.stringify(hashes,null,2)+'\n');
   }finally{rmSync(scratch,{recursive:true,force:true});}
 });
