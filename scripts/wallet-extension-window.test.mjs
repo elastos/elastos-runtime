@@ -281,6 +281,13 @@ for (const kind of ['metamask','unisat']) test(`${kind}: local picker, stopped l
     const home=await fixture(browser,kind,{noHomeWallet:true});
     try{await home.action('connect').click();await home.state('link-error');assert.equal(await home.top.evaluate(()=>testState.receipts.length),0);}
     finally{await home.close();}
+    const timed=await fixture(browser,kind,{requests:true,saved:true});
+    try{
+      await timed.top.evaluate(()=>{testState.mode='pending';});
+      await timed.action('send-request').click();await timed.state('request-extension');
+      await timed.top.clock.runFor(61000);await timed.state('request-timeout');
+      assert.doesNotMatch(await timed.frame.locator('body').innerText(),/check again/i);
+    }finally{await timed.close();}
     const stale=await fixture(browser,kind,{requests:true,saved:true});
     try{
       await stale.state('request-waiting');await stale.top.evaluate(()=>{testState.requests=[];});
