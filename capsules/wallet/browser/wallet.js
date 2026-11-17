@@ -148,9 +148,15 @@ const {
   onRequestClick,
   openPendingReview,
   pendingWalletRequests,
+  requestsWithDecisions,
   renderRequests,
 } = createWalletRequests({
-  clearRequestSelection: () => { reviewWalletRequestId = ""; },
+  clearRequestSelection: () => {
+    reviewWalletRequestId = "";
+    currentRequests = requestsWithDecisions(currentRequests);
+    renderActivity(currentRequests);
+    renderApprovalsBadge(pendingWalletRequests(currentRequests).length);
+  },
   fetchJson,
   notifyHomeSummaryChanged,
   openApprovalMethod,
@@ -207,7 +213,7 @@ const { canSendFromAccount, openSendFlow } = createWalletSendFlow({
   flowStaticRow,
   formatAmount,
   getCurrentPrices: () => currentPrices,
-  getCurrentRequests: () => currentRequests,
+  getCurrentRequests: () => requestsWithDecisions(currentRequests),
   getDisplayCurrency,
   isPasskeyManagedAccount,
   modalButton,
@@ -511,6 +517,7 @@ async function loadWalletState() {
   ]);
   const walletAccounts = summary && summary.wallet_accounts;
   const walletApprovals = summary && summary.wallet_approvals;
+  if (walletApprovals?.available === false) throw new Error("Wallet requests are unavailable.");
   currentApprovalMethods = summary && summary.approval_methods
     ? summary.approval_methods
     : {};
@@ -520,9 +527,8 @@ async function loadWalletState() {
   currentDefaults = Array.isArray(walletAccounts && walletAccounts.default_accounts)
     ? walletAccounts.default_accounts
     : [];
-  currentRequests = Array.isArray(walletApprovals && walletApprovals.approval_requests)
-    ? walletApprovals.approval_requests
-    : [];
+  currentRequests = requestsWithDecisions(Array.isArray(walletApprovals && walletApprovals.approval_requests)
+    ? walletApprovals.approval_requests : []);
   currentPrices = prices.prices || {};
   pricesStale = Boolean(prices.stale);
   pricesUnavailable = Boolean(prices.unavailable);
@@ -531,6 +537,7 @@ async function loadWalletState() {
 }
 
 function renderAll() {
+  currentRequests = requestsWithDecisions(currentRequests);
   const allAccounts = buildViewAccounts();
   const pending = pendingWalletRequests(currentRequests);
   renderHero(allAccounts);

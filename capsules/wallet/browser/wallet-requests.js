@@ -161,6 +161,20 @@ export function createWalletRequests({
     return row;
   }
 
+  function requestsWithDecisions(requests) {
+    if (!acknowledgement) return requests;
+    const known = { ...acknowledgement };
+    delete known.localAcknowledgement;
+    let found = false;
+    const merged = requests.map(request => {
+      if (readText(request.request_id) !== known.request_id) return request;
+      found = true;
+      return request.transaction_hash || ["completed", "rejected"].includes(request.status) ? request : known;
+    });
+    if (!found) merged.push(known);
+    return merged;
+  }
+
   function openPendingReview() {
     (requestsNode || requestsPanelNode)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
@@ -232,7 +246,8 @@ export function createWalletRequests({
         : "Request rejected.";
       const request = visibleRequests.find(r => readText(r.request_id) === requestId);
       if (request) {
-        acknowledgement = { ...request, request_id: requestId, localAcknowledgement: message };
+        acknowledgement = { ...request, request_id: requestId, status:"rejected",
+          localDecisionKind:result?.receipt_status === "dismissed" ? "dismissed" : "rejected", localAcknowledgement:message };
         renderRequests(visibleRequests.filter(r => readText(r.request_id) !== requestId));
       }
       clearRequestSelection();
@@ -254,6 +269,7 @@ export function createWalletRequests({
   return {
     onRequestClick,
     openPendingReview,
+    requestsWithDecisions,
     pendingWalletRequests: requests => pendingRequests(requests).filter(request => readText(request.request_id) !== acknowledgement?.request_id),
     renderRequests,
   };

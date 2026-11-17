@@ -37,10 +37,14 @@ export function activityTime(request) {
   return Number(request.completed_at || request.created_at || 0);
 }
 
+function decisionWasDismissed(request) {
+  return Boolean(request.approved_at) || request.localDecisionKind === "dismissed";
+}
+
 export function activityIcon(request) {
   const status = readText(request.status);
   if (request.transaction_hash || status === "completed") return "✓";
-  if (status === "rejected" && request.approved_at) return "·";
+  if (status === "rejected" && decisionWasDismissed(request)) return "·";
   if (status === "rejected" || status === "expired") return "×";
   return "!";
 }
@@ -48,7 +52,7 @@ export function activityIcon(request) {
 export function activityTitle(request) {
   const status = readText(request.status);
   const capsule = readText(request.capsule_id) || "Capsule";
-  if (request.transaction_hash && status === "rejected" && request.approved_at) {
+  if (request.transaction_hash && status === "rejected" && decisionWasDismissed(request)) {
     return `${capsule} · Sent from wallet after request was dismissed`;
   }
   if (request.transaction_hash) {
@@ -58,7 +62,7 @@ export function activityTitle(request) {
     return `${capsule} · Approved ${requestTitle(request)}`;
   }
   if (status === "rejected") {
-    if (request.intent === "transaction_intent" && request.approved_at && readText(request.connector_id)) {
+    if (request.intent === "transaction_intent" && decisionWasDismissed(request) && readText(request.connector_id)) {
       return `${capsule} · Dismissed transaction request`;
     }
     return `${capsule} · Rejected ${requestTitle(request)}`;
@@ -75,7 +79,7 @@ export function activitySubtitle(request) {
     parts.push(shortAddress(request.address));
   }
   if (request.transaction_hash) {
-    const dismissed = request.status === "rejected" && request.approved_at;
+    const dismissed = request.status === "rejected" && decisionWasDismissed(request);
     parts.push(`tx ${dismissed ? readText(request.transaction_hash) : shortAddress(request.transaction_hash)}`);
   } else if (request.reason) {
     parts.push(readText(request.reason));

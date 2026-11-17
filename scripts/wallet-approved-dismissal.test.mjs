@@ -67,6 +67,10 @@ test("Wallet dismisses earlier-session connector sends without another approval"
     assert(!descendants(root).some(node => node.className === "wallet-request-time"));
     assert(descendants(root).some(node => node.textContent.startsWith("Request dismissed.")));
     assert.match(activityTitle(request), /Dismissed transaction request/);
+    assert.equal(requests.requestsWithDecisions([])[0].status, "rejected");
+    assert.equal(requests.requestsWithDecisions([{ ...request, status:"approved" }])[0].status, "rejected", "an old read cannot reopen the known decision");
+    const positive = { ...request, status:"completed", transaction_hash:`0x${"a".repeat(64)}` };
+    assert.deepEqual(requests.requestsWithDecisions([positive]), [positive], "a later recorded result keeps its canonical facts");
   }
 });
 
