@@ -4261,10 +4261,10 @@ async fn test_browser_provider_crash_blocks_until_terminal_proof_then_allows_new
 async fn test_browser_personal_sign_queues_wallet_inbox_approval() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let browser_token = projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
     let browser_wallet_authority =
         runtime_wallet_authority_for_app_token(dir.path(), BROWSER_CAPSULE_ID, &browser_token);
-    let inbox_token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let inbox_token = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:1:{address}");
     let provider = MockWalletProvider {
@@ -4364,8 +4364,8 @@ async fn test_browser_personal_sign_queues_wallet_inbox_approval() {
 async fn test_browser_typed_data_sign_queues_wallet_inbox_approval() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
-    let inbox_token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let browser_token = projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let inbox_token = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:20:{address}");
     let provider = MockWalletProvider {
@@ -5045,10 +5045,10 @@ async fn test_browser_chain_reads_route_through_chain_provider_without_inbox_app
 async fn test_browser_eth_send_transaction_queues_wallet_inbox_approval() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let browser_token = projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
     let browser_wallet_authority =
         runtime_wallet_authority_for_app_token(dir.path(), BROWSER_CAPSULE_ID, &browser_token);
-    let inbox_token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let inbox_token = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:20:{address}");
     let provider = MockWalletProvider {

@@ -72,6 +72,7 @@ async fn test_system_approves_managed_wallet_request_and_executes_signature() {
             "proof_type": "managed_evm",
             "payload_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "principal_id": authority.principal_id.clone(),
+            "session_id": authority.session_id.clone(),
             "created_at": 10,
             "expires_at": 20
         })]),

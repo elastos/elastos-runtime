@@ -4,7 +4,7 @@ use super::super::*;
 async fn test_inbox_approves_wallet_requests_through_runtime_wallet_signing() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let token = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
     let wallet_authority =
         runtime_wallet_authority_for_app_token(dir.path(), INBOX_CAPSULE_ID, &token);
     let provider = MockWalletProvider {
@@ -23,6 +23,7 @@ async fn test_inbox_approves_wallet_requests_through_runtime_wallet_signing() {
             "proof_type": "managed_evm",
             "payload_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "principal_id": authority.principal_id.clone(),
+            "session_id": authority.session_id.clone(),
             "created_at": 10,
             "expires_at": 20
         })]),
@@ -660,9 +661,9 @@ async fn test_btc_wallet_approval_journey_reviews_in_inbox_and_signs() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
     let system_token = authority.system_token.clone();
-    let inbox_token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
-    let wallet_token = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &authority);
-    let documents_token = app_token_for_authority(dir.path(), DOCUMENTS_CAPSULE_ID, &authority);
+    let inbox_token = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let wallet_token = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
+    let documents_token = projection_launch_token_for_authority_context(dir.path(), DOCUMENTS_CAPSULE_ID, &authority);
     let documents_wallet_authority =
         runtime_wallet_authority_for_app_token(dir.path(), DOCUMENTS_CAPSULE_ID, &documents_token);
     let home_token = authority.home_token.clone();

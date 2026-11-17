@@ -276,16 +276,27 @@ async fn n4_pending_requests_current_session_only_existing_routes() {
     let owner = passkey_authority(dir.path());
     let wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &owner);
     let inbox = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &owner);
-    let other_home = app_token_for_authority(dir.path(), HOME_CAPSULE_ID, &owner);
-    let other = runtime_wallet_authority_for_app_token(dir.path(), HOME_CAPSULE_ID, &other_home);
+    let other_context = HomeLaunchTokenContext {
+        principal_id: owner.principal_id.clone(),
+        session_id: format!("auth:{}", uuid_like_token()),
+        proof_binding_id: Some(owner.proof_binding_id.clone()),
+        grant_id: format!("grant:{}", uuid_like_token()),
+    };
+    crate::auth::store_session_grant(dir.path(), AuthSessionGrantV1 {
+        schema: AuthSessionGrantV1::SCHEMA.to_string(),
+        grant_id: other_context.grant_id.clone(), session_id: other_context.session_id.clone(),
+        principal_id: owner.principal_id.clone(), proof_binding_id: owner.proof_binding_id.clone(),
+        issued_at:now_ts(), expires_at:now_ts()+3600, apps:vec![HOME_CAPSULE_ID.to_string()],
+    }).unwrap();
     let other_wallet = issue_home_projection_launch_token_with_context(
-        dir.path(), WALLET_CAPSULE_ID, WALLET_CAPSULE_ID, &other.home_launch_context(),
+        dir.path(), WALLET_CAPSULE_ID, WALLET_CAPSULE_ID, &other_context,
     ).unwrap();
+    let other_inbox = issue_home_projection_launch_token_with_context(
+        dir.path(), INBOX_CAPSULE_ID, INBOX_CAPSULE_ID, &other_context,
+    ).unwrap();
+    let other = runtime_wallet_authority_for_app_token(dir.path(), WALLET_CAPSULE_ID, &other_wallet);
     assert_eq!(other.verified_context().principal_id(), owner.principal_id);
     assert_ne!(other.verified_context().session_id(), owner.session_id);
-    let other_inbox = issue_home_projection_launch_token_with_context(
-        dir.path(), INBOX_CAPSULE_ID, INBOX_CAPSULE_ID, &other.home_launch_context(),
-    ).unwrap();
     let record = json!({"schema":"elastos.wallet.approval_request/v1", "request_id":"request:session-fixture", "status":"pending",
         "intent":"publish_envelope", "requested_by_actor":"documents", "principal_id":owner.principal_id, "session_id":owner.session_id,
         "account_id":"account:session-fixture", "chain_namespace":"eip155:20", "address":"0xabc", "proof_type":"siwe", "connector_id":"wallet-metamask",
