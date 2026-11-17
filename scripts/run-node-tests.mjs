@@ -61,11 +61,21 @@ function stop() {
 function arm(file, state) {
   if (stopping || state.closed) return;
   clearTimeout(state.timer);
-  state.timer = setTimeout(() => {
+  const reportedAt = Date.now();
+  function check() {
     if (stopping || state.closed) return;
+    // Synchronous tests can keep Node's reporter buffered across many results.
+    // Their synchronous start records still prove progress within this file.
+    const started = lastStarted(file, state);
+    const remaining = inactivityTimeout - (Date.now() - Math.max(reportedAt, started?.startedAt ?? 0));
+    if (remaining > 0) {
+      state.timer = setTimeout(check, remaining);
+      return;
+    }
     fail(`${relative(process.cwd(), file)}: timed out after ${inactivityTimeout}ms; first unfinished: ${label(state.pending.values().next().value ?? lastStarted(file, state))}`);
     stop();
-  }, inactivityTimeout);
+  }
+  state.timer = setTimeout(check, inactivityTimeout);
 }
 const lines = createInterface({ input: child.stdio[3] });
 lines.on("line", line => {

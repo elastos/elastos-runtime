@@ -156,3 +156,12 @@ test("supervisor delegates group signals to the ownership-checked worker", () =>
   assert.doesNotMatch(source, /process\.kill\(-child\.pid/);
   assert.match(source, /spawnOwnedTestWorker/);
 });
+
+test("synchronous test starts refresh the deadline while reporter events are buffered", () => {
+  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=1500", join(fixtures, "synchronous-progress.mjs")], {
+    encoding: "utf8", timeout: 10_000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /pass 8/);
+});

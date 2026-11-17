@@ -11,7 +11,7 @@ if (process.env.NODE_TEST_CONTEXT === "child-v8" && process.env.NODE_TEST_GUARD_
   after(() => {});
   tracingChannel("node.test").subscribe({ start({ name, file, type }) {
     if (type === "test" && name !== "<root>") {
-      appendFileSync(process.env.NODE_TEST_GUARD_STARTS, `${JSON.stringify({ name: name.slice(0, 160), file })}\n`);
+      appendFileSync(process.env.NODE_TEST_GUARD_STARTS, `${JSON.stringify({ name: name.slice(0, 160), file, startedAt: Date.now() })}\n`);
     }
   } });
 }
