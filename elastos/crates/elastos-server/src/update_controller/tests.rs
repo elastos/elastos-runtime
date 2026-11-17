@@ -244,7 +244,6 @@ fn publish_retained_receipt(fixture: &PrivateFixture) {
     let expected = digest(&fs::read(&fixture.binary).unwrap());
     copy_controller(&fixture.binary, &fixture.controller(), &expected).unwrap();
     let launch = LaunchPlan {
-        no_open: false,
         args: vec![BASE64.encode(b"home"), BASE64.encode(b"--browser")],
         environment: Vec::new(),
         cwd: BASE64.encode(fixture.data.as_os_str().as_bytes()),
@@ -998,7 +997,6 @@ fn receipt_round_trip_keeps_non_utf8_launch_args_environment_and_working_directo
     let key = OsString::from("PATH");
     let value = OsString::from_vec(b"value-\xfe".to_vec());
     let launch = LaunchPlan {
-        no_open: false,
         args: [
             OsStr::new("home"),
             OsStr::new("--browser"),
@@ -1073,6 +1071,26 @@ fn receipt_round_trip_keeps_non_utf8_launch_args_environment_and_working_directo
 }
 
 #[test]
+fn home_browser_no_open_receipt_is_readable_by_the_previous_runtime() {
+    // The previous Runtime reads this shape before execing the retained controller.
+    // Its strict schema and serialized launch hash are part of restart recovery.
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PreviousLaunchPlan {
+        args: Vec<String>,
+        environment: Vec<(String, String)>,
+        cwd: String,
+    }
+    for no_open in [false, true] {
+        let launch = LaunchPlan::capture_environment([], PathBuf::from("/Home fixture"), no_open);
+        let bytes = serde_json::to_vec(&launch).unwrap();
+        let previous: PreviousLaunchPlan = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(serde_json::to_vec(&previous).unwrap(), bytes);
+        assert_eq!(digest(&serde_json::to_vec(&previous).unwrap()), launch.sha256().unwrap());
+    }
+}
+
+#[test]
 fn home_browser_no_open_launch_plan_is_explicit_and_legacy_compatible() {
     for no_open in [false, true] {
         let launch = LaunchPlan::capture_environment(
@@ -1084,9 +1102,14 @@ fn home_browser_no_open_launch_plan_is_explicit_and_legacy_compatible() {
         assert!(launch.environment.is_empty());
         let bytes = serde_json::to_vec(&launch).unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value.get("no_open"), no_open.then_some(&Value::Bool(true)));
+        let mut expected = vec![BASE64.encode(b"home"), BASE64.encode(b"--browser")];
+        if no_open {
+            expected.push(BASE64.encode(b"--no-open"));
+        }
+        assert_eq!(launch.args, expected);
+        assert!(value.get("no_open").is_none());
         let retained: LaunchPlan = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(retained.no_open, no_open);
+        assert_eq!(retained.args, expected);
         assert_eq!(retained.sha256().unwrap(), launch.sha256().unwrap());
         for restarting in [false, true] {
             let command = retained.command(Path::new("/legacy/elastos"), &"c".repeat(32), restarting).unwrap();
@@ -1103,7 +1126,7 @@ fn home_browser_no_open_launch_plan_is_explicit_and_legacy_compatible() {
                 "args": value["args"], "environment": value["environment"], "cwd": value["cwd"]
             })).unwrap();
             let old: LaunchPlan = serde_json::from_slice(&old).unwrap();
-            assert!(!old.no_open);
+            assert!(!old.args.contains(&BASE64.encode(b"--no-open")));
             assert_eq!(old.sha256().unwrap(), launch.sha256().unwrap());
         }
     }
@@ -2316,7 +2339,6 @@ fn consumed_request_completion_preserves_a_different_request_identity() {
     let fixture = PrivateFixture::new();
     let (_, choice, _) = choice_fixture();
     let launch = LaunchPlan {
-        no_open: false,
         args: vec![BASE64.encode(b"home"), BASE64.encode(b"--browser")],
         environment: Vec::new(),
         cwd: BASE64.encode(fixture.data.as_os_str().as_bytes()),
@@ -3943,7 +3965,7 @@ fn assert_launch_observations(fixture: &PrivateFixture, no_open: bool, starts: u
     expected.extend((1..starts).map(|_| "1 unset home --browser".to_string()));
     assert_eq!(observed.lines().collect::<Vec<_>>(), expected);
     let receipt: Receipt = read_private_json(&fixture.directory.join(RECEIPT)).unwrap();
-    assert_eq!(receipt.launch.no_open, no_open);
+    assert_eq!(receipt.launch.args.contains(&BASE64.encode(b"--no-open")), no_open);
     validate_retained_receipt(&receipt).unwrap();
 }
 

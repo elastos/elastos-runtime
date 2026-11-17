@@ -181,9 +181,6 @@ fn exec_controller(controller: &Path, receipt: &Path, lease: &FileLock) -> anyho
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LaunchPlan {
-    // Omit the default so existing receipts keep their exact launch hash.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    no_open: bool,
     args: Vec<String>,
     environment: Vec<(String, String)>,
     cwd: String,
@@ -204,12 +201,15 @@ impl LaunchPlan {
         no_open: bool,
     ) -> Self {
         let encode = |value: &std::ffi::OsStr| BASE64.encode(value.as_bytes());
+        let mut args = vec![
+            encode(std::ffi::OsStr::new("home")),
+            encode(std::ffi::OsStr::new("--browser")),
+        ];
+        if no_open {
+            args.push(encode(std::ffi::OsStr::new("--no-open")));
+        }
         Self {
-            no_open,
-            args: vec![
-                encode(std::ffi::OsStr::new("home")),
-                encode(std::ffi::OsStr::new("--browser")),
-            ],
+            args,
             environment: environment
                 .into_iter()
                 .filter(|(key, _)| allowed_launch_key(key))
@@ -233,8 +233,12 @@ impl LaunchPlan {
             .env_clear()
             .current_dir(decode(&self.cwd)?)
             .stdin(Stdio::null());
+        let no_open_arg = BASE64.encode(b"--no-open");
+        let no_open = self.args.contains(&no_open_arg);
         for arg in &self.args {
-            command.arg(decode(arg)?);
+            if arg != &no_open_arg {
+                command.arg(decode(arg)?);
+            }
         }
         for (key, value) in &self.environment {
             let key = decode(key)?;
@@ -245,10 +249,10 @@ impl LaunchPlan {
         command
             .env(HOST_ENV, "1")
             .env("ELASTOS_UPDATE_GENERATION", generation)
-            // Older releases accept home --browser and this controller-owned marker.
-            // Keep the public option in the receipt, rather than passing it to an
-            // older Runtime during Undo or recovery.
-            .env("ELASTOS_UPDATE_RESTART", if restart || self.no_open { "1" } else { "0" });
+            // Older releases can read the unchanged receipt schema and accept
+            // home --browser with this controller-owned marker. The retained
+            // controller consumes --no-open before previous-release restoration.
+            .env("ELASTOS_UPDATE_RESTART", if restart || no_open { "1" } else { "0" });
         Ok(command)
     }
 

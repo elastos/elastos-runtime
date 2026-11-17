@@ -1613,15 +1613,15 @@ class CliFixtureTests(unittest.TestCase):
         home, directory, process, status, identities, executables, response = self.initial_home_fixture()
         path = directory / "update-controller/receipt.json"
         receipt = observer.cli_private_json(path)
-        receipt["launch"]["no_open"] = True
+        receipt["launch"]["args"].append(base64.b64encode(b"--no-open").decode())
         receipt["launch_sha256"] = hashlib.sha256(json.dumps(
-            {key: receipt["launch"][key] for key in ("no_open", "args", "environment", "cwd")},
+            {key: receipt["launch"][key] for key in ("args", "environment", "cwd")},
             separators=(",", ":")).encode()).hexdigest()
         observer.write(path, receipt)
         with patch.object(observer, "cli_process_identity", side_effect=identities.get), \
              patch.object(observer, "cli_process_executable", side_effect=executables.get), \
              patch.object(observer, "cli_home_response", side_effect=response), patch.object(observer, "lock_state", return_value="held"):
-            # The hash includes the option, as serde emits it before the existing fields.
+            # The option stays in the existing args field and is bound by the launch hash.
             proof = observer.cli_observe_initial_home(SimpleNamespace(roots={}), self.manifest,
                                                       home, process, status, no_open=True)
             self.assertTrue(proof["authenticated_health"])

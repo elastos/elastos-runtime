@@ -3018,10 +3018,10 @@ def cli_observe_initial_home(processes, manifest, home_path, process, status, re
     need(hashlib.sha256(signed).hexdigest() == manifest["files"][manifest["publications"][release]["release"]]["sha256"]
          and receipt["trusted_source"] == source_for_home(home_path), "controller signed release or trust differs")
     launch = receipt["launch"]
-    need(launch.get("no_open", False) is no_open
-         and [base64.b64decode(value, validate=True) for value in launch["args"]] == [b"home", b"--browser"]
+    expected_args = [b"home", b"--browser"] + ([b"--no-open"] if no_open else [])
+    need([base64.b64decode(value, validate=True) for value in launch["args"]] == expected_args
          and base64.b64decode(launch["cwd"], validate=True) == os.fsencode(home_path)
-         and hashlib.sha256(json.dumps({key: launch[key] for key in (("no_open",) if "no_open" in launch else ()) + ("args", "environment", "cwd")}, separators=(",", ":")).encode()).hexdigest() == receipt["launch_sha256"],
+         and hashlib.sha256(json.dumps({key: launch[key] for key in ("args", "environment", "cwd")}, separators=(",", ":")).encode()).hexdigest() == receipt["launch_sha256"],
          "controller launch receipt differs")
     controller_identity = cli_process_identity(process.pid)
     host_identity = cli_process_identity(status["host_pid"])
