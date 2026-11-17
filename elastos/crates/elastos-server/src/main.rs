@@ -2694,14 +2694,16 @@ mod tests {
 
     #[test]
     fn home_browser_no_open_capability_probe_exits_with_help() {
-        let result = super::Cli::try_parse_from([
-            "elastos", "home", "--browser", "--no-open", "--help",
-        ]).err().expect("capability probe must exit through Clap before startup");
+        let result =
+            super::Cli::try_parse_from(["elastos", "home", "--browser", "--no-open", "--help"])
+                .err()
+                .expect("capability probe must exit through Clap before startup");
         assert_eq!(result.kind(), clap::error::ErrorKind::DisplayHelp);
         assert_eq!(result.exit_code(), 0);
-        let unsupported = super::Cli::try_parse_from([
-            "elastos", "home", "--browser", "--no-opne", "--help",
-        ]).err().expect("unknown option must fail before help");
+        let unsupported =
+            super::Cli::try_parse_from(["elastos", "home", "--browser", "--no-opne", "--help"])
+                .err()
+                .expect("unknown option must fail before help");
         assert_eq!(unsupported.kind(), clap::error::ErrorKind::UnknownArgument);
         assert_eq!(unsupported.exit_code(), 2);
     }
@@ -2715,8 +2717,12 @@ mod tests {
             for entry in std::fs::read_dir(path).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
-                    if path.file_name().unwrap() != "tests" { visit(&path, marker, sites); }
-                } else if path.extension().is_some_and(|ext| ext == "rs") && path.file_name().unwrap() != "tests.rs" {
+                    if path.file_name().unwrap() != "tests" {
+                        visit(&path, marker, sites);
+                    }
+                } else if path.extension().is_some_and(|ext| ext == "rs")
+                    && path.file_name().unwrap() != "tests.rs"
+                {
                     let source = std::fs::read_to_string(&path).unwrap();
                     let production = source.split("\n#[cfg(test)]\nmod tests {").next().unwrap();
                     for _ in production.match_indices(marker) {
@@ -2727,7 +2733,11 @@ mod tests {
         }
         let marker = format!("\"{}{}\"", "ELASTOS_UPDATE_", "RESTART");
         let mut sites = Vec::new();
-        visit(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &marker, &mut sites);
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &marker,
+            &mut sites,
+        );
         sites.sort();
         assert_eq!(sites, ["gateway_entry.rs", "update_controller.rs"]);
     }

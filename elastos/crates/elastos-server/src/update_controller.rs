@@ -801,18 +801,22 @@ pub async fn enter_browser_home(no_open: bool) -> Result<()> {
         &data,
         &binary,
         &source,
-        || bootstrap_controller(
-            &data,
-            &binary,
-            &source,
-            controller_directory,
-            acquire_lease,
-            crate::install_transaction::InstallationGuard::acquire,
-        ),
-        |directory, binary, expected| prepare_controller(directory, binary, expected, |path, needed| {
-            crate::install_transaction::require_controller_update_space(path, needed)
-        }),
-        write_private::<Receipt>,
+        || {
+            bootstrap_controller(
+                &data,
+                &binary,
+                &source,
+                controller_directory,
+                acquire_lease,
+                crate::install_transaction::InstallationGuard::acquire,
+            )
+        },
+        |directory, binary, expected| {
+            prepare_controller(directory, binary, expected, |path, needed| {
+                crate::install_transaction::require_controller_update_space(path, needed)
+            })
+        },
+        |path, receipt| write_private(path, receipt),
     )
 }
 
