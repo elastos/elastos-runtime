@@ -129,3 +129,22 @@ test("n3_reject_dismiss_acknowledgement: successful decision survives a failed r
   assert(!descendants(root).some(node => node.className === "wallet-request-time"));
   assert.equal(view.pendingWalletRequests([request]).length, 0, "an older in-flight summary cannot count the acknowledged ID again");
 });
+
+test("n3_reject_dismiss_acknowledgement: consecutive decisions survive a stale read", async t => {
+  const previous = globalThis.document;
+  globalThis.document = { createElement: tag => new Element(tag) };
+  t.after(() => { globalThis.document = previous; });
+  const stale = ["first", "second"].map(request_id => ({ request_id, status:"pending", intent:"browser_personal_sign", connector_id:"wallet-metamask", reason:"Sign a message" }));
+  const root = new Element("section");
+  const requests = createWalletRequests({ requestsNode:root, shellHeaders:headers => headers,
+    fetchJson:async () => ({}), notifyHomeSummaryChanged() {}, showStatus() {},
+    refreshWalletState:async () => { throw new Error("read failed"); } });
+  requests.renderRequests(stale);
+  for (const id of ["first", "second"]) {
+    const button = descendants(root).find(node => node.dataset.walletRequestReject === id);
+    assert(button, `request ${id} can be rejected`);
+    await requests.onRequestClick({ target:button });
+  }
+  assert.deepEqual(requests.requestsWithDecisions(stale).map(r => r.status), ["rejected", "rejected"]);
+  assert.equal(requests.pendingWalletRequests(stale).length, 0, "neither known decision reopens in the count");
+});
