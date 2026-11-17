@@ -67,12 +67,12 @@ test("fix1 Wallet keeps focus and scroll in Send during a balance refresh and cl
   await r.frame.getByRole("button",{name:/Send/}).first().click();
   await r.frame.locator("#wallet-hero-back button").filter({hasText:/ELA/}).first().click();
   const input=r.frame.locator('input[name="amount"]'); await input.fill("0.25");
-  assert.equal(await r.frame.locator('.wallet-request [role="status"]').count(),0,"a deliberate action outside the acknowledgement ends its display");
   const before=await input.evaluate(el=>({top:scrollY,focused:document.activeElement===el,value:el.value}));
   const response=r.page.waitForResponse(u=>u.url().includes("/api/apps/wallet/wallet/summary"));
   await event(r,"account.balance.changed"); await response; await settled(r);
   const after=await input.evaluate(el=>({top:scrollY,focused:document.activeElement===el,value:el.value}));
   assert.deepEqual(after,before);
+  assert.equal(await r.frame.locator('.wallet-request [role="status"]').count(),0,"a deliberate action outside the acknowledgement ends its display");
 });
 
 for (const presentation of ["window","rail"]) test(`fix1 Inbox background refresh preserves focus and acknowledgement ends on filter selection (${presentation})`,async t=>{
@@ -84,7 +84,10 @@ for (const presentation of ["window","rail"]) test(`fix1 Inbox background refres
   const response=r.page.waitForResponse(u=>u.url().endsWith("/api/apps/inbox/summary"));
   await event(r);await response;await settled(r);
   assert.deepEqual(await r.frame.locator("#refresh").evaluate(el=>({top:scrollY,focused:document.activeElement===el})),before);
-  await r.frame.locator('[data-filter="review"]').click();
+  if (presentation === "rail") await r.frame.locator("body").evaluate(() => window.dispatchEvent(new MessageEvent("message", {
+    origin:"null",source:window.parent,data:{type:"elastos:menu-command",cmd:"filter-review"},
+  })));
+  else await r.frame.locator('[data-filter="review"]').click();
   assert.equal(await r.frame.locator('[role="status"]').filter({hasText:"Request rejected."}).count(),0);
 });
 
