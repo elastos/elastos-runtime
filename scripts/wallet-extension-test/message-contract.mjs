@@ -121,7 +121,9 @@ export function handoffValid(m) {
   const h = m.handoff, tx = h?.intent === 'transaction_intent';
   if (!exact(h, ['schema', 'request_id', 'intent', 'payload_hash', 'signer', 'status', ...(tx ? ['transaction'] : ['message', 'signature_type'])])
     || h.schema !== 'elastos.wallet.webconnect_handoff/v1' || h.request_id !== m.request_id
-    || !/^0x[0-9a-fA-F]{64}$/.test(h.payload_hash)) return false;
+    || typeof h.intent !== 'string' || h.intent.length < 1 || h.intent.length > 128
+    || typeof h.signer !== 'string' || h.signer.length > 256
+    || typeof h.payload_hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(h.payload_hash)) return false;
   if (tx) return m.connector_id === 'wallet-metamask' && h.status === 'awaiting_wallet_transaction'
     && exact(h.transaction, ['from', 'to', 'value', 'data', 'gas', 'gasPrice', 'nonce', 'chainId'])
     && h.transaction.from === h.signer && /^0x[0-9a-fA-F]{40}$/.test(h.signer)
@@ -141,7 +143,8 @@ export function settlementValid(row) {
     && exact(b, ['schema', 'connector_id', 'connector_token', 'payload_hash', 'signer', 'outcome'])
     && b.schema === 'elastos.home.wallet-connector.call-settlement.request/v1' && b.connector_id === 'wallet-metamask'
     && typeof b.connector_token === 'string' && b.connector_token.length > 0
-    && /^0x[0-9a-fA-F]{64}$/.test(b.payload_hash) && /^0x[0-9a-fA-F]{40}$/.test(b.signer)
+    && typeof b.payload_hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(b.payload_hash)
+    && typeof b.signer === 'string' && /^0x[0-9a-fA-F]{40}$/.test(b.signer)
     && ['not_approved', 'not_authorized', 'unresolved'].includes(b.outcome)
     && exact(r, ['schema', 'action', 'connector_id', 'request_id', 'status', 'outcome'])
     && r.schema === 'elastos.home.wallet-connector.effect.result/v1' && r.action === 'approval_call_settlement'

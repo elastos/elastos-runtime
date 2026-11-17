@@ -3930,6 +3930,70 @@
           "external_result_deadline_at": 1800043200
         }
       }
+    },
+    {
+      "id": "handoff-invalid-array-payload_hash",
+      "valid": false,
+      "message": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_handoff",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "evm_chains": [],
+        "handoff": {
+          "schema": "elastos.wallet.webconnect_handoff/v1",
+          "request_id": "request:fixture-1",
+          "payload_hash": [
+            "0xabababababababababababababababababababababababababababababababab"
+          ],
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "intent": "transaction_intent",
+          "status": "awaiting_wallet_transaction",
+          "transaction": {
+            "from": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+            "to": "0x1212121212121212121212121212121212121212",
+            "value": "0x1",
+            "data": "0x",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "nonce": "0x0",
+            "chainId": "0x1"
+          }
+        }
+      }
+    },
+    {
+      "id": "handoff-invalid-array-signer",
+      "valid": false,
+      "message": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_handoff",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "evm_chains": [],
+        "handoff": {
+          "schema": "elastos.wallet.webconnect_handoff/v1",
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": [
+            "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1"
+          ],
+          "intent": "transaction_intent",
+          "status": "awaiting_wallet_transaction",
+          "transaction": {
+            "from": [
+              "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1"
+            ],
+            "to": "0x1212121212121212121212121212121212121212",
+            "value": "0x1",
+            "data": "0x",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "nonce": "0x0",
+            "chainId": "0x1"
+          }
+        }
+      }
     }
   ],
   "settlementProposal": "NB1 default proposal only; N1 and N2 have not yet had their human security review. Envelopes assume Home dual authorization and the stored result binding; these examples grant none. If the fallback is chosen, remove these producer/operation rows.",
@@ -4189,6 +4253,78 @@
           "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
           "outcome": "not_approved",
           "code": 4001
+        }
+      }
+    },
+    {
+      "id": "settlement-invalid-array-payload_hash",
+      "valid": false,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": [
+          "0xabababababababababababababababababababababababababababababababab"
+        ],
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "not_approved"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": [
+            "0xabababababababababababababababababababababababababababababababab"
+          ],
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "not_approved"
+        }
+      }
+    },
+    {
+      "id": "settlement-invalid-array-signer",
+      "valid": false,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": [
+          "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1"
+        ],
+        "outcome": "not_approved"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": [
+            "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1"
+          ],
+          "outcome": "not_approved"
         }
       }
     }

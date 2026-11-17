@@ -101,6 +101,14 @@ test('NB1 draft has exactly the proposed producers, operation data and acknowled
     ['not_approved', 'not_authorized', 'unresolved']);
   for (const row of fixture.callSettlements) assert.equal(settlementValid(row), row.valid, row.id);
 });
+test('draft hash and signer fields reject arrays before operation correlation', () => {
+  for (const key of ['payload_hash', 'signer']) {
+    const row = structuredClone(fixture.callSettlements.find((row) => row.valid));
+    row.body[key] = [row.body[key]];
+    row.runtimeOperation.data[key] = row.body[key];
+    assert.equal(settlementValid(row), false, key);
+  }
+});
 test('selected-result reads preserve the existing route and canonical selector', () => {
   for (const row of fixture.selectedResultReads) assert.equal(selectedResultDecision(row), row.expect, row.id);
 });
