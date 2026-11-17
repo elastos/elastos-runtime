@@ -36,10 +36,12 @@ export async function runtimeView(t, app, state = {}) {
     text: state.permission === "granted" ? "Stop WalletConnect relay access on this computer." : consentText });
   await context.route("https://runtime.test/**", async route => {
     const request = route.request(), url = new URL(request.url());
-    const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(body) });
+    const cors = { "access-control-allow-origin": "*", "access-control-allow-headers":"content-type,x-elastos-home-token", "access-control-allow-methods":"GET,POST,PUT,DELETE,OPTIONS" };
+    const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
     if (request.method() === "OPTIONS") return json({});
-    if (url.pathname === "/") return route.fulfill({ contentType: "text/html", body: `<!doctype html><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe id="app" src="/apps/${app}/index.html?home_origin=https%3A%2F%2Fruntime.test&wallet_request=${encodeURIComponent(state.requestId || "")}#home_token=fixture-token"></iframe><script>window.messages=[];addEventListener('message',e=>{messages.push(e.data);if(e.data.type==='elastos.home.passkey-step-up.request/v1')e.source.postMessage({type:'elastos.home.passkey-step-up.result/v1',requestId:e.data.requestId,stepUpToken:'fixture-proof'},'*')})</script>` });
+    if (url.pathname === "/") return route.fulfill({ contentType: "text/html", body: `<!doctype html><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe id="app" sandbox="allow-scripts allow-forms" src="/apps/${app}/index.html?home_origin=https%3A%2F%2Fruntime.test&wallet_request=${encodeURIComponent(state.requestId || "")}#home_token=fixture-token"></iframe><script>window.messages=[];addEventListener('message',e=>{if(e.source!==document.getElementById('app')?.contentWindow||e.origin!=='null')return;messages.push(e.data);if(e.data.type==='elastos.home.passkey-step-up.request/v1')e.source.postMessage({type:'elastos.home.passkey-step-up.result/v1',requestId:e.data.requestId,stepUpToken:'fixture-proof'},'*')})</script>` });
     if (url.pathname.startsWith("/api/")) {
+      if (request.headers()["x-elastos-home-token"] !== "fixture-token") return json({error:"missing fixture launch"}, 403);
       const input = request.postDataJSON();
       calls.push({ path: url.pathname, method: request.method(), input });
       if (url.pathname === "/api/apps/inbox/summary") return json({ notifications: { entries: state.entries, attention_count: state.entries.filter(e => e.severity === "attention").length, unread_count: state.entries.filter(e => !e.read).length } });
@@ -66,6 +68,7 @@ export async function runtimeView(t, app, state = {}) {
           state.entries = [permissionEntry("refused", state.question)];
         } else if (input.action_id?.startsWith("walletconnect-internet-turn-off:")) {
           if (!["granted", "cleanup"].includes(state.permission) || input.action_id !== `walletconnect-internet-turn-off:${state.question}`) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
+          if (state.permission === "granted" && input.step_up_token !== "fixture-proof") return json({error:"passkey proof required"}, 403);
           if (state.cleanupFailure) return json({ error: "cleanup could not finish" }, 503);
           state.permission = "revoked";
           state.cleanup = false;
@@ -93,7 +96,7 @@ export async function runtimeView(t, app, state = {}) {
     if (!match || match[2].split("/").includes("..")) return route.abort();
     try {
       const file = new URL(`capsules/${match[1]}/browser/${match[2]}`, root);
-      await route.fulfill({ body: await readFile(file), contentType: types[extname(file.pathname)] || "application/octet-stream" });
+      await route.fulfill({ body: await readFile(file), headers:cors, contentType: types[extname(file.pathname)] || "application/octet-stream" });
     } catch { await route.fulfill({ status: 404, body: "missing fixture asset" }); }
   });
   const page = await context.newPage();

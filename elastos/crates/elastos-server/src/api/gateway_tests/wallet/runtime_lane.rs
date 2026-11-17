@@ -62,7 +62,10 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
                 WALLET_UNISAT_CAPSULE_ID,
                 &authority,
             );
-            let other = passkey_authority_with_name(dir.path(), Some("other-site-reader"));
+            let other = passkey_authority_with_name_role_credential(
+                dir.path(), Some("other-site-reader"), crate::auth::RuntimePrincipalRole::Admin,
+                "other-site-reader-credential",
+            );
             let other_wallet = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &other);
             let record = json!({"schema":"elastos.wallet.approval_request/v1", "request_id":"request:site", "status":"pending", "intent":intent, "requested_by_actor":"browser",
             "principal_id":authority.principal_id, "session_id":authority.session_id, "account_id":"account:site", "chain_namespace":"eip155:20",

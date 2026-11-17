@@ -4356,7 +4356,7 @@ async fn test_browser_personal_sign_queues_wallet_inbox_approval() {
     assert_eq!(inbox_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Browser signature request"
+        "Sign a message"
     );
 }
 
@@ -4457,7 +4457,7 @@ async fn test_browser_typed_data_sign_queues_wallet_inbox_approval() {
     assert_eq!(inbox_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Browser typed data signature request"
+        "Sign typed data"
     );
 }
 
@@ -5148,7 +5148,7 @@ async fn test_browser_eth_send_transaction_queues_wallet_inbox_approval() {
     assert_eq!(inbox_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Transaction approval request"
+        "Send transaction"
     );
 }
 
