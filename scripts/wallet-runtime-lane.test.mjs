@@ -45,7 +45,7 @@ test("n5_inbox_action_by_kind_and_409: decision and conflict", async t => {
 });
 
 test("n3_reject_dismiss_acknowledgement: Wallet cards", async t => {
-  for (const dismissed of [false, true]) for (const failedRefresh of [false, true]) await t.test(`${dismissed ? "Dismiss" : "Reject"}${failedRefresh ? " / refresh failed" : ""}`, async t => {
+  for (const dismissed of [false, true]) for (const failedRefresh of [false, "transport", "unavailable"]) await t.test(`${dismissed ? "Dismiss" : "Reject"}${failedRefresh ? ` / ${failedRefresh}` : ""}`, async t => {
     const request = { ...requestFixture(),
       status: dismissed ? "approved" : "pending", intent: dismissed ? "transaction_intent" : "browser_personal_sign",
       approved_at: dismissed ? Math.floor(Date.now() / 1000) - 30 : null,
@@ -62,10 +62,10 @@ test("n3_reject_dismiss_acknowledgement: Wallet cards", async t => {
     if (failedRefresh) await r.frame.locator("#wallet-status").filter({ hasText:"Wallet could not refresh other requests." }).waitFor();
     assert.equal(await r.frame.locator("#wallet-approvals-badge").isVisible(), false, "a known decision clears the badge even when the next read fails");
     const outcome = dismissed ? "dismissed" : "rejected";
-    await r.capture(`wallet-request-${outcome}${failedRefresh ? "-refresh-failed" : ""}-light-window.png`);
+    await r.capture(`wallet-request-${outcome}${failedRefresh ? `-${failedRefresh}` : ""}-light-window.png`);
     await r.frame.getByRole("button", { name:"Activity", exact:true }).click();
     await r.frame.locator("#wallet-activity-drawer .wallet-activity-row strong").filter({ hasText: dismissed ? "Dismissed transaction request" : "Rejected" }).waitFor();
-    if (failedRefresh) await r.capture(`wallet-activity-${outcome}-refresh-failed-light-window.png`);
+    if (failedRefresh) await r.capture(`wallet-activity-${outcome}-${failedRefresh}-light-window.png`);
     assert.deepEqual(r.errors, []);
   });
 });

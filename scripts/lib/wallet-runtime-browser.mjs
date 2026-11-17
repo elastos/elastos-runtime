@@ -45,6 +45,7 @@ export async function runtimeView(t, app, state = {}) {
       const input = request.postDataJSON();
       calls.push({ path: url.pathname, method: request.method(), input });
       if (url.pathname === "/api/apps/inbox/summary") return json({ notifications: { entries: state.entries, attention_count: state.entries.filter(e => e.severity === "attention").length, unread_count: state.entries.filter(e => !e.read).length } });
+      if (url.pathname === "/api/apps/wallet/wallet/summary" && state.decisionComplete && state.summaryFailureAfterDecision === "unavailable") return json({ wallet_accounts:{available:true, accounts:state.accounts, default_accounts:[]}, wallet_approvals:{available:false, pending_count:0, approval_requests:[], note:"Wallet requests are unavailable."}, approval_methods:{} });
       if (url.pathname === "/api/apps/wallet/wallet/summary" && state.decisionComplete && state.summaryFailureAfterDecision) return json({error:"summary read failed"}, 503);
       if (url.pathname === "/api/apps/wallet/wallet/summary") return json({ wallet_accounts: { available:true, accounts: state.accounts, default_accounts: [] }, wallet_approvals: { available:true, pending_count:state.approvals.filter(r => r.status === "pending").length, approval_requests: state.approvals }, approval_methods: { walletconnect: { available: true } } });
       if (url.pathname === "/api/apps/wallet-walletconnect/internet") {
