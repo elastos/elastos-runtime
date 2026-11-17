@@ -610,6 +610,7 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
 pub(in crate::api::gateway) fn wallet_request_display_origin(
     record: &serde_json::Value,
 ) -> Option<String> {
+    if record.get("schema")?.as_str()? != "elastos.wallet.approval_request/v1" { return None; }
     if record.get("requested_by_actor")?.as_str()? != BROWSER_CAPSULE_ID {
         return None;
     }
@@ -642,9 +643,11 @@ pub(in crate::api::gateway) fn wallet_request_display_origin(
     match record.get("intent")?.as_str()? {
         "browser_personal_sign"
             if text("schema")? == "elastos.browser.wallet-signature-request/v1"
+                && payload.get("requires_wallet_approval")?.as_bool()?
                 && text("method")? == "personal_sign" => {}
         "browser_typed_data_sign"
             if text("schema")? == "elastos.browser.wallet-signature-request/v1"
+                && payload.get("requires_wallet_approval")?.as_bool()?
                 && matches!(
                     text("method")?,
                     "eth_signTypedData" | "eth_signTypedData_v3" | "eth_signTypedData_v4"
@@ -765,11 +768,11 @@ mod wallet_display_tests {
     use serde_json::json;
 
     fn browser_request(origin: &str, page_url: &str) -> serde_json::Value {
-        json!({"request_id":"request:display", "status":"pending", "intent":"browser_personal_sign",
+        json!({"schema":"elastos.wallet.approval_request/v1", "request_id":"request:display", "status":"pending", "intent":"browser_personal_sign",
             "requested_by_actor":"browser", "principal_id":"person:test", "session_id":"session:test",
             "account_id":"account:test", "address":"0xabc", "chain_namespace":"eip155:20", "resource":"wallet:test",
             "reason":"Sign message", "proof_type":"siwe", "connector_id":"wallet-metamask", "created_at":1, "expires_at":u64::MAX,
-            "payload":{"schema":"elastos.browser.wallet-signature-request/v1", "method":"personal_sign",
+            "payload":{"schema":"elastos.browser.wallet-signature-request/v1", "requires_wallet_approval":true, "method":"personal_sign",
                 "principal_id":"person:test", "session_id":"session:test", "account_id":"account:test",
                 "chain_namespace":"eip155:20", "address":"0xabc", "origin":origin, "page_url":page_url}})
     }

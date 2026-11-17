@@ -2262,7 +2262,7 @@ mod tests {
         assert!(request.get("home_token").is_none());
         assert!(request.get("principal_id").is_none());
         // This authenticates a remote Engine page, not a local Browser origin.
-        assert!(gateway_wallet_approvals::wallet_request_display_origin(&request).is_none());
+        assert!(wallet_request_display_origin(&request).is_none());
         admit_remote_wallet_consumer_request(&binding, &request, &engine).expect("matching page");
         let mut foreign_page = binding.clone();
         foreign_page.page_id = "page:other".into();
