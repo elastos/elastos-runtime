@@ -495,7 +495,12 @@ account access and unrelated entries through the real module.
 
 **After this work.** Runtime retains its direct-approval refusal for external
 proofs on both Wallet and Inbox routes, including stale cards with a fresh
-passkey. Wallet reads the canonical record, shows the existing reason/account/
+passkey. Pre-review N3 changes are confined to classification, gateway
+dispatch/presentation and tests of that existing refusal. They do not edit
+approve_and_sign_managed, its managed-proof predicate, signing call, request
+consumption or shared expiry/pruning behavior in approval.rs. If an apparent
+refusal fix needs any such provider change, that part waits for the human
+N1/N2 gate; preserve managed approve-and-sign regressions unchanged. Wallet reads the canonical record, shows the existing reason/account/
 network/deadline facts, and opens its stored connector with N1's selector.
 Unsupported requests retain their summary and Reject, without Send. Opening a
 connector consumes nothing; explicit Send performs preflight and one handoff.
@@ -529,101 +534,247 @@ with Dismiss under [the existing receipt rules](#first-shippable-slice).
 Home request. Dismiss closes an eligible handed-off WalletConnect transaction
 locally, not in the wallet. After Reject/Dismiss, clear selection before refresh
 and retain the acknowledgement; Activity remains a separate action. A consumed
-ID is never resent. Result unknown is reserved for a send whose hash/result
-Home has not received. A known but unrecorded hash uses
+ID is never resent. Result unknown is reserved for an unresolved send disposition; a known
+wallet refusal keeps its outcome, including when saving it fails. A known but unrecorded hash uses
 [Home's receipt-status rule](HOME_SHELL_HOST_CONTRACT.md#n2-waiting-settlement-and-memory).
 A returned hash alone establishes neither chain confirmation nor that the
 transaction matches the payload.
 
 #### N3 MetaMask transaction results
 
-**Today.** MetaMask transaction completion expires with its approval request;
-only WalletConnect has the existing late-receipt grace rule. wallet-provider
-stores approved_at but not the carried token's expiry. CompleteConnectorHandoff
-is also absent from the v2 idempotent replay helper, and its handler rejects a
-Completed record. The following retention and
-identical-hash acknowledgement are implementation requirements, not current
-behavior.
+**Today.** Handoff consumes a pending request before the wallet answers.
+An outside decline stores no settlement. MetaMask approval expires at its
+original request expiry (maximum 30 minutes); WalletConnect alone has its
+existing grace/Dismiss rule. The active limit is 100 per principal. The
+provider's replay helper does not yet make hash completion idempotent.
 
-**After this work.** Runtime/navigation owns the received-hash state change.
-At a MetaMask transaction handoff, Runtime atomically stores approved_at and
-external_result_deadline_at = approved_at + 43,200 seconds (12 hours), with
-checked arithmetic, before returning the consumed handoff. This optional
-Runtime-owned u64 epoch-second field is also projected on the request
-summary for Wallet's waiting view. The existing handoff success envelope carries
-the same stored value to Home as specified in N2; the typed signing payload and
-Bus operation parameters stay unchanged. A caller supplies neither the value nor a token-expiry claim.
-It is immutable: later send, frame retirement, Stop, request expiry, renewal,
-sign-out and session-authority end do not reset it. Twelve hours is Main's
-default pending Irzhy's N1/N2 human review; lanes wait for confirmation or an
-explicit change/waiver before implementing this gated receipt work.
+**After this work — proposal for the human review of N1/N2.** Runtime/navigation
+owns result retention and the proposed settlement operation. At each new
+wallet-metamask transaction handoff, atomically store approved_at,
+external_result_deadline_at = approved_at + 43,200 seconds (12 hours), and
+external_result_authority_binding before returning success. The deadline is an
+optional Runtime-owned u64 epoch second, calculated with checked arithmetic;
+invalid/overflowing approved_at refuses handoff before consumption. The last field
+is computed with the existing wallet_authority_binding function from the
+verified connector handoff invocation, not from the requesting app's distinct
+authority_binding and not from caller parameters. It binds principal, session,
+proof, grant, connector actor and launch ID; same-authority renewal preserves
+it. The caller sets neither field. Twelve hours is the proposed default for
+Irzhy to confirm; it never renews with a page, frame, token or later result.
 
-| Status | MetaMask transaction condition | Stored state / view |
-| --- | --- | --- |
-| After this work | Handoff accepted, no hash, now strictly before external_result_deadline_at | Approved and waiting, including after expires_at; retained in Wallet's request list and active quota, outside resolved-history eviction |
-| After this work | Valid hash accepted before that deadline | Completed once with the existing bound hash receipt; normal receipt/activity retention applies |
-| After this work | No recorded hash when now reaches the deadline | Expired, resolved_at set to the stored deadline, result unknown; Wallet says to check the named wallet and Wallet's activity before making another payment |
-| After this work | Page/frame/session authority ends before the deadline | Record remains Approved/waiting until hash or deadline; only page delivery rights change |
+**After this work — NB2.** The stored deadline may appear on Wallet's scoped
+summary for display; it never enters the existing handoff envelope or nested
+typed payload. Home's old and new handoff wire shapes stay unchanged under
+their existing schemas. Runtime enforces the deadline; Home needs no new
+deadline read. [N2](HOME_SHELL_HOST_CONTRACT.md#n2-runtime-admission-preflight-and-errors)
+owns the exact unchanged envelope and old-page compatibility test.
 
-**After this work.** This rule applies to connector_id wallet-metamask,
-including its Brave provider when supported; it adds no UniSat transaction.
-The stored status enum stays Pending/Approved/Completed/Rejected/Expired.
-The result_unknown view outcome is derived from Expired plus the stored
-external_result_deadline_at and absent hash, not a new persisted status.
-Expiry at that bound releases the active slot through the existing lifecycle
-accounting; before it, token/session expiry is not provider pruning input.
+#### NB1 proposed wallet-call settlement
 
-**After this work.** Wallet and the matching connector's scoped feed retain
-the Approved/waiting MetaMask transaction as a read-only request; Inbox/System
-notifications stay pending-only. Selecting it in a reopened connector shows
-this waiting state, not a new approval or an unavailable pending-card retry.
-This waiting view has no Send, Retry payment, Reject or Dismiss. Dismiss remains WalletConnect-only. The principal can inspect the
-account, network, requesting app, result deadline and Wallet's activity, and
-check MetaMask/Brave Wallet itself. A later session can see this read-only
-waiting record but inherits no completion authority. It never shows Expired
-before its stored bound, even if the original page closed. The deadline ending
-result collection proves no cancellation or failed on-chain payment; it does
-not authorize resending this consumed ID.
+**After this work — default proposal, not approved authority.** Home reports
+only the actual settled result of the one eth_sendTransaction call made for
+that consumed MetaMask/Brave request. A valid returned hash uses the existing
+completion route. A call without a usable hash uses the proposed Home-only
+call-settlement route and Runtime-private RecordExternalCallOutcome operation,
+with exactly request_id, payload_hash, signer and outcome as operation data.
+The gateway derives the verified authority; the body is not proof. No new
+public capsule capability or generic Bus path may invoke this operation.
+Home and the Runtime mediator must enforce the dual-authorizer check before
+provider mutation, even if a direct caller has a connector launch capability.
 
-**After this work.** The existing Home completion route still requires valid
-same-origin Home authority and a carried token with the same principal/session/
-proof/grant. Provider checks the original connector/request/payload-hash/signer,
-a well-formed transaction_hash and the stored result deadline. A first hash is
-accepted only while now < external_result_deadline_at; identical bound hashes
-then return the stored acknowledgement idempotently, including after completion
-or the deadline, while the record is retained and the same delivery authority
-is valid. They cause no second receipt, completion audit or quota release.
-Different hashes/bindings conflict atomically. Runtime does not infer token
-expiry from launch_id, and it does not extend or revive authority. At the
-deadline a record without a hash expires; terminal records are not reopened.
-This records an existing wallet result, with no further handoff or provider call.
+| Status | Closed outcome | Home's only producer | Runtime state / view |
+| --- | --- | --- | --- |
+| Proposed default | not_approved | That send promise rejects with numeric 4001, including native prompt close; the button/person's intention is unknowable | Rejected, external_call_outcome not_approved, resolved_at now; terminal not sent, outside active quota/list |
+| Proposed default | not_authorized | That send promise rejects with numeric 4100 | Rejected, external_call_outcome not_authorized, resolved_at now; terminal not sent, outside active quota/list |
+| Proposed default | unresolved | That made call settles with another error or an invalid/missing hash; absence is not proof of no send | Approved, external_call_outcome unresolved; active result-unavailable record until hash/deadline, not a claim that the wallet still waits |
+| Proposed default | Valid hash through existing completion | That call returns a well-formed hash, or a later authorized positive receipt corrects earlier evidence | Completed with the original receipt bindings; canonical positive-hash evidence wins |
+| Proposed default | No settlement report and no hash | No recorded answer: call still pending, old Home lacks the reporter, delivery authority ended, or saving failed | Approved, no external_call_outcome; active no-recorded-answer view until stored bound |
 
-**After this work.** Home's bounded submission/retry schedule and authority_changed
-behavior live only in [N2](HOME_SHELL_HOST_CONTRACT.md#n2-waiting-settlement-and-memory).
-Home's known-but-unrecorded result remains recording_failed; Runtime alone can
-say result unknown when it has no hash. A returned hash proves neither chain
-confirmation nor a payload match. WalletConnect's grace and Dismiss rules stay
-in [their owning section](#first-shippable-slice).
+**After this work — default proposal.** No caller supplies a reason, error
+message, numeric code, timestamp, cancellation claim, transaction, signature,
+account change or new payload. Root Home derives only the closed outcome
+above; free text and extra keys are invalid. Stop, local timeout, request
+expiry, frame close, account/network events and failed Runtime HTTP submission
+are not wallet settlements. No report may be invented before a send call,
+from a UI button or merely because no hash is present. An ambiguous error
+uses unresolved, never not sent. The not-sent label means the wallet call
+reported non-approval; it is not cryptographic proof that no transfer exists.
 
-**After this work.** Older Approved MetaMask transaction records with a valid
-approved_at derive and persist this same fixed bound on first new-code load;
-an already Expired/Rejected record stays terminal, and a missing/invalid
-approved_at supplies no exception. No signing payload/hash is migrated. Undo
-to 2.0.1 loses this new waiting guarantee: that code may drop the optional field
-or expire/prune the record at expires_at. Re-update only derives the bound for
-a surviving Approved record; it does not resurrect terminal/pruned history.
-Installed update/Undo tests must state that limit rather than promise old-code
-receipt retention.
+**After this work — default proposal.** Runtime requires same-origin Home
+authority plus the same valid carried connector authority as the handoff,
+with active principal/session/proof/grant and exact wallet-metamask actor.
+The provider checks the stored external_result_authority_binding, request ID,
+transaction intent, approved handoff, payload hash, canonical signer and
+now < external_result_deadline_at. It accepts at most one no-hash outcome:
+identical retries return the stored acknowledgement; a different no-hash code
+conflicts. It never changes the signed payload, requesting actor, original
+authority or deadline. Existing hash-completion request/response schemas stay
+unchanged. New-code handoffs use the stored connector binding for both paths.
+An older surviving Approved record may derive the deadline from approved_at
+before pruning, but without a stored connector-result binding it gets hash-only
+legacy completion checks and no new no-hash authority; do not bootstrap that
+binding from a presented settlement. Such records and old pages use the
+honest fallback view below when no outcome is recorded.
 
-**After this work.** n2_transaction_completion_after_frame_close has the single
-accountable owner Runtime/navigation, with Home-extension module contributions.
-It covers Stop, expiry, frame close/load/new nonce, authority_changed and
-same-authority renewal; the persisted 43,200-second boundary and equality case;
-active quota/history pruning; read-only waiting versus Expired views; old
-records/Undo; duplicate, concurrent identical and conflicting hashes; lost
-acknowledgement, three bounded HTTP attempts, exhausted retry and delivery end.
-All signing refusals remain unchanged. Its real Home-plus-Runtime tests and
-every affected provider/server target wait for the N1/N2 gate.
+**After this work — default proposal.** not_approved/not_authorized leave the
+waiting list and active quota immediately. Store them as Rejected with the
+closed external_call_outcome so they are distinct from a person's pending
+Reject; they never later become result unknown. Clearing the finished card/
+acknowledgement clears selection as for other finished requests; it grants no
+Dismiss, deletes no receipt binding and does not revive Send. Normal Activity
+retains the answer. An unresolved answer is labelled result unavailable; the
+no-outcome view says Home has not recorded an answer, not that the wallet
+definitely has not answered. Only unresolved/unrecorded disposition can become
+result unknown at the bound. Home's known local refusal remains visible even
+when its report fails; Wallet truthfully says no outcome was recorded.
+
+**After this work — positive receipt precedence.** A same-bound valid hash
+received before the stored deadline is recorded even after a not-sent report,
+finished-view clearing or an unresolved report. Atomically change the canonical
+view to Completed, retain the earlier closed outcome as audit history, and
+replace the not-sent label/count with the positive result. There is still only
+one hash receipt and no second handoff/provider call. Identical hashes return
+the same acknowledgement; different hashes conflict. A no-hash report after
+a stored hash conflicts and cannot downgrade, hide or delete it. At/after the
+deadline, a new first hash/report is expired; retained identical acknowledgements
+may still be read under valid authority. This is a defensive ordering case,
+not a claim that a standards-compliant promise normally settles twice.
+
+**After this work — bounded retention.** Keep a settled no-hash record's
+minimal immutable receipt binding and closed outcome through the original
+result deadline, even if its finished view is cleared or normal 100-item
+resolved-history display rolls over. It is outside the active quota. Reserve
+space for the maximum permitted receipt update before handoff; the existing
+64 MiB wallet-store bound still applies. Refuse new admission before consumption
+rather than evict a live binding or a received result. A late positive hash is
+recording, not new admission: do not reject it merely because the active count
+has since reached 100. Existing completed/chain-outcome accounting may then
+put the count above the admission threshold; new admissions remain refused
+until normal resolution reduces it. No unbounded new history or expiry reset
+is allowed. Storage/lifecycle bounds remain independent of active quota.
+
+**After this work — authority limit and risk.** This proposal changes Runtime
+recording authority and quota/visibility, so it waits for Irzhy, not just a
+contract diff PASS. It creates no transaction, signing, linking, cancellation,
+internet or navigation authority; all money movement still needs its original
+one-time handoff and the wallet's own approval. A caller able to withhold a
+hash can already leave Runtime without positive evidence by silence. This
+report cannot erase positive evidence already stored, and later positive
+evidence wins. It does add a trusted-Home assertion about a call's outcome;
+there is no chain proof of absence. The review must judge that trust and
+misleading-wallet risk explicitly. Another frame/session or the requesting
+app gains no report authority from knowing an ID or self-consistent fields.
+
+**After this work — timing and quota.** An unanswered/no-recorded-answer record
+remains Approved through the fixed 12-hour result bound, including after its
+request expiry, and counts toward the principal's 100 active requests.
+A known unresolved answer stays active with result-unavailable wording.
+At the bound it becomes Expired/result unknown, resolved_at is that stored
+bound, and it leaves active quota. Pending/Approved/Completed/Rejected/Expired
+remain the status enum; result unknown is a derived view, not a new status.
+Under the default, 100 sequential recorded 4001/4100 refusals do not consume
+100 active slots; each terminal report releases its slot. Other existing
+store/lifecycle limits still apply. Sign-out, authority_changed and page loss
+end page delivery, not the stored record; a later session may inspect it
+read-only but receives no completion/report right. Approved no-answer and
+unresolved records have no Send/Retry/Reject/Dismiss; Dismiss stays WalletConnect-only.
+Wallet offers inspection of account, network, asking app, result deadline and
+Activity, plus guidance to check MetaMask/Brave itself. Selecting a retained
+record shows that read-only result state, rather than an unavailable pending
+card or an invitation to resend.
+
+#### NB1 fallback if the human review refuses no-hash reports
+
+**After this work — alternative, mutually exclusive with the default.** Add
+no call-settlement route/private operation and send no no-hash report. Keep
+hash-only result collection with the same proposed 12-hour stored bound.
+Home preserves its observed refusal/prompt-close result locally; the Runtime
+record has no such knowledge and remains Approved/active until hash or bound.
+Its view is unrecorded result, not "the wallet is still waiting" and not a
+claim that the person declined. Proposed Wallet wording for Sasha: "Home has
+not recorded a transaction result. It keeps this request open until {time}.
+Check your wallet before starting a payment." The connector may add: "The
+wallet did not approve this request. Home cannot save that answer." This is
+an explicit recording gap, not an unanswered-wallet claim. The expiry view
+says result not recorded/check wallet; a locally known refusal keeps its
+outcome instead of being relabelled unknown.
+
+**After this work — fallback cost.** There is no Dismiss for that Approved
+MetaMask record and no same-ID resend. Each unreported decline/closed prompt
+occupies one principal active slot until the bound. About 100 such requests
+within twelve hours fill the 100-active threshold and the next admission is
+refused until slots expire or a valid result resolves them. Hiding a card
+does not release a slot. This also describes old Home pages or failed delivery
+under the default when Runtime receives no settlement. The reviewer must
+accept this UX/quota cost if choosing the fallback; it is not silently fixed.
+
+**Today.** The connector approvals feed filters out terminal records. It does
+not yet provide the selected-result refresh below.
+
+**After this work — gated canonical result refresh.** Extend the existing
+GET /api/apps/:wallet_connector/wallet/approvals route with one optional
+wallet_request query selector, using N1's canonical request-ID validation.
+Keep its current response shape; approval_requests adds at most that one
+selected retained terminal/result record to the normal bounded feed, deduplicated
+by ID. Without the selector, retain the ordinary bounded feed. The Runtime
+checks the verified principal and stored connector before looking up a retained
+binding; an unavailable, other-principal or other-connector selector returns
+HTTP 404 with the closed N2 effect.error/v1 body and code request_unavailable. This read grants no report/completion
+right and bypasses neither session rules nor request authority. Other apps and
+connectors receive no added result data. Retained bindings outside the normal
+history are selected-only, not an unbounded new history feed.
+
+**After this work.** Runtime/navigation owns this scoped read and its tests;
+all connector consumers render it. After a settlement advisory or conflicting
+submission, the window refreshes with its selected request ID and renders
+canonical positive-hash evidence ahead of an earlier no-send result. Terminal
+records are history, not waiting rows. This is a connector read for a selected
+result, not a new Home deadline read or a changed handoff. The binding/precedence
+test covers cross-principal/connector refusal, history rollover, cardinality
+and the real consumer refresh.
+
+#### Wallet result list and count
+
+**After this work — gated with result retention.** Runtime/navigation owns
+wallet-activity.js pendingRequests, wallet-requests.js rendering and wallet.js
+renderApprovalsBadge. One canonical waiting projection drives both the drawn
+full waiting list and its count: principal/session-visible Pending requests,
+plus Approved external transactions awaiting an unrecorded/unresolved result
+under their connector's rule, including MetaMask and WalletConnect. Count
+each ID once. A selected-request detail may filter the view but keeps the
+full-list count labelled as total; it does not invent another waiting total.
+Recorded terminal not-sent, Completed and Expired records leave that waiting
+count/list together. Ordinary Activity/history is separate. Legacy fallback
+Approved records remain in both until their bound. GUI notification badge
+rules in N3 remain pending-notification rules, not this Wallet waiting count.
+
+**After this work.** n2_transaction_completion_after_frame_close remains
+Runtime/navigation's joined Home/provider test: Stop, request expiry, frame
+close/load/new nonce, authority_changed and same-authority renewal; the exact
+43,200-second boundary/equality, active quota/history, old records/Undo, read-only
+versus expired views, concurrent identical/conflicting hashes, lost acknowledgement,
+three bounded attempts, exhaustion and delivery end. All signing refusals remain
+unchanged. Add
+n2_no_hash_settlement_binding_and_precedence (same owner): all three outcomes,
+4001 native-close neutrality, no report for Stop/timer/no call, direct capsule/
+Wallet/Inbox/Bus refusal, wrong principal/session/proof/grant/launch/signer/hash,
+duplicate/conflicting reports, no downgrade after hash, late hash after cleared
+not-sent, full active quota, retained binding/byte bounds, failed saving and
+frame/authority end. Test 100 sequential refusals under default and fallback.
+n3_wallet_waiting_count_matches_list (Runtime/navigation) proves Pending,
+Approved MetaMask/WalletConnect, no-answer, unresolved, terminal/cleared results,
+selected detail and expiry. All these producer/transport/result tests are
+gated; use real modules, and mark late contradictory evidence as an adversarial
+protocol fixture rather than an invented extension recording.
+
+**After this work.** New fields and the optional private operation require
+mixed-version/installed update/Undo proof. Old Home's successful transaction
+handoff/hash completion must work unchanged against new Runtime. Old Home
+does not gain a no-hash reporter retroactively. Undo to 2.0.1 may drop new
+outcome/binding fields or prune by old expiry/history rules; it cannot promise
+the new retention or answer display. Re-update never revives terminal/pruned
+authority. WalletConnect's existing grace/Dismiss rules are unchanged; this
+no-hash proposal applies only to wallet-metamask transaction calls.
 
 **After this work.** [Issue scope](https://github.com/elastos/elastos-runtime/issues/575)
 is a message on each connector and a transaction on WalletConnect and MetaMask
@@ -634,7 +785,7 @@ open for this contract.
 | Status | Runtime/Inbox/Wallet/navigation lane tests | Run location |
 | --- | --- | --- |
 | After this work | `n3_external_inbox_review_action`, `n3_direct_external_approve_refused` | Runtime/navigation owns: server producer and both routes; real Inbox controls, old cards and managed/account-access regressions |
-| After this work | `n3_same_request_to_each_connector`, `n3_reject_dismiss_acknowledgement` | Runtime/navigation owns the joined journey; connector lanes supply their real window modules |
+| After this work | `n3_same_request_to_each_connector`, `n3_reject_dismiss_acknowledgement` | Runtime/navigation owns; provider/Inbox/Wallet acknowledgement cases may run pre-review, connector-module and N1 journey cases wait; the full name passes only after all subcases |
 | After this work | `n3_wallet_badge_counts_review_requests`, `n3_requester_provenance_without_site_invention` | Runtime/navigation owns: real GUI badge and cards; actor provenance, account-access exception, absent site and fixture rejection |
 
 **After this work.** Out of scope: general Inbox presenter/count redesign,
@@ -1110,7 +1261,9 @@ column below. The scripted-extension fixture and shared-view enabling commits
 come first; the four build lanes then take those dependencies. Irzhy's recorded
 N1/N2 review, or Anders's explicit waiver, opens the gated column. N1 reviews
 who may move Home's window; N2 reviews which page may drive an extension and
-with what authority, including paymentPending and the received-hash deadline.
+with what authority, including nullable paymentPending, result settlement,
+close/return focus and the received-hash deadline. NB1 is a proposal: choose
+the default or fallback explicitly before any of its gated implementation.
 Main records the reviewed contract tree and fixture commit in #575. A contract
 diff PASS is not this human approval.
 
@@ -1118,7 +1271,7 @@ diff PASS is not this human approval.
 | --- | --- | --- | --- |
 | After this work | Scripted-extension enabling | First commit creates scripts/fixtures/wallet-connector-v2-messages.json with valid/invalid draft packets, N1 rows, N4 wire and N7 summaries; recorded provider replays and primary-recording validation/import, including stalled MetaMask and transaction/unlock observations. Validate JSON/schema examples without enabling Home effects. | Real-module N1/N2 integration and any claim that draft conformance proves approved authority. Still-unrecorded Brave cases also wait for their recording. |
 | After this work | Shared-view enabling | Pure renderers/state reducers on supplied fixtures; isolated wallet/site text, fixed local copy, geometry and operable exits. Own the single joined wallet_windows_state_producers_and_controls and n7_connector_site_rendering matrices across all three real window views; run render-only cases now. | Live Home messages, hello/ready, N1 delivery and controls that invoke N2. Actual-producer branches of the joined state/control matrix wait; a render-only pass is partial evidence. |
-| After this work | Runtime/Inbox/Wallet/navigation; all Rust, capsules/inbox/browser/inbox.js, capsules/wallet/browser/** and capsules/home-gui/browser/** | N3 classification, existing direct-approval refusals, Reject/Dismiss acknowledgements and GUI badge; N4 shared cleaner, optional metadata/storage and existing-route cases; provider/list/card/count parts of session visibility; N5 current consent routes/kind/409 rules; N7 local projection/privacy/compatibility and Inbox/Wallet rendering. Run n3_direct_external_approve_refused, n3_reject_dismiss_acknowledgement, n3_wallet_badge_counts_review_requests, n3_requester_provenance_without_site_invention, pure N4 cleaner/storage tests, N5 existing-route tests and N7 tests on current scoped routes. | Every N1 selector/read/allow-list/GUI selection and source-app row; N3 Review in Wallet/open-stored-connector delivery and n3_same_request_to_each_connector; click/navigation cases of n3_external_inbox_review_action; N4 connector-selector/stale-adapter subcases of n4_pending_requests_current_session_only; n4_wire_fields_host_runtime and injected-link adapter cases; all new N2 routes/admission, shell-host hooks, payment safety routing and received-hash provider/storage/view change. Full joined n2_* Home-plus-Runtime rows and all n1_* tests wait. |
+| After this work | Runtime/Inbox/Wallet/navigation; all Rust, capsules/inbox/browser/inbox.js, capsules/wallet/browser/** and capsules/home-gui/browser/** | N3 classification, existing direct-approval refusals, Reject/Dismiss acknowledgements and GUI badge; N4 shared cleaner, optional metadata/storage and existing-route cases; provider/list/card/count parts of session visibility; N5 current consent routes/kind/409 rules; N7 local projection/privacy/compatibility and Inbox/Wallet rendering. Run n3_direct_external_approve_refused, only provider/Inbox/Wallet subcases of n3_reject_dismiss_acknowledgement, n3_wallet_badge_counts_review_requests, n3_requester_provenance_without_site_invention, pure N4 cleaner/storage tests, N5 existing-route tests and N7 tests on current scoped routes. | Every N1 selector/read/allow-list/GUI selection, source-app row and close-return/focus extension; connector subcases of n3_reject_dismiss_acknowledgement; N3 Review in Wallet/open-stored-connector delivery and n3_same_request_to_each_connector; click/navigation cases of n3_external_inbox_review_action; N4 connector-selector/stale-adapter subcases of n4_pending_requests_current_session_only; n4_wire_fields_host_runtime and injected-link adapter cases; all new N2 routes/admission, shell-host hooks, payment safety routing, hash/no-hash settlement authority/binding/retention, waiting list/count, selected terminal-result read and result provider/storage/view changes. Full joined n2_* Home-plus-Runtime rows and all n1_* tests wait. |
 | After this work | Home-extension build; capsules/home/browser/home-wallet-connector-host.js | Review recorded replay data and draft fixture structure; prepare the test inputs. No new N2 product implementation. | All new N2 host effects, state/generation/readiness/continuation/paymentPending/retry code and real-host tests, including its single accountable n2_v2_message_fixtures_shared matrix. Runtime/navigation supplies home-shell-host hooks after the gate; extension imports them. |
 | After this work | MetaMask/UniSat-window build; their browser files | Consume the enabling pure views and draft snapshots for N4/N7 rendering and extension_request_feedback_in_view; contribute real view cases to the shared owner. Fixed copy and view-only tests use fixtures without invoking Home. | Sending hello, enabling N1 rows, current-authority effect clients, N2 state/effect routing and live controls; end-to-end test branches that reach Home/Runtime adapters. |
 | After this work | WalletConnect-window build; capsules/wallet-walletconnect/browser/** and scripts/walletconnect/adapter.mjs | Existing-authority SDK error/local wait/intent handling, E5 stopped-pairing cleanup and walletconnect_stopped_pairing_ends_before_new_qr, N4 peer-name rendering on its existing link route, N5 local intent/cleanup cases, N7 rendering contribution and walletconnect_request_feedback_in_view. Test these through current scoped APIs or pure view fixtures. | WalletConnect hello/ready as well as all its new N1 rows (including Inbox return/activity/source-app) and packet/state routing. Home-return/navigation subcases of n5_retired_intent_never_resumes wait. It remains outside injected-provider N2 effects. |
@@ -1135,12 +1288,24 @@ tests do not authorize an installed partial journey.
 
 | Status | Shared file | First editor / permitted first change | Later editor / permitted later change |
 | --- | --- | --- | --- |
-| After this work | capsules/wallet-provider/src/approval.rs, storage.rs and models.rs | Runtime/navigation, pre-review: N4 metadata and session/list visibility only; keep current completion/expiry semantics | Same lane, after review: atomic external_result_deadline_at, receipt idempotency, active-quota/pruning and state transitions. Preserve earlier filters/metadata and their tests. |
+| After this work | capsules/wallet-provider/src/approval.rs, storage.rs and models.rs | Runtime/navigation, pre-review: N4 metadata and session/list visibility only; N3 refusal tests leave approve_and_sign_managed and its signing/expiry helpers unchanged. Keep current completion semantics | Same lane, after review: atomic external_result_deadline_at/result-authority binding, chosen NB1 operation, receipt precedence/idempotency, retained binding, active-quota/pruning and state transitions. Preserve earlier filters/metadata and their tests. |
 | After this work | capsules/inbox/browser/inbox.js | Runtime/navigation, pre-review: N3 classification presentation/refusal/acknowledgement, N5 kind/consent controls and N7 text | Same lane, after review: N1 Review in Wallet selector/result delivery and any selector-dependent Open control. Preserve consent and display changes. |
-| After this work | capsules/wallet/browser/wallet-requests.js and wallet-activity.js | Runtime/navigation, pre-review: N4/N7 text, filtered list/count, existing Reject/Dismiss acknowledgement | Same lane, after review: selected-request connector launch through N1, then gated MetaMask waiting/result-deadline view. Preserve earlier rendering and WalletConnect-only Dismiss predicate. |
+| After this work | capsules/wallet/browser/wallet-requests.js and wallet-activity.js | Runtime/navigation, pre-review: N4/N7 text, filtered list/count, existing Reject/Dismiss acknowledgement | Same lane, after review: selected-request connector launch through N1, then gated MetaMask result/settlement view and canonical waiting count/list. Wallet index heading/focus receiver also waits. Preserve earlier rendering and WalletConnect-only Dismiss predicate. |
 | After this work | capsules/wallet-walletconnect/browser/wallet-walletconnect.js | WalletConnect-window, pre-review: local waits/cleanup, existing consent intent, metadata/site/feedback views | Same lane, after review: hello/ready and N1 navigation/state delivery only, preserving those views and cleanup guards. Other lanes contribute tests/exports rather than editing this file. |
-| After this work | capsules/home/browser/home-shell-host.js and capsules/home-gui/browser/** | Runtime/navigation alone; pre-review GUI badge only, no new N1/N2 shell-host edits | Same lane after review owns N1 and the specified N2 hook exports, frame load/removal/expiry/renewal and state routing; Home-extension consumes the hooks and does not edit the file. |
+| After this work | capsules/home/browser/home-shell-host.js and capsules/home-gui/browser/** | Runtime/navigation alone; pre-review GUI badge only, no new N1/N2 shell-host edits | Same lane after review owns N1 close/return/focus and the specified N2 hook exports, frame load/removal/expiry/renewal and state routing; Home-extension consumes the hooks and does not edit the file. |
 | After this work | scripts/fixtures/wallet-connector-v2-messages.json | Scripted-extension enabling first commit: provisional protocol/examples before human review | Integrator coordinates accepted changes after review; every Home, Rust, shared-view and window consumer imports the same accepted bytes. No lane keeps a private copy or an older draft packet shape. |
+
+**After this work — fixture correction.** Replace round 5's seven-key
+transaction handoff example with the existing six-key envelope; the seventh
+deadline key is an invalid example. Preserve the real v2.0.1 Home source
+provenance for n2_old_home_transaction_handoff_compatible. New draft examples
+also cover nullable safety, the proposed settlement route and three outcomes,
+refused advisory/receipt semantics, selected-result read selectors, and the
+internal Accounts close-return delivery. No new handoff schema or deadline read is introduced. Scripted-
+extension owns the provisional file; integrator coordinates changes after
+review. If the reviewer chooses the fallback, remove valid no-hash producer/
+operation examples and assert their absence; do not ship both policies as a
+runtime/user setting. All imported packet consumers must be rerun.
 
 **After this work.** The first shared file intentionally encodes N1/N2 messages
 before the human review. It is a draft contract test input, not a security
@@ -1153,22 +1318,51 @@ supplies pure exports that later lanes import; the integrator coordinates any
 later shared export change. Each file keeps its named editor through both
 phases; the phase boundary is not permission for concurrent edits.
 
-**After this work.** Main records candidate, checks/skips, reviews, installed
-proof, remaining gate and next owner in the owning issue. Irzhy's contract and
-network/session reviews and Anders's final trial remain acceptance gates; a
-waiver belongs to Anders. Defaults for remaining human questions are:
+### For the human review of N1 and N2
 
-| Status | Question | Who answers / default |
-| --- | --- | --- |
-| After this work | May the check disclose more than firstAccount and required membership? | Irzhy with Anders; narrowed projection only |
-| After this work | Which trusted wrapper fact may produce extensions_unavailable? | Sasha supplies it, Irzhy reviews trust, Anders accepts scope; no producer in 2.0.2 until then |
-| After this work | May a guest link an extension wallet or request owner consent from a window? | Anders; existing proof rules, instruction to ask owner, no new request path |
-| After this work | Should Home explain a wallet's unverified-origin warning? | Irzhy advises, Anders decides; Home adds no warning or assurance |
-| After this work | May self-named WalletConnect peers receive brand marks? | Sasha and Irzhy, with Anders's decision; generic mark |
-| After this work | Is look-alike-name handling beyond the explicit table needed? | Sasha/Irzhy; isolated, clipped untrusted text, reserved labels blocked, no confusable-authentication claim |
+**After this work — proposals for review.** Main records the accepted contract
+tree, fixture commit, choices/waivers, checks/skips and next owner in #575.
+Irzhy's approval and Anders's scope decisions open only the gated work they
+cover. The default and fallback are alternatives for that review, not a runtime
+switch. Contract diff approval alone grants neither. Sasha owns final visible
+copy under the selected behavior.
 
-**After this work.** Those defaults settle lane implementation. They grant no
-new wallet methods, internet scope, page reload authority or website navigation.
+| Decision | Reviewer / proposed default until decided |
+| --- | --- |
+| Which page may drive which wallet, with what authority? | Irzhy; retain trusted Home plus matching carried proof-bound connector authority, exact closed effects, frame binding and one consumed handoff; no gated code before approval |
+| Which N1 moves are permitted, including source-app return? | Irzhy/Anders; only the documented rows; Runtime derives source app, excluding Home/shell/sender; selectors grant no authority |
+| Close-own-window and fixed Wallet return/focus? | Irzhy/Anders, Sasha on focus UX; retain existing self-close scope; gate the fixed Accounts return and non-action heading focus, preserving existing edits and provider-call occupancy |
+| Stored result-collection duration? | Irzhy; proposed 43,200 seconds from approved_at, immutable and independent of live token/session expiry; not a signing/send extension |
+| May Home report a settled no-hash result? | Irzhy; proposed NB1 default: 4001/4100 terminal not-sent, ambiguous settlement unresolved; Home-only dual-authorized Runtime mediation and stored connector-result binding. If refused, choose the explicit hash-only fallback and its 100-active quota cost |
+| May a no-send assertion outweigh positive hash evidence? | Irzhy; no. A same-bound late valid hash wins, no-hash cannot downgrade it, no second send; retain receipt bindings through the fixed bound under the store byte limit, admit new work only with reserved result space |
+| What about quota after late correction and old pages? | Irzhy; recorded no-send releases active quota, old/unreported declines follow fallback; late hash recording is not refused as new admission, and existing completed-result accounting may block later admissions |
+| How are outcomes/counts worded and counted? | Sasha with Irzhy; answered outcomes persist, no person-decline inference, no recorded answer differs from unresolved answer; one waiting list drives its labelled count and terminal not-sent leaves both |
+| How is unknown WalletConnect activity treated? | Anders/Irzhy; nullable safety: true only for known work, null for unobservable cross-window activity. Presence is not a payment; neutral uncertainty/Close/check recovery, no reload/alternative while unknown. No invented trusted status producer |
+| May a window read its selected retained result? | Irzhy; the gated scoped approvals selector returns at most one extra result for its verified principal/stored connector, preserves session rules and grants no mutation authority |
+| Can the handoff wire shape change for old Home? | Compatibility constraint for the review to verify: preserve current six keys, nested shapes and schemas; no new old-page negotiation/read; old Home completes a transaction against new Runtime |
+| May check disclose more accounts? | Irzhy/Anders; firstAccount for new link and required membership only |
+| Which wrapper fact produces extensions_unavailable? | Sasha supplies, Irzhy reviews, Anders accepts; no producer in this release until a trusted fact is agreed |
+| May a guest link or create an owner question? | Anders; existing proof rules and instruction to ask owner, no new guest request path |
+| Is a recorded origin a verified site, including remote Engine input? | Irzhy/Anders; local recorded Browser projection only, labelled reported by Browser; remote/unknown provenance absent, no authenticated-site claim |
+| Peer brand marks, name confusables or wallet unverified-origin warnings? | Sasha/Irzhy with Anders's decision; generic peer mark, the single bounded cleaner/isolated text, no extra authenticity claim or Home assurance |
+
+**After this work.** Ungated display defaults apply only to the pre-review
+column. Gated proposals become implementation instructions only after Main
+records the human choice. They grant no generic wallet methods, new website
+navigation, guest authority or connector reload capability.
+
+### Design wording and focus constraints
+
+**After this work.** Sasha/design owns the exact busy/Close window sentences;
+the contract owns behavior and focus mechanism. Replace the design sentence
+"You declined this transaction in MetaMask": 4001 also means native prompt
+close, so [N2's outcome rule](HOME_SHELL_HOST_CONTRACT.md#n2-waiting-settlement-and-memory)
+requires wallet-attributed non-approval without a claim about the person's
+choice. Apply it consistently in connector and Wallet views. Show unknown
+cross-window work as unknown, not an asserted payment. The focus journey must
+include the preserved active-Wallet-edit and failed-return cases specified by
+N1. This document does not edit or approve the design pictures.
+
 
 ## Red Lines
 
