@@ -56,6 +56,9 @@ fn browser_home_ready_no_open(url: &str) {
 }
 
 fn report_browser_home_ready(url: &str, no_open: bool) {
+    // This is the marker's only production reader. It suppresses the opener
+    // and these notices for restarts OR quiet initial starts; it must never
+    // select restart-only work. Keep this invariant with LaunchPlan::command.
     if std::env::var("ELASTOS_UPDATE_RESTART").as_deref() == Ok("1") {
         return;
     }

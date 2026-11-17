@@ -252,6 +252,9 @@ impl LaunchPlan {
             // Older releases can read the unchanged receipt schema and accept
             // home --browser with this controller-owned marker. The retained
             // controller consumes --no-open before previous-release restoration.
+            // Invariant: gateway_entry::report_browser_home_ready is its only
+            // production reader, solely to suppress the opener and notices.
+            // Quiet initial starts set it too; never use it for restart-only work.
             .env(
                 "ELASTOS_UPDATE_RESTART",
                 if restart || no_open { "1" } else { "0" },
@@ -808,14 +811,14 @@ pub async fn enter_browser_home(no_open: bool) -> Result<()> {
         crate::install_transaction::InstallationGuard::acquire,
     )?
     else {
-        eprintln!("Home will open. Free disk space before updating.");
+        eprintln!("{}", controller_space_notice(no_open));
         return Ok(());
     };
     let controller = directory.join("runtime");
     if !prepare_controller(&directory, &binary, &expected, |path, needed| {
         crate::install_transaction::require_controller_update_space(path, needed)
     })? {
-        eprintln!("Home will open. Free disk space before updating.");
+        eprintln!("{}", controller_space_notice(no_open));
         return Ok(());
     }
     let launch = LaunchPlan::capture(no_open)?;
@@ -833,13 +836,21 @@ pub async fn enter_browser_home(no_open: bool) -> Result<()> {
     let path = directory.join(RECEIPT);
     if let Err(error) = write_private(&path, &receipt) {
         if controller_space_error(&error) {
-            eprintln!("Home will open. Free disk space before updating.");
+            eprintln!("{}", controller_space_notice(no_open));
             return Ok(());
         }
         return Err(error);
     }
     drop(writer);
     Err(exec_controller(&controller, &path, &lease))
+}
+
+fn controller_space_notice(no_open: bool) -> &'static str {
+    if no_open {
+        "Home will start. Free disk space before updating."
+    } else {
+        "Home will open. Free disk space before updating."
+    }
 }
 
 /// An older updater or an interrupted Undo can leave this release's support

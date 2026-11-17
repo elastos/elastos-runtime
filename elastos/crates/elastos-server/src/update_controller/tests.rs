@@ -3444,6 +3444,7 @@ struct RealRestartOwner {
     candidate_process: Option<(u32, Option<String>)>,
     candidate_exit: Option<std::process::ExitStatus>,
     candidate_phase: Option<RestartPhase>,
+    interrupt_after_ready: Option<RestartPhase>,
 }
 
 impl crate::update::RestartOwner for RealRestartOwner {
@@ -3497,6 +3498,15 @@ impl crate::update::RestartOwner for RealRestartOwner {
                     let pid = child.pid();
                     (pid, process_start(pid).or(recorded.process_start))
                 });
+            }
+            let ready_phase = if candidate {
+                RestartPhase::CandidateReady
+            } else {
+                RestartPhase::PreviousReady
+            };
+            if result.is_ok() && self.interrupt_after_ready == Some(ready_phase) {
+                crate::update::finish_ready_restart(transaction)?;
+                panic!("fixture lost its controller at {ready_phase:?}");
             }
             result
         })
@@ -3674,6 +3684,7 @@ async fn restart_scenario_with_no_open(
         candidate_process: None,
         candidate_exit: None,
         candidate_phase: None,
+        interrupt_after_ready: None,
     };
     owner.controller.start_initial().await.unwrap();
     owner.controller.request = Some(request.clone());
@@ -4004,6 +4015,112 @@ async fn home_browser_no_open_survives_previous_release_and_cold_recovery() {
         recovered.stop_child().await.unwrap();
         assert_no_recovery_files(&fixture);
     }
+}
+
+async fn quiet_ready_recovery_fixture(previous: bool) -> PrivateFixture {
+    let RestartScenario {
+        fixture,
+        mut owner,
+        request,
+        fetch,
+        ..
+    } = restart_scenario_with_no_open(
+        |fixture| {
+            if previous {
+                crash_candidate(fixture)
+            } else {
+                format!(
+                    "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'elastos 0.7.1\\n'; exit 0; fi\n{}",
+                    fixture_home_exec("RESTART_FIXTURE_ROLE=candidate RESTART_FIXTURE_VERSION=0.7.1")
+                )
+            }
+        },
+        0,
+        Some(Duration::from_secs(3)),
+        true,
+    )
+    .await;
+    let ready_phase = if previous {
+        RestartPhase::PreviousReady
+    } else {
+        RestartPhase::CandidateReady
+    };
+    owner.interrupt_after_ready = Some(ready_phase);
+    let data = fixture.data.clone();
+    let stopped = tokio::spawn(async move {
+        let _ = crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut owner)
+            .await;
+    })
+    .await
+    .expect_err("fixture controller must stop before retiring its Ready journal");
+    assert!(stopped.is_panic());
+    let transaction = InstallTransaction::acquire(&fixture.data, &fixture.binary).unwrap();
+    let record = transaction.restart_record().unwrap();
+    assert_eq!(record.phase, ready_phase);
+    assert!(child::generation_gone(
+        record.pid.unwrap(),
+        record.process_start.as_deref().unwrap()
+    )
+    .unwrap());
+    assert_launch_observations(&fixture, true, 2);
+    fixture
+}
+
+#[tokio::test]
+async fn home_browser_no_open_ready_recovery_handoff_keeps_quiet_receipt() {
+    for previous in [false, true] {
+        let fixture = quiet_ready_recovery_fixture(previous).await;
+        let path = fixture.directory.join(RECEIPT);
+        let before = fs::read(&path).unwrap();
+        // This is the handoff resume_restart_recovery uses, including its lease.
+        let handoff = restart_recovery_handoff(&fixture.data, &fixture.binary)
+            .unwrap()
+            .unwrap();
+        assert_eq!(handoff.controller, fixture.controller());
+        assert_eq!(handoff.receipt, path);
+        assert!(acquire_lease(&fixture.directory).is_err());
+        let receipt: Receipt = read_private_json(&handoff.receipt).unwrap();
+        assert!(receipt.launch.args.contains(&BASE64.encode(b"--no-open")));
+        assert_eq!(receipt.launch.sha256().unwrap(), receipt.launch_sha256);
+        assert_eq!(fs::read(&path).unwrap(), before);
+        drop(handoff);
+        let mut recovered = retained_controller(&fixture);
+        recovered.reconcile_pending().await.unwrap();
+        assert!(recovered.child.is_none());
+        assert_no_recovery_files(&fixture);
+    }
+}
+
+#[tokio::test]
+async fn home_browser_no_open_ready_recovery_initial_start_keeps_choice() {
+    for previous in [false, true] {
+        let fixture = quiet_ready_recovery_fixture(previous).await;
+        let mut recovered = retained_controller(&fixture);
+        recovered.reconcile_pending().await.unwrap();
+        assert!(recovered.child.is_none());
+        assert_no_recovery_files(&fixture);
+        // Ready-phase reconciliation retires the journal, then takes start_initial.
+        recovered.complete_reconciliation().await.unwrap();
+        assert!(recovered.host_ready);
+        assert_eq!(
+            status(&fixture.data).unwrap().unwrap().phase,
+            if previous { "restored" } else { "updated" }
+        );
+        assert_launch_observations(&fixture, true, 3);
+        recovered.stop_child().await.unwrap();
+    }
+}
+
+#[test]
+fn home_browser_no_open_space_notice_preserves_normal_text() {
+    assert_eq!(
+        controller_space_notice(false),
+        "Home will open. Free disk space before updating."
+    );
+    assert_eq!(
+        controller_space_notice(true),
+        "Home will start. Free disk space before updating."
+    );
 }
 
 fn assert_launch_observations(fixture: &PrivateFixture, no_open: bool, starts: usize) {

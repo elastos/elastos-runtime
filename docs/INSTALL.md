@@ -77,8 +77,19 @@ elastos home --browser --no-open
 keeps this choice for its controller's update, previous-release restoration and
 interrupted-restart recovery. The starter still owns Home's foreground lifetime;
 keep it open while Home runs. This option registers no background service.
-A terminal Undo keeps its existing behavior: it stops Home. Use the same command
-when starting Home again after Undo.
+The option exists from the first release that contains this change. A Runtime
+older than that release refuses `--no-open` with a usage error before it can
+start Home or finish pending recovery. This affects any later start after an
+Undo to such a release, including reopening the app or restarting the computer
+after a System Undo. Before each start, the starter must run `elastos --version`
+and compare the reported version with the first release that contains this
+change. Use `elastos home --browser --no-open` for that release and later
+releases. For an older Runtime, use `elastos home --browser`. On a fresh start, expect
+Home in the app window and one extra default-browser tab.
+
+Recovery uses the choice in the stored receipt, so a quiet command can open one
+tab if the receipt came from a normal start or an older release; the reverse
+can also happen once. The next fresh start uses its own command-line choice.
 
 For machine-readable readiness, run `elastos home --json` in a separate process
 with the same Home data directory. Wait for `runtime.running` to be `true`,
