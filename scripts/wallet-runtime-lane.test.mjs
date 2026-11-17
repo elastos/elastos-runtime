@@ -151,6 +151,14 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   assert.equal(await linked.locator("strong").textContent(), name);
   assert.equal(await linked.locator("strong").evaluate(el => el.dir), "auto");
   assert.match(await linked.locator("img").getAttribute("src"), /icons\/icon-64.png$/);
+  await linked.getByRole("button", { name:"Remove", exact:true }).click();
+  const confirmation = r.frame.getByRole("heading", { name:"Remove Your wallet?", exact:true });
+  await confirmation.waitFor();
+  assert.equal(await r.frame.locator(".wallet-modal-header").getByText(name, { exact:true }).count(), 0,
+    "peer display text never becomes an account-operation instruction");
+  await r.capture("wallet-account-remove-confirm-light-window.png");
+  await r.frame.locator("#wallet-modal").getByRole("button", { name:"Cancel", exact:true }).click();
+  await confirmation.waitFor({ state:"hidden" });
   await r.capture("wallet-linked-light-window.png");
   assert.deepEqual(r.errors, []);
 });

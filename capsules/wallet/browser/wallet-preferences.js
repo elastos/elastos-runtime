@@ -8,6 +8,7 @@ import {
   storeValue,
   isPasskeyManagedAccount,
   walletDisplay,
+  accountDisplayName,
 } from "./wallet-format.js?v=wallet-20260720k";
 import {
   actionButton,
@@ -150,11 +151,11 @@ export function createWalletPreferences({
     row.className = "wallet-method wallet-method-account";
     const monogram = accountMonogram(account);
     const body = document.createElement("div");
-    const name = textNode("strong", account.name, "wallet-card-name");
+    const name = textNode("strong", accountDisplayName(account), "wallet-card-name");
     name.dir = "auto";
     body.append(name, textNode("span", `${account.network} · ${shortAddress(account.address)}`));
     const display = walletDisplay(account);
-    if (!isPasskeyManagedAccount(account) && display.name !== account.name) {
+    if (!isPasskeyManagedAccount(account) && display.name !== accountDisplayName(account)) {
       const walletName = textNode("span", display.name, "wallet-display-name");
       walletName.dir = "auto";
       body.append(walletName);

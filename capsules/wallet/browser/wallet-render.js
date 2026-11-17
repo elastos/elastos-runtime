@@ -4,6 +4,7 @@ import {
   formatAmount,
   shortAddress,
   walletDisplay,
+  accountDisplayName,
   isPasskeyManagedAccount,
 } from "./wallet-format.js?v=wallet-20260819f";
 
@@ -91,14 +92,14 @@ export function accountCard(account, displayedAccountId = "", { privacyMode, pri
   const addressText = account.network
     ? `${shortAddress(account.address)} (${account.network})`
     : shortAddress(account.address);
-  const accountLabel = textNode("strong", account.name, "wallet-card-name");
+  const accountLabel = textNode("strong", accountDisplayName(account), "wallet-card-name");
   accountLabel.dir = "auto";
   title.append(
     accountLabel,
     textNode("span", addressText, "wallet-card-address"),
   );
   const display = walletDisplay(account);
-  if (!isPasskeyManagedAccount(account) && display.name !== account.name) {
+  if (!isPasskeyManagedAccount(account) && display.name !== accountDisplayName(account)) {
     const name = textNode("span", display.name, "wallet-display-name");
     name.dir = "auto";
     title.append(name);

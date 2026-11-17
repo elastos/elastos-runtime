@@ -71,7 +71,7 @@ export function accountName(account, index) {
   if (label) {
     return label;
   }
-  if (!isPasskeyManagedAccount(account)) return walletDisplay(account).name;
+  if (!isPasskeyManagedAccount(account)) return "Your wallet";
   const connectorId = readText(account.connector_id);
   if (connectorId === "wallet-walletconnect") {
     return index === 0 ? "Connected Account" : "WalletConnect Account";
@@ -312,6 +312,13 @@ export function isPasskeyManagedAccount(account) {
 
 export function isManagedRequest(request) {
   return !request.connector_id && (request.proof_type === "managed_evm" || request.proof_type === "managed_btc_p2wpkh");
+}
+
+// A peer's display name belongs only in isolated identity labels. Account
+// operations use the person's account label or the generic account fallback.
+export function accountDisplayName(account) {
+  return isPasskeyManagedAccount(account) || cleanAccountLabel(account.label)
+    ? account.name : walletDisplay(account).name;
 }
 
 export function walletDisplay(account) {

@@ -13,6 +13,7 @@ import {
   METHOD_MONOGRAMS,
   accountDisplayBalance,
   accountName,
+  accountDisplayName,
   cardAddressDisplay,
   cardNetworkLabel,
   chainLabel,
@@ -754,7 +755,7 @@ function renderHeroAccount(accounts) {
     accountCardAddressNode.dataset.walletCopyAddress = account.address;
   }
   if (accountCardNameNode) {
-    accountCardNameNode.textContent = account.name;
+    accountCardNameNode.textContent = accountDisplayName(account);
     accountCardNameNode.dir = "auto";
   }
   if (accountCardNetworkNode) {
