@@ -74,12 +74,11 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
       } finally { await g.close(); }
       const h = await fixture(browser, kind, { saved: true });
       try {
-        await h.state('linked');
+        await h.state('ready');
+        assert.equal(await h.frame.locator('.connection-account').count(), 0, 'stored Home data does not prove current extension access');
+        await h.action('connect').click(); await h.state('linked');
         await h.action('copy-address').click();
-        // Existing effect registers the recipient, without any new ready packet.
-        // Re-link through the same v1 action to establish that registration.
-        await h.frame.evaluate(() => window.top.postMessage({ type: 'home:wallet-connector-effect', schema: 'elastos.home.wallet-connector-effect/v1', requestId: 'fixture:observe', connectorId: location.pathname.includes('metamask') ? 'wallet-metamask' : 'wallet-unisat', connectorToken: 'fixture-token', action: { kind: 'link' } }, 'http://extensions.test'));
-        await h.top.waitForFunction(() => testState.receipts.length === 1);
+        assert.equal(await h.top.evaluate(() => testState.receipts.length), 1);
         await h.top.evaluate(value => emitWallet('accountsChanged', [value]), kind === 'metamask' ? B : V);
         await h.state('account-unavailable');
         assert.equal(await h.action('connect').count(), 1);
@@ -160,7 +159,7 @@ test('live-window regression oracle rejects five deliberate breaks', { timeout: 
   const browser = await playwright.chromium.launch({ headless: true });
   try {
     const mutations = [
-      ['state mapped wrong', s => s.replace("let stage = 'ready'", "let stage = 'link-error'").replace("return accounts.length ? 'linked' : 'ready';", "return accounts.length ? 'linked' : 'link-error';"), async f => {
+      ['state mapped wrong', s => s.replace("let stage = 'ready'", "let stage = 'link-error'").replace("return accounts.length && linkObserved ? 'linked' : 'ready';", "return accounts.length && linkObserved ? 'linked' : 'link-error';"), async f => {
         // Snapshot the first controller paint before any asynchronous refresh.
         assert.equal(await f.frame.locator('main').getAttribute('data-state'), 'ready');
       }],

@@ -13,7 +13,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   const frameHomeToken = readLaunchToken();
   const homeOrigin = readQueryParam('home_origin');
   let hostEffectInFlight = false, hostRequestSequence = 0;
-  let picked = false;
+  let picked = false, linkObserved = false;
   let stage = 'ready', accounts = [], requests = [], selected = null;
   let uncertain = false;
   let operation = null, revision = 0, refreshing = null, disposed = false;
@@ -58,7 +58,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (requests.length > 1 && !picked) return 'request-list';
     if (selected) return selected.expiresAt !== null && selected.expiresAt <= now()
       ? 'request-expired' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
-    return accounts.length ? 'linked' : 'ready';
+    return accounts.length && linkObserved ? 'linked' : 'ready';
   }
 
   function now() { return Math.floor(Date.now() / 1000); }
@@ -143,6 +143,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       operation = null;
       notifyHomeSummaryChanged();
       if (action.kind === 'link') {
+        linkObserved = true;
         selected = null;
         if (refreshing) await refreshing;
         await refresh();
