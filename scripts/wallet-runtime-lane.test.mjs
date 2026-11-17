@@ -86,9 +86,10 @@ test("n3_wallet_badge_counts_review_requests: real GUI module", async t => {
 test("n7_browser_site_projection_all_surfaces: Inbox and Wallet consumers", async t => {
   for (const app of ["inbox", "wallet"]) await t.test(app, async t => {
     for (const intent of ["browser_personal_sign", "browser_typed_data_sign", "transaction_intent"]) {
-    const request = { ...requestFixture(), intent };
+    const title = intent === "transaction_intent" ? "Send transaction" : intent === "browser_typed_data_sign" ? "Sign typed data" : "Sign a message";
+    const request = { ...requestFixture(), intent, reason:title };
     const entry = { id: `wallet-approval-request:${request.request_id}`, source_app: request.capsule_id,
-      kind: "wallet_approval_request", title: intent === "transaction_intent" ? "Send transaction" : intent === "browser_typed_data_sign" ? "Sign typed data" : "Sign a message", body: "Sign in to the app.", severity: "attention", read: true,
+      kind: "wallet_approval_request", title, body: `${request.capsule_id} requests wallet approval for ${request.reason}.`, severity: "attention", read: true,
       requesting_origin: request.requesting_origin, action_ref: { action_id: `wallet-review-request:${request.request_id}` } };
     const r = await runtimeView(t, app, { approvals: [request], entries: [entry] });
     await r.frame.getByText("Site reported by Browser", { exact: true }).waitFor();
@@ -99,6 +100,11 @@ test("n7_browser_site_projection_all_surfaces: Inbox and Wallet consumers", asyn
     assert.equal(await origin.evaluate(el => getComputedStyle(el).unicodeBidi), "isolate");
     const state = intent === "transaction_intent" ? "transaction" : intent === "browser_typed_data_sign" ? "typed-data" : "request";
     await r.capture(`${app}-${state}-external-light-window.png`);
+    const canonical = "https://shop_sub.example:8443";
+    r.state.approvals[0].requesting_origin = canonical;
+    r.state.entries[0].requesting_origin = canonical;
+    await r.page.reload();
+    await r.frame.getByText(canonical, { exact:true }).waitFor();
     assert.deepEqual(r.errors, []);
     }
   });

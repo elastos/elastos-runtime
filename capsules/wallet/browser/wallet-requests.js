@@ -150,7 +150,7 @@ export function createWalletRequests({
 
   function requestSite(origin) {
     if (typeof origin !== "string" || origin.length > 512
-      || !/^https?:\/\/(?:[a-z0-9.-]+|\[[a-f0-9:]+\])(?::[0-9]{1,5})?$/.test(origin)) return null;
+      || !/^https?:\/\/[!-~]+$/.test(origin) || /[\/?#@\\]/.test(origin.slice(origin.indexOf("//") + 2))) return null;
     const row = document.createElement("div");
     row.className = "wallet-request-site";
     const value = textNode("span", origin, "wallet-request-origin");

@@ -743,7 +743,7 @@
     function walletRequestSite(entry) {
       const origin = entry.requesting_origin;
       if (entry.kind !== "wallet_approval_request" || typeof origin !== "string" || origin.length > 512
-        || !/^https?:\/\/(?:[a-z0-9.-]+|\[[a-f0-9:]+\])(?::[0-9]{1,5})?$/.test(origin)) return null;
+        || !/^https?:\/\/[!-~]+$/.test(origin) || /[\/?#@\\]/.test(origin.slice(origin.indexOf("//") + 2))) return null;
       const row = document.createElement("p");
       const label = document.createElement("small");
       label.textContent = "Site reported by Browser";

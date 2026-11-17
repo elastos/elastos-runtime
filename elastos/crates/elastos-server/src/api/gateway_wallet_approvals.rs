@@ -802,6 +802,11 @@ mod wallet_display_tests {
                 "https://xn--bcher-kva.example/",
                 Some("https://xn--bcher-kva.example"),
             ),
+            (
+                "https://shop_sub.example:8443",
+                "https://shop_sub.example:8443/private",
+                Some("https://shop_sub.example:8443"),
+            ),
             ("https://bücher.example", "https://bücher.example/", None),
             (
                 "https://user:pass@shop.example",
