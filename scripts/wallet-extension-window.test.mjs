@@ -61,7 +61,8 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         await f.state('request-done');
         assert.equal(await f.top.evaluate(() => testState.receipts.length), 1);
         await f.top.evaluate(() => emitWallet('accountsChanged', []));
-        await f.state('account-unavailable');
+        await f.state('request-done');
+        assert.equal(await f.frame.locator('.connection-request-account').count(), 0);
         assert.equal(await f.action('send-request').count(), 0);
       } finally { await f.close(); }
       const g = await fixture(browser, kind);

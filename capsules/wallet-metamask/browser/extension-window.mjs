@@ -23,7 +23,7 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   function accountView() {
     const candidates = accounts.filter(a => a?.connector_id === CONNECTOR_ID || !a?.connector_id)
-      .filter(a => typeof a.address === 'string' && a.address.length <= 128).slice(0, 8);
+      .filter(a => typeof a.address === 'string' && a.address.length <= 128);
     const address = selected?.address || accountEvent?.[0];
     const row = address ? candidates.find(a => sameAccount(a.address, address))
       : linkObserved && candidates.length === 1 ? candidates[0] : null;
