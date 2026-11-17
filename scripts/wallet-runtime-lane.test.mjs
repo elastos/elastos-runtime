@@ -55,6 +55,8 @@ test("n3_reject_dismiss_acknowledgement: Wallet cards", async t => {
     assert.match(await card.textContent(), dismissed ? /Request dismissed/ : /Request rejected/);
     assert.equal(await card.locator("button,.wallet-request-time").count(), 0);
     assert.equal(await card.getByText(request.reason, { exact: true }).count(), 1);
+    const box = await card.boundingBox();
+    assert(box.y >= 0 && box.y + box.height <= 682, "the whole answered card, including identity and outcome, remains in view");
     await r.capture(`wallet-request-${dismissed ? "dismissed" : "rejected"}-light-window.png`);
     assert.deepEqual(r.errors, []);
   });

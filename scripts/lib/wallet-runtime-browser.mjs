@@ -127,7 +127,8 @@ export async function runtimeView(t, app, state = {}) {
       const facts = await frame.locator("html").evaluate(() => ({ theme: window.elastosTheme.resolved(), width: innerWidth, height: innerHeight }));
       if (facts.theme !== theme) throw new Error("Screenshot theme does not match its filename");
       const file = name.replace("-light-", `-${theme}-`);
-      const bytes = await page.screenshot({ path: `${process.env.WALLET_RUNTIME_SCREENS}/${file}` });
+      await frame.locator("html").evaluate(() => document.fonts.ready);
+      const bytes = await page.screenshot({ animations: "disabled", path: `${process.env.WALLET_RUNTIME_SCREENS}/${file}` });
       receipt.screens[file] = { ...facts, sha256: createHash("sha256").update(bytes).digest("hex"), files,
         commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
         tree: execFileSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: root, encoding: "utf8" }).trim(),

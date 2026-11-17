@@ -48,8 +48,8 @@ export function createWalletRequests({
     }
     if (acknowledgement) {
       const result = requestsNode.querySelector?.('[role="status"]');
-      result?.focus();
-      result?.scrollIntoView({ block: "nearest" });
+      result?.focus({ preventScroll: true });
+      result?.closest?.(".wallet-request")?.scrollIntoView({ block: "nearest" });
     }
     if (focused) {
       window.setTimeout(() => focused.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
