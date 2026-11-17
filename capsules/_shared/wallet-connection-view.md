@@ -33,3 +33,17 @@ Every stage below is a presentation state, not proof that a real producer exists
 ### panel
 
 `empty`, `empty-alt`, `linked`, `linked-unisat`, `unconfigured`, `linked-metamask`, `linked-unnamed`, `empty-return`, `linked-return`, `linked-metamask-return`, `linked-unisat-return`.
+
+The factory returns a deeply frozen view. `renderConnection` accepts only a view
+created by this module instance through `connectionView` or `reduceConnection`.
+A window that transfers state between realms transfers the closed input and
+runs the factory in the rendering realm. It owns mounting and effects.
+
+`browser_typed_data_sign` summaries use “Sign typed data”. Known Browser and Notes
+IDs have local display labels; an unnamed app uses “Requesting app”. Request
+content has the visible label “From app:”. The exact ASCII origin wraps in full
+under “Site reported by Browser”. Only the identity area scrolls when it is long;
+feedback and actions keep their position. The contract-only `request-unavailable`
+stage in each connector retains request identity and provides return to the app.
+The window lanes must produce this stage from a stale request selection as well
+as every window-local stage listed above; the enabling lane supplies render data.

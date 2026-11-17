@@ -1,34 +1,44 @@
 import { viewText } from '../../capsules/_shared/wallet-connection-view.mjs';
 
-// Acceptance rules inspect rendered models, independently of stage implementation.
-export function ruleFailures(view) {
-  const failures = [];
-  const text = [viewText(view.status), viewText(view.notice), viewText(view.afterNote)].join(' ');
-  const actions = view.actions;
-  const ids = actions.map(a => a.id);
-  const endsSituation = ['close-window','start-over','open-request-app','open-wallet-activity','inbox','cancel','stop-waiting','connect','finish','send-message','restore-access'];
-  if (/busy|timeout|cancelled|disconnecting|preparing/.test(view.stage) && !ids.some(id => endsSituation.includes(id))) failures.push('exit');
-  if (view.paymentRisk && (/reload/i.test(text) || ids.includes('use-walletconnect'))) failures.push('payment');
-  if(['declined','refused'].includes(view.walletResult?.disposition)&&/result unknown|still waiting|has not answered/i.test(text))failures.push('known-result');
-  if ((view.window === 'unisat' || view.request || view.showAccount) && ids.includes('use-walletconnect')) failures.push('capability');
-  const primary = actions.find(a => a.primary);
-  if(primary?.id==='close-window'&&!/close (this )?window/i.test(text))failures.push('sentence');
-  if (ids.includes('check-access') && /has not answered/.test(text) && primary) {
-    if (primary.id === 'close-window' && !/close this window/i.test(text) || primary.id === 'start-over' && !/new QR code/i.test(text)) failures.push('sentence');
-  }
-  if (view.answered && (!view.request?.id || !view.request?.app || !view.status.length || view.wait !== null || ids.includes('send-request'))) failures.push('answered');
-  if (/home:|fixture-carried-token|wallet-connector-effect|invalid_request|0xdeadbeef|\bN[1-7]\b/.test(text)) failures.push('internal');
-  if ([...view.status,...view.notice,...view.afterNote].some(p => !['copy','wallet','app','site','home','network'].includes(p.kind))) failures.push('isolation');
+// Independent acceptance facts: contract W:986, H:755-775; design's receipt stages.
+// These facts use the supplied input, never product answered/paymentRisk flags.
+const receipts = new Set(['request-done','request-declined','request-access-error','request-wallet-error','request-expired','request-late-ignored','request-sent-wallet-removed','request-unavailable','request-next','transaction-done','transaction-declined','transaction-access-error','transaction-late-result']);
+const unresolved = new Set(['transaction-phone','transaction-extension','transaction-timeout','transaction-cancelled','transaction-reopened','transaction-wallet-error','transaction-wallet-removed','link-error','request-wallet-error']);
+const stopped = new Set(['preparing-qr','internet-clearing','disconnecting','extension-busy','link-busy','request-busy','transaction-busy','link-timeout','request-timeout','transaction-timeout','link-cancelled','request-cancelled','transaction-cancelled']);
+export function ruleFacts(row, shared, expected) {
+  const packet=id=>shared?.messages.find(r=>r.id===id)?.message;
+  const message=packet(row.provider),safety=packet(row.safety)?.snapshot?.paymentPending;
+  const request=row.summaryInput || shared?.n7PrivateSummaries.find(r=>r.id===(row.summary||row.summarySeed))?.summary;
+  const disposition=message?.settled?.result || ({declined:'declined',request_not_authorized:'refused'}[message?.outcome]);
+  const notSent=['declined','refused'].includes(disposition);
+  const payment=(row.window==='walletconnect'?row.local.paymentPending??false:safety??null)!==false || request?.intent==='transaction_intent'&&!notSent&&unresolved.has(row.stage);
+  const answered=receipts.has(row.stage)||message?.outcome==='request_unavailable'||request?.intent==='transaction_intent'&&!!message?.settled?.receipt;
+  const guardedAccount=!!row.local.account && (['site-access-ended','account-unavailable','link-wait','linked'].includes(row.stage)||expected?.inventory.some(text=>['Account to confirm','Required account'].includes(text)));
+  return {wait:!!expected?.wait&&!answered&&row.stage!=='request-list',payment,answered,notSent,capability:row.window!=='metamask'||!!request||guardedAccount,needsExit:stopped.has(row.stage),focus:answered?'outcome':expected?.focus};
+}
+export function ruleFailures(view, {row,shared,expected,facts}={}) {
+  const f=facts || (row ? ruleFacts(row,shared,expected) : {});
+  const failures=[];
+  const text=[viewText(view.status),viewText(view.notice),viewText(view.afterNote)].join(' ');
+  const ids=view.actions.map(a=>a.id);
+  const exits=['close-window','start-over','open-request-app','open-wallet-activity','inbox','cancel','stop-waiting','connect','finish','send-message','restore-access'];
+  if(f.needsExit&&!ids.some(id=>exits.includes(id)))failures.push('exit');
+  if(f.payment&&(/reload/i.test(text)||ids.includes('use-walletconnect')))failures.push('payment');
+  if(f.notSent&&/result unknown|still waiting|has not answered/i.test(text))failures.push('known-result');
+  if(f.capability&&ids.includes('use-walletconnect'))failures.push('capability');
+  if(view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(text))failures.push('sentence');
+  if(f.answered&&(!view.request?.id||!view.request?.app||!view.status.length||view.wait!==null||ids.includes('send-request')||view.focus!=='outcome'))failures.push('answered');
+  if(/home:|fixture-carried-token|wallet-connector-effect|invalid_request|0xdeadbeef|\bN[1-7]\b/.test(text))failures.push('internal');
+  if([...view.status,...view.notice,...view.afterNote].some(p=>!['copy','wallet','app','site','home','network'].includes(p.kind)))failures.push('isolation');
   return failures;
 }
-
-export function layoutFailures(view, observed) {
+export function layoutFailures(view, observed, facts={}) {
   const failures=[];
   if(observed.scrollWidth>observed.width+1)failures.push('horizontal');
-  for(const name of observed.names)if(name.dir!=='auto'||name.bidi!=='isolate'||name.overflow!=='hidden'||name.whiteSpace!=='nowrap')failures.push('isolation');
-  if(view.wait||view.answered||/busy|timeout|cancelled|preparing|disconnecting/.test(view.stage)){
+  for(const name of observed.names)if(name.dir!=='auto'||name.bidi!=='isolate'||(name.kind==='site'?(name.whiteSpace!=='normal'||name.textOverflow==='ellipsis'):(name.overflow!=='hidden'||name.whiteSpace!=='nowrap')))failures.push('isolation');
+  if(facts.wait||facts.answered||facts.needsExit){
     if(observed.feedback.some(f=>!f.visible))failures.push('feedback');
-    if(!view.answered&&!observed.controls.some(b=>b.visible&&['cancel','stop-waiting','close-window','start-over','open-wallet-activity','open-request-app','open-wallet','connect','finish','send-message','restore-access','inbox'].includes(b.id)))failures.push('exit');
+    if(!facts.answered&&!observed.controls.some(b=>b.visible&&['cancel','stop-waiting','close-window','start-over','open-wallet-activity','open-request-app','open-wallet','connect','finish','send-message','restore-access','inbox'].includes(b.id)))failures.push('exit');
   }
   return failures;
 }

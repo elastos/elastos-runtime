@@ -137,3 +137,32 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-compact .connection-dialog h2 { font-size:14px; margin:0; }
 .connection-compact .connection-dialog p { margin:2px 0; font-size:11px; }
 .connection-compact .connection-qr { width:56px; height:56px; }
+/* The identity scrolls in its own area; feedback and decisions keep their place. */
+.connection-window:not(.connection-panel) { height:100svh; min-height:0; }
+.connection-window:not(.connection-panel) > .connection-heading { flex-shrink:0; }
+.connection-window:not(.connection-panel) > .connection-content { min-height:0; display:flex; flex-direction:column; }
+.connection-request:not(.connection-request-choice) { display:flex; flex-direction:column; min-height:0; }
+.connection-request > :not(.connection-identity) { flex-shrink:0; }
+.connection-identity { min-height:0; overflow:auto; overscroll-behavior:contain; }
+.connection-context { font-size:var(--el-text-md); color:var(--el-muted); }
+.connection-context > .connection-app { margin-right:8px; }
+.connection-site-row { display:inline; }
+.connection-site-row .connection-site { display:inline; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+.connection-app-content { unicode-bidi:isolate; overflow-wrap:anywhere; }
+.connection-detail-label { font-weight:500; }
+.connection-request .connection-detail { margin:4px 0 8px; font-size:var(--el-text-md); }
+.connection-request-account { margin-top:8px; }
+.connection-possessive { white-space:nowrap; }
+.connection-actions .el-button { display:block; }
+.connection-request-choice { padding:12px; }
+.connection-request-choice + .connection-request-choice { margin-top:8px; }
+.connection-request-choice h2 { font-size:var(--el-text-md); }
+.connection-request-choice .connection-detail { margin:0; }
+.connection-option-text { flex:1; }
+.connection-option-text > span { display:block; }
+.connection-compact .connection-request { flex-shrink:0; }
+.connection-compact .connection-identity { max-height:none; overflow:visible; }
+.connection-compact .connection-content { overflow:auto; }
+.connection-identity { min-width:0; }
+.connection-request-choice > div { flex:1; }
+.connection-request-choice .connection-identity { overflow-wrap:anywhere; }

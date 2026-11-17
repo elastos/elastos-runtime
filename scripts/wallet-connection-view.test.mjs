@@ -8,7 +8,7 @@ import { contractCopy } from './lib/wallet-connection-picture-oracle.mjs';
 
 test('closed view covers the three connector tables and Wallet connect panel', () => {
   assert.deepEqual(Object.fromEntries(Object.entries(stageNames).map(([key, rows]) => [key, rows.length])),
-    { walletconnect: 62, metamask: 53, unisat: 41, panel: 11 });
+    { walletconnect: 63, metamask: 54, unisat: 42, panel: 11 });
   assert.throws(() => connectionView({ window: 'metamask', stage: 'raw-wallet-error' }));
 });
 
@@ -16,7 +16,7 @@ test('wallet_windows_state_producers_and_controls: render-only matrix', async t 
   for (const row of states) await t.test(row.designState, () => {
     const view = fixtureView(row);
     assert.equal(view.stage, row.stage);
-    assert.deepEqual(ruleFailures(view), [], row.designState);
+    assert.deepEqual(ruleFailures(view,{row,shared}), [], row.designState);
     const expected=pictures.find(p=>p.window===row.window&&p.stage===row.stage);
     const copy=contractCopy(expected,row,view);
     assert.deepEqual({status:viewText(view.status),notice:viewText(view.notice),afterNote:viewText(view.afterNote)},copy,`${row.designState}: design sentences with explicit contract overrides`);
@@ -41,7 +41,7 @@ test('rule oracles reject deliberate broken states, one mutation per rule', () =
     ['internal', {...busy,notice:[{kind:'copy',text:'home:wallet-connector-effect N2 invalid_request'}]}],
     ['isolation', {...busy,notice:[{kind:'html',text:'wallet'}]}],
   ];
-  for(const [rule,view]of mutations)assert(ruleFailures(view).includes(rule),`${rule} mutation escaped`);
+  for(const [rule,view]of mutations)assert(ruleFailures(view,{facts:{needsExit:true,payment:rule==='payment',notSent:rule==='known-result',capability:rule==='capability',answered:rule==='answered'}}).includes(rule),`${rule} mutation escaped`);
 });
 
 test('reducers consume the original shared objects and preserve safety uncertainty', () => {
@@ -71,7 +71,7 @@ test('n7_connector_site_rendering: shared summary matrix, exact origins and audi
 });
 
 test('changed shared summary values reach the view without a copied request shape', () => {
-  const fixture=structuredClone(shared), row=states.find(r=>r.designState==='metamask/request-waiting');
+  const fixture=structuredClone(shared), row={...states.find(r=>r.designState==='metamask/request-waiting'),summary:'site-wallet-metamask'};
   const summary=fixture.n7PrivateSummaries.find(r=>r.id===row.summary).summary;
   summary.reason='A different request';summary.requesting_origin='https://xn--bcher-kva.example';summary.address='0x1122334455667788990011223344556677889900';
   const v=fixtureView(row,{sharedFixture:fixture});
@@ -144,7 +144,7 @@ test('QR keyboard reducer cycles controls and produces only a cancel intent',()=
 });
 
 test('consumed summary IDs never expose Send, and remaining counts use supplied summaries',()=>{
-  const row=states.find(r=>r.designState==='metamask/request-waiting');
+  const row={...states.find(r=>r.designState==='metamask/request-waiting'),summary:'site-wallet-metamask'};
   const fixture=structuredClone(shared);
   fixture.n7PrivateSummaries.find(r=>r.id===row.summary).summary.status='approved';
   const v=fixtureView(row,{sharedFixture:fixture});

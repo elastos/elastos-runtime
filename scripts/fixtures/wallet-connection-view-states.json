@@ -301,7 +301,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -410,7 +411,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -450,7 +452,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "otherSummaryInputs": [
         {
@@ -459,7 +462,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-walletconnect"
+          "connector_id": "wallet-walletconnect",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -468,7 +472,8 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org again.",
           "connector_id": "wallet-walletconnect",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         }
       ]
     },
@@ -508,7 +513,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -547,7 +553,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -587,7 +594,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000599
+        "expires_at": 1800000599,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -626,7 +634,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -665,7 +674,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -704,7 +714,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -743,7 +754,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -784,7 +796,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -825,7 +838,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000300
+        "expires_at": 1800000300,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -866,7 +880,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000599
+        "expires_at": 1800000599,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -906,7 +921,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -946,7 +962,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -986,7 +1003,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1026,7 +1044,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1066,7 +1085,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1106,7 +1126,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1145,7 +1166,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1186,7 +1208,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provisionalInput": {
         "targetNetwork": "Ethereum"
@@ -1228,7 +1251,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1267,7 +1291,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1306,7 +1331,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1346,7 +1372,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1385,7 +1412,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1424,7 +1452,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1530,7 +1559,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "otherSummaryInputs": [
         {
@@ -1539,7 +1569,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-walletconnect"
+          "connector_id": "wallet-walletconnect",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -1548,7 +1579,8 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org again.",
           "connector_id": "wallet-walletconnect",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         }
       ]
     },
@@ -1588,7 +1620,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "otherSummaryInputs": [
         {
@@ -1598,7 +1631,8 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org.",
           "connector_id": "wallet-walletconnect",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         },
         {
           "request_id": "design-request-3",
@@ -1607,7 +1641,8 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org again.",
           "connector_id": "wallet-walletconnect",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         }
       ]
     },
@@ -1647,7 +1682,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "otherSummaryInputs": [
         {
@@ -1656,7 +1692,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-walletconnect"
+          "connector_id": "wallet-walletconnect",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -1665,7 +1702,8 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org again.",
           "connector_id": "wallet-walletconnect",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         }
       ]
     },
@@ -1706,7 +1744,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -1781,7 +1820,8 @@
         "connector_id": "wallet-walletconnect",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       }
     },
     {
@@ -2164,13 +2204,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2208,7 +2253,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "settled-refused-recorded",
       "safety": "state-payment-true",
@@ -2250,7 +2296,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "outcome-declined",
       "safety": "state-payment-false",
@@ -2292,7 +2339,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
@@ -2350,13 +2398,18 @@
         "waitSeconds": 599,
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2381,7 +2434,6 @@
         "waitSeconds": 599,
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "otherSummaryInputs": [
         {
           "request_id": "design-request-2",
@@ -2389,7 +2441,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-metamask"
+          "connector_id": "wallet-metamask",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -2398,15 +2451,22 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org again.",
           "connector_id": "wallet-metamask",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         }
       ],
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2430,13 +2490,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2468,14 +2533,15 @@
       "summaryInput": {
         "request_id": "design-request-1",
         "status": "pending",
-        "intent": "browser_personal_sign",
+        "intent": "browser_typed_data_sign",
         "capsule_id": "browser",
         "reason": "Confirm the details shown by Browser.",
         "account_id": "account:design",
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
@@ -2503,13 +2569,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2534,13 +2605,18 @@
         "waitSeconds": 598,
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "progress-waiting_signature",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2564,13 +2640,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "outcome-declined",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2594,13 +2675,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2624,13 +2710,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2654,13 +2745,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -2699,7 +2795,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
@@ -2742,7 +2839,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000599
+        "expires_at": 1800000599,
+        "requesting_app_name": "Browser"
       },
       "provider": "progress-waiting_transaction",
       "safety": "state-payment-true",
@@ -2784,7 +2882,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "settled-declined-recorded",
       "safety": "state-payment-false",
@@ -2826,7 +2925,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "state-io.metamask",
       "safety": "state-payment-true",
@@ -2868,7 +2968,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "state-io.metamask",
       "safety": "state-payment-true",
@@ -2910,7 +3011,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "settled-failed-recorded",
       "safety": "state-payment-true",
@@ -2952,7 +3054,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "transaction-recorded",
       "safety": "state-payment-false",
@@ -2980,13 +3083,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -3010,13 +3118,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -3081,7 +3194,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "otherSummaryInputs": [
         {
@@ -3090,7 +3204,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-metamask"
+          "connector_id": "wallet-metamask",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -3099,7 +3214,8 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org again.",
           "connector_id": "wallet-metamask",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         }
       ],
       "provider": "state-io.metamask",
@@ -3129,7 +3245,6 @@
         "waitSeconds": 599,
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "otherSummaryInputs": [
         {
           "request_id": "design-request-1",
@@ -3138,7 +3253,8 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org.",
           "connector_id": "wallet-metamask",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         },
         {
           "request_id": "design-request-3",
@@ -3147,15 +3263,22 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org again.",
           "connector_id": "wallet-metamask",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         }
       ],
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -3193,7 +3316,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "otherSummaryInputs": [
         {
@@ -3202,7 +3326,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-metamask"
+          "connector_id": "wallet-metamask",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -3211,7 +3336,8 @@
           "capsule_id": "browser",
           "reason": "Sign in to example.org again.",
           "connector_id": "wallet-metamask",
-          "requesting_origin": "https://example.org"
+          "requesting_origin": "https://example.org",
+          "requesting_app_name": "Browser"
         }
       ],
       "provider": "state-io.metamask",
@@ -3254,7 +3380,8 @@
         "connector_id": "wallet-metamask",
         "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
         "requesting_origin": "https://example.org",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
       },
       "provider": "transaction-recorded",
       "safety": "state-payment-false",
@@ -3295,13 +3422,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "state-io.metamask",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -3354,13 +3486,18 @@
         },
         "producer": "window-local: produced by the window lane"
       },
-      "summary": "site-wallet-metamask",
       "provider": "outcome-host_busy",
       "safety": "state-payment-false",
       "provisional": [
-        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
       ],
-      "alternative": "extension-walletconnect-wallet-metamask"
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
     },
     {
       "window": "metamask",
@@ -3775,7 +3912,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-unisat",
       "safety": "state-payment-false"
@@ -3816,7 +3954,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "otherSummaryInputs": [
         {
@@ -3825,7 +3964,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-unisat"
+          "connector_id": "wallet-unisat",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -3833,7 +3973,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes again.",
-          "connector_id": "wallet-unisat"
+          "connector_id": "wallet-unisat",
+          "requesting_app_name": "Notes"
         }
       ],
       "provider": "state-unisat",
@@ -3874,7 +4015,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-unisat",
       "safety": "state-payment-false"
@@ -3914,7 +4056,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-unisat",
       "safety": "state-payment-false"
@@ -3956,7 +4099,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000599
+        "expires_at": 1800000599,
+        "requesting_app_name": "Notes"
       },
       "provider": "progress-waiting_signature",
       "safety": "state-payment-false",
@@ -3998,7 +4142,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "outcome-declined",
       "safety": "state-payment-false",
@@ -4039,7 +4184,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-unisat",
       "safety": "state-payment-false"
@@ -4079,7 +4225,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-unisat",
       "safety": "state-payment-false"
@@ -4119,7 +4266,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-unisat",
       "safety": "state-payment-false"
@@ -4159,7 +4307,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-unisat",
       "safety": "state-payment-false"
@@ -4199,7 +4348,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-unisat",
       "safety": "state-payment-false"
@@ -4264,7 +4414,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "otherSummaryInputs": [
         {
@@ -4273,7 +4424,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-unisat"
+          "connector_id": "wallet-unisat",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -4281,7 +4433,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes again.",
-          "connector_id": "wallet-unisat"
+          "connector_id": "wallet-unisat",
+          "requesting_app_name": "Notes"
         }
       ],
       "provider": "state-unisat",
@@ -4323,7 +4476,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "otherSummaryInputs": [
         {
@@ -4332,7 +4486,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-unisat"
+          "connector_id": "wallet-unisat",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -4340,7 +4495,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes again.",
-          "connector_id": "wallet-unisat"
+          "connector_id": "wallet-unisat",
+          "requesting_app_name": "Notes"
         }
       ],
       "provider": "state-unisat",
@@ -4381,7 +4537,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "otherSummaryInputs": [
         {
@@ -4390,7 +4547,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes.",
-          "connector_id": "wallet-unisat"
+          "connector_id": "wallet-unisat",
+          "requesting_app_name": "Notes"
         },
         {
           "request_id": "design-request-3",
@@ -4398,7 +4556,8 @@
           "intent": "browser_personal_sign",
           "capsule_id": "notes",
           "reason": "Sign in to Notes again.",
-          "connector_id": "wallet-unisat"
+          "connector_id": "wallet-unisat",
+          "requesting_app_name": "Notes"
         }
       ],
       "provider": "state-unisat",
@@ -4439,7 +4598,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-network-bitcoin_testnet",
       "safety": "state-payment-false"
@@ -4479,7 +4639,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-network-fractal",
       "safety": "state-payment-false"
@@ -4519,7 +4680,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "state-network-unrecognized",
       "safety": "state-payment-false"
@@ -4590,7 +4752,8 @@
         "account_id": "account:design",
         "connector_id": "wallet-unisat",
         "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-        "expires_at": 1800000600
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
       },
       "provider": "outcome-host_busy",
       "safety": "state-payment-false",
@@ -4857,6 +5020,131 @@
       "provisional": [
         "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
       ]
+    }
+  ],
+  "contractStates": [
+    {
+      "window": "walletconnect",
+      "stage": "request-unavailable",
+      "designState": "walletconnect/request-unavailable",
+      "designLine": null,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600,
+        "requesting_app_name": "Browser"
+      },
+      "provider": "outcome-request_unavailable",
+      "contractLine": 986
+    },
+    {
+      "window": "metamask",
+      "stage": "request-unavailable",
+      "designState": "metamask/request-unavailable",
+      "designLine": null,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-request_unavailable",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: app-labelled request with a reason distinct from its intent title"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask",
+      "contractLine": 986,
+      "summarySeed": "site-wallet-metamask",
+      "provisionalSummary": {
+        "requesting_app_name": "Browser",
+        "reason": "Sign in to example.org."
+      }
+    },
+    {
+      "window": "unisat",
+      "stage": "request-unavailable",
+      "designState": "unisat/request-unavailable",
+      "designLine": null,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600,
+        "requesting_app_name": "Notes"
+      },
+      "provider": "outcome-request_unavailable",
+      "safety": "state-payment-false",
+      "contractLine": 986
     }
   ]
 }

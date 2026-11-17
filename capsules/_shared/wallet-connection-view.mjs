@@ -13,6 +13,9 @@
  */
 import { screens } from './wallet-connection-screens.mjs';
 
+const renderedViews = new WeakSet();
+const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
+const appLabels = {browser:'Browser', notes:'Notes'};
 const brands = { walletconnect: 'WalletConnect', metamask: 'MetaMask', unisat: 'UniSat', panel: 'Wallet' };
 const providerCopy = { 'io.metamask': 'MetaMask', 'com.brave.wallet': 'Brave Wallet', unisat: 'UniSat' };
 const providerKeys = ['providerId', 'alternatives', 'availability', 'firstAccount', 'requiredAccountAvailable', 'network', 'networkIssue', 'access', 'busy', 'paymentPending'];
@@ -46,10 +49,10 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
   if (!plain(summary) || !['wallet', 'inbox', connector].includes(audience) || !['wallet-metamask', 'wallet-unisat', 'wallet-walletconnect'].includes(connector) || summary.connector_id !== connector) return null;
   requireValue(bounded(summary.request_id, 256) && bounded(summary.capsule_id, 128), 'request identity');
   const transaction = summary.intent === 'transaction_intent';
-  const app = bounded(summary.requesting_app_name, 128) && summary.requesting_app_name ? summary.requesting_app_name : summary.capsule_id;
+  const app = bounded(summary.requesting_app_name, 128) && summary.requesting_app_name ? summary.requesting_app_name : appLabels[summary.capsule_id] || 'Requesting app';
   return {
     id: summary.request_id, app, actor: summary.capsule_id,
-    title: transaction ? 'Send transaction' : 'Sign a message', transaction,
+    title: transaction ? 'Send transaction' : summary.intent === 'browser_typed_data_sign' ? 'Sign typed data' : 'Sign a message', transaction,
     detail: bounded(summary.reason, 2048) ? summary.reason : '',
     site: summary.capsule_id === 'browser' ? displayOrigin(summary.requesting_origin) : null,
     address: bounded(summary.address, 128) ? summary.address : null,
@@ -61,7 +64,7 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
 function summaryProjection(value) {
   const keys=['id','app','actor','title','transaction','detail','site','address','status','expiresAt'];
   requireValue(plain(value)&&Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k)), 'closed reduced request');
-  requireValue(bounded(value.id,256)&&bounded(value.app,128)&&bounded(value.actor,128)&&bounded(value.detail,2048)&&typeof value.transaction==='boolean'&&['Sign a message','Send transaction'].includes(value.title), 'reduced request fields');
+  requireValue(bounded(value.id,256)&&bounded(value.app,128)&&bounded(value.actor,128)&&bounded(value.detail,2048)&&typeof value.transaction==='boolean'&&['Sign a message','Sign typed data','Send transaction'].includes(value.title), 'reduced request fields');
   requireValue(value.site===null||value.actor==='browser'&&displayOrigin(value.site)===value.site, 'reduced site');
   return clone(value);
 }
@@ -95,6 +98,13 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
     if(disposition==='failed')stage='transaction-wallet-error';
     if(disposition==='answered'&&settled.receipt==='recorded'&&stage!=='transaction-late-result')stage='transaction-done';
   }
+  if(request && !request.transaction && stage.startsWith('request-')) {
+    if(disposition==='declined')stage='request-declined';
+    if(disposition==='refused')stage=Object.hasOwn(screens[input.window],'request-access-error')?'request-access-error':'request-wallet-error';
+    if(disposition==='failed')stage='request-wallet-error';
+    if(disposition==='answered')stage='request-done';
+  }
+  if(request && message?.outcome==='request_unavailable')stage='request-unavailable';
   const deadlines = [request?.expiresAt, Number.isSafeInteger(message?.deadlineAt) ? Math.floor(message.deadlineAt / 1000) : null].filter(Number.isSafeInteger);
   requireValue(!deadlines.length||Number.isSafeInteger(nowSeconds),'explicit clock for contract deadline');
   const waitSeconds = deadlines.length && Number.isSafeInteger(nowSeconds) ? Math.max(0, Math.min(...deadlines) - nowSeconds) : input.waitSeconds;
@@ -130,7 +140,7 @@ export function connectionView(input) {
   requireValue(!provider?.providerId || (window === 'unisat' ? provider.providerId === 'unisat' : window === 'metamask' ? provider.providerId !== 'unisat' : true), 'provider belongs to window');
   requireValue(!provider || (window === 'unisat' ? provider.alternatives.length === 0 : provider.alternatives.every(p=>p!=='unisat')), 'provider alternatives belong to window');
   const summary = input.summary ? summaryProjection(input.summary) : null;
-  requireValue(!screen.request || summary && bounded(summary.id,256) && bounded(summary.app,128) && bounded(summary.detail,2048) && ['Sign a message','Send transaction'].includes(summary.title) && (summary.site===null || displayOrigin(summary.site)===summary.site), 'reduced selected request summary');
+  requireValue(!screen.request || summary && bounded(summary.id,256) && bounded(summary.app,128) && bounded(summary.detail,2048) && ['Sign a message','Sign typed data','Send transaction'].includes(summary.title) && (summary.site===null || displayOrigin(summary.site)===summary.site), 'reduced selected request summary');
   const account = accountDisplay(input.account, window, summary);
   const safety = window === 'walletconnect' ? input.localSafety ?? null : provider?.paymentPending ?? null;
   requireValue(boolOrNull(safety), 'payment safety');
@@ -151,11 +161,13 @@ export function connectionView(input) {
   const transactionRisk = safety !== false || (!knownNotSent && summary?.transaction && (screen.dispatched || /timeout|cancelled|reopened|error|removed/.test(stage)));
   if (transactionRisk) notice = notice.replace(/If .*?Reload control\./g, '').replace(/Enable .*?Open .*? from Wallet\./g, 'Close this window and check your wallet.');
   let actions = screen.requestPicker ? [] : [screen.primary, ...(screen.secondary || []), screen.requestAction, screen.reviewAction].filter(Boolean).map(action);
-  if (window !== 'metamask' || input.alternativeAllowed !== true || screen.request || screen.account || transactionRisk) actions = actions.filter(a => a.id !== 'use-walletconnect');
+  if (window !== 'metamask' || input.alternativeAllowed !== true || screen.request || screen.account || screen.selectedAccount || transactionRisk) actions = actions.filter(a => a.id !== 'use-walletconnect');
   if (!screen.qr && !screen.requestPicker && !actions.length && !screen.afterAnswer && window !== 'panel') actions.push({id:'close-window',label:parts('Close window'),primary:true,quiet:false});
   if(actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${screen.status||''} ${notice}`))notice=`Close this window. ${notice}`.trim();
+  if(safety===null && /busy|error|missing|unavailable/.test(stage) && !summary?.transaction)notice='Close this window. Home cannot tell whether another window has payment work. Check your wallet and Wallet activity before trying again.';
+  if(stage==='disconnecting')notice='Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed')notice+=' Home cannot save that answer.';
-  const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed)|transaction-(done|declined|access-error|late-result))$/.test(stage));
+  const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
   let outcome = parts(screen.status);
   if(summary?.transaction&&result.disposition==='answered'&&result.receipt!=='recorded'){
     outcome=parts('The wallet returned a transaction result. Home cannot save it.');
@@ -177,7 +189,7 @@ export function connectionView(input) {
   requireValue(input.otherRequests===undefined||Array.isArray(input.otherRequests)&&input.otherRequests.length<=100,'bounded request choices');
   const choices = screen.choices ? (input.otherRequests || []).slice(0, screen.choices === 3 ? 2 : 1).map(summaryProjection) : [];
   if (screen.requestPicker && summary) choices.unshift(summary);
-  return {
+  const view = {
     window, stage, title: brands[window], account, selectedAccount: !!screen.selectedAccount,
     showAccount: !!screen.account, requiredAccount: !!screen.requiredAccount, disconnect: screen.disconnect !== false && window === 'walletconnect',
     request: screen.request ? summary : null, choices, picker: !!screen.requestPicker,
@@ -187,6 +199,7 @@ export function connectionView(input) {
     qrData: screen.qr ? input.qrData : null, panel: window === 'panel',
     walletconnectAvailable: screen.walletconnectAvailable !== false || !!account,
   };
+  freeze(view); renderedViews.add(view); return view;
 }
 
 export const viewText = parts => parts.map(p => p.text).join('');
@@ -203,12 +216,17 @@ export function connectionKey(view, {key, shiftKey = false, action} = {}) {
 
 /** Creates detached DOM only. The owning window installs its own event handler. */
 export function renderConnection(document, view) {
+  requireValue(renderedViews.has(view), 'renderConnection requires a connectionView result from this module');
   const el = (tag, text, className) => {
     const element = document.createElement(tag);
     if (className) element.className = className;
-    if (Array.isArray(text)) for (const part of text) {
+    if (Array.isArray(text)) for (let index=0;index<text.length;index++) {
+      const part=text[index];
       if (part.kind === 'copy') element.append(document.createTextNode(part.text));
-      else { const span = el('bdi', part.text, `connection-isolated connection-${part.kind}`); span.dir = 'auto'; element.append(span); }
+      else { const span = el('bdi', part.text, `connection-isolated connection-${part.kind}`); span.dir = 'auto';
+        const suffix=text[index+1]?.kind==='copy' && text[index+1].text.startsWith("'s") ? "'s" : null;
+        if(suffix){const group=el('span',null,'connection-possessive');group.append(span,document.createTextNode(suffix));element.append(group);const rest=text[++index].text.slice(2);if(rest)element.append(document.createTextNode(rest));}
+        else element.append(span); }
     }
     else if (text) element.textContent = text;
     return element;
@@ -235,26 +253,28 @@ export function renderConnection(document, view) {
     const card = el('article',null,`connection-card ${selected ? 'connection-selected' : 'connection-account'}`);
     const h = el('div',null,'connection-account-header');
     if (!selected) h.append(icon(account.mark));
-    const joinedHeading = !view.panel && !selected && account.name === view.title && view.showAccount && !view.request;
+    const joinedHeading = !view.panel && !selected && view.window !== 'walletconnect' && account.name === view.title && view.showAccount && !view.request;
     if(joinedHeading){h.replaceChildren(heading);if(!view.compact&&view.status.length)h.append(status);}
-    else h.append(el('h2',selected ? 'Account to confirm' : isolated(account.name,'wallet'),'connection-account-name'));
+    else h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(account.name,'wallet'),'connection-account-name'));
     if(view.panel)h.append(button({id:'open-wallet',label:isolated('Manage','copy'),quiet:true}));
     card.append(h);
-    if(account.connection)card.append(el('p','via WalletConnect','connection-note connection-via'));
+    if(account.connection && (view.panel||view.window!=='walletconnect'))card.append(el('p','via WalletConnect','connection-note connection-via'));
     for (const row of account.accounts) {
-      const r=el('div',null,'connection-address-row');r.append(el('code',short(row.address),'connection-address'));
+      const r=el('div',null,'connection-address-row');r.append(el('code',isolated(short(row.address),'address'),'connection-address'));
       if(!selected){const copy=button({id:'copy-address',label:isolated('Copy','copy'),key:`copy-address:${row.address}`});copy.setAttribute('aria-label',`Copy address ${short(row.address)}`);r.append(copy);}
-      card.append(r,el('p',row.networks.join(' · '),'connection-network'));
+      card.append(r,el('p',row.networks.flatMap((network,i)=>[...(i?[{kind:'copy',text:' · '}]:[]),...isolated(network,'network')]),'connection-network'));
     }
     if(view.disconnect&&!selected){const foot=el('div',null,'connection-account-foot');foot.append(button({id:'disconnect',label:isolated('Disconnect','copy'),quiet:true}));card.append(foot);}
     return card;
   }
   function requestIdentity(request, card) {
     card.dataset.requestId = request.id;
-    card.append(el('p',isolated(request.app,'app'),'connection-note connection-app'));
-    if(request.site){const site=el('div',null,'connection-site-row');site.append(el('span','Site reported by Browser'),el('bdi',request.site,'connection-isolated connection-site'));site.lastChild.dir='auto';site.lastChild.title=request.site;site.lastChild.tabIndex=0;card.append(site);}
-    const detail=el('p',request.detail,'connection-detail');detail.setAttribute('aria-label','Content from app');
-    card.append(el('h2',request.title),detail);
+    const identity=el('div',null,'connection-identity');
+    const context=el('div',null,'connection-context');context.append(el('bdi',request.app,'connection-isolated connection-app'));
+    context.firstChild.dir='auto';
+    if(request.site){const site=el('div',null,'connection-site-row');site.append(el('span','Site reported by Browser: '),el('bdi',request.site,'connection-isolated connection-site'));site.lastChild.dir='auto';site.lastChild.tabIndex=0;context.append(site);}
+    const detail=el('p',null,'connection-detail');detail.append(el('span','From app: ','connection-detail-label'),el('bdi',request.detail,'connection-app-content'));detail.lastChild.dir='auto';
+    identity.append(context,el('h2',request.title),detail);card.append(identity);return identity;
   }
   if(view.panel){
     const accounts=el('section',null,'connection-accounts');const h=el('h2','Accounts');h.dataset.focus='accounts';h.tabIndex=-1;accounts.append(h);
@@ -262,15 +282,15 @@ export function renderConnection(document, view) {
     const row=el('div',null,'connection-actions');row.append(button({id:'create',label:isolated('Create account','copy')}),button({id:'import',label:isolated('Import account','copy'),quiet:true}));accounts.append(row);content.append(accounts);
     const options=el('section',null,'connection-wallet-options');options.append(el('h2',view.account?'Connect another wallet':'Connect a wallet'));
     const list=el('div',null,'connection-card connection-options-list');
-    for(const kind of ['walletconnect','metamask','unisat']){if(kind==='walletconnect'&&!view.walletconnectAvailable)continue;const b=button({id:`use-${kind}`,label:[]});b.className='connection-option';b.append(icon(kind),el('span',brands[kind]),document.createTextNode(' '),el('span',kind==='walletconnect'?(view.account?.connection?'Add account':'Connect a wallet app with a QR code'):kind==='unisat'?'Bitcoin extension':'Browser extension','connection-note'),document.createTextNode(' '),el('span','›'));list.append(b);}options.append(list);content.append(options);
+    for(const kind of ['walletconnect','metamask','unisat']){if(kind==='walletconnect'&&!view.walletconnectAvailable)continue;const b=button({id:`use-${kind}`,label:[]});b.className='connection-option';const label=el('span',null,'connection-option-text');label.append(el('span',brands[kind],'connection-option-label'),document.createTextNode(' '),el('span',kind==='walletconnect'?(view.account?.connection?'Add account':'Connect a wallet app with a QR code'):kind==='unisat'?'Bitcoin extension':'Browser extension','connection-note'));b.append(icon(kind),label,document.createTextNode(' '),el('span','›'));list.append(b);}options.append(list);content.append(options);
   }else{
     if(view.showAccount&&view.account&&!view.request)content.append(accountCard(view.account));
     if(view.selectedAccount&&view.account&&!view.request)content.append(accountCard(view.account,true));
     let destination=content;
-    if(view.request&&!view.picker){const card=el('article',null,'connection-card connection-request');requestIdentity(view.request,card);
-      if(view.account){const a=el('div',null,'connection-request-account');if(view.window==='walletconnect')a.append(icon('wallet'));const parts=[];if(view.requiredAccount)parts.push({kind:'copy',text:'Required account · '});if(view.account.name!==view.title)parts.push({kind:'wallet',text:view.account.name},{kind:'copy',text:' · '});parts.push({kind:'copy',text:`${short(view.account.accounts[0].address)} · ${view.account.accounts[0].networks.join(' · ')}`});a.append(el('span',parts));card.append(a);}content.append(card);destination=card;}
+    if(view.request&&!view.picker){const card=el('article',null,'connection-card connection-request');const identity=requestIdentity(view.request,card);
+      if(view.account){const a=el('div',null,'connection-request-account');if(view.window==='walletconnect')a.append(icon('wallet'));const parts=[];if(view.requiredAccount)parts.push({kind:'copy',text:'Required account · '});if(view.account.name!==view.title)parts.push({kind:'wallet',text:view.account.name},{kind:'copy',text:' · '});parts.push({kind:'address',text:short(view.account.accounts[0].address)},{kind:'copy',text:' · '},...view.account.accounts[0].networks.flatMap((network,i)=>[...(i?[{kind:'copy',text:' · '}]:[]),{kind:'network',text:network}]));a.append(el('span',parts));identity.append(a);}content.append(card);destination=card;}
     if(view.queueCount){const queue=el('div',null,'connection-queue');queue.append(el('h2',`${view.queueCount} requests waiting`));if(!view.picker)queue.append(button({id:'view-requests',label:isolated('View requests','copy'),quiet:true}));content.prepend(queue);}
-    if(!view.compact){if(view.status.length&&!status.parentNode)(view.request?destination:root).append(status);if(wait)destination.append(wait);if(notice)destination.append(notice);destination.append(controls);}
+    if(!view.compact){if(view.status.length&&!status.parentNode)(view.request?destination:root).prepend(status);if(wait)destination.append(wait);if(notice)destination.append(notice);destination.append(controls);}
     else{if(notice)destination.append(notice);if(view.status.length)feedback.append(status);if(wait)feedback.append(wait);feedback.append(controls);}
     for(const request of view.choices){const card=el('article',null,'connection-card connection-request connection-request-choice');const text=el('div');requestIdentity(request,text);card.append(text,button({id:'select-request',label:isolated('View request','copy'),quiet:true,key:`select-request:${request.id}`}));content.append(card);}
     if(view.afterNote.length)content.append(el('p',view.afterNote,'connection-note'));

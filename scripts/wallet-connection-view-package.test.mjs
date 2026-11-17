@@ -28,7 +28,7 @@ test('real release staging and archives carry identical inactive view bytes in a
       const controller=readFileSync(`capsules/${name}/browser/${name}.js`,'utf8');
       assert(!entry.includes('wallet-connection-view')&&!controller.includes('wallet-connection-view'),'live window stays on its existing controller');
     }
-    const receipt=process.env.WALLET_VIEW_PACKAGE_RECEIPT||'/tmp/codex-runs/wallet-sharedview.package.json';
+    const receipt=process.env.WALLET_VIEW_PACKAGE_RECEIPT||join(scratch,'receipt.json');
     mkdirSync(dirname(receipt),{recursive:true});
     writeFileSync(receipt,JSON.stringify(hashes,null,2)+'\n');
   }finally{rmSync(scratch,{recursive:true,force:true});}

@@ -311,7 +311,7 @@ export const screens = {
     },
     "request-expired": {
       "status": "This request expired.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -339,7 +339,7 @@ export const screens = {
     },
     "request-declined": {
       "status": "{{wallet}} did not approve this message.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -419,7 +419,7 @@ export const screens = {
     },
     "transaction-deadline": {
       "status": "There is too little time to send this transaction.",
-      "notice": "Start it again on {{site}} in {{app}}.",
+      "notice": "Start it again in {{app}}.",
       "account": true,
       "request": true,
       "wait": true,
@@ -448,7 +448,7 @@ export const screens = {
     },
     "transaction-declined": {
       "status": "{{wallet}} did not approve this transaction.",
-      "notice": "Dismiss in Wallet clears this request. To try again, return to {{site}} in {{app}}.",
+      "notice": "Dismiss in Wallet clears this request. To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -532,7 +532,7 @@ export const screens = {
     },
     "request-wallet-error": {
       "status": "{{wallet}} could not sign this message.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -588,7 +588,7 @@ export const screens = {
     },
     "request-sent-wallet-removed": {
       "status": "{{wallet}} ended the connection after this message was sent.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -816,6 +816,17 @@ export const screens = {
         "quiet": false
       },
       "focus": "connect"
+    },
+    "request-unavailable": {
+      "status": "This request is unavailable. Return to the app and ask for a new request.",
+      "request": true,
+      "account": true,
+      "focusOutcome": true,
+      "primary": {
+        "id": "open-request-app",
+        "label": "Open {{app}}",
+        "quiet": false
+      }
     }
   },
   "metamask": {
@@ -1054,7 +1065,7 @@ export const screens = {
     },
     "request-access-error": {
       "status": "{{wallet}} did not allow this message.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1193,7 +1204,7 @@ export const screens = {
     },
     "request-expired": {
       "status": "This request expired.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1221,7 +1232,7 @@ export const screens = {
     },
     "request-declined": {
       "status": "{{wallet}} did not approve this message.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1316,7 +1327,7 @@ export const screens = {
     },
     "transaction-declined": {
       "status": "{{wallet}} did not approve this transaction.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1380,7 +1391,7 @@ export const screens = {
     },
     "request-wallet-error": {
       "status": "{{wallet}} could not sign this message.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1393,7 +1404,7 @@ export const screens = {
     },
     "request-late-ignored": {
       "status": "The signed message arrived after waiting ended.",
-      "notice": "To try again, return to {{site}} in {{app}}.",
+      "notice": "To try again, return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1602,6 +1613,17 @@ export const screens = {
         "quiet": false
       },
       "focus": "connect"
+    },
+    "request-unavailable": {
+      "status": "This request is unavailable. Return to the app and ask for a new request.",
+      "request": true,
+      "account": true,
+      "focusOutcome": true,
+      "primary": {
+        "id": "open-request-app",
+        "label": "Open {{app}}",
+        "quiet": false
+      }
     }
   },
   "unisat": {
@@ -2192,6 +2214,17 @@ export const screens = {
         "quiet": false
       },
       "focus": "connect"
+    },
+    "request-unavailable": {
+      "status": "This request is unavailable. Return to the app and ask for a new request.",
+      "request": true,
+      "account": true,
+      "focusOutcome": true,
+      "primary": {
+        "id": "open-request-app",
+        "label": "Open {{app}}",
+        "quiet": false
+      }
     }
   },
   "panel": {

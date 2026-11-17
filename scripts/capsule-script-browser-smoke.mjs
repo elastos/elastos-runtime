@@ -148,3 +148,7 @@ try {
   await new Promise(resolve => foreign.close(resolve));
 }
 assert.deepEqual(failures, [], failures.join('\n'));
+
+// The Rust content-sandbox harness installs and requires Chromium and WebKit.
+await import('./wallet-connection-view-layout.test.mjs');
+await import('./wallet-connection-view-origin.test.mjs');

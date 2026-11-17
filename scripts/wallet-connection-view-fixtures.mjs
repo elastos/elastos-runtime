@@ -2,18 +2,23 @@ import { readFileSync } from 'node:fs';
 import { reduceConnection } from '../capsules/_shared/wallet-connection-view.mjs';
 
 export const shared = JSON.parse(readFileSync(new URL('./fixtures/wallet-connector-v2-messages.json', import.meta.url)));
-export const states = JSON.parse(readFileSync(new URL('./fixtures/wallet-connection-view-states.json', import.meta.url))).states;
+const localFixture=JSON.parse(readFileSync(new URL('./fixtures/wallet-connection-view-states.json', import.meta.url)));
+export const states=localFixture.states;
+export const contractStates=localFixture.contractStates;
 const pictureFixture = JSON.parse(readFileSync(new URL('./fixtures/wallet-connection-view-pictures.json', import.meta.url)));
 export const pictures = pictureFixture.states;
 export const pictureViewports = pictureFixture.viewports;
 const png = `data:image/png;base64,${readFileSync(new URL('./fixtures/wallet-connection-view-qr.png', import.meta.url)).toString('base64')}`;
 
-export function fixtureView(row, { compact = false, sharedFixture = shared, previousFocus } = {}) {
+export function fixtureArguments(row, { compact = false, sharedFixture = shared, previousFocus } = {}) {
   const packet = id => id ? sharedFixture.messages.find(r => r.id === id && r.valid)?.message : undefined;
-  const summary = row.summary ? sharedFixture.n7PrivateSummaries.find(r => r.id === row.summary)?.summary : row.summaryInput;
+  const canonical = sharedFixture.n7PrivateSummaries.find(r => r.id === (row.summary||row.summarySeed))?.summary;
+  const summary = row.summary ? canonical : row.summarySeed ? {...canonical,...row.provisionalSummary} : row.summaryInput;
   const input = { window: row.window, stage: row.stage, account: row.local.account,
     waitSeconds: row.local.waitSeconds, localSafety: row.local.paymentPending ?? false,
     homeOrigin: 'http://localhost:63198', compact, previousFocus, targetNetwork: row.provisionalInput?.targetNetwork, ...(row.local.qr ? { qrData: png } : {}) };
-  return reduceConnection(input, { message: packet(row.provider), safetyMessage: packet(row.safety),
-    summary, otherSummaries: row.otherSummaryInputs || [], alternative: row.alternative ? sharedFixture.n1Queries.find(r=>r.id===row.alternative) : undefined, nowSeconds: 1800000001 });
+  return [input, { message: packet(row.provider), safetyMessage: packet(row.safety),
+    summary, otherSummaries: row.otherSummaryInputs || [], alternative: row.alternative ? sharedFixture.n1Queries.find(r=>r.id===row.alternative) : undefined, nowSeconds: 1800000001 }];
 }
+
+export function fixtureView(row, options) { return reduceConnection(...fixtureArguments(row,options)); }
