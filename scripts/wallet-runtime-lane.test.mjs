@@ -270,7 +270,7 @@ test("n3_external_inbox_review_action: presentation before navigation review", a
 });
 
 test("n3_requester_provenance_without_site_invention: Wallet card", async t => {
-  const request = { ...requestFixture(), capsule_id: "notes", requesting_origin: undefined, reason: "Home asks for https://forged.example" };
+  const request = { ...requestFixture(), capsule_id: "notes", requesting_app_name:"Notes", requesting_origin: undefined, reason: "Home asks for https://forged.example" };
   const r = await runtimeView(t, "wallet", { approvals: [request] });
   const card = r.frame.locator(".wallet-request");
   await card.waitFor();

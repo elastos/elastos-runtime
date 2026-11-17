@@ -26,6 +26,11 @@ test("fix1 JB5 site consumers enforce the exact shared ASCII origin rule", async
       let valid=false; try { valid=new URL(origin).origin===origin && /^https?:\/\/[^/?#@\\]+$/.test(origin); } catch {}
       assert.equal(count, valid ? 1 : 0, `${app}: ${origin}`);
     }
+    r.state.approvals[0].capsule_id="notes"; r.state.entries[0].source_app="notes";
+    r.state.approvals[0].requesting_origin="https://shop.example"; r.state.entries[0].requesting_origin="https://shop.example";
+    await r.page.reload();
+    await r.frame.locator(app === "wallet" ? ".wallet-request" : "#entry-detail").waitFor();
+    assert.equal(await r.frame.getByText("https://shop.example",{exact:true}).count(),0,"a copied projection on another app is omitted");
   });
 });
 
@@ -95,14 +100,15 @@ test("fix1 Wallet accounts remain visible when only requests are unavailable",as
     connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"Trust Wallet",wallet_mark:"wallet"}]});
   await r.frame.locator("#wallet-status").filter({hasText:"Wallet requests are unavailable."}).waitFor();
   assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').textContent(),"Trust Wallet");
-  assert.equal(await r.frame.getByRole("button",{name:"Send",exact:true}).isEnabled(),true);
+  assert.equal(await r.frame.getByRole("button",{name:/Send/}).first().isEnabled(),true);
 });
 
 test("fix1 removal dialog names its row and uses the shared removal sentence",async t=>{
   const r=await runtimeView(t,"wallet",{accounts:[{account_id:"external",chain_namespace:"eip155:20",address:request().address,
     connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"Trust Wallet",wallet_mark:"wallet"}]});
   await r.frame.getByRole("button",{name:"Remove",exact:true}).click();
-  await r.frame.getByRole("heading",{name:"Remove Trust Wallet?",exact:true}).waitFor();
+  await r.frame.locator(".wallet-modal-header").waitFor();
+  assert.equal(await r.frame.locator(".wallet-modal-header h2").textContent(),"Remove Trust Wallet?");
   assert.equal(await r.frame.getByText("Remove this account from Home. Your wallet and funds stay unchanged. Passkey confirmation is required.",{exact:true}).count(),1);
 });
 

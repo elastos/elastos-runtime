@@ -514,7 +514,6 @@
 
       row.append(top, snippet);
       row.addEventListener("click", () => {
-        state.walletAcknowledgement = null;
         state.requestedSelectionId = "";
         state.walletAcknowledgement = null;
         state.focusWalletAcknowledgement = false;
@@ -773,7 +772,7 @@
 
     function walletRequestSite(entry) {
       const origin = entry.requesting_origin;
-      if (entry.kind !== "wallet_approval_request" || typeof origin !== "string" || origin.length > 512
+      if (entry.kind !== "wallet_approval_request" || entry.source_app !== "browser" || typeof origin !== "string" || origin.length > 512
         || !/^https?:\/\/[!-~]+$/.test(origin) || /[\/?#@\\]/.test(origin.slice(origin.indexOf("//") + 2))) return null;
       try { if (new URL(origin).origin !== origin) return null; } catch (_) { return null; }
       const row = document.createElement("p");

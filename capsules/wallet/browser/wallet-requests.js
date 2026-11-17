@@ -97,7 +97,7 @@ export function createWalletRequests({
       textNode("span", `${requestingAppName(request)} · ${shortAddress(request.address)} · ${chainLabel(readText(request.chain_namespace).slice(0, 64))}`),
     );
     if (detail !== purpose) main.append(textNode("small", detail));
-    const site = requestSite(request.requesting_origin);
+    const site = readText(request.capsule_id) === "browser" ? requestSite(request.requesting_origin) : null;
     if (site) main.append(site);
     if (!answered) main.append(textNode("small", requestTiming(request), "wallet-request-time"));
     if (accountAccessReview) {
