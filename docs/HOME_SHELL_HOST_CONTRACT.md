@@ -676,6 +676,17 @@ result); Send is always a separate action. A busy provider can keep Send disable
 after selection. The existing ok acknowledgement means selection accepted,
 including queued selection, not proof of display or approval.
 
+**After this work.** An empty-query row completes when GUI accepts its
+launch/focus command; it does not require a selection acknowledgement from an
+ordinary app. A row with selection waits for the acknowledgement above. Both
+use the same total budget and accepted means admission, not visible completion.
+For the Runtime navigation read, invalid_request, denied and unsupported_version
+map to the same N1 reason. request_unavailable, request_expired and conflict
+map to request_unavailable. Every other code, malformed/unknown error body,
+transport failure or two-second read timeout maps to delivery_failed. These
+mappings are covered by n1_navigation_read_all_connectors and
+n1_refusal_result_to_source; neither error path retries automatically.
+
 **After this work.** Home answers the requesting source frame with type
 `home:open-target-result`, schema `elastos.home.open-target-result/v2`, exact
 keys `type,schema,requestId,documentNonce,ok,reason`. Successful reason is
