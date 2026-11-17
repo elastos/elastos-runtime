@@ -21,7 +21,9 @@ export function contractCopy(expected, row, view) {
     if(result.notice.includes('If '))result.notice=result.notice.split('If ')[0];
     if(result.notice.startsWith('Enable '))result.notice=result.notice.split(', then reload Home')[0]+'. Open '+name+' again from Wallet.';
   }
-  if(facts.payment&&row.window==='metamask'&&row.stage==='extension-missing')result.notice='Enable '+name+' in this browser. Open '+name+' again from Wallet.';
+  if(facts.payment&&row.window==='metamask'&&['extension-missing','other-ethereum-wallet'].includes(row.stage))result.notice='Enable '+name+' in this browser. Open '+name+' again from Wallet.';
+  if(facts.payment&&row.window==='metamask'&&row.stage==='extensions-unavailable')result.notice='';
+  if(facts.payment&&row.window==='metamask'&&row.stage==='ready-multiple')result.notice='Connect will use '+name+'.';
   if(view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${result.status} ${result.notice}`))result.notice=`Close this window. ${result.notice}`.trim();
   if(row.stage==='disconnecting')result.notice='Disconnecting continues after you close this window.';
   return result;

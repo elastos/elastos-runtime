@@ -99,7 +99,9 @@ test('provider network changes select the matching view, and provider choice dri
   assert.equal(reduceConnection({window:'unisat',stage:'ready'},{message:packet}).stage,'network-fractal');
   const brave=shared.messages.find(r=>r.id==='state-com.brave.wallet').message;
   const v=reduceConnection({window:'metamask',stage:'ready-multiple'},{message:brave});
-  assert.equal(viewText(v.notice),'Connect will use Brave Wallet. MetaMask is also available.');
+  assert.equal(viewText(v.notice),'Connect will use Brave Wallet.');
+  const safe=reduceConnection({window:'metamask',stage:'ready-multiple'},{message:brave,safetyMessage:shared.messages.find(r=>r.id==='state-payment-false').message});
+  assert.equal(viewText(safe.notice),'Connect will use Brave Wallet. MetaMask is also available.');
 });
 
 test('network refusal before handoff preserves a pending request and retry control',()=>{

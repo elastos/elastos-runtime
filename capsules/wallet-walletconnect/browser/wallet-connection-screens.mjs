@@ -840,6 +840,7 @@ const definitions = {
     },
     "ready-multiple": {
       "notice": "Connect will use {{wallet}}. {{alternative}} is also available.",
+      "paymentSafeNotice": "Connect will use {{wallet}}.",
       "primary": {
         "id": "connect",
         "label": "Connect wallet",
@@ -849,6 +850,7 @@ const definitions = {
     "extension-missing": {
       "status": "{{wallet}} was not found here.",
       "notice": "Connect a wallet app with a QR code. If you enable {{wallet}} in this browser, reload Home using your browser’s Reload control.",
+      "paymentSafeNotice": "Enable {{wallet}} in this browser. Open {{wallet}} again from Wallet.",
       "primary": {
         "id": "use-walletconnect",
         "label": "WalletConnect",
@@ -859,6 +861,7 @@ const definitions = {
     "extensions-unavailable": {
       "status": "No wallet extension was found here.",
       "notice": "Connect a wallet app with a QR code.",
+      "paymentSafeNotice": "",
       "primary": {
         "id": "use-walletconnect",
         "label": "WalletConnect",
@@ -1497,6 +1500,7 @@ const definitions = {
     "other-ethereum-wallet": {
       "status": "{{wallet}} was not found here.",
       "notice": "Connect a wallet app with a QR code. If you enable {{wallet}} in this browser, reload Home using your browser’s Reload control.",
+      "paymentSafeNotice": "Enable {{wallet}} in this browser. Open {{wallet}} again from Wallet.",
       "primary": {
         "id": "use-walletconnect",
         "label": "WalletConnect",

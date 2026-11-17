@@ -64,7 +64,7 @@ test('F2: every stage has an unknown-safety fixture, with a contract-owned recov
  for(const row of unknownSafetyStates)await t.test(row.caseId+' H754 busy / H767 uncertainty / H779 conservative safety',()=>{
   const v=fixtureView(row),expected=allowed[row.window].includes(row.stage),text=viewText(v.notice);
   assert.equal(text.includes('Home cannot tell'),expected,row.caseId);
-  assert.doesNotMatch(text,/reload/i);assert(!v.actions.some(a=>a.id==='use-walletconnect'));
+  assert.doesNotMatch(text,/reload/i);if(row.window==='metamask')assert.doesNotMatch(text,/QR code|also available/,'H779 unknown safety offers no alternative in its copy');assert(!v.actions.some(a=>a.id==='use-walletconnect'));
   if(expected){assert.equal(v.actions.find(a=>a.primary)?.quiet,false,'primary Close has primary styling');assert.match(text,/Wallet activity/);assert.equal(v.actions.find(a=>a.primary)?.id,'close-window');assert.equal(v.focus,'close-window');}
   if(row.stage==='request-unavailable'){assert.equal(viewText(v.status),'This request is unavailable. Return to the app and ask for a new request.');assert.equal(text,'');}
   if(row.stage==='request-access-error')assert.equal(text,'To try again, return to Browser.');
@@ -89,4 +89,14 @@ test('temporary proof folders are removed after success and an uncaught failure'
  const helper=new URL('./lib/wallet-connection-browser-fixture.mjs',import.meta.url).href;
  const child=spawnSync(process.execPath,['--input-type=module','-e',`const {temporaryProof}=await import(process.argv[1]);const proof=await temporaryProof('wallet-proof-failure-');console.log(proof.path);throw new Error('deliberate failure');`,helper],{encoding:'utf8',timeout:5000});
  assert.equal(child.status,1);assert(!existsSync(child.stdout.trim()),'exit cleanup removes the failed run folder');
+});
+
+test('H779: alternative advice fails the rule even when its controls are withheld',async()=>{
+ const {unknownSafetyStates}=await import('./wallet-connection-view-fixtures.mjs');
+ for(const stage of ['ready-multiple','extension-missing','extensions-unavailable','other-ethereum-wallet']){
+  const row=unknownSafetyStates.find(r=>r.window==='metamask'&&r.stage===stage),v=fixtureView(row);
+  assert(!ruleFailures(v,{row,shared}).includes('payment'));
+  const broken={...v,notice:[{kind:'copy',text:stage==='ready-multiple'?'Another wallet is also available.':'Connect a wallet app with a QR code.'}]};
+  assert(ruleFailures(broken,{row,shared}).includes('payment'),stage+': passive alternative advice escaped');
+ }
 });

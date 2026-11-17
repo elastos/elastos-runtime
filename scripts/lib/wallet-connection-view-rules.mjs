@@ -25,7 +25,8 @@ export function ruleFailures(view, {row,shared,expected,facts}={}) {
   const ids=view.actions.map(a=>a.id);
   const exits=['close-window','start-over','open-request-app','open-wallet-activity','inbox','cancel','stop-waiting','connect','finish','send-message','restore-access'];
   if(f.needsExit&&!ids.some(id=>exits.includes(id)))failures.push('exit');
-  if(f.payment&&(/reload/i.test(text)||ids.includes('use-walletconnect')))failures.push('payment');
+  const homeCopy=[...view.status,...view.notice,...view.afterNote].filter(p=>p.kind==='copy').map(p=>p.text).join(' ');
+  if(f.payment&&(/reload/i.test(homeCopy)||view.window==='metamask'&&/QR code|also available/i.test(homeCopy)||ids.includes('use-walletconnect')))failures.push('payment');
   if(f.notSent&&/result unknown|still waiting|has not answered/i.test(text))failures.push('known-result');
   if(f.capability&&ids.includes('use-walletconnect'))failures.push('capability');
   if(ids.includes('check-access')&&text.includes('has not answered')&&view.actions.some(a=>a.primary&&a.id==='start-over')&&!text.includes('new QR code'))failures.push('sentence');
