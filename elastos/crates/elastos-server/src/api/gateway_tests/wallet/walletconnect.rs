@@ -497,7 +497,11 @@ async fn n5_inbox_action_by_kind_and_409_routes() {
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
-    let other_launch = app_token_for_authority(f.data.path(), INBOX_CAPSULE_ID, &passkey_authority(f.data.path()));
+    let other_launch = app_token_for_authority(
+        f.data.path(),
+        INBOX_CAPSULE_ID,
+        &passkey_authority(f.data.path()),
+    );
     let foreign_proof = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(
         f.data.path(),
         &other_launch,

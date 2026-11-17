@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { runtimeView, permissionEntry, packets } from "./lib/wallet-runtime-browser.mjs";
 
 const requestFixture = () => ({ ...packets.n7PrivateSummaries.find(f => f.id === "site-wallet").summary, created_at:Math.floor(Date.now()/1000),
-  chain_namespace: "eip155:20", expires_at: Math.floor(Date.now() / 1000) + 600 });
+  requesting_app_name:"Browser", chain_namespace: "eip155:20", expires_at: Math.floor(Date.now() / 1000) + 600 });
 
 test("n5_permission_entry_all_states: Inbox existing routes", async t => {
   for (const status of ["requested", "granted", "refused", "revoked", "expired", "cleanup"]) await t.test(status, async t => {
@@ -185,13 +185,13 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   assert.equal(await linked.locator("strong").evaluate(el => el.dir), "auto");
   assert.match(await linked.locator("img").getAttribute("src"), /icons\/icon-64.png$/);
   await linked.getByRole("button", { name:"Remove", exact:true }).click();
-  const confirmation = r.frame.getByRole("heading", { name:"Remove Your wallet?", exact:true });
+  const confirmation = r.frame.getByRole("heading", { name:`Remove ${name}?`, exact:true });
   await confirmation.waitFor();
   assert.match(await r.frame.locator("#wallet-modal .wallet-modal-body").textContent(), /fed1/);
-  assert.match(await r.frame.locator(".wallet-modal-header").textContent(), /Your outside wallet and its funds stay unchanged/);
+  assert.match(await r.frame.locator(".wallet-modal-header").textContent(), /Your wallet and funds stay unchanged/);
   assert.doesNotMatch(await r.frame.locator(".wallet-modal-header").textContent(), /recovery key/);
-  assert.equal(await r.frame.locator(".wallet-modal-header").getByText(name, { exact:true }).count(), 0,
-    "peer display text never becomes an account-operation instruction");
+  assert.equal(await confirmation.textContent(), `Remove ${name}?`, "the confirmation names the same isolated display identity as its row");
+  assert.equal(await r.frame.locator(".wallet-modal-header svg[onload]").count(), 0);
   await r.capture("wallet-account-remove-confirm-light-window.png");
   await r.frame.locator("#wallet-modal").getByRole("button", { name:"Cancel", exact:true }).click();
   await confirmation.waitFor({ state:"hidden" });
@@ -274,7 +274,7 @@ test("n3_requester_provenance_without_site_invention: Wallet card", async t => {
   const r = await runtimeView(t, "wallet", { approvals: [request] });
   const card = r.frame.locator(".wallet-request");
   await card.waitFor();
-  assert.equal(await card.locator(".wallet-request-main > span").textContent(), `notes · ${request.address.slice(0, 6)}…${request.address.slice(-4)} · Elastos Smart Chain`);
+  assert.equal(await card.locator(".wallet-request-main > span").textContent(), `Notes · ${request.address.slice(0, 6)}…${request.address.slice(-4)} · Elastos Smart Chain`);
   assert.equal(await card.locator(".wallet-request-origin").count(), 0);
   await r.capture("wallet-request-no-site-light-window.png");
 });

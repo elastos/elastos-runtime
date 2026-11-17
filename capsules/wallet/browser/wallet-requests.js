@@ -39,8 +39,8 @@ export function createWalletRequests({
       if (requestsPanelNode) requestsPanelNode.hidden = true;
     }
   }
-  document.addEventListener?.("pointerdown", clearAcknowledgementOutside, true);
-  document.addEventListener?.("focusin", clearAcknowledgementOutside);
+  globalThis.document?.addEventListener?.("pointerdown", clearAcknowledgementOutside, true);
+  globalThis.document?.addEventListener?.("focusin", clearAcknowledgementOutside);
   const decisions = new Map();
   let visibleRequests = [];
 
