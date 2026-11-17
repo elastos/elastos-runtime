@@ -154,6 +154,7 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   await linked.getByRole("button", { name:"Remove", exact:true }).click();
   const confirmation = r.frame.getByRole("heading", { name:"Remove Your wallet?", exact:true });
   await confirmation.waitFor();
+  assert.match(await r.frame.locator("#wallet-modal .wallet-modal-body").textContent(), /fed1/);
   assert.equal(await r.frame.locator(".wallet-modal-header").getByText(name, { exact:true }).count(), 0,
     "peer display text never becomes an account-operation instruction");
   await r.capture("wallet-account-remove-confirm-light-window.png");

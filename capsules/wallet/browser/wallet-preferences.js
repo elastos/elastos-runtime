@@ -168,6 +168,7 @@ export function createWalletPreferences({
     );
     const remove = actionButton("Remove", "walletRemoveAccount", account.account_id, true);
     remove.dataset.walletAccountName = account.name;
+    remove.dataset.walletAccountDescription = `${account.network} · ${shortAddress(account.address)}`;
     row.append(remove);
     return row;
   }
@@ -198,7 +199,7 @@ export function createWalletPreferences({
     openFlowModal(
       `Remove ${name}?`,
       "Built-in accounts require their Wallet recovery key to restore later. Passkey confirmation is required.",
-      [],
+      [textNode("p", remove.dataset.walletAccountDescription || "", "wallet-state")],
       [
         modalButton("Cancel", closeModal, true),
         modalButton("Remove", () => removeAccount(remove, accountId, name), false, true),
