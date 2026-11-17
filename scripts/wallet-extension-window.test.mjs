@@ -159,7 +159,7 @@ test('live-window regression oracle rejects five deliberate breaks', { timeout: 
   const browser = await playwright.chromium.launch({ headless: true });
   try {
     const mutations = [
-      ['state mapped wrong', s => s.replace("let stage = 'ready'", "let stage = 'link-error'").replace("return accounts.length && linkObserved ? 'linked' : 'ready';", "return accounts.length && linkObserved ? 'linked' : 'link-error';"), async f => {
+      ['state mapped wrong', s => s.replace("let stage = 'ready'", "let stage = 'link-error'").replace("return accountView() && (linkObserved || accountEvent?.length) ? 'linked' : 'ready';", "return accountView() && (linkObserved || accountEvent?.length) ? 'linked' : 'link-error';"), async f => {
         // Snapshot the first controller paint before any asynchronous refresh.
         assert.equal(await f.frame.locator('main').getAttribute('data-state'), 'ready');
       }],
@@ -327,5 +327,19 @@ test('MetaMask: typed data and transaction wait, stop, failure, timeout and chan
         assert.equal(await f.frame.locator('.connection-request-account').count(),0);
       }finally{await f.close();}
     }
+  }finally{await browser.close();}
+});
+
+for (const kind of ['metamask','unisat']) test(`${kind}: a Home list with several saved accounts is not a current wallet selection`, async()=>{
+  const browser=await playwright.chromium.launch({headless:true});
+  try{
+    const f=await fixture(browser,kind,{saved:true,extraHomeAccount:true});
+    try{
+      await f.state('ready');await f.action('connect').click();
+      await f.top.waitForFunction(()=>testState.receipts.length===1);
+      await f.state('ready');assert.equal(await f.frame.locator('.connection-account').count(),0);
+      await f.top.evaluate(()=>emitWallet('accountsChanged',[testState.address]));await f.state('linked');
+      assert.equal(await f.frame.locator('.connection-address-row').count(),1);
+    }finally{await f.close();}
   }finally{await browser.close();}
 });

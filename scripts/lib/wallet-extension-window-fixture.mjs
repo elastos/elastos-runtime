@@ -38,7 +38,7 @@ function installProvider({ kind, address }) {
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   const replay = recording ? await replayInput(recording) : null;
@@ -87,10 +87,10 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:560
     if (url.pathname.includes('/api/')) {
       reads.push({ url: url.pathname, headers: route.request().headers() });
       if (readFailure) return route.fulfill({ status: readFailure, json: { error: 'fixture read failure' } });
-      const data = await top.evaluate(({ url, kind }) => {
+      const data = await top.evaluate(({ url, kind, extraHomeAccount }) => {
         const s = testState;
-        return url.endsWith('/accounts') ? { accounts: s.linked ? [{ address: s.address, connector_id: 'wallet-' + kind, chain_namespace: kind === 'metamask' ? 'eip155:1' : 'bip122:000000000019d6689c085ae165831e93' }] : [] } : { approval_requests: s.requests };
-      }, { url: url.pathname, kind });
+        return url.endsWith('/accounts') ? { accounts: s.linked ? [{ address: s.address, connector_id: 'wallet-' + kind, chain_namespace: kind === 'metamask' ? 'eip155:1' : 'bip122:000000000019d6689c085ae165831e93' }, ...(extraHomeAccount ? [{address:kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38),connector_id:'wallet-'+kind,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93'}] : [])] : [] } : { approval_requests: s.requests };
+      }, { url: url.pathname, kind, extraHomeAccount });
       return route.fulfill({ json: data });
     }
     const relative = url.pathname.replace(/^\/apps\//, 'capsules/').replace(/^(capsules\/[^/]+)\/(.*)$/, '$1/browser/$2');

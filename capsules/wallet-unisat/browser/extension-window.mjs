@@ -22,8 +22,12 @@ export function startExtensionWindow(kind, homeClipboard) {
   const mount = document.querySelector('#connection-root');
 
   function accountView() {
-    const rows = accounts.filter(a => a?.connector_id === CONNECTOR_ID || !a?.connector_id)
+    const candidates = accounts.filter(a => a?.connector_id === CONNECTOR_ID || !a?.connector_id)
       .filter(a => typeof a.address === 'string' && a.address.length <= 128).slice(0, 8);
+    const address = selected?.address || accountEvent?.[0];
+    const row = address ? candidates.find(a => sameAccount(a.address, address))
+      : linkObserved && candidates.length === 1 ? candidates[0] : null;
+    const rows = row ? [row] : [];
     if (!rows.length) return null;
     const networks = chain => {
       if (networkEvent !== null) {
@@ -59,7 +63,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (requests.length > 1 && !picked) return 'request-list';
     if (selected) return selected.expiresAt !== null && selected.expiresAt <= now()
       ? 'request-expired' : requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
-    return accounts.length && linkObserved ? 'linked' : 'ready';
+    return accountView() && (linkObserved || accountEvent?.length) ? 'linked' : 'ready';
   }
 
   function now() { return Math.floor(Date.now() / 1000); }
@@ -143,7 +147,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     revision += 1;
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
-    if (action.kind === 'link') { accountEvent = null; networkEvent = null; disconnected = false; }
+    if (action.kind === 'link') { accountEvent = null; networkEvent = null; disconnected = false; fixedOutcome = false; selected = null; picked = false; }
     stage = action.kind === 'link' ? 'extension-wait' : selected?.transaction ? 'transaction-extension' : 'request-extension';
     draw();
     try {
