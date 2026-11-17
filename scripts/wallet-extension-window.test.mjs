@@ -16,9 +16,9 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
     try {
       const f = await fixture(browser, kind);
       try {
-        await f.state('ready'); await f.action('connect').click(); await f.state('linked');
+        await f.state('ready'); await f.action('connect').focus(); await f.top.keyboard.press('Enter'); await f.state('linked');
         assert.equal(await f.top.evaluate(() => testState.receipts.length), 1);
-        await f.action('copy-address').click();
+        await f.action('copy-address').focus(); await f.top.keyboard.press('Space');
         await f.top.waitForFunction(() => testState.copies.length === 1);
         assert.equal(await f.top.evaluate(() => testState.copies[0]), kind === 'metamask' ? A : U);
         assert.equal(await f.frame.locator('body > :not(#connection-root):not(script)').count(), 0);
@@ -36,7 +36,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         const position = await g.frame.evaluate(() => ({ key: document.activeElement.dataset.focusKey, y: scrollY }));
         await g.top.clock.runFor(2000);
         assert.deepEqual(await g.frame.evaluate(() => ({ key: document.activeElement.dataset.focusKey, y: scrollY })), position);
-        await g.action('send-request').click(); await g.state('request-done');
+        await g.top.keyboard.press('Enter'); await g.state('request-done');
         assert.equal(await g.top.evaluate(() => testState.receipts.length), 1);
         assert.equal(await g.top.evaluate(() => testState.effects[0].action.kind), 'approve');
         assert.equal(await g.top.evaluate(() => testState.requests.length), 0);
@@ -56,7 +56,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         await f.top.evaluate(() => { testState.mode = 'pending'; });
         await f.action('send-request').click(); await f.state('request-extension');
         assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
-        await f.action('stop-waiting').click(); await f.state('request-cancelled');
+        await f.action('stop-waiting').focus(); await f.top.keyboard.press('Enter'); await f.state('request-cancelled');
         await f.top.evaluate(() => { const p = testState.pending.shift(); p.resolve(p.result); });
         await f.state('request-done');
         assert.equal(await f.top.evaluate(() => testState.receipts.length), 1);
@@ -275,7 +275,7 @@ for (const kind of ['metamask','unisat']) test(`${kind}: local picker, stopped l
       await stopped.action('connect').click();await stopped.state('extension-wait');
       await stopped.action('stop-waiting').click();await stopped.state('extension-cancelled');
       assert.doesNotMatch(await stopped.frame.locator('body').innerText(),/check again/i);
-      await stopped.action('close-window').click();await stopped.top.waitForFunction(()=>testState.closed);
+      await stopped.action('close-window').focus(); await stopped.top.keyboard.press('Enter');await stopped.top.waitForFunction(()=>testState.closed);
     }finally{await stopped.close();}
     const missing=await fixture(browser,kind,{launch:false});
     try{await missing.state('window-expired');assert.equal(await missing.frame.locator('button').count(),0);}
@@ -354,9 +354,9 @@ for (const engine of ['chromium','webkit']) for (const kind of ['metamask','unis
       await f.state('request-list');await f.frame.locator('[data-focus-key="select-request:approval-1"]').click();await f.state('request-multiple');
       await f.action('send-request').click();await f.state('request-next');
       assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
-      await f.action('view-requests').click();await f.state('request-list');
+      await f.action('view-requests').focus();await f.top.keyboard.press('Space');await f.state('request-list');
       assert.equal(await f.frame.locator('[data-focus-key="select-request:approval-1"]').count(),0);
-      await f.frame.locator('[data-focus-key="select-request:approval-2"]').click();await f.state('request-waiting');
+      await f.frame.locator('[data-focus-key="select-request:approval-2"]').focus();await f.top.keyboard.press('Enter');await f.state('request-waiting');
       await f.action('send-request').click();await f.state('request-done');
       assert.equal(await f.top.evaluate(()=>testState.receipts.length),2);
       assert.deepEqual(await f.top.evaluate(()=>testState.effects.map(e=>e.action.approvalRequestId)),['approval-1','approval-2']);
