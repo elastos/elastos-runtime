@@ -385,8 +385,10 @@ Silent-method compatibility claims cover the recorded MetaMask/UniSat builds;
 Brave needs its own recording before acceptance.
 
 **After this work.** Home bounds its private site-account array to 32 canonical
-addresses of at most 128 ASCII bytes each. Only `firstAccount` crosses the edge:
-the first permitted account for a new link, lower-case `0x` plus 40 lower-case
+addresses of at most 128 ASCII bytes each. Only `firstAccount` can carry an address across this edge, and only in a
+new-link check/link without an account selector. It is null in linked-account
+checks, restoration and approval. For a new link it is the first permitted
+account, lower-case `0x` plus 40 lower-case
 hex digits for EVM, or a validated Bitcoin address (lower-case bech32; base58
 case preserved). `requiredAccountAvailable` is null with no selector; otherwise
 it is membership of the Runtime-resolved required address. The full array never
@@ -556,9 +558,9 @@ that advisory is dropped.
 
 **After this work.** Account/network events are validated hints. Home coalesces
 ordinary fact changes for 100 ms, preserving order of busy transitions and the
-one settlement advisory. EVM account ordering with unchanged membership and
-firstAccount still emits the new firstAccount if it changed; it is not rendered
-as loss of the required account. Network events schedule one serialized reread;
+one settlement advisory. EVM reordering emits a changed firstAccount in new-link contexts only. With
+a linked/request selector, unchanged membership produces no account-loss state
+and no ordering-only message; the list/order remains private. Network events schedule one serialized reread;
 UniSat event strings do not replace getChain identity. During a provider call,
 mark affected facts unknown and retain at most one reread. Events never link
 an account or send a request.
