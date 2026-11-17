@@ -48,8 +48,7 @@ test("fix1 JB14 an older Inbox read cannot replace a newer permission decision",
   let release, entered;
   const held=new Promise(resolve=>entered=resolve);
   const gate=new Promise(resolve=>release=resolve);
-  const old=r.state.entries;
-  r.state.beforeInboxSummary=async()=>{r.state.beforeInboxSummary=null;entered();await gate;r.state.entries=old;};
+  r.state.beforeInboxSummary=async()=>{r.state.beforeInboxSummary=null;entered();await gate;};
   await event(r); await held;
   await r.frame.getByRole("button",{name:"Allow",exact:true}).click();
   await r.frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor();

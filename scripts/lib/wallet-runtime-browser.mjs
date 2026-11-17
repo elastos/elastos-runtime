@@ -51,8 +51,11 @@ export async function runtimeView(t, app, state = {}) {
       const input = request.postDataJSON();
       calls.push({ path: url.pathname, method: request.method(), input });
       if (url.pathname === "/api/apps/inbox/summary" && state.conflictSeen && state.summaryFailureAfterConflict) return route.abort("failed");
-      if (url.pathname === "/api/apps/inbox/summary" && state.beforeInboxSummary) await state.beforeInboxSummary();
-      if (url.pathname === "/api/apps/inbox/summary") return json({ notifications: { entries: state.entries, attention_count: state.entries.filter(e => e.severity === "attention").length, unread_count: state.entries.filter(e => !e.read).length } });
+      if (url.pathname === "/api/apps/inbox/summary") {
+        const snapshot = { notifications: { entries: structuredClone(state.entries), attention_count: state.entries.filter(e => e.severity === "attention").length, unread_count: state.entries.filter(e => !e.read).length } };
+        if (state.beforeInboxSummary) await state.beforeInboxSummary();
+        return json(snapshot);
+      }
       if (url.pathname === "/api/apps/wallet/wallet/summary" && (state.approvalsUnavailable || state.decisionComplete && state.summaryFailureAfterDecision === "unavailable")) return json({ wallet_accounts:{available:true, accounts:state.accounts, default_accounts:[]}, wallet_approvals:{available:false, pending_count:0, approval_requests:[], note:"Wallet requests are unavailable."}, approval_methods:{} });
       if (url.pathname === "/api/apps/wallet/wallet/summary" && state.decisionComplete && state.summaryFailureAfterDecision) return route.abort("failed");
       if (url.pathname === "/api/apps/wallet/wallet/summary") return json({ wallet_accounts: { available:true, accounts: state.accounts, default_accounts: [] }, wallet_approvals: { available:true, pending_count:state.approvals.filter(r => r.status === "pending").length, approval_requests: state.approvals }, approval_methods: { walletconnect: { available: true } } });
