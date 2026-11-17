@@ -796,45 +796,65 @@ pub async fn enter_browser_home(no_open: bool) -> Result<()> {
     if !crate::install_transaction::InstallTransaction::has_pending_recovery(&binary) {
         repair_installed_support(&data, &binary, &source).await?;
     }
+    enter_browser_home_controller(
+        no_open,
+        &data,
+        &binary,
+        &source,
+        || bootstrap_controller(
+            &data,
+            &binary,
+            &source,
+            controller_directory,
+            acquire_lease,
+            crate::install_transaction::InstallationGuard::acquire,
+        ),
+        |directory, binary, expected| prepare_controller(directory, binary, expected, |path, needed| {
+            crate::install_transaction::require_controller_update_space(path, needed)
+        }),
+        write_private::<Receipt>,
+    )
+}
+
+fn enter_browser_home_controller(
+    no_open: bool,
+    data: &Path,
+    binary: &Path,
+    source: &TrustedSource,
+    bootstrap: impl FnOnce() -> Result<Option<ControllerBootstrap>>,
+    prepare: impl FnOnce(&Path, &Path, &str) -> Result<bool>,
+    write_receipt: impl FnOnce(&Path, &Receipt) -> Result<()>,
+) -> Result<()> {
     let Some(ControllerBootstrap {
         directory,
         lease,
         writer,
         signed,
         expected,
-    }) = bootstrap_controller(
-        &data,
-        &binary,
-        &source,
-        controller_directory,
-        acquire_lease,
-        crate::install_transaction::InstallationGuard::acquire,
-    )?
+    }) = bootstrap()?
     else {
         eprintln!("{}", controller_space_notice(no_open));
         return Ok(());
     };
     let controller = directory.join("runtime");
-    if !prepare_controller(&directory, &binary, &expected, |path, needed| {
-        crate::install_transaction::require_controller_update_space(path, needed)
-    })? {
+    if !prepare(&directory, binary, &expected)? {
         eprintln!("{}", controller_space_notice(no_open));
         return Ok(());
     }
     let launch = LaunchPlan::capture(no_open)?;
     let receipt = Receipt {
         schema: "elastos.update-controller/v1".into(),
-        data_dir: data,
-        binary,
+        data_dir: data.to_path_buf(),
+        binary: binary.to_path_buf(),
         controller: controller.clone(),
         controller_sha256: expected,
         signed_controller_release: BASE64.encode(signed),
-        trusted_source: source,
+        trusted_source: source.clone(),
         launch_sha256: launch.sha256()?,
         launch,
     };
     let path = directory.join(RECEIPT);
-    if let Err(error) = write_private(&path, &receipt) {
+    if let Err(error) = write_receipt(&path, &receipt) {
         if controller_space_error(&error) {
             eprintln!("{}", controller_space_notice(no_open));
             return Ok(());

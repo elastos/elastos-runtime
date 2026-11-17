@@ -77,15 +77,25 @@ elastos home --browser --no-open
 keeps this choice for its controller's update, previous-release restoration and
 interrupted-restart recovery. The starter still owns Home's foreground lifetime;
 keep it open while Home runs. This option registers no background service.
-The option exists from the first release that contains this change. A Runtime
-older than that release refuses `--no-open` with a usage error before it can
-start Home or finish pending recovery. This affects any later start after an
-Undo to such a release, including reopening the app or restarting the computer
-after a System Undo. Before each start, the starter must run `elastos --version`
-and compare the reported version with the first release that contains this
-change. Use `elastos home --browser --no-open` for that release and later
-releases. For an older Runtime, use `elastos home --browser`. On a fresh start, expect
-Home in the app window and one extra default-browser tab.
+Before every start, the app must check the option with the same executable that
+will start Home:
+
+```bash
+elastos home --browser --no-open --help
+```
+
+This capability check starts no Home and requires no parsing of help text. Exit
+code `0` means the executable supports `--no-open`; start it with
+`elastos home --browser --no-open`. Exit code `2` means the older CLI refuses the
+option; use `elastos home --browser` instead. Other failures need the app's
+normal startup-error handling. On a fresh fallback start, the person gets Home
+in the app window and one extra default-browser tab. Check capability rather
+than comparing version strings, so source builds and release candidates work.
+
+An executable without the option refuses it before starting Home or finishing
+pending recovery. This affects every later start after an Undo
+(`elastos update --rollback-to`) to such a release, including reopening the app
+or restarting the computer.
 
 Recovery uses the choice in the stored receipt, so a quiet command can open one
 tab if the receipt came from a normal start or an older release; the reverse

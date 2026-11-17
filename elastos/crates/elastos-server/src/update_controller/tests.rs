@@ -4123,6 +4123,60 @@ fn home_browser_no_open_space_notice_preserves_normal_text() {
     );
 }
 
+#[test]
+fn home_browser_no_open_space_notices_follow_real_start_choice() {
+    for step in ["bootstrap", "prepare", "receipt"] {
+        for no_open in [false, true] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "update_controller::tests::home_browser_space_notice_fixture", "--ignored", "--nocapture"])
+                .env("QUIET_START_SPACE_STEP", step)
+                .env("QUIET_START_SPACE_NO_OPEN", if no_open { "1" } else { "0" })
+                .output().unwrap();
+            assert!(output.status.success(), "{output:?}");
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            let expected = if no_open {
+                "Home will start. Free disk space before updating.\n"
+            } else {
+                "Home will open. Free disk space before updating.\n"
+            };
+            assert_eq!(stderr, expected, "{step}, no_open={no_open}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "isolated process for the real installed-start low-space branches"]
+fn home_browser_space_notice_fixture() {
+    let step = std::env::var("QUIET_START_SPACE_STEP").unwrap();
+    let no_open = std::env::var("QUIET_START_SPACE_NO_OPEN").unwrap() == "1";
+    let fixture = PrivateFixture::new();
+    let source = fixture.publish_installed_release();
+    enter_browser_home_controller(
+        no_open,
+        &fixture.data,
+        &fixture.binary,
+        &source,
+        || {
+            if step == "bootstrap" { return Ok(None); }
+            bootstrap_controller(
+                &fixture.data, &fixture.binary, &source,
+                controller_directory, acquire_lease,
+                crate::install_transaction::InstallationGuard::acquire,
+            )
+        },
+        |directory, binary, expected| {
+            assert_ne!(step, "bootstrap");
+            if step == "prepare" { return Ok(false); }
+            prepare_controller(directory, binary, expected, |_, _| Ok(()))
+        },
+        |_, receipt| {
+            assert_eq!(step, "receipt");
+            assert_eq!(receipt.launch.args.contains(&BASE64.encode(b"--no-open")), no_open);
+            Err(std::io::Error::from_raw_os_error(libc::ENOSPC).into())
+        },
+    ).unwrap();
+}
+
 fn assert_launch_observations(fixture: &PrivateFixture, no_open: bool, starts: usize) {
     let observed = fs::read_to_string(fixture.data.join("launch-observations")).unwrap();
     let mut expected = vec![format!(
