@@ -277,6 +277,6 @@ export function renderConnection(document, view) {
   }
   root.append(content);
   if(view.compact)root.append(feedback);
-  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');dialog.append(el('h2','WalletConnect'));const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan this QR Code with your phone'),el('p','Or paste the copied link into a wallet app on this computer.'));if(!view.compact)dialog.append(controls);content.append(dialog);}
+  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');const title=el('h2','WalletConnect');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan this QR Code with your phone'),el('p','Or paste the copied link into a wallet app on this computer.'));if(!view.compact)dialog.append(controls);content.append(dialog);}
   return root;
 }

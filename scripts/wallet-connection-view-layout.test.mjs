@@ -78,11 +78,12 @@ for (const engine of ['chromium','webkit']) await test(`extension_request_feedba
           let clicks=[];root.addEventListener('click',e=>{const b=e.target.closest('button');if(b)clicks.push(b.dataset.action);});
           const exit=controls.find(b=>b.visible&&['cancel','stop-waiting','close-window','start-over','open-wallet-activity','open-request-app','open-wallet','connect','finish','send-message','restore-access','inbox'].includes(b.id));
           if(exit)[...root.querySelectorAll('button')].find(b=>b.dataset.action===exit.id).click();
-          return {controls,feedback,names,paragraphs:[...root.querySelectorAll('p')].filter(p=>p.checkVisibility()).map(p=>p.textContent),focus:document.activeElement.dataset.action||document.activeElement.dataset.focus||null,text:root.innerText,links:root.querySelectorAll('a').length,clicks,scrollWidth:root.scrollWidth,width:innerWidth};
+          return {controls,feedback,names,qrHeadingMark:root.querySelector('.connection-dialog h2 img')?.getAttribute('src'),paragraphs:[...root.querySelectorAll('p')].filter(p=>p.checkVisibility()).map(p=>p.textContent),focus:document.activeElement.dataset.action||document.activeElement.dataset.focus||null,text:root.innerText,links:root.querySelectorAll('a').length,clicks,scrollWidth:root.scrollWidth,width:innerWidth};
         },{view,theme,visibleFrame:rowSize});
         const key=`${engine}/${theme}/${size.name}/${row.designState}`;
         try{
           assert.equal(observed.links,0,key+': zero navigation');
+          if(view.qrData)assert.equal(observed.qrHeadingMark,'./connection-walletconnect.png',key+': designed local QR heading mark');
           const normalizedText=text=>text.replace(/\s+/g,' ').trim();
           for(const parts of [view.status,view.notice,view.afterNote])if(parts.length)assert(observed.paragraphs.some(text=>normalizedText(text)===normalizedText(viewText(parts))),key+': designed copy is rendered');
           assert.deepEqual(layoutFailures(view,observed),[],key+': layout invariants');
