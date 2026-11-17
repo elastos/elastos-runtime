@@ -1,0 +1,202 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile, mkdir } from 'node:fs/promises';
+import { resolve, extname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const playwright = require(join(homedir(), '.cache/elastos-runtime/behaviour/browser/node_modules/playwright'));
+const A = '0x' + '1'.repeat(40), B = '0x' + '2'.repeat(40);
+const U = 'bc1q' + 'a'.repeat(38), V = 'bc1q' + 'b'.repeat(38);
+
+import { fixture } from './lib/wallet-extension-window-fixture.mjs';
+
+for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) {
+  test(`${engine} ${kind}: live shared window links, signs, redraws and returns actual receipts`, { timeout: 50000 }, async () => {
+    const browser = await playwright[engine].launch({ headless: true });
+    try {
+      const f = await fixture(browser, kind);
+      try {
+        await f.state('ready'); await f.action('connect').click(); await f.state('linked');
+        assert.equal(await f.top.evaluate(() => testState.receipts.length), 1);
+        await f.action('copy-address').click();
+        await f.top.waitForFunction(() => testState.copies.length === 1);
+        assert.equal(await f.top.evaluate(() => testState.copies[0]), kind === 'metamask' ? A : U);
+        assert.equal(await f.frame.locator('body > :not(#connection-root):not(script)').count(), 0);
+        assert.equal(await f.frame.locator('#connection-root > main').count(), 1);
+      } finally { await f.close(); }
+      const g = await fixture(browser, kind, { saved: true, requests: true });
+      try {
+        await g.state('request-waiting');
+        await g.action('send-request').focus();
+        await g.frame.evaluate(() => window.scrollTo(0, 150));
+        const position = await g.frame.evaluate(() => ({ key: document.activeElement.dataset.focusKey, y: scrollY }));
+        await g.top.clock.runFor(2000);
+        assert.deepEqual(await g.frame.evaluate(() => ({ key: document.activeElement.dataset.focusKey, y: scrollY })), position);
+        await g.action('send-request').click(); await g.state('request-done');
+        assert.equal(await g.top.evaluate(() => testState.receipts.length), 1);
+        assert.equal(await g.top.evaluate(() => testState.effects[0].action.kind), 'approve');
+        assert.equal(await g.top.evaluate(() => testState.requests.length), 0);
+        assert.equal(await g.action('send-request').count(), 0);
+      } finally { await g.close(); }
+    } finally { await browser.close(); }
+  });
+
+  test(`${engine} ${kind}: wallet silence, stop, answer, timeout and account events`, { timeout: 50000 }, async () => {
+    const browser = await playwright[engine].launch({ headless: true });
+    try {
+      const f = await fixture(browser, kind, { saved: true, requests: true });
+      try {
+        await f.top.evaluate(() => { testState.mode = 'pending'; });
+        await f.action('send-request').click(); await f.state('request-extension');
+        assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
+        await f.action('stop-waiting').click(); await f.state('request-cancelled');
+        await f.top.evaluate(() => { const p = testState.pending.shift(); p.resolve(p.result); });
+        await f.state('request-done');
+        assert.equal(await f.top.evaluate(() => testState.receipts.length), 1);
+        await f.top.evaluate(() => emitWallet('accountsChanged', []));
+        await f.state(kind === 'metamask' ? 'site-access-ended' : 'account-unavailable');
+        assert.equal(await f.action('send-request').count(), 0);
+      } finally { await f.close(); }
+      const g = await fixture(browser, kind);
+      try {
+        await g.top.evaluate(() => { testState.mode = 'pending'; });
+        await g.action('connect').click(); await g.state('extension-wait');
+        await g.top.clock.runFor(61000); await g.state('extension-timeout');
+        assert.equal(await g.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
+        assert.equal(await g.top.evaluate(() => testState.effects.length), 1);
+      } finally { await g.close(); }
+      const h = await fixture(browser, kind, { saved: true });
+      try {
+        await h.state('linked');
+        await h.action('copy-address').click();
+        // Existing effect registers the recipient, without any new ready packet.
+        // Re-link through the same v1 action to establish that registration.
+        await h.frame.evaluate(() => window.top.postMessage({ type: 'home:wallet-connector-effect', schema: 'elastos.home.wallet-connector-effect/v1', requestId: 'fixture:observe', connectorId: location.pathname.includes('metamask') ? 'wallet-metamask' : 'wallet-unisat', connectorToken: 'fixture-token', action: { kind: 'link' } }, 'http://extensions.test'));
+        await h.top.waitForFunction(() => testState.receipts.length === 1);
+        await h.top.evaluate(value => emitWallet('accountsChanged', [value]), kind === 'metamask' ? B : V);
+        await h.state('account-unavailable');
+        assert.equal(await h.action('connect').count(), 1);
+        if (kind === 'unisat') {
+          await h.top.evaluate(() => emitWallet('accountsChanged', [testState.address]));
+          await h.top.evaluate(() => emitWallet('networkChanged', 'testnet')); await h.state('network-changed');
+        }
+      } finally { await h.close(); }
+    } finally { await browser.close(); }
+  });
+
+  test(`${engine} ${kind}: recorded decline, closed prompt, missing extension and stalled provider`, { timeout: 50000 }, async () => {
+    const browser = await playwright[engine].launch({ headless: true });
+    try {
+      for (const [recording, person] of [[`${kind}-connect-declined`, 'declines'], [`${kind}-native-connect-close`, 'closes the prompt']]) {
+        const f = await fixture(browser, kind, { recording });
+        try {
+          await f.action('connect').click(); await f.state('extension-wait');
+          await f.top.waitForFunction(() => __walletReplay.requests.length === 1);
+          await f.top.evaluate(person => { __walletReplay.person(person); return __walletReplay.advance(200000); }, person);
+          await f.state('link-error');
+          assert.equal(await f.top.evaluate(() => testState.receipts.length), 0);
+        } finally { await f.close(); }
+      }
+      const missing = await fixture(browser, kind, { recording: 'private-no-extension' });
+      try { await missing.action('connect').click(); await missing.state('extension-missing'); } finally { await missing.close(); }
+      const silent = await fixture(browser, kind, { recording: kind === 'metamask' ? 'metamask-disabled-stale' : 'unisat-connect-pending' });
+      try {
+        await silent.action('connect').click(); await silent.state('extension-wait');
+        await silent.top.clock.runFor(61000); await silent.state('extension-timeout');
+        assert.equal(await silent.top.evaluate(() => __walletReplay.requests.length), 1);
+      } finally { await silent.close(); }
+    } finally { await browser.close(); }
+  });
+}
+
+test('both extension packages carry one presenter and existing v1 actions only', async () => {
+  const mm = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
+  assert.equal(mm, await readFile('capsules/wallet-unisat/browser/extension-window.mjs', 'utf8'));
+  assert.match(mm, /renderConnection\(document, view\)/);
+  assert.doesNotMatch(mm, /localStorage|sessionStorage|eth_requestAccounts|eth_sendTransaction|wallet-connector\/.*\/v2|home:open-target/);
+});
+
+for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) {
+  test(`${engine} ${kind}: keyboard, fit, saved link, refusal and request expiry`, { timeout: 50000 }, async () => {
+    const browser = await playwright[engine].launch({ headless: true });
+    try {
+      const f = await fixture(browser, kind, { saved: true, requests: true });
+      try {
+        await f.state('request-waiting');
+        assert.equal(await f.frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        const expected = await f.frame.locator('button:not(:disabled)').evaluateAll(nodes => nodes.map(n => n.dataset.focusKey));
+        await f.frame.locator('button').first().focus();
+        const visited = new Set();
+        for (let i = 0; i < expected.length * 3 + 3; i++) {
+          const key = await f.frame.evaluate(() => document.activeElement?.dataset.focusKey);
+          if (key) visited.add(key);
+          await f.top.keyboard.press('Tab');
+        }
+        for (const key of expected) assert(visited.has(key), `Tab reaches ${key}`);
+        await f.top.evaluate(() => { testState.mode = 'decline'; });
+        await f.action('send-request').click(); await f.state('request-wallet-error');
+        assert.equal(await f.top.evaluate(() => testState.receipts.length), 0);
+      } finally { await f.close(); }
+      const g = await fixture(browser, kind, { saved: true, requests: true });
+      try {
+        await g.state('request-waiting');
+        await g.top.clock.runFor(301000); await g.state('request-expired');
+        assert.equal(await g.action('send-request').count(), 0);
+        assert.equal(await g.top.evaluate(() => testState.effects.length), 0);
+      } finally { await g.close(); }
+    } finally { await browser.close(); }
+  });
+}
+
+test('live-window regression oracle rejects five deliberate breaks', { timeout: 50000 }, async () => {
+  const browser = await playwright.chromium.launch({ headless: true });
+  try {
+    const mutations = [
+      ['state mapped wrong', s => s.replace("let stage = 'ready'", "let stage = 'link-error'").replace("return accounts.length ? 'linked' : 'ready';", "return accounts.length ? 'linked' : 'link-error';"), async f => {
+        // Snapshot the first controller paint before any asynchronous refresh.
+        assert.equal(await f.frame.locator('main').getAttribute('data-state'), 'ready');
+      }],
+      ['control wired wrong', s => s.replace("void perform({ kind: 'approve', approvalRequestId: selected.id })", "void perform({ kind: 'link' })"), async f => {
+        await f.action('send-request').click();
+        await f.top.waitForFunction(() => testState.effects.length > 0);
+        assert.equal(await f.top.evaluate(() => testState.effects[0].action.kind), 'approve');
+      }],
+      ['Cancel after dispatch', s => s.replace('const markup = root.outerHTML', "for (const b of root.querySelectorAll('[data-action=stop-waiting]')) b.textContent = 'Cancel';\n    const markup = root.outerHTML"), async f => {
+        await f.top.evaluate(() => { testState.mode = 'pending'; });
+        await f.action('send-request').click(); await f.state('request-extension');
+        assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
+      }],
+      ['stale wait after answer', s => s.replace("'transaction-done' : 'request-done'", "'transaction-done' : 'request-extension'"), async f => {
+        await f.action('send-request').click(); await f.state('request-done');
+      }],
+      ['draw outside shared view', s => s.replace('const root = renderConnection(document, view);', "const root = renderConnection(document, view); root.append(document.createElement('aside'));"), async f => {
+        assert.equal(await f.frame.locator('main aside').count(), 0);
+      }],
+    ];
+    for (const [name, mutate, oracle] of mutations) {
+      const source = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
+      assert.notEqual(mutate(source), source, name + ' mutation applies');
+      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: name !== 'state mapped wrong', mutate });
+      try { await assert.rejects(oracle(f), undefined, name + ' must fail the live oracle'); }
+      finally { await f.context.close(); }
+    }
+  } finally { await browser.close(); }
+});
+
+for (const kind of ['metamask', 'unisat']) test(`${kind}: actual old Home with new window, actual old window with new Home`, { timeout: 40000 }, async () => {
+  const browser = await playwright.chromium.launch({ headless: true });
+  try {
+    const modern = await fixture(browser, kind, { oldHost: true });
+    try { await modern.action('connect').click(); await modern.state('linked'); }
+    finally { await modern.close(); }
+    const legacy = await fixture(browser, kind, { oldWindow: true });
+    try {
+      await legacy.frame.locator('#wallet-connect').click();
+      await legacy.frame.locator('#wallet-status').filter({hasText:'Approval method added.'}).waitFor();
+      await legacy.top.evaluate(value => emitWallet('accountsChanged', [value]), kind === 'metamask' ? B : V);
+      assert.equal(await legacy.top.evaluate(() => testState.receipts.length), 1);
+      assert.equal(await legacy.frame.locator('#wallet-status').innerText(), 'Approval method added.');
+    }finally{await legacy.close();}
+  }finally{await browser.close();}
+});
