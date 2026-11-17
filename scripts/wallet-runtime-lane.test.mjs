@@ -40,6 +40,7 @@ test("n5_inbox_action_by_kind_and_409: decision and conflict", async t => {
     assert.equal(r.calls.filter(c => c.path.endsWith("/actions")).length, 1);
     assert.equal(r.calls.filter(c => c.path.endsWith("/summary")).length, 2);
     assert.equal(r.state.permission, "requested");
+    await r.capture("inbox-internet-conflict-light-window.png");
   });
 });
 
@@ -84,9 +85,10 @@ test("n3_wallet_badge_counts_review_requests: real GUI module", async t => {
 
 test("n7_browser_site_projection_all_surfaces: Inbox and Wallet consumers", async t => {
   for (const app of ["inbox", "wallet"]) await t.test(app, async t => {
-    const request = requestFixture();
+    for (const intent of ["browser_personal_sign", "browser_typed_data_sign", "transaction_intent"]) {
+    const request = { ...requestFixture(), intent };
     const entry = { id: `wallet-approval-request:${request.request_id}`, source_app: request.capsule_id,
-      kind: "wallet_approval_request", title: "Sign a message", body: "Sign in to the app.", severity: "attention", read: true,
+      kind: "wallet_approval_request", title: intent === "transaction_intent" ? "Send transaction" : intent === "browser_typed_data_sign" ? "Sign typed data" : "Sign a message", body: "Sign in to the app.", severity: "attention", read: true,
       requesting_origin: request.requesting_origin, action_ref: { action_id: `wallet-review-request:${request.request_id}` } };
     const r = await runtimeView(t, app, { approvals: [request], entries: [entry] });
     await r.frame.getByText("Site reported by Browser", { exact: true }).waitFor();
@@ -95,8 +97,10 @@ test("n7_browser_site_projection_all_surfaces: Inbox and Wallet consumers", asyn
     assert.equal(await origin.evaluate(el => el.tagName), "SPAN");
     assert.equal(await origin.evaluate(el => el.dir), "auto");
     assert.equal(await origin.evaluate(el => getComputedStyle(el).unicodeBidi), "isolate");
-    await r.capture(`${app}-request-external-light-window.png`);
+    const state = intent === "transaction_intent" ? "transaction" : intent === "browser_typed_data_sign" ? "typed-data" : "request";
+    await r.capture(`${app}-${state}-external-light-window.png`);
     assert.deepEqual(r.errors, []);
+    }
   });
 });
 
@@ -125,12 +129,14 @@ test("n7_account_access_uses_same_projection: one site and no review fallback", 
   await card.waitFor();
   assert.equal(await card.getByText("https://shop.example", { exact: true }).count(), 1);
   assert(!await card.textContent().then(text => text.includes("old.example")));
+  await r.capture("wallet-account-access-light-window.png");
   await r.frame.locator("body").evaluate(async (_, request) => {
     const { createWalletRequests } = await import("./wallet-requests.js");
     const root = document.querySelector("#wallet-hero-pending");
     createWalletRequests({ requestsNode: root }).renderRequests([{ ...request, requesting_origin: undefined }]);
   }, request);
   assert.equal(await card.locator(".wallet-request-origin").count(), 0);
+  await r.capture("wallet-account-access-no-site-light-window.png");
 });
 
 test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
@@ -184,6 +190,7 @@ test("n5_cleanup_blocks_allow_until_complete: Inbox cases", async t => {
   await r.frame.locator('dialog[open] button[value="off"]').click();
   await r.frame.locator("#status-text").filter({ hasText: "cleanup could not finish" }).waitFor();
   assert.equal(await r.frame.getByRole("button", { name: "Allow", exact: true }).count(), 0);
+  await r.capture("inbox-internet-cleanup-failed-light-window.png");
   r.state.cleanupFailure = false;
   await finish.click();
   await r.frame.locator('dialog[open] button[value="off"]').click();
@@ -229,6 +236,7 @@ test("n3_requester_provenance_without_site_invention: Wallet card", async t => {
   await card.waitFor();
   assert.equal(await card.locator(".wallet-request-main > span").textContent(), `notes · ${request.address.slice(0, 6)}…${request.address.slice(-4)} · Elastos Smart Chain`);
   assert.equal(await card.locator(".wallet-request-origin").count(), 0);
+  await r.capture("wallet-request-no-site-light-window.png");
 });
 
 test("n3_reject_dismiss_acknowledgement: Inbox decision and count", async t => {

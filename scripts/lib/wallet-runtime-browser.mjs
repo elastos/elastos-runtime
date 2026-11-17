@@ -111,6 +111,7 @@ export async function runtimeView(t, app, state = {}) {
   await frame.locator(app === "inbox" ? "#inbox-shell" : ".wallet-shell").waitFor();
   return { page, frame, calls, state, errors, async capture(name) {
     if (!process.env.WALLET_RUNTIME_SCREENS) return;
+    if (app === "inbox") await frame.locator("#refresh:enabled").waitFor();
     await mkdir(process.env.WALLET_RUNTIME_SCREENS, { recursive: true });
     const files = {};
     const directory = new URL(`capsules/${app}/browser/`, root);
