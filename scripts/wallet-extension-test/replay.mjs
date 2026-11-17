@@ -95,10 +95,6 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
           if (typeof fn !== 'function') return violate('Invalid wallet event listener', { provider: id, member: 'on' });
           if (!events.has(name)) events.set(name, new Set()); events.get(name).add(fn); return provider;
         },
-        removeListener(name, fn) {
-          if (typeof fn !== 'function') return violate('Invalid wallet event listener', { provider: id, member: 'removeListener' });
-          events.get(name)?.delete(fn); return provider;
-        },
       };
       const inventory = id === 'unisat' ? fixture.surfaces.unisat : id === 'legacy' && observation.ethereum?.isRabby ? fixture.surfaces.legacy : null;
       const target = Object.create(eventMethods);
@@ -117,7 +113,10 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
       });
       for (const [key, value] of Object.entries(flags)) set(key, value);
       if (id === 'unisat') {
-        for (const method of inventory.methods) set(method, (...params) => invoke(id, () => request(id, method, params)));
+        const recorded = new Set(fixture.cases.flatMap((c) => c.snapshots).filter((s) => s.call
+          && providerId(s.call.target || s.call.kind) === id).map((s) => s.call.method));
+        for (const method of inventory.methods) if (recorded.has(method))
+          set(method, (...params) => invoke(id, () => request(id, method, params)));
       } else {
         set('request', (args) => invoke(id, () => {
           const { method, params = [] } = args;

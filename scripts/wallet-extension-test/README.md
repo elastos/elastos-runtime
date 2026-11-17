@@ -200,6 +200,11 @@ the exception. Legacy `isConnected()` returns its recorded Boolean from
 R2-BOTH-legacy-shape. The absent `then` property remains undefined for JavaScript
 Promise/EventTarget probes; this is language plumbing, rather than a wallet API.
 Event subscriptions require a function and record a violation otherwise.
+The recorded public method list proves names/types, rather than replies. A
+listed method with no imported call case also uses a guarded getter. The
+recorded event stream supports `on`; provider `removeListener`/`once` and
+unrecorded RPC behavior wait for recordings. A lane can test its own generation
+fences with the recorded events, but a pass does not prove provider unsubscribe.
 The capture has no complete MetaMask or announced-Rabby key inventory,
 nor complete prototype/private-member types. Those stand-ins implement the
 measured request/event interface and recorded flags only. A passing test proves

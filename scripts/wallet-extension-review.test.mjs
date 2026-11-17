@@ -111,7 +111,10 @@ test('F4 UniSat has no EIP-1193 request member', async () => {
   const inventory = input.fixture.surfaces.unisat;
   assert.deepEqual(Object.keys(page.unisat).sort(), [...inventory.keys].sort());
   const descriptors = Object.getOwnPropertyDescriptors(page.unisat);
-  assert.deepEqual(Object.keys(descriptors).filter((key) => typeof descriptors[key].value === 'function').sort(), [...inventory.methods].sort());
+  for (const key of inventory.methods) assert.ok(typeof descriptors[key].value === 'function'
+    || typeof descriptors[key].get === 'function', `${key}: recorded method or guarded unsupported read`);
+  assert.ok(Object.keys(descriptors).filter((key) => typeof descriptors[key].value === 'function')
+    .every((key) => inventory.methods.includes(key)), 'No unrecorded own callable member');
   replay.assertNoViolations();
   replay.dispose();
 });

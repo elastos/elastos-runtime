@@ -45,6 +45,8 @@ for (const [id, scenario, member] of [
   ['legacy', 'rabby-legacy-chooser', '_state'],
   ['unisat', 'unisat-before-access', '_request'],
   ['io.rabby', 'metamask-and-rabby', 'enable'],
+  ['unisat', 'unisat-before-access', 'getBalance'],
+  ['unisat', 'unisat-before-access', 'initialize'],
 ]) {
   test(`F3 residual: unsupported ${id}.${member} read leaves a violation`, async () => {
     const { replay, provider } = await setup(scenario, id);
@@ -56,9 +58,9 @@ for (const [id, scenario, member] of [
 }
 
 for (const [id, scenario] of [['legacy', 'rabby-legacy-chooser'], ['unisat', 'unisat-before-access'], ['io.metamask', 'metamask-before-access'], ['io.rabby', 'metamask-and-rabby']]) {
-  for (const operation of ['on', 'removeListener']) test(`N-e: invalid ${id}.${operation} listener leaves a violation`, async () => {
+  for (const operation of ['on', 'removeListener']) test(`${operation === 'on' ? 'N-e: invalid subscription' : 'F3 residual: unrecorded unsubscribe'} ${id} leaves a violation`, async () => {
     const { replay, provider } = await setup(scenario, id);
-    try { provider[operation]('accountsChanged', null); } catch {}
+    try { provider[operation]('accountsChanged', operation === 'on' ? null : () => {}); } catch {}
     assert.equal(replay.violations.length, 1);
     assert.throws(() => replay.assertNoViolations(), /violations/);
     replay.dispose();
