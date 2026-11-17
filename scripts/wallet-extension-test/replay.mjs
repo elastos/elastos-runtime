@@ -26,6 +26,9 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
     if (!plan || plan.snapshot.call.method !== method || JSON.stringify(ordered(plan.snapshot.call.params)) !== JSON.stringify(ordered(params))) {
       throw new Error(`Unrecorded wallet call: ${provider}.${method}`);
     }
+    if (plan.afterReturn && !requests.some((r) => r.caseId === plan.afterReturn && r.state === 'fulfilled')) {
+      throw new Error('Wait for the earlier recorded answer before this call');
+    }
     plan.used = true;
     const c = plan.snapshot.call;
     const pending = { caseId: plan.id, provider, method, params: copy(params), startedAt: now,

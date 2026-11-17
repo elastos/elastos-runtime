@@ -70,7 +70,7 @@ for (const name of Object.keys(scenarios)) {
       for (const p of providers.values()) if (p !== page.ethereum) assert.notEqual(p, page.ethereum);
     }
     const outputs = new Map();
-    for (const plan of input.spec.calls) {
+    function start(plan) {
       const entry = input.fixture.cases.find((c) => c.id === plan.id);
       const call = finalCall(entry);
       const id = canon(call.target || call.kind);
@@ -80,6 +80,7 @@ for (const name of Object.keys(scenarios)) {
       const promise = id === 'unisat' ? provider[call.method](...call.params) : provider.request({ method: call.method, params: call.params });
       promise.then((value) => outputs.set(plan.id, { state: 'fulfilled', value }), (error) => outputs.set(plan.id, { state: 'rejected', error: errorShape(error) }));
     }
+    for (const plan of input.spec.calls.filter((p) => !p.afterReturn)) start(plan);
     replay.person('does nothing');
     // Even a day of virtual waiting cannot approve a prompt or settle an unanswered call.
     await replay.advance(86_400_000);
@@ -94,6 +95,8 @@ for (const name of Object.keys(scenarios)) {
       if (input.spec.calls.some((later) => later.after === plan.id)) await replay.advance(86_400_000);
     }
     await replay.advance(86_400_000);
+    for (const plan of input.spec.calls.filter((p) => p.afterReturn)) start(plan);
+    await replay.advance(1000);
     for (const plan of input.spec.calls) {
       const call = finalCall(input.fixture.cases.find((c) => c.id === plan.id));
       assertReply(outputs.get(plan.id), call);
@@ -206,6 +209,8 @@ test('real_transaction_hash_and_late_receipt_recording: three independent receip
     const get = (id) => fixture.cases.find((c) => c.id === id);
     const hash = finalCall(get(send)).value;
     const r = finalCall(get(receipt));
+    const sendCall = finalCall(get(send));
+    assert.ok(r.started_at_ms >= sendCall.started_at_ms + sendCall.elapsed_ms, 'Raw receipt query follows the returned hash');
     assert.equal(r.params[0], hash);
     assert.equal(r.value.transactionHash, hash);
     assert.equal(r.value.status, '0x1');
@@ -214,6 +219,39 @@ test('real_transaction_hash_and_late_receipt_recording: three independent receip
   const late = finalCall(fixture.cases.find((c) => c.id === 'R2-MM-send-late75'));
   assert.ok(late.elapsed_ms > 100_000);
 });
+
+for (const name of ['metamask-transaction-receipt', 'metamask-transaction-late-receipt', 'metamask-transactions-queued']) {
+  test(`receipt request follows the recorded hash: ${name}`, async () => {
+    const input = await replayInput(name);
+    const page = pageSurface();
+    const replay = installScriptedExtension(input, page);
+    let provider;
+    page.addEventListener('eip6963:announceProvider', ({ detail }) => { if (detail.info.rdns === 'io.metamask') provider = detail.provider; });
+    page.dispatchEvent(new Event('eip6963:requestProvider'));
+    await replay.advance(1000);
+    const sends = input.spec.calls.filter((p) => !p.afterReturn);
+    const send = finalCall(input.fixture.cases.find((c) => c.id === sends[0].id));
+    const receiptPlan = input.spec.calls.find((p) => p.afterReturn);
+    const receipt = finalCall(input.fixture.cases.find((c) => c.id === receiptPlan.id));
+    const hashPromise = provider.request({ method: send.method, params: send.params });
+    for (const other of sends.slice(1)) {
+      const call = finalCall(input.fixture.cases.find((c) => c.id === other.id));
+      provider.request({ method: call.method, params: call.params }).catch(() => {});
+    }
+    assert.throws(() => provider.request({ method: receipt.method, params: receipt.params }), /earlier recorded answer/);
+    replay.person('approves', sends[0].id);
+    await replay.advance(send.elapsed_ms + 1);
+    assert.equal(await hashPromise, receipt.params[0]);
+    for (const other of sends.slice(1)) {
+      replay.person(other.action, other.id);
+      await replay.advance(finalCall(input.fixture.cases.find((c) => c.id === other.id)).elapsed_ms + 1);
+    }
+    const receiptPromise = provider.request({ method: receipt.method, params: receipt.params });
+    await replay.advance(receipt.elapsed_ms + 1);
+    assert.deepEqual(await receiptPromise, receipt.value);
+    replay.dispose();
+  });
+}
 
 async function runMutant(name, mutate) {
   const original = await replayInput(name);

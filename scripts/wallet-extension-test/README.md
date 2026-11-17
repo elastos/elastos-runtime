@@ -37,6 +37,9 @@ The error inventory also compares all raw rejection shapes with the cases
 used by scenarios. `metamask-transaction-revoked` replays the captured
 permission-revocation cleanup error from MM-8-confirm. Its `removes access`
 control represents that cleanup, rather than a native Cancel-button trial.
+Receipt scenarios require the recorded send to return its hash before the
+receipt call. Preserve cross-call dependencies as well as per-call replies;
+the raw clocks and the early-receipt refusal tests check this order.
 
 The person controls are `approves`, `declines`, `closes the prompt`,
 `does nothing`, `unlocks`, `switches account`, and `removes access`.
