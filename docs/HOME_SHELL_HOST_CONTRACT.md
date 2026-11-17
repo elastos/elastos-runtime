@@ -359,7 +359,8 @@ but may not assert a `locked` fact.
 | After this work | `request_not_authorized` | The active wallet call returned numeric `4100`: the wallet did not allow this request. That code alone identifies neither an account-selection error nor whether account or method permission failed. |
 | After this work | `account_mismatch` | The signer returned for a link/proof changed from the bound account before dispatch/verification. A request account absent from the site list uses `account_not_authorized`. |
 | After this work | `unknown_network` | An unresolved numeric `4902` after the fixed Runtime-configured switch/add sequence, an unsupported UniSat chain, or a network Home cannot safely identify/configure. |
-| After this work | `wallet_busy` | This provider already has a Home call in flight, or the active call returned numeric `-32002`. Signing queues and UniSat's concurrent-connect anomaly are prevented by serialization, not assumed to return that code. |
+| After this work | `host_busy` | Home already has a call to this provider in flight, or the frame's bounded admission capacity is full. Use neutral local-busy guidance; this alone proves no wallet prompt. |
+| After this work | `wallet_busy` | The active wallet call returned numeric `-32002`. The recorded MetaMask connect case can say a wallet request is already open. Signing queues and UniSat's concurrent-connect anomaly are prevented by serialization, not assumed to return that code. |
 | After this work | `no_wallet` | No usable allowed provider was found here; installation/disable/private causes remain unknown. |
 | After this work | `extensions_unavailable` | Positive enclosing-host fact as specified above. |
 | After this work | `stopped` | Home ended the local wait by user action or its deadline. An extension prompt may remain open. |
@@ -448,7 +449,7 @@ mint links or auto-send a request.
 
 **After this work.** Discovery holds at most 32 provider entries for the page
 lifetime. Frame registration holds its token, generation, last validated
-snapshot and at most 64 used request IDs for five minutes. At capacity return `wallet_busy` for new effects until entries expire, keeping
+snapshot and at most 64 used request IDs for five minutes. At capacity return `host_busy` for new effects until entries expire, keeping
 unexpired replay protection. Reserve capacity for the active effect's stop;
 repeating that stop has no further effect.
 One busy-provider record retains only the original binding, dispatch state and
@@ -528,7 +529,7 @@ scripted extension replays pinned recordings rather than invented lock/errors.
 | After this work | `n2_closed_actions_and_frame_binding`, `n2_unknown_kind_and_old_home_reload` | Home lane, Node module tests plus headless opaque frames; forged source/token/generation, replay, extra fields and old-page probe cause zero provider effects. |
 | After this work | `n2_recorded_provider_facts`, `n2_account_network_events` | Home lane, real host module with recording replay; changed UUID, permitted versus global account, empty accounts, 4001/4100/-32002/4902, queued signatures, UniSat chain enum, 4100 without an account/method cause claim, and no lock inference. |
 | After this work | `n2_preflight_before_handoff` | Home and Runtime lanes, real modules and server tests; wrong/empty accounts, network refusal, stale request and timeout leave handoff count zero and pending state intact. A concurrent handoff wins at most once. |
-| After this work | `n2_one_deadline_stop_late_reply`, `n2_serializes_across_frames` | Home lane, controlled clocks and deferred provider replies; one 60-second budget across stages, stop at every await, late proof ignored, late transaction never resent, reopened frame remains busy. |
+| After this work | `n2_one_deadline_stop_late_reply`, `n2_serializes_across_frames` | Home lane, controlled clocks and deferred provider replies; one 60-second budget across stages, stop at every await, late proof ignored, late transaction never resent, reopened frame returns `host_busy`, and only an actual -32002 returns `wallet_busy`. |
 | After this work | `n1_navigation_rows_and_near_misses`, `n1_request_id_survives_launch_and_reuse`, `n1_source_app_from_runtime_record` | Navigation lane, real Home/Wallet modules plus headless frames; exercise every row, reject adjacent invalid rows, open actual activity drawer with a pending request, substitute source app/ID, and test missing/unlaunchable records. |
 | After this work | `wallet_windows_state_producers_and_controls` | Shared-view and window lanes, built Home; import the design state list, reach every accepted state through its producer and press every control. Include no extension Disconnect and the actual selected/permitted account. |
 
