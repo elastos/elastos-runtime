@@ -573,9 +573,10 @@ none of these facts. Type
 is `home:wallet-connector-state`, schema
 `elastos.home.wallet-connector-state/v2`; exact keys are `type`, `schema`,
 `connectorId`, `documentNonce`, `generation`, `snapshot`, `settled`. Normally
-settled is null. If a call outlives its stopped/expired effect or failed check,
-then settles, send exactly
-one advisory to its still-live original registration:
+settled is null. If a provider call outlives its stopped/expired effect or
+failed check, or transaction receipt work outlives the ended wait, send exactly
+one advisory to its still-live original registration when that work settles.
+This includes Stop during verifying after the hash has already arrived:
 `settled:{effectRequestId,result:"answered"|"declined"|"failed",receipt}`.
 These three inner keys are exact. Answered means a successful provider return,
 declined means 4001, failed means all other settlement. receipt is exactly null, "recorded" or "recording_failed". It is non-null only
