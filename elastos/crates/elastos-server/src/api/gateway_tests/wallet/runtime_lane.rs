@@ -48,9 +48,21 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
             let dir = tempfile::tempdir().unwrap();
             seed_walletconnect_connector_config(dir.path());
             let authority = passkey_authority(dir.path());
-            let wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
-            let inbox = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
-            let system = projection_launch_token_for_authority_context(dir.path(), SYSTEM_CAPSULE_ID, &authority);
+            let wallet = projection_launch_token_for_authority_context(
+                dir.path(),
+                WALLET_CAPSULE_ID,
+                &authority,
+            );
+            let inbox = projection_launch_token_for_authority_context(
+                dir.path(),
+                INBOX_CAPSULE_ID,
+                &authority,
+            );
+            let system = projection_launch_token_for_authority_context(
+                dir.path(),
+                SYSTEM_CAPSULE_ID,
+                &authority,
+            );
             let matching_actor = connector.unwrap_or(WALLET_METAMASK_CAPSULE_ID);
             let matching = projection_launch_token_for_authority_context(
                 dir.path(),
@@ -68,7 +80,11 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
                 crate::auth::RuntimePrincipalRole::Admin,
                 "other-site-reader-credential",
             );
-            let other_wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &other);
+            let other_wallet = projection_launch_token_for_authority_context(
+                dir.path(),
+                WALLET_CAPSULE_ID,
+                &other,
+            );
             let record = json!({"schema":"elastos.wallet.approval_request/v1", "request_id":"request:site", "status":"pending", "intent":intent, "requested_by_actor":"browser",
             "principal_id":authority.principal_id, "session_id":authority.session_id, "account_id":"account:site", "chain_namespace":"eip155:20",
             "address":"0xabc", "resource":"elastos://wallet/sign", "reason":"Sign a message", "proof_type":if connector.is_some() { "siwe" } else { "managed_evm" }, "connector_id":connector,
@@ -220,9 +236,18 @@ async fn n7_browser_site_projection_all_surfaces_transactions() {
         let dir = tempfile::tempdir().unwrap();
         seed_walletconnect_connector_config(dir.path());
         let authority = passkey_authority(dir.path());
-        let browser = projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
-        let wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
-        let inbox = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
+        let browser = projection_launch_token_for_authority_context(
+            dir.path(),
+            BROWSER_CAPSULE_ID,
+            &authority,
+        );
+        let wallet = projection_launch_token_for_authority_context(
+            dir.path(),
+            WALLET_CAPSULE_ID,
+            &authority,
+        );
+        let inbox =
+            projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
         let address = "0x1111111111111111111111111111111111111111";
         let account_id = format!("wallet:eip155:20:{address}");
         let provider = MockWalletProvider {
@@ -274,7 +299,8 @@ async fn n7_browser_site_projection_all_surfaces_transactions() {
 async fn n4_pending_requests_current_session_only_existing_routes() {
     let dir = tempfile::tempdir().unwrap();
     let owner = passkey_authority(dir.path());
-    let wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &owner);
+    let wallet =
+        projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &owner);
     let inbox = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &owner);
     let other_context = HomeLaunchTokenContext {
         principal_id: owner.principal_id.clone(),
@@ -282,19 +308,36 @@ async fn n4_pending_requests_current_session_only_existing_routes() {
         proof_binding_id: Some(owner.proof_binding_id.clone()),
         grant_id: format!("grant:{}", uuid_like_token()),
     };
-    crate::auth::store_session_grant(dir.path(), AuthSessionGrantV1 {
-        schema: AuthSessionGrantV1::SCHEMA.to_string(),
-        grant_id: other_context.grant_id.clone(), session_id: other_context.session_id.clone(),
-        principal_id: owner.principal_id.clone(), proof_binding_id: owner.proof_binding_id.clone(),
-        issued_at:now_ts(), expires_at:now_ts()+3600, apps:vec![HOME_CAPSULE_ID.to_string()],
-    }).unwrap();
+    crate::auth::store_session_grant(
+        dir.path(),
+        AuthSessionGrantV1 {
+            schema: AuthSessionGrantV1::SCHEMA.to_string(),
+            grant_id: other_context.grant_id.clone(),
+            session_id: other_context.session_id.clone(),
+            principal_id: owner.principal_id.clone(),
+            proof_binding_id: owner.proof_binding_id.clone(),
+            issued_at: now_ts(),
+            expires_at: now_ts() + 3600,
+            apps: vec![HOME_CAPSULE_ID.to_string()],
+        },
+    )
+    .unwrap();
     let other_wallet = issue_home_projection_launch_token_with_context(
-        dir.path(), WALLET_CAPSULE_ID, WALLET_CAPSULE_ID, &other_context,
-    ).unwrap();
+        dir.path(),
+        WALLET_CAPSULE_ID,
+        WALLET_CAPSULE_ID,
+        &other_context,
+    )
+    .unwrap();
     let other_inbox = issue_home_projection_launch_token_with_context(
-        dir.path(), INBOX_CAPSULE_ID, INBOX_CAPSULE_ID, &other_context,
-    ).unwrap();
-    let other = runtime_wallet_authority_for_app_token(dir.path(), WALLET_CAPSULE_ID, &other_wallet);
+        dir.path(),
+        INBOX_CAPSULE_ID,
+        INBOX_CAPSULE_ID,
+        &other_context,
+    )
+    .unwrap();
+    let other =
+        runtime_wallet_authority_for_app_token(dir.path(), WALLET_CAPSULE_ID, &other_wallet);
     assert_eq!(other.verified_context().principal_id(), owner.principal_id);
     assert_ne!(other.verified_context().session_id(), owner.session_id);
     let record = json!({"schema":"elastos.wallet.approval_request/v1", "request_id":"request:session-fixture", "status":"pending",
@@ -302,22 +345,48 @@ async fn n4_pending_requests_current_session_only_existing_routes() {
         "account_id":"account:session-fixture", "chain_namespace":"eip155:20", "address":"0xabc", "proof_type":"siwe", "connector_id":"wallet-metamask",
         "resource":"elastos://content/publish", "reason":"Publish document revision", "created_at":now_ts(), "expires_at":now_ts()+600});
     let provider = MockWalletProvider {
-        challenges: TokioMutex::default(), bitcoin_challenges: TokioMutex::default(), accounts: TokioMutex::default(),
-        approvals: TokioMutex::new(vec![record.clone()]), defaults: TokioMutex::default(),
+        challenges: TokioMutex::default(),
+        bitcoin_challenges: TokioMutex::default(),
+        accounts: TokioMutex::default(),
+        approvals: TokioMutex::new(vec![record.clone()]),
+        defaults: TokioMutex::default(),
     };
     let (state, recorder) = wallet_test_state_with_recording_provider(dir.path(), provider).await;
     let app = gateway_router(state);
     let own = read_private(&app, &wallet, "/api/apps/wallet/wallet/summary").await;
     assert_eq!(own["wallet_approvals"]["pending_count"], 1);
     let own = read_private(&app, &inbox, "/api/apps/inbox/summary").await;
-    assert_eq!(own["notifications"]["entries"].as_array().unwrap().iter().filter(|e| e["kind"] == "wallet_approval_request").count(), 1);
+    assert_eq!(
+        own["notifications"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["kind"] == "wallet_approval_request")
+            .count(),
+        1
+    );
     let foreign = read_private(&app, &other_wallet, "/api/apps/wallet/wallet/summary").await;
-    assert_eq!(foreign["wallet_approvals"]["approval_requests"], json!([]), "the fixture must enforce the real provider session rule");
+    assert_eq!(
+        foreign["wallet_approvals"]["approval_requests"],
+        json!([]),
+        "the fixture must enforce the real provider session rule"
+    );
     assert_eq!(foreign["wallet_approvals"]["pending_count"], 0);
     let foreign = read_private(&app, &other_inbox, "/api/apps/inbox/summary").await;
-    assert!(!foreign["notifications"]["entries"].as_array().unwrap().iter().any(|e| e["kind"] == "wallet_approval_request"));
+    assert!(!foreign["notifications"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["kind"] == "wallet_approval_request"));
     assert_eq!(recorder.provider.approvals.lock().await[0], record);
-    recorder.provider.approvals.lock().await[0].as_object_mut().unwrap().remove("session_id");
+    recorder.provider.approvals.lock().await[0]
+        .as_object_mut()
+        .unwrap()
+        .remove("session_id");
     let legacy = read_private(&app, &wallet, "/api/apps/wallet/wallet/summary").await;
-    assert_eq!(legacy["wallet_approvals"]["approval_requests"], json!([]), "an unbound pending request stays hidden");
+    assert_eq!(
+        legacy["wallet_approvals"]["approval_requests"],
+        json!([]),
+        "an unbound pending request stays hidden"
+    );
 }
