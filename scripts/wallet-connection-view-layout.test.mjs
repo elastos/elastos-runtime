@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -14,10 +15,10 @@ import { viewText } from '../capsules/_shared/wallet-connection-view.mjs';
 const playwright = requireProductSmokePlaywright();
 const proof = process.env.WALLET_VIEW_PROOF_DIR || await mkdtemp(join(tmpdir(),'wallet-view-render-'));
 const capture = process.env.WALLET_VIEW_CAPTURE === '1';
-const root = resolve('.');
+const root = resolve(fileURLToPath(new URL('../',import.meta.url)));
 const sizes = [{name:'window',width:480,height:522},{name:'390',width:390,height:844},{name:'1280',width:1280,height:720},
   {name:'small',compact:true},{name:'phone',compact:true}];
-const candidate=execFileSync('git',['rev-parse','HEAD','HEAD^{tree}'],{encoding:'utf8'}).trim().split('\n');
+const candidate=execFileSync('git',['rev-parse','HEAD','HEAD^{tree}'],{encoding:'utf8',cwd:root}).trim().split('\n');
 const results = [];
 const frameGeometry = {};
 const interactionChecks = [];
@@ -169,7 +170,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
     interactionChecks.push({engine,stableAddressFocus:true,qrTabAndEscape:true,walletTextLiteral:true});
   } finally {
     await browser.close();
-    const hash=createHash('sha256').update(await readFile('capsules/_shared/wallet-connection-view.mjs')).digest('hex');
+    const hash=createHash('sha256').update(await readFile(resolve(root,'capsules/_shared/wallet-connection-view.mjs'))).digest('hex');
     await writeFile(`${proof}/results.json`,JSON.stringify({head:candidate[0],tree:candidate[1],sourceSha256:hash,frameGeometry,interactionChecks,results},null,2)+'\n');
   }
 });

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -6,6 +7,7 @@ import { resolve, extname } from 'node:path';
 import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
 import { states, fixtureView, fixtureArguments } from './wallet-connection-view-fixtures.mjs';
 const playwright=requireProductSmokePlaywright();
+const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
 for(const engine of ['chromium','webkit'])test(`F1: full origins and fixed feedback in ${engine}`,{skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in content-sandbox CI':false},async()=>{
   const browser=await playwright[engine].launch({headless:true});
   try{
@@ -13,9 +15,9 @@ for(const engine of ['chromium','webkit'])test(`F1: full origins and fixed feedb
     await page.route('**/*',async route=>{
       const url=new URL(route.request().url());assert.equal(url.hostname,'wallet-view.test');
       if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:'<!doctype html><link rel="stylesheet" href="/capsules/wallet-metamask/browser/elastos-ui.css"><link rel="stylesheet" href="/capsules/_shared/wallet-connection-view.css"><body class="el-app" style="margin:0"></body>'});
-      if(url.pathname.startsWith('/connection-'))return route.fulfill({body:await readFile(resolve('capsules/_shared',url.pathname.slice(1))),contentType:'image/png'});
+      if(url.pathname.startsWith('/connection-'))return route.fulfill({body:await readFile(resolve(root,'capsules/_shared',url.pathname.slice(1))),contentType:'image/png'});
       assert(url.pathname.startsWith('/capsules/'));
-      return route.fulfill({body:await readFile(resolve('.'+url.pathname)),contentType:extname(url.pathname)==='.mjs'?'text/javascript':extname(url.pathname)==='.css'?'text/css':'image/png'});
+      return route.fulfill({body:await readFile(resolve(root,'.'+url.pathname)),contentType:extname(url.pathname)==='.mjs'?'text/javascript':extname(url.pathname)==='.css'?'text/css':'image/png'});
     });
     await page.goto('http://wallet-view.test/');
     const origins=['https://accounts.example.com.secure-login-verify-session.attacker-domain.net','https://'+('long-lookalike.'.repeat(28))+'attacker-domain.net'];
