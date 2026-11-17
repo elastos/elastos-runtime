@@ -319,7 +319,13 @@ windows. An unclassified host remains `unknown`. Host classification takes an
 explicit platform/host input owned by Home; a capsule cannot supply it.
 The bare WebKit absence recording proves absence, not this classification.
 Check again uses `check`; installing in Home's Browser cannot equip the
-browser enclosing Home. WalletConnect navigation uses N1.
+browser enclosing Home. A control named Check access still uses this silent
+check. If restoring access needs a prompt, the person uses the extension's own
+site controls or an explicit link ceremony; a verified relink updates the same
+canonical account rather than adding a duplicate. The contract adds neither a
+prompting check variant nor a fifth effect kind. A connector can give reload
+instructions; actual reload uses Home-owned or browser controls, not a new
+connector reload message. WalletConnect navigation uses N1.
 
 **After this work.** `accounts` is a validated list of at most 32 canonical
 addresses, each at most 128 ASCII bytes; overflow or malformed data fails the
@@ -349,8 +355,9 @@ but may not assert a `locked` fact.
 | --- | --- | --- |
 | After this work | `done` | Check completed, or Runtime verified link/approval completion. A stop acknowledges its local effect only. |
 | After this work | `declined` | The active provider call returned numeric `4001`; Home reports decline without inferring a native close-button action. |
-| After this work | `account_not_authorized` | The active wallet call returned numeric `4100`: the site lacks this account's permission. |
-| After this work | `account_mismatch` | The request's address is absent from a nonempty permitted-account list, or the signer changed before dispatch/verification. |
+| After this work | `account_not_authorized` | The canonical required account is unavailable in the site-account read. This reports unavailable access, with lock/permission cause left unknown. |
+| After this work | `request_not_authorized` | The active wallet call returned numeric `4100`: the wallet did not allow this request. That code alone identifies neither an account-selection error nor whether account or method permission failed. |
+| After this work | `account_mismatch` | The signer returned for a link/proof changed from the bound account before dispatch/verification. A request account absent from the site list uses `account_not_authorized`. |
 | After this work | `unknown_network` | An unresolved numeric `4902` after the fixed Runtime-configured switch/add sequence, an unsupported UniSat chain, or a network Home cannot safely identify/configure. |
 | After this work | `wallet_busy` | This provider already has a Home call in flight, or the active call returned numeric `-32002`. Signing queues and UniSat's concurrent-connect anomaly are prevented by serialization, not assumed to return that code. |
 | After this work | `no_wallet` | No usable allowed provider was found here; installation/disable/private causes remain unknown. |
@@ -519,7 +526,7 @@ scripted extension replays pinned recordings rather than invented lock/errors.
 | Status | Required named tests | Run location / proof obligation |
 | --- | --- | --- |
 | After this work | `n2_closed_actions_and_frame_binding`, `n2_unknown_kind_and_old_home_reload` | Home lane, Node module tests plus headless opaque frames; forged source/token/generation, replay, extra fields and old-page probe cause zero provider effects. |
-| After this work | `n2_recorded_provider_facts`, `n2_account_network_events` | Home lane, real host module with recording replay; changed UUID, permitted versus global account, empty accounts, 4001/4100/-32002/4902, queued signatures, UniSat chain enum and no lock inference. |
+| After this work | `n2_recorded_provider_facts`, `n2_account_network_events` | Home lane, real host module with recording replay; changed UUID, permitted versus global account, empty accounts, 4001/4100/-32002/4902, queued signatures, UniSat chain enum, 4100 without an account/method cause claim, and no lock inference. |
 | After this work | `n2_preflight_before_handoff` | Home and Runtime lanes, real modules and server tests; wrong/empty accounts, network refusal, stale request and timeout leave handoff count zero and pending state intact. A concurrent handoff wins at most once. |
 | After this work | `n2_one_deadline_stop_late_reply`, `n2_serializes_across_frames` | Home lane, controlled clocks and deferred provider replies; one 60-second budget across stages, stop at every await, late proof ignored, late transaction never resent, reopened frame remains busy. |
 | After this work | `n1_navigation_rows_and_near_misses`, `n1_request_id_survives_launch_and_reuse`, `n1_source_app_from_runtime_record` | Navigation lane, real Home/Wallet modules plus headless frames; exercise every row, reject adjacent invalid rows, open actual activity drawer with a pending request, substitute source app/ID, and test missing/unlaunchable records. |
