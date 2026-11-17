@@ -65,7 +65,7 @@ test('F2: every stage has an unknown-safety fixture, with a contract-owned recov
   const v=fixtureView(row),expected=allowed[row.window].includes(row.stage),text=viewText(v.notice);
   assert.equal(text.includes('Home cannot tell'),expected,row.caseId);
   assert.doesNotMatch(text,/reload/i);assert(!v.actions.some(a=>a.id==='use-walletconnect'));
-  if(expected){assert.match(text,/Wallet activity/);assert.equal(v.actions.find(a=>a.primary)?.id,'close-window');assert.equal(v.focus,'close-window');}
+  if(expected){assert.equal(v.actions.find(a=>a.primary)?.quiet,false,'primary Close has primary styling');assert.match(text,/Wallet activity/);assert.equal(v.actions.find(a=>a.primary)?.id,'close-window');assert.equal(v.focus,'close-window');}
   if(row.stage==='request-unavailable'){assert.equal(viewText(v.status),'This request is unavailable. Return to the app and ask for a new request.');assert.equal(text,'');}
   if(row.stage==='request-access-error')assert.equal(text,'To try again, return to Browser.');
   if(row.stage==='account-unavailable')assert.match(text,row.window==='metamask'?/Manage connected accounts/:/Choose the required account/);

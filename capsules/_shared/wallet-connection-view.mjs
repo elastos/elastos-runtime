@@ -173,7 +173,7 @@ export function connectionView(input) {
   const unknownRecovery=safety===null && !knownNotSent && unknownRecoveryStages.has(stage);
   if(unknownRecovery){
     notice='Close this window. Home cannot tell whether another window has payment work. Check your wallet and Wallet activity before trying again.';
-    actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over').map(a=>({...a,primary:a.id==='close-window'}));
+    actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over').map(a=>({...a,primary:a.id==='close-window',quiet:a.id==='close-window'?false:a.quiet}));
     const close=actions.find(a=>a.id==='close-window')||{id:'close-window',label:parts('Close window'),primary:true,quiet:false};
     actions=[close,...actions.filter(a=>a.id!=='close-window')];
   }

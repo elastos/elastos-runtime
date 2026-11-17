@@ -80,7 +80,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           if(view.compact&&!view.panel)root.querySelector('.connection-content').scrollTop=10000;
           const box=e=>{const b=e.getBoundingClientRect();return {top:b.top,bottom:b.bottom,left:b.left,right:b.right,width:b.width,height:b.height};};
           const shown=e=>{const b=box(e);return b.width>0&&b.height>0&&b.top>=-1&&b.left>=-1&&b.bottom<=Math.min(innerHeight,visibleFrame.visibleHeight??innerHeight)+1&&b.right<=Math.min(innerWidth,visibleFrame.visibleWidth??innerWidth)+1;};
-          const controls=[...root.querySelectorAll('button')].map(b=>({id:b.dataset.action,label:b.textContent,primary:b.classList.contains('el-button-primary'),visible:shown(b),box:box(b)}));
+          const controls=[...root.querySelectorAll('button')].map(b=>({id:b.dataset.action,label:b.textContent,primary:b.classList.contains('el-button-primary'),quiet:b.classList.contains('connection-quiet'),background:getComputedStyle(b).backgroundColor,visible:shown(b),box:box(b)}));
           const feedback=[...root.querySelectorAll('.connection-wait,.connection-status')].filter(e=>e.textContent).map(e=>({text:e.textContent,visible:shown(e),box:box(e)}));
           const names=[...root.querySelectorAll('.connection-isolated')].map(e=>({kind:e.classList.contains('connection-site')?'site':'name',textOverflow:getComputedStyle(e).textOverflow,text:e.textContent,dir:e.dir,bidi:getComputedStyle(e).unicodeBidi,overflow:getComputedStyle(e).overflowX,clipOverflow:e.querySelector('.connection-isolated-text')?getComputedStyle(e.querySelector('.connection-isolated-text')).overflowX:null,whiteSpace:getComputedStyle(e).whiteSpace}));
           let clicks=[];root.addEventListener('click',e=>{const b=e.target.closest('button');if(b)clicks.push(b.dataset.action);});
@@ -91,6 +91,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
         const key=`${engine}/${theme}/${size.name}/${row.caseId||row.designState}`;
         try{
           if(size.name==='window'){assert(observed.documentHeight<=rowSize.height,key+': ordinary screen fits');assert(observed.controls.every(b=>b.visible),key+': all controls in view');assert(!observed.identityScroll,key+': ordinary identity needs no scroll');}
+          for(const b of observed.controls.filter(b=>b.primary)){assert.equal(b.quiet,false,key+': primary control is not quiet');assert(!['transparent','rgba(0, 0, 0, 0)'].includes(b.background),key+': primary control has a painted background');}
           assert.equal(observed.background,theme==='dark'?'rgb(11, 13, 16)':'rgb(238, 241, 246)',key+': designed app background');assert.equal(observed.headingBeforeFeedback,true,key+': trusted heading precedes status');assert.equal(observed.links,0,key+': zero navigation');assert.equal(observed.siteOutsideIdentity,false,key+': site once in identity');assert(observed.requestAccountIsolated,key+': isolated account address');assert(observed.actionDisplays.every(display=>display==='block'),key+': text spacing uses inline flow');
           if(view.qrData)assert.equal(observed.qrHeadingMark,'./connection-walletconnect.png',key+': designed local QR heading mark');
           const normalizedText=text=>text.replace(/\s+/g,' ').trim();
