@@ -254,7 +254,10 @@ async fn n3_direct_external_approve_refused_existing_routes() {
                 .unwrap();
             let message = String::from_utf8(bytes.to_vec()).unwrap();
             if proof_type == "siwe" {
-                assert!(message.contains("approval method") || message.contains("different connector"), "{message}");
+                assert!(
+                    message.contains("approval method") || message.contains("different connector"),
+                    "{message}"
+                );
             }
             // The contradictory managed+connector record also has the direct
             // guard assertion above; legacy routes may refuse it earlier.
