@@ -41,7 +41,11 @@ impl WalletProvider {
         let display = elastos_wallet_contract::wallet_display_identity(
             account.connector_id.as_deref().unwrap_or_default(),
             account.provider_id.as_deref(),
-            if account.connector_id.as_deref() == Some("wallet-walletconnect") { account.wallet_display_name.as_deref() } else { None },
+            if account.connector_id.as_deref() == Some("wallet-walletconnect") {
+                account.wallet_display_name.as_deref()
+            } else {
+                None
+            },
         );
         let mut summary = json!({
             "account_id": account.account_id,
@@ -57,9 +61,15 @@ impl WalletProvider {
             "signing_available": signing_available,
             "signing_status": signing_status,
         });
-        if let Some(id) = display.provider_id { summary["provider_id"] = json!(id); }
-        if let Some(name) = display.wallet_display_name { summary["wallet_display_name"] = json!(name); }
-        if account.connector_id.is_some() { summary["wallet_mark"] = json!(display.wallet_mark); }
+        if let Some(id) = display.provider_id {
+            summary["provider_id"] = json!(id);
+        }
+        if let Some(name) = display.wallet_display_name {
+            summary["wallet_display_name"] = json!(name);
+        }
+        if account.connector_id.is_some() {
+            summary["wallet_mark"] = json!(display.wallet_mark);
+        }
         summary
     }
 
@@ -135,7 +145,7 @@ impl WalletProvider {
                 );
             }
             if let Some(existing) = exact_account {
-                return Response::ok(json!({ "account": existing, "created": false }));
+                return Response::ok(json!({ "account": self.account_summary(&existing), "created": false }));
             }
             distinct_keys.pop()
         };
@@ -195,7 +205,7 @@ impl WalletProvider {
             self.recover_store_after_save_failure(previous);
             return Response::error("storage_error", err);
         }
-        Response::ok(json!({ "account": account, "created": true }))
+        Response::ok(json!({ "account": self.account_summary(&account), "created": true }))
     }
 
     pub(super) fn import_managed_recovery_key(
@@ -352,7 +362,7 @@ impl WalletProvider {
         if let Err(err) = self.save() {
             return Response::error("storage_error", err);
         }
-        Response::ok(json!({ "account": account, "imported": true }))
+        Response::ok(json!({ "account": self.account_summary(&account), "imported": true }))
     }
 
     pub(super) fn import_managed_recovery_set(
@@ -425,13 +435,18 @@ impl WalletProvider {
         }
         if let Err(code) = elastos_wallet_contract::validate_wallet_display_fields(
             input.connector_id.as_deref().unwrap_or_default(),
-            input.provider_id.as_deref(), input.wallet_peer_name.as_deref(),
+            input.provider_id.as_deref(),
+            input.wallet_peer_name.as_deref(),
         ) {
-            return Response::error(code, "wallet display metadata is invalid for this connector");
+            return Response::error(
+                code,
+                "wallet display metadata is invalid for this connector",
+            );
         }
         let display = elastos_wallet_contract::wallet_display_identity(
             input.connector_id.as_deref().unwrap_or_default(),
-            input.provider_id.as_deref(), input.wallet_peer_name.as_deref(),
+            input.provider_id.as_deref(),
+            input.wallet_peer_name.as_deref(),
         );
         let previous = self.store.clone();
         let now = now_ts();
@@ -465,7 +480,12 @@ impl WalletProvider {
             self.recover_store_after_save_failure(previous);
             return Response::error("storage_error", err);
         }
-        let stored = self.store.accounts.iter().find(|a| a.principal_id == account.principal_id && a.account_id == account.account_id).expect("linked account was stored");
+        let stored = self
+            .store
+            .accounts
+            .iter()
+            .find(|a| a.principal_id == account.principal_id && a.account_id == account.account_id)
+            .expect("linked account was stored");
         Response::ok(json!({ "account": self.account_summary(stored) }))
     }
 
@@ -512,7 +532,7 @@ impl WalletProvider {
             })
             .count();
         Response::ok(
-            json!({ "account": account, "connector_accounts_remaining": connector_accounts_remaining }),
+            json!({ "account": self.account_summary(&account), "connector_accounts_remaining": connector_accounts_remaining }),
         )
     }
 
@@ -550,7 +570,7 @@ impl WalletProvider {
         if let Err(err) = self.save() {
             return Response::error("storage_error", err);
         }
-        Response::ok(json!({ "account": account }))
+        Response::ok(json!({ "account": self.account_summary(&account) }))
     }
 
     pub(super) fn export_managed_recovery_key(
@@ -689,7 +709,7 @@ impl WalletProvider {
         }
         Response::ok(json!({
             "default_account": default_account,
-            "account": account,
+            "account": self.account_summary(&account),
         }))
     }
 
@@ -714,7 +734,7 @@ impl WalletProvider {
         };
         Response::ok(json!({
             "default_account": default,
-            "account": account,
+            "account": self.account_summary(&account),
         }))
     }
 

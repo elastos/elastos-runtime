@@ -576,7 +576,7 @@ fn connector_handoff_requires_the_stored_actor_and_runtime_session() {
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
         ),
         Response::Ok { .. }
     ));

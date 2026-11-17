@@ -4199,8 +4199,11 @@ pub(in crate::api) async fn evm_verify_for_wallet_link(
         authority,
     } = link;
     elastos_wallet_contract::validate_wallet_display_fields(
-        &app, None, input.wallet_peer_name.as_deref(),
-    ).map_err(|code| anyhow::anyhow!("{code}: invalid wallet display metadata"))?;
+        &app,
+        None,
+        input.wallet_peer_name.as_deref(),
+    )
+    .map_err(|code| anyhow::anyhow!("{code}: invalid wallet display metadata"))?;
     let session_proof_binding_id = context
         .proof_binding_id
         .clone()
@@ -4322,7 +4325,7 @@ pub(in crate::api) async fn evm_verify_for_wallet_link(
 
             provider_id: None,
             wallet_peer_name: input.wallet_peer_name.clone(),
-},
+        },
     )
     .await?;
     crate::auth::append_audit_event(
@@ -4540,7 +4543,7 @@ pub(in crate::api) async fn btc_verify_for_wallet_link(
 
             provider_id: None,
             wallet_peer_name: None,
-},
+        },
     )
     .await?;
     crate::auth::append_audit_event(

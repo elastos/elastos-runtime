@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { runtimeView, permissionEntry, packets } from "./lib/wallet-runtime-browser.mjs";
 
+const requestFixture = () => ({ ...packets.n7PrivateSummaries.find(f => f.id === "site-wallet").summary,
+  expires_at: Math.floor(Date.now() / 1000) + 600 });
+
 test("n5_permission_entry_all_states: Inbox existing routes", async t => {
   for (const status of ["requested", "granted", "refused", "revoked", "expired", "cleanup"]) await t.test(status, async t => {
     const r = await runtimeView(t, "inbox", { entries: [permissionEntry(status)], permission: status });
@@ -55,4 +58,120 @@ test("n3_reject_dismiss_acknowledgement: Wallet cards", async t => {
     await r.capture(`wallet-request-${dismissed ? "dismissed" : "rejected"}-light-window.png`);
     assert.deepEqual(r.errors, []);
   });
+});
+
+test("n3_wallet_badge_counts_review_requests: real GUI module", async t => {
+  const r = await runtimeView(t, "wallet");
+  const count = await r.page.evaluate(async () => {
+    document.body.innerHTML = '<button id="toolbar-wallet"></button><aside id="wallet-rail" hidden><iframe id="wallet-rail-frame"></iframe></aside>';
+    const rail = await import("/apps/home-gui/shell-wallet-rail.js");
+    rail.bindWalletRail();
+    const entry = (action, kind = "wallet_approval_request") => ({ kind, action_ref: { action_id: action } });
+    rail.syncWalletRailAvailability({ targets: [{ target: "wallet", title: "Wallet" }], notifications: { entries: [
+      entry("wallet-approve-request:a"), entry("wallet-approve-request:a"), entry("wallet-review-request:a"),
+      entry("wallet-review-request:b"), entry("wallet-review-request:account-access"),
+      entry("wallet-review-request:"), entry("wallet-review-request:other", "contact_request"), entry("unrelated:c"),
+    ] } });
+    const value = document.querySelector(".toolbar-wallet-count")?.textContent;
+    rail.retireWalletRail();
+    return value;
+  });
+  assert.equal(count, "3");
+  assert.deepEqual(r.errors, []);
+});
+
+test("n7_browser_site_projection_all_surfaces: Inbox and Wallet consumers", async t => {
+  for (const app of ["inbox", "wallet"]) await t.test(app, async t => {
+    const request = requestFixture();
+    const entry = { id: `wallet-approval-request:${request.request_id}`, source_app: request.capsule_id,
+      kind: "wallet_approval_request", title: "Sign a message", body: "Sign in to the app.", severity: "attention", read: true,
+      requesting_origin: request.requesting_origin, action_ref: { action_id: `wallet-review-request:${request.request_id}` } };
+    const r = await runtimeView(t, app, { approvals: [request], entries: [entry] });
+    await r.frame.getByText("Site reported by Browser", { exact: true }).waitFor();
+    const origin = r.frame.getByText(request.requesting_origin, { exact: true });
+    assert.equal(await origin.count(), 1);
+    assert.equal(await origin.evaluate(el => el.tagName), "SPAN");
+    assert.equal(await origin.evaluate(el => el.dir), "auto");
+    assert.equal(await origin.evaluate(el => getComputedStyle(el).unicodeBidi), "isolate");
+    await r.capture(`${app}-request-external-light-window.png`);
+    assert.deepEqual(r.errors, []);
+  });
+});
+
+test("n7_site_absent_or_forged_origin: shared invalid summaries", async t => {
+  const r = await runtimeView(t, "wallet");
+  const outcomes = await r.frame.locator("body").evaluate(async (_, fixtures) => {
+    const { createWalletRequests } = await import("./wallet-requests.js");
+    const root = document.createElement("section"); document.body.append(root);
+    const view = createWalletRequests({ requestsNode: root });
+    return fixtures.filter(f => f.audience === "wallet").map(f => {
+      view.renderRequests([f.summary]);
+      return { id: f.id, actual: root.querySelectorAll(".wallet-request-origin").length, expected: f.expect === "show_site" ? 1 : 0,
+        text: root.querySelector(".wallet-request-origin")?.textContent };
+    });
+  }, packets.n7PrivateSummaries);
+  for (const result of outcomes) assert.equal(result.actual, result.expected, result.id);
+  assert.equal(outcomes.find(r => r.id === "literal-idn").text, "https://xn--bcher-kva.example");
+});
+
+test("n7_account_access_uses_same_projection: one site and no review fallback", async t => {
+  const request = { ...requestFixture(), intent: "browser_account_access", proof_type: "managed_evm", connector_id: null,
+    reason: "Browser origin https://old.example requests access", review: { kind: "account_access", origin: "https://old.example",
+      page_url: "https://old.example/private", permission: "eth_accounts", account_id: "account:fixture-1" } };
+  const r = await runtimeView(t, "wallet", { approvals: [request] });
+  const card = r.frame.locator(".wallet-request");
+  await card.waitFor();
+  assert.equal(await card.getByText("https://shop.example", { exact: true }).count(), 1);
+  assert(!await card.textContent().then(text => text.includes("old.example")));
+  await r.frame.locator("body").evaluate(async (_, request) => {
+    const { createWalletRequests } = await import("./wallet-requests.js");
+    const root = document.querySelector("#wallet-hero-pending");
+    createWalletRequests({ requestsNode: root }).renderRequests([{ ...request, requesting_origin: undefined }]);
+  }, request);
+  assert.equal(await card.locator(".wallet-request-origin").count(), 0);
+});
+
+test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
+  const name = "Alice <svg/onload=alert(1)>";
+  const account = { account_id: "account:fixture-1", chain_namespace: "eip155:20", address: requestFixture().address,
+    connector_id: "wallet-walletconnect", proof_type: "siwe", wallet_display_name: name, wallet_mark: "wallet" };
+  const r = await runtimeView(t, "wallet", { accounts: [account] });
+  const label = r.frame.locator(".wallet-account .wallet-card-name");
+  await label.filter({ hasText: name }).waitFor();
+  assert.equal(await label.textContent(), name);
+  assert.equal(await label.evaluate(el => el.dir), "auto");
+  assert.equal(await label.evaluate(el => getComputedStyle(el).unicodeBidi), "isolate");
+  const mark = r.frame.locator(".wallet-account .wallet-method-mark img");
+  assert.match(await mark.getAttribute("src"), /icons\/icon-64.png$/);
+  assert.equal(await mark.getAttribute("alt"), "");
+  assert.equal(await r.frame.locator(".wallet-account svg[onload]").count(), 0);
+  await r.capture("wallet-linked-light-window.png");
+  assert.deepEqual(r.errors, []);
+});
+
+test("n4_old_record_and_reopened_window: legacy Wallet fallback", async t => {
+  const account = { account_id: "account:fixture-1", chain_namespace: "eip155:20", address: requestFixture().address,
+    connector_id: "wallet-metamask", proof_type: "siwe" };
+  const r = await runtimeView(t, "wallet", { accounts: [account] });
+  await r.frame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Your wallet" }).waitFor();
+  await r.page.reload();
+  await r.frame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Your wallet" }).waitFor();
+  await r.capture("wallet-linked-unknown-light-window.png");
+  assert.deepEqual(r.errors, []);
+});
+
+test("n5_cleanup_blocks_allow_until_complete: Inbox cases", async t => {
+  const r = await runtimeView(t, "inbox", { permission: "cleanup", cleanupFailure: true, entries: [permissionEntry("cleanup")],
+    accounts: [{ account_id: "account:kept" }] });
+  const finish = r.frame.getByRole("button", { name: "Finish disconnecting", exact: true });
+  await finish.click();
+  await r.frame.locator('dialog[open] button[value="off"]').click();
+  await r.frame.locator("#status-text").filter({ hasText: "cleanup could not finish" }).waitFor();
+  assert.equal(await r.frame.getByRole("button", { name: "Allow", exact: true }).count(), 0);
+  r.state.cleanupFailure = false;
+  await finish.click();
+  await r.frame.locator('dialog[open] button[value="off"]').click();
+  await r.frame.getByRole("button", { name: "Allow", exact: true }).waitFor();
+  assert.deepEqual(r.state.accounts, [{ account_id: "account:kept" }]);
+  assert.equal(r.calls.filter(c => c.input?.action === "request").length, 0);
 });

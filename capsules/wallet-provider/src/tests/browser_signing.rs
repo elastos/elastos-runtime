@@ -47,7 +47,7 @@ fn browser_personal_sign_is_a_typed_approval_request() {
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
         ),
         Response::Ok { .. }
     ));
@@ -246,7 +246,7 @@ fn external_browser_personal_sign_completion_accepts_hex_decoded_signature() {
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
         ),
         Response::Ok { .. }
     ));

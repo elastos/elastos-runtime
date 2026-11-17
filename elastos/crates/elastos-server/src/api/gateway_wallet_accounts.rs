@@ -124,9 +124,18 @@ pub(in crate::api::gateway) fn system_wallet_account_summary(
     value: &serde_json::Value,
 ) -> Option<SystemWalletAccountSummary> {
     Some(SystemWalletAccountSummary {
-        provider_id: value.get("provider_id").and_then(|v| v.as_str()).map(ToString::to_string),
-        wallet_display_name: value.get("wallet_display_name").and_then(|v| v.as_str()).map(ToString::to_string),
-        wallet_mark: value.get("wallet_mark").and_then(|v| v.as_str()).map(ToString::to_string),
+        provider_id: value
+            .get("provider_id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        wallet_display_name: value
+            .get("wallet_display_name")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        wallet_mark: value
+            .get("wallet_mark")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
         account_id: value.get("account_id")?.as_str()?.to_string(),
         chain_namespace: value.get("chain_namespace")?.as_str()?.to_string(),
         address: value.get("address")?.as_str()?.to_string(),

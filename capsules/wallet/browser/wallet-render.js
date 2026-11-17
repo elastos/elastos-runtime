@@ -140,7 +140,8 @@ export function accountCard(account, displayedAccountId = "", { privacyMode, pri
 
 function walletDisplayMark(key) {
   const mark = document.createElement("span");
-  mark.className = "wallet-method-mark";
+  mark.className = "wallet-method-mark wallet-method-mark-icon";
+  mark.setAttribute("aria-hidden", "true");
   const image = document.createElement("img");
   image.src = ({ wallet: "./icons/icon-64.png", metamask: "./icons/metamask.png", unisat: "./icons/unisat.png" })[key] || "./icons/icon-64.png";
   image.alt = "";

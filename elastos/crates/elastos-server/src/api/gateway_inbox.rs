@@ -208,7 +208,10 @@ pub(super) fn append_wallet_approval_notifications(
                 app: WALLET_CAPSULE_ID.to_string(),
                 action_id: format!(
                     "{}:{}",
-                    if request.intent == "browser_account_access" || !is_managed_wallet_proof_type(&request.proof_type) || request.connector_id.is_some() {
+                    if request.intent == "browser_account_access"
+                        || !is_managed_wallet_proof_type(&request.proof_type)
+                        || request.connector_id.is_some()
+                    {
                         "wallet-review-request"
                     } else {
                         "wallet-approve-request"

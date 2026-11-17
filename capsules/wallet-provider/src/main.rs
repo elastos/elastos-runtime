@@ -205,7 +205,7 @@ impl WalletProvider {
 
                 provider_id,
                 wallet_peer_name,
-} => self.link_account(LinkAccountInput {
+            } => self.link_account(LinkAccountInput {
                 principal_id: principal_id.to_string(),
                 proof_binding_id: proof_binding_id.clone(),
                 chain_namespace: chain_namespace.clone(),

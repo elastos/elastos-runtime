@@ -599,7 +599,9 @@
         return;
       }
       // A request Inbox decides itself has no other app to open.
-      if (entry.kind !== "browser_internet_request" && typeof entry.source_app === "string" && entry.source_app.trim() && entry.source_app.trim() !== "inbox") {
+      if (entry.kind !== "browser_internet_request"
+        && !(entry.kind === "wallet_approval_request" && actionId?.startsWith("wallet-review-request:"))
+        && typeof entry.source_app === "string" && entry.source_app.trim() && entry.source_app.trim() !== "inbox") {
         // A direct-message notice opens its own conversation in Chat.
         const query = typeof actionId === "string" && actionId.startsWith("chat-open-direct:")
           ? { conversation_id: actionId.slice("chat-open-direct:".length) } : {};

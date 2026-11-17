@@ -26,7 +26,15 @@ impl std::error::Error for ConsentConflict {}
 
 pub(super) fn consent_conflict_response(error: &anyhow::Error) -> Option<Response> {
     error.downcast_ref::<ConsentConflict>()?;
-    Some((StatusCode::CONFLICT, Json(json!({"schema":"elastos.home.wallet-connector.effect.error/v1","code":"conflict"}))).into_response())
+    Some(
+        (
+            StatusCode::CONFLICT,
+            Json(
+                json!({"schema":"elastos.home.wallet-connector.effect.error/v1","code":"conflict"}),
+            ),
+        )
+            .into_response(),
+    )
 }
 
 pub(crate) struct WalletConnectService {
@@ -203,10 +211,14 @@ pub(super) async fn answer(
         .strip_prefix("walletconnect-internet-")
         .and_then(|v| v.split_once(':'))
         .ok_or_else(|| anyhow::anyhow!("Invalid WalletConnect internet action"))?;
-    if id != c.id { return Err(ConsentConflict.into()); }
+    if id != c.id {
+        return Err(ConsentConflict.into());
+    }
     match verb {
         "deny" => {
-            if c.status != "requested" { return Err(ConsentConflict.into()); }
+            if c.status != "requested" {
+                return Err(ConsentConflict.into());
+            }
             c.status = "refused".into();
         }
         "allow" | "turn-off" => {
@@ -222,7 +234,8 @@ pub(super) async fn answer(
                     180,
                     if stopping { REVOKE } else { GRANT },
                     &request(&c)?,
-                ).map_err(|_| anyhow::Error::from(ConsentConflict))?;
+                )
+                .map_err(|_| anyhow::Error::from(ConsentConflict))?;
                 c.status = if stopping { "revoked" } else { "granted" }.into();
                 c.cleanup_pending = stopping;
                 c.principal = Some(launch.context.principal_id.clone());
@@ -291,7 +304,7 @@ pub(super) fn notification(
                     .ok()
                     .is_some_and(|inner| !inner.sockets.is_empty())));
     Some(HomeNotificationEntrySummary {
-            requesting_origin: None,
+        requesting_origin: None,
         id: "walletconnect-internet:permission".into(),
         source_app: WALLET_WALLETCONNECT_CAPSULE_ID.into(),
         kind: if pending {

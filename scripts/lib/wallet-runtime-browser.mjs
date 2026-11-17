@@ -12,7 +12,6 @@ const types = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "te
 export async function runtimeView(t, app, state = {}) {
   const { chromium } = requireProductSmokePlaywright();
   const browser = await chromium.launch({ ...productSmokeLaunchOptions(), headless: true });
-  t.after(() => browser.close());
   const context = await browser.newContext({ viewport: { width: 1040, height: 682 } });
   const calls = [];
   const errors = [];
@@ -20,13 +19,14 @@ export async function runtimeView(t, app, state = {}) {
   state.approvals ||= [];
   state.accounts ||= [];
   state.permission ||= "off";
+  state.cleanup ??= state.permission === "cleanup";
   state.question ||= "consent:current";
   const question = () => ({ id: state.question, resource: "elastos://walletconnect/internet", issued_at: Math.floor(Date.now() / 1000), text: "WalletConnect internet access" });
   await context.route("https://runtime.test/**", async route => {
     const request = route.request(), url = new URL(request.url());
     const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(body) });
     if (request.method() === "OPTIONS") return json({});
-    if (url.pathname === "/") return route.fulfill({ contentType: "text/html", body: `<!doctype html><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe id="app" src="/apps/${app}/index.html?home_origin=https%3A%2F%2Fruntime.test#home_token=fixture-token"></iframe><script>window.messages=[];addEventListener('message',e=>{messages.push(e.data);if(e.data.type==='elastos.home.passkey-step-up.request/v1')e.source.postMessage({type:'elastos.home.passkey-step-up.result/v1',requestId:e.data.requestId,stepUpToken:'fixture-proof'},'*')})</script>` });
+    if (url.pathname === "/") return route.fulfill({ contentType: "text/html", body: `<!doctype html><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe id="app" src="/apps/${app}/index.html?home_origin=https%3A%2F%2Fruntime.test&wallet_request=${encodeURIComponent(state.requestId || "")}#home_token=fixture-token"></iframe><script>window.messages=[];addEventListener('message',e=>{messages.push(e.data);if(e.data.type==='elastos.home.passkey-step-up.request/v1')e.source.postMessage({type:'elastos.home.passkey-step-up.result/v1',requestId:e.data.requestId,stepUpToken:'fixture-proof'},'*')})</script>` });
     if (url.pathname.startsWith("/api/")) {
       const input = request.postDataJSON();
       calls.push({ path: url.pathname, method: request.method(), input });
@@ -46,6 +46,12 @@ export async function runtimeView(t, app, state = {}) {
           if (state.permission !== "requested" || input.action_id !== `walletconnect-internet-allow:${state.question}` || input.step_up_token !== "fixture-proof") return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
           state.permission = "granted";
           state.entries = [permissionEntry("granted", state.question)];
+        } else if (input.action_id?.startsWith("walletconnect-internet-turn-off:")) {
+          if (!["granted", "cleanup"].includes(state.permission) || input.action_id !== `walletconnect-internet-turn-off:${state.question}`) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
+          if (state.cleanupFailure) return json({ error: "cleanup could not finish" }, 503);
+          state.permission = "revoked";
+          state.cleanup = false;
+          state.entries = [permissionEntry("revoked", state.question)];
         } else if (input.action_id?.startsWith("wallet-reject-request:")) {
           state.entries = state.entries.filter(e => !e.id.endsWith(input.action_id.slice("wallet-reject-request:".length)));
         }
@@ -61,7 +67,9 @@ export async function runtimeView(t, app, state = {}) {
       }
       if (url.pathname === "/api/wallet/prices") return json({ prices: {}, unavailable: true });
       if (url.pathname === "/api/provider/chain/balance") return json({ status: "unavailable" });
-      return json({});
+      if (url.pathname === "/api/apps/inbox/notifications/read") return json({});
+      errors.push(`Unhandled fixture route: ${request.method()} ${url.pathname}`);
+      return json({ error: "unsupported fixture route" }, 501);
     }
     const match = url.pathname.match(/^\/apps\/([^/]+)\/(.*)$/);
     if (!match || match[2].split("/").includes("..")) return route.abort();
@@ -71,14 +79,22 @@ export async function runtimeView(t, app, state = {}) {
     } catch { await route.fulfill({ status: 404, body: "missing fixture asset" }); }
   });
   const page = await context.newPage();
+  page.setDefaultTimeout(5000);
   page.on("pageerror", e => errors.push(e.message));
+  t.after(async () => {
+    if (errors.length) t.diagnostic(JSON.stringify({ errors, calls: calls.map(c => `${c.method} ${c.path}`) }));
+    await browser.close();
+  });
   await page.goto("https://runtime.test/");
   const frame = page.frameLocator("#app");
   await frame.locator(app === "inbox" ? "#inbox-shell" : ".wallet-shell").waitFor();
   return { page, frame, calls, state, errors, async capture(name) {
     if (!process.env.WALLET_RUNTIME_SCREENS) return;
     await mkdir(process.env.WALLET_RUNTIME_SCREENS, { recursive: true });
+    await frame.locator("html").evaluate(() => window.elastosTheme.set("light"));
     await page.screenshot({ path: `${process.env.WALLET_RUNTIME_SCREENS}/${name}` });
+    await frame.locator("html").evaluate(() => window.elastosTheme.set("dark"));
+    await page.screenshot({ path: `${process.env.WALLET_RUNTIME_SCREENS}/${name.replace("-light-", "-dark-")}` });
   } };
 }
 

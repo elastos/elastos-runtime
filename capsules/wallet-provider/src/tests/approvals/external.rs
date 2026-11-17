@@ -22,7 +22,7 @@ fn signature_request_records_pending_approval_without_signing() {
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
         ),
         Response::Ok { .. }
     ));
@@ -95,7 +95,7 @@ fn approval_request_can_be_rejected_and_hidden_from_pending_list() {
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
         ),
         Response::Ok { .. }
     ));
@@ -174,7 +174,7 @@ fn approval_request_can_be_approved_and_completed_without_exposing_raw_signature
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
         ),
         Response::Ok { .. }
     ));
@@ -311,7 +311,7 @@ fn approval_external_bitcoin_request_completes_with_bip322_connector_signature()
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
         ),
         Response::Ok { .. }
     ));
@@ -412,7 +412,7 @@ fn approval_completion_rejects_signature_from_wrong_evm_key() {
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
         ),
         Response::Ok { .. }
     ));
@@ -503,7 +503,7 @@ fn approval_external_request_cannot_complete_after_expiry() {
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
         ),
         Response::Ok { .. }
     ));

@@ -60,8 +60,11 @@ test("Wallet dismisses earlier-session connector sends without another approval"
     assert.equal(calls[1].input.method, "POST");
     assert.equal(calls[1].input.headers["x-elastos-home-token"], "fixture-current-session-wallet-token",
       "dismissal uses the current Wallet launch, including for an earlier-session send");
-    assert.equal(root.children.length, 0, "successful refresh removes the dismissed request");
-    assert.equal(panel.hidden, true);
+    assert.equal(root.children.length, 1, "the acknowledgement keeps the request identity after refresh");
+    assert.equal(panel.hidden, false);
+    assert.equal(requests.pendingWalletRequests([request]).length, 0, "the acknowledgement is outside the waiting count");
+    assert.equal(descendants(root).filter(node => node.tagName === "button").length, 0);
+    assert(!descendants(root).some(node => node.className === "wallet-request-time"));
     assert(messages.some(message => message.startsWith("Request dismissed.")));
     assert.match(activityTitle(request), /Dismissed transaction request/);
   }

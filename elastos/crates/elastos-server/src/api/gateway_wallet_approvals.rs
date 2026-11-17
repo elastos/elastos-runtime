@@ -414,8 +414,13 @@ pub(in crate::api::gateway) async fn system_wallet_approvals_summary(
                     let private_audience = matches!(actor, WALLET_CAPSULE_ID | INBOX_CAPSULE_ID)
                         || (!is_managed_wallet_proof_type(&summary.proof_type)
                             && summary.connector_id.as_deref() == Some(actor));
-                    if private_audience && record["principal_id"].as_str() == Some(authority.verified_context().principal_id())
-                        && (summary.intent != "transaction_intent" || gateway_transaction_effects::wallet_display_transaction_bound(state, authority, record))
+                    if private_audience
+                        && record["principal_id"].as_str()
+                            == Some(authority.verified_context().principal_id())
+                        && (summary.intent != "transaction_intent"
+                            || gateway_transaction_effects::wallet_display_transaction_bound(
+                                state, authority, record,
+                            ))
                     {
                         summary.requesting_origin = wallet_request_display_origin(record);
                     }
@@ -602,35 +607,82 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
 
 /// Display context from the local Browser producer's immutable recorded fields.
 /// The caller applies audience/session visibility and the transaction effect check.
-fn wallet_request_display_origin(record: &serde_json::Value) -> Option<String> {
-    if record.get("requested_by_actor")?.as_str()? != BROWSER_CAPSULE_ID { return None; }
-    let payload = record.get("payload")?;
-    if serde_json::to_vec(payload).ok()?.len() > 32 * 1024 { return None; }
-    let text = |key: &str| payload.get(key).and_then(|v| v.as_str());
-    for key in ["principal_id", "session_id", "account_id", "chain_namespace"] {
-        if key == "chain_namespace" && record["intent"] == "browser_account_access" { continue; }
-        if text(key)? != record.get(key)?.as_str()? || text(key)?.is_empty() { return None; }
+pub(in crate::api::gateway) fn wallet_request_display_origin(record: &serde_json::Value) -> Option<String> {
+    if record.get("requested_by_actor")?.as_str()? != BROWSER_CAPSULE_ID {
+        return None;
     }
-    let address_key = if record["intent"] == "transaction_intent" { "from" } else { "address" };
-    if !text(address_key)?.eq_ignore_ascii_case(record.get("address")?.as_str()?) { return None; }
+    let payload = record.get("payload")?;
+    if serde_json::to_vec(payload).ok()?.len() > 32 * 1024 {
+        return None;
+    }
+    let text = |key: &str| payload.get(key).and_then(|v| v.as_str());
+    for key in [
+        "principal_id",
+        "session_id",
+        "account_id",
+        "chain_namespace",
+    ] {
+        if key == "chain_namespace" && record["intent"] == "browser_account_access" {
+            continue;
+        }
+        if text(key)? != record.get(key)?.as_str()? || text(key)?.is_empty() {
+            return None;
+        }
+    }
+    let address_key = if record["intent"] == "transaction_intent" {
+        "from"
+    } else {
+        "address"
+    };
+    if !text(address_key)?.eq_ignore_ascii_case(record.get("address")?.as_str()?) {
+        return None;
+    }
     match record.get("intent")?.as_str()? {
-        "browser_personal_sign" if text("schema")? == "elastos.browser.wallet-signature-request/v1" && text("method")? == "personal_sign" => {},
-        "browser_typed_data_sign" if text("schema")? == "elastos.browser.wallet-signature-request/v1" && matches!(text("method")?, "eth_signTypedData" | "eth_signTypedData_v3" | "eth_signTypedData_v4") => {},
-        "transaction_intent" if text("schema")? == "elastos.chain.unsigned_transaction_intent/v1" && text("source")? == "browser_wallet" => {},
-        "browser_account_access" if text("schema")? == "elastos.browser.account-access-request/v1" && wallet_account_access_review(record).is_some() => {},
+        "browser_personal_sign"
+            if text("schema")? == "elastos.browser.wallet-signature-request/v1"
+                && text("method")? == "personal_sign" => {}
+        "browser_typed_data_sign"
+            if text("schema")? == "elastos.browser.wallet-signature-request/v1"
+                && matches!(
+                    text("method")?,
+                    "eth_signTypedData" | "eth_signTypedData_v3" | "eth_signTypedData_v4"
+                ) => {}
+        "transaction_intent"
+            if text("schema")? == "elastos.chain.unsigned_transaction_intent/v1"
+                && text("source")? == "browser_wallet" => {}
+        "browser_account_access"
+            if text("schema")? == "elastos.browser.account-access-request/v1"
+                && wallet_account_access_review(record).is_some() => {}
         _ => return None,
     }
     let origin = text("origin")?;
-    if origin.is_empty() || origin.len() > 512 || !origin.is_ascii()
-        || origin.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || matches!(b, b'\\' | b'@' | b'?' | b'#')) { return None; }
+    if origin.is_empty()
+        || origin.len() > 512
+        || !origin.is_ascii()
+        || origin.bytes().any(|b| {
+            b.is_ascii_whitespace()
+                || b.is_ascii_control()
+                || matches!(b, b'\\' | b'@' | b'?' | b'#')
+        })
+    {
+        return None;
+    }
     let (_, authority) = origin.split_once("://")?;
-    if authority.is_empty() || authority.contains('/') { return None; }
+    if authority.is_empty() || authority.contains('/') {
+        return None;
+    }
     let parsed = url::Url::parse(origin).ok()?;
-    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() { return None; }
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return None;
+    }
     let page = url::Url::parse(text("page_url")?).ok()?;
-    if parsed.origin() != page.origin() { return None; }
+    if parsed.origin() != page.origin() {
+        return None;
+    }
     let display = parsed.origin().ascii_serialization();
-    if display.is_empty() || display.len() > 512 || !display.is_ascii() { return None; }
+    if display.is_empty() || display.len() > 512 || !display.is_ascii() {
+        return None;
+    }
     Some(display)
 }
 
@@ -723,24 +775,52 @@ mod wallet_display_tests {
     #[test]
     fn n7_origin_form_and_ascii_vectors() {
         for (source, page, expected) in [
-            ("https://Shop.Example:443", "https://shop.example/pay?q=secret", Some("https://shop.example")),
-            ("http://localhost:8099", "http://localhost:8099/pay", Some("http://localhost:8099")),
-            ("https://[2001:db8::1]:443", "https://[2001:db8::1]/", Some("https://[2001:db8::1]")),
-            ("https://xn--bcher-kva.example", "https://xn--bcher-kva.example/", Some("https://xn--bcher-kva.example")),
+            (
+                "https://Shop.Example:443",
+                "https://shop.example/pay?q=secret",
+                Some("https://shop.example"),
+            ),
+            (
+                "http://localhost:8099",
+                "http://localhost:8099/pay",
+                Some("http://localhost:8099"),
+            ),
+            (
+                "https://[2001:db8::1]:443",
+                "https://[2001:db8::1]/",
+                Some("https://[2001:db8::1]"),
+            ),
+            (
+                "https://xn--bcher-kva.example",
+                "https://xn--bcher-kva.example/",
+                Some("https://xn--bcher-kva.example"),
+            ),
             ("https://bücher.example", "https://bücher.example/", None),
-            ("https://user:pass@shop.example", "https://shop.example/", None),
+            (
+                "https://user:pass@shop.example",
+                "https://shop.example/",
+                None,
+            ),
             ("https://@shop.example", "https://shop.example/", None),
             ("https://shop.example/", "https://shop.example/", None),
             ("https://shop.example/pay", "https://shop.example/pay", None),
             ("https://shop.example?q", "https://shop.example/", None),
-            ("https://shop.example#fragment", "https://shop.example/", None),
+            (
+                "https://shop.example#fragment",
+                "https://shop.example/",
+                None,
+            ),
             ("https://shop.example", "https://other.example/", None),
             ("https:\\shop.example", "https://shop.example/", None),
             ("https://shop.\nexample", "https://shop.example/", None),
         ] {
             let record = browser_request(source, page);
             let before = record.clone();
-            assert_eq!(wallet_request_display_origin(&record).as_deref(), expected, "{source:?}");
+            assert_eq!(
+                wallet_request_display_origin(&record).as_deref(),
+                expected,
+                "{source:?}"
+            );
             assert_eq!(record, before);
         }
         let mut large = browser_request("https://shop.example", "https://shop.example/");
@@ -752,35 +832,71 @@ mod wallet_display_tests {
     fn n7_site_absent_or_forged_origin() {
         let valid = browser_request("https://shop.example", "https://shop.example/private");
         assert!(wallet_request_display_origin(&valid).is_some());
-        for field in ["principal_id", "session_id", "account_id", "address", "chain_namespace"] {
+        for field in [
+            "principal_id",
+            "session_id",
+            "account_id",
+            "address",
+            "chain_namespace",
+        ] {
             let mut record = valid.clone();
             record["payload"][field] = json!("forged");
             assert_eq!(wallet_request_display_origin(&record), None, "{field}");
         }
-        for origin in [serde_json::Value::Null, json!(123), json!(""), json!("a".repeat(513))] {
-            let mut record = valid.clone(); record["payload"]["origin"] = origin;
+        for origin in [
+            serde_json::Value::Null,
+            json!(123),
+            json!(""),
+            json!("a".repeat(513)),
+        ] {
+            let mut record = valid.clone();
+            record["payload"]["origin"] = origin;
             assert_eq!(wallet_request_display_origin(&record), None);
         }
-        let mut other = valid.clone(); other["requested_by_actor"] = json!("notes");
+        let mut other = valid.clone();
+        other["requested_by_actor"] = json!("notes");
         other["requesting_origin"] = json!("https://shop.example");
         assert_eq!(wallet_request_display_origin(&other), None);
-        let mut remote = valid.clone(); remote["payload"]["schema"] = json!("elastos.browser.engine.wallet-consumer-request/v1");
+        let mut remote = valid.clone();
+        remote["payload"]["schema"] = json!("elastos.browser.engine.wallet-consumer-request/v1");
         assert_eq!(wallet_request_display_origin(&remote), None);
         // Generic summary mapping remains app-only for Home/System/Chat.
-        assert!(serde_json::to_value(system_wallet_approval_summary(&valid).unwrap()).unwrap().get("requesting_origin").is_none());
+        assert!(
+            serde_json::to_value(system_wallet_approval_summary(&valid).unwrap())
+                .unwrap()
+                .get("requesting_origin")
+                .is_none()
+        );
     }
 
     #[test]
     fn n3_external_inbox_review_action_classification() {
         for proof in ["siwe", "unknown", "", "managed_evm", "managed_btc_p2wpkh"] {
-            for connector in [serde_json::Value::Null, json!("wallet-metamask"), json!("unknown")] {
+            for connector in [
+                serde_json::Value::Null,
+                json!("wallet-metamask"),
+                json!("unknown"),
+            ] {
                 let mut record = browser_request("https://shop.example", "https://shop.example/");
-                record["proof_type"] = json!(proof); record["connector_id"] = connector.clone();
+                record["proof_type"] = json!(proof);
+                record["connector_id"] = connector.clone();
                 let mut notifications = HomeNotificationsSummary::default();
-                append_wallet_approval_notifications(&mut notifications, vec![system_wallet_approval_summary(&record).unwrap()]);
+                append_wallet_approval_notifications(
+                    &mut notifications,
+                    vec![system_wallet_approval_summary(&record).unwrap()],
+                );
                 let external = !is_managed_wallet_proof_type(proof) || !connector.is_null();
-                assert_eq!(notifications.entries[0].action_ref.as_ref().unwrap().action_id,
-                    format!("wallet-{}-request:request:display", if external { "review" } else { "approve" }));
+                assert_eq!(
+                    notifications.entries[0]
+                        .action_ref
+                        .as_ref()
+                        .unwrap()
+                        .action_id,
+                    format!(
+                        "wallet-{}-request:request:display",
+                        if external { "review" } else { "approve" }
+                    )
+                );
             }
         }
     }
@@ -788,9 +904,30 @@ mod wallet_display_tests {
     #[test]
     fn n3_requester_provenance_without_site_invention() {
         let mut record = browser_request("https://shop.example", "https://shop.example/");
-        record["capsule_id"] = json!("forged"); record["reason"] = json!("Home says https://fake.example");
+        record["capsule_id"] = json!("forged");
+        record["reason"] = json!("Home says https://fake.example");
         let summary = system_wallet_approval_summary(&record).unwrap();
         assert_eq!(summary.capsule_id, "browser");
         assert!(summary.requesting_origin.is_none());
+    }
+
+    #[test]
+    fn n7_account_access_uses_same_projection() {
+        let mut record = browser_request("https://shop.example", "https://shop.example/private");
+        record["intent"] = json!("browser_account_access"); record["launch_id"] = json!("launch:browser");
+        let payload = record["payload"].as_object_mut().unwrap();
+        payload.insert("schema".into(), json!("elastos.browser.account-access-request/v1"));
+        payload.insert("permission".into(), json!("eth_accounts"));
+        payload.insert("launch_id".into(), json!("launch:browser"));
+        payload.insert("proof_binding_id".into(), json!("proof:fixture"));
+        payload.insert("requested_chain_namespace".into(), json!("eip155:20"));
+        payload.insert("chain_namespaces".into(), json!(["eip155:20", "eip155:8453"]));
+        payload.insert("grant_expires_at".into(), json!(now_ts()+600));
+        payload.insert("requires_wallet_approval".into(), json!(true));
+        let before = record.clone();
+        assert_eq!(wallet_request_display_origin(&record).as_deref(), Some("https://shop.example"));
+        assert_eq!(record, before, "site projection keeps the account-access proof bindings");
+        record["payload"]["origin"] = serde_json::Value::Null;
+        assert!(wallet_request_display_origin(&record).is_none(), "page_url supplies no display fallback");
     }
 }

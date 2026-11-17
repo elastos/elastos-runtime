@@ -232,7 +232,9 @@ async fn passkey_step_up_begin_inner(
         gateway_walletconnect::GRANT | gateway_walletconnect::REVOKE
     ) {
         let stored = gateway_walletconnect::step_up_request(state, &launch, &operation).await?;
-        if input.request != stored { return Err(gateway_walletconnect::ConsentConflict.into()); }
+        if input.request != stored {
+            return Err(gateway_walletconnect::ConsentConflict.into());
+        }
         stored
     } else {
         input.request
@@ -1404,7 +1406,9 @@ fn sync_directory(_path: &Path) -> anyhow::Result<()> {
 }
 
 fn passkey_step_up_error_response(err: anyhow::Error) -> Response {
-    if let Some(response) = gateway_walletconnect::consent_conflict_response(&err) { return response; }
+    if let Some(response) = gateway_walletconnect::consent_conflict_response(&err) {
+        return response;
+    }
     let text = err.to_string();
     let status = if text.contains("missing home launch token")
         || text.contains("original launch authority")

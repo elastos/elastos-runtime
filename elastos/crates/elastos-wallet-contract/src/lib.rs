@@ -19,7 +19,9 @@ use std::fmt;
 
 mod wallet_display;
 mod wallet_unicode;
-pub use wallet_display::{validate_wallet_display_fields, wallet_display_identity, WalletDisplayIdentity};
+pub use wallet_display::{
+    validate_wallet_display_fields, wallet_display_identity, WalletDisplayIdentity,
+};
 
 /// Canonical reason when the owner dismisses an approved WalletConnect send.
 pub const WALLETCONNECT_DISMISSAL_REASON: &str =
@@ -838,9 +840,8 @@ impl WalletProviderOperationV2 {
                 address,
                 proof_type,
                 label,
-
                 ..
-} => {
+            } => {
                 validate_required("proof_binding_id", proof_binding_id, 256)?;
                 validate_token("chain_namespace", chain_namespace, 64)?;
                 validate_required("address", address, 256)?;
@@ -1673,7 +1674,7 @@ mod tests {
 
                     provider_id: None,
                     wallet_peer_name: None,
-},
+                },
             ),
             (
                 WalletOperationKind::RevokeAccount,
@@ -2129,7 +2130,7 @@ mod tests {
 
                 provider_id: None,
                 wallet_peer_name: None,
-},
+            },
             WalletProviderOperationV2::ImportManagedRecoveryKey {
                 recovery_key: recovery_key(),
                 label: None,
