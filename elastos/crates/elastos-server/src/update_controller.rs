@@ -816,7 +816,7 @@ pub async fn enter_browser_home(no_open: bool) -> Result<()> {
                 crate::install_transaction::require_controller_update_space(path, needed)
             })
         },
-        |path, receipt| write_private(path, receipt),
+        write_private,
     )
 }
 
