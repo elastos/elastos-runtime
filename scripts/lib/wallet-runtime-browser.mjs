@@ -97,7 +97,7 @@ export async function runtimeView(t, app, state = {}) {
     try {
       const file = new URL(`capsules/${match[1]}/browser/${match[2]}`, root);
       await route.fulfill({ body: await readFile(file), headers:cors, contentType: types[extname(file.pathname)] || "application/octet-stream" });
-    } catch { await route.fulfill({ status: 404, body: "missing fixture asset" }); }
+    } catch { errors.push(`Missing fixture asset: ${url.pathname}`); await route.fulfill({ status: 404, body: "missing fixture asset" }); }
   });
   const page = await context.newPage();
   page.setDefaultTimeout(5000);
