@@ -39,8 +39,11 @@ function installProvider({ kind, address }) {
 export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
+  const replay = recording ? await replayInput(recording) : null;
+  const firstCase = replay?.fixture.cases.find(c => c.id === replay.spec.calls[0]?.id);
+  const peerElapsed = firstCase?.snapshots.filter(s => s.call).at(-1)?.call.elapsed_ms;
   if (recording) {
-    await context.addInitScript(({ source, input }) => { if (window === window.top) (0, eval)(`(${source})`)(input); }, { source: installScriptedExtension.toString(), input: await replayInput(recording) });
+    await context.addInitScript(({ source, input }) => { if (window === window.top) (0, eval)(`(${source})`)(input); }, { source: installScriptedExtension.toString(), input: replay });
     await context.addInitScript(({ address }) => { if (window === window.top) window.testState = { address, linked: false, requests: [], receipts: [], effects: [], copies: [], calls: [] }; }, { address });
   } else await context.addInitScript(installProvider, { kind, address });
   const errors = [], reads = []; 
@@ -114,6 +117,6 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:560
       await frame.evaluate(() => document.documentElement.removeAttribute('data-el-theme'));
     }
   };
-  return { top, frame, context, errors, reads, action, state, async close() { if (recording) await top.evaluate(() => __walletReplay.assertNoViolations()); await context.close(); assert.deepEqual(errors, []); } };
+  return { top, frame, context, errors, reads, peerElapsed, action, state, async close() { if (recording) await top.evaluate(() => __walletReplay.assertNoViolations()); await context.close(); assert.deepEqual(errors, []); } };
 }
 

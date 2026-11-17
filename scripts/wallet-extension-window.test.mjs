@@ -99,8 +99,9 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         try {
           await f.action('connect').click(); await f.state('extension-wait');
           await f.top.waitForFunction(() => __walletReplay.requests.length === 1);
+          await f.top.clock.runFor(Math.min(60001, Math.ceil(f.peerElapsed)));
           await f.top.evaluate(person => { __walletReplay.person(person); return __walletReplay.advance(200000); }, person);
-          await f.state('link-error');
+          await f.state(f.peerElapsed > 60000 ? 'extension-timeout' : 'link-error');
           assert.equal(await f.top.evaluate(() => testState.receipts.length), 0);
         } finally { await f.close(); }
       }
