@@ -63,7 +63,9 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
                 &authority,
             );
             let other = passkey_authority_with_name_role_credential(
-                dir.path(), Some("other-site-reader"), crate::auth::RuntimePrincipalRole::Admin,
+                dir.path(),
+                Some("other-site-reader"),
+                crate::auth::RuntimePrincipalRole::Admin,
                 "other-site-reader-credential",
             );
             let other_wallet = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &other);
