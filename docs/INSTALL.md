@@ -67,6 +67,29 @@ setup completes and prints the full command for opening Home later. On a Linux
 computer with no desktop, such as a Jetson used over SSH, it prints the SSH
 tunnel command for opening Home from another computer.
 
+An app that shows Home in its own window can start Runtime with:
+
+```bash
+elastos home --browser --no-open
+```
+
+`--no-open` starts the same Home and keeps the default browser closed. Runtime
+keeps this choice for its controller's update, previous-release restoration and
+interrupted-restart recovery. The starter still owns Home's foreground lifetime;
+keep it open while Home runs. This option registers no background service.
+A terminal Undo keeps its existing behavior: it stops Home. Use the same command
+when starting Home again after Undo.
+
+For machine-readable readiness, run `elastos home --json` in a separate process
+with the same Home data directory. Wait for `runtime.running` to be `true`,
+`runtime.kind` to be `gateway`, and `runtime.version` to contain the expected
+release version; then wait for `http://localhost:8090/home/` to respond. The
+probe writes JSON to stdout and starts no Home. `elastos home --status` gives a
+human-readable probe. Startup notices use stderr: a source Home prints
+`Home: <url>` and the terminal-lifetime notice; an installed Home's controller
+records child output in its private runtime log. Apps should use the probe
+instead of parsing startup output.
+
 So that `elastos` is found in new terminals and after a restart, the installer
 adds one line ending in `# Added by the ElastOS installer` to your login profile
 (`~/.zprofile` for zsh, the default on macOS; `~/.profile` for bash, the default

@@ -314,9 +314,13 @@ enum Commands {
 
     /// Launch Home
     Home {
-        /// Open local Home in the default web browser
+        /// Start local Home and open it in the default web browser
         #[arg(long, conflicts_with_all = &["status", "json"])]
         browser: bool,
+
+        /// Keep Home in the foreground without opening the default browser
+        #[arg(long, requires = "browser")]
+        no_open: bool,
 
         /// Print a local Home-state probe without opening the home-cli surface
         #[arg(long)]
@@ -1366,6 +1370,7 @@ async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Commands::Home {
         browser: false,
+        no_open: false,
         status: false,
         json: false,
     });
@@ -1439,11 +1444,12 @@ async fn run() -> anyhow::Result<()> {
 
         Commands::Home {
             browser,
+            no_open,
             status,
             json,
         } => {
             if browser {
-                return gateway_entry::run_browser_home().await;
+                return gateway_entry::run_browser_home(no_open).await;
             }
             return home_cmd::run(status, json).await;
         }
@@ -2638,6 +2644,7 @@ mod tests {
             terminal.command,
             Some(super::Commands::Home {
                 browser: false,
+                no_open: false,
                 status: false,
                 json: false
             })
@@ -2660,7 +2667,7 @@ mod tests {
             vec!["elastos", "home", "--no-open", "--browser"],
         ] {
             let result = super::Cli::try_parse_from(&args);
-            assert!(result.is_ok(), "{args:?}: {result:?}");
+            assert!(result.is_ok(), "{args:?}: {:?}", result.err());
         }
         for args in [
             vec!["elastos", "home", "--no-open"],
@@ -2675,7 +2682,8 @@ mod tests {
             assert!(super::Cli::try_parse_from(&args).is_err(), "{args:?}");
         }
         let help = super::Cli::try_parse_from(["elastos", "home", "--help"])
-            .unwrap_err()
+            .err()
+            .expect("help exits through Clap")
             .to_string();
         assert!(help.contains("--no-open"), "{help}");
     }

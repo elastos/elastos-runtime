@@ -181,25 +181,31 @@ fn exec_controller(controller: &Path, receipt: &Path, lease: &FileLock) -> anyho
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LaunchPlan {
+    // Omit the default so existing receipts keep their exact launch hash.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    no_open: bool,
     args: Vec<String>,
     environment: Vec<(String, String)>,
     cwd: String,
 }
 
 impl LaunchPlan {
-    fn capture() -> Result<Self> {
+    fn capture(no_open: bool) -> Result<Self> {
         Ok(Self::capture_environment(
             std::env::vars_os(),
             std::env::current_dir()?,
+            no_open,
         ))
     }
 
     fn capture_environment(
         environment: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
         cwd: PathBuf,
+        no_open: bool,
     ) -> Self {
         let encode = |value: &std::ffi::OsStr| BASE64.encode(value.as_bytes());
         Self {
+            no_open,
             args: vec![
                 encode(std::ffi::OsStr::new("home")),
                 encode(std::ffi::OsStr::new("--browser")),
@@ -239,7 +245,10 @@ impl LaunchPlan {
         command
             .env(HOST_ENV, "1")
             .env("ELASTOS_UPDATE_GENERATION", generation)
-            .env("ELASTOS_UPDATE_RESTART", if restart { "1" } else { "0" });
+            // Older releases accept home --browser and this controller-owned marker.
+            // Keep the public option in the receipt, rather than passing it to an
+            // older Runtime during Undo or recovery.
+            .env("ELASTOS_UPDATE_RESTART", if restart || self.no_open { "1" } else { "0" });
         Ok(command)
     }
 
@@ -760,7 +769,7 @@ fn first_start_without_controller_authority(data: &Path) -> Result<bool> {
 }
 
 /// Used by the existing Home browser entry. Source Homes keep their current launcher.
-pub async fn enter_browser_home() -> Result<()> {
+pub async fn enter_browser_home(no_open: bool) -> Result<()> {
     if std::env::var(HOST_ENV).as_deref() == Ok("1") {
         return Ok(());
     }
@@ -802,7 +811,7 @@ pub async fn enter_browser_home() -> Result<()> {
         eprintln!("Home will open. Free disk space before updating.");
         return Ok(());
     }
-    let launch = LaunchPlan::capture()?;
+    let launch = LaunchPlan::capture(no_open)?;
     let receipt = Receipt {
         schema: "elastos.update-controller/v1".into(),
         data_dir: data,

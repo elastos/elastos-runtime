@@ -1609,6 +1609,26 @@ class CliFixtureTests(unittest.TestCase):
         self.assertNotIn("attach_secret", json.dumps(proof))
         self.assertNotIn("private fixture token", json.dumps(proof))
 
+    def test_initial_home_probe_binds_the_no_open_choice(self):
+        home, directory, process, status, identities, executables, response = self.initial_home_fixture()
+        path = directory / "update-controller/receipt.json"
+        receipt = observer.cli_private_json(path)
+        receipt["launch"]["no_open"] = True
+        receipt["launch_sha256"] = hashlib.sha256(json.dumps(
+            {key: receipt["launch"][key] for key in ("no_open", "args", "environment", "cwd")},
+            separators=(",", ":")).encode()).hexdigest()
+        observer.write(path, receipt)
+        with patch.object(observer, "cli_process_identity", side_effect=identities.get), \
+             patch.object(observer, "cli_process_executable", side_effect=executables.get), \
+             patch.object(observer, "cli_home_response", side_effect=response), patch.object(observer, "lock_state", return_value="held"):
+            # The hash includes the option, as serde emits it before the existing fields.
+            proof = observer.cli_observe_initial_home(SimpleNamespace(roots={}), self.manifest,
+                                                      home, process, status, no_open=True)
+            self.assertTrue(proof["authenticated_health"])
+            with self.assertRaisesRegex(ValueError, "launch receipt differs"):
+                observer.cli_observe_initial_home(SimpleNamespace(roots={}), self.manifest,
+                                                  home, process, status)
+
     def test_initial_home_admission_requires_signed_native_support_and_preservation(self):
         self.initial_home_fixture()
         observer.cli_admit_home_support(self.root, self.manifest)
@@ -2319,6 +2339,7 @@ class CliFixtureTests(unittest.TestCase):
             process = SimpleNamespace(pid=4242, poll=lambda: None, wait=lambda timeout=None: order.append("home-closed") or 0)
 
             def spawn(argv, env, cwd, label, umask=-1):
+                self.assertEqual(argv[1:], ["home", "--browser", "--no-open"])
                 umasks[label] = umask
                 return process
 

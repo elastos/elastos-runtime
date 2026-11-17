@@ -3001,7 +3001,7 @@ def cli_home_snapshot(manifest, home_path):
                           for key, paths in manifest["preserve"].items()}}
 
 
-def cli_observe_initial_home(processes, manifest, home_path, process, status, release="old"):
+def cli_observe_initial_home(processes, manifest, home_path, process, status, release="old", *, no_open=False):
     directory = home_path / CLI_DATA
     expected = manifest["files"][manifest["publications"][release]["binary"]]["sha256"]
     controller = directory / "update-controller/runtime"
@@ -3018,9 +3018,10 @@ def cli_observe_initial_home(processes, manifest, home_path, process, status, re
     need(hashlib.sha256(signed).hexdigest() == manifest["files"][manifest["publications"][release]["release"]]["sha256"]
          and receipt["trusted_source"] == source_for_home(home_path), "controller signed release or trust differs")
     launch = receipt["launch"]
-    need([base64.b64decode(value, validate=True) for value in launch["args"]] == [b"home", b"--browser"]
+    need(launch.get("no_open", False) is no_open
+         and [base64.b64decode(value, validate=True) for value in launch["args"]] == [b"home", b"--browser"]
          and base64.b64decode(launch["cwd"], validate=True) == os.fsencode(home_path)
-         and hashlib.sha256(json.dumps({key: launch[key] for key in ("args", "environment", "cwd")}, separators=(",", ":")).encode()).hexdigest() == receipt["launch_sha256"],
+         and hashlib.sha256(json.dumps({key: launch[key] for key in (("no_open",) if "no_open" in launch else ()) + ("args", "environment", "cwd")}, separators=(",", ":")).encode()).hexdigest() == receipt["launch_sha256"],
          "controller launch receipt differs")
     controller_identity = cli_process_identity(process.pid)
     host_identity = cli_process_identity(status["host_pid"])
@@ -3391,19 +3392,19 @@ def cli_ubuntu_layout(processes, manifest, home_path, evidence, steps):
     opener = cli_path(home_path / CLI_DATA, CLI_OPENER)
     env["PATH"] = str(opener.parent) + ":" + env["PATH"]
     processes.roots[str(opener)] = {manifest["files"][manifest["consumer"]["files"][CLI_OPENER]]["sha256"]}
-    process = processes.spawn([str(home_path / ".local/bin/elastos"), "home", "--browser"], env, home_path, "ubuntu-home",
+    process = processes.spawn([str(home_path / ".local/bin/elastos"), "home", "--browser", "--no-open"], env, home_path, "ubuntu-home",
                               umask=CLI_UBUNTU_UMASK)
     try:
         status_path, deadline, ready = home_path / CLI_DATA / "update-controller/status.json", time.monotonic() + 150, None
         while ready is None and process.poll() is None and time.monotonic() < deadline:
             status = cli_private_json(status_path) if status_path.exists() else {}
             if status.get("phase") == "ready" and status.get("controller_pid") == process.pid:
-                ready = cli_observe_initial_home(processes, manifest, home_path, process, status, "new")
+                ready = cli_observe_initial_home(processes, manifest, home_path, process, status, "new", no_open=True)
             else:
                 time.sleep(.2)
         need(ready is not None and ready["authenticated_health"], "Home did not start on the default Ubuntu account layout"
              + cli_ci_stderr_detail(processes, manifest, "ubuntu-home", "Home"))
-        evidence["home"] = {"generation": ready["generation"], "authenticated_health": True}
+        evidence["home"] = {"generation": ready["generation"], "authenticated_health": True, "no_open": True}
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)
