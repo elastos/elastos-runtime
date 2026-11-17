@@ -16,6 +16,7 @@ const origins=[...[1,63,87,89,118,135,253].map(n=>'https://'+host(n)), 'https://
 assert.equal(exact.length,135);assert.equal(origins.at(-1).length,512);
 const sizes=[[320,182],[360,596],[480,522],[390,844]];
 const ciSmoke=process.env.WALLET_VIEW_BROWSER_SMOKE==='1';
+const exhaustivePaint=process.env.WALLET_VIEW_EXHAUSTIVE_PAINT==='1';
 const requested=process.env.WALLET_VIEW_PROOF_DIR;
 const proof=await temporaryProof('wallet-view-origin-',requested);
 test.after(async()=>proof.cleanup());
@@ -51,8 +52,9 @@ async function sweep(page){
   }return {max,visible:[...new Set(visible)]};
  },approvalIds);
  assert(samples.visible.length,'approving control is reachable');
- // Every sampled paint position (16px steps plus both intersection edges) gets a standalone pixel reference; geometry above checks every CSS pixel.
- const positions=samples.visible.filter((y,i)=>i===0||i===samples.visible.length-1||y%16===0);
+ // The exhaustive lane proof paints every approving CSS-pixel scroll position.
+ // The routine CI run samples at 16px plus both edges; both modes measure every CSS pixel.
+ const positions=exhaustivePaint?samples.visible:samples.visible.filter((y,i)=>i===0||i===samples.visible.length-1||y%16===0);
  for(const y of new Set(positions)){await page.evaluate(y=>{document.querySelector('main').scrollTop=y;},y);await check(page);}
  return {...samples,paintedScrollPositions:[...new Set(positions)]};
 }
@@ -69,10 +71,10 @@ async function activate(page,resize){
  const events=await page.evaluate(()=>window.approvalActivations);assert.equal(events.length,3);assert(events.every(e=>e.visible),'site final line visible at pointer, Enter and Space activation');
  return events;
 }
-describe('structural approval access and paint',{concurrency:false,timeout:360000},()=>{
+describe('structural approval access and paint',{concurrency:false,timeout:exhaustivePaint?1800000:360000},()=>{
 for(const engine of ['chromium','webkit']){
  const optional=engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE;
- test(`F1: full origins and fixed feedback in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false,timeout:175000},async t=>{
+ test(`F1: full origins and fixed feedback in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false,timeout:exhaustivePaint?900000:175000},async t=>{
   const receipts=[];
   const runScale=async scale=>{
    // At 200% effective browser zoom, a physical window contains half as many CSS pixels.
