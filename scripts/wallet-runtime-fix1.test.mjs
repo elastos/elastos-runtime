@@ -135,3 +135,13 @@ test("fix1 account-name branches after the external fallback are managed-only",a
   const body=source.slice(source.indexOf("export function accountName("),source.indexOf("export function cleanAccountLabel("));
   assert(!body.includes('connectorId ==='),"unreachable external connector branches have been removed");
 });
+
+test("fix1 request-kind titles match the Inbox producer",async()=>{
+  const {requestTitle}=await import("../capsules/wallet/browser/wallet-format.js");
+  const titles={auth_challenge:"Wallet sign-in request",capability_grant:"Wallet access request",credential:"Credential signing request",
+    publish_envelope:"Publish approval request",transaction_intent:"Send transaction",browser_account_access:"Browser account access request",
+    browser_personal_sign:"Sign a message",browser_typed_data_sign:"Sign typed data",bitcoin_bip322_proof:"Bitcoin proof request",
+    revocation:"Revocation approval request",unknown:"Wallet approval request"};
+  for(const [intent,title] of Object.entries(titles)) for(const proof_type of ["managed_evm","siwe"])
+    assert.equal(requestTitle({intent,proof_type,connector_id:proof_type==="siwe"?"wallet-metamask":null}),title,intent);
+});
