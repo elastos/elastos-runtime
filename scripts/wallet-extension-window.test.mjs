@@ -1,18 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, mkdir } from 'node:fs/promises';
-import { resolve, extname, join } from 'node:path';
-import { homedir } from 'node:os';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const playwright = require(join(homedir(), '.cache/elastos-runtime/behaviour/browser/node_modules/playwright'));
+import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
+const playwright = requireProductSmokePlaywright();
+const engineSkip = engine => engine === 'webkit' && !existsSync(playwright.webkit.executablePath()) ? 'Install WebKit for the explicit acceptance run; behaviour inputs provide Chromium.' : false;
 const A = '0x' + '1'.repeat(40), B = '0x' + '2'.repeat(40);
 const U = 'bc1q' + 'a'.repeat(38), V = 'bc1q' + 'b'.repeat(38);
 
 import { fixture } from './lib/wallet-extension-window-fixture.mjs';
 
 for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) {
-  test(`${engine} ${kind}: live shared window links, signs, redraws and returns actual receipts`, { timeout: 50000 }, async () => {
+  test(`${engine} ${kind}: live shared window links, signs, redraws and returns actual receipts`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
     const browser = await playwright[engine].launch({ headless: true });
     try {
       const f = await fixture(browser, kind);
@@ -49,7 +48,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
     } finally { await browser.close(); }
   });
 
-  test(`${engine} ${kind}: wallet silence, stop, answer, timeout and account events`, { timeout: 50000 }, async () => {
+  test(`${engine} ${kind}: wallet silence, stop, answer, timeout and account events`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
     const browser = await playwright[engine].launch({ headless: true });
     try {
       const f = await fixture(browser, kind, { saved: true, requests: true });
@@ -92,7 +91,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
     } finally { await browser.close(); }
   });
 
-  test(`${engine} ${kind}: recorded decline, closed prompt, missing extension and stalled provider`, { timeout: 50000 }, async () => {
+  test(`${engine} ${kind}: recorded decline, closed prompt, missing extension and stalled provider`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
     const browser = await playwright[engine].launch({ headless: true });
     try {
       for (const [recording, person] of [[`${kind}-connect-declined`, 'declines'], [`${kind}-native-connect-close`, 'closes the prompt']]) {
@@ -125,7 +124,7 @@ test('both extension packages carry one presenter and existing v1 actions only',
 });
 
 for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) {
-  test(`${engine} ${kind}: keyboard, fit, saved link, refusal and request expiry`, { timeout: 50000 }, async () => {
+  test(`${engine} ${kind}: keyboard, fit, saved link, refusal and request expiry`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
     const browser = await playwright[engine].launch({ headless: true });
     try {
       const f = await fixture(browser, kind, { saved: true, requests: true });
