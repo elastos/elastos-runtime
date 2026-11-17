@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, extname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -102,6 +102,10 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:560
     if (process.env.EXTENSION_WINDOW_PICTURES && !mutate) {
       const dir = join(homedir(), 'omp-inbox/walletconnect/screens/windows-' + kind);
       await mkdir(dir, { recursive: true });
+      const copy = await frame.evaluate(() => ({ state: document.querySelector('main').dataset.state,
+        sentences: [...document.querySelectorAll('.connection-status,.connection-note,.connection-more')].map(n => n.textContent.trim()).filter(Boolean),
+        controls: [...document.querySelectorAll('[data-action]')].map(n => ({action:n.dataset.action,label:n.textContent.trim(),disabled:n.disabled})) }));
+      await writeFile(join(homedir(), '.local/share/elastos-ops/runs', `window-extensions-copy-${kind}-${expected}.json`), JSON.stringify(copy, null, 2));
       for (const theme of ['dark', 'light']) {
         await frame.evaluate(theme => { document.documentElement.toggleAttribute('data-el-theme', theme === 'light'); if (theme === 'light') document.documentElement.setAttribute('data-el-theme','light'); }, theme);
         await top.locator('iframe').screenshot({ path: join(dir, `${expected}-${theme}.png`) });
