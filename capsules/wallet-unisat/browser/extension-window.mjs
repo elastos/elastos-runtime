@@ -128,7 +128,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   async function perform(action) {
     if (operation || uncertain) return;
     revision += 1;
-    const pending = { action, deadline: now() + 60, stopped: false };
+    const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
     stage = action.kind === 'link' ? 'extension-wait' : selected?.transaction ? 'transaction-extension' : 'request-extension';
     draw();
@@ -163,7 +163,6 @@ export function startExtensionWindow(kind, homeClipboard) {
     const action = button.dataset.action;
     if (action === 'close-window') window.top.postMessage({ type: 'home:close-self', homeToken: frameHomeToken }, homeOrigin);
     else if (action === 'stop-waiting' && operation) {
-      operation.stopped = true;
       stage = operation.action.kind === 'link' ? 'extension-cancelled' : selected?.transaction ? 'transaction-cancelled' : 'request-cancelled';
       draw();
     } else if (operation && action !== 'copy-address') return;
