@@ -327,15 +327,24 @@ prompts and network prompts never change it. Approval becomes `handed_off`
 when Runtime handoff returns. It becomes `sent` only at the ownership/payload
 signature or transaction send call boundary. That means the call was made,
 not that a signature, broadcast or chain confirmation succeeded. Only a
-transaction whose payload call was made and whose wait ended by stop/expiry
-uses `unknown`. `waitEnd` is non-null only with `outcome:"stopped"`: `user` or
+transaction whose payload call was made and whose wait ended before its
+receipt was recorded uses `unknown`. A later recorded hash resolves Runtime's
+receipt state, without resolving the ended effect a second time. `waitEnd` is non-null only with `outcome:"stopped"`: `user` or
 `deadline`. Final effect results retain the last absolute `deadlineAt`.
 
 **After this work.** Check always ends at `stage:"checking"`,
 `dispatch:"not_sent"`, `waitEnd:null`, with its original two-second deadline.
-A busy check returns `outcome:"done"`, `snapshot.busy:true` from this
-registration's bounded cache; it makes no provider call. It still spends a
-request ID. Stop has all 11 keys: its own correlation ID, `stage:"checking"`,
+A check whose provider read passes its two-second deadline ends `failed` at
+`checking`, with `snapshot.busy:true` and `availability:"unknown"`; the pending
+read keeps its provider slot. Keep safely discovered providerId/alternatives,
+but clear firstAccount, requiredAccountAvailable, network and networkIssue to
+null and access to unknown. This proves neither absence nor a cause. A late read
+does not replace that final result or install its expired account/network facts;
+it releases busy and sends the settlement advisory below. A new check can then
+read fresh facts.
+A check accepted while its provider is already busy returns `outcome:"done"`,
+`snapshot.busy:true` from this registration's bounded cache, with no provider
+call. Both cases spend a request ID. Stop has all 11 keys: its own correlation ID, `stage:"checking"`,
 `deadlineAt:null`, the current bounded snapshot, `outcome:"done"`,
 `waitEnd:null`, `dispatch:"not_sent"`. The target effect separately ends
 `stopped` with its last stage/deadline/dispatch. A missing or already-ended stop
@@ -360,8 +369,9 @@ reply as unsupported_version, without rendering its text.
 `availability`, `firstAccount`, `requiredAccountAvailable`, `network`,
 `networkIssue`, `access`, `busy`. Empty facts are null provider/account/network,
 empty alternatives, unknown availability/access, null membership/networkIssue,
-and the known busy Boolean. A fresh registration during another frame's busy
-call gets these empty facts with busy true, not the older frame's account data.
+and the known busy Boolean. A fresh registration whose selected provider is
+already busy gets these empty facts with busy true, not the older frame's
+account data. A call on another provider leaves its busy fact false.
 Caches remain confined to their verified principal/session/connector and
 canonical selector. They are observations, not signing authority.
 
@@ -376,7 +386,10 @@ identifiers name providers; EIP-6963 UUIDs and object identity are page-local
 conflict checks, not reload-stable identity or cryptographic authentication.
 
 **After this work.** `availability` is `found`, `absent`, `unknown` or
-`unavailable`. This head has no trusted wrapper fact for unavailable. In 2.0.2
+`unavailable`. Found means an allowed provider object is present; it does not
+prove that its extension answers. A stale object can still announce itself.
+A timed-out check reports unknown as specified above. This head has no trusted
+wrapper fact for unavailable. In 2.0.2
 `extensions_unavailable` stays in the closed outcome list but has no producer;
 no lane infers it from user-agent strings, missing providers or Runtime host OS.
 Until a wrapper supplies a reviewed fact, use cause-neutral absence and the
@@ -513,45 +526,65 @@ newly learned earlier proof expiry can shorten, never extend, the link deadline.
 **After this work.** A wallet answer received while Home still waits and the
 request/admission remains valid counts, including the recorded 77/112-second
 completions. Only stop or expiry ends that wait; expired/revoked launch authority
-also ends registration, with retired outcome. Launch expiry is separate from
+also ends registration, with retired outcome. Signature and link answers after
+the wait ends are dropped. Transaction hashes follow the receipt-only rule
+below, including after Stop, wait expiry or frame retirement. Launch expiry is separate from
 `deadlineAt`: timely same-authority renewal keeps the wait deadline and does not
 freeze it at the old token's expiry. If current authority expires first, Home
 retires the registration; a later renewal cannot revive that effect.
 
-**After this work.** Home sends stopped/waitEnd deadline at the deadline. With
+**After this work.** Home sends stopped/waitEnd deadline for link/approve at
+their deadline; check uses its failed result above. With
 no first progress after two seconds, the window shows a communication warning
 and keeps Stop available; it neither cancels automatically nor retries. After
 known deadlineAt plus two seconds without a final result it displays the local
 expiry fallback, preserving request identity and uncertainty. Late authoritative
 receipts still refresh Runtime state. Stop or expiry fences every continuation
-before another challenge/handoff/sign/send or proof verification. Already
-accepted Runtime work can finish and its receipt remains authoritative.
+before another challenge/handoff/sign/send or proof verification. The
+transaction-only receipt continuation is the stated exception: it records an
+already returned hash and grants no further wallet effect. Already accepted
+Runtime work can finish and its receipt remains authoritative.
 
-**After this work.** One provider call at a time is allowed across frames in
-this page, including reads; another tab still meets Runtime's one-shot gate.
-A stopped/expired pending provider promise holds its slot until settlement or
-page unload. A check during busy returns done with busy true from cache;
-link/approve return host_busy. Checks run only on open, focus return and explicit
-Check access, with no interval polling. Every accepted check, cached or not,
-spends one replay ID. Clients never reuse an ID in a document. Home keeps at
-most 64 IDs: inactive IDs for five minutes, active IDs pinned until the effect
+**After this work.** One provider call at a time per selected provider
+(`io.metamask`, `com.brave.wallet`, `unisat`) is allowed across all frames in
+this page, including reads; calls to different providers do not block each
+other. Another tab still meets Runtime's one-shot gate. An unanswered call
+holds only its provider's slot until settlement or page unload. Link/approve
+refused for that occupied slot return host_busy. Checks run only on open,
+focus return and explicit Check access, with no interval polling. A window
+skips every new check while one is in flight or its snapshot says busy; repeated
+focus/check actions are discarded, not queued or given IDs. Release of busy
+permits the next explicit/open/focus check, without an automatic retry.
+Every accepted check, cached or not, spends one replay ID. Clients never reuse
+an ID in a document. Home keeps at most 64 IDs per frame generation: inactive IDs for five minutes, active IDs pinned until the effect
 and its outstanding call settle plus five minutes. Reserve one slot for the
 active effect's stop; refuse new work instead of evicting live/pinned IDs.
 Runtime proof/admission consumption and handoff provide the durable replay
 fence independently of this bounded page cache.
 
 **After this work.** Home sends state messages on every busy transition to live registrations
-watching that same connector/provider, using each registration's own cache.
-Another connector receives none of these facts. Type
+watching that selected provider, using each registration's own cache and
+authority. Busy is exactly occupancy of that provider's slot; another provider's
+call cannot set it or cause a serialization refusal. Another connector receives
+none of these facts. Type
 is `home:wallet-connector-state`, schema
 `elastos.home.wallet-connector-state/v2`; exact keys are `type`, `schema`,
 `connectorId`, `documentNonce`, `generation`, `snapshot`, `settled`. Normally
-settled is null. If a stopped/expired provider call later settles, send exactly
+settled is null. If a call outlives its stopped/expired effect or failed check,
+then settles, send exactly
 one advisory to its still-live original registration:
-`settled:{effectRequestId,result:"answered"|"declined"|"failed"}`. Answered means
-a successful provider return, declined means 4001, failed means all other
-settlement. The advisory carries no text, signature or hash, does not resolve
-the stopped wait again, and supplies the late-ignored design-state producer.
+`settled:{effectRequestId,result:"answered"|"declined"|"failed",receipt}`.
+These three inner keys are exact. Answered means a successful provider return,
+declined means 4001, failed means all other settlement. receipt is exactly null, "recorded" or "recording_failed". It is non-null only
+for a returned transaction hash: recorded means Runtime acknowledged its
+receipt, recording_failed means that submission failed or timed out while Home
+keeps the hash. Busy release is sent immediately with settled null if receipt
+recording is still running; the one advisory follows that recording result.
+It carries no text, signature or hash and does not resolve the ended wait
+again. Signature/link answers may produce late-ignored wording; a transaction
+advisory with non-null receipt instead says the wallet returned a result and
+offers Open Wallet. recording_failed adds fixed result-recording failure
+guidance, never Result unknown or another Send for the consumed ID.
 A replacement/reloaded generation receives only busy release and fresh facts,
 not another generation's settled effect ID. With no live original generation,
 that advisory is dropped.
@@ -565,23 +598,49 @@ UniSat event strings do not replace getChain identity. During a provider call,
 mark affected facts unknown and retain at most one reread. Events never link
 an account or send a request.
 
-**After this work.** Closing a frame stops its wait and registration but may
-retain one transaction-only completion continuation: the last current carried
-token plus immutable request/hash/authority binding. It may record a returned
-hash after close only while the same Home page, principal/session/proof/grant,
-Home authority, connector token and Runtime receipt TTL remain valid. It cannot
-make another provider call or handoff, and sends no reply to the closed frame.
-Sign-out, shell replacement, expired authority and page unload drop that token
-and continuation. A refused/late completion leaves Result unknown. This grants
-no new TTL; WalletConnect's existing distinct receipt rule remains in
-[Wallet Provider](WALLET_PROVIDER.md#first-shippable-slice).
+**After this work.** For a transaction whose send call was made, a hash that
+Home actually receives is recorded once through the transaction-only
+continuation, whatever ended the wait: Stop, request/wait expiry, frame close,
+or retirement by load/reload or a new readiness nonce. Retain the last current
+carried token and immutable consumed-request/payload-hash/signer/authority
+binding independently of the frame generation. This continuation makes no new
+provider call or handoff and sends no reply to a closed or retired frame.
+Signature and link answers do not use it.
+
+**After this work.** The continuation uses the same Home page,
+principal/session/proof/grant and valid Home/carried authority. It retains one
+received hash privately until Runtime acknowledges the receipt or that
+authority/page ends; a frame-only retirement cannot clear it. Runtime's
+receipt-only persistence and expiry handling are owned by
+[N3](WALLET_PROVIDER.md#n3-outside-wallet-requests), not by a window timer.
+Runtime stores an identical hash idempotently; a different hash for the same
+consumed ID is conflict, never another send. Receipt HTTP failure keeps that
+bounded slot while its authority is valid; it does not discard the known hash
+or retry the wallet. Reserve one of at most 64 transaction-receipt slots per
+selected provider in this page before consuming a transaction request; at
+capacity return host_busy with the actual provider busy flag and leave the
+request pending. A receipt slot is released after acknowledgement or authority
+end, not on frame retirement. This bound does not block another provider or
+account/signature operations. Receipt submission has a two-second HTTP timeout;
+it is separate from the ended wallet wait and cannot authorize another send. A still-waiting effect reports failed at verifying on
+receipt failure; an ended wait uses the closed receipt advisory above. Sign-out,
+shell replacement, carried-authority expiry and page unload end this authority
+and its private continuation; another session cannot inherit it. Top-level
+Home reload destroys the old page, so a hash never delivered to that page
+cannot be recovered by this rule. WalletConnect retains its existing distinct
+receipt rule in [Wallet Provider](WALLET_PROVIDER.md#first-shippable-slice).
 
 **After this work.** Discovery retains at most 32 page-local entries. Per-frame
 facts, nonce/generation, replay IDs and one effect are cleared on retirement;
 only the bounded nonce tombstones, provider-busy record and transaction
 exception above can outlive it. No browser storage or logs retain extension material. A never-settled
-call stays busy until page unload. Finish/reject the prompt in the wallet, or
-follow reload instructions; closing its tab alone is not proven cancellation.
+call stays busy until page unload. All host_busy guidance, wallet_busy
+guidance, and guidance while busy after Stop or a failed check includes both
+exits: "Answer or close the request in your wallet, or reload Home." If no
+request can be answered or closed, reload is the available exit. These are
+instruction text, with no connector-triggered reload. Closing a wallet tab or
+side panel alone is not proven cancellation; a native notification close may
+settle the promise. Only its actual settlement releases the slot.
 
 ### Wallet window navigation (N1)
 
@@ -691,8 +750,9 @@ n1_refusal_result_to_source; neither error path retries automatically.
 `home:open-target-result`, schema `elastos.home.open-target-result/v2`, exact
 keys `type,schema,requestId,documentNonce,ok,reason`. Successful reason is
 `accepted`; refusal reasons are `invalid_request`, `denied`,
-`request_unavailable`, `target_unavailable`, `unsupported_version`, `busy`,
-`delivery_failed`, `timeout`. Home sends timeout at 15 seconds. The source
+`request_unavailable`, `target_unavailable`, `unsupported_version`,
+`delivery_failed`, `timeout`. N1 has no busy reason: active-effect selections
+are queued as above; other delivery refusal maps to delivery_failed. Home sends timeout at 15 seconds. The source
 helper checks Home source/origin and its pending ID/nonce, then renders fixed
 local recovery wording for that reason. It falls back to the same timeout
 wording at 17 seconds if the reply is missing. Invalid IDs/unregistered sources
@@ -700,32 +760,100 @@ get no reply. GUI also retains its existing delivery-failure feedback. Fixed sou
 copy is: invalid_request/denied, `Home could not open this destination.`;
 request_unavailable, `This request is unavailable. Open Wallet to check it.`;
 target_unavailable, `This app is unavailable. Open Wallet to check the request.`;
-unsupported_version, `Reload Home, then open this window again.`; busy,
-`Finish the current action, then try again.`; delivery_failed/timeout,
+unsupported_version, `Reload Home, then open this window again.`; delivery_failed/timeout,
 `Could not open this destination. Try again.` Old Home cannot authorize new
 rows; v2 connector controls stay hidden without ready.
+
+#### N2 shell-host hook interface
+
+**Today.** home-shell-host imports the effect handler and moves
+context.walletEffectState during renewal. There is no exported v2 lifecycle
+bridge. The navigation lane owns every edit to this file; the extension lane
+owns home-wallet-connector-host.js and consumes the bridge below.
+
+**After this work.** home-shell-host exports the following three functions.
+At boot it passes exactly {readHomeWalletConnectorAuthority,
+postHomeWalletConnectorMessage} to the extension module's
+createHomeWalletConnectorHost(bridge), then calls
+installHomeWalletConnectorHooks with the returned object once, before any
+frame listener can deliver a wallet message. The factory does not install hooks. Injection avoids an
+extension-module import of the UI shell host and lets its real-module tests
+supply a test bridge.
+
+| Status | Export | Promise |
+| --- | --- | --- |
+| After this work | installHomeWalletConnectorHooks(hooks) | Exactly onMessage, onFrameLoad, onRetire, onRenew, all functions; a second installation fails. Callbacks are synchronous. onMessage returns Boolean claimed; lifecycle callbacks return void. |
+| After this work | readHomeWalletConnectorAuthority(frameHandle, loadEpoch) | Returns null for a removed/retired/expired frame or a different load epoch. Otherwise returns exactly connectorId, connectorToken, parentOrigin, expiresAt, authorityKey. Every Runtime call reads this afresh. authorityKey is an opaque page-local identity retained only by same-authority renewal; it is not frame-provided proof or wire data. |
+| After this work | postHomeWalletConnectorMessage(frameHandle, loadEpoch, message) | Returns Boolean delivered. Sends only N2 ready/result/state to the bound current WindowProxy using the opaque target origin, after rechecking epoch, source, current authority and retirement. The extension validates current nonce/generation and the closed message before calling it. Failed delivery has no fallback recipient. |
+
+**After this work.** frameHandle is one opaque Home-owned object per launched
+frame, stable across token renewal, separate from its document loadEpoch.
+loadEpoch is a non-negative safe integer, starting at zero for blank and
+incrementing at each Runtime document load; exhaustion requires close/reopen.
+The navigation lane creates/binds it only from the Runtime-authorized launch
+and GUI frame record. The callback arguments and order are exact:
+
+| Status | Callback | Navigation-owned trigger / extension-owned response |
+| --- | --- | --- |
+| After this work | onMessage(event, frameHandle, loadEpoch, data) | Home resolves WindowProxy, opaque origin, live exact token and target before delivery. Hello/effect read connectorToken, N1 continues to read homeToken. Route both wallet hello and effect, for all three connectors, before generic message fallthrough. True consumes the message; false resumes existing dispatch. The extension owns exact N2 shape/nonce/generation validation and ready/result/state production. |
+| After this work | onFrameLoad(frameHandle, loadEpoch, phase) | Home increments loadEpoch at frame-element load and calls before a wallet hello can register. Earlier messages cannot establish N2 readiness. phase is blank, initial or reload. Blank cannot register; initial is the first Runtime-routed load; reload is every later load and retires the old generation before a new hello. The extension owns generation/replay/fact state, not the iframe listener. |
+| After this work | onRenew(frameHandle, loadEpoch) | After verified same-authority renewal, Home updates the token mapping and reader in place, then calls once. Handle, epoch and authorityKey stay unchanged. The extension retains generation, IDs and effects, updates the last-current token in any transaction continuation and reads the fresh token at the next Runtime call. An authority change uses onRetire instead. |
+| After this work | onRetire(frameHandle, loadEpoch, reason) | Home calls once before removing the context. Reason is frame_removed, launch_expired, authority_changed, sign_out, shell_replaced or page_unload. Actual expiry has a timer and is also checked before dispatch/read/post. The extension fences effects/registrations synchronously and keeps only N2's permitted busy/transaction continuation. |
+
+**After this work.** During onRetire only, the posting function permits one
+terminal result with outcome retired and empty snapshot to the original
+still-loaded document, even when its authority just expired; it permits no
+facts, ready, progress or state in that exception. Removed/reloaded documents
+receive nothing. After the callback it refuses every post for that context.
+A new hello nonce in the same load epoch is retired inside the extension host
+before a replacement generation is issued; its old continuations cannot post.
+The navigation lane owns wiring, ordering and expiry; the extension lane owns
+its state machine. n2_shell_host_hooks_contract imports the real modules and
+tests each callback, failed post and current-token read, including preserving
+a transaction receipt across frame-only retirement.
 
 #### N1/N2 tests, ownership and review defaults
 
 **After this work.** Home's extension lane owns `home-wallet-connector-host.js`;
-Runtime/navigation owns the integration hooks in home-shell-host and all Rust.
+Runtime/navigation owns home-shell-host and all Rust; its exact hook exports
+are defined above. It owns the complete Home-plus-Runtime test row, including
+the JS integration harness and Rust route/provider targets. Home extension
+implements the imported host module; the Runtime/navigation owner joins and
+reports both sides before those tests pass.
 The shared-view/window lanes own clients. One fixture file,
 `scripts/fixtures/wallet-connector-v2-messages.json`, contains valid and invalid
 instances of every v2 hello/ready/effect/result/state/navigation-result message,
 plus their exact stage/dispatch and N1 query examples. The real Home module
 tests and every connector window test import that same file. It includes the
 N4 wire examples linked from [N4](WALLET_PROVIDER.md#n4-wallet-name-and-mark).
-The shared-view enabling commit owns this fixture file before build lanes
-start; Home and all windows consume it rather than creating local variants.
-The integrator reviews later fixture changes. Test authors retain existing
+The first commit of the scripted-extension enabling lane creates this fixture
+file, before the four build lanes start. That lane also owns the recorded
+provider replay used by n2_stale_provider_check_and_reload_guidance; the shared
+view does not own a second packet file. Home extension, Runtime/navigation,
+MetaMask/UniSat windows, WalletConnect window and shared-view tests all import
+this same file (Rust uses include_str plus serde_json). The integrator reviews
+later fixture changes. Test authors retain existing
 guards and use real modules, not extracted source.
 
 | Status | Owner | Required named tests |
 | --- | --- | --- |
-| After this work | Home extension | `n2_closed_actions_and_frame_binding`, `n2_unknown_kind_and_old_home_reload`, `n2_recorded_provider_facts`, `n2_account_network_events`, `n2_one_deadline_stop_late_reply`, `n2_serializes_across_frames`, `n2_v2_message_fixtures_shared`, `n2_hello_reload_renewal`, `n2_v1_on_new_home`, `n2_check_never_prompts`, `n2_late_settlement_advisory`, `n2_final_result_phase_and_dispatch`, `n2_ready_handshake_and_authority_renewal`, `n2_stage_dispatch_table`, `n2_busy_release_and_late_settlement`, `n2_capacity_and_stop_reserve`, `n2_walletconnect_frame_refused` |
-| After this work | Home plus Runtime | `n2_preflight_before_handoff`, `n2_runtime_error_codes`, `n2_empty_accounts_prompt_on_send`, `n2_link_admission_before_prompt`, `n2_narrow_check_and_unisat_network_facts`, `n2_transaction_completion_after_frame_close` |
+| After this work | Home extension | `n2_closed_actions_and_frame_binding`, `n2_unknown_kind_and_old_home_reload`, `n2_recorded_provider_facts`, `n2_account_network_events`, `n2_one_deadline_stop_late_reply`, `n2_serializes_across_frames`, `n2_v2_message_fixtures_shared`, `n2_v1_on_new_home`, `n2_check_never_prompts`, `n2_ready_handshake_and_authority_renewal`, `n2_stage_dispatch_table`, `n2_busy_release_and_late_settlement`, `n2_capacity_and_stop_reserve`, `n2_walletconnect_frame_refused`, `n2_stale_provider_check_and_reload_guidance` |
+| After this work | Runtime/navigation (single accountable owner; Home extension contributes its module) | `n2_preflight_before_handoff`, `n2_runtime_error_codes`, `n2_empty_accounts_prompt_on_send`, `n2_link_admission_before_prompt`, `n2_narrow_check_and_unisat_network_facts`, `n2_transaction_completion_after_frame_close`, `n2_shell_host_hooks_contract` |
 | After this work | Navigation and GUI | `n1_navigation_rows_and_near_misses`, `n1_request_id_survives_launch_and_reuse`, `n1_source_app_from_runtime_record`, `n1_old_home_rows_unavailable`, `n1_selection_during_active_effect`, `n1_refusal_result_to_source`, `n1_source_app_excluded_targets`, `n1_navigation_read_all_connectors` |
 | After this work | Every connector/window and shared view | `wallet_windows_state_producers_and_controls`, `n2_v2_message_fixtures_shared`; import the same packets and reach the accepted design states through their actual producers |
+
+**After this work.** n2_stale_provider_check_and_reload_guidance uses the
+round-two retained/re-announced disabled MetaMask provider and its unanswered
+RPC as its dead-provider replay. The scripted extension stalls the silent read
+with a controlled pending promise, not an invented reply or lock diagnosis.
+It proves the two-second failed/unknown/busy result, both recovery exits, an
+independent UniSat call, focus deduplication without spent IDs, late read
+settlement without stale facts, and fresh discovery after top-level Home reload.
+n2_serializes_across_frames covers both same-provider serialization and
+different-provider independence; n2_stage_dispatch_table covers final phases
+and check/stop shapes; n2_busy_release_and_late_settlement covers the one
+advisory and its receipt variants. Each consolidated name owns all cases of
+its former pair.
 
 **After this work.** These names are lane obligations, not results. JS tests run
 in the behavior suite; server/provider tests run all targets under the shared

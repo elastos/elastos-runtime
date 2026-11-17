@@ -512,6 +512,30 @@ ID is never resent. Result unknown must stay explicit when Home lacks a receipt;
 a returned hash alone establishes neither chain confirmation nor that the
 transaction matches the payload.
 
+**Today.** MetaMask transaction completion expires with its approval request;
+only WalletConnect has the existing late-receipt grace rule. That does not yet
+meet the following received-hash requirement.
+
+**After this work.** Runtime/navigation owns the receipt-only change needed by
+[Home's transaction continuation](HOME_SHELL_HOST_CONTRACT.md#n2-waiting-settlement-and-memory).
+Once a MetaMask transaction has been handed off and its send call made, Runtime
+keeps the consumed binding available for its one hash receipt while the
+original carried authority remains valid, including past request expiry and
+frame retirement. Request expiry/history pruning cannot erase that binding
+while it can still accept this receipt; existing capacity bounds refuse new
+work rather than evict it. The existing Home completion route accepts only
+the same principal/session/connector/request/payload-hash/signer binding and a
+well-formed transaction_hash. Identical completion is idempotent; a different
+hash is conflict. This is result recording, with no challenge, signing,
+handoff, send, changed payload or new authority. A terminal expiry/rejection
+stays terminal; Activity retains the returned hash and identifies it as a
+wallet-returned result, without claiming chain confirmation. A known hash
+cannot be represented as Result unknown. WalletConnect's existing grace and
+dismissal rules remain in [the owning section](#first-shippable-slice).
+n2_transaction_completion_after_frame_close covers Stop, request expiry,
+close, load/new-nonce retirement, duplicate hash, conflicting hash, pruning,
+authority end and unchanged signing refusal on both Home and Runtime sides.
+
 **After this work.** [Issue scope](https://github.com/elastos/elastos-runtime/issues/575)
 is a message on each connector and a transaction on WalletConnect and MetaMask
 only. UniSat signs messages only today; a Bitcoin transaction through UniSat
@@ -520,9 +544,9 @@ open for this contract.
 
 | Status | Runtime/Inbox/Wallet/navigation lane tests | Run location |
 | --- | --- | --- |
-| After this work | `n3_external_inbox_review_action`, `n3_direct_external_approve_refused` | Server producer and both routes; real Inbox controls, old cards and managed/account-access regressions |
-| After this work | `n3_same_request_to_each_connector`, `n3_reject_dismiss_acknowledgement` | Real Wallet/Home/window modules, provider and headless journey |
-| After this work | `n3_wallet_badge_counts_review_requests`, `n3_requester_provenance_without_site_invention` | Real GUI badge and cards; actor provenance, account-access exception, absent site and fixture rejection |
+| After this work | `n3_external_inbox_review_action`, `n3_direct_external_approve_refused` | Runtime/navigation owns: server producer and both routes; real Inbox controls, old cards and managed/account-access regressions |
+| After this work | `n3_same_request_to_each_connector`, `n3_reject_dismiss_acknowledgement` | Runtime/navigation owns the joined journey; connector lanes supply their real window modules |
+| After this work | `n3_wallet_badge_counts_review_requests`, `n3_requester_provenance_without_site_invention` | Runtime/navigation owns: real GUI badge and cards; actor provenance, account-access exception, absent site and fixture rejection |
 
 **After this work.** Out of scope: general Inbox presenter/count redesign,
 stored reviewed state, automatic Home rejection on wallet decline, website
@@ -612,17 +636,20 @@ removal/whitespace policy is below; ranges are inclusive.
 | After this work | UnicodeData M* | Keep at most two consecutive marks after a non-space base; drop leading marks and extra marks |
 | After this work | Remaining text | Trim, truncate to 40 Unicode scalar values (at most 160 UTF-8 bytes), then trim again |
 | After this work | No UnicodeData L* or Nd left | Name is absent |
-| After this work | Reserved labels as whole token sequences, ASCII case-insensitive | Name is absent; token boundaries are ends or non-L*/Nd characters |
+| After this work | Reserved labels other than Wallet / Your wallet | Name is absent on whole token-sequence match anywhere, ASCII case-insensitive; token boundaries are ends or non-L*/Nd characters |
+| After this work | Wallet / Your wallet | Name is absent only on whole cleaned-name match, ASCII case-insensitive |
 
 **After this work.** Reserved sequences are Home, ElastOS, ElastOS Home,
-Runtime, System, Wallet, Your wallet, Inbox, People, Library, Documents and
-Assistant. Check after truncation. Preserve other letter case; perform no
+Runtime, System, Inbox, People, Library, Documents and Assistant, matched as
+whole token sequences anywhere. Wallet and Your wallet match only the whole
+cleaned name, so Trust Wallet, Coinbase Wallet and OKX Wallet keep their names
+with the generic mark. Check after truncation. Preserve other letter case; perform no
 normalization or confusable folding. Look-alike letters in another script are
 a stated limit, not authenticated branding. The generic WalletConnect mark and
 separate transport/source label remain required even when a peer calls itself
 MetaMask. All peer code-point filtering occurs in the one shared function. Fixed
-validated extension labels bypass peer reserved-name rejection; otherwise
-Brave Wallet would be rejected as an untrusted use of Wallet. Keep generated
+validated extension labels bypass peer reserved-name rejection; they are derived
+from the checked provider ID rather than peer metadata. Keep generated
 Unicode table provenance and its required license with that implementation.
 
 | Status | Input (escapes are literal test notation) | Cleaned name / peer mark |
@@ -635,6 +662,8 @@ Unicode table provenance and its required license with that implementation.
 | After this work | `\uD800Alice` in JS | transport `\uFFFDAlice`; cleaner returns `Alice` / wallet |
 | After this work | `H` + Cyrillic U+043E + `me` | retained as untrusted text / wallet; not covered by ASCII reserved-name matching |
 | After this work | `Home`, `SYSTEM support`, `Alice Home Wallet` | absent / wallet |
+| After this work | `Wallet`, ` wallet `, `Your wallet`, `YOUR WALLET` | absent / wallet |
+| After this work | `Trust Wallet`, `Coinbase Wallet`, `OKX Wallet` | retained exactly / wallet |
 | After this work | `A` repeated 41 times | 40 `A` scalars / wallet |
 | After this work | `钱包` | retained / wallet |
 | After this work | absent, non-string at the client, or client string over 1,024 bytes | omitted metadata, absent / wallet |
@@ -678,11 +707,11 @@ not installed acceptance.
 
 | Status | Runtime/Wallet lane tests | Location / proof |
 | --- | --- | --- |
-| After this work | `n4_metadata_bounds_and_text_rendering`, `n4_metadata_bound_to_verified_link`, `n4_old_record_and_reopened_window` | Shared cleaner, provider/server targets and real view modules; ownership, isolation, marks, bounds and fallback |
-| After this work | `n4_wire_fields_host_runtime` | Shared packet fixture from N2; identity field/actor match, well-formed transport, successful recorded-pattern link; no second mapper |
-| After this work | `n4_cleaning_vectors_shared` | Every vector and exact Unicode tables above; all call sites use the shared implementation |
-| After this work | `n4_bus_mixed_version_optional_metadata` | Fields absent accepted by old shape; strict old consumer rejects new params before mutation; compatible new pair preserves them |
-| After this work | `n4_update_201_undo_preserves_accounts` | Installed update, add link, Undo, old operation/save, re-update and fallback |
+| After this work | `n4_metadata_bounds_and_text_rendering`, `n4_metadata_bound_to_verified_link`, `n4_old_record_and_reopened_window` | Runtime/navigation owns: shared cleaner, provider/server targets and real view modules; ownership, isolation, marks, bounds and fallback |
+| After this work | `n4_wire_fields_host_runtime` | Runtime/navigation owns; imports shared packet fixture from N2; identity field/actor match, well-formed transport, successful recorded-pattern link; no second mapper |
+| After this work | `n4_cleaning_vectors_shared` | Runtime/navigation owns: every vector and exact Unicode tables above; all call sites use the shared implementation |
+| After this work | `n4_bus_mixed_version_optional_metadata` | Runtime/navigation owns: fields absent accepted by old shape; strict old consumer rejects new params before mutation; compatible new pair preserves them |
+| After this work | `n4_update_201_undo_preserves_accounts` | Runtime/navigation owns the test; integration runs installed update, add link, Undo, old operation/save, re-update and fallback |
 
 **After this work.** Out of scope: authenticated peer branding, remote icons,
 confusable detection, user-label/key migration, a new Brave mark and guaranteed
@@ -755,10 +784,10 @@ Anders decides its policy; no new guest-specific block or authority is inferred.
 
 | Status | Required named tests | Lane / location |
 | --- | --- | --- |
-| After this work | `n5_permission_entry_all_states`, `n5_allow_after_refusal_off_expiry` | Runtime/Inbox real producer, current-ID/passkey routes and six-state UI; retain absent-action assertions and existing working recovery tests |
-| After this work | `n5_inbox_action_by_kind_and_409`, `n5_guest_request_creates_no_question` | Inbox/gateway; decision versus request, exact conflict answer, stale proof/ID/expiry, idempotent concurrent request creation and guest instruction |
-| After this work | `n5_cleanup_blocks_allow_until_complete` | Runtime and WalletConnect; existing cleanup predicates, failed cleanup and retry |
-| After this work | `n5_retired_intent_never_resumes` | WalletConnect real controller/client, Home return and delayed read; same active intent resumes once, dropped intents stay dropped |
+| After this work | `n5_permission_entry_all_states`, `n5_allow_after_refusal_off_expiry` | Runtime/navigation owns: Inbox real producer, current-ID/passkey routes and six-state UI; retain absent-action assertions and existing working recovery tests |
+| After this work | `n5_inbox_action_by_kind_and_409`, `n5_guest_request_creates_no_question` | Runtime/navigation owns: Inbox/gateway; decision versus request, exact conflict answer, stale proof/ID/expiry, idempotent concurrent request creation and guest instruction |
+| After this work | `n5_cleanup_blocks_allow_until_complete` | Runtime/navigation owns the joined test; WalletConnect lane supplies its controller; existing cleanup predicates, failed cleanup and retry |
+| After this work | `n5_retired_intent_never_resumes` | WalletConnect-window lane owns: real controller/client, Home return and delayed read; same active intent resumes once, dropped intents stay dropped |
 
 **After this work.** Out of scope: new consent fields/fences, producer changes,
 Browser policy changes, hosted Exit selection, more relay hosts, a second switch
@@ -778,10 +807,10 @@ not product acceptance.
 | Status | Required test | Owner / proof |
 | --- | --- | --- |
 | After this work | `wallet_connection_same_id_installed_journeys` | Integration: one ID through Inbox/Wallet/connector/result; messages on all three, transactions on WalletConnect/MetaMask only; leftover pending/handed-off/busy/reopened states and no duplicate send |
-| After this work | `wallet_connection_real_wallets_and_webkit` | Installed real relay peer, actual MetaMask/UniSat, WebKit and native desktop, exact versions/artifact hashes and human trial |
-| After this work | `wallet_connection_expiry_reconnect_and_controls` | Actual producers, expiry/reconnect, every accepted control, focus and human screen-reader checks |
-| After this work | `wallet_connection_old_home_tab_across_update` | New v2 window in an old Home tab: zero provider calls, unsupported-version guidance and hidden new N1 controls until reload; pre-existing v1 documents do not gain v2 behavior retroactively |
-| After this work | `n2_guest_without_proof_creates_no_prompt` | Home/Runtime admission rejects absent proof before prompting, under today's principal policy |
+| After this work | `wallet_connection_real_wallets_and_webkit` | Integration owns: installed real relay peer, actual MetaMask/UniSat, WebKit and native desktop, exact versions/artifact hashes and human trial |
+| After this work | `wallet_connection_expiry_reconnect_and_controls` | Integration owns: actual producers, expiry/reconnect, every accepted control, focus and human screen-reader checks |
+| After this work | `wallet_connection_old_home_tab_across_update` | Integration owns the installed update case: new v2 window in old Home makes zero provider calls and shows reload guidance; a pre-existing v1 window may reach the wallet, but its old link has no admission_id and Runtime refuses it without linking. Reload Home and reopen the window to use admitted v2 linking; pre-existing v1 documents gain no v2 behavior retroactively. |
+| After this work | `n2_guest_without_proof_creates_no_prompt` | Runtime/navigation owns JS plus Runtime admission coverage; absent proof is rejected before prompting under today's principal policy |
 
 **After this work.** These cases require primary recordings before their replay
 fixtures are written; a lane cannot manufacture a provider reply from this
@@ -789,9 +818,9 @@ specification. New raw observations take precedence over an older report:
 
 | Status | Recording-gated test | Evidence gate / affected tests |
 | --- | --- | --- |
-| After this work | `n2_real_transaction_hash_and_late_receipt_recording` | Raw follow-up recordings now contain MetaMask sends returning hashes, including after more than 100 seconds, with independent local-chain receipts. Validate/import those observations before transaction branches of n2_one_deadline_stop_late_reply, n2_transaction_completion_after_frame_close and real transaction acceptance. The local test chain adds no supported product network or installed proof. |
-| After this work | `n2_real_unisat_link_after_unlock_recording` | Raw follow-up recording now shows a single locked requestAccounts completing after unlock and account approval. Validate/import it before the empty-account prompt branch of n2_empty_accounts_prompt_on_send/link admission acceptance; combine with recorded proof signing and real Runtime verification to prove linking, which requestAccounts alone does not prove. |
-| After this work | `n2_real_brave_discovery_and_silent_check_recording` | Still awaits configured Brave announcements, identity and non-prompting reads; Brave replay/alternatives and n4_old_record_and_reopened_window compatibility wait for it. |
+| After this work | `n2_real_transaction_hash_and_late_receipt_recording` | Scripted-extension lane owns fixture validation/import; Home and Runtime/navigation own its consuming tests. Raw follow-up recordings now contain MetaMask sends returning hashes, including after more than 100 seconds, with independent local-chain receipts. Validate/import those observations before transaction branches of n2_one_deadline_stop_late_reply, n2_transaction_completion_after_frame_close and real transaction acceptance. The local test chain adds no supported product network or installed proof. |
+| After this work | `n2_real_unisat_link_after_unlock_recording` | Scripted-extension lane owns fixture validation/import; Home and Runtime/navigation own its consuming tests. Raw follow-up recording now shows a single locked requestAccounts completing after unlock and account approval. Validate/import it before the empty-account prompt branch of n2_empty_accounts_prompt_on_send/link admission acceptance; combine with recorded proof signing and real Runtime verification to prove linking, which requestAccounts alone does not prove. |
+| After this work | `n2_real_brave_discovery_and_silent_check_recording` | Scripted-extension lane owns the missing fixture; Home and Wallet consumers wait. Still awaits configured Brave announcements, identity and non-prompting reads; Brave replay/alternatives and n4_old_record_and_reopened_window compatibility wait for it. |
 
 **After this work.** Structural tests may use the contract's enum/wire examples;
 those are not invented provider observations. Existing recorded signature
@@ -799,6 +828,19 @@ patterns still cover the message/deadline branches. Record new reply hashes,
 versions and observation provenance in the fixture before writing the blocked
 replay cases. Unit-test proof signatures may use isolated fixture keys and do
 not claim real-wallet compatibility.
+
+**After this work.** The scripted-extension lane's first fixture commit and
+the shared-view enabling commit precede the four build lanes. Their data,
+replay and presentation work can start after Main's contract diff check. N3
+review actions, N4 metadata, N5 consent and WalletConnect-window work do not
+wait for the N1/N2 human review. In the Runtime/navigation lane, N1 navigation,
+the N2 shell bridge, N2 routes and the received-hash change wait for Irzhy's
+N1/N2 review or Anders's explicit waiver. Home-extension product code also
+waits. MetaMask/UniSat windows may build shared rendering and test against the
+scripted contract; enabling their new N1/N2 effects waits for that same gate.
+The integration lane joins these parts only after their dependencies and
+human gates pass. Main records the review or waiver; the contract diff check
+alone does not supply it.
 
 **After this work.** Main records candidate, checks/skips, reviews, installed
 proof, remaining gate and next owner in the owning issue. Irzhy's contract and
