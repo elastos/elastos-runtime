@@ -403,13 +403,6 @@ pub(in crate::api::gateway) async fn system_wallet_approvals_summary(
     .await;
     match response {
         Ok(data) => {
-            let data_dir = state.data_dir.clone();
-            let app_names = blocking_capsule_inventory(move || {
-                gateway_home_runtime::home_launch_targets(&data_dir)
-                    .into_iter()
-                    .map(|target| (target.target, target.title))
-                    .collect::<BTreeMap<_, _>>()
-            }).await;
             let approval_requests = data
                 .get("approval_requests")
                 .and_then(|value| value.as_array())
@@ -417,8 +410,6 @@ pub(in crate::api::gateway) async fn system_wallet_approvals_summary(
                 .flatten()
                 .filter_map(|record| {
                     let mut summary = system_wallet_approval_summary(record)?;
-                    summary.requesting_app_name = app_names.get(&summary.capsule_id)
-                        .filter(|name| !name.is_empty() && name.chars().count() <= 128).cloned();
                     let actor = authority.verified_context().actor();
                     let private_audience = matches!(actor, WALLET_CAPSULE_ID | INBOX_CAPSULE_ID)
                         || (!is_managed_wallet_proof_type(&summary.proof_type)
@@ -568,7 +559,9 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
         .get("signature_receipt")
         .filter(|value| value.is_object());
     Some(SystemWalletApprovalSummary {
-        requesting_app_name: None,
+        requesting_app_name: Some(gateway_home_runtime::app_shell_title(
+            value.get("requested_by_actor").or_else(|| value.get("capsule_id"))?.as_str()?,
+        )),
         requesting_origin: None,
         request_id: value.get("request_id")?.as_str()?.to_string(),
         status: value.get("status")?.as_str()?.to_string(),

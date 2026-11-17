@@ -46,7 +46,13 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
             ("browser_typed_data_sign", "eth_signTypedData_v4"),
         ] {
             let dir = tempfile::tempdir().unwrap();
-        write_test_browser_capsule(dir.path(), BROWSER_CAPSULE_ID, "app", "Browser", Some("<!doctype html>"));
+            write_test_browser_capsule(
+                dir.path(),
+                BROWSER_CAPSULE_ID,
+                "app",
+                "Browser",
+                Some("<!doctype html>"),
+            );
 
             seed_walletconnect_connector_config(dir.path());
             let authority = passkey_authority(dir.path());
@@ -105,7 +111,10 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
             let (state, _) = wallet_test_state_with_recording_provider(dir.path(), provider).await;
             let app = gateway_router(state);
             let body = read_private(&app, &wallet, "/api/apps/wallet/wallet/summary").await;
-        assert_eq!(body["wallet_approvals"]["approval_requests"][0]["requesting_app_name"], "Browser");
+            assert_eq!(
+                body["wallet_approvals"]["approval_requests"][0]["requesting_app_name"],
+                "Browser"
+            );
 
             assert_eq!(
                 body["wallet_approvals"]["approval_requests"][0]["requesting_origin"],
@@ -194,6 +203,15 @@ async fn n3_direct_external_approve_refused_existing_routes() {
             };
             let (state, recorder) =
                 wallet_test_state_with_recording_provider(dir.path(), provider).await;
+            if proof_type == "managed_evm" {
+                let runtime_authority = runtime_wallet_authority_for_app_token(dir.path(), actor, &token);
+                let context = runtime_authority.home_launch_context();
+                let result = gateway_wallet_approvals::approve_pending_managed_wallet_request(
+                    &state, dir.path(), &context, &runtime_authority,
+                    gateway_wallet_approvals::system_wallet_approval_summary(&record).unwrap(), reason, actor,
+                ).await;
+                assert!(result.err().unwrap().to_string().contains("approval method"));
+            }
             let app = gateway_router(state);
             let proof = step_up_token_for_app_context(
                 dir.path(),
@@ -225,7 +243,8 @@ async fn n3_direct_external_approve_refused_existing_routes() {
                 .unwrap();
             let message = String::from_utf8(bytes.to_vec()).unwrap();
             assert!(
-                message.contains("approval method") || message.contains("different connector"),
+                message.contains("approval method") || message.contains("different connector")
+                    || message.contains("Use System to approve built-in wallet requests"),
                 "{message}"
             );
             assert_eq!(recorder.provider.approvals.lock().await[0], record);
