@@ -48,9 +48,9 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
             let dir = tempfile::tempdir().unwrap();
             seed_walletconnect_connector_config(dir.path());
             let authority = passkey_authority(dir.path());
-            let wallet = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &authority);
-            let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
-            let system = app_token_for_authority(dir.path(), SYSTEM_CAPSULE_ID, &authority);
+            let wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
+            let inbox = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
+            let system = projection_launch_token_for_authority_context(dir.path(), SYSTEM_CAPSULE_ID, &authority);
             let matching_actor = connector.unwrap_or(WALLET_METAMASK_CAPSULE_ID);
             let matching = projection_launch_token_for_authority_context(
                 dir.path(),
@@ -68,7 +68,7 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
                 crate::auth::RuntimePrincipalRole::Admin,
                 "other-site-reader-credential",
             );
-            let other_wallet = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &other);
+            let other_wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &other);
             let record = json!({"schema":"elastos.wallet.approval_request/v1", "request_id":"request:site", "status":"pending", "intent":intent, "requested_by_actor":"browser",
             "principal_id":authority.principal_id, "session_id":authority.session_id, "account_id":"account:site", "chain_namespace":"eip155:20",
             "address":"0xabc", "resource":"elastos://wallet/sign", "reason":"Sign a message", "proof_type":if connector.is_some() { "siwe" } else { "managed_evm" }, "connector_id":connector,
@@ -158,7 +158,7 @@ async fn n3_direct_external_approve_refused_existing_routes() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let authority = passkey_authority(dir.path());
-        let token = app_token_for_authority(dir.path(), actor, &authority);
+        let token = projection_launch_token_for_authority_context(dir.path(), actor, &authority);
         let record = json!({"request_id":"request:external", "status":"pending", "intent":"credential", "requested_by_actor":"documents",
             "principal_id":authority.principal_id, "session_id":authority.session_id, "account_id":"account:external", "address":"0xabc",
             "chain_namespace":"eip155:20", "resource":"elastos://wallet/sign", "reason":"Sign a credential", "proof_type":"siwe",
@@ -220,9 +220,9 @@ async fn n7_browser_site_projection_all_surfaces_transactions() {
         let dir = tempfile::tempdir().unwrap();
         seed_walletconnect_connector_config(dir.path());
         let authority = passkey_authority(dir.path());
-        let browser = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
-        let wallet = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &authority);
-        let inbox = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+        let browser = projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
+        let wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
+        let inbox = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
         let address = "0x1111111111111111111111111111111111111111";
         let account_id = format!("wallet:eip155:20:{address}");
         let provider = MockWalletProvider {
@@ -278,6 +278,7 @@ async fn n4_pending_requests_current_session_only_existing_routes() {
     let inbox = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &owner);
     let other_wallet = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &owner);
     let other = runtime_wallet_authority_for_app_token(dir.path(), WALLET_CAPSULE_ID, &other_wallet);
+    assert_eq!(other.verified_context().principal_id(), owner.principal_id);
     assert_ne!(other.verified_context().session_id(), owner.session_id);
     let other_inbox = issue_home_projection_launch_token_with_context(
         dir.path(), INBOX_CAPSULE_ID, INBOX_CAPSULE_ID, &other.home_launch_context(),
