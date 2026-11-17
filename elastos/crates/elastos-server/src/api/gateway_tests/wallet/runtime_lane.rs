@@ -280,7 +280,7 @@ async fn n4_pending_requests_current_session_only_existing_routes() {
     let other = runtime_wallet_authority_for_app_token(dir.path(), WALLET_CAPSULE_ID, &other_wallet);
     assert_ne!(other.verified_context().session_id(), owner.session_id);
     let other_inbox = issue_home_projection_launch_token_with_context(
-        dir.path(), INBOX_CAPSULE_ID, INBOX_CAPSULE_ID, &other.home_launch_context().context,
+        dir.path(), INBOX_CAPSULE_ID, INBOX_CAPSULE_ID, &other.home_launch_context(),
     ).unwrap();
     let record = json!({"schema":"elastos.wallet.approval_request/v1", "request_id":"request:session-fixture", "status":"pending",
         "intent":"publish_envelope", "requested_by_actor":"documents", "principal_id":owner.principal_id, "session_id":owner.session_id,
