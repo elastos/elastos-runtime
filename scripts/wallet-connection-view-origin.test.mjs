@@ -26,15 +26,19 @@ for(const engine of ['chromium','webkit'])test(`F1: full origins and fixed feedb
         const {connectionView,renderConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
         const view=connectionView({window:v.window,stage:v.stage,summary:{...v.request,site:origin},account:v.account,waitSeconds:299,localSafety:false,compact});
         document.body.replaceChildren(renderConnection(document,view));await document.fonts.ready;
-        const site=document.querySelector('.connection-site'),identity=site.closest('.connection-identity')||site.parentElement;
+        const site=document.querySelector('.connection-site');
+        let identity=site.closest('.connection-identity');
+        while(identity&&!['auto','scroll'].includes(getComputedStyle(identity).overflowY))identity=identity.parentElement;
         const style=getComputedStyle(site),box=site.getBoundingClientRect();
-        identity.scrollTop=identity.scrollHeight;
+
         const visible=e=>{const b=e.getBoundingClientRect();return b.top>=0&&b.bottom<=innerHeight&&b.width>0};
         const range=document.createRange();range.setStart(site.firstChild,origin.length-1);range.setEnd(site.firstChild,origin.length);
-        const end=range.getBoundingClientRect(),area=identity.getBoundingClientRect();
-        return {siteCount:document.querySelectorAll('.connection-site').length,reasonLabel:document.querySelector('.connection-detail-label')?.textContent,text:site.textContent,style:{whiteSpace:style.whiteSpace,overflow:style.overflowX,textOverflow:style.textOverflow},width:box.width,scrollWidth:site.scrollWidth,lastCharacterVisible:end.top>=area.top-1&&end.bottom<=area.bottom+1,feedback:[...document.querySelectorAll('.connection-status,.connection-wait,.connection-actions button')].filter(e=>e.textContent).every(visible),documentHeight:document.documentElement.scrollHeight};
+        const area=identity.getBoundingClientRect();
+        identity.scrollTop+=Math.max(0,range.getBoundingClientRect().bottom-Math.min(area.bottom,innerHeight)+2);
+        const end=range.getBoundingClientRect();
+        return {siteCount:document.querySelectorAll('.connection-site').length,reasonLabel:document.querySelector('.connection-detail-label')?.textContent,text:site.textContent,style:{whiteSpace:style.whiteSpace,overflow:style.overflowX,textOverflow:style.textOverflow},width:box.width,scrollWidth:site.scrollWidth,identityIsScoped:identity.classList.contains('connection-identity')||identity.classList.contains('connection-content'),lastCharacterVisible:end.top>=Math.max(area.top,0)-1&&end.bottom<=Math.min(area.bottom,innerHeight)+1,feedback:[...document.querySelectorAll('.connection-status,.connection-wait,.connection-actions button')].filter(e=>e.textContent).every(visible),documentHeight:document.documentElement.scrollHeight};
       },{v,origin,compact});
-      assert.equal(observed.text,origin);assert.equal(observed.style.whiteSpace,'normal');assert.equal(observed.siteCount,1);assert.equal(observed.reasonLabel,'From app: ');assert.notEqual(observed.style.textOverflow,'ellipsis');assert(observed.scrollWidth<=observed.width+1);assert(observed.lastCharacterVisible);assert(observed.feedback,JSON.stringify({width,height,observed}));assert(observed.documentHeight<=height);
+      assert.equal(observed.text,origin);assert.equal(observed.style.whiteSpace,'normal');assert.equal(observed.siteCount,1);assert.equal(observed.reasonLabel,'From app: ');assert.notEqual(observed.style.textOverflow,'ellipsis');assert(observed.scrollWidth<=observed.width+1);assert(observed.identityIsScoped);assert(observed.lastCharacterVisible,JSON.stringify({width,height,observed}));assert(observed.feedback,JSON.stringify({width,height,observed}));assert(observed.documentHeight<=height);
     }
     for(const name of ['walletconnect/request-list','metamask/request-unsendable','metamask/access-wrong-account']){
       await page.setViewportSize({width:480,height:522});const v=fixtureView(states.find(r=>r.designState===name));
