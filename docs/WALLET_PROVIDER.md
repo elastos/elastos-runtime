@@ -783,14 +783,15 @@ not product acceptance.
 | After this work | `wallet_connection_old_home_tab_across_update` | New v2 window in an old Home tab: zero provider calls, unsupported-version guidance and hidden new N1 controls until reload; pre-existing v1 documents do not gain v2 behavior retroactively |
 | After this work | `n2_guest_without_proof_creates_no_prompt` | Home/Runtime admission rejects absent proof before prompting, under today's principal policy |
 
-**After this work.** These recording-dependent cases wait for primary evidence;
-a lane must not manufacture a provider reply from this specification:
+**After this work.** These cases require primary recordings before their replay
+fixtures are written; a lane cannot manufacture a provider reply from this
+specification. New raw observations take precedence over an older report:
 
-| Status | Test waiting for recording | Needed evidence / affected tests |
+| Status | Recording-gated test | Evidence gate / affected tests |
 | --- | --- | --- |
-| After this work | `n2_real_transaction_hash_and_late_receipt_recording` | A real test-network send returns its hash and timing; transaction branches of n2_one_deadline_stop_late_reply, n2_transaction_completion_after_frame_close and real transaction acceptance wait for it |
-| After this work | `n2_real_unisat_link_after_unlock_recording` | A clean locked UniSat connection unlocks and completes linking; that branch of n2_empty_accounts_prompt_on_send/link admission acceptance waits for it |
-| After this work | `n2_real_brave_discovery_and_silent_check_recording` | Configured Brave announcements, identity and non-prompting reads; Brave replay/alternatives and n4_old_record_and_reopened_window compatibility wait for it |
+| After this work | `n2_real_transaction_hash_and_late_receipt_recording` | Raw follow-up recordings now contain MetaMask sends returning hashes, including after more than 100 seconds, with independent local-chain receipts. Validate/import those observations before transaction branches of n2_one_deadline_stop_late_reply, n2_transaction_completion_after_frame_close and real transaction acceptance. The local test chain adds no supported product network or installed proof. |
+| After this work | `n2_real_unisat_link_after_unlock_recording` | Raw follow-up recording now shows a single locked requestAccounts completing after unlock and account approval. Validate/import it before the empty-account prompt branch of n2_empty_accounts_prompt_on_send/link admission acceptance; combine with recorded proof signing and real Runtime verification to prove linking, which requestAccounts alone does not prove. |
+| After this work | `n2_real_brave_discovery_and_silent_check_recording` | Still awaits configured Brave announcements, identity and non-prompting reads; Brave replay/alternatives and n4_old_record_and_reopened_window compatibility wait for it. |
 
 **After this work.** Structural tests may use the contract's enum/wire examples;
 those are not invented provider observations. Existing recorded signature
