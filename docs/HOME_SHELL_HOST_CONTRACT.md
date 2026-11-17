@@ -117,6 +117,11 @@ The Home host may:
   the shell and open windows keep their old code until the page reloads, and
   a reload would drop what open windows have not saved.
 
+**After this work.** The recovery surface and version-change advice follow
+[payment-safe recovery](#n2-payment-safe-recovery). Outstanding payment work
+takes precedence over a reload suggestion, including a generic host error.
+Wallet-window Clipboard unknown-purpose recovery uses this same policy.
+
 The Home host must not:
 
 - contain desktop, taskbar, launcher, window, or terminal implementation;
@@ -267,7 +272,8 @@ require closing/reopening that frame rather than forgetting a live tombstone. Ho
 never by a registration-time push into `about:blank`.
 
 **After this work.** At two seconds without ready, or on a v1-schema reply, the
-window shows fixed `unsupported_version` reload instruction text and hides its
+window shows fixed `unsupported_version` recovery text under
+[payment-safe recovery](#n2-payment-safe-recovery) and hides its
 new N1 controls. It keeps listening: a valid late ready for its current nonce
 removes that guidance and enables the rows. No effect or new N1 row runs before
 ready, and no v1 fallback effect runs. WalletConnect receives this handshake
@@ -304,7 +310,8 @@ Home cannot prove a click inside an opaque frame; capability checks and the
 outside wallet's own confirmation remain the effect guards. A frame supplies
 no method, parameters, message, signature, transaction or deadline. Restoring
 access uses Connect wallet, which requests accounts; Check access stays silent.
-A connector gives reload instructions only. Home/browser controls own reload;
+A connector gives only the instruction text permitted by
+[payment-safe recovery](#n2-payment-safe-recovery). Home/browser controls own reload;
 there is no connector reload message.
 
 **After this work.** Results use type `home:wallet-connector-effect-result`,
@@ -363,16 +370,29 @@ null and dispatch not_sent. Unknown schema/kind gets unsupported_version/kind;
 extra keys get invalid_request. A v2 Home
 answers an identifiable v1 effect caller in its exact v1 error shape (`type`,
 `schema`, `requestId`, `connectorId`, `error`) with constant text
-`Reload Home to continue.` and zero effects. New clients treat any such v1
+`Check your wallet and Wallet's activity before continuing.` and zero effects. New clients treat any such v1
 reply as unsupported_version, without rendering its text.
 
 #### N2 provider facts and closed outcomes
 
 **After this work.** Snapshot keys are exactly `providerId`, `alternatives`,
 `availability`, `firstAccount`, `requiredAccountAvailable`, `network`,
-`networkIssue`, `access`, `busy`. Empty facts are null provider/account/network,
+`networkIssue`, `access`, `busy`, `paymentPending`. Empty facts are null provider/account/network,
 empty alternatives, unknown availability/access, null membership/networkIssue,
-and the known busy Boolean. A fresh registration whose selected provider is
+and the known busy and paymentPending Booleans. paymentPending is a
+conservative page-reload safety bit, not proof that a transaction was sent.
+It is true while Home holds any transaction-receipt slot on this page,
+including another provider or retired frame; reservation sets it before
+handoff. It is also true for a recipient when another live WalletConnect frame
+could hold private payment work that Home cannot observe. A WalletConnect
+recipient checks its own local handed-off state as well as this bit; Home's
+generic recovery treats every such opaque frame as unknown. No new
+WalletConnect reporting message is added. False is permitted only when Home
+knows neither risk is present. It carries no request ID, account, hash,
+extension identity or other frame's facts and does not serialize providers.
+Failure-placeholder snapshots use false and are ignored; missing, stale or
+untrusted payment safety is treated as unknown by the view.
+A fresh registration whose selected provider is
 already busy gets these empty facts with busy true, not the older frame's
 account data. A call on another provider leaves its busy fact false.
 Caches remain confined to their verified principal/session/connector and
@@ -395,8 +415,9 @@ A timed-out check reports unknown as specified above. This head has no trusted
 wrapper fact for unavailable. In 2.0.2
 `extensions_unavailable` stays in the closed outcome list but has no producer;
 no lane infers it from user-agent strings, missing providers or Runtime host OS.
-Until a wrapper supplies a reviewed fact, use cause-neutral absence and the
-WalletConnect alternative. Configured Brave behavior is still unrecorded.
+Until a wrapper supplies a reviewed fact, use cause-neutral absence and
+[N1's restricted alternative](#n1-walletconnect-alternative).
+Configured Brave behavior is still unrecorded.
 Silent-method compatibility claims cover the recorded MetaMask/UniSat builds;
 Brave needs its own recording before acceptance.
 
@@ -437,7 +458,7 @@ required membership; changing selectors resets the observation baseline.
 | Status | Closed outcome | Meaning |
 | --- | --- | --- |
 | After this work | `done` | Check/control completed, or Runtime accepted proof/completion. |
-| After this work | `declined` | Numeric wallet 4001 in the reported stage; no claim about a native close button. |
+| After this work | `declined` | Numeric wallet 4001 in the reported stage, including a recorded native notification close. It identifies neither a button nor the person's intent. |
 | After this work | `request_not_authorized` | Numeric 4100; no account/method cause inferred. |
 | After this work | `account_not_authorized`, `access_removed` | Account availability and precedence above; neither proves lock or revocation cause. |
 | After this work | `account_mismatch` | The proof signer changed from the bound signer. |
@@ -495,6 +516,18 @@ Wrong account/network, refusal, unsupported intent and expiry leave the request
 pending while its TTL allows. Runtime atomically rechecks the immutable request
 and consumes once. Home compares the handoff to preflight before its one payload
 call. A race after consumption does not permit a second handoff/send.
+
+**After this work.** For a wallet-metamask transaction only, the existing
+POST /api/apps/home/wallet-connector/approvals/:request_id/handoff success
+envelope has exactly schema, action, connector_id, request_id, handoff,
+evm_chains and external_result_deadline_at. The last value is the positive
+safe-integer epoch-second bound from the atomically approved stored record
+defined in [N3](WALLET_PROVIDER.md#n3-metamask-transaction-results). Home retains
+it privately; it is not the frame's wait deadline and never crosses N2.
+Signature handoffs retain the six-key envelope without that field. Existing
+typed handoff payload keys and schemas stay unchanged. A missing/malformed
+bound after a transaction handoff prevents a send and offers Wallet/activity
+recovery; it never triggers a second handoff.
 
 **After this work.** Every `/api/apps/home/wallet-connector/*` failure, including
 JSON rejection and the N1 read, has exactly
@@ -565,11 +598,17 @@ active effect's stop; refuse new work instead of evicting live/pinned IDs.
 Runtime proof/admission consumption and handoff provide the durable replay
 fence independently of this bounded page cache.
 
-**After this work.** Home sends state messages on every busy transition to live registrations
-watching that selected provider, using each registration's own cache and
-authority. Busy is exactly occupancy of that provider's slot; another provider's
-call cannot set it or cause a serialization refusal. Another connector receives
-none of these facts. Type
+**After this work.** Home sends provider-busy transitions only to registrations
+watching that provider, using each registration's own cache and authority.
+Busy is exactly occupancy of that provider's slot; another provider's call
+cannot set it or cause a serialization refusal. Payment-safety transitions go
+immediately to all three live connector registrations with each recipient's
+own cache and computed bit; no other provider/account/network facts cross to
+another connector. WalletConnect gets empty provider facts and busy false.
+Frame load/removal also recomputes this risk. Immediately after ready, Home
+posts one initial state with empty provider facts and the current busy/risk
+bits, without a provider call. A window treats safety as unknown until that
+current-generation state arrives. Type
 is `home:wallet-connector-state`, schema
 `elastos.home.wallet-connector-state/v2`; exact keys are `type`, `schema`,
 `connectorId`, `documentNonce`, `generation`, `snapshot`, `settled`. Normally
@@ -579,10 +618,14 @@ one advisory to its still-live original registration when that work settles.
 This includes Stop during verifying after the hash has already arrived:
 `settled:{effectRequestId,result:"answered"|"declined"|"failed",receipt}`.
 These three inner keys are exact. Answered means a successful provider return,
-declined means 4001, failed means all other settlement. receipt is exactly null, "recorded" or "recording_failed". It is non-null only
+declined means 4001, failed means all other settlement. The visible 4001
+wording is "The wallet did not approve this request."; it makes no claim that
+the person selected Decline rather than closing a native notification.
+receipt is exactly null, "recorded" or "recording_failed". It is non-null only
 for a returned transaction hash: recorded means Runtime acknowledged its
-receipt, recording_failed means that submission failed or timed out while Home
-keeps the hash. Busy release is sent immediately with settled null if receipt
+receipt, recording_failed means the bounded submission sequence below ended
+without acknowledgement while Home keeps the hash. Busy release is sent
+immediately with settled null if receipt
 recording is still running; the one advisory follows that recording result.
 It carries no text, signature or hash and does not resolve the ended wait
 again. Signature/link answers may produce late-ignored wording; a transaction
@@ -594,7 +637,7 @@ not another generation's settled effect ID. With no live original generation,
 that advisory is dropped.
 
 **After this work.** Account/network events are validated hints. Home coalesces
-ordinary fact changes for 100 ms, preserving order of busy transitions and the
+ordinary fact changes for 100 ms, preserving order of busy/paymentPending transitions and the
 one settlement advisory. EVM reordering emits a changed firstAccount in new-link contexts only. With
 a linked/request selector, unchanged membership produces no account-loss state
 and no ordering-only message; the list/order remains private. Network events schedule one serialized reread;
@@ -612,39 +655,104 @@ provider call or handoff and sends no reply to a closed or retired frame.
 Signature and link answers do not use it.
 
 **After this work.** The continuation uses the same Home page,
-principal/session/proof/grant and valid Home/carried authority. It retains one
-received hash privately until Runtime acknowledges the receipt or that
+principal/session/proof/grant and valid Home/carried authority. Runtime's
+stored result deadline in [N3](WALLET_PROVIDER.md#n3-metamask-transaction-results)
+limits acceptance independently of token expiry; a renewed token never extends
+that deadline. It retains one received hash privately until Runtime acknowledges the receipt or that
 authority/page ends; a frame-only retirement cannot clear it. Runtime's
 receipt-only persistence and expiry handling are owned by
 [N3](WALLET_PROVIDER.md#n3-outside-wallet-requests), not by a window timer.
-Runtime stores an identical hash idempotently; a different hash for the same
-consumed ID is conflict, never another send. Receipt HTTP failure keeps that
-bounded slot while its authority is valid; it does not discard the known hash
-or retry the wallet. Reserve one of at most 64 transaction-receipt slots per
+Runtime stores an identical hash idempotently after this work; a different
+hash for the same consumed ID is conflict, never another send. This is an
+implementation obligation, not today's completion behavior. Receipt HTTP
+failure keeps that bounded slot while its authority is valid; it does not
+discard the known hash or retry the wallet. Reserve one of at most 64 transaction-receipt slots per
 selected provider in this page before consuming a transaction request; at
-capacity return host_busy with the actual provider busy flag and leave the
-request pending. A receipt slot is released after acknowledgement or authority
-end, not on frame retirement. This bound does not block another provider or
+capacity return host_busy with the actual provider busy flag and
+paymentPending true, leave the request pending and use payment-safe recovery.
+A receipt slot is released after acknowledgement, a failure before handoff,
+or a settled provider error with no hash and no remaining send call, or at
+authority/page end; frame retirement alone cannot release it. This bound does not block another provider or
 account/signature operations. Receipt submission has a two-second HTTP timeout;
 it is separate from the ended wallet wait and cannot authorize another send. A still-waiting effect reports failed at verifying on
-receipt failure; an ended wait uses the closed receipt advisory above. Sign-out,
-shell replacement, carried-authority expiry and page unload end this authority
-and its private continuation; another session cannot inherit it. Top-level
-Home reload destroys the old page, so a hash never delivered to that page
-cannot be recovered by this rule. WalletConnect retains its existing distinct
+the final receipt failure; an ended wait uses the closed receipt advisory
+above. Sign-out, shell replacement, carried-authority expiry, page unload and
+onRetire(reason=authority_changed) end the private continuation and its delivery
+rights. authority_changed means the old principal/session/proof/grant/actor
+binding was replaced; it neither transfers the hash nor adopts the new token.
+Frame removal, frame reload/new readiness and same-authority renewal retain the
+continuation as specified above. These events do not change Runtime's stored
+waiting state or result deadline. Another session cannot inherit delivery.
+Top-level Home reload destroys the page and any private pending/received hash;
+a hash not recorded before that destruction cannot be recovered by this rule. WalletConnect retains its existing distinct
 receipt rule in [Wallet Provider](WALLET_PROVIDER.md#first-shippable-slice).
+
+**After this work.** A received hash triggers attempt 1 immediately. Only a
+transport failure, two-second HTTP timeout or exact Runtime failed/HTTP 500
+starts a monotonic retry timer: attempt 2 one second after the first failure,
+attempt 3 five seconds after the second failure. There are at most three HTTP
+submissions total per consumed request/hash, including timed-out attempts;
+focus, reopening and repeated events add none. Each attempt uses the same
+immutable binding/hash and currently valid same-authority token. A new attempt
+checks authority and the stored result deadline first; denial, expiry, conflict
+or any other closed error ends the sequence without another retry. At most one
+client HTTP wait runs at a time; timed-out Runtime work may overlap a retry,
+so identical completion must be atomic. A late acknowledgement prevents further
+attempts.
+An ambiguous timed-out submission may finish at Runtime; idempotent completion
+makes a later identical submission harmless.
+
+**After this work.** Receipt progress stays verifying while the sequence runs
+and the original wait is live. Its final acknowledgement or exhaustion is the
+single receipt result/advisory; Stop/expiry may end that wait earlier without
+ending receipt-only work. If the sequence ends without acknowledgement, retain
+the known hash in its bounded slot until acknowledgement or delivery authority/
+page end; no fourth automatic attempt is made. Fixed guidance is "Your wallet
+returned a transaction result, but Home could not save it. Check {wallet_name}
+and Wallet's activity before making another payment." A retained known hash
+uses recording_failed, including when Runtime's deadline later passes, rather
+than claiming Home did not receive a result. No new send or connector switch
+is offered. The joined transaction test covers loss of acknowledgement after
+a successful save and every retry/authority/deadline boundary.
 
 **After this work.** Discovery retains at most 32 page-local entries. Per-frame
 facts, nonce/generation, replay IDs and one effect are cleared on retirement;
 only the bounded nonce tombstones, provider-busy record and transaction
 exception above can outlive it. No browser storage or logs retain extension material. A never-settled
-call stays busy until page unload. All host_busy guidance, wallet_busy
-guidance, and guidance while busy after Stop or a failed check includes both
-exits: "Answer or close the request in your wallet, or reload Home." If no
-request can be answered or closed, reload is the available exit. These are
-instruction text, with no connector-triggered reload. Closing a wallet tab or
-side panel alone is not proven cancellation; a native notification close may
-settle the promise. Only its actual settlement releases the slot.
+call stays busy until page unload. Closing a wallet tab or side panel alone is
+not proven cancellation; a native notification close may settle the promise.
+Only actual settlement releases its provider slot.
+
+#### N2 payment-safe recovery
+
+**After this work.** Payment guidance takes precedence over every busy,
+capacity, failed-check, unsupported-version, navigation-failure, generic host
+and update/reload suggestion. A window treats payment as unresolved after its
+transaction reaches dispatch handed_off, sent or unknown, or while a current
+trusted snapshot has paymentPending true. Missing/stale/untrusted safety facts
+are conservative: they do not permit reload advice. Home applies the same
+guard to its own recovery surface across all outstanding page payment work.
+
+**After this work.** For an unresolved payment, say "Check {wallet_name} and
+Wallet's activity before making another payment." Use the fixed local name for
+the selected provider (MetaMask, Brave Wallet or UniSat); a generic host with no
+selected provider says "your connected wallet". Offer Open Wallet/activity
+through the authorized N1 row when ready, otherwise explain how to open Wallet
+from Home. This branch gives neither reload advice nor another connector,
+including when host_busy came from receipt capacity with busy false. It never
+offers Send for the consumed request. A known unrecorded hash uses the more
+specific recording_failed sentence above.
+
+**After this work.** Only a check, message or link context with trusted current
+paymentPending false and no handed-off transaction may use the non-payment
+busy instruction: "Answer or close the request in your wallet, or reload Home
+with the browser's Reload control." After that message/link wait has ended,
+replace "Answer" with "Reject" so a discarded signature is not requested.
+A check can explain that no answer arrived; presence is not liveness. With
+unknown safety or an unsupported old Home, show only the wallet/activity
+guidance until safety is known. Reload remains instruction text, owned by the
+browser, with no connector-triggered reload message. The narrow WalletConnect
+alternative has the separate N1 predicate below.
 
 ### Wallet window navigation (N1)
 
@@ -667,9 +775,25 @@ v2 readiness. Existing exact legacy forms remain accepted only on today's rows.
 | After this work | Inbox | WalletConnect | `{}` after internet decision; readiness only, not a retired intent |
 | After this work | Any connector | Wallet | `{wallet_request:id}` belonging to this principal/source connector |
 | After this work | Any connector | Wallet | `{tab:"activity"}`; open actual drawer even with pending requests |
-| After this work | MetaMask or UniSat | WalletConnect | `{}`; configured target only, no request/authority transfer |
+| After this work | MetaMask | WalletConnect | `{}`; only N1's new-link alternative predicate below, configured target only, no request/authority transfer |
 | After this work | WalletConnect | Inbox | `{notification_id:"walletconnect-internet:permission"}` |
 | After this work | Any connector | Runtime-recorded source app | `{}` plus `walletRequestId:id`; supplied target is only an equality assertion |
+
+#### N1 WalletConnect alternative
+
+**After this work.** Offer WalletConnect only from the MetaMask connector for
+a new link: no account selector, no selected wallet request, no prior handoff,
+trusted current paymentPending false, live v2 readiness and a configured target.
+Home checks the source's registered selection and payment state, not merely the
+empty destination query, before accepting this row. UniSat has no such control
+or row: its Bitcoin account cannot use this EVM-only connector. An account-bound
+request/restoration and every post-handoff state keep their original connector.
+Neither absence nor a failed/busy check relaxes these conditions. This is an
+alternative way to create a new link, not a way to retry an existing payment.
+A validly registered request that fails the source/selection/payment predicate
+gets N1 reason denied; an unconfigured target gets target_unavailable.
+n1_navigation_rows_and_near_misses covers every failed predicate, including
+UniSat, a restored account, a selected request and post-handoff/receipt states.
 
 **After this work.** Home resolves every selected request with one fixed read:
 `POST /api/apps/home/wallet-connector/approvals/:request_id/navigation`.
@@ -687,7 +811,7 @@ and expired records are readable for navigation; missing/pruned/foreign records
 all use HTTP 404/request_unavailable in the N2 error body. Navigation can
 read retained same-principal resolved history from an earlier session, but
 earlier-session pending selections are unavailable under
-[N4](WALLET_PROVIDER.md#n4-pending-requests-after-a-new-sign-in). It cannot reuse
+[session visibility](WALLET_PROVIDER.md#request-visibility-across-runtime-sessions). It cannot reuse
 an earlier session's effect authority. This read returns no payload, signature or new
 signing authority and accepts WalletConnect as well as both injected connectors.
 
@@ -767,8 +891,10 @@ get no reply. GUI also retains its existing delivery-failure feedback. Fixed sou
 copy is: invalid_request/denied, `Home could not open this destination.`;
 request_unavailable, `This request is unavailable. Open Wallet to check it.`;
 target_unavailable, `This app is unavailable. Open Wallet to check the request.`;
-unsupported_version, `Reload Home, then open this window again.`; delivery_failed/timeout,
-`Could not open this destination. Try again.` Old Home cannot authorize new
+unsupported_version uses N2's payment-safe recovery (reload instruction only
+in a proven non-payment check/message/link context); delivery_failed/timeout,
+`Could not open this destination. Try again.` only when no payment guidance
+takes precedence. Old Home cannot authorize new
 rows; v2 connector controls stay hidden without ready.
 
 #### N2 shell-host hook interface
@@ -809,13 +935,13 @@ and GUI frame record. The callback arguments and order are exact:
 | After this work | onMessage(event, frameHandle, loadEpoch, data) | Home resolves WindowProxy, opaque origin, live exact token and target before delivery. Hello/effect read connectorToken, N1 continues to read homeToken. Route both wallet hello and effect, for all three connectors, before generic message fallthrough. True consumes every recognized hello/effect, including a refusal; false is only for an unrelated type and resumes existing dispatch. The extension owns exact N2 shape/nonce/generation validation and ready/result/state production. |
 | After this work | onFrameLoad(frameHandle, loadEpoch, phase) | Home increments loadEpoch at frame-element load and calls before a wallet hello can register. Earlier messages cannot establish N2 readiness. phase is blank, initial or reload. Blank cannot register; initial is the first Runtime-routed load; reload is every later load and retires the old generation before a new hello. The extension owns generation/replay/fact state, not the iframe listener. |
 | After this work | onRenew(frameHandle, loadEpoch) | After verified same-authority renewal, Home updates the token mapping and reader in place, then calls once. Handle, epoch and authorityKey stay unchanged. The extension retains generation, IDs and effects, updates the last-current token in any transaction continuation and reads the fresh token at the next Runtime call. An authority change uses onRetire instead. |
-| After this work | onRetire(frameHandle, loadEpoch, reason) | Home calls once before removing the context. Reason is frame_removed, launch_expired, authority_changed, sign_out, shell_replaced or page_unload. Actual expiry has a timer and is also checked before dispatch/read/post. The extension fences effects/registrations synchronously and keeps only N2's permitted busy/transaction continuation. |
+| After this work | onRetire(frameHandle, loadEpoch, reason) | Home calls once before removing the context. Reason is frame_removed, launch_expired, authority_changed, sign_out, shell_replaced or page_unload. Actual expiry has a timer and is also checked before dispatch/read/post. The extension fences effects/registrations synchronously. frame_removed keeps the permitted receipt continuation; every authority-ending reason, including authority_changed, ends delivery/continuation but leaves Runtime's stored waiting record unchanged. Provider-busy occupancy remains until its call settles or the page unloads. |
 
 **After this work.** During onRetire only, the posting function permits one
 terminal result with outcome retired and an empty failure-placeholder snapshot
 to the original still-loaded document, even when its authority just expired.
 That placeholder uses null provider/account/network/membership/networkIssue,
-empty alternatives, unknown availability/access and busy false; clients ignore
+empty alternatives, unknown availability/access, busy false and paymentPending false; clients ignore
 it as a fact source. This exception permits no ready, progress or state. Removed/reloaded documents
 receive nothing. After the callback it refuses every post for that context.
 A new hello nonce in the same load epoch is retired inside the extension host
@@ -840,8 +966,10 @@ throughout the wait; status is associated with that request, not another card.
 The design chooses the layout and focus treatment.
 
 **After this work.** Test the actual app-frame viewport inside Home's smallest
-supported 320 by 220 outer window (including chrome deductions), the narrow
-phone window, both themes and both pinned Chromium/WebKit engines. Assert
+supported 320 by 220 outer window (including chrome deductions), and a narrow
+phone outer window of 360 by 640 CSS pixels, both themes and both pinned
+Chromium/WebKit engines. Both sizes are in scope, including 320 by 220 even
+though the design pictures do not cover it. Assert
 visible bounding boxes and operable controls after the action and after each
 asynchronous transition, not merely text present somewhere in the DOM.
 walletconnect_request_feedback_in_view is owned by the WalletConnect-window
@@ -871,7 +999,10 @@ provider replay used by n2_stale_provider_check_and_reload_guidance; the shared
 view does not own a second packet file. Home extension, Runtime/navigation,
 MetaMask/UniSat windows, WalletConnect window and shared-view tests all import
 this same file (Rust uses include_str plus serde_json). The integrator reviews
-later fixture changes. Test authors retain existing
+later fixture changes. This first file deliberately encodes draft N1/N2
+messages before the human review; it is not approval to implement them.
+[The lane gates](WALLET_PROVIDER.md#lane-start-gates-and-shared-file-order)
+define permitted pre-review work and replacement of changed draft examples. Test authors retain existing
 guards and use real modules, not extracted source.
 
 | Status | Owner | Required named tests |
@@ -881,15 +1012,24 @@ guards and use real modules, not extracted source.
 | After this work | Runtime/navigation — N7 | Owns all Rust, Inbox and Wallet projection/consumer work and N7 producer/privacy/compatibility tests in [N7](WALLET_PROVIDER.md#n7-requesting-site-display); connector windows only render the field |
 | After this work | WalletConnect window / shared view | `walletconnect_request_feedback_in_view` (WalletConnect-window owner), `extension_request_feedback_in_view` (shared-view owner, MetaMask/UniSat consumers) |
 | After this work | Navigation and GUI | `n1_navigation_rows_and_near_misses`, `n1_request_id_survives_launch_and_reuse`, `n1_source_app_from_runtime_record`, `n1_old_home_rows_unavailable`, `n1_selection_during_active_effect`, `n1_refusal_result_to_source`, `n1_source_app_excluded_targets`, `n1_navigation_read_all_connectors` |
-| After this work | Every connector/window and shared view | `wallet_windows_state_producers_and_controls`, `n2_v2_message_fixtures_shared`; import the same packets and reach the accepted design states through their actual producers |
+| After this work | Shared-view enabling lane (single accountable owner; all three window lanes contribute real-module cases) | `wallet_windows_state_producers_and_controls`; one joined three-window matrix using the common packets and actual producers |
 
 **After this work.** n2_stale_provider_check_and_reload_guidance uses the
 round-two retained/re-announced disabled MetaMask provider and its unanswered
 RPC as its dead-provider replay. The scripted extension stalls the silent read
 with a controlled pending promise, not an invented reply or lock diagnosis.
-It proves the two-second failed/unknown/busy result, both recovery exits, an
-independent UniSat call, focus deduplication without spent IDs, late read
-settlement without stale facts, and fresh discovery after top-level Home reload.
+It proves the two-second failed/unknown/busy result, an independent UniSat
+call, focus deduplication without spent IDs, late read settlement without stale
+facts, and fresh discovery after top-level Home reload in a proven non-payment
+context. It also proves both guidance branches: checks/messages/linking with
+paymentPending false have browser-owned reload recovery; handed-off/sent/unknown
+transactions, retained slots (including busy false at capacity), retired-frame
+payment work and unknown safety have wallet/activity guidance, zero reload
+advice and zero alternative-connector controls. Cover unsupported-version,
+navigation failure, update and generic host recovery, not just the busy card.
+The shared packets include paymentPending transitions and ignored placeholders.
+Home extension is the single accountable owner of n2_v2_message_fixtures_shared;
+every real Home/window test imports it and contributes to that one matrix.
 n2_serializes_across_frames covers both same-provider serialization and
 different-provider independence; n2_stage_dispatch_table covers final phases
 and check/stop shapes; n2_busy_release_and_late_settlement covers the one

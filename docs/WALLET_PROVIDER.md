@@ -435,6 +435,34 @@ Copy link. The source-app recovery row is included in N1's issue scope and human
 review. WalletConnect client error classification stays inside its existing
 capsule authority; a design label N6 adds no new effect or permission.
 
+#### WalletConnect stopped pairing and replacement QR
+
+**Today.** The client aborts its local attempt, retires the adapter and clears
+Runtime session storage on Cancel/fresh Connect. The pinned adapter aborts its
+pairing attempt and requests relay transport closure. A local cancellation alone is
+not evidence that every earlier proposal/late callback can no longer be adopted.
+
+**After this work.** Before Get new QR code or fresh Connect issues a replacement
+URI, the WalletConnect-window lane ends the stopped pairing/proposal using the
+pinned SDK's cancellation/retirement path and completes Runtime's existing
+storage-revision cleanup barrier. The old URI/topic/proposal is no longer
+eligible for adoption by that client; an old approval, display_uri, storage
+write or late result cannot restore it, link an account or replace the new
+attempt. Stop and repeated new-QR presses join the same cleanup operation.
+Only its successful completion permits one fresh attempt/URI. A failed or
+timed-out cleanup shows "Home could not end the earlier connection. Try again."
+and offers cleanup retry, without issuing another QR. This rule covers pairing/
+proposal replacement, not cancellation of a handed-off transaction.
+
+**After this work.** `walletconnect_stopped_pairing_ends_before_new_qr` has one
+accountable owner, the WalletConnect-window lane. Its real client/adapter test
+stops before/after proposal, delays cleanup, repeats Stop/new-QR presses and
+delivers an old proposal approval; it proves no replacement URI before the
+barrier, one fresh URI after it, and no adoption/link from the retired attempt.
+Run it in the behaviour suite and both pinned browser engines. Keep existing
+cancellation guards; where a branch already works, retain it as a regression
+rather than inventing a failing provider response.
+
 ### N3 outside-wallet requests
 
 **Today.** The Inbox producer chooses wallet-review-request only for Browser
@@ -507,29 +535,95 @@ Home has not received. A known but unrecorded hash uses
 A returned hash alone establishes neither chain confirmation nor that the
 transaction matches the payload.
 
-**Today.** MetaMask transaction completion expires with its approval request;
-only WalletConnect has the existing late-receipt grace rule. That does not yet
-meet the following received-hash requirement.
+#### N3 MetaMask transaction results
 
-**After this work.** Runtime/navigation owns the receipt-only change needed by
-[Home's transaction continuation](HOME_SHELL_HOST_CONTRACT.md#n2-waiting-settlement-and-memory).
-Once a MetaMask transaction has been handed off and its send call made, Runtime
-keeps the consumed binding available for its one hash receipt while the
-original carried authority remains valid, including past request expiry and
-frame retirement. Request expiry/history pruning cannot erase that binding
-while it can still accept this receipt; existing capacity bounds refuse new
-work rather than evict it. The existing Home completion route accepts only
-the same principal/session/connector/request/payload-hash/signer binding and a
-well-formed transaction_hash. Identical completion is idempotent; a different
-hash is conflict. This is result recording, with no challenge, signing,
-handoff, send, changed payload or new authority. A terminal expiry/rejection
-stays terminal; Activity retains the returned hash and identifies it as a
-wallet-returned result, without claiming chain confirmation. A known hash
-cannot be represented as Result unknown. WalletConnect's existing grace and
-dismissal rules remain in [the owning section](#first-shippable-slice).
-n2_transaction_completion_after_frame_close covers Stop, request expiry,
-close, load/new-nonce retirement, duplicate hash, conflicting hash, pruning,
-authority end and unchanged signing refusal on both Home and Runtime sides.
+**Today.** MetaMask transaction completion expires with its approval request;
+only WalletConnect has the existing late-receipt grace rule. wallet-provider
+stores approved_at but not the carried token's expiry. CompleteConnectorHandoff
+is also absent from the v2 idempotent replay helper, and its handler rejects a
+Completed record. The following retention and
+identical-hash acknowledgement are implementation requirements, not current
+behavior.
+
+**After this work.** Runtime/navigation owns the received-hash state change.
+At a MetaMask transaction handoff, Runtime atomically stores approved_at and
+external_result_deadline_at = approved_at + 43,200 seconds (12 hours), with
+checked arithmetic, before returning the consumed handoff. This optional
+Runtime-owned u64 epoch-second field is also projected on the request
+summary for Wallet's waiting view. The existing handoff success envelope carries
+the same stored value to Home as specified in N2; the typed signing payload and
+Bus operation parameters stay unchanged. A caller supplies neither the value nor a token-expiry claim.
+It is immutable: later send, frame retirement, Stop, request expiry, renewal,
+sign-out and session-authority end do not reset it. Twelve hours is Main's
+default pending Irzhy's N1/N2 human review; lanes wait for confirmation or an
+explicit change/waiver before implementing this gated receipt work.
+
+| Status | MetaMask transaction condition | Stored state / view |
+| --- | --- | --- |
+| After this work | Handoff accepted, no hash, now strictly before external_result_deadline_at | Approved and waiting, including after expires_at; retained in Wallet's request list and active quota, outside resolved-history eviction |
+| After this work | Valid hash accepted before that deadline | Completed once with the existing bound hash receipt; normal receipt/activity retention applies |
+| After this work | No recorded hash when now reaches the deadline | Expired, resolved_at set to the stored deadline, result unknown; Wallet says to check the named wallet and Wallet's activity before making another payment |
+| After this work | Page/frame/session authority ends before the deadline | Record remains Approved/waiting until hash or deadline; only page delivery rights change |
+
+**After this work.** This rule applies to connector_id wallet-metamask,
+including its Brave provider when supported; it adds no UniSat transaction.
+The stored status enum stays Pending/Approved/Completed/Rejected/Expired.
+The result_unknown view outcome is derived from Expired plus the stored
+external_result_deadline_at and absent hash, not a new persisted status.
+Expiry at that bound releases the active slot through the existing lifecycle
+accounting; before it, token/session expiry is not provider pruning input.
+
+**After this work.** Wallet and the matching connector's scoped feed retain
+the Approved/waiting MetaMask transaction as a read-only request; Inbox/System
+notifications stay pending-only. Selecting it in a reopened connector shows
+this waiting state, not a new approval or an unavailable pending-card retry.
+This waiting view has no Send, Retry payment, Reject or Dismiss. Dismiss remains WalletConnect-only. The principal can inspect the
+account, network, requesting app, result deadline and Wallet's activity, and
+check MetaMask/Brave Wallet itself. A later session can see this read-only
+waiting record but inherits no completion authority. It never shows Expired
+before its stored bound, even if the original page closed. The deadline ending
+result collection proves no cancellation or failed on-chain payment; it does
+not authorize resending this consumed ID.
+
+**After this work.** The existing Home completion route still requires valid
+same-origin Home authority and a carried token with the same principal/session/
+proof/grant. Provider checks the original connector/request/payload-hash/signer,
+a well-formed transaction_hash and the stored result deadline. A first hash is
+accepted only while now < external_result_deadline_at; identical bound hashes
+then return the stored acknowledgement idempotently, including after completion
+or the deadline, while the record is retained and the same delivery authority
+is valid. They cause no second receipt, completion audit or quota release.
+Different hashes/bindings conflict atomically. Runtime does not infer token
+expiry from launch_id, and it does not extend or revive authority. At the
+deadline a record without a hash expires; terminal records are not reopened.
+This records an existing wallet result, with no further handoff or provider call.
+
+**After this work.** Home's bounded submission/retry schedule and authority_changed
+behavior live only in [N2](HOME_SHELL_HOST_CONTRACT.md#n2-waiting-settlement-and-memory).
+Home's known-but-unrecorded result remains recording_failed; Runtime alone can
+say result unknown when it has no hash. A returned hash proves neither chain
+confirmation nor a payload match. WalletConnect's grace and Dismiss rules stay
+in [their owning section](#first-shippable-slice).
+
+**After this work.** Older Approved MetaMask transaction records with a valid
+approved_at derive and persist this same fixed bound on first new-code load;
+an already Expired/Rejected record stays terminal, and a missing/invalid
+approved_at supplies no exception. No signing payload/hash is migrated. Undo
+to 2.0.1 loses this new waiting guarantee: that code may drop the optional field
+or expire/prune the record at expires_at. Re-update only derives the bound for
+a surviving Approved record; it does not resurrect terminal/pruned history.
+Installed update/Undo tests must state that limit rather than promise old-code
+receipt retention.
+
+**After this work.** n2_transaction_completion_after_frame_close has the single
+accountable owner Runtime/navigation, with Home-extension module contributions.
+It covers Stop, expiry, frame close/load/new nonce, authority_changed and
+same-authority renewal; the persisted 43,200-second boundary and equality case;
+active quota/history pruning; read-only waiting versus Expired views; old
+records/Undo; duplicate, concurrent identical and conflicting hashes; lost
+acknowledgement, three bounded HTTP attempts, exhausted retry and delivery end.
+All signing refusals remain unchanged. Its real Home-plus-Runtime tests and
+every affected provider/server target wait for the N1/N2 gate.
 
 **After this work.** [Issue scope](https://github.com/elastos/elastos-runtime/issues/575)
 is a message on each connector and a transaction on WalletConnect and MetaMask
@@ -714,7 +808,7 @@ branding retention through an old writer. Sasha and Irzhy review spoof-resistant
 presentation; brand marks for WalletConnect peers default to generic until a
 human decision.
 
-#### N4 pending requests after a new sign-in
+### Request visibility across Runtime sessions
 
 **Today.** ListApprovals filters pending records by principal, while connector
 handoff checks session_id. Inbox uses that same list. A new sign-in can
@@ -735,15 +829,18 @@ resubmit it. Its own still-authorized session keeps its existing rights.
 Resolved history remains history; the existing owner Dismiss rule for an
 already-approved WalletConnect transaction stays unchanged and grants no Send.
 A stale selection or direct review/preflight/handoff from another session is
-request_unavailable, not a server-failure journey. Home's N1/N2 adapters use
-their existing HTTP 404/request_unavailable body. Wallet/Inbox and windows
+request_unavailable, not a server-failure journey. The N1/N2 adapters to be built use
+the specified HTTP 404/request_unavailable body. Wallet/Inbox and windows
 show: "This request is unavailable. Return to the app and ask for a new request."
 The app must create a fresh ID under the current session; Home never carries
 the old request across sessions.
 
 **After this work.** n4_pending_requests_current_session_only is owned by
 Runtime/navigation: provider dispatch/all targets, gateway, Inbox, Wallet,
-badge and all connector selectors. It fails today on the principal-only list;
+badge and all connector selectors. The provider/list/count/card cases can be
+built before the human review; connector-selector and stale N1/N2 adapter cases
+wait for that gate. The whole test is complete only after both groups pass.
+It fails today on the principal-only list;
 it must prove same-principal/two-session and absent-session cases, count
 filtering, stale selection without a wallet call, unchanged stored records,
 owning-session access and the retained Dismiss exception. Update/Undo does not
@@ -843,7 +940,7 @@ Inbox, and only to the connector matching the record's connector_id; managed
 requests have no connector recipient. Derive the audience from verified
 Runtime authority, never a caller-provided audience or principal. Apply the
 existing request visibility rules, including
-[N4's session filter](#n4-pending-requests-after-a-new-sign-in), before projection.
+[the session filter](#request-visibility-across-runtime-sessions), before projection.
 
 **After this work.** No requesting_origin or new site label is copied into
 generic Home/shell summaries, badges, System/Chat/other-app notifications,
@@ -867,6 +964,18 @@ from another app is ineligible even if it copies these keys or schemas.
 | After this work | browser_personal_sign / browser_typed_data_sign | payload schema elastos.browser.wallet-signature-request/v1; matching method and existing request bindings |
 | After this work | Browser transaction_intent | payload schema elastos.chain.unsigned_transaction_intent/v1, source browser_wallet and its Runtime effect binding |
 | After this work | browser_account_access | payload schema elastos.browser.account-access-request/v1, permission eth_accounts and its existing record bindings |
+
+**After this work.** The eligible producer is the local Browser wallet bridge.
+Origin/page_url supplied by a remote Engine peer, including the currently
+inactive gateway_browser_remote admit/forward_remote_wallet_consumer_request
+path, is ineligible even with an authenticated peer, browser actor, matching
+schema or page/generation binding. Those bindings authenticate the peer, not
+the site's origin. A future remote producer must keep its reported origin out
+of display-eligible local request shapes until separate provenance review;
+a peer-supplied "local" marker supplies no proof. Imported or otherwise unknown
+producer provenance gives no site. This adds no persisted N7 provenance field
+or new remote-wallet feature. n7_site_absent_or_forged_origin covers the remote
+mediation path as well as copied local keys; it cannot create a site label.
 
 **After this work.** Missing, null or non-string recorded origin gives no field,
 even if page_url alone could suggest a site. Neither a reason/resource, a
@@ -942,7 +1051,7 @@ a request to another session. Installed round-trip proof remains required.
 | After this work | `n7_origin_form_and_ascii_vectors` | Runtime/navigation; every vector above, bounds, backslash/control cases, default/non-default ports, unchanged approval/hash and no raw credential logging |
 | After this work | `n7_account_access_uses_same_projection` | Runtime/navigation; same site in the sibling question, one site label, unchanged grant/step-up bindings, no display fallback to page_url |
 | After this work | `n7_old_records_update_undo` | Runtime/navigation owns fixtures; integration runs installed 2.0.1 update, create requests, Undo/save/re-update, missing-origin fallback and byte-preserved private data/bindings |
-| After this work | `n7_connector_site_rendering` | Shared-view lane owns MetaMask/UniSat consumer tests; WalletConnect-window lane owns its consumer run. All use the shared packet/summary fixtures and real modules, plain isolated text, literal A-labels and zero URL navigation |
+| After this work | `n7_connector_site_rendering` | Shared-view enabling lane is the single accountable owner of one joined three-connector test; WalletConnect-window contributes its real renderer. Shared packet/summary fixtures, plain isolated text, literal A-labels and zero URL navigation |
 
 **After this work.** N7 adds no Browser method, chain or connector pairing.
 Producer journeys use supported Browser flows; all three connector renderers
@@ -974,7 +1083,7 @@ not product acceptance.
 | After this work | `wallet_connection_same_id_installed_journeys` | Integration: one ID through Inbox/Wallet/connector/result; messages on all three, transactions on WalletConnect/MetaMask only; leftover pending/handed-off/busy/reopened states and no duplicate send |
 | After this work | `wallet_connection_real_wallets_and_webkit` | Integration owns: installed real relay peer, actual MetaMask/UniSat, WebKit and native desktop, exact versions/artifact hashes and human trial |
 | After this work | `wallet_connection_expiry_reconnect_and_controls` | Integration owns: actual producers, expiry/reconnect, every accepted control, focus and human screen-reader checks |
-| After this work | `wallet_connection_old_home_tab_across_update` | Integration owns the installed update case: new v2 window in old Home makes zero provider calls and shows reload guidance; a pre-existing v1 window may reach the wallet, but its old link has no admission_id and Runtime refuses it without linking. Reload Home and reopen the window to use admitted v2 linking; pre-existing v1 documents gain no v2 behavior retroactively. |
+| After this work | `wallet_connection_old_home_tab_across_update` | Integration owns the installed update case: new v2 window in old Home makes zero provider calls and uses N2's payment-safe unsupported-version guidance; a pre-existing v1 window may reach the wallet, but its old link has no admission_id and Runtime refuses it without linking. Browser-owned reload/reopen guidance is permitted only when payment safety is established; pre-existing v1 documents gain no v2 behavior retroactively. |
 | After this work | `n2_guest_without_proof_creates_no_prompt` | Runtime/navigation owns JS plus Runtime admission coverage; absent proof is rejected before prompting under today's principal policy |
 
 **After this work.** These cases require primary recordings before their replay
@@ -994,19 +1103,55 @@ versions and observation provenance in the fixture before writing the blocked
 replay cases. Unit-test proof signatures may use isolated fixture keys and do
 not claim real-wallet compatibility.
 
-**After this work.** The scripted-extension lane's first fixture commit and
-the shared-view enabling commit precede the four build lanes. Their data,
-replay and presentation work can start after Main's contract diff check. N3
-review actions, N4 metadata/session visibility, N5 consent, N7 projection and
-WalletConnect-window work do not
-wait for the N1/N2 human review. In the Runtime/navigation lane, N1 navigation,
-the N2 shell bridge, N2 routes and the received-hash change wait for Irzhy's
-N1/N2 review or Anders's explicit waiver. Home-extension product code also
-waits. MetaMask/UniSat windows may build shared rendering and test against the
-scripted contract; enabling their new N1/N2 effects waits for that same gate.
-The integration lane joins these parts only after their dependencies and
-human gates pass. Main records the review or waiver; the contract diff check
-alone does not supply it.
+### Lane start gates and shared-file order
+
+**After this work.** Main's contract diff check permits only the pre-review
+column below. The scripted-extension fixture and shared-view enabling commits
+come first; the four build lanes then take those dependencies. Irzhy's recorded
+N1/N2 review, or Anders's explicit waiver, opens the gated column. N1 reviews
+who may move Home's window; N2 reviews which page may drive an extension and
+with what authority, including paymentPending and the received-hash deadline.
+Main records the reviewed contract tree and fixture commit in #575. A contract
+diff PASS is not this human approval.
+
+| Status | Lane / files it owns | May build and test before N1/N2 human review | Waits for that review or waiver |
+| --- | --- | --- | --- |
+| After this work | Scripted-extension enabling | First commit creates scripts/fixtures/wallet-connector-v2-messages.json with valid/invalid draft packets, N1 rows, N4 wire and N7 summaries; recorded provider replays and primary-recording validation/import, including stalled MetaMask and transaction/unlock observations. Validate JSON/schema examples without enabling Home effects. | Real-module N1/N2 integration and any claim that draft conformance proves approved authority. Still-unrecorded Brave cases also wait for their recording. |
+| After this work | Shared-view enabling | Pure renderers/state reducers on supplied fixtures; isolated wallet/site text, fixed local copy, geometry and operable exits. Own the single joined wallet_windows_state_producers_and_controls and n7_connector_site_rendering matrices across all three real window views; run render-only cases now. | Live Home messages, hello/ready, N1 delivery and controls that invoke N2. Actual-producer branches of the joined state/control matrix wait; a render-only pass is partial evidence. |
+| After this work | Runtime/Inbox/Wallet/navigation; all Rust, capsules/inbox/browser/inbox.js, capsules/wallet/browser/** and capsules/home-gui/browser/** | N3 classification, existing direct-approval refusals, Reject/Dismiss acknowledgements and GUI badge; N4 shared cleaner, optional metadata/storage and existing-route cases; provider/list/card/count parts of session visibility; N5 current consent routes/kind/409 rules; N7 local projection/privacy/compatibility and Inbox/Wallet rendering. Run n3_direct_external_approve_refused, n3_reject_dismiss_acknowledgement, n3_wallet_badge_counts_review_requests, n3_requester_provenance_without_site_invention, pure N4 cleaner/storage tests, N5 existing-route tests and N7 tests on current scoped routes. | Every N1 selector/read/allow-list/GUI selection and source-app row; N3 Review in Wallet/open-stored-connector delivery and n3_same_request_to_each_connector; click/navigation cases of n3_external_inbox_review_action; N4 connector-selector/stale-adapter subcases of n4_pending_requests_current_session_only; n4_wire_fields_host_runtime and injected-link adapter cases; all new N2 routes/admission, shell-host hooks, payment safety routing and received-hash provider/storage/view change. Full joined n2_* Home-plus-Runtime rows and all n1_* tests wait. |
+| After this work | Home-extension build; capsules/home/browser/home-wallet-connector-host.js | Review recorded replay data and draft fixture structure; prepare the test inputs. No new N2 product implementation. | All new N2 host effects, state/generation/readiness/continuation/paymentPending/retry code and real-host tests, including its single accountable n2_v2_message_fixtures_shared matrix. Runtime/navigation supplies home-shell-host hooks after the gate; extension imports them. |
+| After this work | MetaMask/UniSat-window build; their browser files | Consume the enabling pure views and draft snapshots for N4/N7 rendering and extension_request_feedback_in_view; contribute real view cases to the shared owner. Fixed copy and view-only tests use fixtures without invoking Home. | Sending hello, enabling N1 rows, current-authority effect clients, N2 state/effect routing and live controls; end-to-end test branches that reach Home/Runtime adapters. |
+| After this work | WalletConnect-window build; capsules/wallet-walletconnect/browser/** and scripts/walletconnect/adapter.mjs | Existing-authority SDK error/local wait/intent handling, E5 stopped-pairing cleanup and walletconnect_stopped_pairing_ends_before_new_qr, N4 peer-name rendering on its existing link route, N5 local intent/cleanup cases, N7 rendering contribution and walletconnect_request_feedback_in_view. Test these through current scoped APIs or pure view fixtures. | WalletConnect hello/ready as well as all its new N1 rows (including Inbox return/activity/source-app) and packet/state routing. Home-return/navigation subcases of n5_retired_intent_never_resumes wait. It remains outside injected-provider N2 effects. |
+| After this work | Integration/release | Assemble existing-route and render-only evidence with exact artifacts; retain partial results and named outstanding gates. Run ungated compatibility cases only after their implementations exist. | Full one-ID Inbox→Wallet→connector journeys, installed old-Home cases, received-hash/update/Undo proof and product acceptance wait for gated implementations, review and all dependencies. Anders's final trial remains required. |
+
+**After this work.** Split mixed tests into clearly named subcases inside the
+existing test name; do not create a second owner or a second test with the same
+promise. In particular n4_pending_requests_current_session_only has ungated
+provider/list/count/card cases and gated connector-selector/adapter cases.
+Report each group separately; the full named test is not PASS until both run.
+The same rule applies to mixed N3, N4 wire, N5 return and shared-window matrices.
+Pre-review candidates keep incomplete new navigation/effects unexposed; pure
+tests do not authorize an installed partial journey.
+
+| Status | Shared file | First editor / permitted first change | Later editor / permitted later change |
+| --- | --- | --- | --- |
+| After this work | capsules/wallet-provider/src/approval.rs, storage.rs and models.rs | Runtime/navigation, pre-review: N4 metadata and session/list visibility only; keep current completion/expiry semantics | Same lane, after review: atomic external_result_deadline_at, receipt idempotency, active-quota/pruning and state transitions. Preserve earlier filters/metadata and their tests. |
+| After this work | capsules/inbox/browser/inbox.js | Runtime/navigation, pre-review: N3 classification presentation/refusal/acknowledgement, N5 kind/consent controls and N7 text | Same lane, after review: N1 Review in Wallet selector/result delivery and any selector-dependent Open control. Preserve consent and display changes. |
+| After this work | capsules/wallet/browser/wallet-requests.js and wallet-activity.js | Runtime/navigation, pre-review: N4/N7 text, filtered list/count, existing Reject/Dismiss acknowledgement | Same lane, after review: selected-request connector launch through N1, then gated MetaMask waiting/result-deadline view. Preserve earlier rendering and WalletConnect-only Dismiss predicate. |
+| After this work | capsules/wallet-walletconnect/browser/wallet-walletconnect.js | WalletConnect-window, pre-review: local waits/cleanup, existing consent intent, metadata/site/feedback views | Same lane, after review: hello/ready and N1 navigation/state delivery only, preserving those views and cleanup guards. Other lanes contribute tests/exports rather than editing this file. |
+| After this work | capsules/home/browser/home-shell-host.js and capsules/home-gui/browser/** | Runtime/navigation alone; pre-review GUI badge only, no new N1/N2 shell-host edits | Same lane after review owns N1 and the specified N2 hook exports, frame load/removal/expiry/renewal and state routing; Home-extension consumes the hooks and does not edit the file. |
+| After this work | scripts/fixtures/wallet-connector-v2-messages.json | Scripted-extension enabling first commit: provisional protocol/examples before human review | Integrator coordinates accepted changes after review; every Home, Rust, shared-view and window consumer imports the same accepted bytes. No lane keeps a private copy or an older draft packet shape. |
+
+**After this work.** The first shared file intentionally encodes N1/N2 messages
+before the human review. It is a draft contract test input, not a security
+decision. If the review changes a shape, predicate or bound, first update these
+owning documents, then the one fixture, then every dependent consumer/test in
+that order; repeat the affected conformance/behavior checks and discard earlier
+draft PASS claims. Until first implementation is accepted, replace the draft
+rather than adding a compatibility path for it. The shared-view enabling commit
+supplies pure exports that later lanes import; the integrator coordinates any
+later shared export change. Each file keeps its named editor through both
+phases; the phase boundary is not permission for concurrent edits.
 
 **After this work.** Main records candidate, checks/skips, reviews, installed
 proof, remaining gate and next owner in the owning issue. Irzhy's contract and
