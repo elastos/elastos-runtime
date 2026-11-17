@@ -1,4 +1,4 @@
-import { readText, relativeTime, requestTitle, shortAddress } from "./wallet-format.js?v=wallet-20260523a";
+import { readText, relativeTime, requestTitle, requestingAppName, shortAddress } from "./wallet-format.js?v=wallet-20260523a";
 
 export function createWalletActivity({ activityNode, textNode }) {
   function renderActivity(requests) {
@@ -51,7 +51,7 @@ export function activityIcon(request) {
 
 export function activityTitle(request) {
   const status = readText(request.status);
-  const capsule = readText(request.capsule_id) || "Capsule";
+  const capsule = requestingAppName(request);
   if (request.transaction_hash && status === "rejected" && decisionWasDismissed(request)) {
     return `${capsule} · Sent from wallet after request was dismissed`;
   }

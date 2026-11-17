@@ -72,16 +72,6 @@ export function accountName(account, index) {
     return label;
   }
   if (!isPasskeyManagedAccount(account)) return "Your wallet";
-  const connectorId = readText(account.connector_id);
-  if (connectorId === "wallet-walletconnect") {
-    return index === 0 ? "Connected Account" : "WalletConnect Account";
-  }
-  if (connectorId === "wallet-metamask" || (!connectorId && account.proof_type === "siwe")) {
-    return index === 0 ? "Family" : "MetaMask Account";
-  }
-  if (connectorId === "wallet-unisat") {
-    return "Cold Storage";
-  }
   if (account.chain_namespace === "eip155:8453") {
     return "Spending";
   }
@@ -282,28 +272,23 @@ export function requestTiming(request) {
 }
 
 export function requestTitle(request) {
-  if (request.intent === "transaction_intent") {
-    return "Send transaction";
-  }
-  if (request.intent === "browser_personal_sign") {
-    return "Sign a message";
-  }
-  if (request.intent === "browser_typed_data_sign") {
-    return "Sign typed data";
-  }
-  if (isManagedRequest(request)) {
-    return "Built-in approval";
-  }
-  if (isBitcoinProofRequest(request)) {
-    return "Bitcoin proof";
-  }
-  if (request.connector_id === "wallet-metamask") {
-    return "MetaMask approval";
-  }
-  if (request.connector_id === "wallet-unisat") {
-    return "Bitcoin approval";
-  }
-  return "Wallet approval";
+  return ({
+    auth_challenge: "Wallet sign-in request",
+    capability_grant: "Wallet access request",
+    credential: "Credential signing request",
+    publish_envelope: "Publish approval request",
+    transaction_intent: "Send transaction",
+    browser_account_access: "Browser account access request",
+    browser_personal_sign: "Sign a message",
+    browser_typed_data_sign: "Sign typed data",
+    bitcoin_bip322_proof: "Bitcoin proof request",
+    revocation: "Revocation approval request",
+  })[request.intent] || "Wallet approval request";
+}
+
+export function requestingAppName(request) {
+  const name = readText(request.requesting_app_name);
+  return name && [...name].length <= 128 ? name : "Requesting app";
 }
 
 export function isPasskeyManagedAccount(account) {

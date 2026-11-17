@@ -517,7 +517,7 @@ async function loadWalletState() {
   ]);
   const walletAccounts = summary && summary.wallet_accounts;
   const walletApprovals = summary && summary.wallet_approvals;
-  if (walletApprovals?.available === false) throw new Error("Wallet requests are unavailable.");
+  const requestsUnavailable = walletApprovals?.available === false;
   currentApprovalMethods = summary && summary.approval_methods
     ? summary.approval_methods
     : {};
@@ -527,13 +527,14 @@ async function loadWalletState() {
   currentDefaults = Array.isArray(walletAccounts && walletAccounts.default_accounts)
     ? walletAccounts.default_accounts
     : [];
-  currentRequests = requestsWithDecisions(Array.isArray(walletApprovals && walletApprovals.approval_requests)
+  if (!requestsUnavailable) currentRequests = requestsWithDecisions(Array.isArray(walletApprovals && walletApprovals.approval_requests)
     ? walletApprovals.approval_requests : []);
   currentPrices = prices.prices || {};
   pricesStale = Boolean(prices.stale);
   pricesUnavailable = Boolean(prices.unavailable);
   currentBalanceRows = await loadBalanceRows(currentAccounts);
   renderAll();
+  if (requestsUnavailable) throw new Error("Wallet requests are unavailable.");
 }
 
 function renderAll() {

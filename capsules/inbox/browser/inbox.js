@@ -16,6 +16,7 @@
       walletconnectInternet: null,
       readGeneration: 0,
       walletAcknowledgement: null,
+      focusWalletAcknowledgement: false,
       walletDecisions: new Set(),
     };
 
@@ -304,9 +305,24 @@
             resolve(stepUpToken);
             return;
           }
-          reject(new Error(typeof result.error === "string" && result.error.trim()
-            ? result.error.trim()
-            : "Passkey verification failed."));
+          const message = typeof result.error === "string" && result.error.trim()
+            ? result.error.trim() : "Passkey verification failed.";
+          let conflict = false;
+          if (["walletconnect.internet.grant", "walletconnect.internet.revoke"].includes(operation)
+            && /^request failed: 409\b/.test(message)) {
+            try {
+              const body = JSON.parse(message.slice(message.indexOf("{")));
+              conflict = Object.keys(body).length === 2
+                && body.schema === "elastos.home.wallet-connector.effect.error/v1" && body.code === "conflict";
+            } catch (_) {}
+          }
+          if (conflict) {
+            const error = new Error("This request has changed. Refresh Inbox and review the current request.");
+            error.status = 409;
+            loadInbox().catch(() => {}).finally(() => reject(error));
+            return;
+          }
+          reject(new Error(message));
         };
         window.addEventListener("message", onResult);
         window.top.postMessage({
@@ -402,6 +418,8 @@
     }
 
     function setFilter(filter) {
+      state.walletAcknowledgement = null;
+      state.focusWalletAcknowledgement = false;
       state.filter = filter === "review" ? "review" : "all";
       for (const button of elements.filterButtons) {
         const active = button.dataset.filter === state.filter;
@@ -443,9 +461,7 @@
         }
         if (state.walletAcknowledgement) {
           elements.entryRows.appendChild(createRailCard(state.walletAcknowledgement));
-          const result = elements.entryRows.querySelector('[role="status"]');
-          result?.focus();
-          result?.scrollIntoView({ block: "nearest" });
+          focusWalletAcknowledgement(elements.entryRows);
         }
         elements.entryDetail.replaceChildren();
       } else {
@@ -500,6 +516,8 @@
       row.addEventListener("click", () => {
         state.walletAcknowledgement = null;
         state.requestedSelectionId = "";
+        state.walletAcknowledgement = null;
+        state.focusWalletAcknowledgement = false;
         state.selectedId = entryId(entry);
         renderInbox();
       });
@@ -741,16 +759,23 @@
       const site = walletRequestSite(entry);
       if (site) elements.entryDetail.insertBefore(site, actions);
       if (entry.localAcknowledgement) {
-        const result = actions.querySelector('[role="status"]');
-        result.focus();
-        result.scrollIntoView({ block: "nearest" });
+        focusWalletAcknowledgement(actions);
       }
+    }
+
+    function focusWalletAcknowledgement(container) {
+      if (!state.focusWalletAcknowledgement) return;
+      state.focusWalletAcknowledgement = false;
+      const result = container.querySelector('[role="status"]');
+      result?.focus({ preventScroll: true });
+      result?.scrollIntoView({ block: "nearest" });
     }
 
     function walletRequestSite(entry) {
       const origin = entry.requesting_origin;
       if (entry.kind !== "wallet_approval_request" || typeof origin !== "string" || origin.length > 512
         || !/^https?:\/\/[!-~]+$/.test(origin) || /[\/?#@\\]/.test(origin.slice(origin.indexOf("//") + 2))) return null;
+      try { if (new URL(origin).origin !== origin) return null; } catch (_) { return null; }
       const row = document.createElement("p");
       const label = document.createElement("small");
       label.textContent = "Site reported by Browser";
@@ -819,6 +844,7 @@
               ? "Request dismissed. Check your connected wallet before sending again." : "Request rejected.";
             state.walletAcknowledgement = { ...entry, read: true, severity: "info", action_ref: null, localAcknowledgement: message };
             state.walletDecisions.add(id);
+            state.focusWalletAcknowledgement = true;
             state.entries = state.entries.filter(e => e.id !== id);
             state.selectedId = "";
             state.requestedSelectionId = "";

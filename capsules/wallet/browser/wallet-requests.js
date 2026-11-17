@@ -7,6 +7,7 @@ import {
   requestTitle,
   shortAddress,
   chainLabel,
+  requestingAppName,
 } from "./wallet-format.js?v=wallet-20260523a";
 import { actionButton, setBusy, textNode } from "./wallet-render.js?v=wallet-20260523a";
 
@@ -23,6 +24,23 @@ export function createWalletRequests({
   clearRequestSelection = () => {},
 }) {
   let acknowledgement = null;
+  let focusAcknowledgement = false;
+  let lastFocusedRequestId = "";
+  // Acknowledgements last until the person works outside that request.
+  function clearAcknowledgementOutside(event) {
+    if (!acknowledgement || event.target?.closest?.("[data-wallet-request-id]")?.dataset.walletRequestId === acknowledgement.request_id) return;
+    const id = acknowledgement.request_id;
+    acknowledgement = null;
+    for (const card of requestsNode?.children || []) {
+      if (card.dataset.walletRequestId === id) card.remove();
+    }
+    if (requestsNode && !requestsNode.children.length) {
+      requestsNode.hidden = true;
+      if (requestsPanelNode) requestsPanelNode.hidden = true;
+    }
+  }
+  document.addEventListener?.("pointerdown", clearAcknowledgementOutside, true);
+  document.addEventListener?.("focusin", clearAcknowledgementOutside);
   const decisions = new Map();
   let visibleRequests = [];
 
@@ -47,14 +65,16 @@ export function createWalletRequests({
       }
       requestsNode.append(card);
     }
-    if (acknowledgement) {
+    if (acknowledgement && focusAcknowledgement) {
+      focusAcknowledgement = false;
       const result = requestsNode.querySelector?.('[role="status"]');
       result?.focus({ preventScroll: true });
       result?.closest?.(".wallet-request")?.scrollIntoView({ block: "nearest" });
     }
-    if (focused) {
+    if (focused && focusRequestId !== lastFocusedRequestId) {
       window.setTimeout(() => focused.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
     }
+    lastFocusedRequestId = focusRequestId;
     return Boolean(focused);
   }
 
@@ -70,11 +90,11 @@ export function createWalletRequests({
     card.dataset.walletRequestId = requestId;
     const main = document.createElement("div");
     main.className = "wallet-request-main";
-    const purpose = accountAccess ? "Browser account access" : requestTitle(request);
+    const purpose = requestTitle(request);
     const detail = accountAccess ? "Browser requests account access." : readText(request.reason) || "Approval requested.";
     main.append(
       textNode("strong", purpose),
-      textNode("span", `${readText(request.capsule_id).slice(0, 256) || "Capsule"} · ${shortAddress(request.address)} · ${chainLabel(readText(request.chain_namespace).slice(0, 64))}`),
+      textNode("span", `${requestingAppName(request)} · ${shortAddress(request.address)} · ${chainLabel(readText(request.chain_namespace).slice(0, 64))}`),
     );
     if (detail !== purpose) main.append(textNode("small", detail));
     const site = requestSite(request.requesting_origin);
@@ -152,6 +172,7 @@ export function createWalletRequests({
   function requestSite(origin) {
     if (typeof origin !== "string" || origin.length > 512
       || !/^https?:\/\/[!-~]+$/.test(origin) || /[\/?#@\\]/.test(origin.slice(origin.indexOf("//") + 2))) return null;
+    try { if (new URL(origin).origin !== origin) return null; } catch (_) { return null; }
     const row = document.createElement("div");
     row.className = "wallet-request-site";
     const value = textNode("span", origin, "wallet-request-origin");
@@ -233,6 +254,7 @@ export function createWalletRequests({
     if (!requestId) {
       return;
     }
+    const request = visibleRequests.find(r => readText(r.request_id) === requestId);
     setBusy(button, true);
     showStatus(button.dataset.walletApprovedTransaction === "true" ? "Dismissing request." : "Rejecting request.", "muted");
     try {
@@ -244,11 +266,11 @@ export function createWalletRequests({
       const message = result?.receipt_status === "dismissed"
         ? "Request dismissed. Check your connected wallet before sending again."
         : "Request rejected.";
-      const request = visibleRequests.find(r => readText(r.request_id) === requestId);
       if (request) {
         acknowledgement = { ...request, request_id: requestId, status:"rejected",
           localDecisionKind:result?.receipt_status === "dismissed" ? "dismissed" : "rejected", localAcknowledgement:message };
         decisions.set(requestId, acknowledgement);
+        focusAcknowledgement = true;
         renderRequests(visibleRequests.filter(r => readText(r.request_id) !== requestId));
       }
       clearRequestSelection();
