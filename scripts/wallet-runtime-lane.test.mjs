@@ -46,7 +46,7 @@ test("n5_inbox_action_by_kind_and_409: decision and conflict", async t => {
     const r = await runtimeView(t, "inbox", { entries:[permissionEntry("requested")], permission:"requested",
       conflict:true, summaryFailureAfterConflict:true });
     await r.frame.getByRole("button", { name:"Allow", exact:true }).click();
-    await r.frame.locator("#status-text").filter({ hasText:/This request has changed|failed to fetch/i }).waitFor();
+    await r.frame.locator("#refresh:enabled").waitFor();
     assert.equal(await r.frame.locator("#status-text").textContent(), "This request has changed. Refresh Inbox and review the current request.");
     assert.equal(r.calls.filter(c => c.path.endsWith("/actions")).length, 1);
     assert.equal(r.calls.filter(c => c.path.endsWith("/summary")).length, 2, "the failed refresh is attempted only once");

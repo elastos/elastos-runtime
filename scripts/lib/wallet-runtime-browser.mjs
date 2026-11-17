@@ -96,6 +96,9 @@ export async function runtimeView(t, app, state = {}) {
           if (!state.entries.some(e => e.id === id)) return json({ error:"request unavailable" }, 404);
           state.entries = state.entries.filter(e => e.id !== id);
           message = "Rejected wallet request.";
+        } else if (input.action_id?.startsWith("notification-read:")) {
+          // Generated permission entries have no persisted notification row.
+          message = "That inbox entry was already read or is no longer present.";
         } else {
           errors.push(`Unhandled fixture Inbox action: ${input.action_id}`);
           return json({ error:"unsupported fixture action" }, 501);
@@ -132,6 +135,7 @@ export async function runtimeView(t, app, state = {}) {
   t.after(async () => {
     if (errors.length) t.diagnostic(JSON.stringify({ errors, calls: calls.map(c => `${c.method} ${c.path}`) }));
     await browser.close();
+    if (errors.length) throw new Error(`Unexpected Runtime fixture calls: ${errors.join("; ")}`);
   });
   await page.goto("https://runtime.test/");
   const frame = page.frameLocator("#app");
