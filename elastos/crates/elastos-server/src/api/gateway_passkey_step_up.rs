@@ -46,6 +46,14 @@ const PASSKEY_STEP_UP_ACTORS: &[&str] = &[
 
 static PASSKEY_STEP_UP_STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[derive(Debug)]
+struct StaleStepUp(&'static str);
+impl std::fmt::Display for StaleStepUp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(self.0) }
+}
+impl std::error::Error for StaleStepUp {}
+pub(super) fn step_up_is_stale(error: &anyhow::Error) -> bool { error.downcast_ref::<StaleStepUp>().is_some() }
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PasskeyStepUpBeginRequest {
@@ -582,7 +590,7 @@ fn consume_passkey_step_up_for_effect(
             prepare(&effect)?;
             return Ok(effect);
         }
-        anyhow::bail!("passkey step-up token has already been used");
+        return Err(StaleStepUp("passkey step-up token has already been used").into());
     }
     prepare_consumed_capacity(data_dir, now)?;
     let effect = PasskeyStepUpEffectIdentity {
@@ -602,7 +610,7 @@ fn consume_passkey_step_up_for_effect(
             .downcast_ref::<std::io::Error>()
             .is_some_and(|err| err.kind() == std::io::ErrorKind::AlreadyExists)
         {
-            anyhow::anyhow!("passkey step-up token has already been used")
+            anyhow::Error::from(StaleStepUp("passkey step-up token has already been used"))
         } else {
             err
         }
@@ -837,7 +845,7 @@ fn require_step_up_binding(
         anyhow::bail!("passkey step-up original launch binding mismatch");
     }
     if payload.operation != operation || payload.request_sha256 != request_sha256 {
-        anyhow::bail!("passkey step-up intent mismatch");
+        return Err(StaleStepUp("passkey step-up intent mismatch").into());
     }
     Ok(())
 }
@@ -866,12 +874,12 @@ impl PasskeyStepUpPayload {
             anyhow::bail!("passkey step-up token lifetime is invalid");
         }
         if self.exp <= now {
-            anyhow::bail!("passkey step-up token expired");
+            return Err(StaleStepUp("passkey step-up token expired").into());
         }
         if self.iat > now.saturating_add(60)
             || now.saturating_sub(self.iat) > max_age_secs.min(PASSKEY_STEP_UP_TTL_SECS)
         {
-            anyhow::bail!("passkey step-up token is too old");
+            return Err(StaleStepUp("passkey step-up token is too old").into());
         }
         Ok(())
     }

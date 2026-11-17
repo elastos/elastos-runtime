@@ -235,7 +235,9 @@ pub(super) async fn answer(
                     if stopping { REVOKE } else { GRANT },
                     &request(&c)?,
                 )
-                .map_err(|_| anyhow::Error::from(ConsentConflict))?;
+                .map_err(|error| {
+                    if gateway_passkey_step_up::step_up_is_stale(&error) { anyhow::Error::from(ConsentConflict) } else { error }
+                })?;
                 c.status = if stopping { "revoked" } else { "granted" }.into();
                 c.cleanup_pending = stopping;
                 c.principal = Some(launch.context.principal_id.clone());
