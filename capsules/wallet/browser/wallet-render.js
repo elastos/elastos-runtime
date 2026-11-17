@@ -121,7 +121,7 @@ export function accountCard(account, displayedAccountId = "", { privacyMode, pri
   more.type = "button";
   more.textContent = "⋯";
   more.dataset.walletAccountMenu = account.account_id;
-  more.setAttribute("aria-label", `Account actions for ${account.name}`);
+  more.setAttribute("aria-label", `Account actions for ${accountDisplayName(account)}`);
 
   top.append(identity, balance, more);
 

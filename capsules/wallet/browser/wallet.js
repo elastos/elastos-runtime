@@ -749,20 +749,21 @@ function renderHeroAccount(accounts) {
   const privacy = getPrivacyMode();
   const addressText = cardAddressDisplay(account.address, { privacy });
   const networkText = cardNetworkLabel(account);
-  const selectionLabel = selectedAccountId ? `Selected · ${account.name}` : `Default · ${account.name}`;
+  const displayName = accountDisplayName(account);
+  const selectionLabel = selectedAccountId ? `Selected · ${displayName}` : `Default · ${displayName}`;
 
   accountCardNode.hidden = false;
   heroSceneNode?.classList.add("has-account-card");
   accountCardNode.classList.toggle("is-selected", Boolean(selectedAccountId));
   accountCardNode.setAttribute("aria-label", `${selectionLabel}. ${networkText}`);
-  accountCardNode.title = `${account.name} · ${account.address}`;
+  accountCardNode.title = `${displayName} · ${account.address}`;
 
   if (accountCardAddressNode) {
     accountCardAddressNode.textContent = addressText;
     accountCardAddressNode.dataset.walletCopyAddress = account.address;
   }
   if (accountCardNameNode) {
-    accountCardNameNode.textContent = accountDisplayName(account);
+    accountCardNameNode.textContent = displayName;
     accountCardNameNode.dir = "auto";
   }
   if (accountCardNetworkNode) {
@@ -770,7 +771,7 @@ function renderHeroAccount(accounts) {
   }
   if (accountCardCopyNode) {
     accountCardCopyNode.replaceChildren(
-      copyIconButton(account.address, `Copy ${account.name} address`),
+      copyIconButton(account.address, `Copy ${displayName} address`),
     );
   }
 }

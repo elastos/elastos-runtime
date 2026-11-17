@@ -160,6 +160,8 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   const label = r.frame.locator(".wallet-account .wallet-card-name");
   await label.filter({ hasText: name }).waitFor();
   assert.equal(await label.textContent(), name);
+  assert((await r.frame.locator("#wallet-account-card").getAttribute("aria-label")).includes(name));
+  assert((await r.frame.locator(".wallet-account [data-wallet-account-menu]").getAttribute("aria-label")).includes(name));
   assert.equal(await label.evaluate(el => el.dir), "auto");
   assert.equal(await label.evaluate(el => getComputedStyle(el).unicodeBidi), "isolate");
   const mark = r.frame.locator(".wallet-account .wallet-method-mark img");
