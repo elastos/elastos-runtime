@@ -173,7 +173,7 @@ test('live-window regression oracle rejects five deliberate breaks', { timeout: 
         await f.action('send-request').click(); await f.state('request-extension');
         assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
       }],
-      ['stale wait after answer', s => s.replace("'transaction-done' : 'request-done'", "'transaction-done' : 'request-extension'"), async f => {
+      ['stale wait after answer', s => s.replace("stage = result.effect === 'transaction' ? 'transaction-done' : 'request-done';", "stage = result.effect === 'transaction' ? 'transaction-done' : 'request-extension';"), async f => {
         await f.action('send-request').click(); await f.state('request-done');
       }],
       ['draw outside shared view', s => s.replace('const root = renderConnection(document, view);', "const root = renderConnection(document, view); root.append(document.createElement('aside'));"), async f => {
