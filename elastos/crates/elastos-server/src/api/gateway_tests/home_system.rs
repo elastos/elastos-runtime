@@ -5443,8 +5443,9 @@ async fn test_home_summary_and_events_include_browser_wallet_approvals() {
     assert_eq!(summary_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Transaction approval request"
+        "Send transaction"
     );
+    assert!(home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0].get("requesting_origin").is_none());
 
     let events = app
         .oneshot(

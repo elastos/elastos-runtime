@@ -6,6 +6,7 @@ import {
   requestTiming,
   requestTitle,
   shortAddress,
+  chainLabel,
 } from "./wallet-format.js?v=wallet-20260523a";
 import { actionButton, setBusy, textNode } from "./wallet-render.js?v=wallet-20260523a";
 
@@ -68,11 +69,13 @@ export function createWalletRequests({
     card.dataset.walletRequestId = requestId;
     const main = document.createElement("div");
     main.className = "wallet-request-main";
+    const purpose = accountAccess ? "Browser account access" : requestTitle(request);
+    const detail = accountAccess ? "Browser requests account access." : readText(request.reason) || "Approval requested.";
     main.append(
-      textNode("strong", accountAccess ? "Browser account access" : requestTitle(request)),
-      textNode("span", `${readText(request.capsule_id) || "Capsule"} · ${shortAddress(request.address)}`),
-      textNode("small", accountAccess ? "Browser requests account access." : readText(request.reason) || "Approval requested."),
+      textNode("strong", purpose),
+      textNode("span", `${readText(request.capsule_id).slice(0, 256) || "Capsule"} · ${shortAddress(request.address)} · ${chainLabel(readText(request.chain_namespace).slice(0, 64))}`),
     );
+    if (detail !== purpose) main.append(textNode("small", detail));
     const site = requestSite(request.requesting_origin);
     if (site) main.append(site);
     if (!answered) main.append(textNode("small", requestTiming(request), "wallet-request-time"));
@@ -228,11 +231,19 @@ export function createWalletRequests({
         ? "Request dismissed. Check your connected wallet before sending again."
         : "Request rejected.";
       const request = visibleRequests.find(r => readText(r.request_id) === requestId);
-      if (request) acknowledgement = { ...request, request_id: requestId, localAcknowledgement: message };
+      if (request) {
+        acknowledgement = { ...request, request_id: requestId, localAcknowledgement: message };
+        renderRequests(visibleRequests.filter(r => readText(r.request_id) !== requestId));
+      }
       clearRequestSelection();
       notifyHomeSummaryChanged();
-      await refreshWalletState();
-      showStatus(message, "success");
+      try {
+        await refreshWalletState();
+      } catch (_) {
+        showStatus("Wallet could not refresh other requests.", "error");
+        return;
+      }
+      showStatus(acknowledgement ? "" : message, "success");
     } catch (error) {
       showStatus(String(error.message || error), "error");
     } finally {
@@ -243,7 +254,7 @@ export function createWalletRequests({
   return {
     onRequestClick,
     openPendingReview,
-    pendingWalletRequests: pendingRequests,
+    pendingWalletRequests: requests => pendingRequests(requests).filter(request => readText(request.request_id) !== acknowledgement?.request_id),
     renderRequests,
   };
 }

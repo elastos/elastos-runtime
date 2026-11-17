@@ -282,11 +282,14 @@ export function requestTiming(request) {
 }
 
 export function requestTitle(request) {
+  if (request.intent === "transaction_intent") {
+    return "Send transaction";
+  }
   if (request.intent === "browser_personal_sign") {
-    return "Browser signature";
+    return "Sign a message";
   }
   if (request.intent === "browser_typed_data_sign") {
-    return "Browser typed data";
+    return "Sign typed data";
   }
   if (isManagedRequest(request)) {
     return "Built-in approval";

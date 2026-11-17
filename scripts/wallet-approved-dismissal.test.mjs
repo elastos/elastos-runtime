@@ -65,7 +65,7 @@ test("Wallet dismisses earlier-session connector sends without another approval"
     assert.equal(requests.pendingWalletRequests([request]).length, 0, "the acknowledgement is outside the waiting count");
     assert.equal(descendants(root).filter(node => node.tagName === "button").length, 0);
     assert(!descendants(root).some(node => node.className === "wallet-request-time"));
-    assert(messages.some(message => message.startsWith("Request dismissed.")));
+    assert(descendants(root).some(node => node.textContent.startsWith("Request dismissed.")));
     assert.match(activityTitle(request), /Dismissed transaction request/);
   }
 });
@@ -106,4 +106,22 @@ for (const dismissed of [false, true]) test(`Wallet uses the current rejection r
   assert.equal(messages.at(-1), dismissed
     ? "Request dismissed. Check your connected wallet before sending again."
     : "Request rejected.");
+});
+
+test("n3_reject_dismiss_acknowledgement: successful decision survives a failed refresh", async t => {
+  const previous = globalThis.document;
+  globalThis.document = { createElement: tag => new Element(tag) };
+  t.after(() => { globalThis.document = previous; });
+  const root = new Element("section");
+  const request = { request_id:"request:refresh-failed", status:"pending", intent:"browser_personal_sign", capsule_id:"notes",
+    reason:"Sign into Notes", address:"0xabc", expires_at:Math.floor(Date.now()/1000)+600 };
+  const view = createWalletRequests({ requestsNode:root, fetchJson:async () => ({}), shellHeaders:headers => headers,
+    notifyHomeSummaryChanged() {}, showStatus() {}, refreshWalletState:async () => { throw new Error("refresh unavailable"); } });
+  view.renderRequests([request]);
+  await view.onRequestClick({ target:descendants(root).find(node => node.dataset.walletRequestReject) });
+  assert(descendants(root).some(node => node.textContent === "Request rejected."));
+  assert(descendants(root).some(node => node.textContent === "Sign into Notes"));
+  assert.equal(descendants(root).filter(node => node.tagName === "button").length, 0);
+  assert(!descendants(root).some(node => node.className === "wallet-request-time"));
+  assert.equal(view.pendingWalletRequests([request]).length, 0, "an older in-flight summary cannot count the acknowledged ID again");
 });

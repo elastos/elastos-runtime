@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { runtimeView, permissionEntry, packets } from "./lib/wallet-runtime-browser.mjs";
 
 const requestFixture = () => ({ ...packets.n7PrivateSummaries.find(f => f.id === "site-wallet").summary,
-  expires_at: Math.floor(Date.now() / 1000) + 600 });
+  chain_namespace: "eip155:20", expires_at: Math.floor(Date.now() / 1000) + 600 });
 
 test("n5_permission_entry_all_states: Inbox existing routes", async t => {
   for (const status of ["requested", "granted", "refused", "revoked", "expired", "cleanup"]) await t.test(status, async t => {
@@ -21,7 +21,7 @@ test("n5_allow_after_refusal_off_expiry: current question and proof", async t =>
     await r.frame.getByRole("button", { name: "Allow", exact: true }).click();
     await r.frame.getByRole("button", { name: "Turn Off", exact: true }).waitFor();
     assert.deepEqual(r.calls.filter(c => c.path.endsWith("/internet") && c.method === "POST").map(c => c.input), [{ action: "request" }]);
-    assert.deepEqual(r.calls.find(c => c.path.endsWith("/actions")).input, { action_id: "walletconnect-internet-allow:consent:current", step_up_token: "fixture-proof" });
+    assert.deepEqual(r.calls.find(c => c.path.endsWith("/actions")).input, { action_id: "walletconnect-internet-allow:consent:new", step_up_token: "fixture-proof" });
     assert.equal(r.state.permission, "granted");
     assert.deepEqual(r.errors, []);
   });
@@ -201,6 +201,25 @@ test("n3_requester_provenance_without_site_invention: Wallet card", async t => {
   const r = await runtimeView(t, "wallet", { approvals: [request] });
   const card = r.frame.locator(".wallet-request");
   await card.waitFor();
-  assert.equal(await card.locator(".wallet-request-main > span").textContent(), `notes · ${request.address.slice(0, 6)}…${request.address.slice(-4)}`);
+  assert.equal(await card.locator(".wallet-request-main > span").textContent(), `notes · ${request.address.slice(0, 6)}…${request.address.slice(-4)} · Elastos Smart Chain`);
   assert.equal(await card.locator(".wallet-request-origin").count(), 0);
+});
+
+test("n3_reject_dismiss_acknowledgement: Inbox decision and count", async t => {
+  const request = requestFixture();
+  const entry = { id:`wallet-approval-request:${request.request_id}`, source_app:"browser", kind:"wallet_approval_request",
+    title:"Sign a message", body:"Sign into the app.", read:true, severity:"attention", requesting_origin:request.requesting_origin,
+    action_ref:{ action_id:`wallet-approve-request:${request.request_id}` } };
+  const r = await runtimeView(t, "inbox", { entries:[entry] });
+  await r.frame.getByRole("button", { name:"Reject", exact:true }).click();
+  const result = r.frame.locator('#entry-detail [role="status"]');
+  await result.waitFor();
+  assert.equal(await result.textContent(), "Request rejected.");
+  assert.equal(await r.frame.locator("#entry-detail button").count(), 0);
+  assert.equal(await r.frame.locator("#pending-count").textContent(), "0");
+  assert.equal(await r.frame.getByText("Sign into the app.", { exact:true }).count(), 1);
+  await r.frame.getByRole("button", { name:"Refresh", exact:true }).click();
+  await result.waitFor();
+  assert.equal(await r.frame.locator("#entry-detail button").count(), 0);
+  await r.capture("inbox-request-rejected-light-window.png");
 });

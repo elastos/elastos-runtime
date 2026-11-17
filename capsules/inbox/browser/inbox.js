@@ -14,6 +14,7 @@
       selectedId: requestedNotificationId.trim(),
       walletconnectInternet: null,
       readGeneration: 0,
+      walletAcknowledgement: null,
     };
 
     const elements = {
@@ -333,7 +334,7 @@
     async function loadInbox() {
       const generation = ++state.readGeneration;
       const payload = await api("/api/apps/inbox/summary");
-      const entries = inboxEntries(payload);
+      const entries = inboxEntries(payload).filter(entry => entry.id !== state.walletAcknowledgement?.id);
       let permission = null;
       if (entries.some(e => e.kind === "walletconnect_internet_request" || e.kind === "walletconnect_internet_decision")) {
         try { permission = await api("/api/apps/wallet-walletconnect/internet"); } catch (_) {}
@@ -430,12 +431,18 @@
           ? state.requestedSelectionId
           : requestedSelectionMissing
           ? ""
-          : entries.length ? entryId(entries[0]) : "";
+          : state.walletAcknowledgement ? "" : entries.length ? entryId(entries[0]) : "";
       }
       elements.entryRows.replaceChildren();
       if (presentation === "rail") {
         for (const entry of entries) {
           elements.entryRows.appendChild(createRailCard(entry));
+        }
+        if (state.walletAcknowledgement) {
+          elements.entryRows.appendChild(createRailCard(state.walletAcknowledgement));
+          const result = elements.entryRows.querySelector('[role="status"]');
+          result?.focus();
+          result?.scrollIntoView({ block: "nearest" });
         }
         elements.entryDetail.replaceChildren();
       } else {
@@ -443,11 +450,11 @@
           elements.entryRows.appendChild(createRow(entry));
         }
         renderDetail(
-          entries.find((entry) => entryId(entry) === state.selectedId) || null,
+          entries.find((entry) => entryId(entry) === state.selectedId) || state.walletAcknowledgement,
           requestedSelectionMissing,
         );
       }
-      const empty = entries.length === 0;
+      const empty = entries.length === 0 && !state.walletAcknowledgement;
       elements.emptyState.classList.toggle("hidden", !empty);
       elements.entrySplit.classList.toggle("hidden", empty);
       elements.emptyTitle.textContent =
@@ -487,6 +494,7 @@
 
       row.append(top, snippet);
       row.addEventListener("click", () => {
+        state.walletAcknowledgement = null;
         state.requestedSelectionId = "";
         state.selectedId = entryId(entry);
         renderInbox();
@@ -557,6 +565,14 @@
     }
 
     function fillEntryActions(actions, entry) {
+      if (entry.localAcknowledgement) {
+        const result = document.createElement("p");
+        result.textContent = entry.localAcknowledgement;
+        result.setAttribute("role", "status");
+        result.setAttribute("tabindex", "-1");
+        actions.appendChild(result);
+        return;
+      }
       const actionId = entry.action_ref && entry.action_ref.action_id;
       if (entry.kind === "walletconnect_internet_request" || entry.kind === "walletconnect_internet_decision") {
         const path = "/api/apps/wallet-walletconnect/internet";
@@ -714,6 +730,11 @@
       elements.entryDetail.append(titleRow, time, body, actions);
       const site = walletRequestSite(entry);
       if (site) elements.entryDetail.insertBefore(site, actions);
+      if (entry.localAcknowledgement) {
+        const result = actions.querySelector('[role="status"]');
+        result.focus();
+        result.scrollIntoView({ block: "nearest" });
+      }
     }
 
     function walletRequestSite(entry) {
@@ -780,8 +801,21 @@
       setButtonsDisabled(true);
       try {
         const outcome = await inboxAction(actionId);
-        await loadInbox();
         if (actionId.startsWith("wallet-reject-request:")) {
+          const id = "wallet-approval-request:" + actionId.slice("wallet-reject-request:".length);
+          const entry = state.entries.find(e => e.id === id);
+          if (entry) {
+            const message = outcome.message?.startsWith("Request dismissed.")
+              ? "Request dismissed. Check your connected wallet before sending again." : "Request rejected.";
+            state.walletAcknowledgement = { ...entry, read: true, severity: "info", action_ref: null, localAcknowledgement: message };
+            state.entries = state.entries.filter(e => e.id !== id);
+            state.selectedId = "";
+            state.requestedSelectionId = "";
+            renderInbox();
+          }
+        }
+        await loadInbox();
+        if (actionId.startsWith("wallet-reject-request:") && !state.walletAcknowledgement) {
           setStatus(outcome.message || "Request rejected.");
         }
       } catch (error) {
