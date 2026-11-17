@@ -88,6 +88,16 @@ impl WalletProvider {
         }
     }
 
+    fn account_record_summary(&self, account: &LinkedAccount) -> Value {
+        let display = self.account_summary(account);
+        let mut record = serde_json::to_value(account).expect("linked account serializes");
+        for field in ["provider_id", "wallet_display_name", "wallet_mark"] {
+            record.as_object_mut().unwrap().remove(field);
+            if let Some(value) = display.get(field) { record[field] = value.clone(); }
+        }
+        record
+    }
+
     pub(super) fn create_managed_account(&mut self, input: CreateManagedAccountInput) -> Response {
         if let Err(response) = self.ensure_initialized() {
             return response;
@@ -146,7 +156,7 @@ impl WalletProvider {
             }
             if let Some(existing) = exact_account {
                 return Response::ok(
-                    json!({ "account": self.account_summary(&existing), "created": false }),
+                    json!({ "account": self.account_record_summary(&existing), "created": false }),
                 );
             }
             distinct_keys.pop()
@@ -207,7 +217,7 @@ impl WalletProvider {
             self.recover_store_after_save_failure(previous);
             return Response::error("storage_error", err);
         }
-        Response::ok(json!({ "account": self.account_summary(&account), "created": true }))
+        Response::ok(json!({ "account": self.account_record_summary(&account), "created": true }))
     }
 
     pub(super) fn import_managed_recovery_key(
@@ -364,7 +374,7 @@ impl WalletProvider {
         if let Err(err) = self.save() {
             return Response::error("storage_error", err);
         }
-        Response::ok(json!({ "account": self.account_summary(&account), "imported": true }))
+        Response::ok(json!({ "account": self.account_record_summary(&account), "imported": true }))
     }
 
     pub(super) fn import_managed_recovery_set(
@@ -488,7 +498,7 @@ impl WalletProvider {
             .iter()
             .find(|a| a.principal_id == account.principal_id && a.account_id == account.account_id)
             .expect("linked account was stored");
-        Response::ok(json!({ "account": self.account_summary(stored) }))
+        Response::ok(json!({ "account": self.account_record_summary(stored) }))
     }
 
     pub(super) fn revoke_account(&mut self, principal_id: &str, account_id: &str) -> Response {
@@ -534,7 +544,7 @@ impl WalletProvider {
             })
             .count();
         Response::ok(
-            json!({ "account": self.account_summary(&account), "connector_accounts_remaining": connector_accounts_remaining }),
+            json!({ "account": self.account_record_summary(&account), "connector_accounts_remaining": connector_accounts_remaining }),
         )
     }
 
@@ -572,7 +582,7 @@ impl WalletProvider {
         if let Err(err) = self.save() {
             return Response::error("storage_error", err);
         }
-        Response::ok(json!({ "account": self.account_summary(&account) }))
+        Response::ok(json!({ "account": self.account_record_summary(&account) }))
     }
 
     pub(super) fn export_managed_recovery_key(
@@ -711,7 +721,7 @@ impl WalletProvider {
         }
         Response::ok(json!({
             "default_account": default_account,
-            "account": self.account_summary(&account),
+            "account": self.account_record_summary(&account),
         }))
     }
 
@@ -736,7 +746,7 @@ impl WalletProvider {
         };
         Response::ok(json!({
             "default_account": default,
-            "account": self.account_summary(account),
+            "account": self.account_record_summary(account),
         }))
     }
 

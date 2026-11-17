@@ -355,6 +355,13 @@ fn n4_update_201_undo_preserves_accounts() {
     let dir = tempfile::tempdir().unwrap();
     let mut provider = init_provider(dir.path());
     let principal = "person:local:alice";
+    let old_link = wallet_request(&wallet_context(principal, "wallet-metamask"), WalletProviderOperationV2::LinkVerifiedAccount {
+        proof_binding_id:"proof:eip155:20:0xabc".into(), chain_namespace:"eip155:20".into(), address:"0xabc".into(), proof_type:"siwe".into(),
+        label:Some("My old account".into()), provider_id:None, wallet_peer_name:None,
+    });
+    assert_eq!(old_provider_call(dir.path(), &old_link)["status"], "ok");
+    provider = init_provider(dir.path());
+    assert!(provider.store.accounts[0].wallet_display_name.is_none());
     external_request(&mut provider, principal);
     assert!(matches!(
         link_metadata(
@@ -365,6 +372,10 @@ fn n4_update_201_undo_preserves_accounts() {
         ),
         Response::Ok { .. }
     ));
+    assert!(matches!(invoke_wallet(&mut provider, principal, "wallet-walletconnect", WalletProviderOperationV2::LinkVerifiedAccount {
+        proof_binding_id:"proof:eip155:20:0xdef".into(), chain_namespace:"eip155:20".into(), address:"0xdef".into(), proof_type:"siwe".into(),
+        label:Some("New account".into()), provider_id:None, wallet_peer_name:Some("Trust Wallet".into()),
+    }), Response::Ok { .. }));
     assert!(matches!(
         invoke_wallet(
             &mut provider,
@@ -391,6 +402,8 @@ fn n4_update_201_undo_preserves_accounts() {
     );
     assert_eq!(old_provider_call(dir.path(), &request)["status"], "ok");
     let mut updated = init_provider(dir.path());
+    assert_eq!(updated.store.accounts.len(), 2, "Undo reads the old account and the account linked after update");
+    assert_eq!(updated.store.accounts[1].account_id, "wallet:eip155:20:0xdef");
     assert!(
         updated.storage_key == before_key,
         "Undo preserves the fixture key"
@@ -439,6 +452,11 @@ fn n4_bus_mixed_version_optional_metadata() {
         },
     );
     assert_eq!(old_provider_call(dir.path(), &legacy)["status"], "ok");
+    let legacy_link = wallet_request(&context, WalletProviderOperationV2::LinkVerifiedAccount {
+        proof_binding_id:"proof:eip155:20:0xabc".into(), chain_namespace:"eip155:20".into(), address:"0xabc".into(), proof_type:"siwe".into(),
+        label:None, provider_id:None, wallet_peer_name:None,
+    });
+    assert_eq!(old_provider_call(dir.path(), &legacy_link)["status"], "ok", "absent optional metadata keeps the old link shape");
     let bytes = std::fs::read(provider.store_path.as_ref().unwrap()).unwrap();
     let metadata: WalletProviderOperationV2 = serde_json::from_value(json!({"kind":"link_verified_account", "params":{
         "proof_binding_id":"proof:eip155:20:0xabc", "chain_namespace":"eip155:20", "address":"0xabc", "proof_type":"siwe", "wallet_peer_name":"Trust Wallet"
@@ -470,30 +488,72 @@ fn n7_old_records_update_undo() {
     let principal = "person:local:alice";
     let address = format!("0x{}", "12".repeat(20));
     let account_id = format!("wallet:eip155:20:{address}");
-    assert!(matches!(invoke_wallet(&mut provider, principal, "wallet-metamask", WalletProviderOperationV2::LinkVerifiedAccount {
-        proof_binding_id:"proof:site-fixture".into(), chain_namespace:"eip155:20".into(), address:address.clone(), proof_type:"siwe".into(),
-        label:None, provider_id:None, wallet_peer_name:None,
-    }), Response::Ok { .. }));
+    assert!(matches!(
+        invoke_wallet(
+            &mut provider,
+            principal,
+            "wallet-metamask",
+            WalletProviderOperationV2::LinkVerifiedAccount {
+                proof_binding_id: "proof:site-fixture".into(),
+                chain_namespace: "eip155:20".into(),
+                address: address.clone(),
+                proof_type: "siwe".into(),
+                label: None,
+                provider_id: None,
+                wallet_peer_name: None,
+            }
+        ),
+        Response::Ok { .. }
+    ));
     let context = wallet_context(principal, "browser");
     for has_origin in [true, false] {
-        let mut payload = browser_personal_sign_payload(&account_id, &address, "Sign into the test app");
-        payload["principal_id"] = json!(principal); payload["session_id"] = json!(context.session_id());
+        let mut payload =
+            browser_personal_sign_payload(&account_id, &address, "Sign into the test app");
+        payload["principal_id"] = json!(principal);
+        payload["session_id"] = json!(context.session_id());
         payload["page_url"] = json!("https://dapp.example/private?query=kept#fragment");
-        if !has_origin { payload.as_object_mut().unwrap().remove("origin"); }
-        assert!(matches!(invoke_wallet_with_context(&mut provider, &context, WalletProviderOperationV2::RequestApproval {
-            account_id:account_id.clone(), chain_namespace:"eip155:20".into(), intent:"browser_personal_sign".into(),
-            resource:"elastos://wallet/eip155:20/sign/browser_personal_sign".into(), reason:"Sign a message".into(), payload,
-            expires_at:now_ts()+600,
-        }), Response::Ok { .. }));
+        if !has_origin {
+            payload.as_object_mut().unwrap().remove("origin");
+        }
+        assert!(matches!(
+            invoke_wallet_with_context(
+                &mut provider,
+                &context,
+                WalletProviderOperationV2::RequestApproval {
+                    account_id: account_id.clone(),
+                    chain_namespace: "eip155:20".into(),
+                    intent: "browser_personal_sign".into(),
+                    resource: "elastos://wallet/eip155:20/sign/browser_personal_sign".into(),
+                    reason: "Sign a message".into(),
+                    payload,
+                    expires_at: now_ts() + 600,
+                }
+            ),
+            Response::Ok { .. }
+        ));
     }
     let before = serde_json::to_vec(&provider.store.approval_requests).unwrap();
-    let request = wallet_request(&wallet_context(principal, "wallet"), WalletProviderOperationV2::RenameAccount {
-        account_id, label:"Saved by 2.0.1".into(),
-    });
+    let request = wallet_request(
+        &wallet_context(principal, "wallet"),
+        WalletProviderOperationV2::RenameAccount {
+            account_id,
+            label: "Saved by 2.0.1".into(),
+        },
+    );
     assert_eq!(old_provider_call(dir.path(), &request)["status"], "ok");
     let updated = init_provider(dir.path());
-    assert_eq!(serde_json::to_vec(&updated.store.approval_requests).unwrap(), before, "old writer preserves private payload bytes and request bindings");
+    assert_eq!(
+        serde_json::to_vec(&updated.store.approval_requests).unwrap(),
+        before,
+        "old writer preserves private payload bytes and request bindings"
+    );
     for record in &updated.store.approval_requests {
-        assert!(serde_json::to_value(record).unwrap().get("requesting_origin").is_none(), "display origin is computed, never persisted");
+        assert!(
+            serde_json::to_value(record)
+                .unwrap()
+                .get("requesting_origin")
+                .is_none(),
+            "display origin is computed, never persisted"
+        );
     }
 }
