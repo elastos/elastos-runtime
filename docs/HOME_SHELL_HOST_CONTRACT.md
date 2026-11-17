@@ -381,9 +381,12 @@ reply as unsupported_version, without rendering its text.
 empty alternatives, unknown availability/access, null membership/networkIssue,
 and the known busy and paymentPending Booleans. paymentPending is a
 conservative page-reload safety bit, not proof that a transaction was sent.
-It is true while Home holds any transaction-receipt slot on this page,
-including another provider or retired frame; reservation sets it before
-handoff. It is also true for a recipient when another live WalletConnect frame
+It is true while Home holds any transaction-receipt slot or unsettled
+transaction send call on this page, including another provider or retired
+frame; reservation sets it before handoff. Ending delivery authority may
+release the receipt slot while the send promise remains pending: its bounded
+provider-busy record retains a transaction-call Boolean until settlement,
+so paymentPending stays true even for a fresh frame in that interval. It is also true for a recipient when another live WalletConnect frame
 could hold private payment work that Home cannot observe. A WalletConnect
 recipient checks its own local handed-off state as well as this bit; Home's
 generic recovery treats every such opaque frame as unknown. No new
@@ -645,9 +648,10 @@ UniSat event strings do not replace getChain identity. During a provider call,
 mark affected facts unknown and retain at most one reread. Events never link
 an account or send a request.
 
-**After this work.** For a transaction whose send call was made, a hash that
-Home actually receives is recorded once through the transaction-only
-continuation, whatever ended the wait: Stop, request/wait expiry, frame close,
+**After this work.** While the continuation's delivery authority below remains
+valid, a hash Home actually receives from a transaction send call is recorded
+once through its bounded transaction-only submission sequence, whatever ended
+the wait: Stop, request/wait expiry, frame close,
 or retirement by load/reload or a new readiness nonce. Retain the last current
 carried token and immutable consumed-request/payload-hash/signer/authority
 binding independently of the frame generation. This continuation makes no new
@@ -1024,7 +1028,8 @@ facts, and fresh discovery after top-level Home reload in a proven non-payment
 context. It also proves both guidance branches: checks/messages/linking with
 paymentPending false have browser-owned reload recovery; handed-off/sent/unknown
 transactions, retained slots (including busy false at capacity), retired-frame
-payment work and unknown safety have wallet/activity guidance, zero reload
+payment work (including an unsettled send after authority end released its
+receipt slot) and unknown safety have wallet/activity guidance, zero reload
 advice and zero alternative-connector controls. Cover unsupported-version,
 navigation failure, update and generic host recovery, not just the busy card.
 The shared packets include paymentPending transitions and ignored placeholders.
