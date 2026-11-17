@@ -175,3 +175,32 @@ test("n5_cleanup_blocks_allow_until_complete: Inbox cases", async t => {
   assert.deepEqual(r.state.accounts, [{ account_id: "account:kept" }]);
   assert.equal(r.calls.filter(c => c.input?.action === "request").length, 0);
 });
+
+test("n4_pending_requests_current_session_only: stale Wallet card and count", async t => {
+  const r = await runtimeView(t, "wallet", { approvals: [], requestId: "request:previous-session" });
+  await r.frame.locator("#wallet-status").filter({ hasText: "This request is unavailable. Return to the app and ask for a new request." }).waitFor();
+  assert.equal(await r.frame.locator(".wallet-request").count(), 0);
+  assert.equal(await r.frame.locator("#wallet-approvals-badge").isVisible(), false);
+  assert.equal(r.calls.filter(c => c.method === "POST" && /approve|handoff|complete/.test(c.path)).length, 0);
+  await r.capture("wallet-request-unavailable-light-window.png");
+});
+
+test("n3_external_inbox_review_action: presentation before navigation review", async t => {
+  const request = requestFixture();
+  const entry = { id: `wallet-approval-request:${request.request_id}`, source_app: "browser", kind: "wallet_approval_request",
+    title: "Sign a message", body: "Browser requests a signature.", severity: "attention", read: true,
+    action_ref: { action_id: `wallet-review-request:${request.request_id}` } };
+  const r = await runtimeView(t, "inbox", { entries: [entry] });
+  await r.frame.getByRole("button", { name: "Review in Wallet", exact: true }).waitFor();
+  assert.deepEqual(await r.frame.locator("#entry-detail button").allTextContents(), ["Review in Wallet"]);
+  assert.equal(r.calls.filter(c => c.path.endsWith("/actions")).length, 0);
+});
+
+test("n3_requester_provenance_without_site_invention: Wallet card", async t => {
+  const request = { ...requestFixture(), capsule_id: "notes", requesting_origin: undefined, reason: "Home asks for https://forged.example" };
+  const r = await runtimeView(t, "wallet", { approvals: [request] });
+  const card = r.frame.locator(".wallet-request");
+  await card.waitFor();
+  assert.equal(await card.locator(".wallet-request-main > span").textContent(), `notes · ${request.address.slice(0, 6)}…${request.address.slice(-4)}`);
+  assert.equal(await card.locator(".wallet-request-origin").count(), 0);
+});

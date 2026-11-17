@@ -607,7 +607,9 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
 
 /// Display context from the local Browser producer's immutable recorded fields.
 /// The caller applies audience/session visibility and the transaction effect check.
-pub(in crate::api::gateway) fn wallet_request_display_origin(record: &serde_json::Value) -> Option<String> {
+pub(in crate::api::gateway) fn wallet_request_display_origin(
+    record: &serde_json::Value,
+) -> Option<String> {
     if record.get("requested_by_actor")?.as_str()? != BROWSER_CAPSULE_ID {
         return None;
     }
@@ -914,20 +916,36 @@ mod wallet_display_tests {
     #[test]
     fn n7_account_access_uses_same_projection() {
         let mut record = browser_request("https://shop.example", "https://shop.example/private");
-        record["intent"] = json!("browser_account_access"); record["launch_id"] = json!("launch:browser");
+        record["intent"] = json!("browser_account_access");
+        record["launch_id"] = json!("launch:browser");
         let payload = record["payload"].as_object_mut().unwrap();
-        payload.insert("schema".into(), json!("elastos.browser.account-access-request/v1"));
+        payload.insert(
+            "schema".into(),
+            json!("elastos.browser.account-access-request/v1"),
+        );
         payload.insert("permission".into(), json!("eth_accounts"));
         payload.insert("launch_id".into(), json!("launch:browser"));
         payload.insert("proof_binding_id".into(), json!("proof:fixture"));
         payload.insert("requested_chain_namespace".into(), json!("eip155:20"));
-        payload.insert("chain_namespaces".into(), json!(["eip155:20", "eip155:8453"]));
-        payload.insert("grant_expires_at".into(), json!(now_ts()+600));
+        payload.insert(
+            "chain_namespaces".into(),
+            json!(["eip155:20", "eip155:8453"]),
+        );
+        payload.insert("grant_expires_at".into(), json!(now_ts() + 600));
         payload.insert("requires_wallet_approval".into(), json!(true));
         let before = record.clone();
-        assert_eq!(wallet_request_display_origin(&record).as_deref(), Some("https://shop.example"));
-        assert_eq!(record, before, "site projection keeps the account-access proof bindings");
+        assert_eq!(
+            wallet_request_display_origin(&record).as_deref(),
+            Some("https://shop.example")
+        );
+        assert_eq!(
+            record, before,
+            "site projection keeps the account-access proof bindings"
+        );
         record["payload"]["origin"] = serde_json::Value::Null;
-        assert!(wallet_request_display_origin(&record).is_none(), "page_url supplies no display fallback");
+        assert!(
+            wallet_request_display_origin(&record).is_none(),
+            "page_url supplies no display fallback"
+        );
     }
 }

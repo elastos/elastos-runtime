@@ -17,7 +17,9 @@ const WALLET_PROVIDER_ID: &str = "wallet";
 #[derive(Debug)]
 pub(in crate::api) struct WalletMetadataUnsupported;
 impl std::fmt::Display for WalletMetadataUnsupported {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("unsupported_version") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("unsupported_version")
+    }
 }
 impl std::error::Error for WalletMetadataUnsupported {}
 
@@ -100,7 +102,8 @@ impl<'a> RuntimeWalletAdapter<'a> {
         if status != "ok" {
             if matches!(&request.operation, WalletProviderOperationV2::LinkVerifiedAccount { provider_id, wallet_peer_name, .. }
                 if provider_id.is_some() || wallet_peer_name.is_some())
-                && response.get("code").and_then(serde_json::Value::as_str) == Some("invalid_wallet_contract")
+                && response.get("code").and_then(serde_json::Value::as_str)
+                    == Some("invalid_wallet_contract")
             {
                 return Err(WalletMetadataUnsupported.into());
             }
@@ -217,7 +220,9 @@ mod tests {
                 && matches!(&wallet_request.operation, WalletProviderOperationV2::LinkVerifiedAccount { provider_id, wallet_peer_name, .. }
                     if provider_id.is_some() || wallet_peer_name.is_some())
             {
-                return Ok(serde_json::json!({"status":"error","code":"invalid_wallet_contract","message":"unknown optional metadata field"}));
+                return Ok(
+                    serde_json::json!({"status":"error","code":"invalid_wallet_contract","message":"unknown optional metadata field"}),
+                );
             }
             let mut response = serde_json::to_value(WalletProviderResponseV2::for_request(
                 &wallet_request,
@@ -233,7 +238,9 @@ mod tests {
             ))
             .map_err(|err| ProviderError::Provider(err.to_string()))?;
             match self.mutation {
-                ResponseMutation::None | ResponseMutation::StructuredProofError | ResponseMutation::LegacyMetadata => {}
+                ResponseMutation::None
+                | ResponseMutation::StructuredProofError
+                | ResponseMutation::LegacyMetadata => {}
                 ResponseMutation::TransportFailure => unreachable!(),
                 ResponseMutation::MalformedEnvelope => {
                     return Ok(serde_json::json!({"status": "ok", "data": {}}));
@@ -485,13 +492,28 @@ mod tests {
         let authority = test_authority();
         let adapter = RuntimeWalletAdapter::new(&registry, &authority);
         let request = WalletProviderOperationV2::LinkVerifiedAccount {
-            proof_binding_id:"proof:fixture".into(), chain_namespace:"eip155:20".into(), address:"0xabc".into(), proof_type:"siwe".into(),
-            label:None, provider_id:None, wallet_peer_name:Some("Trust Wallet".into()),
+            proof_binding_id: "proof:fixture".into(),
+            chain_namespace: "eip155:20".into(),
+            address: "0xabc".into(),
+            proof_type: "siwe".into(),
+            label: None,
+            provider_id: None,
+            wallet_peer_name: Some("Trust Wallet".into()),
         };
-        let error = adapter.invoke_with_runtime_fields(REQUEST_ID.to_string(), ISSUED_AT, request).await.unwrap_err();
+        let error = adapter
+            .invoke_with_runtime_fields(REQUEST_ID.to_string(), ISSUED_AT, request)
+            .await
+            .unwrap_err();
         assert!(error.downcast_ref::<WalletMetadataUnsupported>().is_some());
-        assert_eq!(recorder.requests.lock().await.len(), 1, "metadata is never dropped and retried");
-        let response = adapter.invoke_with_runtime_fields(REQUEST_ID.to_string(), ISSUED_AT, list_accounts()).await.unwrap();
+        assert_eq!(
+            recorder.requests.lock().await.len(),
+            1,
+            "metadata is never dropped and retried"
+        );
+        let response = adapter
+            .invoke_with_runtime_fields(REQUEST_ID.to_string(), ISSUED_AT, list_accounts())
+            .await
+            .unwrap();
         assert!(matches!(response.result, WalletResultV2::Ok { .. }));
     }
 

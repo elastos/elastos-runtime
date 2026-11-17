@@ -145,7 +145,9 @@ impl WalletProvider {
                 );
             }
             if let Some(existing) = exact_account {
-                return Response::ok(json!({ "account": self.account_summary(&existing), "created": false }));
+                return Response::ok(
+                    json!({ "account": self.account_summary(&existing), "created": false }),
+                );
             }
             distinct_keys.pop()
         };
@@ -734,7 +736,7 @@ impl WalletProvider {
         };
         Response::ok(json!({
             "default_account": default,
-            "account": self.account_summary(&account),
+            "account": self.account_summary(account),
         }))
     }
 

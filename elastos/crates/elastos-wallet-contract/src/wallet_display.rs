@@ -140,9 +140,22 @@ mod tests {
 
     #[test]
     fn n4_cleaning_vectors_shared() {
-        let packets: serde_json::Value = serde_json::from_str(include_str!("../../../../scripts/fixtures/wallet-connector-v2-messages.json")).unwrap();
-        for fixture in packets["n4IdentityFields"].as_array().unwrap().iter().filter(|f| f["expect"] == "accept") {
-            assert!(validate_wallet_display_fields(fixture["actor"].as_str().unwrap(), fixture["fields"]["provider_id"].as_str(), fixture["fields"]["wallet_peer_name"].as_str()).is_ok());
+        let packets: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../scripts/fixtures/wallet-connector-v2-messages.json"
+        ))
+        .unwrap();
+        for fixture in packets["n4IdentityFields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["expect"] == "accept")
+        {
+            assert!(validate_wallet_display_fields(
+                fixture["actor"].as_str().unwrap(),
+                fixture["fields"]["provider_id"].as_str(),
+                fixture["fields"]["wallet_peer_name"].as_str()
+            )
+            .is_ok());
         }
         for (raw, expected) in [
             ("  Alice\tKey App  ", Some("Alice Key App")),
