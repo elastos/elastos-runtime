@@ -6307,10 +6307,7 @@ async fn linked_start_journey_quiet_restart_recovery() {
     let mut fixture = LinkedStartFixture::new(true);
     fixture.start_with_choice(true).await;
     fixture.interrupt_update("0.7.1").await;
-    // Recovery must resolve the linked saved path as well as the linked launch.
-    let mut sources = load_trusted_sources(fixture.data()).unwrap();
-    sources.sources[0].install_path = fixture.alias.to_str().unwrap().into();
-    crate::sources::save_trusted_sources(fixture.data(), &sources).unwrap();
+    // The update saved the physical path; recovery still launches through linked-bin.
     fixture.start_with_choice(true).await;
     assert!(!InstallTransaction::has_pending_recovery(
         &fixture.fixture.binary
