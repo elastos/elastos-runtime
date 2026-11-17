@@ -272,3 +272,22 @@ test("n3_reject_dismiss_acknowledgement: Inbox decision and count", async t => {
   assert.equal(await r.frame.locator("#entry-detail button").count(), 0);
   await r.capture("inbox-request-rejected-light-window.png");
 });
+
+test("n3_reject_dismiss_acknowledgement: Inbox consecutive decisions and stale list", async t => {
+  const request = requestFixture();
+  const entries = ["first", "second"].map(id => ({ id:`wallet-approval-request:${id}`, source_app:"browser", kind:"wallet_approval_request",
+    title:"Sign a message", body:`Sign message ${id}.`, read:true, severity:"attention", requesting_origin:request.requesting_origin,
+    action_ref:{ action_id:`wallet-approve-request:${id}` } }));
+  const r = await runtimeView(t, "inbox", { entries });
+  for (const id of ["first", "second"]) {
+    await r.frame.locator(".entry-row").filter({ hasText:`Sign message ${id}.` }).click();
+    await r.frame.getByRole("button", { name:"Reject", exact:true }).click();
+    await r.frame.locator('#entry-detail [role="status"]').waitFor();
+  }
+  r.state.entries = entries;
+  await r.frame.getByRole("button", { name:"Refresh", exact:true }).click();
+  await r.frame.locator("#refresh:enabled").waitFor();
+  assert.equal(await r.frame.locator("#pending-count").textContent(), "0", "a stale list cannot reopen either confirmed decision");
+  assert.equal(await r.frame.locator(".entry-row").count(), 1, "only the last acknowledgement remains listed");
+  assert.deepEqual(r.errors, []);
+});
