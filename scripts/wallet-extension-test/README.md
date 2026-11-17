@@ -92,6 +92,26 @@ are omitted while the underlying request remains intact. The fixture's N1/N2
 messages still await human security review. Both contract digests are pinned;
 text changes fail the conformance check until the integrator reviews the data.
 
+The same file contains the current draft's nullable safety facts, the unchanged
+six-key v1 handoff, proposed NB1 settlement bodies/private operation data and
+acknowledgements, selected-result read selectors, and trusted Accounts
+close-return delivery. The MetaMask-to-WalletConnect row includes the complete
+new-link selection/safety predicate; UniSat has no such row. Context fields
+such as `selection`, `samePrincipal` and `delivery` are test preconditions,
+rather than wire fields or evidence of authority. The contract commit and
+both document digests identify the text these examples follow.
+
+`oldHomeSource` pins the real v2.0.1 tag object, peeled commit, module path and
+source digest. Its `.js.txt` artifact preserves that entire module byte for
+byte, including in shallow checkouts. Its check proves provenance and the draft envelope shape only.
+Runtime/navigation still owns `n2_old_home_transaction_handoff_compatible`,
+which runs that unchanged module through a real Runtime handoff, send, hash and
+completion, including a late answer. The new settlement, selected-result,
+close-return and host safety tests also wait for their human gate and product
+owners. A fixture PASS establishes neither the gate nor those joined journeys.
+If review selects the NB1 fallback, remove valid no-hash producer/operation
+examples before the consumers run; the file models only the proposed default.
+
 Run the small checks:
 
 ```sh
