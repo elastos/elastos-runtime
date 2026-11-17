@@ -33,4 +33,3 @@ Every stage below is a presentation state, not proof that a real producer exists
 ### panel
 
 `empty`, `empty-alt`, `linked`, `linked-unisat`, `unconfigured`, `linked-metamask`, `linked-unnamed`, `empty-return`, `linked-return`, `linked-metamask-return`, `linked-unisat-return`.
-
