@@ -65,6 +65,7 @@ export async function runtimeView(t, app, state = {}) {
       }
       if (url.pathname === "/api/apps/inbox/actions") {
         if (state.conflict) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
+        let message = "WalletConnect internet choice saved.";
         if (input.action_id?.startsWith("walletconnect-internet-allow:")) {
           if (state.permission !== "requested" || input.action_id !== `walletconnect-internet-allow:${state.question}` || input.step_up_token !== "fixture-proof") return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
           state.permission = "granted";
@@ -80,10 +81,17 @@ export async function runtimeView(t, app, state = {}) {
           state.permission = "revoked";
           state.cleanup = false;
           state.entries = [permissionEntry("revoked", state.question)];
+          message = "WalletConnect connection turned off.";
         } else if (input.action_id?.startsWith("wallet-reject-request:")) {
-          state.entries = state.entries.filter(e => !e.id.endsWith(input.action_id.slice("wallet-reject-request:".length)));
+          const id = `wallet-approval-request:${input.action_id.slice("wallet-reject-request:".length)}`;
+          if (!state.entries.some(e => e.id === id)) return json({ error:"request unavailable" }, 404);
+          state.entries = state.entries.filter(e => e.id !== id);
+          message = "Rejected wallet request.";
+        } else {
+          errors.push(`Unhandled fixture Inbox action: ${input.action_id}`);
+          return json({ error:"unsupported fixture action" }, 501);
         }
-        return json({});
+        return json({ message });
       }
       if (url.pathname.endsWith("/reject")) {
         const id = decodeURIComponent(url.pathname.split("/").at(-2));
@@ -92,7 +100,9 @@ export async function runtimeView(t, app, state = {}) {
         const dismissed = current.status === "approved" && current.connector_id === "wallet-walletconnect" && current.intent === "transaction_intent";
         current.status = "rejected";
         state.decisionComplete = true;
-        return json({ receipt_status: dismissed ? "dismissed" : null });
+        const pending = state.approvals.filter(r => r.status === "pending");
+        return json({ available:true, pending_count:pending.length, approval_requests:pending,
+          ...(dismissed ? { receipt_status:"dismissed", note:"Request dismissed. Check your connected wallet before sending again." } : {}) });
       }
       if (url.pathname === "/api/wallet/prices") return json({ prices: {}, unavailable: true });
       if (url.pathname === "/api/provider/chain/balance") return json({ status: "unavailable" });
