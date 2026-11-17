@@ -105,6 +105,16 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
             return violate('Unrecorded wallet member', { provider: id, member });
           return Reflect.get(target, member, receiver);
         },
+        has(target, member) {
+          if (typeof member === 'string' && member !== 'then' && !Reflect.has(target, member))
+            return violate('Unrecorded wallet member test', { provider: id, member });
+          return Reflect.has(target, member);
+        },
+        set(target, member, value, receiver) {
+          if (typeof member === 'string' && (!Reflect.has(target, member) || Object.getOwnPropertyDescriptor(target, member)?.get))
+            return violate('Unrecorded wallet member assignment', { provider: id, member });
+          return Reflect.set(target, member, value, receiver);
+        },
       });
       const set = (key, value) => Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
       for (const key of inventory?.keys || []) Object.defineProperty(target, key, {
@@ -169,7 +179,7 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
       for (const [id, provider] of providers) {
         const inventory = id === 'unisat' ? fixture.surfaces.unisat : id === 'legacy' && observation.ethereum?.isRabby ? fixture.surfaces.legacy : null;
         if (!inventory) continue;
-        if (JSON.stringify(Object.keys(provider).sort()) !== JSON.stringify([...inventory.keys].sort())) violate('Provider own keys differ from recording', { provider: id });
+        if (JSON.stringify(Object.getOwnPropertyNames(provider).sort()) !== JSON.stringify([...inventory.keys].sort())) violate('Provider own keys differ from recording', { provider: id });
         const actual = Object.getOwnPropertyDescriptors(provider);
         for (const [key, expected] of Object.entries(surfaces.get(id))) {
           const member = actual[key];

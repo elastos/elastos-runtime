@@ -59,6 +59,9 @@ export function validateScenarios(fixture, scenarios, actions) {
       const entry = entries.get(plan.id), call = finalCall(entry);
       if ((plan.action === 'approves' || plan.unlock) && (!actions?.[plan.id] || recordedActionDigest(entry) !== actions[plan.id]))
         throw new Error(`${name}: recorded action evidence differs (outcome, value, phase or action marks)`);
+      if (plan.unlock && !entry.snapshots.some((s) =>
+        (Number.isFinite(s.unlock_action_at_ms) && s.unlock_action_at_ms >= 0) || s.phase === 'unlocked then signed'))
+        throw new Error(`${name}: unlock evidence missing`);
       if (plan.action === 'approves' && call.state !== 'fulfilled') throw new Error(`${name}: approves must fulfill`);
       if (plan.action === 'approves' && !['eth_requestAccounts', 'requestAccounts', 'personal_sign', 'signMessage', 'eth_sendTransaction'].includes(call.method))
         throw new Error(`${name}: approval must use a recorded prompting method`);

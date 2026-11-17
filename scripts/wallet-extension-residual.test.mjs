@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { installScriptedExtension, replayInput } from './wallet-extension-test/index.mjs';
 import { readFile } from 'node:fs/promises';
-import { validateScenarios } from './wallet-extension-test/recording-source.mjs';
+import { recordedActionPins, validateScenarios } from './wallet-extension-test/recording-source.mjs';
 import { scenarios } from './wallet-extension-test/scenarios.mjs';
 import { messageDecision } from './wallet-extension-test/message-contract.mjs';
+import { importRecordings } from './wallet-extension-test/import-recordings.mjs';
 
 async function setup(scenario, id) {
   const input = await replayInput(scenario);
@@ -72,6 +73,8 @@ test('F3 residual: descriptors inspect recorded names without using unknown memb
   const descriptors = Object.getOwnPropertyDescriptors(provider);
   assert.deepEqual(Object.keys(provider).sort(), [...input.fixture.surfaces.unisat.keys].sort());
   assert.equal(typeof descriptors._request.get, 'function');
+  assert.equal('_request' in provider, true, 'The recorded inventory proves presence, without a reply');
+  assert.equal('getAccounts' in provider, true);
   replay.assertNoViolations();
   assert.equal(await Promise.resolve(provider), provider);
   replay.assertNoViolations(); replay.dispose();
@@ -107,3 +110,52 @@ test('N-f: UUID format follows the version-neutral contract', async () => {
     assert.notEqual(messageDecision(message), 'accept');
   }
 });
+
+test('R3 importer refuses an unlock plan with no recorded unlock evidence', async () => {
+  const { fixture } = await replayInput('metamask-sign-approved');
+  const raw = { cases: fixture.cases, provenance: { product_commit: fixture.source.productCommit,
+    extensions: fixture.source.extensions }, round2: { extensions: [] } };
+  const plan = scenarios['metamask-sign-approved'].calls[0], original = plan.unlock;
+  try {
+    plan.unlock = true;
+    assert.throws(() => importRecordings(Buffer.from(JSON.stringify(raw))), /unlock evidence missing/);
+  } finally { plan.unlock = original; }
+});
+
+for (const phase of [undefined, 'unlock unavailable; no unlock occurred']) {
+  test(`R3 validation refuses re-pinned unlock with phase ${phase}`, async () => {
+    const { fixture } = await replayInput('unisat-sign-late');
+    const entry = fixture.cases.find((c) => c.id === 'US-12-locked-sign-repeat');
+    for (const snapshot of entry.snapshots) snapshot.phase = phase;
+    const pins = recordedActionPins(fixture.cases, scenarios);
+    assert.throws(() => validateScenarios(fixture, scenarios, pins), /unlock evidence missing/);
+  });
+}
+
+for (const [id, scenario, member, operation] of [
+  ['io.metamask', 'metamask-before-access', 'enable', 'in'],
+  ['unisat', 'unisat-before-access', 'request', 'in'],
+  ['legacy', 'rabby-legacy-chooser', 'chainId', 'set'],
+  ['unisat', 'unisat-before-access', '_request', 'set'],
+  ['io.metamask', 'metamask-before-access', 'enable', 'set'],
+]) {
+  test(`R3 caught ${id}.${member} ${operation} leaves a violation`, async () => {
+    const { replay, provider } = await setup(scenario, id);
+    try {
+      if (operation === 'in') void (member in provider);
+      else provider[member] = '0x1';
+    } catch { /* Product catches leave the control evidence intact. */ }
+    assert.equal(replay.violations.length, 1);
+    assert.throws(() => replay.assertNoViolations(), /violations/);
+    replay.dispose();
+  });
+}
+
+for (const [id, scenario] of [['legacy', 'rabby-legacy-chooser'], ['unisat', 'unisat-before-access']]) {
+  test(`R3 surface check catches non-enumerable ${id} member`, async () => {
+    const { replay, provider } = await setup(scenario, id);
+    Object.defineProperty(provider, 'extraHiddenMember', { value: true });
+    assert.throws(() => replay.assertNoViolations(), /own keys differ/);
+    replay.dispose();
+  });
+}

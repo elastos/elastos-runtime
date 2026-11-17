@@ -59,6 +59,9 @@ unlock followed by approval. `closes side panel` leaves the measured MetaMask
 side-panel call pending; `closes the prompt` is the recorded native notification
 close. A pending-only recording stays pending for all virtual time. The queued
 signature recordings establish waiting, not an eventual signature response.
+An unlock plan must contain a finite recorded `unlock_action_at_ms` or the exact
+recorded phase `unlocked then signed`. Import and default validation require
+this evidence even when the action pins have been regenerated.
 
 `advance(ms)` drives wallet time only. If the test uses Playwright's page
 clock for Home deadlines, advance that clock as well. An approval releases the
@@ -193,12 +196,18 @@ legacy Rabby own-key list comes from R2-BOTH-legacy-shape. Unknown internal
 values are guarded getters: reading one records a violation and throws before
 product code can call or use it. Reads of absent wallet members, including
 standard methods on announced providers, also record a violation and throw.
-These guards add no own member names. Use `Object.keys` and property descriptors
+The `in` operator records a violation for absent wallet names. Membership tests
+for recorded names return their presence without invoking guarded getters.
+Assignment to a guarded or absent string member records a violation before it
+throws. Writes to existing data members retain JavaScript assignment semantics;
+the final surface check still checks their descriptors and types.
+These guards add no own member names. Use `Object.getOwnPropertyNames` and property descriptors
 to inspect the measured surface without invoking it. The final one-line
-`assertNoViolations()` check catches these reads even when product code catches
-the exception. Legacy `isConnected()` returns its recorded Boolean from
-R2-BOTH-legacy-shape. The absent `then` property remains undefined for JavaScript
-Promise/EventTarget probes; this is language plumbing, rather than a wallet API.
+`assertNoViolations()` check catches unsupported reads, membership tests and
+assignments even when product code catches the exception. Its surface check
+includes enumerable and non-enumerable own names. Legacy `isConnected()` returns its recorded Boolean from
+R2-BOTH-legacy-shape. The absent `then` property returns `undefined` on reads and
+`false` on membership probes for JavaScript Promise/EventTarget plumbing.
 Event subscriptions require a function and record a violation otherwise.
 The recorded public method list proves names/types, rather than replies. A
 listed method with no imported call case also uses a guarded getter. The

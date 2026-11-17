@@ -10,7 +10,7 @@ import { finalCall, validateScenarios } from './wallet-extension-test/recording-
 import { importRecordings } from './wallet-extension-test/import-recordings.mjs';
 
 const fixtureUrl = new URL('./fixtures/wallet-extension-replay.json', import.meta.url);
-for (const mutation of ['error-code', 'pending-answer', 'swapped-errors', 'decline-approval', 'whitespace', 'chain-and-resealed-pin']) {
+for (const mutation of ['error-code', 'pending-answer', 'swapped-errors', 'decline-approval', 'whitespace', 'chain-and-resealed-pin', 'unlock-with-resealed-pins']) {
   test(`F1 default run rejects file mutation: ${mutation}`, async (t) => {
     const scratch = await mkdtemp(join(await realpath(tmpdir()), 'wallet-review-'));
     const identity = await lstat(scratch);
@@ -31,6 +31,20 @@ for (const mutation of ['error-code', 'pending-answer', 'swapped-errors', 'decli
         const path = join(scratch, 'scripts/wallet-extension-test/scenarios.mjs');
         await writeFile(path, (await readFile(path, 'utf8')).replace("call('MM-2-reject', 'declines')", "call('MM-2-ignore', 'declines')"));
       }
+      if (mutation === 'unlock-with-resealed-pins') {
+        const path = join(scratch, 'scripts/wallet-extension-test/scenarios.mjs');
+        await writeFile(path, (await readFile(path, 'utf8')).replace("call('MM-5-sign-approve', 'approves')", "call('MM-5-sign-approve', 'approves', true)"));
+        const pinPath = join(scratch, 'scripts/wallet-extension-test/recording-pin.json');
+        const original = await readFile(pinPath);
+        const pin = JSON.parse(original);
+        const { scenarios } = await import(join(scratch, 'scripts/wallet-extension-test/scenarios.mjs'));
+        pin.scenariosSha256 = createHash('sha256').update(JSON.stringify(scenarios)).digest('hex');
+        const bytes = `${JSON.stringify(pin, null, 2)}\n`;
+        await writeFile(pinPath, bytes);
+        const testPath = join(scratch, 'scripts/wallet-extension-replay.test.mjs');
+        await writeFile(testPath, (await readFile(testPath, 'utf8')).replace(
+          createHash('sha256').update(original).digest('hex'), createHash('sha256').update(bytes).digest('hex')));
+      }
       await writeFile(join(scratch, 'scripts/fixtures/wallet-extension-replay.json'), `${JSON.stringify(fixture, null, 2)}\n${mutation === 'whitespace' ? '\n' : ''}`);
       if (mutation === 'chain-and-resealed-pin') {
         const path = join(scratch, 'scripts/wallet-extension-test/recording-pin.json');
@@ -43,10 +57,14 @@ for (const mutation of ['error-code', 'pending-answer', 'swapped-errors', 'decli
       assert.equal(run.error, undefined);
       assert.match(run.stdout + run.stderr, /recording parity:/, 'Child must execute the default tests');
       assert.equal(run.status, 1, `${mutation} escaped the default run`);
-      const expected = mutation === 'chain-and-resealed-pin' ? /Independent recording pin integrity failure/
+      const expected = mutation === 'unlock-with-resealed-pins' ? /unlock evidence missing/
+        : mutation === 'chain-and-resealed-pin' ? /Independent recording pin integrity failure/
         : mutation === 'decline-approval' ? /Scenario mapping integrity failure/ : /Replay fixture integrity failure/;
-      assert.match(run.stdout + run.stderr, expected, 'Independent pin must detect the mutation');
-      t.diagnostic(`${mutation}: mutated default run exits ${run.status}; independent pin rejects it`);
+      assert.match(run.stdout + run.stderr, expected, 'Recording integrity or semantics must detect the mutation');
+      if (mutation === 'unlock-with-resealed-pins') assert.doesNotMatch(run.stdout + run.stderr,
+        /Independent recording pin integrity failure|Scenario mapping integrity failure|Replay fixture integrity failure/,
+        'Re-sealed pins must pass so unlock semantics alone reject the plan');
+      t.diagnostic(`${mutation}: mutated default run exits ${run.status}; integrity or semantic check rejects it`);
     } finally {
       for (let path = scratch; ; path = dirname(path)) {
         const stat = await lstat(path); assert.equal(stat.isSymbolicLink(), false);
@@ -107,9 +125,9 @@ test('F4 UniSat has no EIP-1193 request member', async () => {
   const input = await replayInput('unisat-before-access');
   const page = new EventTarget(); page.CustomEvent = CustomEvent;
   const replay = installScriptedExtension(input, page);
-  assert.equal('request' in page.unisat, false);
+  assert.equal(Object.getOwnPropertyDescriptor(page.unisat, 'request'), undefined);
   const inventory = input.fixture.surfaces.unisat;
-  assert.deepEqual(Object.keys(page.unisat).sort(), [...inventory.keys].sort());
+  assert.deepEqual(Object.getOwnPropertyNames(page.unisat).sort(), [...inventory.keys].sort());
   const descriptors = Object.getOwnPropertyDescriptors(page.unisat);
   for (const key of inventory.methods) assert.ok(typeof descriptors[key].value === 'function'
     || typeof descriptors[key].get === 'function', `${key}: recorded method or guarded unsupported read`);
@@ -124,7 +142,7 @@ for (const mutation of ['extra', 'missing', 'wrong-method-type']) {
     const input = await replayInput('unisat-before-access');
     const page = new EventTarget(); page.CustomEvent = CustomEvent;
     const replay = installScriptedExtension(input, page);
-    if (mutation === 'extra') page.unisat.request = () => {};
+    if (mutation === 'extra') Object.defineProperty(page.unisat, 'request', { value: () => {}, enumerable: true });
     if (mutation === 'missing') delete page.unisat.getAccounts;
     if (mutation === 'wrong-method-type') page.unisat.getAccounts = undefined;
     assert.throws(() => replay.assertNoViolations(), /differ from recording/);
