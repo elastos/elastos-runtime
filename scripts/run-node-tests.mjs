@@ -33,6 +33,7 @@ const child = spawn(process.execPath, [
   `--test-reporter=${reporter}`, "--test-reporter-destination=stderr", ...args,
 ], { env, detached: true, stdio: ["ignore", "inherit", "inherit", "pipe"] });
 let failed = false;
+let stopping = false;
 let summary = false;
 function lastStarted(file, state) {
   const recorded = readFileSync(starts, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse)
@@ -45,12 +46,18 @@ function fail(message) {
   console.error(`Node test guard: ${message}`);
 }
 function stop() {
+  if (stopping) return;
+  stopping = true;
+  clearTimeout(startup);
+  for (const state of files.values()) clearTimeout(state.timer);
   // This process group belongs only to this invocation, including test helpers.
   try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
 }
 function arm(file, state) {
+  if (stopping || state.closed) return;
   clearTimeout(state.timer);
   state.timer = setTimeout(() => {
+    if (stopping || state.closed) return;
     fail(`${relative(process.cwd(), file)}: timed out after ${inactivityTimeout}ms; first unfinished: ${label(state.pending.values().next().value ?? lastStarted(file, state))}`);
     stop();
   }, inactivityTimeout);
@@ -83,7 +90,12 @@ lines.on("line", line => {
     }
     if (!wrapper && type === "test:dequeue") state.last = data;
     if (state.required && (type === "test:dequeue" || type === "test:complete" || type === "test:summary")) arm(file, state);
-    if (wrapper && type === "test:complete") clearTimeout(state.timer);
+    if (wrapper && type === "test:complete") {
+      // Completion is execution-ordered; the child summary can arrive later
+      // from Node's per-file declaration-order buffer. Keep the timer retired.
+      state.closed = true;
+      clearTimeout(state.timer);
+    }
   } catch (error) {
     fail(`invalid or unreadable event: ${error.message}`);
     stop();

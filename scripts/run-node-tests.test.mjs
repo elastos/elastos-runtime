@@ -13,7 +13,7 @@ delete env.NODE_TEST_CONTEXT;
 
 // Exercise the actual shell entry point with its real discovery arguments.
 // Only its test files and Browser package receipts are replaced by tiny fixtures.
-function suite(t, name, timeout = 10_000) {
+function suite(t, name, timeout = 10_000, overrides = {}) {
   const root = mkdtempSync(join(tmpdir(), "node-runner-guard-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "scripts/lib"), { recursive: true });
@@ -27,7 +27,7 @@ function suite(t, name, timeout = 10_000) {
   for (const pattern of paths.slice(start)) {
     const file = join(root, pattern.replaceAll("*", "fixture"));
     mkdirSync(dirname(file), { recursive: true });
-    cpSync(join(fixtures, pattern === "scripts/*.test.mjs" ? name : "pass.mjs"), file);
+    cpSync(join(fixtures, overrides[pattern] ?? (pattern === "scripts/*.test.mjs" ? name : "pass.mjs")), file);
   }
   const inputs = join(root, "inputs");
   for (const [prefix, pkg, version] of [["browser", "playwright", "1.60.0"], ["core", "playwright-core", "1.59.1"]]) {
@@ -41,7 +41,7 @@ function suite(t, name, timeout = 10_000) {
     writeFileSync(path, script.replace("scripts/run-node-tests.mjs ", `scripts/run-node-tests.mjs --timeout=${timeout} `));
   }
   return spawnSync("bash", [join(root, "scripts/test-behaviour.sh")], {
-    cwd: root, env: { ...env, BEHAVIOUR_INPUTS: inputs }, encoding: "utf8", timeout: 10_000, maxBuffer: 5 * 1024 * 1024,
+    cwd: root, env: { ...env, BEHAVIOUR_INPUTS: inputs }, encoding: "utf8", timeout: 20_000, maxBuffer: 5 * 1024 * 1024,
   });
 }
 
@@ -127,4 +127,26 @@ test("runner permits a whole-file assertion journey beyond one test budget", () 
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /whole-file assertions completed/);
+});
+
+test("completed worker stays complete when its summary is buffered behind another file", t => {
+  const result = suite(t, "pass.mjs", 1500, {
+    "capsules/*/browser/*.test.mjs": "progress.mjs",
+    "scripts/model-preparation-failure-smoke.mjs": "long-progress.mjs",
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /long progress 15/);
+});
+
+test("two stalled workers shut down without a second process-group kill", t => {
+  const root = mkdtempSync(join(tmpdir(), "node-runner-two-stalls-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const files = ["one.mjs", "two.mjs"].map(name => join(root, name));
+  for (const file of files) cpSync(join(fixtures, "open-handle.mjs"), file);
+  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=1500", ...files], { encoding: "utf8", timeout: 8000 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /timed out after 3000ms/);
+  assert.doesNotMatch(result.stderr, /kill EPERM|run-node-tests.mjs:\d/);
 });
