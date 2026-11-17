@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -13,9 +13,9 @@ const runner = join(scripts, "run-node-tests.mjs");
 const fixtures = join(scripts, "fixtures/node-test-runner");
 const env = { ...process.env };
 delete env.NODE_TEST_CONTEXT;
-function run(name, args = [], extra = {}) {
+function run(name, args = [], extra = {}, limit = 10_000) {
   const result = spawnSync(process.execPath, [runner, ...args, join(fixtures, name)], {
-    env: { ...env, ...extra }, encoding: "utf8", timeout: 10_000,
+    env: { ...env, ...extra }, encoding: "utf8", timeout: limit,
   });
   assert.ifError(result.error);
   return result;
@@ -132,4 +132,64 @@ test("N6 early exit explains how a plain script should finish", () => {
   const result = run("early-exit.mjs");
   assert.equal(result.status, 1);
   assert.match(result.stderr, /finish naturally.*process\.exit\(0\).*process\.exitCode/);
+});
+
+test("F1 a printing loop reaches the fixed file upper limit", () => {
+  const result = run("printing-loop.mjs", ["--timeout=1500"], {}, 35_000);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /printing-loop.mjs: upper limit.*30000ms/);
+  assert.match(result.stdout, /Node test guard: FAIL \(exit 1\)/);
+  assert.match(readFileSync(join(scripts, "test-behaviour.sh"), "utf8"), /20-minute upper limit/);
+});
+
+for (const mode of ["unavailable", "wrong-group"]) {
+  test(`F2 failed group check (${mode}) stops only the owned Node CLI`, async t => {
+    const root = mkdtempSync(join(tmpdir(), "node-guard-check-failure-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const ready = join(root, "ready.json"), marker = join(root, "fail-check");
+    const realPs = execFileSync("sh", ["-c", "command -v ps"], { encoding: "utf8" }).trim();
+    const shim = join(root, "ps");
+    writeFileSync(shim, `#!${process.execPath}\n` +
+      `const {existsSync,unlinkSync}=require('node:fs'); const {spawnSync}=require('node:child_process');\n` +
+      `const failing=existsSync(process.env.NODE_TEST_GUARD_FAIL_CHECK);\n` +
+      `if(failing && process.env.NODE_TEST_GUARD_CHECK_MODE==='unavailable') process.exit(1);\n` +
+      `const r=spawnSync(${JSON.stringify(realPs)},process.argv.slice(2),{encoding:'utf8'});\n` +
+      `let text=r.stdout; if(failing) { unlinkSync(process.env.NODE_TEST_GUARD_FAIL_CHECK); text=text.replace(/^(\\s*\\d+\\s+\\d+\\s+)\\d+/gm,(_,prefix)=>prefix+'999999'); }\n` +
+      `process.stdout.write(text); process.exitCode=r.status;\n`);
+    chmodSync(shim, 0o755);
+    const neighbour = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    t.after(() => stopChild(neighbour));
+    const gate = spawn(process.execPath, [join(fixtures, "supervisor-death-gate.mjs"), runner, join(fixtures, "orphan-blocked.mjs")], {
+      detached: true, env: { ...env, PATH: `${root}:${env.PATH}`, NODE_TEST_GUARD_READY: ready,
+        NODE_TEST_GUARD_FAIL_CHECK: marker, NODE_TEST_GUARD_CHECK_MODE: mode }, stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    t.after(() => stopChild(gate));
+    const [{ supervisor }] = await once(gate, "message");
+    const owned = [identity(supervisor)];
+    t.after(() => {
+      for (const p of owned.reverse()) if (same(p, identity(p.pid))) process.kill(p.pid, "SIGKILL");
+    });
+    assert.equal(await until(() => existsSync(ready), 10_000), true);
+    const pids = JSON.parse(readFileSync(ready, "utf8"));
+    const leader = identity(pids.worker), cli = identity(pids.runner), file = identity(pids.test);
+    owned.push(leader, cli, file);
+    assert.ok(owned.every(Boolean));
+    assert.equal(leader.parent, supervisor);
+    assert.equal(cli.parent, leader.pid);
+    assert.equal(file.parent, cli.pid);
+    assert.equal(file.group, leader.group);
+    assert.notEqual(identity(neighbour.pid).group, leader.group);
+    writeFileSync(marker, "fail only after startup\n");
+    gate.send("SIGKILL");
+    assert.equal(await until(() => !same(cli, identity(cli.pid))), true, "owned Node CLI survived failed group check");
+    assert.equal(same(file, identity(file.pid)), true, "fallback signalled another member of the group");
+    assert.equal(process.kill(neighbour.pid, 0), true);
+    console.log(`${mode}: owned Node CLI ended; same-group test and outside neighbour survived`);
+  });
+}
+
+test("F3 supervisor reports the signal that ended the Node CLI", () => {
+  const result = run("kill-node-cli.mjs");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Node test guard: Node process ended by SIGKILL/);
 });

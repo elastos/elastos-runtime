@@ -18,6 +18,9 @@ if (!Number.isSafeInteger(timeout) || timeout < 1 || !args.length || args.some(a
 // Plain assertion scripts cover a whole journey. Their file inactivity budget
 // permits two per-test budgets; Node still enforces the per-test timeout.
 const inactivityTimeout = timeout * 2;
+// Fixed from file start, independent of output. Short fixture budgets scale
+// down the same 20-minute production ceiling.
+const upperTimeout = Math.min(timeout * 20, 20 * 60_000);
 const files = new Map(args.map(file => [realpathSync(file), { pending: new Map(), summary: false, timer: null, last: null, required: true }]));
 const canonical = file => {
   if (!file) return undefined;
@@ -53,7 +56,10 @@ function stop() {
   if (stopping) return;
   stopping = true;
   clearTimeout(startup);
-  for (const state of files.values()) clearTimeout(state.timer);
+  for (const state of files.values()) {
+    clearTimeout(state.timer);
+    clearTimeout(state.upperTimer);
+  }
   try {
     if (!worker.stop()) child.kill("SIGKILL"); // Exact child handle; never guess a group.
   } catch (error) {
@@ -63,6 +69,11 @@ function stop() {
 }
 function arm(file, state) {
   if (stopping || state.closed) return;
+  if (!state.upperTimer) state.upperTimer = setTimeout(() => {
+    if (stopping || state.closed) return;
+    fail(`${relative(process.cwd(), file)}: upper limit of ${upperTimeout}ms reached; first unfinished: ${label(state.pending.values().next().value ?? lastStarted(file, state))}`);
+    stop();
+  }, upperTimeout);
   clearTimeout(state.timer);
   const reportedAt = Date.now();
   function check() {
@@ -84,6 +95,10 @@ const lines = createInterface({ input: child.stdio[3] });
 lines.on("line", line => {
   try {
     const { type, data } = JSON.parse(line);
+    if (type === "worker:signal") {
+      fail(`Node process ended by ${data.signal}`);
+      return;
+    }
     if (type === "test:summary" && !data.file) {
       summary = true;
       if (!data.success) failed = true;
@@ -114,6 +129,7 @@ lines.on("line", line => {
       // from Node's per-file declaration-order buffer. Keep the timer retired.
       state.closed = true;
       clearTimeout(state.timer);
+      clearTimeout(state.upperTimer);
     }
   } catch (error) {
     fail(`invalid or unreadable event: ${error.message}`);
@@ -126,6 +142,7 @@ child.on("close", (code, signal) => {
   clearTimeout(startup);
   for (const [file, state] of files) {
     clearTimeout(state.timer);
+    clearTimeout(state.upperTimer);
     if ((state.required && !state.summary) || state.pending.size) {
       fail(`${relative(process.cwd(), file)}: incomplete results; first unfinished: ${label(state.pending.values().next().value ?? lastStarted(file, state))}; ${state.pending.size} declared test(s) without a result; file summary ${state.summary ? "received" : "missing"}`);
       if (state.required && !state.summary && code === 0) {

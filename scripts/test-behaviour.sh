@@ -9,6 +9,10 @@
 # Its closing PASS means exit 0: every file completed and every test reported.
 # Its closing FAIL means exit 1: a test failed or completion was incomplete.
 # Plain smokes finish naturally; use process.exitCode instead of process.exit.
+# Each file also has a fixed 20-minute upper limit, unaffected by output.
+# Slowest measured file: release-publish.test.mjs, 577.5s of sequential tests.
+# The full Mac run's 628.1s bounds its elapsed time; 1200s gives >=91% headroom.
+# Both platforms use this cap; short --timeout fixture budgets scale it down.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
