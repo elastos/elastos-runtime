@@ -29,6 +29,7 @@ it when it starts. A command must not silently start a competing host.
 | Command | Class | Actual behavior |
 | --- | --- | --- |
 | `elastos`, `elastos home` | Managed user lane | Opens Home. `elastos home` starts or reuses the managed Home runtime. It does not attach to an operator runtime that already owns the same home. |
+| `elastos home --browser [--no-open]` | Service | Starts the local browser Home in the foreground. `--no-open` keeps the default browser closed; the installed controller retains this choice for update and restart recovery. The starter stays open while Home runs. See [app-window startup](INSTALL.md#install-from-the-publisher) for readiness and Undo. |
 | `elastos home --status`, `elastos home --json` | Self-contained | Reads runtime coordinates to see whether a runtime is live, and prints that Home-state probe. A coordinate file that fails the live check is removed. It does not start Home. |
 | `elastos run <path>` or `elastos run --cid <cid>`, `type=data` | Self-contained | Materializes the capsule, creates an in-process Runtime and preview server, opens the browser, and remains active until stopped. It does not attach to `elastos serve`. |
 | `elastos run <path>` or `elastos run --cid <cid>`, Component | Operator lane | Accepts only `type=wasm` with `runtime_abi="elastos.component/v1"`. It attaches to the operator runtime for Bus authorization, then executes the Component locally. |

@@ -1074,6 +1074,86 @@ fn receipt_round_trip_keeps_non_utf8_launch_args_environment_and_working_directo
 }
 
 #[test]
+fn home_browser_no_open_receipt_is_readable_by_the_previous_runtime() {
+    // The previous Runtime reads this shape before execing the retained controller.
+    // Its strict schema and serialized launch hash are part of restart recovery.
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PreviousLaunchPlan {
+        args: Vec<String>,
+        environment: Vec<(String, String)>,
+        cwd: String,
+    }
+    for no_open in [false, true] {
+        let launch = LaunchPlan::capture_environment([], PathBuf::from("/Home fixture"), no_open);
+        let bytes = serde_json::to_vec(&launch).unwrap();
+        let previous: PreviousLaunchPlan = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(serde_json::to_vec(&previous).unwrap(), bytes);
+        assert_eq!(
+            digest(&serde_json::to_vec(&previous).unwrap()),
+            launch.sha256().unwrap()
+        );
+    }
+}
+
+#[test]
+fn home_browser_no_open_launch_plan_is_explicit_and_legacy_compatible() {
+    for no_open in [false, true] {
+        let launch = LaunchPlan::capture_environment(
+            [
+                (OsString::from("ELASTOS_SERVICE"), OsString::from("1")),
+                (
+                    OsString::from("ELASTOS_UPDATE_RESTART"),
+                    OsString::from("1"),
+                ),
+            ],
+            PathBuf::from("/Home fixture"),
+            no_open,
+        );
+        assert!(launch.environment.is_empty());
+        let bytes = serde_json::to_vec(&launch).unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        let mut expected = vec![BASE64.encode(b"home"), BASE64.encode(b"--browser")];
+        if no_open {
+            expected.push(BASE64.encode(b"--no-open"));
+        }
+        assert_eq!(launch.args, expected);
+        assert!(value.get("no_open").is_none());
+        let retained: LaunchPlan = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(retained.args, expected);
+        assert_eq!(retained.sha256().unwrap(), launch.sha256().unwrap());
+        for restarting in [false, true] {
+            let command = retained
+                .command(Path::new("/legacy/elastos"), &"c".repeat(32), restarting)
+                .unwrap();
+            assert_eq!(
+                command.as_std().get_args().collect::<Vec<_>>(),
+                [OsStr::new("home"), OsStr::new("--browser")]
+            );
+            let marker = command
+                .as_std()
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("ELASTOS_UPDATE_RESTART"))
+                .and_then(|(_, value)| value);
+            assert_eq!(
+                marker,
+                Some(OsStr::new(if no_open || restarting { "1" } else { "0" }))
+            );
+        }
+        if !no_open {
+            // Old receipts omit no_open; preserving their bytes preserves the journal binding.
+            let old = serde_json::to_vec(&json!({
+                "args": value["args"], "environment": value["environment"], "cwd": value["cwd"]
+            }))
+            .unwrap();
+            let old: LaunchPlan = serde_json::from_slice(&old).unwrap();
+            assert!(!old.args.contains(&BASE64.encode(b"--no-open")));
+            assert_eq!(old.sha256().unwrap(), launch.sha256().unwrap());
+        }
+    }
+}
+
+#[test]
 fn launch_capture_and_restart_preserve_carrier_mdns_choice() {
     for choice in [None, Some("0"), Some("1")] {
         let environment = choice.into_iter().map(|value| {
@@ -1082,7 +1162,8 @@ fn launch_capture_and_restart_preserve_carrier_mdns_choice() {
                 OsString::from(value),
             )
         });
-        let launch = LaunchPlan::capture_environment(environment, PathBuf::from("/Home fixture"));
+        let launch =
+            LaunchPlan::capture_environment(environment, PathBuf::from("/Home fixture"), false);
         for restarting in [false, true] {
             let command = launch
                 .command(
@@ -1152,7 +1233,7 @@ fn launch_capture_and_retained_commands_exclude_unrelated_credentials() {
             OsString::from("excluded-secret-fixture"),
         )
     }));
-    let launch = LaunchPlan::capture_environment(environment, cwd.clone());
+    let launch = LaunchPlan::capture_environment(environment, cwd.clone(), false);
     let receipt_bytes = serde_json::to_vec(&launch).unwrap();
     let secret = BASE64.encode(b"excluded-secret-fixture");
     assert!(!receipt_bytes
@@ -1284,7 +1365,7 @@ async fn desktop_and_wallet_bindings_reach_captured_and_retained_child_commands(
         ]
         .map(|(key, value)| (OsString::from(key), OsString::from(value))),
     );
-    let mut captured = LaunchPlan::capture_environment(environment, fixture.data.clone());
+    let mut captured = LaunchPlan::capture_environment(environment, fixture.data.clone(), false);
     captured.args = ["-c", r#"
         test -z "${AWS_SECRET_ACCESS_KEY+x}" || exit 90
         test -z "${OPENAI_API_KEY+x}" || exit 91
@@ -3366,6 +3447,7 @@ struct RealRestartOwner {
     candidate_process: Option<(u32, Option<String>)>,
     candidate_exit: Option<std::process::ExitStatus>,
     candidate_phase: Option<RestartPhase>,
+    interrupt_after_ready: Option<RestartPhase>,
 }
 
 impl crate::update::RestartOwner for RealRestartOwner {
@@ -3420,6 +3502,15 @@ impl crate::update::RestartOwner for RealRestartOwner {
                     (pid, process_start(pid).or(recorded.process_start))
                 });
             }
+            let ready_phase = if candidate {
+                RestartPhase::CandidateReady
+            } else {
+                RestartPhase::PreviousReady
+            };
+            if result.is_ok() && self.interrupt_after_ready == Some(ready_phase) {
+                crate::update::finish_ready_restart(transaction)?;
+                panic!("fixture lost its controller at {ready_phase:?}");
+            }
             result
         })
     }
@@ -3459,7 +3550,7 @@ use crate::install_transaction::shell_quote;
 /// Shell lines that export `settings` and exec the real fixture Home below.
 fn fixture_home_exec(settings: &str) -> String {
     format!(
-        "export {settings}\nexec {} --exact {} --ignored --nocapture\n",
+        "[ \"$1\" = home ] && [ \"$2\" = --browser ] && [ \"$#\" = 2 ] || exit 64\nprintf '%s %s %s\\n' \"$ELASTOS_UPDATE_RESTART\" \"${{ELASTOS_SERVICE-unset}}\" \"$*\" >> launch-observations\nexport {settings}\nexec {} --exact {} --ignored --nocapture\n",
         shell_quote(std::env::current_exe().unwrap().to_str().unwrap()),
         shell_quote(&format!(
             "{}::restart_home_fixture",
@@ -3476,6 +3567,15 @@ async fn restart_scenario(
     candidate: impl FnOnce(&PrivateFixture) -> String,
     previous_delay: u64,
     candidate_budget: Option<Duration>,
+) -> RestartScenario {
+    restart_scenario_with_no_open(candidate, previous_delay, candidate_budget, false).await
+}
+
+async fn restart_scenario_with_no_open(
+    candidate: impl FnOnce(&PrivateFixture) -> String,
+    previous_delay: u64,
+    candidate_budget: Option<Duration>,
+    no_open: bool,
 ) -> RestartScenario {
     let fixture = PrivateFixture::new();
     let interpreter = fixture.data.join("previous-interpreter");
@@ -3524,6 +3624,11 @@ async fn restart_scenario(
     };
     fixture.publish_installed_release_with_components(&components(b"old support"));
     publish_retained_receipt(&fixture);
+    let path = fixture.directory.join(RECEIPT);
+    let mut receipt: Receipt = read_private_json(&path).unwrap();
+    receipt.launch = LaunchPlan::capture_environment([], fixture.data.clone(), no_open);
+    receipt.launch_sha256 = receipt.launch.sha256().unwrap();
+    write_private(&path, &receipt).unwrap();
 
     let candidate = candidate(&fixture);
     let candidate_components = components(b"new support");
@@ -3582,6 +3687,7 @@ async fn restart_scenario(
         candidate_process: None,
         candidate_exit: None,
         candidate_phase: None,
+        interrupt_after_ready: None,
     };
     owner.controller.start_initial().await.unwrap();
     owner.controller.request = Some(request.clone());
@@ -3842,6 +3948,269 @@ async fn real_controller_accepts_a_new_home_ready_after_45_seconds() {
     );
     assert_no_recovery_files(&fixture);
     owner.controller.stop_child().await.unwrap();
+}
+
+#[tokio::test]
+async fn home_browser_no_open_survives_installed_update() {
+    for no_open in [false, true] {
+        let RestartScenario { fixture, mut owner, request, fetch, .. } = restart_scenario_with_no_open(
+            |_| format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'elastos 0.7.1\\n'; exit 0; fi\n{}",
+                fixture_home_exec("RESTART_FIXTURE_ROLE=candidate RESTART_FIXTURE_VERSION=0.7.1")),
+            0, None, no_open,
+        ).await;
+        let result = crate::update::run_restarting_update(
+            &fixture.data,
+            &fetch,
+            request.head_cid,
+            &mut owner,
+        )
+        .await;
+        owner.controller.publish_apply_result(&result).unwrap();
+        result.unwrap();
+        assert_eq!(status(&fixture.data).unwrap().unwrap().phase, "updated");
+        assert_launch_observations(&fixture, no_open, 2);
+        owner.controller.stop_child().await.unwrap();
+        assert_no_recovery_files(&fixture);
+    }
+}
+
+#[tokio::test]
+async fn home_browser_no_open_survives_previous_release_and_cold_recovery() {
+    for no_open in [false, true] {
+        let RestartScenario {
+            fixture,
+            mut owner,
+            request,
+            fetch,
+            ..
+        } = restart_scenario_with_no_open(
+            crash_candidate,
+            0,
+            Some(Duration::from_secs(3)),
+            no_open,
+        )
+        .await;
+        fixture.file(&fixture.data.join("previous-fail"), b"", 0o600);
+        let result = crate::update::run_restarting_update(
+            &fixture.data,
+            &fetch,
+            request.head_cid,
+            &mut owner,
+        )
+        .await;
+        owner.controller.publish_apply_result(&result).unwrap();
+        assert!(result.is_err());
+        assert_eq!(
+            InstallTransaction::acquire(&fixture.data, &fixture.binary)
+                .unwrap()
+                .restart_record()
+                .unwrap()
+                .phase,
+            RestartPhase::PreviousRunning
+        );
+        assert!(owner.controller.child.is_none());
+        fs::remove_file(fixture.data.join("previous-fail")).unwrap();
+        let mut recovered = retained_controller(&fixture);
+        recovered.reconcile_pending().await.unwrap();
+        recovered.complete_reconciliation().await.unwrap();
+        assert_eq!(status(&fixture.data).unwrap().unwrap().phase, "restored");
+        assert_launch_observations(&fixture, no_open, 3);
+        recovered.stop_child().await.unwrap();
+        assert_no_recovery_files(&fixture);
+    }
+}
+
+async fn quiet_ready_recovery_fixture(previous: bool) -> PrivateFixture {
+    let RestartScenario {
+        fixture,
+        mut owner,
+        request,
+        fetch,
+        ..
+    } = restart_scenario_with_no_open(
+        |fixture| {
+            if previous {
+                crash_candidate(fixture)
+            } else {
+                format!(
+                    "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'elastos 0.7.1\\n'; exit 0; fi\n{}",
+                    fixture_home_exec("RESTART_FIXTURE_ROLE=candidate RESTART_FIXTURE_VERSION=0.7.1")
+                )
+            }
+        },
+        0,
+        Some(Duration::from_secs(3)),
+        true,
+    )
+    .await;
+    let ready_phase = if previous {
+        RestartPhase::PreviousReady
+    } else {
+        RestartPhase::CandidateReady
+    };
+    owner.interrupt_after_ready = Some(ready_phase);
+    let data = fixture.data.clone();
+    let stopped = tokio::spawn(async move {
+        let _ =
+            crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut owner).await;
+    })
+    .await
+    .expect_err("fixture controller must stop before retiring its Ready journal");
+    assert!(stopped.is_panic());
+    let transaction = InstallTransaction::acquire(&fixture.data, &fixture.binary).unwrap();
+    let record = transaction.restart_record().unwrap();
+    assert_eq!(record.phase, ready_phase);
+    assert!(child::generation_gone(
+        record.pid.unwrap(),
+        record.process_start.as_deref().unwrap()
+    )
+    .unwrap());
+    assert_launch_observations(&fixture, true, 2);
+    fixture
+}
+
+#[tokio::test]
+async fn home_browser_no_open_ready_recovery_handoff_keeps_quiet_receipt() {
+    for previous in [false, true] {
+        let fixture = quiet_ready_recovery_fixture(previous).await;
+        let path = fixture.directory.join(RECEIPT);
+        let before = fs::read(&path).unwrap();
+        // This is the handoff resume_restart_recovery uses, including its lease.
+        let handoff = restart_recovery_handoff(&fixture.data, &fixture.binary)
+            .unwrap()
+            .unwrap();
+        assert_eq!(handoff.controller, fixture.controller());
+        assert_eq!(handoff.receipt, path);
+        assert!(acquire_lease(&fixture.directory).is_err());
+        let receipt: Receipt = read_private_json(&handoff.receipt).unwrap();
+        assert!(receipt.launch.args.contains(&BASE64.encode(b"--no-open")));
+        assert_eq!(receipt.launch.sha256().unwrap(), receipt.launch_sha256);
+        assert_eq!(fs::read(&path).unwrap(), before);
+        drop(handoff);
+        let mut recovered = retained_controller(&fixture);
+        recovered.reconcile_pending().await.unwrap();
+        assert!(recovered.child.is_none());
+        assert_no_recovery_files(&fixture);
+    }
+}
+
+#[tokio::test]
+async fn home_browser_no_open_ready_recovery_initial_start_keeps_choice() {
+    for previous in [false, true] {
+        let fixture = quiet_ready_recovery_fixture(previous).await;
+        let mut recovered = retained_controller(&fixture);
+        recovered.reconcile_pending().await.unwrap();
+        assert!(recovered.child.is_none());
+        assert_no_recovery_files(&fixture);
+        // Ready-phase reconciliation retires the journal, then takes start_initial.
+        recovered.complete_reconciliation().await.unwrap();
+        assert!(recovered.host_ready);
+        assert_eq!(
+            status(&fixture.data).unwrap().unwrap().phase,
+            if previous { "restored" } else { "updated" }
+        );
+        assert_launch_observations(&fixture, true, 3);
+        recovered.stop_child().await.unwrap();
+    }
+}
+
+#[test]
+fn home_browser_no_open_space_notice_preserves_normal_text() {
+    assert_eq!(
+        controller_space_notice(false),
+        "Home will open. Free disk space before updating."
+    );
+    assert_eq!(
+        controller_space_notice(true),
+        "Home will start. Free disk space before updating."
+    );
+}
+
+#[test]
+fn home_browser_no_open_space_notices_follow_real_start_choice() {
+    for step in ["bootstrap", "prepare", "receipt"] {
+        for no_open in [false, true] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "update_controller::tests::home_browser_space_notice_fixture",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("QUIET_START_SPACE_STEP", step)
+                .env("QUIET_START_SPACE_NO_OPEN", if no_open { "1" } else { "0" })
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            let expected = if no_open {
+                "Home will start. Free disk space before updating.\n"
+            } else {
+                "Home will open. Free disk space before updating.\n"
+            };
+            assert_eq!(stderr, expected, "{step}, no_open={no_open}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "isolated process for the real installed-start low-space branches"]
+fn home_browser_space_notice_fixture() {
+    let step = std::env::var("QUIET_START_SPACE_STEP").unwrap();
+    let no_open = std::env::var("QUIET_START_SPACE_NO_OPEN").unwrap() == "1";
+    let fixture = PrivateFixture::new();
+    let source = fixture.publish_installed_release();
+    enter_browser_home_controller(
+        no_open,
+        &fixture.data,
+        &fixture.binary,
+        &source,
+        || {
+            if step == "bootstrap" {
+                return Ok(None);
+            }
+            bootstrap_controller(
+                &fixture.data,
+                &fixture.binary,
+                &source,
+                controller_directory,
+                acquire_lease,
+                crate::install_transaction::InstallationGuard::acquire,
+            )
+        },
+        |directory, binary, expected| {
+            assert_ne!(step, "bootstrap");
+            if step == "prepare" {
+                return Ok(false);
+            }
+            prepare_controller(directory, binary, expected, |_, _| Ok(()))
+        },
+        |_, receipt| {
+            assert_eq!(step, "receipt");
+            assert_eq!(
+                receipt.launch.args.contains(&BASE64.encode(b"--no-open")),
+                no_open
+            );
+            Err(std::io::Error::from_raw_os_error(libc::ENOSPC).into())
+        },
+    )
+    .unwrap();
+}
+
+fn assert_launch_observations(fixture: &PrivateFixture, no_open: bool, starts: usize) {
+    let observed = fs::read_to_string(fixture.data.join("launch-observations")).unwrap();
+    let mut expected = vec![format!(
+        "{} unset home --browser",
+        if no_open { "1" } else { "0" }
+    )];
+    expected.extend((1..starts).map(|_| "1 unset home --browser".to_string()));
+    assert_eq!(observed.lines().collect::<Vec<_>>(), expected);
+    let receipt: Receipt = read_private_json(&fixture.directory.join(RECEIPT)).unwrap();
+    assert_eq!(
+        receipt.launch.args.contains(&BASE64.encode(b"--no-open")),
+        no_open
+    );
+    validate_retained_receipt(&receipt).unwrap();
 }
 
 /// The candidate crashes and the in-process rollback start exits while `previous-fail`
