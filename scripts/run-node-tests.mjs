@@ -12,6 +12,9 @@ const timeout = args[0]?.startsWith("--timeout=") ? Number(args.shift().split("=
 if (!Number.isSafeInteger(timeout) || timeout < 1 || !args.length || args.some(arg => arg.startsWith("-"))) {
   throw new Error("usage: node scripts/run-node-tests.mjs [--timeout=milliseconds] FILE...");
 }
+// Plain assertion scripts cover a whole journey. Their file inactivity budget
+// permits two per-test budgets; Node still enforces the per-test timeout.
+const inactivityTimeout = timeout * 2;
 const files = new Map(args.map(file => [realpathSync(file), { pending: new Map(), summary: false, timer: null, last: null, required: true }]));
 const canonical = file => {
   if (!file) return undefined;
@@ -48,9 +51,9 @@ function stop() {
 function arm(file, state) {
   clearTimeout(state.timer);
   state.timer = setTimeout(() => {
-    fail(`${relative(process.cwd(), file)}: timed out after ${timeout}ms; first unfinished: ${label(state.pending.values().next().value ?? lastStarted(file, state))}`);
+    fail(`${relative(process.cwd(), file)}: timed out after ${inactivityTimeout}ms; first unfinished: ${label(state.pending.values().next().value ?? lastStarted(file, state))}`);
     stop();
-  }, timeout);
+  }, inactivityTimeout);
 }
 const lines = createInterface({ input: child.stdio[3] });
 lines.on("line", line => {

@@ -86,7 +86,7 @@ for (const [name, title] of [["blocked.mjs", "blocked event loop"], ["open-handl
     });
     assert.ifError(result.error);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /timed out after 1500ms/);
+    assert.match(result.stderr, /timed out after 3000ms/);
     assert.ok(result.stderr.includes(title), result.stderr);
   });
 }
@@ -118,4 +118,13 @@ test("repository gate entry points keep the completion supervisor", () => {
     assert.doesNotMatch(source, /node (?:--experimental-strip-types )?--test(?:\s|$)/, file);
     assert.ok(source.includes("scripts/run-node-tests.mjs"), file);
   }
+});
+
+test("runner permits a whole-file assertion journey beyond one test budget", () => {
+  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=1500", join(fixtures, "slow-assertions.mjs")], {
+    encoding: "utf8", timeout: 8000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /whole-file assertions completed/);
 });
