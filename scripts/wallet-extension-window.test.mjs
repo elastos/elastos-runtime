@@ -24,6 +24,10 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         assert.equal(await f.top.evaluate(() => testState.copies[0]), kind === 'metamask' ? A : U);
         assert.equal(await f.frame.locator('body > :not(#connection-root):not(script)').count(), 0);
         assert.equal(await f.frame.locator('#connection-root > main').count(), 1);
+        await f.top.evaluate(() => emitWallet('accountsChanged', []));
+        await f.state(kind === 'metamask' ? 'site-access-ended' : 'account-unavailable');
+        await f.action('connect').click(); await f.state('linked');
+        assert.equal(await f.top.evaluate(() => testState.receipts.length), 2);
       } finally { await f.close(); }
       const g = await fixture(browser, kind, { saved: true, requests: true });
       try {
@@ -38,6 +42,9 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         assert.equal(await g.top.evaluate(() => testState.effects[0].action.kind), 'approve');
         assert.equal(await g.top.evaluate(() => testState.requests.length), 0);
         assert.equal(await g.action('send-request').count(), 0);
+        await g.top.evaluate(kind => emitWallet(kind === 'metamask' ? 'chainChanged' : 'networkChanged', kind === 'metamask' ? '0x1' : 'livenet'), kind);
+        await g.state('request-done');
+        assert.equal(await g.action('send-request').count(), 0, 'a network event cannot revive a consumed request');
       } finally { await g.close(); }
     } finally { await browser.close(); }
   });

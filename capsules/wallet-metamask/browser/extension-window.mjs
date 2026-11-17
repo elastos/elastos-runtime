@@ -54,6 +54,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (disconnected || accountEvent?.length === 0) return accounts.length ? kind === 'metamask' ? 'site-access-ended' : 'account-unavailable' : 'ready';
     if (accountEvent && accounts.length && !accounts.some(a => sameAccount(a.address, accountEvent[0]))) return 'account-unavailable';
     if (kind === 'unisat' && networkEvent !== null && networkEvent !== 'livenet') return networkEvent === 'testnet' ? 'network-changed' : 'network-unknown';
+    if (selected?.status === 'completed') return selected.transaction ? 'transaction-done' : 'request-done';
     if (requests.length > 1 && !picked) return 'request-list';
     if (selected) return selected.expiresAt !== null && selected.expiresAt <= now()
       ? 'request-expired' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
@@ -130,6 +131,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     revision += 1;
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
+    if (action.kind === 'link') { accountEvent = null; networkEvent = null; disconnected = false; }
     stage = action.kind === 'link' ? 'extension-wait' : selected?.transaction ? 'transaction-extension' : 'request-extension';
     draw();
     try {
@@ -141,9 +143,15 @@ export function startExtensionWindow(kind, homeClipboard) {
       operation = null;
       notifyHomeSummaryChanged();
       if (action.kind === 'link') {
+        selected = null;
         if (refreshing) await refreshing;
         await refresh();
-      } else { stage = (disconnected || accountEvent && !accounts.some(a => sameAccount(a.address, accountEvent[0]))) ? chooseStage() : result.effect === 'transaction' ? 'transaction-done' : 'request-done'; draw(); }
+      } else {
+        requests = requests.filter(r => r.request_id !== selected.id);
+        selected = { ...selected, status: 'completed' };
+        stage = (disconnected || accountEvent && !accounts.some(a => sameAccount(a.address, accountEvent[0]))) ? chooseStage() : result.effect === 'transaction' ? 'transaction-done' : 'request-done';
+        draw();
+      }
     } catch (error) {
       if (disposed) return;
       revision += 1; operation = null;
