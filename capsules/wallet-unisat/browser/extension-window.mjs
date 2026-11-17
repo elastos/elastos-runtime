@@ -124,9 +124,9 @@ export function startExtensionWindow(kind, homeClipboard) {
     refreshing = (async () => {
       try {
         const [a, r] = await Promise.all(['accounts', 'approvals'].map(suffix => fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/${suffix}`, { headers: { 'x-elastos-home-token': frameHomeToken } })));
-        if (disposed) return;
+        if (disposed || observedRevision !== revision) return;
         accounts = Array.isArray(a?.accounts) ? a.accounts : [];
-        requests = (Array.isArray(r?.approval_requests) ? r.approval_requests : []).filter(signable);
+        requests = (Array.isArray(r?.approval_requests) ? r.approval_requests : []).filter(signable).filter(r => !fixedOutcome || r.request_id !== selected?.id);
         if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) {
           if (selected && !requests.some(request => request.request_id === selected.id)) {
             if (['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage)) { stage = 'request-unavailable'; fixedOutcome = true; }
@@ -135,6 +135,7 @@ export function startExtensionWindow(kind, homeClipboard) {
             stage = chooseStage();
           }
         }
+        if (fixedOutcome && selected?.status === 'completed' && !selected.transaction) stage = requests.length ? 'request-next' : 'request-done';
         draw();
       } catch (error) { if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) { stage = [401, 403].includes(error.status) ? 'window-expired' : 'link-error'; draw(); } }
       finally { refreshing = null; }
@@ -167,8 +168,8 @@ export function startExtensionWindow(kind, homeClipboard) {
         fixedOutcome = true;
         requests = requests.filter(r => r.request_id !== selected.id);
         selected = { ...selected, status: 'completed' };
-        stage = result.effect === 'transaction' ? 'transaction-done' : 'request-done';
-        draw();
+        stage = result.effect === 'transaction' ? 'transaction-done' : requests.length ? 'request-next' : 'request-done';
+        draw(); void refresh();
       }
     } catch (error) {
       if (disposed) return;
@@ -199,10 +200,10 @@ export function startExtensionWindow(kind, homeClipboard) {
       const address = button.dataset.focusKey.slice('copy-address:'.length);
       button.disabled = true;
       homeClipboard.writeText(address, { purpose: 'wallet.address' }).catch(() => { button.focus(); }).finally(() => { button.disabled = false; });
-    } else if (action === 'view-requests') { fixedOutcome = false; picked = false; stage = 'request-list'; draw(); }
+    } else if (action === 'view-requests') { revision += 1; fixedOutcome = false; picked = false; selected = reduceSummary(requests[0], { connector: CONNECTOR_ID }); stage = 'request-list'; draw(); }
     else if (action === 'select-request') {
       const id = button.dataset.focusKey.slice('select-request:'.length);
-      fixedOutcome = false; picked = true;
+      revision += 1; fixedOutcome = false; picked = true;
       selected = reduceSummary(requests.find(r => r.request_id === id), { connector: CONNECTOR_ID });
       stage = chooseStage(); draw();
     }

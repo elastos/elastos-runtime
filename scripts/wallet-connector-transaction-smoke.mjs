@@ -26,7 +26,8 @@ try {
     assert.equal(await f.frame.evaluate(()=>location.search.includes('home_token')),false);
     assert.equal(await f.frame.evaluate(()=>location.hash.includes('home_token=fixture-token')),true);
     for(const read of f.reads) assert.equal(read.headers['x-elastos-home-token'],'fixture-token');
-    assert(observed.runtimeCalls.every(c=>c.url.startsWith('/api/apps/home/wallet-connector/')));
+    assert(observed.runtimeCalls.every(c=>c.url.startsWith('/api/apps/home/wallet-connector/') && c.body.connector_token==='fixture-token' && c.body.connector_id==='wallet-metamask' && c.body.schema==='elastos.home.wallet-connector.effect.request/v1'));
+    assert.equal(f.context.pages().length,1,'connector opens no extra window');
     result={connectorId:'wallet-metamask',providerMethods:methods,runtimeEndpoints:observed.runtimeCalls.map(c=>c.url),authorityTransport:'fragment',effectOwner:'home-host'};
   }finally{await f.close();}
 }finally{await browser.close();}

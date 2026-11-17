@@ -86,6 +86,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         if (kind === 'unisat') {
           await h.top.evaluate(() => emitWallet('accountsChanged', [testState.address]));
           await h.top.evaluate(() => emitWallet('networkChanged', 'testnet')); await h.state('network-changed');
+          await h.top.evaluate(() => emitWallet('networkChanged', 'unknown')); await h.state('network-unknown');
         }
       } finally { await h.close(); }
     } finally { await browser.close(); }
@@ -174,7 +175,7 @@ test('live-window regression oracle rejects five deliberate breaks', { timeout: 
         await f.action('send-request').click(); await f.state('request-extension');
         assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
       }],
-      ['stale wait after answer', s => s.replace("stage = result.effect === 'transaction' ? 'transaction-done' : 'request-done';", "stage = result.effect === 'transaction' ? 'transaction-done' : 'request-extension';"), async f => {
+      ['stale wait after answer', s => s.replace("stage = result.effect === 'transaction' ? 'transaction-done' : requests.length ? 'request-next' : 'request-done';", "stage = result.effect === 'transaction' ? 'transaction-done' : 'request-extension';"), async f => {
         await f.action('send-request').click(); await f.state('request-done');
       }],
       ['draw outside shared view', s => s.replace('const root = renderConnection(document, view);', "const root = renderConnection(document, view); root.append(document.createElement('aside'));"), async f => {
@@ -341,6 +342,25 @@ for (const kind of ['metamask','unisat']) test(`${kind}: a Home list with severa
       await f.state('ready');assert.equal(await f.frame.locator('.connection-account').count(),0);
       await f.top.evaluate(()=>emitWallet('accountsChanged',[testState.address]));await f.state('linked');
       assert.equal(await f.frame.locator('.connection-address-row').count(),1);
+    }finally{await f.close();}
+  }finally{await browser.close();}
+});
+
+for (const engine of ['chromium','webkit']) for (const kind of ['metamask','unisat']) test(`${engine} ${kind}: another pending message remains reachable after a signed result`, {timeout:40000,skip:engineSkip(engine)}, async()=>{
+  const browser=await playwright[engine].launch({headless:true});
+  try{
+    const f=await fixture(browser,kind,{saved:true,requests:'multiple'});
+    try{
+      await f.state('request-list');await f.frame.locator('[data-focus-key="select-request:approval-1"]').click();await f.state('request-multiple');
+      await f.action('send-request').click();await f.state('request-next');
+      assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
+      await f.action('view-requests').click();await f.state('request-list');
+      assert.equal(await f.frame.locator('[data-focus-key="select-request:approval-1"]').count(),0);
+      await f.frame.locator('[data-focus-key="select-request:approval-2"]').click();await f.state('request-waiting');
+      await f.action('send-request').click();await f.state('request-done');
+      assert.equal(await f.top.evaluate(()=>testState.receipts.length),2);
+      assert.deepEqual(await f.top.evaluate(()=>testState.effects.map(e=>e.action.approvalRequestId)),['approval-1','approval-2']);
+      assert.equal(await f.top.evaluate(()=>testState.requests.length),0);
     }finally{await f.close();}
   }finally{await browser.close();}
 });
