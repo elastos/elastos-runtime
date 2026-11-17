@@ -4,6 +4,11 @@
 #   test-behaviour.sh inputs  installs the pinned Browser test inputs (network)
 #   test-behaviour.sh         runs the suite offline; the spec reporter ends
 #                             with the failing tests by name
+# The completion supervisor prints "Node test guard:" messages for missing
+# results, early exits and timeouts, with the file and first unfinished test.
+# Its closing PASS means exit 0: every file completed and every test reported.
+# Its closing FAIL means exit 1: a test failed or completion was incomplete.
+# Plain smokes finish naturally; use process.exitCode instead of process.exit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

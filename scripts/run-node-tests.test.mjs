@@ -17,7 +17,7 @@ function suite(t, name, timeout = 10_000, overrides = {}) {
   const root = mkdtempSync(join(tmpdir(), "node-runner-guard-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "scripts/lib"), { recursive: true });
-  for (const file of ["test-behaviour.sh", "run-node-tests.mjs", "lib/node-test-events.mjs", "lib/owned-test-worker.mjs"]) {
+  for (const file of ["test-behaviour.sh", "run-node-tests.mjs", "lib/node-test-events.mjs", "lib/owned-test-worker.mjs", "lib/node-test-worker-lifetime.mjs"]) {
     cpSync(join(scripts, file), join(root, "scripts", file));
   }
   const script = readFileSync(join(root, "scripts/test-behaviour.sh"), "utf8");

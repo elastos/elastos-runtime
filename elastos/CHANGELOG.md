@@ -10,6 +10,13 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 - Apps no longer open blank in Safari and other WebKit browsers.
 
+### Developer detail
+
+- The behaviour gate rejects incomplete or missing test results, early exits
+  and stalled files. Its completion supervisor reports the file and first
+  unfinished test, ends with one PASS or FAIL verdict, and stops its workers
+  when the gate exits. Plain smoke scripts finish naturally with process.exitCode.
+
 ## [2.0.1] - 2026-11-09
 
 ### Added

@@ -17,7 +17,7 @@ if (process.env.NODE_TEST_CONTEXT === "child-v8" && process.env.NODE_TEST_GUARD_
 }
 export default async function* events(source) {
   for await (const { type, data } of source) {
-    if (["test:enqueue", "test:dequeue", "test:pass", "test:fail", "test:complete", "test:summary"].includes(type)) {
+    if (["test:enqueue", "test:dequeue", "test:pass", "test:fail", "test:complete", "test:summary", "test:stdout", "test:stderr"].includes(type)) {
       writeSync(3, `${JSON.stringify({ type, data })}\n`);
     }
   }

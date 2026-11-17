@@ -1,11 +1,14 @@
 // The supervisor owns the verdict. A zero child exit also needs a complete
 // event stream from every file, even when the child calls process.exit(0).
 import { spawnOwnedTestWorker } from "./lib/owned-test-worker.mjs";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+
+// The external verdict is last, including when setup throws before spawning.
+process.on("exit", code => writeSync(1, `Node test guard: ${code === 0 ? "PASS" : "FAIL"} (exit ${code})\n`));
 
 const args = process.argv.slice(2);
 const timeout = args[0]?.startsWith("--timeout=") ? Number(args.shift().split("=")[1]) : 60_000;
@@ -86,14 +89,15 @@ lines.on("line", line => {
       if (!data.success) failed = true;
       return;
     }
-    const file = canonical(data.file);
+    const output = type === "test:stdout" || type === "test:stderr";
+    const file = canonical(output ? data.entryFile ?? data.file : data.file);
     if (!file) return;
     if (!files.has(file)) files.set(file, { pending: new Map(), summary: false, timer: null, last: null, required: false });
     const state = files.get(file);
     if (type === "test:dequeue") clearTimeout(startup);
     // Node's outer FileTest shares the child's test IDs; it is a process result,
     // not a verdict for any test declared inside that file.
-    const wrapper = state.required && (data.name === file || data.name === relative(process.cwd(), file));
+    const wrapper = state.required && typeof data.name === "string" && canonical(data.name) === file;
     if (type === "test:summary") {
       state.summary = true;
       if (!data.success) failed = true;
@@ -104,7 +108,7 @@ lines.on("line", line => {
       if (type === "test:fail" && !data.todo) failed = true;
     }
     if (!wrapper && type === "test:dequeue") state.last = data;
-    if (state.required && (type === "test:dequeue" || type === "test:complete" || type === "test:summary")) arm(file, state);
+    if (state.required && (output || type === "test:dequeue" || type === "test:complete" || type === "test:summary")) arm(file, state);
     if (wrapper && type === "test:complete") {
       // Completion is execution-ordered; the child summary can arrive later
       // from Node's per-file declaration-order buffer. Keep the timer retired.
@@ -117,13 +121,16 @@ lines.on("line", line => {
   }
 });
 child.on("error", error => fail(error.message));
-for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => { fail(`interrupted by ${signal}`); stop(); });
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => { fail(`interrupted by ${signal}`); stop(); });
 child.on("close", (code, signal) => {
   clearTimeout(startup);
   for (const [file, state] of files) {
     clearTimeout(state.timer);
     if ((state.required && !state.summary) || state.pending.size) {
       fail(`${relative(process.cwd(), file)}: incomplete results; first unfinished: ${label(state.pending.values().next().value ?? lastStarted(file, state))}; ${state.pending.size} declared test(s) without a result; file summary ${state.summary ? "received" : "missing"}`);
+      if (state.required && !state.summary && code === 0) {
+        fail(`${relative(process.cwd(), file)}: finish naturally; replace process.exit(0) with process.exitCode = 0 so Node can send the file summary`);
+      }
     }
   }
   if (!summary) fail("run summary missing");

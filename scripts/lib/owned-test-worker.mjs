@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-function inspect(pid) {
+export function inspect(pid) {
   const output = execFileSync("ps", ["-p", [process.pid, pid].filter(Number.isSafeInteger).join(","),
     "-o", "pid=,ppid=,pgid=,lstart=,stat="], { encoding: "utf8", timeout: 5000, maxBuffer: 64 * 1024 });
   const rows = new Map();
@@ -25,7 +26,14 @@ export function canSignalWorkerGroup(started, current, supervisor, exited, super
 
 export function spawnOwnedTestWorker(args, options) {
   inspect(); // Refuse a missing process inspector before starting any workers.
-  const child = spawn(process.execPath, args, { ...options, detached: true });
+  const env = { ...process.env, ...options.env, NODE_TEST_GUARD_OWNER: String(process.pid) };
+  delete env.NODE_TEST_CONTEXT;
+  const lifetime = fileURLToPath(new URL("./node-test-worker-lifetime.mjs", import.meta.url));
+  const stdio = Array.isArray(options.stdio) ? [...options.stdio] : Array(3).fill(options.stdio ?? "pipe");
+  while (stdio.length < 4) stdio.push("ignore");
+  env.NODE_TEST_GUARD_EVENTS = stdio[3] === "pipe" ? "1" : "0";
+  stdio[4] = "pipe"; // Private lifetime channel, held only by supervisor and leader.
+  const child = spawn(process.execPath, [lifetime, ...args], { ...options, env, stdio, detached: true });
   let exited = false;
   let signalled = false;
   child.once("exit", () => { exited = true; });
