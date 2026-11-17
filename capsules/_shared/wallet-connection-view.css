@@ -1,0 +1,139 @@
+/* Presentation only. The shell owns the tokens, type scale and controls. */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { min-width: 280px; }
+h1, h2, p { margin: 0; }
+.connection-window {
+  font-family: var(--el-font);
+  width: min(100%, 640px);
+  min-height: 100svh;
+  margin: 0 auto;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  font-size: var(--el-text-lg);
+  line-height: 1.5;
+}
+.connection-heading { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; }
+.connection-heading img { width: 36px; height: 36px; object-fit: contain; }
+h1 { font-size: var(--el-text-display); font-weight: 600; line-height: 1.25; }
+h2 { font-size: var(--el-text-lg); font-weight: 600; }
+.connection-network, .connection-note { color: var(--el-muted); font-size: var(--el-text-md); }
+.connection-status { margin-bottom: 16px; }
+.connection-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.connection-window .el-button, .connection-dialog .el-button { min-height: 44px; }
+.connection-quiet { border-color: transparent; background: transparent; color: var(--el-muted); }
+.connection-card { padding: 16px; border: 1px solid var(--el-hairline); border-radius: var(--el-radius-lg); background: var(--el-surface-raised); }
+.connection-card + .connection-card { margin-top: 16px; }
+.connection-account-header, .connection-address-row, .connection-section-heading { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.connection-account-header { margin-bottom: 12px; }
+.connection-account-header img { width: 24px; height: 24px; object-fit: contain; }
+.connection-account-name { flex: 1; font-weight: 600; }
+.connection-address-row { justify-content: flex-start; gap: 8px; }
+.connection-address { font: 400 var(--el-text-md) / 1.5 var(--el-font-mono); }
+.connection-window .connection-copy { min-height: 28px; height: 28px; padding: 0 8px; position: relative; }
+.connection-copy::before { content: ""; position: absolute; inset: -8px 0; }
+.connection-account-foot { margin-top: 8px; display: flex; justify-content: flex-end; }
+.connection-requests, .connection-wallet-options { margin-top: 24px; }
+.connection-accounts { margin-top: 24px; }
+.connection-section-heading { margin-bottom: 12px; }
+.connection-request p { margin: 4px 0 16px; color: var(--el-muted); }
+.connection-request .connection-note { margin: 0 0 4px; }
+.connection-wait, .connection-notice { margin-top: 8px; }
+.connection-account + .connection-actions, .connection-wait + .connection-actions, .connection-notice + .connection-actions { margin-top: 16px; }
+.connection-panel-note { margin-bottom: 12px; }
+.connection-dialog {
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  padding: 20px;
+  border: 1px solid var(--el-hairline-strong);
+  border-radius: var(--el-radius-xl);
+  background: var(--el-surface-raised);
+  color: var(--el-text);
+  box-shadow: var(--el-shadow-3);
+  font: 400 var(--el-text-lg) / 1.5 var(--el-font);
+  text-align: center;
+}
+.connection-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+.connection-dialog h2 { display:flex; align-items:center; justify-content:center; gap:8px; font-size: var(--el-text-xl); margin-bottom: 12px; }
+.connection-dialog h2 img { width:24px; height:24px; object-fit:contain; }
+.connection-qr { display: block; width: min(100%, calc(100svh - 298px)); height: auto; margin:0 auto; background: white; border-radius: var(--el-radius-sm); }
+.connection-dialog p { margin: 12px 0; color: var(--el-muted); font-size:var(--el-text-md); }
+.connection-dialog .connection-actions { display:grid; grid-template-columns:1fr 1fr; }
+.connection-option { width: 100%; display: flex; align-items: center; gap: 12px; border: 0; border-bottom: 1px solid var(--el-hairline); padding: 16px; background: transparent; color: var(--el-text); font: inherit; text-align: left; cursor: pointer; }
+.connection-option:last-child { border-bottom: 0; }
+.connection-option:hover { background: var(--el-lift); }
+.connection-option img { width: 28px; height: 28px; object-fit: contain; }
+.connection-option span:first-of-type { flex: 1; }
+.connection-option-label { display: block; font-weight: 500; }
+.connection-options-list { padding: 0; overflow: hidden; }
+.connection-panel .connection-actions { margin-top: 16px; }
+@media (max-width: 480px) {
+  .connection-window { padding: 24px 20px; }
+  .connection-actions { flex-direction:column; align-items:stretch; }
+  .connection-actions > button, .connection-request > button { width:100%; }
+  .connection-dialog .connection-actions { flex-direction:row; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}
+/* One request card carries its account context, wait and action together. */
+.connection-request-account { display:flex; align-items:center; gap:8px; margin-top:16px; color:var(--el-muted); font-size:var(--el-text-md); }
+.connection-request-account img { width:24px; height:24px; object-fit:contain; }
+.connection-request .connection-wait { margin:16px 0 0; }
+.connection-request .connection-notice { margin:8px 0 0; }
+.connection-request > .el-button { margin-top:16px; }
+.connection-content > .connection-requests:first-child { margin-top:0; }
+.connection-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.connection-status > img { width:24px; height:24px; object-fit:contain; vertical-align:middle; margin-right:8px; }
+
+.connection-via { margin:-4px 0 8px; }
+.connection-selected h2 { margin-bottom:8px; }
+.connection-selected + .connection-actions { margin-top:16px; }
+.connection-request > .connection-actions { margin-top:16px; }
+
+/* Existing shell blue, made opaque so focus clears 3:1 in both themes. */
+:focus-visible { outline:2px solid #4f7fff !important; outline-offset:3px; }
+.connection-queue { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px; }
+.connection-request-choice { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.connection-request-choice p { margin:0; }
+.connection-request-choice .el-button { flex-shrink:0; min-height:44px; }
+.connection-panel .connection-wallet-options:first-child { margin-top:0; }
+
+.connection-account .el-button { min-height:44px; }
+.connection-account .connection-copy { min-height:28px; }
+/* Choice rows keep their text flexible at computer window widths. */
+.connection-request-choice > div { min-width:0; }
+.connection-request-choice > .el-button { width:auto; }
+.connection-copy { position:relative; height:28px; min-height:28px; padding:0 8px; }
+
+/* Names are returned display data, never part of a trusted sentence's layout. */
+.connection-isolated { display:inline-block; max-width:100%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; unicode-bidi:isolate; vertical-align:bottom; line-height:1.5; }
+.connection-wallet, .connection-app, .connection-home { max-width:min(18em, 65vw); }
+.connection-site-row { display:flex; flex-direction:column; gap:2px; margin-bottom:8px; font-size:var(--el-text-md); color:var(--el-muted); }
+.connection-site-row .connection-site { max-width:100%; overflow-wrap:anywhere; }
+.connection-account-header .connection-heading { margin-bottom:0; }
+.connection-account-header:has(.connection-heading) { flex-wrap:wrap; }
+.connection-account-header .connection-status { flex-basis:100%; }
+.connection-content { min-width:0; }
+.connection-detail { overflow-wrap:anywhere; }
+.connection-request-account { flex-wrap:wrap; }
+.connection-feedback:empty { display:none; }
+.connection-dialog { position:static; margin:auto; box-shadow:none; }
+.connection-compact { height:100svh; min-height:0; padding:6px 8px; justify-content:flex-start; gap:4px; font-size:12px; line-height:1.2; overflow:hidden; }
+.connection-compact .connection-heading { margin:0; gap:6px; flex-shrink:0; }
+.connection-compact h1 { font-size:16px; }
+.connection-compact .connection-heading img { width:18px; height:18px; }
+.connection-compact .connection-content { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.connection-compact .connection-feedback { flex-shrink:0; }
+.connection-compact .connection-status { margin:0 0 4px; font-size:12px; line-height:1.2; }
+.connection-compact .connection-wait { margin:0 0 4px; font-size:11px; line-height:1.2; }
+.connection-compact .connection-actions { display:flex; flex-direction:row; flex-wrap:wrap; gap:4px; margin:0; }
+.connection-compact .connection-actions .el-button { width:auto; flex:1 1 auto; min-height:24px; padding:2px 6px; font-size:12px; line-height:1.2; }
+.connection-compact .connection-card { padding:8px; }
+.connection-compact .connection-note,.connection-compact .connection-detail { font-size:12px; }
+.connection-compact .connection-dialog { width:100%; padding:0; border:0; }
+.connection-compact .connection-dialog h2 { font-size:14px; margin:0; }
+.connection-compact .connection-dialog p { margin:2px 0; font-size:11px; }
+.connection-compact .connection-qr { width:56px; height:56px; }

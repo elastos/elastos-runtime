@@ -1,0 +1,4862 @@
+{
+  "schema": "elastos.test.wallet-connection-view-states/v1",
+  "designCommit": "58aaafe6db48f8a3600f1e3bb8312499405502fc",
+  "states": [
+    {
+      "window": "walletconnect",
+      "stage": "nothing-saved",
+      "designState": "walletconnect/nothing-saved",
+      "designLine": 263,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "internet-pending",
+      "designState": "walletconnect/internet-pending",
+      "designLine": 264,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "internet-refused",
+      "designState": "walletconnect/internet-refused",
+      "designLine": 265,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "internet-off",
+      "designState": "walletconnect/internet-off",
+      "designLine": 266,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "internet-expired",
+      "designState": "walletconnect/internet-expired",
+      "designLine": 267,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "internet-clearing",
+      "designState": "walletconnect/internet-clearing",
+      "designLine": 268,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "internet-ready",
+      "designState": "walletconnect/internet-ready",
+      "designLine": 269,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "preparing-qr",
+      "designState": "walletconnect/preparing-qr",
+      "designLine": 270,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "qr-shown",
+      "designState": "walletconnect/qr-shown",
+      "designLine": 271,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "qr": true,
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "qr-cancelled",
+      "designState": "walletconnect/qr-cancelled",
+      "designLine": 272,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "qr-expired",
+      "designState": "walletconnect/qr-expired",
+      "designLine": 273,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "connection-declined",
+      "designState": "walletconnect/connection-declined",
+      "designLine": 274,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-wait",
+      "designState": "walletconnect/link-wait",
+      "designLine": 275,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 299,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-declined",
+      "designState": "walletconnect/link-declined",
+      "designLine": 276,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-timeout",
+      "designState": "walletconnect/link-timeout",
+      "designLine": 277,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-cancelled",
+      "designState": "walletconnect/link-cancelled",
+      "designLine": 278,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "saved-unlinked",
+      "designState": "walletconnect/saved-unlinked",
+      "designLine": 279,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "connection-expired",
+      "designState": "walletconnect/connection-expired",
+      "designLine": 280,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-connection-expired",
+      "designState": "walletconnect/request-connection-expired",
+      "designLine": 281,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "wallet-removed",
+      "designState": "walletconnect/wallet-removed",
+      "designLine": 282,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "linked",
+      "designState": "walletconnect/linked",
+      "designLine": 283,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "linked-multiple",
+      "designState": "walletconnect/linked-multiple",
+      "designLine": 284,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum",
+                "Base"
+              ]
+            },
+            {
+              "address": "0x2aB5a6b3211872E5A1234567890123456789a4C2",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-waiting",
+      "designState": "walletconnect/request-waiting",
+      "designLine": 285,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-multiple",
+      "designState": "walletconnect/request-multiple",
+      "designLine": 286,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-2",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-walletconnect"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org again.",
+          "connector_id": "wallet-walletconnect",
+          "requesting_origin": "https://example.org"
+        }
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-unsendable",
+      "designState": "walletconnect/request-unsendable",
+      "designLine": 287,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "This signing format is unavailable here.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-expired",
+      "designState": "walletconnect/request-expired",
+      "designLine": 288,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-phone",
+      "designState": "walletconnect/request-phone",
+      "designLine": 289,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 598,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000599
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-declined",
+      "designState": "walletconnect/request-declined",
+      "designLine": 290,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-timeout",
+      "designState": "walletconnect/request-timeout",
+      "designLine": 291,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-done",
+      "designState": "walletconnect/request-done",
+      "designLine": 292,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-cancelled",
+      "designState": "walletconnect/request-cancelled",
+      "designLine": 293,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-waiting",
+      "designState": "walletconnect/transaction-waiting",
+      "designLine": 294,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "paymentPending": false,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-deadline",
+      "designState": "walletconnect/transaction-deadline",
+      "designLine": 295,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 299,
+        "paymentPending": false,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000300
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-phone",
+      "designState": "walletconnect/transaction-phone",
+      "designLine": 296,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 598,
+        "paymentPending": true,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000599
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-declined",
+      "designState": "walletconnect/transaction-declined",
+      "designLine": 297,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "paymentPending": false,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-timeout",
+      "designState": "walletconnect/transaction-timeout",
+      "designLine": 298,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "paymentPending": true,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-cancelled",
+      "designState": "walletconnect/transaction-cancelled",
+      "designLine": 299,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "paymentPending": true,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-wallet-error",
+      "designState": "walletconnect/transaction-wallet-error",
+      "designLine": 300,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "paymentPending": true,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-done",
+      "designState": "walletconnect/transaction-done",
+      "designLine": 301,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "paymentPending": false,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-reopened",
+      "designState": "walletconnect/transaction-reopened",
+      "designLine": 302,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "paymentPending": true,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-wallet-error",
+      "designState": "walletconnect/request-wallet-error",
+      "designLine": 303,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-new-connection",
+      "designState": "walletconnect/request-new-connection",
+      "designLine": 304,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection",
+        "needs an example from the foundation lane: canonical requested network label"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provisionalInput": {
+        "targetNetwork": "Ethereum"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-network-unsupported",
+      "designState": "walletconnect/request-network-unsupported",
+      "designLine": 305,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "Your wallet",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-wallet-removed",
+      "designState": "walletconnect/request-wallet-removed",
+      "designLine": 306,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-sent-wallet-removed",
+      "designState": "walletconnect/request-sent-wallet-removed",
+      "designLine": 307,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-wallet-removed",
+      "designState": "walletconnect/transaction-wallet-removed",
+      "designLine": 308,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "paymentPending": true,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-internet-off",
+      "designState": "walletconnect/request-internet-off",
+      "designLine": 309,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-internet-pending",
+      "designState": "walletconnect/request-internet-pending",
+      "designLine": 310,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "disconnecting",
+      "designState": "walletconnect/disconnecting",
+      "designLine": 311,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "disconnected",
+      "designState": "walletconnect/disconnected",
+      "designLine": 312,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "window-expired",
+      "designState": "walletconnect/window-expired",
+      "designLine": 313,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "guest-access",
+      "designState": "walletconnect/guest-access",
+      "designLine": 314,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-error",
+      "designState": "walletconnect/link-error",
+      "designLine": 315,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-list",
+      "designState": "walletconnect/request-list",
+      "designLine": 316,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-2",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-walletconnect"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org again.",
+          "connector_id": "wallet-walletconnect",
+          "requesting_origin": "https://example.org"
+        }
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-selected-second",
+      "designState": "walletconnect/request-selected-second",
+      "designLine": 317,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-2",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-1",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org.",
+          "connector_id": "wallet-walletconnect",
+          "requesting_origin": "https://example.org"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org again.",
+          "connector_id": "wallet-walletconnect",
+          "requesting_origin": "https://example.org"
+        }
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-next",
+      "designState": "walletconnect/request-next",
+      "designLine": 318,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "approved",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-2",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-walletconnect"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org again.",
+          "connector_id": "wallet-walletconnect",
+          "requesting_origin": "https://example.org"
+        }
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "transaction-late-result",
+      "designState": "walletconnect/transaction-late-result",
+      "designLine": 319,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "paymentPending": false,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Base",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "guest-ready",
+      "designState": "walletconnect/guest-ready",
+      "designLine": 320,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-busy",
+      "designState": "walletconnect/link-busy",
+      "designLine": 321,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "request-busy",
+      "designState": "walletconnect/request-busy",
+      "designLine": 322,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-walletconnect",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      }
+    },
+    {
+      "window": "walletconnect",
+      "stage": "link-late-ignored",
+      "designState": "walletconnect/link-late-ignored",
+      "designLine": 323,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "walletconnect",
+      "stage": "focus",
+      "designState": "walletconnect/focus",
+      "designLine": 324,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "metamask",
+      "stage": "ready",
+      "designState": "metamask/ready",
+      "designLine": 330,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "ready-multiple",
+      "designState": "metamask/ready-multiple",
+      "designLine": 331,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "extension-missing",
+      "designState": "metamask/extension-missing",
+      "designLine": 332,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-no_wallet",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "extensions-unavailable",
+      "designState": "metamask/extensions-unavailable",
+      "designLine": 333,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-extensions_unavailable",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "extension-wait",
+      "designState": "metamask/extension-wait",
+      "designLine": 334,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "waitSeconds": 299,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "progress-waiting_signature",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "extension-timeout",
+      "designState": "metamask/extension-timeout",
+      "designLine": 335,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "extension-cancelled",
+      "designState": "metamask/extension-cancelled",
+      "designLine": 336,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "link-wait",
+      "designState": "metamask/link-wait",
+      "designLine": 337,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 279,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "progress-waiting_signature",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "connection-declined",
+      "designState": "metamask/connection-declined",
+      "designLine": 338,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-declined",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "link-declined",
+      "designState": "metamask/link-declined",
+      "designLine": 339,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-declined",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "link-timeout",
+      "designState": "metamask/link-timeout",
+      "designLine": 340,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "link-cancelled",
+      "designState": "metamask/link-cancelled",
+      "designLine": 341,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "link-late-ignored",
+      "designState": "metamask/link-late-ignored",
+      "designLine": 342,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "account-unavailable",
+      "designState": "metamask/account-unavailable",
+      "designLine": 343,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "site-access-ended",
+      "designState": "metamask/site-access-ended",
+      "designLine": 344,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "connect-already-open",
+      "designState": "metamask/connect-already-open",
+      "designLine": 345,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-access-error",
+      "designState": "metamask/request-access-error",
+      "designLine": 346,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-access-error",
+      "designState": "metamask/transaction-access-error",
+      "designLine": 347,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-true",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-network-declined",
+      "designState": "metamask/request-network-declined",
+      "designLine": 348,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "outcome-declined",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-network-unknown",
+      "designState": "metamask/request-network-unknown",
+      "designLine": 349,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Elastos Smart Chain"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "To 0x8bC4…391a · Elastos Smart Chain",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "linked",
+      "designState": "metamask/linked",
+      "designLine": 350,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-waiting",
+      "designState": "metamask/request-waiting",
+      "designLine": 351,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-multiple",
+      "designState": "metamask/request-multiple",
+      "designLine": 352,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-2",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-metamask"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org again.",
+          "connector_id": "wallet-metamask",
+          "requesting_origin": "https://example.org"
+        }
+      ],
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-unsendable",
+      "designState": "metamask/request-unsendable",
+      "designLine": 353,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-typed-data",
+      "designState": "metamask/request-typed-data",
+      "designLine": 354,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Confirm the details shown by Browser.",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-expired",
+      "designState": "metamask/request-expired",
+      "designLine": 355,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-extension",
+      "designState": "metamask/request-extension",
+      "designLine": 356,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 598,
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "progress-waiting_signature",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-declined",
+      "designState": "metamask/request-declined",
+      "designLine": 357,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "outcome-declined",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-timeout",
+      "designState": "metamask/request-timeout",
+      "designLine": 358,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-done",
+      "designState": "metamask/request-done",
+      "designLine": 359,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-cancelled",
+      "designState": "metamask/request-cancelled",
+      "designLine": 360,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-waiting",
+      "designState": "metamask/transaction-waiting",
+      "designLine": 361,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-extension",
+      "designState": "metamask/transaction-extension",
+      "designLine": 362,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 598,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000599
+      },
+      "provider": "progress-waiting_transaction",
+      "safety": "state-payment-true",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-declined",
+      "designState": "metamask/transaction-declined",
+      "designLine": 363,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "outcome-declined",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-timeout",
+      "designState": "metamask/transaction-timeout",
+      "designLine": 364,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-true",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-cancelled",
+      "designState": "metamask/transaction-cancelled",
+      "designLine": 365,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-true",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-wallet-error",
+      "designState": "metamask/transaction-wallet-error",
+      "designLine": 366,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-true",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-done",
+      "designState": "metamask/transaction-done",
+      "designLine": 367,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-wallet-error",
+      "designState": "metamask/request-wallet-error",
+      "designLine": 368,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-late-ignored",
+      "designState": "metamask/request-late-ignored",
+      "designLine": 369,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "window-expired",
+      "designState": "metamask/window-expired",
+      "designLine": 370,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "link-error",
+      "designState": "metamask/link-error",
+      "designLine": 371,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-list",
+      "designState": "metamask/request-list",
+      "designLine": 372,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-2",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-metamask"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org again.",
+          "connector_id": "wallet-metamask",
+          "requesting_origin": "https://example.org"
+        }
+      ],
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-selected-second",
+      "designState": "metamask/request-selected-second",
+      "designLine": 373,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-1",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org.",
+          "connector_id": "wallet-metamask",
+          "requesting_origin": "https://example.org"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org again.",
+          "connector_id": "wallet-metamask",
+          "requesting_origin": "https://example.org"
+        }
+      ],
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-next",
+      "designState": "metamask/request-next",
+      "designLine": 374,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "approved",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "reason": "Sign in to example.org.",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-2",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-metamask"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "browser",
+          "reason": "Sign in to example.org again.",
+          "connector_id": "wallet-metamask",
+          "requesting_origin": "https://example.org"
+        }
+      ],
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "transaction-late-result",
+      "designState": "metamask/transaction-late-result",
+      "designLine": 375,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "transaction_intent",
+        "capsule_id": "browser",
+        "reason": "0.01 ETH to 0x8bC4…391a · Ethereum",
+        "account_id": "account:design",
+        "connector_id": "wallet-metamask",
+        "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+        "requesting_origin": "https://example.org",
+        "expires_at": 1800000600
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "other-ethereum-wallet",
+      "designState": "metamask/other-ethereum-wallet",
+      "designLine": 376,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-no_wallet",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "access-wrong-account",
+      "designState": "metamask/access-wrong-account",
+      "designLine": 377,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "link-busy",
+      "designState": "metamask/link-busy",
+      "designLine": 378,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-host_busy",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "request-busy",
+      "designState": "metamask/request-busy",
+      "designLine": 379,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "summary": "site-wallet-metamask",
+      "provider": "outcome-host_busy",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "extension-busy",
+      "designState": "metamask/extension-busy",
+      "designLine": 380,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-host_busy",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "extension-late-ignored",
+      "designState": "metamask/extension-late-ignored",
+      "designLine": 381,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "metamask",
+      "stage": "focus",
+      "designState": "metamask/focus",
+      "designLine": 382,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-io.metamask",
+      "safety": "state-payment-false",
+      "alternative": "extension-walletconnect-wallet-metamask"
+    },
+    {
+      "window": "unisat",
+      "stage": "ready",
+      "designState": "unisat/ready",
+      "designLine": 388,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "extension-missing",
+      "designState": "unisat/extension-missing",
+      "designLine": 389,
+      "origin": "provisional",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-no_wallet",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: UniSat packet for outcome-no_wallet"
+      ],
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "extensions-unavailable",
+      "designState": "unisat/extensions-unavailable",
+      "designLine": 390,
+      "origin": "provisional",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-extensions_unavailable",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: UniSat packet for outcome-extensions_unavailable"
+      ],
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "extension-wait",
+      "designState": "unisat/extension-wait",
+      "designLine": 391,
+      "origin": "provisional",
+      "local": {
+        "waitSeconds": 299,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "progress-waiting_signature",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: UniSat packet for progress-waiting_signature"
+      ],
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "extension-timeout",
+      "designState": "unisat/extension-timeout",
+      "designLine": 392,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "extension-cancelled",
+      "designState": "unisat/extension-cancelled",
+      "designLine": 393,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "link-wait",
+      "designState": "unisat/link-wait",
+      "designLine": 394,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 279,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "progress-waiting_signature",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: UniSat packet for progress-waiting_signature",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "connection-declined",
+      "designState": "unisat/connection-declined",
+      "designLine": 395,
+      "origin": "provisional",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-declined",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: UniSat packet for outcome-declined"
+      ],
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "link-declined",
+      "designState": "unisat/link-declined",
+      "designLine": 396,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-declined",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: UniSat packet for outcome-declined",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "link-timeout",
+      "designState": "unisat/link-timeout",
+      "designLine": 397,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "unisat",
+      "stage": "link-cancelled",
+      "designState": "unisat/link-cancelled",
+      "designLine": 398,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "unisat",
+      "stage": "link-late-ignored",
+      "designState": "unisat/link-late-ignored",
+      "designLine": 399,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "unisat",
+      "stage": "account-unavailable",
+      "designState": "unisat/account-unavailable",
+      "designLine": 400,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "unisat",
+      "stage": "network-changed",
+      "designState": "unisat/network-changed",
+      "designLine": 401,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-network-bitcoin_testnet",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "network-fractal",
+      "designState": "unisat/network-fractal",
+      "designLine": 402,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-network-fractal",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "network-unknown",
+      "designState": "unisat/network-unknown",
+      "designLine": 403,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-network-unrecognized",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "linked",
+      "designState": "unisat/linked",
+      "designLine": 404,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "unisat",
+      "stage": "request-waiting",
+      "designState": "unisat/request-waiting",
+      "designLine": 405,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-multiple",
+      "designState": "unisat/request-multiple",
+      "designLine": 406,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-2",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-unisat"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes again.",
+          "connector_id": "wallet-unisat"
+        }
+      ],
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-unsendable",
+      "designState": "unisat/request-unsendable",
+      "designLine": 407,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-expired",
+      "designState": "unisat/request-expired",
+      "designLine": 408,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-extension",
+      "designState": "unisat/request-extension",
+      "designLine": 409,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 598,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: UniSat packet for progress-waiting_signature",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000599
+      },
+      "provider": "progress-waiting_signature",
+      "safety": "state-payment-false",
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-declined",
+      "designState": "unisat/request-declined",
+      "designLine": 410,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: UniSat packet for outcome-declined",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "outcome-declined",
+      "safety": "state-payment-false",
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-timeout",
+      "designState": "unisat/request-timeout",
+      "designLine": 411,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-done",
+      "designState": "unisat/request-done",
+      "designLine": 412,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-cancelled",
+      "designState": "unisat/request-cancelled",
+      "designLine": 413,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-wallet-error",
+      "designState": "unisat/request-wallet-error",
+      "designLine": 414,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-late-ignored",
+      "designState": "unisat/request-late-ignored",
+      "designLine": 415,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "window-expired",
+      "designState": "unisat/window-expired",
+      "designLine": 416,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "link-error",
+      "designState": "unisat/link-error",
+      "designLine": 417,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-list",
+      "designState": "unisat/request-list",
+      "designLine": 418,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-2",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-unisat"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes again.",
+          "connector_id": "wallet-unisat"
+        }
+      ],
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-selected-second",
+      "designState": "unisat/request-selected-second",
+      "designLine": 419,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "waitSeconds": 599,
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-2",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-1",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-unisat"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes again.",
+          "connector_id": "wallet-unisat"
+        }
+      ],
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-next",
+      "designState": "unisat/request-next",
+      "designLine": 420,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "approved",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "otherSummaryInputs": [
+        {
+          "request_id": "design-request-2",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes.",
+          "connector_id": "wallet-unisat"
+        },
+        {
+          "request_id": "design-request-3",
+          "status": "pending",
+          "intent": "browser_personal_sign",
+          "capsule_id": "notes",
+          "reason": "Sign in to Notes again.",
+          "connector_id": "wallet-unisat"
+        }
+      ],
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-network-testnet",
+      "designState": "unisat/request-network-testnet",
+      "designLine": 421,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-network-bitcoin_testnet",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-network-fractal",
+      "designState": "unisat/request-network-fractal",
+      "designLine": 422,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-network-fractal",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-network-unknown",
+      "designState": "unisat/request-network-unknown",
+      "designLine": 423,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "state-network-unrecognized",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "link-busy",
+      "designState": "unisat/link-busy",
+      "designLine": 424,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-host_busy",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: UniSat packet for outcome-host_busy",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "request-busy",
+      "designState": "unisat/request-busy",
+      "designLine": 425,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: canonical request summary for this connector/intent/queue",
+        "needs an example from the foundation lane: UniSat packet for outcome-host_busy",
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ],
+      "summaryInput": {
+        "request_id": "design-request-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "notes",
+        "reason": "Sign in to Notes.",
+        "account_id": "account:design",
+        "connector_id": "wallet-unisat",
+        "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        "expires_at": 1800000600
+      },
+      "provider": "outcome-host_busy",
+      "safety": "state-payment-false",
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "extension-busy",
+      "designState": "unisat/extension-busy",
+      "designLine": 426,
+      "origin": "provisional",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "outcome-host_busy",
+      "safety": "state-payment-false",
+      "provisional": [
+        "needs an example from the foundation lane: UniSat packet for outcome-host_busy"
+      ],
+      "providerConnectorOverride": "wallet-unisat"
+    },
+    {
+      "window": "unisat",
+      "stage": "extension-late-ignored",
+      "designState": "unisat/extension-late-ignored",
+      "designLine": 427,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "unisat",
+      "stage": "focus",
+      "designState": "unisat/focus",
+      "designLine": 428,
+      "origin": "reducer over shared fixture",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      },
+      "provider": "state-unisat",
+      "safety": "state-payment-false"
+    },
+    {
+      "window": "panel",
+      "stage": "empty",
+      "designState": "panel/empty",
+      "designLine": 434,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "panel",
+      "stage": "empty-alt",
+      "designState": "panel/empty-alt",
+      "designLine": 435,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "panel",
+      "stage": "linked",
+      "designState": "panel/linked",
+      "designLine": 436,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "panel",
+      "stage": "linked-unisat",
+      "designState": "panel/linked-unisat",
+      "designLine": 437,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "panel",
+      "stage": "unconfigured",
+      "designState": "panel/unconfigured",
+      "designLine": 438,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "panel",
+      "stage": "linked-metamask",
+      "designState": "panel/linked-metamask",
+      "designLine": 439,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "panel",
+      "stage": "linked-unnamed",
+      "designState": "panel/linked-unnamed",
+      "designLine": 440,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "Your wallet",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "panel",
+      "stage": "empty-return",
+      "designState": "panel/empty-return",
+      "designLine": 441,
+      "origin": "window-local: produced by the window lane",
+      "local": {
+        "producer": "window-local: produced by the window lane"
+      }
+    },
+    {
+      "window": "panel",
+      "stage": "linked-return",
+      "designState": "panel/linked-return",
+      "designLine": 442,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "wallet",
+          "connection": "WalletConnect",
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "panel",
+      "stage": "linked-metamask-return",
+      "designState": "panel/linked-metamask-return",
+      "designLine": 443,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "MetaMask",
+          "mark": "metamask",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+              "networks": [
+                "Ethereum"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    },
+    {
+      "window": "panel",
+      "stage": "linked-unisat-return",
+      "designState": "panel/linked-unisat-return",
+      "designLine": 444,
+      "origin": "provisional",
+      "local": {
+        "account": {
+          "name": "UniSat",
+          "mark": "unisat",
+          "connection": null,
+          "accounts": [
+            {
+              "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+              "networks": [
+                "Bitcoin"
+              ]
+            }
+          ]
+        },
+        "producer": "window-local: produced by the window lane"
+      },
+      "provisional": [
+        "needs an example from the foundation lane: verified linked-account display metadata/address/network projection"
+      ]
+    }
+  ]
+}
