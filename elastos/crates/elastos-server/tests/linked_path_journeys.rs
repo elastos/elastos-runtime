@@ -35,7 +35,7 @@ fn linked_path_native_journeys_use_cargo_builds() {
             .lines()
             .filter(|line| line.ends_with(": test"))
             .count(),
-        6,
+        10,
         "{names}"
     );
     let status = cargo_journeys().arg("--nocapture").status().unwrap();

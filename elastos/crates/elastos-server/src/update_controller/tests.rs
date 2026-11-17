@@ -5764,6 +5764,29 @@ fn linked_path_helper_unresolvable_current_keeps_controller_off() {
     assert_eq!(decision, None);
 }
 
+fn linked_ready_test_binary(repository: &Path, profile: &OsStr) -> &'static PathBuf {
+    static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BINARY.get_or_init(|| {
+        let output = std::process::Command::new(env!("CARGO"))
+            .current_dir(repository)
+            .args(["test", "--manifest-path"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+            .args(["-p", "elastos-server", "--bin", "elastos", "--no-run", "--message-format=json", "--locked", "--offline", "--jobs", "1", "--profile"])
+            .arg(profile)
+            .env_remove("CARGO_MAKEFLAGS")
+            .output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap().lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find_map(|message| {
+                if message["reason"] == "compiler-artifact" && message["target"]["name"] == "elastos"
+                    && message["profile"]["test"].as_bool() == Some(true) {
+                    message["executable"].as_str().map(PathBuf::from)
+                } else { None }
+            }).expect("Cargo built the real ready-callback test binary")
+    })
+}
+
 /// Cargo reports the candidate native executable. Omit debug information so
 /// its signed payload fits the same Carrier content bound as a release.
 fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
@@ -5806,6 +5829,7 @@ fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
         .arg(profile)
         .args(["--", "-C", "strip=debuginfo"])
         .env_remove("CARGO_MAKEFLAGS")
+        .env("ELASTOS_LINKED_FIXTURE_READY_TEST_EXE", linked_ready_test_binary(repository, profile))
         .env("ELASTOS_LINKED_FIXTURE_VERSION", version)
         .env("ELASTOS_LINKED_FIXTURE_TEST_EXE", &harness)
         .env(
@@ -5920,11 +5944,16 @@ impl LinkedStartFixture {
     }
 
     pub(crate) async fn start(&mut self) {
+        self.start_with_choice(false).await;
+    }
+
+    async fn start_with_choice(&mut self, no_open: bool) {
         use tokio::io::AsyncReadExt;
         let mut exited =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child()).unwrap();
         let mut command = self.command(&self.alias, std::env::consts::OS);
         command.args(["home", "--browser"]);
+        if no_open { command.arg("--no-open"); }
         self.process = Some(child::OwnedChild::spawn(&mut command).unwrap());
         let accepted = tokio::time::timeout(READY_TIMEOUT, async {
             loop {
@@ -5958,7 +5987,10 @@ impl LinkedStartFixture {
     }
 
     pub(crate) async fn update(&mut self, version: &str) {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        self.update_with_outcome(version, "updated").await;
+    }
+
+    fn stage_update(&self, version: &str) {
         let binary = linked_start_binary(&self.fixture.data, version);
         let components = fs::read(self.fixture.data.join("components.json")).unwrap();
         let descriptor =
@@ -5990,6 +6022,12 @@ impl LinkedStartFixture {
             fs::write(payloads.join(cid), bytes).unwrap();
         }
         write_private(&self.data().join("linked-start-update.json"), &request).unwrap();
+    }
+
+    async fn update_with_outcome(&mut self, version: &str, phase: &str) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let previous = load_trusted_sources(self.data()).unwrap().sources[0].installed_version.clone();
+        self.stage_update(version);
         let stream = self.stream.as_mut().unwrap();
         stream.write_all(b"U").await.unwrap();
         assert_eq!(
@@ -6000,8 +6038,44 @@ impl LinkedStartFixture {
             b'U'
         );
         let source = load_trusted_sources(self.data()).unwrap().sources.remove(0);
-        assert_eq!(source.installed_version, version);
-        assert_eq!(Path::new(&source.install_path), self.fixture.binary);
+        assert_eq!(status(self.data()).unwrap().unwrap().phase, phase);
+        assert_eq!(source.installed_version, if phase == "updated" { version } else { &previous });
+        if phase == "updated" {
+            assert_eq!(Path::new(&source.install_path), self.fixture.binary);
+        }
+    }
+
+    async fn interrupt_update(&mut self, version: &str) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        self.stage_update(version);
+        let mut stream = self.stream.take().unwrap();
+        stream.write_all(b"I").await.unwrap();
+        let mut byte = [0];
+        assert_eq!(tokio::time::timeout(READY_TIMEOUT, stream.read(&mut byte)).await.unwrap().unwrap(), 0);
+        let mut process = self.process.take().unwrap();
+        tokio::time::timeout(READY_TIMEOUT, async {
+            while process.observed_exit().unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        process.stop().await.unwrap();
+        let transaction = InstallTransaction::acquire(self.data(), &self.fixture.binary).unwrap();
+        assert_eq!(transaction.restart_record().unwrap().phase, RestartPhase::CandidateReady);
+    }
+
+    fn assert_quiet_launches(&self, versions: &[&str]) {
+        let receipt: Receipt = read_private_json(&self.fixture.directory.join(RECEIPT)).unwrap();
+        assert_eq!(receipt.binary, fs::canonicalize(&self.alias).unwrap());
+        assert!(receipt.launch.args.contains(&BASE64.encode(b"--no-open")), "quiet choice lost from receipt");
+        assert_eq!(receipt.launch.sha256().unwrap(), receipt.launch_sha256);
+        let events: Vec<Value> = fs::read_to_string(self.data().join("linked-start-launches.jsonl")).unwrap()
+            .lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(events.len(), versions.len(), "{events:?}");
+        for (event, version) in events.iter().zip(versions) {
+            assert_eq!(event["version"], *version);
+            assert_eq!(event["marker"], "1", "quiet launch lost suppression: {event}");
+            assert_eq!(event["args"], json!(["home", "--browser"]));
+        }
     }
 }
 
@@ -6036,17 +6110,26 @@ async fn linked_start_controller_fixture() {
         download_meter: Default::default(),
         test_readiness: None,
     };
-    controller.start_initial().await.unwrap();
+    if InstallTransaction::has_pending_recovery(&controller.receipt.binary) {
+        controller.reconcile_pending().await.unwrap();
+        controller.complete_reconciliation().await.unwrap();
+    } else {
+        controller.start_initial().await.unwrap();
+    }
+    let initial_launch_sha256 = controller.receipt.launch.sha256().unwrap();
     let data = controller.receipt.data_dir.clone();
     let mut stream = tokio::net::UnixStream::connect(data.join("linked-start.sock"))
         .await
         .unwrap();
     stream.write_all(b"R").await.unwrap();
-    while stream.read_u8().await.unwrap() == b'U' {
+    loop {
+        let action = stream.read_u8().await.unwrap();
+        if action == b'S' { break; }
+        assert!(matches!(action, b'U' | b'I'));
         let request: UpdateRequest =
             read_private_json(&data.join("linked-start-update.json")).unwrap();
         let payloads = data.join("linked-start-payloads");
-        let items = fs::read_dir(payloads)
+        let items: std::collections::HashMap<String, Vec<u8>> = fs::read_dir(payloads)
             .unwrap()
             .map(|entry| {
                 let path = entry.unwrap().path();
@@ -6057,6 +6140,25 @@ async fn linked_start_controller_fixture() {
             })
             .collect();
         let source = installed_source(&data).unwrap();
+        if action == b'I' {
+            let items = Arc::new(items);
+            let fetch: crate::update::FetchFn = Box::new(move |cid| {
+                let bytes = items.get(&cid).cloned();
+                Box::pin(async move { bytes.context("linked interrupted-update payload missing") })
+            });
+            queue_update(&data, request.clone()).unwrap();
+            fs::rename(controller.directory.join(REQUEST), controller.directory.join(ACTIVE_REQUEST)).unwrap();
+            controller.request = Some(request.clone());
+            controller.previous_binary_sha256 = admit_for_update(&data, &controller.receipt.binary, &source, &fetch).await.unwrap();
+            controller.previous_version = source.installed_version;
+            let mut owner = RealRestartOwner {
+                controller, starts: Vec::new(), stops: 0, candidate_process: None,
+                candidate_exit: None, candidate_phase: None,
+                interrupt_after_ready: Some(RestartPhase::CandidateReady),
+            };
+            let result = crate::update::on_heap(|| crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut owner)).await;
+            panic!("linked interruption fixture must stop at CandidateReady: {result:?}");
+        }
         let (_, server, serving) =
             crate::setup::tests::carrier_cid_source(&data, &source, items).await;
         queue_update(&data, request).unwrap();
@@ -6069,7 +6171,8 @@ async fn linked_start_controller_fixture() {
         });
         assert!(keep_running, "published status: {update_status:#?}");
         let update_status = update_status.unwrap().unwrap();
-        assert_eq!(update_status.phase, "updated", "{update_status:#?}");
+        assert!(matches!(update_status.phase.as_str(), "updated" | "restored"), "{update_status:#?}");
+        assert_eq!(controller.receipt.launch.sha256().unwrap(), initial_launch_sha256, "controller lost its stored start choice");
         server.close().await;
         serving.await.unwrap();
         stream.write_all(b"U").await.unwrap();
@@ -6083,6 +6186,53 @@ async fn linked_start_controller_fixture() {
 async fn linked_start_journey_first_start_keeps_controller() {
     let mut fixture = LinkedStartFixture::new(true);
     fixture.start().await;
+    fixture.stop().await;
+}
+
+#[tokio::test]
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_quiet_first_start() {
+    let mut fixture = LinkedStartFixture::new(true);
+    fixture.start_with_choice(true).await;
+    fixture.assert_quiet_launches(&["0.7.0"]);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_quiet_update() {
+    let mut fixture = LinkedStartFixture::new(true);
+    fixture.start_with_choice(true).await;
+    fixture.update("0.7.1").await;
+    fixture.assert_quiet_launches(&["0.7.0", "0.7.1"]);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_quiet_restores_previous() {
+    let mut fixture = LinkedStartFixture::new(true);
+    fixture.start_with_choice(true).await;
+    fs::write(fixture.data().join("linked-start-candidate-fail"), b"").unwrap();
+    fixture.update_with_outcome("0.7.1", "restored").await;
+    fixture.assert_quiet_launches(&["0.7.0", "0.7.1", "0.7.0"]);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+#[ignore = "run by the Cargo linked_path_journeys integration target"]
+async fn linked_start_journey_quiet_restart_recovery() {
+    let mut fixture = LinkedStartFixture::new(true);
+    fixture.start_with_choice(true).await;
+    fixture.interrupt_update("0.7.1").await;
+    // Recovery must resolve the linked saved path as well as the linked launch.
+    let mut sources = load_trusted_sources(fixture.data()).unwrap();
+    sources.sources[0].install_path = fixture.alias.to_str().unwrap().into();
+    crate::sources::save_trusted_sources(fixture.data(), &sources).unwrap();
+    fixture.start_with_choice(true).await;
+    assert!(!InstallTransaction::has_pending_recovery(&fixture.fixture.binary));
+    assert_eq!(status(fixture.data()).unwrap().unwrap().phase, "updated");
+    fixture.assert_quiet_launches(&["0.7.0", "0.7.1", "0.7.1"]);
     fixture.stop().await;
 }
 

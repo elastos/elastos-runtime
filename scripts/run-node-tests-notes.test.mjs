@@ -136,9 +136,21 @@ for (const [name, verdict, exit] of [["assertions.mjs", "PASS", 0], ["early-exit
 test("N5 developer entrypoint and changelog explain the completion gate", () => {
   const header = readFileSync(join(scripts, "test-behaviour.sh"), "utf8").split("set -euo")[0];
   for (const text of ["Node test guard:", "first unfinished", "exit 0", "exit 1"]) assert.ok(header.includes(text), text);
-  const unreleased = readFileSync(join(scripts, "../elastos/CHANGELOG.md"), "utf8").split("## [Unreleased]")[1].split("\n## [")[0];
-  assert.match(unreleased, /### Developer detail/);
-  assert.match(unreleased, /behaviour.*(?:incomplete|missing).*test/i);
+  const changelog = readFileSync(join(scripts, "../elastos/CHANGELOG.md"), "utf8");
+  const requireEntry = text => {
+    const sections = text.split(/^## \[/m).slice(1);
+    const owners = sections.filter(section => {
+      const detail = section.split(/^### Developer detail\s*$/m)[1]?.split(/^### /m)[0];
+      return detail && /behaviour.*(?:incomplete|missing).*test/i.test(detail);
+    });
+    assert.equal(owners.length, 1, "one release section must carry the completion-gate Developer detail");
+  };
+  const cut = changelog.replace("## [Unreleased]", "## [2.0.2-rc.1]\n\n### Fixed\n\n- Candidate release.\n\n## [2.0.2]");
+  for (const text of [changelog, cut]) {
+    requireEntry(text);
+    const missing = text.replace(/^- The behaviour gate[^\n]*(?:\n {2,}[^\n]*)*/m, "");
+    assert.throws(() => requireEntry(missing), /completion-gate Developer detail/);
+  }
 });
 
 test("N6 early exit explains how a plain script should finish", () => {
