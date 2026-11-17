@@ -255,3 +255,65 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
     }finally{await g.close();}
   }finally{await browser.close();}
 });
+
+for (const kind of ['metamask','unisat']) test(`${kind}: local picker, stopped link, missing launch and no Home wallet`, {timeout:40000}, async()=>{
+  const browser=await playwright.chromium.launch({headless:true});
+  try{
+    const list=await fixture(browser,kind,{saved:true,requests:'multiple'});
+    try{
+      await list.state('request-list');
+      await list.frame.locator('[data-focus-key="select-request:approval-2"]').click();await list.state('request-multiple');
+      assert.equal(await list.frame.locator('.connection-request[data-request-id="approval-2"]').count(),1);
+      await list.action('view-requests').click();await list.state('request-list');
+      assert.equal(await list.top.evaluate(()=>testState.effects.length),0);
+    }finally{await list.close();}
+    const stopped=await fixture(browser,kind);
+    try{
+      await stopped.top.evaluate(()=>{testState.mode='pending';});
+      await stopped.action('connect').click();await stopped.state('extension-wait');
+      await stopped.action('stop-waiting').click();await stopped.state('extension-cancelled');
+      assert.doesNotMatch(await stopped.frame.locator('body').innerText(),/check again/i);
+      await stopped.action('close-window').click();await stopped.top.waitForFunction(()=>testState.closed);
+    }finally{await stopped.close();}
+    const missing=await fixture(browser,kind,{launch:false});
+    try{await missing.state('window-expired');assert.equal(await missing.frame.locator('button').count(),0);}
+    finally{await missing.close();}
+    const home=await fixture(browser,kind,{noHomeWallet:true});
+    try{await home.action('connect').click();await home.state('link-error');assert.equal(await home.top.evaluate(()=>testState.receipts.length),0);}
+    finally{await home.close();}
+    const stale=await fixture(browser,kind,{requests:true,saved:true});
+    try{
+      await stale.state('request-waiting');await stale.top.evaluate(()=>{testState.requests=[];});
+      await stale.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await stale.state('request-unavailable');
+      assert.equal(await stale.action('send-request').count(),0);
+    }finally{await stale.close();}
+  }finally{await browser.close();}
+});
+
+test('MetaMask: typed data and transaction wait, stop, failure, timeout and changed-account result', {timeout:50000}, async()=>{
+  const browser=await playwright.chromium.launch({headless:true});
+  try{
+    const typed=await fixture(browser,'metamask',{saved:true,requests:'typed'});
+    try{
+      await typed.state('request-typed-data');await typed.action('send-request').click();await typed.state('request-done');
+      assert.equal(await typed.top.evaluate(()=>testState.receipts[0].signature_type),'eip712');
+    }finally{await typed.close();}
+    for(const mode of ['approve','decline','stop','timeout']){
+      const f=await fixture(browser,'metamask',{saved:true,requests:'transaction'});
+      try{
+        await f.state('transaction-waiting');
+        await f.top.evaluate(mode=>{testState.mode=mode==='approve'||mode==='stop'||mode==='timeout'?'pending':'decline';},mode);
+        await f.action('send-request').click();
+        if(mode==='decline'){await f.state('transaction-wallet-error');continue;}
+        await f.state('transaction-extension');
+        await f.top.waitForFunction(()=>testState.pending.length>0);
+        if(mode==='timeout'){await f.top.clock.runFor(61000);await f.state('transaction-timeout');continue;}
+        if(mode==='stop'){await f.action('stop-waiting').click();await f.state('transaction-cancelled');}
+        await f.top.evaluate(value=>{emitWallet('accountsChanged',[value]);const pending=testState.pending.shift();pending.resolve(pending.result);},B);
+        await f.state('transaction-done');
+        assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
+        assert.equal(await f.frame.locator('.connection-request-account').count(),0);
+      }finally{await f.close();}
+    }
+  }finally{await browser.close();}
+});

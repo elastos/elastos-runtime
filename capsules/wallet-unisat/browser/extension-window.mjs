@@ -58,7 +58,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (kind === 'unisat' && networkEvent !== null && networkEvent !== 'livenet') return networkEvent === 'testnet' ? 'network-changed' : 'network-unknown';
     if (requests.length > 1 && !picked) return 'request-list';
     if (selected) return selected.expiresAt !== null && selected.expiresAt <= now()
-      ? 'request-expired' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
+      ? 'request-expired' : requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
     return accounts.length && linkObserved ? 'linked' : 'ready';
   }
 
@@ -81,7 +81,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       waitSeconds: remaining(), homeOrigin, alternativeAllowed: false });
     const root = renderConnection(document, view);
     for (const control of root.querySelectorAll('[data-action]')) {
-      if (!supported.has(control.dataset.action)) control.remove();
+      if (!supported.has(control.dataset.action) || control.dataset.action === 'close-window' && (!frameHomeToken || !homeOrigin || window.top === window)) control.remove();
       else if ((operation || uncertain) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action)) control.disabled = true;
     }
     // These shared recovery paragraphs point to Check access, which the base

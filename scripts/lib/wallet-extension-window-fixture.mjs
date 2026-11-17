@@ -21,7 +21,7 @@ function installProvider({ kind, address }) {
       if (method === 'eth_chainId') return s.chain;
       if (method === 'wallet_switchEthereumChain') { if (!s.added) throw {code:4902}; s.chain=params[0].chainId; return null; }
       if (method === 'wallet_addEthereumChain') { s.added=true; s.chain=params[0].chainId; return null; }
-      if (method === 'eth_sendTransaction') return '0x'+'aa'.repeat(32);
+      if (method === 'eth_sendTransaction') return ask(method,'0x'+'aa'.repeat(32));
       return ask(method, method === 'eth_requestAccounts' ? [s.address] : '0x' + 'ab'.repeat(65));
     },
     async requestAccounts() { testState.calls.push({ method: 'requestAccounts' }); return ask('requestAccounts', [testState.address]); },
@@ -38,7 +38,7 @@ function installProvider({ kind, address }) {
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   const replay = recording ? await replayInput(recording) : null;
@@ -59,7 +59,8 @@ import { handleHomeWalletConnectorEffect } from '/apps/home/home-wallet-connecto
 const kind=${JSON.stringify(kind)}, id='wallet-'+kind;
 const state=window.testState;
 state.linked=${saved};
-if(${JSON.stringify(requests)}) state.requests=[{request_id:'approval-1',status:'pending',intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',proof_type:kind==='metamask'?'siwe':'bip322_simple',capsule_id:'browser',reason:'Test signing',requesting_origin:'https://shop.example.com',connector_id:id,address:state.address,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93',expires_at:Math.floor(Date.now()/1000)+300}];
+if(${JSON.stringify(requests)}) state.requests=[{request_id:'approval-1',status:'pending',intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',proof_type:kind==='metamask'?'siwe':'bip322_simple',capsule_id:'browser',reason:'Test signing',requesting_origin:'https://shop.example.com',connector_id:id,address:state.address,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93',expires_at:Math.floor(Date.now()/1000)+300}];
+if(${JSON.stringify(requests)}==='multiple') state.requests.push({...state.requests[0],request_id:'approval-2',reason:'Second test signing'});
 const lifetime={retired:false,generation:'document-1'}, walletEffectState={inFlight:false,requestIds:new Set()};
 addEventListener('message',event=>{
  if(event.source!==document.querySelector('iframe')?.contentWindow) return;
@@ -70,15 +71,16 @@ addEventListener('message',event=>{
 });
 window.runtimeFetch=async(url,init)=>{
  state.runtimeCalls||=[];state.runtimeCalls.push({url,body:JSON.parse(init.body)});
+ if (${noHomeWallet} && url.includes('/link/challenge')) throw Error('Create a Home wallet first.');
  const body=JSON.parse(init.body), schema='elastos.home.wallet-connector.effect.result/v1';
  const action=url.includes('/link/challenge')?(kind==='metamask'?'evm_link_challenge':'bitcoin_link_challenge'):url.includes('/link/verify')?(kind==='metamask'?'evm_link_complete':'bitcoin_link_complete'):url.endsWith('/handoff')?'approval_handoff':'approval_complete';
  if(url.includes('/link/challenge'))return {schema,action,connector_id:id,challenge:{schema:kind==='metamask'?'elastos.auth.challenge/v1':'elastos.wallet.bitcoin_challenge/v1',challenge_id:'fixture-challenge',message:'Isolated account proof',expires_at:Math.floor(Date.now()/1000)+300,resources:[],...(kind==='unisat'?{network:'bitcoin',address:state.address,proof_type:'bip322_simple'}:{})}};
  if(url.includes('/link/verify')){state.linked=true;state.receipts.push(body);return {schema,action,connector_id:id,status:'linked'};}
  if(url.endsWith('/handoff')&&${JSON.stringify(requests)}==='transaction') return {schema,action,connector_id:id,request_id:'approval-1',evm_chains:[{chainId:'0x14',chainName:'Elastos Smart Chain',nativeCurrency:{name:'ELA',symbol:'ELA',decimals:18},rpcUrls:['https://api.elastos.io/esc']}],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:'approval-1',intent:'transaction_intent',payload_hash:'0x'+'ab'.repeat(32),signer:state.address,status:'awaiting_wallet_transaction',transaction:{from:state.address,to:'0x'+'2'.repeat(40),value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x0',chainId:'0x14'}}};
- if(url.endsWith('/handoff'))return {schema,action,connector_id:id,request_id:'approval-1',evm_chains:[],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:'approval-1',intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',payload_hash:'0x'+'ab'.repeat(32),signer:state.address,status:'awaiting_wallet_signature',message:'Isolated app request',signature_type:kind==='metamask'?'personal_sign':'bip322_simple'}};
+ if(url.endsWith('/handoff'))return {schema,action,connector_id:id,request_id:'approval-1',evm_chains:[],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:'approval-1',intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',payload_hash:'0x'+'ab'.repeat(32),signer:state.address,status:'awaiting_wallet_signature',message:'Isolated app request',signature_type:kind==='metamask'?'personal_sign':'bip322_simple'}};
  state.receipts.push(body);state.requests=[];return {schema,action,connector_id:id,request_id:'approval-1',status:'completed'};
 };
-const frame=document.createElement('iframe');frame.style='width:480px;height:560px;border:0;display:block';frame.sandbox='allow-scripts';frame.src='/apps/'+id+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-token';document.body.append(frame);
+const frame=document.createElement('iframe');frame.style='width:480px;height:560px;border:0;display:block';frame.sandbox='allow-scripts';frame.src='/apps/'+id+'/?home_origin='+encodeURIComponent(location.origin)+${JSON.stringify(launch ? '#home_token=fixture-token' : '')};document.body.append(frame);
 </script>` });
     if (url.pathname.endsWith('/shell-core.js')) return route.fulfill({ contentType: 'text/javascript', body: 'export const fetchJson=(...args)=>window.runtimeFetch(...args);' });
     if (url.pathname.endsWith('/home-clipboard-client.js')) return route.fulfill({ contentType: 'text/javascript', body: `export const createHomeClipboardClient=()=>({start(){},teardown(){},async writeText(value){window.top.postMessage({type:'fixture:copy',value},'http://extensions.test');}});` });
