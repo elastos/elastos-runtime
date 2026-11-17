@@ -275,7 +275,9 @@ for navigation but remains excluded from the injected-provider effect set.
 
 **After this work.** Renewal under the existing frame-authority renewal
 protocol keeps document nonce, generation, used IDs and in-flight effect. Home uses the context's current token on each Runtime call;
-a closure cannot keep using the old token. Renewal must preserve principal,
+a live-frame closure cannot keep using the old token. The transaction-only
+continuation after frame retirement follows the retained-binding exception in
+[N2 waiting](#n2-waiting-settlement-and-memory). Renewal must preserve principal,
 session, proof, grant and actor; a change is retirement, not renewal. An expired
 current launch retires registration and fences effects/events. Renewal after
 expiry starts a new registration and never resumes an old effect.
@@ -784,7 +786,7 @@ supply a test bridge.
 | Status | Export | Promise |
 | --- | --- | --- |
 | After this work | installHomeWalletConnectorHooks(hooks) | Exactly onMessage, onFrameLoad, onRetire, onRenew, all functions; a second installation fails. Callbacks are synchronous. onMessage returns Boolean claimed; lifecycle callbacks return void. |
-| After this work | readHomeWalletConnectorAuthority(frameHandle, loadEpoch) | Returns null for a removed/retired/expired frame or a different load epoch. Otherwise returns exactly connectorId, connectorToken, parentOrigin, expiresAt, authorityKey. Every Runtime call reads this afresh. authorityKey is an opaque page-local identity retained only by same-authority renewal; it is not frame-provided proof or wire data. |
+| After this work | readHomeWalletConnectorAuthority(frameHandle, loadEpoch) | Returns null for a removed/retired/expired frame or a different load epoch. Otherwise returns exactly connectorId, connectorToken, parentOrigin, expiresAt, authorityKey. Every live-frame Runtime call reads this afresh; a transaction continuation after frame retirement follows N2's retained binding instead. authorityKey is an opaque page-local identity retained only by same-authority renewal; it is not frame-provided proof or wire data. |
 | After this work | postHomeWalletConnectorMessage(frameHandle, loadEpoch, message) | Returns Boolean delivered. Sends only N2 ready/result/state to the bound current WindowProxy using the opaque target origin, after rechecking epoch, source, current authority and retirement. The extension validates current nonce/generation and the closed message before calling it. Failed delivery has no fallback recipient. |
 
 **After this work.** This bridge covers only wallet-metamask, wallet-unisat and
@@ -806,9 +808,11 @@ and GUI frame record. The callback arguments and order are exact:
 | After this work | onRetire(frameHandle, loadEpoch, reason) | Home calls once before removing the context. Reason is frame_removed, launch_expired, authority_changed, sign_out, shell_replaced or page_unload. Actual expiry has a timer and is also checked before dispatch/read/post. The extension fences effects/registrations synchronously and keeps only N2's permitted busy/transaction continuation. |
 
 **After this work.** During onRetire only, the posting function permits one
-terminal result with outcome retired and empty snapshot to the original
-still-loaded document, even when its authority just expired; it permits no
-facts, ready, progress or state in that exception. Removed/reloaded documents
+terminal result with outcome retired and an empty failure-placeholder snapshot
+to the original still-loaded document, even when its authority just expired.
+That placeholder uses null provider/account/network/membership/networkIssue,
+empty alternatives, unknown availability/access and busy false; clients ignore
+it as a fact source. This exception permits no ready, progress or state. Removed/reloaded documents
 receive nothing. After the callback it refuses every post for that context.
 A new hello nonce in the same load epoch is retired inside the extension host
 before a replacement generation is issued; its old continuations cannot post.
