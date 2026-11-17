@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { messageDecision, queryValid, identityDecision, summarySiteDecision, wireKeys, wireTypes, nestedKeys,
-  closeValid, handoffValid, settlementValid, selectedResultDecision } from './wallet-extension-test/message-contract.mjs';
+  closeValid, handoffValid, settlementValid, selectedResultDecision, runtimeKeys } from './wallet-extension-test/message-contract.mjs';
 
 const fixture = JSON.parse(await readFile(new URL('./fixtures/wallet-connector-v2-messages.json', import.meta.url), 'utf8'));
 test('n2_v2_message_fixtures_shared: pinned text and every exact-key example', async () => {
@@ -59,6 +59,31 @@ test('stage, dispatch and outcome coverage uses the same packets', () => {
   for (const outcome of fixture.outcomes) assert.ok(fixture.messages.some((x) => x.valid && x.message.outcome === outcome), outcome);
   for (const dispatch of fixture.dispatch) assert.ok(fixture.messages.some((x) => x.valid && x.message.dispatch === dispatch), dispatch);
   assert.equal(fixture.messages.find((x) => x.message.outcome === 'extensions_unavailable').producible, false);
+});
+test('N-d handoff and settlement exact keys come from the contracts and preserved source', async () => {
+  const host = await readFile(new URL('../docs/HOME_SHELL_HOST_CONTRACT.md', import.meta.url), 'utf8');
+  const wallet = await readFile(new URL('../docs/WALLET_PROVIDER.md', import.meta.url), 'utf8');
+  function keysBetween(text, start, end) {
+    const begin = text.indexOf(start); assert.ok(begin >= 0, start);
+    const stop = text.indexOf(end, begin + start.length); assert.ok(stop > begin, end);
+    return text.slice(begin + start.length, stop).replace(/\([^)]*\)/g, '')
+      .replace(/action\s+approval_call_settlement/, 'action').replace(/\band\b/g, ',').replace(/[`\s]/g, '').split(',');
+  }
+  for (const [kind, text, start, end] of [
+    ['handoff', host, 'Home pages: exactly ', ', with the same'],
+    ['settlementBody', host, 'Its exact body is ', '; schema is '],
+    ['settlementResult', host, 'Success has exactly ', '.\nnot_approved'],
+    ['settlementOperation', wallet, 'with exactly ', ' as operation data.'],
+  ]) assert.deepEqual([...runtimeKeys[kind]].sort(), keysBetween(text, start, end).sort(), kind);
+  assert.deepEqual([...nestedKeys.settled].sort(), keysBetween(host, 'settled keys remain ', '. result is ').sort());
+  // The contract preserves nested typed keys; read those declarations from the complete pinned old module.
+  const source = await readFile(new URL(`../${fixture.oldHomeSource.fixturePath}`, import.meta.url), 'utf8');
+  const handoff = source.slice(source.indexOf('function requireHandoffResponse('), source.indexOf('function validTransaction('));
+  const literals = (text) => [...text.matchAll(/"([A-Za-z_]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(runtimeKeys.handoffCommon, literals(handoff.match(/const commonKeys = \[([\s\S]*?)\];/)[1]));
+  const variants = [...handoff.matchAll(/\[\.\.\.commonKeys,([\s\S]*?)\]/g)].map((m) => literals(m[1]));
+  assert.deepEqual([runtimeKeys.handoffTransaction, runtimeKeys.handoffSignature], variants);
+  assert.deepEqual(runtimeKeys.transaction, literals(source.slice(source.indexOf('function validTransaction(')).match(/const keys = \[([^\]]+)\]/)[1]));
 });
 test('n1 query rows include routes, selectors and near misses', () => {
   for (const row of fixture.n1Queries) assert.equal(queryValid(row), row.valid, row.id);

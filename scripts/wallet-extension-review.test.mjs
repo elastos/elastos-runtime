@@ -4,12 +4,13 @@ import { readFile, writeFile, cp, mkdtemp, rm, mkdir, lstat, realpath } from 'no
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { installScriptedExtension, replayInput } from './wallet-extension-test/index.mjs';
 import { finalCall, validateScenarios } from './wallet-extension-test/recording-source.mjs';
 import { importRecordings } from './wallet-extension-test/import-recordings.mjs';
 
 const fixtureUrl = new URL('./fixtures/wallet-extension-replay.json', import.meta.url);
-for (const mutation of ['error-code', 'pending-answer', 'swapped-errors', 'decline-approval', 'whitespace']) {
+for (const mutation of ['error-code', 'pending-answer', 'swapped-errors', 'decline-approval', 'whitespace', 'chain-and-resealed-pin']) {
   test(`F1 default run rejects file mutation: ${mutation}`, async (t) => {
     const scratch = await mkdtemp(join(await realpath(tmpdir()), 'wallet-review-'));
     const identity = await lstat(scratch);
@@ -21,6 +22,7 @@ for (const mutation of ['error-code', 'pending-answer', 'swapped-errors', 'decli
       const get = (id) => finalCall(fixture.cases.find((c) => c.id === id));
       if (mutation === 'error-code') get('MM-4-second-connect').error.code = 4001;
       if (mutation === 'pending-answer') Object.assign(get('R2-DISABLED-old-mm-request'), { state: 'fulfilled', value: [], elapsed_ms: 300 });
+      if (mutation === 'chain-and-resealed-pin') get('MM-8-preflight-chain').value = '0xdeadbeef';
       if (mutation === 'swapped-errors') {
         const a = get('MM-2-reject'), b = get('MM-5-sign-reject');
         [a.error, b.error] = [b.error, a.error];
@@ -30,12 +32,19 @@ for (const mutation of ['error-code', 'pending-answer', 'swapped-errors', 'decli
         await writeFile(path, (await readFile(path, 'utf8')).replace("call('MM-2-reject', 'declines')", "call('MM-2-ignore', 'declines')"));
       }
       await writeFile(join(scratch, 'scripts/fixtures/wallet-extension-replay.json'), `${JSON.stringify(fixture, null, 2)}\n${mutation === 'whitespace' ? '\n' : ''}`);
+      if (mutation === 'chain-and-resealed-pin') {
+        const path = join(scratch, 'scripts/wallet-extension-test/recording-pin.json');
+        const pin = JSON.parse(await readFile(path, 'utf8'));
+        pin.fixtureSha256 = createHash('sha256').update(await readFile(join(scratch, 'scripts/fixtures/wallet-extension-replay.json'))).digest('hex');
+        await writeFile(path, `${JSON.stringify(pin, null, 2)}\n`);
+      }
       const env = { ...process.env }; delete env.WALLET_EXTENSION_RAW; delete env.NODE_TEST_CONTEXT;
       const run = spawnSync(process.execPath, ['--test', 'scripts/wallet-extension-replay.test.mjs'], { cwd: scratch, env, encoding: 'utf8', timeout: 30000 });
       assert.equal(run.error, undefined);
       assert.match(run.stdout + run.stderr, /recording parity:/, 'Child must execute the default tests');
       assert.equal(run.status, 1, `${mutation} escaped the default run`);
-      const expected = mutation === 'decline-approval' ? /Scenario mapping integrity failure/ : /Replay fixture integrity failure/;
+      const expected = mutation === 'chain-and-resealed-pin' ? /Independent recording pin integrity failure/
+        : mutation === 'decline-approval' ? /Scenario mapping integrity failure/ : /Replay fixture integrity failure/;
       assert.match(run.stdout + run.stderr, expected, 'Independent pin must detect the mutation');
       t.diagnostic(`${mutation}: mutated default run exits ${run.status}; independent pin rejects it`);
     } finally {
@@ -123,13 +132,14 @@ for (const mutation of ['extra', 'missing', 'wrong-method-type']) {
 test('N9 every scenario action is checked against its raw outcome and selected event', async () => {
   const { fixture } = await replayInput('unisat-switch-account');
   const { scenarios } = await import('./wallet-extension-test/scenarios.mjs');
-  validateScenarios(fixture, scenarios);
+  const { actions } = JSON.parse(await readFile(new URL('./wallet-extension-test/recording-pin.json', import.meta.url)));
+  validateScenarios(fixture, scenarios, actions);
   const wrong = structuredClone(scenarios);
   wrong['unisat-switch-account'].events[0].indices = [7];
-  assert.throws(() => validateScenarios(fixture, wrong), /action event differs/);
+  assert.throws(() => validateScenarios(fixture, wrong, actions), /action event differs/);
   const approval = structuredClone(scenarios);
   approval['metamask-connect-declined'].calls[0].id = 'MM-2-ignore';
-  assert.throws(() => validateScenarios(fixture, approval), /decline\/close must reject/);
+  assert.throws(() => validateScenarios(fixture, approval, actions), /decline\/close must reject/);
 });
 
 test('N1 legacy events reach window.ethereum and retain their recorded payload', async () => {

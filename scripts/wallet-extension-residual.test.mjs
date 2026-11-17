@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { installScriptedExtension, replayInput } from './wallet-extension-test/index.mjs';
+import { readFile } from 'node:fs/promises';
+import { validateScenarios } from './wallet-extension-test/recording-source.mjs';
+import { scenarios } from './wallet-extension-test/scenarios.mjs';
+import { messageDecision } from './wallet-extension-test/message-contract.mjs';
 
 async function setup(scenario, id) {
   const input = await replayInput(scenario);
@@ -76,4 +80,28 @@ test('F3 residual: replacing an unknown getter with undefined fails the surface 
   Object.defineProperty(provider, '_request', { value: undefined });
   assert.throws(() => replay.assertNoViolations(), /descriptors differ/);
   replay.dispose();
+});
+
+for (const mutation of ['approval-value', 'approval-phase', 'unlock-phase']) {
+  test(`N-c: recorded action evidence rejects ${mutation}`, async () => {
+    const { fixture } = await replayInput('metamask-connect-late');
+    const pin = JSON.parse(await readFile(new URL('./wallet-extension-test/recording-pin.json', import.meta.url)));
+    const entry = fixture.cases.find((c) => c.id === (mutation === 'unlock-phase' ? 'US-12-locked-sign-repeat' : 'MM-2-ignore'));
+    if (mutation === 'approval-value') entry.snapshots.at(-1).call.value = [];
+    if (mutation === 'approval-phase') entry.snapshots.at(-1).phase = 'not approved';
+    if (mutation === 'unlock-phase') entry.snapshots.at(-1).phase = 'unlock unavailable; no unlock occurred';
+    assert.throws(() => validateScenarios(fixture, scenarios, pin.actions), /recorded action evidence/);
+  });
+}
+
+test('N-f: UUID format follows the version-neutral contract', async () => {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/wallet-connector-v2-messages.json', import.meta.url)));
+  for (const type of ['home:wallet-connector-hello', 'home:open-target-result']) {
+    const message = structuredClone(fixture.messages.find((row) => row.valid && row.message.type === type).message);
+    message.documentNonce = '01890f18-c312-7e26-8d6c-111111111111';
+    if (type === 'home:open-target-result') message.requestId = message.documentNonce;
+    assert.equal(messageDecision(message), 'accept');
+    message.documentNonce = 'not-a-uuid';
+    assert.notEqual(messageDecision(message), 'accept');
+  }
 });

@@ -140,6 +140,21 @@ importer with the raw check, then review both diffs. The default run checks the
 pin even when the private raw file is absent. Raw capture changes require a
 reviewed source-digest update by the integrator.
 
+A change to `recording-pin.json` must be reviewed against a passing private raw
+run. Its digest also has an independent anchor in the replay test source; a
+fixture edit plus a hand-updated fixture digest therefore fails the default
+run. Update that source anchor deliberately after the raw comparison and diff
+review. The importer takes raw approval from `approvedRawSha256` in
+`recording-source.mjs`, rather than from the editable pin file.
+Approval/unlock evidence pins bind each case's recorded values, outcomes,
+exact phases (including recorded absence) and action timestamps. A word such
+as "unlock" in unrelated text cannot satisfy that check.
+
+The packet checker reads the handoff/settlement key declarations from the
+pinned contracts in its conformance test. Preserved nested handoff declarations
+also come from the complete old Home module. UUID validation follows the
+contract's version-neutral syntax; producer randomness is a separate property.
+
 ## Recording limits and lane gates
 
 Configured Brave Wallet discovery and silent reads have no recording. This
