@@ -1,3 +1,4 @@
+    const WALLET_REQUEST_UNAVAILABLE = "This request is unavailable. Return to the app and ask for a new request.";
     const INBOX_SAFETY_REFRESH_MS = 5 * 60 * 1000;
     const launchParams = new URLSearchParams(window.location.search);
     const homeParentOrigin = launchParams.get("home_origin") || "";
@@ -461,7 +462,8 @@
         state.filter === "review" && state.entries.length !== 0
           ? "No requests need review"
           : "No requests";
-      setStatus(pendingCount === 0 ? "" : `${pendingCount} pending.`);
+      setStatus(requestedSelectionMissing && state.requestedSelectionId.startsWith("wallet-approval-request:")
+        ? WALLET_REQUEST_UNAVAILABLE : pendingCount === 0 ? "" : `${pendingCount} pending.`);
       notifyRailChrome();
     }
 
@@ -686,7 +688,8 @@
         const placeholder = document.createElement("div");
         placeholder.className = "entry-detail-placeholder";
         placeholder.textContent = requestedSelectionMissing
-          ? "That request is no longer available. Select another request."
+          ? state.requestedSelectionId.startsWith("wallet-approval-request:")
+            ? WALLET_REQUEST_UNAVAILABLE : "That request is no longer available. Select another request."
           : "Select a request";
         elements.entryDetail.appendChild(placeholder);
         return;

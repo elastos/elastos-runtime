@@ -176,13 +176,23 @@ test("n5_cleanup_blocks_allow_until_complete: Inbox cases", async t => {
   assert.equal(r.calls.filter(c => c.input?.action === "request").length, 0);
 });
 
-test("n4_pending_requests_current_session_only: stale Wallet card and count", async t => {
+test("n4_pending_requests_current_session_only: stale cards and counts", async t => {
+  await t.test("Wallet", async t => {
   const r = await runtimeView(t, "wallet", { approvals: [], requestId: "request:previous-session" });
   await r.frame.locator("#wallet-status").filter({ hasText: "This request is unavailable. Return to the app and ask for a new request." }).waitFor();
   assert.equal(await r.frame.locator(".wallet-request").count(), 0);
   assert.equal(await r.frame.locator("#wallet-approvals-badge").isVisible(), false);
   assert.equal(r.calls.filter(c => c.method === "POST" && /approve|handoff|complete/.test(c.path)).length, 0);
   await r.capture("wallet-request-unavailable-light-window.png");
+  });
+  await t.test("Inbox", async t => {
+    const r = await runtimeView(t, "inbox", { entries:[], notificationId:"wallet-approval-request:previous-session" });
+    await r.frame.locator("#status-text").filter({ hasText:"This request is unavailable. Return to the app and ask for a new request." }).waitFor();
+    assert.equal(await r.frame.locator("#pending-count").textContent(), "0");
+    assert.equal(await r.frame.locator("#entry-detail button").count(), 0);
+    assert.equal(r.calls.filter(c => c.method === "POST" && /approve|handoff|complete/.test(c.path)).length, 0);
+    await r.capture("inbox-request-unavailable-light-window.png");
+  });
 });
 
 test("n3_external_inbox_review_action: presentation before navigation review", async t => {
