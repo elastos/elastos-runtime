@@ -8,6 +8,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Fixed
 
+- Home and apps can enter full screen in Safari and the desktop app.
 - Apps no longer open blank in Safari and other WebKit browsers.
 
 ## [2.0.1] - 2026-11-09

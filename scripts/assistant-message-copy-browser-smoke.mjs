@@ -134,7 +134,7 @@ const server = createServer(async (req, res) => {
       // Home GUI: hosts the Assistant frame and raises its room once ready.
       const homeOrigin = url.searchParams.get("home_origin");
       send(200, "text/html", `<!doctype html><style>html,body,iframe{width:100%;height:100%;margin:0;border:0}</style>
-        <iframe title="Assistant" sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts" allow="autoplay; fullscreen"
+        <iframe title="Assistant" sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts" allow="autoplay; fullscreen *"
           src="/apps/assistant/?home_origin=${encodeURIComponent(homeOrigin)}#home_token=${homeToken}"></iframe>
         <script>addEventListener('message',event=>{if(event.data?.type==='home-agent:ready'){
           event.source.postMessage({type:'home-agent:open'},'*');
