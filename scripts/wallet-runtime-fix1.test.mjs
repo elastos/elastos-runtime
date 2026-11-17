@@ -61,7 +61,7 @@ test("fix1 JB14 an older Inbox read cannot replace a newer permission decision",
 
 test("fix1 Wallet keeps focus and scroll in Send during a balance refresh and clears the acknowledgement on leaving it", async t => {
   const managed={account_id:"managed",chain_namespace:"eip155:20",address:"0x3333333333333333333333333333333333333333",proof_type:"managed_evm",label:"Travel"};
-  const r=await runtimeView(t,"wallet",{approvals:[request()],accounts:[managed],balance:true});
+  const r=await runtimeView(t,"wallet",{approvals:[request()],accounts:[managed,{account_id:request().account_id,chain_namespace:"eip155:20",address:request().address,proof_type:"siwe",connector_id:"wallet-metamask"}],balance:true});
   await r.frame.getByRole("button",{name:"Reject",exact:true}).click();
   await r.frame.locator('[role="status"]').filter({hasText:"Request rejected."}).waitFor();
   await r.frame.getByRole("button",{name:/Send/}).first().click();

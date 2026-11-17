@@ -497,15 +497,7 @@ async fn n5_inbox_action_by_kind_and_409_routes() {
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
-    let context = runtime_wallet_authority_for_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.inbox)
-        .home_launch_context();
-    let other_launch = issue_home_projection_launch_token_with_context(
-        f.data.path(),
-        INBOX_CAPSULE_ID,
-        INBOX_CAPSULE_ID,
-        &context,
-    )
-    .unwrap();
+    let other_launch = app_token_for_authority(f.data.path(), INBOX_CAPSULE_ID, &passkey_authority(f.data.path()));
     let foreign_proof = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(
         f.data.path(),
         &other_launch,
