@@ -269,3 +269,40 @@ async fn n7_browser_site_projection_all_surfaces_transactions() {
         }
     }
 }
+
+#[tokio::test]
+async fn n4_pending_requests_current_session_only_existing_routes() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = passkey_authority(dir.path());
+    let wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &owner);
+    let inbox = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &owner);
+    let other_wallet = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &owner);
+    let other = runtime_wallet_authority_for_app_token(dir.path(), WALLET_CAPSULE_ID, &other_wallet);
+    assert_ne!(other.verified_context().session_id(), owner.session_id);
+    let other_inbox = issue_home_projection_launch_token_with_context(
+        dir.path(), INBOX_CAPSULE_ID, INBOX_CAPSULE_ID, &other.home_launch_context().context,
+    ).unwrap();
+    let record = json!({"schema":"elastos.wallet.approval_request/v1", "request_id":"request:session-fixture", "status":"pending",
+        "intent":"publish_envelope", "requested_by_actor":"documents", "principal_id":owner.principal_id, "session_id":owner.session_id,
+        "account_id":"account:session-fixture", "chain_namespace":"eip155:20", "address":"0xabc", "proof_type":"siwe", "connector_id":"wallet-metamask",
+        "resource":"elastos://content/publish", "reason":"Publish document revision", "created_at":now_ts(), "expires_at":now_ts()+600});
+    let provider = MockWalletProvider {
+        challenges: TokioMutex::default(), bitcoin_challenges: TokioMutex::default(), accounts: TokioMutex::default(),
+        approvals: TokioMutex::new(vec![record.clone()]), defaults: TokioMutex::default(),
+    };
+    let (state, recorder) = wallet_test_state_with_recording_provider(dir.path(), provider).await;
+    let app = gateway_router(state);
+    let own = read_private(&app, &wallet, "/api/apps/wallet/wallet/summary").await;
+    assert_eq!(own["wallet_approvals"]["pending_count"], 1);
+    let own = read_private(&app, &inbox, "/api/apps/inbox/summary").await;
+    assert_eq!(own["notifications"]["entries"].as_array().unwrap().iter().filter(|e| e["kind"] == "wallet_approval_request").count(), 1);
+    let foreign = read_private(&app, &other_wallet, "/api/apps/wallet/wallet/summary").await;
+    assert_eq!(foreign["wallet_approvals"]["approval_requests"], json!([]), "the fixture must enforce the real provider session rule");
+    assert_eq!(foreign["wallet_approvals"]["pending_count"], 0);
+    let foreign = read_private(&app, &other_inbox, "/api/apps/inbox/summary").await;
+    assert!(!foreign["notifications"]["entries"].as_array().unwrap().iter().any(|e| e["kind"] == "wallet_approval_request"));
+    assert_eq!(recorder.provider.approvals.lock().await[0], record);
+    recorder.provider.approvals.lock().await[0].as_object_mut().unwrap().remove("session_id");
+    let legacy = read_private(&app, &wallet, "/api/apps/wallet/wallet/summary").await;
+    assert_eq!(legacy["wallet_approvals"]["approval_requests"], json!([]), "an unbound pending request stays hidden");
+}
