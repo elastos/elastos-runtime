@@ -85,10 +85,10 @@ with the same Home data directory. Wait for `runtime.running` to be `true`,
 `runtime.kind` to be `gateway`, and `runtime.version` to contain the expected
 release version; then wait for `http://localhost:8090/home/` to respond. The
 probe writes JSON to stdout and starts no Home. `elastos home --status` gives a
-human-readable probe. Startup notices use stderr: a source Home prints
-`Home: <url>` and the terminal-lifetime notice; an installed Home's controller
-records child output in its private runtime log. Apps should use the probe
-instead of parsing startup output.
+human-readable probe. A source Home prints `Home: <url>` and the terminal-lifetime
+notice to stderr. An installed controller prints those notices to stdout after
+its readiness check and records child output in its private runtime log. Apps
+should use the probe instead of parsing startup output.
 
 So that `elastos` is found in new terminals and after a restart, the installer
 adds one line ending in `# Added by the ElastOS installer` to your login profile
