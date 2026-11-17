@@ -10,3 +10,4 @@
 ffmpeg ffmpeg
 ffprobe ffmpeg
 turnserver coturn
+ps procps

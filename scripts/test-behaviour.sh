@@ -4,6 +4,15 @@
 #   test-behaviour.sh inputs  installs the pinned Browser test inputs (network)
 #   test-behaviour.sh         runs the suite offline; the spec reporter ends
 #                             with the failing tests by name
+# The completion supervisor prints "Node test guard:" messages for missing
+# results, early exits and timeouts, with the file and first unfinished test.
+# Its closing PASS means exit 0: every file completed and every test reported.
+# Its closing FAIL means exit 1: a test failed or completion was incomplete.
+# Plain smokes finish naturally; use process.exitCode instead of process.exit.
+# Each file also has a fixed 20-minute upper limit, unaffected by output.
+# Slowest measured file: release-publish.test.mjs, 577.5s of sequential tests.
+# The full Mac run's 628.1s bounds its elapsed time; 1200s gives >=91% headroom.
+# Both platforms use this cap; short --timeout fixture budgets scale it down.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,4 +47,4 @@ if ! installed "$browser" playwright 1.60.0 || ! installed "$core" playwright-co
 fi
 export NODE_PATH="${browser}/node_modules"
 export BROWSER_OPERATOR_PLAYWRIGHT_CORE="${core}/node_modules/playwright-core"
-exec node --test --test-force-exit --test-timeout=60000 --test-reporter=spec elastos/esp/projections.test.mjs scripts/*.test.mjs scripts/build/*.test.mjs scripts/lib/*.test.mjs capsules/*/browser/*.test.mjs capsules/*/browser/src/*.test.mjs scripts/home-fixture-contracts-smoke.mjs scripts/documents-save-conflict-smoke.mjs scripts/gba-save-conflict-smoke.mjs scripts/assistant-shell-smoke.mjs scripts/model-preparation-failure-smoke.mjs scripts/model-management-browser-smoke.mjs scripts/assistant-message-copy-browser-smoke.mjs scripts/assistant-reply-layout-browser-smoke.mjs scripts/assistant-follow-input-browser-smoke.mjs scripts/home-update-reload-browser-smoke.mjs scripts/browser-text-select-smoke.mjs
+exec node scripts/run-node-tests.mjs elastos/esp/projections.test.mjs scripts/*.test.mjs scripts/build/*.test.mjs scripts/lib/*.test.mjs capsules/*/browser/*.test.mjs capsules/*/browser/src/*.test.mjs scripts/home-fixture-contracts-smoke.mjs scripts/documents-save-conflict-smoke.mjs scripts/gba-save-conflict-smoke.mjs scripts/assistant-shell-smoke.mjs scripts/model-preparation-failure-smoke.mjs scripts/model-management-browser-smoke.mjs scripts/assistant-message-copy-browser-smoke.mjs scripts/assistant-reply-layout-browser-smoke.mjs scripts/assistant-follow-input-browser-smoke.mjs scripts/home-update-reload-browser-smoke.mjs scripts/browser-text-select-smoke.mjs

@@ -18,6 +18,6 @@
     "./trust": "./trust.ts"
   },
   "scripts": {
-    "test": "node --experimental-strip-types --check esp_v0.ts && node --experimental-strip-types --check authority.ts && node --experimental-strip-types --check index.ts && node --experimental-strip-types check-esp-v0.mjs && node --experimental-strip-types --test projections.test.mjs"
+    "test": "node --experimental-strip-types --check esp_v0.ts && node --experimental-strip-types --check authority.ts && node --experimental-strip-types --check index.ts && node --experimental-strip-types check-esp-v0.mjs && node ../../scripts/run-node-tests.mjs projections.test.mjs"
   }
 }

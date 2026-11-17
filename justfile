@@ -171,22 +171,22 @@ verify:
     ./scripts/vendor-ui-tokens.sh --check
     node scripts/carrier-dependency-generation-check.mjs
     just product-ui-source
-    node --test scripts/browser-window-close-handshake.test.mjs
-    node --test scripts/home-assistant-mark.test.mjs
-    node --test scripts/assistant-markdown.test.mjs
-    node --test scripts/home-two-runtime-acceptance.test.mjs
-    node --test scripts/system-hosted-save.test.mjs
-    node --test scripts/home-form-factor.test.mjs
-    node --test scripts/home-keyboard-inset.test.mjs
-    node --test scripts/home-capsule-layout.test.mjs
-    node --test scripts/home-phone-dock.test.mjs
-    node --test scripts/home-phone-stage.test.mjs
-    node --test scripts/home-sheet-handle.test.mjs
-    node --test scripts/home-link-status.test.mjs
-    node --test scripts/home-touch-long-press.test.mjs
-    node --test scripts/home-fullscreen-toggle.test.mjs
-    node --test scripts/home-phone-home.test.mjs
-    node --test scripts/chat-room-enter.test.mjs
+    node scripts/run-node-tests.mjs scripts/browser-window-close-handshake.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-assistant-mark.test.mjs
+    node scripts/run-node-tests.mjs scripts/assistant-markdown.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-two-runtime-acceptance.test.mjs
+    node scripts/run-node-tests.mjs scripts/system-hosted-save.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-form-factor.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-keyboard-inset.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-capsule-layout.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-phone-dock.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-phone-stage.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-sheet-handle.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-link-status.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-touch-long-press.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-fullscreen-toggle.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-phone-home.test.mjs
+    node scripts/run-node-tests.mjs scripts/chat-room-enter.test.mjs
     python3 scripts/source-home-capsule-inventory-smoke.py
     ./scripts/command-smoke.sh
     ./scripts/browser-local-exit-orphan-cleanup-smoke.sh
@@ -212,10 +212,10 @@ product-ui-source:
     node scripts/inbox-product-behavior-smoke.mjs
     node scripts/archive-product-behavior-smoke.mjs
     node scripts/marketplace-product-behavior-smoke.mjs
-    node --test scripts/documents-markdown.test.mjs
+    node scripts/run-node-tests.mjs scripts/documents-markdown.test.mjs
     node scripts/library-product-behavior-smoke.mjs
     node scripts/chat-room-product-behavior-smoke.mjs
-    node --test scripts/chat-room-reconnect.test.mjs
+    node scripts/run-node-tests.mjs scripts/chat-room-reconnect.test.mjs
 
 product-ui-browser:
     node scripts/assistant-reply-layout-browser-smoke.mjs
