@@ -254,9 +254,9 @@
             && body.code === "conflict" && Object.keys(body).length === 2;
         } catch (_) {}
         if (conflict) {
-          await loadInbox();
           const error = new Error("This request has changed. Refresh Inbox and review the current request.");
           error.status = 409;
+          try { await loadInbox(); } catch (_) {}
           throw error;
         }
         const error = new Error(publicInboxText(text, "Inbox could not complete the request."));
@@ -588,6 +588,11 @@
             const stepUpToken = current.status === "revoked" ? undefined : await requestPasskeyStepUp("walletconnect.internet.revoke", current.request);
             await inboxAction(actionId, { step_up_token: stepUpToken });
             await loadInbox(); notifyHome();
+          } catch (error) {
+            if (error.status !== 409) {
+              try { await loadInbox(); } catch (_) {}
+            }
+            throw error;
           } finally { setButtonsDisabled(false); }
         };
         if (entry.kind === "walletconnect_internet_request" && actionId?.startsWith("walletconnect-internet-allow:")) {
