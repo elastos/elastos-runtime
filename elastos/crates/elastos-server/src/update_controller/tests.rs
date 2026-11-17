@@ -4048,8 +4048,8 @@ async fn quiet_ready_recovery_fixture(previous: bool) -> PrivateFixture {
     owner.interrupt_after_ready = Some(ready_phase);
     let data = fixture.data.clone();
     let stopped = tokio::spawn(async move {
-        let _ = crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut owner)
-            .await;
+        let _ =
+            crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut owner).await;
     })
     .await
     .expect_err("fixture controller must stop before retiring its Ready journal");
