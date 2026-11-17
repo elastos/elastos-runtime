@@ -117,12 +117,12 @@ examples before the consumers run; the file models only the proposed default.
 Run the small checks:
 
 ```sh
-node --test scripts/wallet-connector-v2-messages.test.mjs scripts/wallet-extension-replay.test.mjs scripts/wallet-extension-review.test.mjs
+node --test scripts/wallet-connector-v2-messages.test.mjs scripts/wallet-extension-replay.test.mjs scripts/wallet-extension-review.test.mjs scripts/wallet-extension-residual.test.mjs
 WALLET_EXTENSION_RAW=/path/to/original/recordings.json node --test scripts/wallet-extension-replay.test.mjs
 elastos-heavy node --test scripts/wallet-extension-page.test.mjs
 ```
 
-All four test files are also found by the repository behaviour suite's
+All five test files are also found by the repository behaviour suite's
 `scripts/*.test.mjs` glob. The raw-file check is skipped when its explicit input
 is absent; the bundled parity checks still run. To regenerate the bounded
 excerpts and their independent pin, run:
@@ -175,8 +175,17 @@ direct stale `eth_accounts` timeout needs its own recording first.
 UniSat's own keys and public method list come from US-10-presence. Its event
 methods live on the stand-in prototype, so the own-key list stays exact. The
 legacy Rabby own-key list comes from R2-BOTH-legacy-shape. Unknown internal
-values remain undefined, and unrecorded method calls fail through the violation
-list. The capture has no complete MetaMask or announced-Rabby key inventory,
+values are guarded getters: reading one records a violation and throws before
+product code can call or use it. Reads of absent wallet members, including
+standard methods on announced providers, also record a violation and throw.
+These guards add no own member names. Use `Object.keys` and property descriptors
+to inspect the measured surface without invoking it. The final one-line
+`assertNoViolations()` check catches these reads even when product code catches
+the exception. Legacy `isConnected()` returns its recorded Boolean from
+R2-BOTH-legacy-shape. The absent `then` property remains undefined for JavaScript
+Promise/EventTarget probes; this is language plumbing, rather than a wallet API.
+Event subscriptions require a function and record a violation otherwise.
+The capture has no complete MetaMask or announced-Rabby key inventory,
 nor complete prototype/private-member types. Those stand-ins implement the
 measured request/event interface and recorded flags only. A passing test proves
 neither complete object reflection nor private API compatibility.

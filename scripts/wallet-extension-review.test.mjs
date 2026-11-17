@@ -101,7 +101,8 @@ test('F4 UniSat has no EIP-1193 request member', async () => {
   assert.equal('request' in page.unisat, false);
   const inventory = input.fixture.surfaces.unisat;
   assert.deepEqual(Object.keys(page.unisat).sort(), [...inventory.keys].sort());
-  assert.deepEqual(Object.keys(page.unisat).filter((key) => typeof page.unisat[key] === 'function').sort(), [...inventory.methods].sort());
+  const descriptors = Object.getOwnPropertyDescriptors(page.unisat);
+  assert.deepEqual(Object.keys(descriptors).filter((key) => typeof descriptors[key].value === 'function').sort(), [...inventory.methods].sort());
   replay.assertNoViolations();
   replay.dispose();
 });
