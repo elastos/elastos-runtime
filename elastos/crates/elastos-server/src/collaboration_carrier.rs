@@ -748,6 +748,30 @@ impl CommunityLinkWatchdog {
     }
 }
 
+#[cfg(test)]
+mod recovery_regressions {
+    use super::*;
+
+    #[test]
+    fn community_recovery_continues_after_120_rebuilds() {
+        let start = Instant::now();
+        let mut watchdog = CommunityLinkWatchdog::new(COMMUNITY_LINK_SILENCE);
+        let mut rebuilds = Vec::new();
+        for second in (0..200_000).step_by(5) {
+            let now = start + Duration::from_secs(second);
+            if let Some(step) = watchdog.observe(None, None, now) {
+                if step == CommunityLinkStep::Rebuild {
+                    rebuilds.push(second);
+                }
+                watchdog.step_finished(now);
+            }
+        }
+        assert!(rebuilds.len() > 120, "repair must continue for unlimited uptime: {}", rebuilds.len());
+        assert!(rebuilds.windows(2).all(|pair| pair[1] - pair[0] >= 60));
+        assert!(rebuilds.last().copied().unwrap() > 190_000);
+    }
+}
+
 fn random_collaboration_consumer_id() -> anyhow::Result<String> {
     let mut bytes = [0_u8; 16];
     getrandom::getrandom(&mut bytes).map_err(|error| {
