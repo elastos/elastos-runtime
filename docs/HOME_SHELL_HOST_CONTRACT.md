@@ -292,9 +292,11 @@ has `stage:"finished"` and one outcome below. `waitEnd` is `null`, `user` or
 `sent` means the provider call was made, not that the wallet accepted it.
 Only Runtime completion can establish link/approval success. `deadlineAt` is a
 positive safe integer while a timed effect is active, otherwise `null`. A
-rejected request returns the empty snapshot (`null` provider/network, empty
-accounts/alternatives, `unknown` availability/access, `busy:false`) rather than
-reading a provider. Clients validate all fields,
+schema/authority rejection returns the empty snapshot (`null` provider/network,
+empty accounts/alternatives, `unknown` availability/access, `busy:false`); clients
+ignore that placeholder snapshot. A valid busy refusal returns the last bounded
+cached snapshot with `busy:true`, without another provider call. Cached facts
+remain non-authoritative. Clients validate all fields,
 the exact Home source/origin, generation and request ID before rendering.
 
 **After this work.** A snapshot has exactly `providerId`, `alternatives`,
@@ -375,8 +377,8 @@ but may not assert a `locked` fact.
 
 **After this work.** Home serializes all calls to a selected wallet provider
 across connector frames in this Home page, including silent reads. It sends one
-call at a time. There is one effect per frame; stop remains available during
-that effect. A rejected concurrent attempt is not queued. Another Home tab or
+call at a time. There is one active link/approval per frame; the cached check
+and matching stop remain available during that effect. A rejected concurrent attempt is not queued. Another Home tab or
 browser has its own page state; Runtime's one-shot handoff still arbitrates the
 same request. Home cannot promise a cross-tab extension mutex.
 
