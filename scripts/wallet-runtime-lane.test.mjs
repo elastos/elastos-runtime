@@ -42,6 +42,18 @@ test("n5_inbox_action_by_kind_and_409: decision and conflict", async t => {
     assert.equal(r.state.permission, "requested");
     await r.capture("inbox-internet-conflict-light-window.png");
   });
+  await t.test("409 keeps fixed wording when its one refresh fails", async t => {
+    const r = await runtimeView(t, "inbox", { entries:[permissionEntry("requested")], permission:"requested",
+      conflict:true, summaryFailureAfterConflict:true });
+    await r.frame.getByRole("button", { name:"Allow", exact:true }).click();
+    await r.frame.locator("#status-text").filter({ hasText:/This request has changed|failed to fetch/i }).waitFor();
+    assert.equal(await r.frame.locator("#status-text").textContent(), "This request has changed. Refresh Inbox and review the current request.");
+    assert.equal(r.calls.filter(c => c.path.endsWith("/actions")).length, 1);
+    assert.equal(r.calls.filter(c => c.path.endsWith("/summary")).length, 2, "the failed refresh is attempted only once");
+    assert.equal(r.state.permission, "requested");
+    await r.capture("inbox-internet-conflict-refresh-failed-light-window.png");
+    assert.deepEqual(r.errors, []);
+  });
 });
 
 test("n3_reject_dismiss_acknowledgement: Wallet cards", async t => {
@@ -205,20 +217,26 @@ test("n4_old_record_and_reopened_window: legacy Wallet fallback", async t => {
 });
 
 test("n5_cleanup_blocks_allow_until_complete: Inbox cases", async t => {
-  const r = await runtimeView(t, "inbox", { permission: "cleanup", cleanupFailure: true, entries: [permissionEntry("cleanup")],
-    accounts: [{ account_id: "account:kept" }] });
-  const finish = r.frame.getByRole("button", { name: "Finish disconnecting", exact: true });
-  await finish.click();
-  await r.frame.locator('dialog[open] button[value="off"]').click();
-  await r.frame.locator("#status-text").filter({ hasText: "cleanup could not finish" }).waitFor();
-  assert.equal(await r.frame.getByRole("button", { name: "Allow", exact: true }).count(), 0);
-  await r.capture("inbox-internet-cleanup-failed-light-window.png");
-  r.state.cleanupFailure = false;
-  await finish.click();
-  await r.frame.locator('dialog[open] button[value="off"]').click();
-  await r.frame.getByRole("button", { name: "Allow", exact: true }).waitFor();
-  assert.deepEqual(r.state.accounts, [{ account_id: "account:kept" }]);
-  assert.equal(r.calls.filter(c => c.input?.action === "request").length, 0);
+  for (const initial of ["cleanup", "granted"]) await t.test(initial === "cleanup" ? "already pending cleanup" : "failure after granted Turn Off", async t => {
+    const r = await runtimeView(t, "inbox", { permission:initial, cleanupFailure:true, entries:[permissionEntry(initial)],
+      accounts:[{ account_id:"account:kept" }] });
+    await r.frame.getByRole("button", { name:initial === "cleanup" ? "Finish disconnecting" : "Turn Off", exact:true }).click();
+    await r.frame.locator('dialog[open] button[value="off"]').click();
+    await r.frame.locator("#status-text").filter({ hasText:"cleanup could not finish" }).waitFor();
+    assert.equal(await r.frame.locator("#status-text").textContent(), "cleanup could not finish", "Runtime failures are plain text");
+    assert.equal(await r.frame.getByRole("button", { name:"Finish disconnecting", exact:true }).count(), 1, "failed Turn Off shows the current persisted cleanup phase");
+    assert.equal(await r.frame.getByRole("button", { name:"Allow", exact:true }).count(), 0);
+    await r.capture(`inbox-internet-cleanup-failed${initial === "granted" ? "-after-turn-off" : ""}-light-window.png`);
+    r.state.cleanupFailure = false;
+    await r.frame.getByRole("button", { name:"Finish disconnecting", exact:true }).click();
+    await r.frame.locator('dialog[open] button[value="off"]').click();
+    await r.frame.getByRole("button", { name:"Allow", exact:true }).waitFor();
+    assert.equal(r.state.accounts.length, 1);
+    const actions = r.calls.filter(c => c.path === "/api/apps/inbox/actions");
+    assert.equal(actions.length, 2);
+    assert.equal(actions.filter(c => c.input.step_up_token).length, initial === "granted" ? 1 : 0, "cleanup retry keeps the existing proof rule");
+    assert.deepEqual(r.errors, []);
+  });
 });
 
 test("n4_pending_requests_current_session_only: stale cards and counts", async t => {

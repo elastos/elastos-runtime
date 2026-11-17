@@ -43,32 +43,37 @@ export async function runtimeView(t, app, state = {}) {
     const request = route.request(), url = new URL(request.url());
     const cors = { "access-control-allow-origin": "*", "access-control-allow-headers":"content-type,x-elastos-home-token", "access-control-allow-methods":"GET,POST,PUT,DELETE,OPTIONS" };
     const json = (body, status = 200) => route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
+    const plain = (body, status) => route.fulfill({ status, contentType:"text/plain", headers:cors, body });
     if (request.method() === "OPTIONS") return json({});
     if (url.pathname === "/") return route.fulfill({ contentType: "text/html", body: `<!doctype html><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe id="app" sandbox="allow-scripts allow-forms" src="/apps/${app}/index.html?home_origin=https%3A%2F%2Fruntime.test&notification_id=${encodeURIComponent(state.notificationId || "")}&wallet_request=${encodeURIComponent(state.requestId || "")}#home_token=fixture-token"></iframe><script>window.messages=[];addEventListener('message',e=>{if(e.source!==document.getElementById('app')?.contentWindow||e.origin!=='null')return;messages.push(e.data);if(e.data.type==='elastos.home.passkey-step-up.request/v1')e.source.postMessage({type:'elastos.home.passkey-step-up.result/v1',requestId:e.data.requestId,stepUpToken:'fixture-proof'},'*')})</script>` });
     if (url.pathname.startsWith("/api/")) {
       if (request.headers()["x-elastos-home-token"] !== "fixture-token") return json({error:"missing fixture launch"}, 403);
       const input = request.postDataJSON();
       calls.push({ path: url.pathname, method: request.method(), input });
+      if (url.pathname === "/api/apps/inbox/summary" && state.conflictSeen && state.summaryFailureAfterConflict) return route.abort("failed");
       if (url.pathname === "/api/apps/inbox/summary") return json({ notifications: { entries: state.entries, attention_count: state.entries.filter(e => e.severity === "attention").length, unread_count: state.entries.filter(e => !e.read).length } });
       if (url.pathname === "/api/apps/wallet/wallet/summary" && state.decisionComplete && state.summaryFailureAfterDecision === "unavailable") return json({ wallet_accounts:{available:true, accounts:state.accounts, default_accounts:[]}, wallet_approvals:{available:false, pending_count:0, approval_requests:[], note:"Wallet requests are unavailable."}, approval_methods:{} });
-      if (url.pathname === "/api/apps/wallet/wallet/summary" && state.decisionComplete && state.summaryFailureAfterDecision) return json({error:"summary read failed"}, 503);
+      if (url.pathname === "/api/apps/wallet/wallet/summary" && state.decisionComplete && state.summaryFailureAfterDecision) return route.abort("failed");
       if (url.pathname === "/api/apps/wallet/wallet/summary") return json({ wallet_accounts: { available:true, accounts: state.accounts, default_accounts: [] }, wallet_approvals: { available:true, pending_count:state.approvals.filter(r => r.status === "pending").length, approval_requests: state.approvals }, approval_methods: { walletconnect: { available: true } } });
       if (url.pathname === "/api/apps/wallet-walletconnect/internet") {
         if (input?.action === "request") {
-          if (state.guest) return json({ error: "owner required" }, 403);
-          if (state.cleanup) return json({ error: "cleanup required" }, 409);
-          if (!["requested", "granted"].includes(state.permission)) state.question = "consent:new";
-          state.permission = "requested";
+          if (state.cleanup) return plain("Finish clearing the previous WalletConnect session in Inbox first.", 500);
+          if (!["requested", "granted"].includes(state.permission)) {
+            if (state.guest) return plain("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.", 500);
+            state.question = "consent:new";
+            state.issuedAt = Math.floor(Date.now() / 1000);
+            state.permission = "requested";
+          }
         }
         return json({ status: state.permission === "cleanup" ? "revoked" : state.permission === "expired" ? "requested" : state.permission,
           request: ["requested", "granted"].includes(state.permission) ? question() : null });
       }
       if (url.pathname === "/api/apps/inbox/actions") {
-        if (state.conflict) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
+        if (state.conflict) { state.conflictSeen = true; return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409); }
         let message = "WalletConnect internet choice saved.";
         if (input.action_id?.startsWith("walletconnect-internet-allow:")) {
           if (state.permission !== "requested" || input.action_id !== `walletconnect-internet-allow:${state.question}`) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
-          if (input.step_up_token !== "fixture-proof") return json({ error:"passkey proof required" }, 403);
+          if (input.step_up_token !== "fixture-proof") return plain(input.step_up_token ? "invalid passkey step-up token encoding" : "missing passkey step-up token", 403);
           state.permission = "granted";
           state.entries = [permissionEntry("granted", state.question)];
         } else if (input.action_id?.startsWith("walletconnect-internet-deny:")) {
@@ -77,8 +82,11 @@ export async function runtimeView(t, app, state = {}) {
           state.entries = [permissionEntry("refused", state.question)];
         } else if (input.action_id?.startsWith("walletconnect-internet-turn-off:")) {
           if (!["granted", "cleanup"].includes(state.permission) || input.action_id !== `walletconnect-internet-turn-off:${state.question}`) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
-          if (state.permission === "granted" && input.step_up_token !== "fixture-proof") return json({error:"passkey proof required"}, 403);
-          if (state.cleanupFailure) return json({ error: "cleanup could not finish" }, 503);
+          if (state.permission === "granted" && input.step_up_token !== "fixture-proof") return plain(input.step_up_token ? "invalid passkey step-up token encoding" : "missing passkey step-up token", 403);
+          state.permission = "cleanup";
+          state.cleanup = true;
+          state.entries = [permissionEntry("cleanup", state.question)];
+          if (state.cleanupFailure) return plain("cleanup could not finish", 500);
           state.permission = "revoked";
           state.cleanup = false;
           state.entries = [permissionEntry("revoked", state.question)];
