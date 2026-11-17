@@ -51,10 +51,11 @@ export function startExtensionWindow(kind, homeClipboard) {
   }
 
   function chooseStage() {
-    if (disconnected || accountEvent?.length === 0) return accounts.length ? kind === 'metamask' ? 'site-access-ended' : 'account-unavailable' : 'ready';
+    if (selected?.status === 'completed') return selected.transaction ? 'transaction-done' : 'request-done';
+    if (disconnected) return 'link-error';
+    if (accountEvent?.length === 0) return accounts.length ? 'account-unavailable' : 'ready';
     if (accountEvent && accounts.length && !accounts.some(a => sameAccount(a.address, accountEvent[0]))) return 'account-unavailable';
     if (kind === 'unisat' && networkEvent !== null && networkEvent !== 'livenet') return networkEvent === 'testnet' ? 'network-changed' : 'network-unknown';
-    if (selected?.status === 'completed') return selected.transaction ? 'transaction-done' : 'request-done';
     if (requests.length > 1 && !picked) return 'request-list';
     if (selected) return selected.expiresAt !== null && selected.expiresAt <= now()
       ? 'request-expired' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
@@ -74,7 +75,8 @@ export function startExtensionWindow(kind, homeClipboard) {
     'stop-waiting', 'close-window', 'copy-address', 'select-request', 'view-requests']);
   function draw() {
     if (disposed) return;
-    const view = connectionView({ window: kind, stage, account: accountView(), summary: selected,
+    const changedDuringRequest = selected && (disconnected || accountEvent && !sameAccount(accountEvent[0], selected.address));
+    const view = connectionView({ window: kind, stage, account: changedDuringRequest && (operation || selected.status === 'completed') ? null : accountView(), summary: selected,
       otherRequests: requests.map(r => reduceSummary(r, { connector: CONNECTOR_ID })).filter(r => r && r.id !== selected?.id),
       waitSeconds: remaining(), homeOrigin, alternativeAllowed: false });
     const root = renderConnection(document, view);
@@ -82,6 +84,9 @@ export function startExtensionWindow(kind, homeClipboard) {
       if (!supported.has(control.dataset.action)) control.remove();
       else if ((operation || uncertain) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action)) control.disabled = true;
     }
+    // These shared recovery paragraphs point to Check access, which the base
+    // cannot perform. Keep the true outcome and working Close control.
+    if (['extension-timeout', 'extension-cancelled', 'request-timeout', 'request-cancelled'].includes(stage)) root.querySelector('.connection-notice')?.remove();
     const markup = root.outerHTML.replace(/Time left: [0-9]+:[0-9]+/g, 'Time left:');
     if (markup === lastMarkup) {
       const wait = mount.querySelector('.connection-wait');
@@ -96,7 +101,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     lastMarkup = markup;
     lastView = view;
     let focus = sameFact && focusKey ? [...root.querySelectorAll('[data-focus-key]')].find(n => n.dataset.focusKey === focusKey) : null;
-    if (!focus && !sameFact) focus = root.querySelector(`[data-action="${view.focus}"]`) || root.querySelector(`[data-focus="${view.focus}"]`);
+    if (!focus && !sameFact) focus = root.querySelector(`[data-action="${view.focus}"]`) || root.querySelector(`[data-focus="${view.focus}"]`) || root.querySelector('button:not(:disabled)');
     focus?.focus({ preventScroll: sameFact });
     if (sameFact) window.scrollTo(scroll.x, scroll.y);
   }
@@ -150,7 +155,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       } else {
         requests = requests.filter(r => r.request_id !== selected.id);
         selected = { ...selected, status: 'completed' };
-        stage = (disconnected || accountEvent && !accounts.some(a => sameAccount(a.address, accountEvent[0]))) ? chooseStage() : result.effect === 'transaction' ? 'transaction-done' : 'request-done';
+        stage = result.effect === 'transaction' ? 'transaction-done' : 'request-done';
         draw();
       }
     } catch (error) {
@@ -198,13 +203,11 @@ export function startExtensionWindow(kind, homeClipboard) {
       const pattern = kind === 'metamask' ? /^0x[0-9a-fA-F]{40}$/ : /^(?:bc1|[13])[A-Za-z0-9]{20,100}$/;
       if (!Array.isArray(data.value) || data.value.length > 8 || data.value.some(a => typeof a !== 'string' || !pattern.test(a))) return;
       accountEvent = data.value;
-      disconnected = false;
-    } else if (data.event === 'disconnect' && data.value === null) { disconnected = true; accountEvent = []; }
+    } else if (data.event === 'disconnect' && data.value === null) { disconnected = true; }
     else if (kind === 'metamask' && data.event === 'chainChanged' && typeof data.value === 'string' && /^0x[0-9a-fA-F]{1,16}$/.test(data.value)) networkEvent = data.value;
     else if (kind === 'unisat' && data.event === 'networkChanged' && ['livenet', 'testnet', 'unknown'].includes(data.value)) networkEvent = data.value;
     else return;
     revision += 1;
-    if (operation && (disconnected || accountEvent?.length === 0 || accountEvent && accounts.length && !accounts.some(a => sameAccount(a.address, accountEvent[0])))) stage = accounts.length ? 'account-unavailable' : stage;
     if (!operation && !uncertain) stage = chooseStage();
     draw();
   }

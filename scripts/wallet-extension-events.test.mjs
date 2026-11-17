@@ -89,3 +89,11 @@ if (vm.SourceTextModule) for (const kind of ['metamask', 'unisat']) {
     assert.equal(f.messages.length, 0);
   });
 }
+
+if (vm.SourceTextModule) for (const kind of ['metamask', 'unisat']) test(`${kind}: a different source with the same connector cannot subscribe`, async () => {
+  const f = await hostFixture(kind), foreign = [];
+  f.invoke({postMessage(data){foreign.push(data);}});
+  f.listeners.get('accountsChanged')([]);
+  assert.equal(f.messages.filter(x=>x.type==='home:wallet-connector-event').length,0);
+  assert.equal(foreign.filter(x=>x.type==='home:wallet-connector-event').length,0);
+});

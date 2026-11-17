@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, extname, join } from 'node:path';
-import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+const baseFixture = JSON.parse(await readFile(new URL('../fixtures/wallet-extension-window-base.json', import.meta.url), 'utf8'));
+for (const file of Object.values(baseFixture.files)) assert.equal(createHash('sha256').update(file.source).digest('hex'), file.sha256);
 import { installScriptedExtension, replayInput } from '../wallet-extension-test/index.mjs';
 const root = resolve('.');
 const A = '0x' + '1'.repeat(40), U = 'bc1q' + 'a'.repeat(38);
@@ -92,7 +94,7 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:560
     const relative = url.pathname.replace(/^\/apps\//, 'capsules/').replace(/^(capsules\/[^/]+)\/(.*)$/, '$1/browser/$2');
     let path = join(root, relative);
     if (url.pathname.endsWith('/')) path = join(path, 'index.html');
-    let body = (oldHost && path.endsWith('/home-wallet-connector-host.js') || oldWindow && (path.endsWith('/index.html') || path.endsWith(`/wallet-${kind}.js`))) ? execFileSync('git', ['show', `805ee5dda47993855b394197fb44ccc29e4eb771:${path.slice(root.length+1)}`]) : await readFile(path);
+    let body = (oldHost && path.endsWith('/home-wallet-connector-host.js') || oldWindow && (path.endsWith('/index.html') || path.endsWith(`/wallet-${kind}.js`))) ? Buffer.from(baseFixture.files[path.slice(root.length+1)].source) : await readFile(path);
     if (mutate && path.endsWith('/extension-window.mjs')) body = Buffer.from(mutate(body.toString()));
     return route.fulfill({ body, contentType: ({ '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.png': 'image/png', '.woff2': 'font/woff2' })[extname(path)] || 'application/octet-stream' });
   });
@@ -103,13 +105,15 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:560
   const action = id => frame.locator(`[data-action="${id}"]`);
   const state = async expected => { try { await frame.locator(`main[data-state="${expected}"]`).waitFor({ timeout: 3000 }); } catch (e) { throw Error(e.message + JSON.stringify(await frame.locator('body').innerText()) + JSON.stringify(await top.evaluate(() => ({effects:testState.effects,calls:testState.calls,receipts:testState.receipts})))) }
     if (process.env.EXTENSION_WINDOW_PICTURES && !mutate) {
-      const dir = join(homedir(), 'omp-inbox/walletconnect/screens/windows-' + kind);
+      const dir = join(process.env.EXTENSION_WINDOW_PICTURES, 'windows-' + kind);
+      const receipts = process.env.EXTENSION_WINDOW_RECEIPTS || process.env.EXTENSION_WINDOW_PICTURES;
+      await mkdir(receipts, {recursive:true});
       await mkdir(dir, { recursive: true });
       const candidate = { head: execFileSync('git', ['rev-parse','HEAD'], {encoding:'utf8'}).trim(), tree: execFileSync('git', ['rev-parse','HEAD^{tree}'], {encoding:'utf8'}).trim() };
       const copy = await frame.evaluate(() => ({ state: document.querySelector('main').dataset.state,
         sentences: [...document.querySelectorAll('.connection-status,.connection-note,.connection-more')].map(n => n.textContent.trim()).filter(Boolean),
         controls: [...document.querySelectorAll('[data-action]')].map(n => ({action:n.dataset.action,label:n.textContent.trim(),disabled:n.disabled})) }));
-      await writeFile(join(homedir(), '.local/share/elastos-ops/runs', `window-extensions-copy-${kind}-${expected}.json`), JSON.stringify({ candidate, ...copy }, null, 2));
+      await writeFile(join(receipts, `window-extensions-copy-${kind}-${expected}.json`), JSON.stringify({ candidate, ...copy }, null, 2));
       for (const theme of ['dark', 'light']) {
         await frame.evaluate(theme => { document.documentElement.toggleAttribute('data-el-theme', theme === 'light'); if (theme === 'light') document.documentElement.setAttribute('data-el-theme','light'); }, theme);
         await top.locator('iframe').screenshot({ path: join(dir, `${expected}-${theme}.png`) });

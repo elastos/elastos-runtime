@@ -24,7 +24,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         assert.equal(await f.frame.locator('body > :not(#connection-root):not(script)').count(), 0);
         assert.equal(await f.frame.locator('#connection-root > main').count(), 1);
         await f.top.evaluate(() => emitWallet('accountsChanged', []));
-        await f.state(kind === 'metamask' ? 'site-access-ended' : 'account-unavailable');
+        await f.state('account-unavailable');
         await f.action('connect').click(); await f.state('linked');
         assert.equal(await f.top.evaluate(() => testState.receipts.length), 2);
       } finally { await f.close(); }
@@ -61,7 +61,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         await f.state('request-done');
         assert.equal(await f.top.evaluate(() => testState.receipts.length), 1);
         await f.top.evaluate(() => emitWallet('accountsChanged', []));
-        await f.state(kind === 'metamask' ? 'site-access-ended' : 'account-unavailable');
+        await f.state('account-unavailable');
         assert.equal(await f.action('send-request').count(), 0);
       } finally { await f.close(); }
       const g = await fixture(browser, kind);
@@ -216,4 +216,42 @@ for (const kind of ['metamask', 'unisat']) test(`${kind}: a failed Home read is 
       finally { await f.close(); }
     }
   } finally { await browser.close(); }
+});
+
+for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) test(`${engine} ${kind}: wallet events preserve an active link and an acknowledged result`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
+  const browser = await playwright[engine].launch({ headless:true });
+  const changed = kind === 'metamask' ? B : V;
+  try {
+    const f = await fixture(browser, kind, {saved:true});
+    try {
+      await f.top.evaluate(()=>{testState.mode='pending';});
+      await f.action('connect').click(); await f.state('extension-wait');
+      await f.top.waitForFunction(()=>testState.pending.length>0);
+      await f.top.evaluate(value=>emitWallet('accountsChanged',[value]),changed);
+      await f.state('extension-wait');
+      assert.equal(await f.action('stop-waiting').count(),1);
+      await f.top.evaluate(value=>{testState.mode='approve';testState.address=value;testState.pending.shift().resolve([value]);},changed);
+      await f.state('linked');
+      assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
+      await f.top.evaluate(()=>emitWallet('disconnect',{code:4900}));
+      await f.state('link-error');
+      assert.doesNotMatch(await f.frame.locator('body').innerText(),/not sharing/i);
+    }finally{await f.close();}
+    const g = await fixture(browser,kind,{saved:true,requests:true});
+    try {
+      await g.top.evaluate(()=>{testState.mode='pending';});
+      await g.action('send-request').click();await g.state('request-extension');
+      await g.top.waitForFunction(()=>testState.pending.length>0);
+      await g.top.evaluate(value=>emitWallet('accountsChanged',[value]),changed);
+      await g.state('request-extension');
+      assert.equal(await g.action('stop-waiting').count(),1);
+      assert.equal(await g.frame.locator('.connection-request-account').count(),0,'changed current account is not shown as the signer');
+      await g.top.evaluate(()=>{const pending=testState.pending.shift();pending.resolve(pending.result);});
+      await g.state('request-done');
+      assert.equal(await g.top.evaluate(()=>testState.receipts.length),1);
+      assert.equal(await g.action('send-request').count(),0);
+      await g.top.evaluate(()=>emitWallet('disconnect',{}));await g.state('request-done');
+      assert.equal(await g.frame.locator('.connection-request-account').count(),0);
+    }finally{await g.close();}
+  }finally{await browser.close();}
 });
