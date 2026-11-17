@@ -204,13 +204,24 @@ async fn n3_direct_external_approve_refused_existing_routes() {
             let (state, recorder) =
                 wallet_test_state_with_recording_provider(dir.path(), provider).await;
             if proof_type == "managed_evm" {
-                let runtime_authority = runtime_wallet_authority_for_app_token(dir.path(), actor, &token);
+                let runtime_authority =
+                    runtime_wallet_authority_for_app_token(dir.path(), actor, &token);
                 let context = runtime_authority.home_launch_context();
-                let result = gateway_wallet_approvals::approve_pending_managed_wallet_request(
-                    &state, dir.path(), &context, &runtime_authority,
-                    gateway_wallet_approvals::system_wallet_approval_summary(&record).unwrap(), reason, actor,
-                ).await;
-                assert!(result.err().unwrap().to_string().contains("approval method"));
+                let result = gateway_wallet::approve_pending_managed_wallet_request(
+                    &state,
+                    dir.path(),
+                    &context,
+                    &runtime_authority,
+                    gateway_wallet::system_wallet_approval_summary(&record).unwrap(),
+                    reason,
+                    actor,
+                )
+                .await;
+                assert!(result
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("approval method"));
             }
             let app = gateway_router(state);
             let proof = step_up_token_for_app_context(
@@ -243,7 +254,8 @@ async fn n3_direct_external_approve_refused_existing_routes() {
                 .unwrap();
             let message = String::from_utf8(bytes.to_vec()).unwrap();
             assert!(
-                message.contains("approval method") || message.contains("different connector")
+                message.contains("approval method")
+                    || message.contains("different connector")
                     || message.contains("Use System to approve built-in wallet requests"),
                 "{message}"
             );

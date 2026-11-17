@@ -560,7 +560,10 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
         .filter(|value| value.is_object());
     Some(SystemWalletApprovalSummary {
         requesting_app_name: Some(gateway_home_runtime::app_shell_title(
-            value.get("requested_by_actor").or_else(|| value.get("capsule_id"))?.as_str()?,
+            value
+                .get("requested_by_actor")
+                .or_else(|| value.get("capsule_id"))?
+                .as_str()?,
         )),
         requesting_origin: None,
         request_id: value.get("request_id")?.as_str()?.to_string(),
