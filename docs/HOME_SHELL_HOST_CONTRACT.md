@@ -787,8 +787,12 @@ supply a test bridge.
 | After this work | readHomeWalletConnectorAuthority(frameHandle, loadEpoch) | Returns null for a removed/retired/expired frame or a different load epoch. Otherwise returns exactly connectorId, connectorToken, parentOrigin, expiresAt, authorityKey. Every Runtime call reads this afresh. authorityKey is an opaque page-local identity retained only by same-authority renewal; it is not frame-provided proof or wire data. |
 | After this work | postHomeWalletConnectorMessage(frameHandle, loadEpoch, message) | Returns Boolean delivered. Sends only N2 ready/result/state to the bound current WindowProxy using the opaque target origin, after rechecking epoch, source, current authority and retirement. The extension validates current nonce/generation and the closed message before calling it. Failed delivery has no fallback recipient. |
 
-**After this work.** frameHandle is one opaque Home-owned object per launched
-frame, stable across token renewal, separate from its document loadEpoch.
+**After this work.** This bridge covers only wallet-metamask, wallet-unisat and
+wallet-walletconnect; the reader returns null for every other target.
+expiresAt is epoch milliseconds. authorityKey is an opaque object compared by
+reference, kept inside Home. frameHandle is one opaque Home-owned object per
+launched connector frame, stable across token renewal, separate from its
+document loadEpoch.
 loadEpoch is a non-negative safe integer, starting at zero for blank and
 incrementing at each Runtime document load; exhaustion requires close/reopen.
 The navigation lane creates/binds it only from the Runtime-authorized launch
@@ -796,7 +800,7 @@ and GUI frame record. The callback arguments and order are exact:
 
 | Status | Callback | Navigation-owned trigger / extension-owned response |
 | --- | --- | --- |
-| After this work | onMessage(event, frameHandle, loadEpoch, data) | Home resolves WindowProxy, opaque origin, live exact token and target before delivery. Hello/effect read connectorToken, N1 continues to read homeToken. Route both wallet hello and effect, for all three connectors, before generic message fallthrough. True consumes the message; false resumes existing dispatch. The extension owns exact N2 shape/nonce/generation validation and ready/result/state production. |
+| After this work | onMessage(event, frameHandle, loadEpoch, data) | Home resolves WindowProxy, opaque origin, live exact token and target before delivery. Hello/effect read connectorToken, N1 continues to read homeToken. Route both wallet hello and effect, for all three connectors, before generic message fallthrough. True consumes every recognized hello/effect, including a refusal; false is only for an unrelated type and resumes existing dispatch. The extension owns exact N2 shape/nonce/generation validation and ready/result/state production. |
 | After this work | onFrameLoad(frameHandle, loadEpoch, phase) | Home increments loadEpoch at frame-element load and calls before a wallet hello can register. Earlier messages cannot establish N2 readiness. phase is blank, initial or reload. Blank cannot register; initial is the first Runtime-routed load; reload is every later load and retires the old generation before a new hello. The extension owns generation/replay/fact state, not the iframe listener. |
 | After this work | onRenew(frameHandle, loadEpoch) | After verified same-authority renewal, Home updates the token mapping and reader in place, then calls once. Handle, epoch and authorityKey stay unchanged. The extension retains generation, IDs and effects, updates the last-current token in any transaction continuation and reads the fresh token at the next Runtime call. An authority change uses onRetire instead. |
 | After this work | onRetire(frameHandle, loadEpoch, reason) | Home calls once before removing the context. Reason is frame_removed, launch_expired, authority_changed, sign_out, shell_replaced or page_unload. Actual expiry has a timer and is also checked before dispatch/read/post. The extension fences effects/registrations synchronously and keeps only N2's permitted busy/transaction continuation. |
