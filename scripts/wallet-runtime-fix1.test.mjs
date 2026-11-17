@@ -99,6 +99,7 @@ test("fix1 Wallet accounts remain visible when only requests are unavailable",as
   const r=await runtimeView(t,"wallet",{approvalsUnavailable:true,accounts:[{account_id:"external",chain_namespace:"eip155:20",address:request().address,
     connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"Trust Wallet",wallet_mark:"wallet"}]});
   await r.frame.locator("#wallet-status").filter({hasText:"Wallet requests are unavailable."}).waitFor();
+  assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').count(),1,"the independent account read is rendered before the request-read error");
   assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').textContent(),"Trust Wallet");
   assert.equal(await r.frame.getByRole("button",{name:/Send/}).first().isEnabled(),true);
 });
