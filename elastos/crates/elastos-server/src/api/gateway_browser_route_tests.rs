@@ -8716,9 +8716,12 @@ async fn test_raw_browser_engine_and_exit_provider_proxy_routes_are_unavailable(
 async fn test_browser_account_access_creates_review_only_inbox_handoff_without_disclosure() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
-    let wallet_token = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
-    let inbox_token = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let browser_token =
+        projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let wallet_token =
+        projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
+    let inbox_token =
+        projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:20:{address}");
     let provider = MockWalletProvider {
@@ -8925,8 +8928,10 @@ async fn test_browser_account_access_uses_selected_connector_when_managed_accoun
 {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
-    let wallet_token = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
+    let browser_token =
+        projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let wallet_token =
+        projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
     let managed_address = "0x1111111111111111111111111111111111111111";
     let connector_address = "0x3333333333333333333333333333333333333333";
     let managed_account_id = format!("wallet:eip155:20:{managed_address}");

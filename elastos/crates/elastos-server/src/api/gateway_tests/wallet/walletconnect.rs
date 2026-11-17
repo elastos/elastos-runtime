@@ -497,14 +497,35 @@ async fn n5_inbox_action_by_kind_and_409_routes() {
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
-    let context = runtime_wallet_authority_for_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.inbox).home_launch_context();
-    let other_launch = issue_home_projection_launch_token_with_context(f.data.path(), INBOX_CAPSULE_ID, INBOX_CAPSULE_ID, &context).unwrap();
+    let context = runtime_wallet_authority_for_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.inbox)
+        .home_launch_context();
+    let other_launch = issue_home_projection_launch_token_with_context(
+        f.data.path(),
+        INBOX_CAPSULE_ID,
+        INBOX_CAPSULE_ID,
+        &context,
+    )
+    .unwrap();
     let foreign_proof = gateway_passkey_step_up::issue_passkey_step_up_token_for_test(
-        f.data.path(), &other_launch, INBOX_CAPSULE_ID, gateway_walletconnect::GRANT, &pending["request"],
-    ).unwrap();
-    let (status, _) = f.route(&f.inbox, "/api/apps/inbox/actions",
-        Some(json!({"action_id":current_action, "step_up_token":foreign_proof}))).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "a valid signature from another launch is an authority refusal, not stale intent");
+        f.data.path(),
+        &other_launch,
+        INBOX_CAPSULE_ID,
+        gateway_walletconnect::GRANT,
+        &pending["request"],
+    )
+    .unwrap();
+    let (status, _) = f
+        .route(
+            &f.inbox,
+            "/api/apps/inbox/actions",
+            Some(json!({"action_id":current_action, "step_up_token":foreign_proof})),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a valid signature from another launch is an authority refusal, not stale intent"
+    );
     assert_eq!(std::fs::read(&path).unwrap(), before);
     for proof in ["", "invalid-proof"] {
         let (status, _) = f

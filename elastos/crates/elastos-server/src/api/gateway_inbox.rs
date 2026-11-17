@@ -189,11 +189,7 @@ pub(super) fn append_wallet_approval_notifications(
     for request in approval_requests {
         notifications.unread_count += 1;
         notifications.attention_count += 1;
-        let capsule = if request.capsule_id.trim().is_empty() {
-            "A capsule".to_string()
-        } else {
-            request.capsule_id.clone()
-        };
+        let capsule = request.requesting_app_name.as_deref().unwrap_or("Requesting app");
         notifications.entries.push(HomeNotificationEntrySummary {
             requesting_origin: request.requesting_origin.clone(),
             id: format!("wallet-approval-request:{}", request.request_id),

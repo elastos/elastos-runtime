@@ -643,6 +643,8 @@ struct SystemWalletApprovalsSummary {
 #[derive(Debug, Clone, Serialize)]
 struct SystemWalletApprovalSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
+    requesting_app_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     requesting_origin: Option<String>,
     request_id: String,
     status: String,

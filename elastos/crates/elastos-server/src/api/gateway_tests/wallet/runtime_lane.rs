@@ -46,6 +46,8 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
             ("browser_typed_data_sign", "eth_signTypedData_v4"),
         ] {
             let dir = tempfile::tempdir().unwrap();
+        write_test_browser_capsule(dir.path(), BROWSER_CAPSULE_ID, "app", "Browser", Some("<!doctype html>"));
+
             seed_walletconnect_connector_config(dir.path());
             let authority = passkey_authority(dir.path());
             let wallet = projection_launch_token_for_authority_context(
@@ -103,6 +105,8 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
             let (state, _) = wallet_test_state_with_recording_provider(dir.path(), provider).await;
             let app = gateway_router(state);
             let body = read_private(&app, &wallet, "/api/apps/wallet/wallet/summary").await;
+        assert_eq!(body["wallet_approvals"]["approval_requests"][0]["requesting_app_name"], "Browser");
+
             assert_eq!(
                 body["wallet_approvals"]["approval_requests"][0]["requesting_origin"],
                 expected_site
@@ -156,75 +160,76 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
 #[tokio::test]
 async fn n3_direct_external_approve_refused_existing_routes() {
     for proof_type in ["siwe", "managed_evm"] {
-    for (actor, route, reason) in [
-        (
-            WALLET_CAPSULE_ID,
-            "/api/apps/wallet/wallet/managed-approvals/request:external/approve",
-            "Approved in Wallet",
-        ),
-        (
-            WALLET_CAPSULE_ID,
-            "/api/apps/wallet/wallet/approvals/request:external/approve",
-            "Approved in Wallet",
-        ),
-        (
-            INBOX_CAPSULE_ID,
-            "/api/apps/inbox/actions",
-            "Approved in Inbox",
-        ),
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let authority = passkey_authority(dir.path());
-        let token = projection_launch_token_for_authority_context(dir.path(), actor, &authority);
-        let record = json!({"request_id":"request:external", "status":"pending", "intent":"credential", "requested_by_actor":"documents",
+        for (actor, route, reason) in [
+            (
+                WALLET_CAPSULE_ID,
+                "/api/apps/wallet/wallet/managed-approvals/request:external/approve",
+                "Approved in Wallet",
+            ),
+            (
+                WALLET_CAPSULE_ID,
+                "/api/apps/wallet/wallet/approvals/request:external/approve",
+                "Approved in Wallet",
+            ),
+            (
+                INBOX_CAPSULE_ID,
+                "/api/apps/inbox/actions",
+                "Approved in Inbox",
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let authority = passkey_authority(dir.path());
+            let token =
+                projection_launch_token_for_authority_context(dir.path(), actor, &authority);
+            let record = json!({"request_id":"request:external", "status":"pending", "intent":"credential", "requested_by_actor":"documents",
             "principal_id":authority.principal_id, "session_id":authority.session_id, "account_id":"account:external", "address":"0xabc",
             "chain_namespace":"eip155:20", "resource":"elastos://wallet/sign", "reason":"Sign a credential", "proof_type":proof_type,
             "connector_id":"wallet-metamask", "created_at":now_ts(), "expires_at":now_ts()+600});
-        let provider = MockWalletProvider {
-            challenges: TokioMutex::default(),
-            bitcoin_challenges: TokioMutex::default(),
-            accounts: TokioMutex::default(),
-            approvals: TokioMutex::new(vec![record.clone()]),
-            defaults: TokioMutex::default(),
-        };
-        let (state, recorder) =
-            wallet_test_state_with_recording_provider(dir.path(), provider).await;
-        let app = gateway_router(state);
-        let proof = step_up_token_for_app_context(
-            dir.path(),
-            actor,
-            &token,
-            "wallet.approve",
-            &json!({"request_id":"request:external", "reason":reason}),
-        );
-        let body = if actor == INBOX_CAPSULE_ID {
-            json!({"action_id":"wallet-approve-request:request:external", "step_up_token":proof})
-        } else {
-            json!({"reason":reason, "step_up_token":proof})
-        };
-        let response = app
-            .oneshot(
-                test_browser_request("localhost:61180", "null")
-                    .uri(route)
-                    .method("POST")
-                    .header("x-elastos-home-token", token)
-                    .header(CONTENT_TYPE, "application/json")
-                    .body(Body::from(body.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_ne!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), 8192)
-            .await
-            .unwrap();
-        let message = String::from_utf8(bytes.to_vec()).unwrap();
-        assert!(
-            message.contains("approval method") || message.contains("different connector"),
-            "{message}"
-        );
-        assert_eq!(recorder.provider.approvals.lock().await[0], record);
-    }
+            let provider = MockWalletProvider {
+                challenges: TokioMutex::default(),
+                bitcoin_challenges: TokioMutex::default(),
+                accounts: TokioMutex::default(),
+                approvals: TokioMutex::new(vec![record.clone()]),
+                defaults: TokioMutex::default(),
+            };
+            let (state, recorder) =
+                wallet_test_state_with_recording_provider(dir.path(), provider).await;
+            let app = gateway_router(state);
+            let proof = step_up_token_for_app_context(
+                dir.path(),
+                actor,
+                &token,
+                "wallet.approve",
+                &json!({"request_id":"request:external", "reason":reason}),
+            );
+            let body = if actor == INBOX_CAPSULE_ID {
+                json!({"action_id":"wallet-approve-request:request:external", "step_up_token":proof})
+            } else {
+                json!({"reason":reason, "step_up_token":proof})
+            };
+            let response = app
+                .oneshot(
+                    test_browser_request("localhost:61180", "null")
+                        .uri(route)
+                        .method("POST")
+                        .header("x-elastos-home-token", token)
+                        .header(CONTENT_TYPE, "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_ne!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 8192)
+                .await
+                .unwrap();
+            let message = String::from_utf8(bytes.to_vec()).unwrap();
+            assert!(
+                message.contains("approval method") || message.contains("different connector"),
+                "{message}"
+            );
+            assert_eq!(recorder.provider.approvals.lock().await[0], record);
+        }
     }
 }
 
@@ -299,10 +304,14 @@ async fn n7_browser_site_projection_all_surfaces_transactions() {
         for field in ["wallet_request_sha256", "launch_id", "resource"] {
             provider.approvals.lock().await[0][field] = json!("mismatched-binding");
             let body = read_private(&app, &wallet, "/api/apps/wallet/wallet/summary").await;
-            assert!(body["wallet_approvals"]["approval_requests"][0].get("requesting_origin").is_none(), "{field}");
+            assert!(
+                body["wallet_approvals"]["approval_requests"][0]
+                    .get("requesting_origin")
+                    .is_none(),
+                "{field}"
+            );
             provider.approvals.lock().await[0] = original.clone();
         }
-
     }
 }
 
