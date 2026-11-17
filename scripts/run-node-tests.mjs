@@ -1,6 +1,6 @@
 // The supervisor owns the verdict. A zero child exit also needs a complete
 // event stream from every file, even when the child calls process.exit(0).
-import { spawn } from "node:child_process";
+import { spawnOwnedTestWorker } from "./lib/owned-test-worker.mjs";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
@@ -28,10 +28,11 @@ const starts = join(scratch, "starts.jsonl");
 writeFileSync(starts, "", { mode: 0o600 });
 const env = { ...process.env, NODE_TEST_GUARD_STARTS: starts };
 delete env.NODE_TEST_CONTEXT;
-const child = spawn(process.execPath, [
+const worker = spawnOwnedTestWorker([
   "--test", `--import=${reporter}`, `--test-timeout=${timeout}`, "--test-reporter=spec", "--test-reporter-destination=stdout",
   `--test-reporter=${reporter}`, "--test-reporter-destination=stderr", ...args,
-], { env, detached: true, stdio: ["ignore", "inherit", "inherit", "pipe"] });
+], { env, stdio: ["ignore", "inherit", "inherit", "pipe"] });
+const { child } = worker;
 let failed = false;
 let stopping = false;
 let summary = false;
@@ -50,8 +51,12 @@ function stop() {
   stopping = true;
   clearTimeout(startup);
   for (const state of files.values()) clearTimeout(state.timer);
-  // This process group belongs only to this invocation, including test helpers.
-  try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+  try {
+    if (!worker.stop()) child.kill("SIGKILL"); // Exact child handle; never guess a group.
+  } catch (error) {
+    fail(`worker group stop refused: ${error.message}`);
+    child.kill("SIGKILL");
+  }
 }
 function arm(file, state) {
   if (stopping || state.closed) return;

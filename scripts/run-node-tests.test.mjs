@@ -17,7 +17,7 @@ function suite(t, name, timeout = 10_000, overrides = {}) {
   const root = mkdtempSync(join(tmpdir(), "node-runner-guard-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "scripts/lib"), { recursive: true });
-  for (const file of ["test-behaviour.sh", "run-node-tests.mjs", "lib/node-test-events.mjs"]) {
+  for (const file of ["test-behaviour.sh", "run-node-tests.mjs", "lib/node-test-events.mjs", "lib/owned-test-worker.mjs"]) {
     cpSync(join(scripts, file), join(root, "scripts", file));
   }
   const script = readFileSync(join(root, "scripts/test-behaviour.sh"), "utf8");
@@ -149,4 +149,10 @@ test("two stalled workers shut down without a second process-group kill", t => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /timed out after 3000ms/);
   assert.doesNotMatch(result.stderr, /kill EPERM|run-node-tests.mjs:\d/);
+});
+
+test("supervisor delegates group signals to the ownership-checked worker", () => {
+  const source = readFileSync(join(scripts, "run-node-tests.mjs"), "utf8");
+  assert.doesNotMatch(source, /process\.kill\(-child\.pid/);
+  assert.match(source, /spawnOwnedTestWorker/);
 });
