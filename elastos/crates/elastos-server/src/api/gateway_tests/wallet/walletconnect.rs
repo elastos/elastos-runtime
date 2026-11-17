@@ -356,6 +356,66 @@ async fn walletconnect_connector_reuses_one_consent_request() {
 }
 
 #[tokio::test]
+async fn n5_permission_entry_all_states_producer() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    let path = f.data.path().join("ElastOS/SystemServices/WalletConnect/internet.json");
+    let original: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for (status, expired, cleanup, kind, action) in [
+        ("requested", false, false, "walletconnect_internet_request", Some("allow")),
+        ("granted", false, false, "walletconnect_internet_decision", Some("turn-off")),
+        ("refused", false, false, "walletconnect_internet_decision", None),
+        ("revoked", false, false, "walletconnect_internet_decision", None),
+        ("requested", true, false, "walletconnect_internet_decision", None),
+        ("revoked", false, true, "walletconnect_internet_decision", Some("turn-off")),
+    ] {
+        let mut consent = original.clone();
+        consent["status"] = json!(status); consent["cleanup_pending"] = json!(cleanup);
+        consent["at"] = json!(if expired { now_ts().saturating_sub(1801) } else { now_ts() });
+        std::fs::write(&path, serde_json::to_vec(&consent).unwrap()).unwrap();
+        let (http, summary) = f.route(&f.inbox, "/api/apps/inbox/summary", None).await;
+        assert_eq!(http, StatusCode::OK);
+        let entry = summary["notifications"]["entries"].as_array().unwrap().iter().find(|e| e["id"] == "walletconnect-internet:permission").unwrap();
+        assert_eq!(entry["kind"], kind);
+        if let Some(verb) = action {
+            assert_eq!(entry["action_ref"]["action_id"], format!("walletconnect-internet-{verb}:{}", consent["id"].as_str().unwrap()));
+        } else { assert!(entry["action_ref"].is_null()); }
+    }
+}
+
+#[tokio::test]
+async fn n5_inbox_action_by_kind_and_409_routes() {
+    let f = Fixture::new().await;
+    let (_, pending) = f.route(&f.connector, INTERNET, Some(json!({"action":"request"}))).await;
+    let path = f.data.path().join("ElastOS/SystemServices/WalletConnect/internet.json");
+    let before = std::fs::read(&path).unwrap();
+    for action_id in ["walletconnect-internet-allow:stale".to_string(), format!("walletconnect-internet-allow:{}", pending["request"]["id"].as_str().unwrap())] {
+        let (status, body) = f.route(&f.inbox, "/api/apps/inbox/actions", Some(json!({"action_id":action_id, "step_up_token":"stale-proof"}))).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body, json!({"schema":"elastos.home.wallet-connector.effect.error/v1","code":"conflict"}));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn n5_allow_after_refusal_off_expiry_routes() {
+    let f = Fixture::new().await;
+    f.allow().await;
+    let path = f.data.path().join("ElastOS/SystemServices/WalletConnect/internet.json");
+    let original: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for status in ["refused", "revoked", "requested"] {
+        let mut consent = original.clone(); consent["status"] = json!(status);
+        if status == "requested" { consent["at"] = json!(now_ts().saturating_sub(1801)); }
+        std::fs::write(&path, serde_json::to_vec(&consent).unwrap()).unwrap();
+        let (http, pending) = f.route(&f.inbox, INTERNET, Some(json!({"action":"request"}))).await;
+        assert_eq!(http, StatusCode::OK); assert_eq!(pending["status"], "requested");
+        assert_ne!(pending["request"]["id"], original["id"]);
+        f.answer(&pending, false).await;
+        assert_eq!(f.route(&f.inbox, INTERNET, None).await.1["status"], "granted");
+    }
+}
+
+#[tokio::test]
 async fn walletconnect_admitted_frames_do_not_reread_sdk_but_new_admissions_verify_it() {
     let f = Fixture::new().await;
     f.allow().await;
