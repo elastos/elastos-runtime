@@ -276,8 +276,11 @@ async fn n4_pending_requests_current_session_only_existing_routes() {
     let owner = passkey_authority(dir.path());
     let wallet = projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &owner);
     let inbox = projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &owner);
-    let other_wallet = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &owner);
-    let other = runtime_wallet_authority_for_app_token(dir.path(), WALLET_CAPSULE_ID, &other_wallet);
+    let other_home = app_token_for_authority(dir.path(), HOME_CAPSULE_ID, &owner);
+    let other = runtime_wallet_authority_for_app_token(dir.path(), HOME_CAPSULE_ID, &other_home);
+    let other_wallet = issue_home_projection_launch_token_with_context(
+        dir.path(), WALLET_CAPSULE_ID, WALLET_CAPSULE_ID, &other.home_launch_context(),
+    ).unwrap();
     assert_eq!(other.verified_context().principal_id(), owner.principal_id);
     assert_ne!(other.verified_context().session_id(), owner.session_id);
     let other_inbox = issue_home_projection_launch_token_with_context(
