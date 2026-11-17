@@ -2653,6 +2653,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn home_browser_no_open_cli_contract() {
+        for args in [
+            vec!["elastos", "home", "--browser", "--no-open"],
+            vec!["elastos", "home", "--no-open", "--browser"],
+        ] {
+            let result = super::Cli::try_parse_from(&args);
+            assert!(result.is_ok(), "{args:?}: {result:?}");
+        }
+        for args in [
+            vec!["elastos", "home", "--no-open"],
+            vec!["elastos", "home", "--browser", "--no-opne"],
+            vec!["elastos", "home", "--browser", "--no-open=true"],
+            vec!["elastos", "home", "--browser", "--no-open", "--status"],
+            vec!["elastos", "home", "--browser", "--no-open", "--json"],
+            vec!["elastos", "setup", "--browser", "--no-open"],
+            vec!["elastos", "gateway", "--no-open"],
+            vec!["elastos", "serve", "--no-open"],
+        ] {
+            assert!(super::Cli::try_parse_from(&args).is_err(), "{args:?}");
+        }
+        let help = super::Cli::try_parse_from(["elastos", "home", "--help"])
+            .unwrap_err()
+            .to_string();
+        assert!(help.contains("--no-open"), "{help}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn home_browser_process_group_keeps_the_terminal_frontdoor_policy() {
