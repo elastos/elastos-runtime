@@ -2736,7 +2736,9 @@ mod tests {
         let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         for entry in std::fs::read_dir(crates).unwrap() {
             let source = entry.unwrap().path().join("src");
-            if source.is_dir() { visit(&source, &marker, &mut sites); }
+            if source.is_dir() {
+                visit(&source, &marker, &mut sites);
+            }
         }
         sites.sort();
         assert_eq!(sites, ["gateway_entry.rs", "update_controller.rs"]);
