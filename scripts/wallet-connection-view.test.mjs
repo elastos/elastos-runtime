@@ -34,6 +34,7 @@ test('rule oracles reject deliberate broken states, one mutation per rule', () =
   const mutations = [
     ['exit', {...busy, actions:[action('check-access')]}],
     ['payment', {...busy, paymentRisk:true, notice:[{kind:'copy',text:'Reload Home.'}]}],
+    ['known-result', {...busy,walletResult:{disposition:'refused',receipt:'recording_failed'},status:[{kind:'copy',text:'Result unknown.'}]}],
     ['capability', {...busy, window:'unisat',actions:[action('use-walletconnect'),action('close-window')]}],
     ['sentence', {...busy,notice:[{kind:'copy',text:'Then check again.'}]}],
     ['answered', {...answered,wait:'Time left: 1:00'}],
@@ -146,6 +147,21 @@ test('consumed summary IDs never expose Send, and remaining counts use supplied 
   const next=structuredClone(states.find(r=>r.designState==='metamask/request-next'));
   next.otherSummaryInputs=[];
   assert.equal(fixtureView(next).queueCount,0);
+});
+
+test('known transaction refusal survives failed saving; failed hash recording never claims sent',()=>{
+  const row=states.find(r=>r.designState==='metamask/transaction-access-error');
+  for(const provider of ['settled-refused-recorded','settled-refused-recording_failed']){
+    const v=fixtureView({...row,provider});
+    assert.equal(viewText(v.status),'MetaMask did not allow this transaction.');
+    assert(!/unknown|waiting/i.test(viewText(v.status)));
+    assert.equal(v.focus,'outcome');assert(!v.actions.some(a=>a.id==='send-request'));
+    if(provider.endsWith('recording_failed'))assert.match(viewText(v.notice),/Home cannot save that answer/);
+  }
+  const sent=states.find(r=>r.designState==='metamask/transaction-done');
+  const v=fixtureView({...sent,provider:'transaction-recording_failed'});
+  assert.match(viewText(v.status),/returned a transaction result.*cannot save/);
+  assert(!/Transaction sent|result unknown/i.test(viewText(v.status)));
 });
 
 test('same-stage focus uses stable address keys and invalid display bounds use the generic fallback',()=>{

@@ -58,6 +58,14 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
   };
 }
 
+function summaryProjection(value) {
+  const keys=['id','app','actor','title','transaction','detail','site','address','status','expiresAt'];
+  requireValue(plain(value)&&Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k)), 'closed reduced request');
+  requireValue(bounded(value.id,256)&&bounded(value.app,128)&&bounded(value.actor,128)&&bounded(value.detail,2048)&&typeof value.transaction==='boolean'&&['Sign a message','Send transaction'].includes(value.title), 'reduced request fields');
+  requireValue(value.site===null||value.actor==='browser'&&displayOrigin(value.site)===value.site, 'reduced site');
+  return clone(value);
+}
+
 /** Derive contract-owned fields; presentation stage/context remains window-owned. */
 export function reduceAlternative(row) {
   const s = row?.selection;
@@ -77,6 +85,16 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
     stage = request ? `request-network-${issue}` : `network-${issue}`;
   }
   if (message?.outcome === 'no_wallet') stage = input.window === 'metamask' && stage === 'other-ethereum-wallet' ? stage : 'extension-missing';
+  const settled=message?.settled;
+  // Refusing a network change before handoff is not a transaction-send result.
+  const disposition=request?.transaction&&!stage.startsWith('transaction-')?null:settled?.result || ({declined:'declined',request_not_authorized:'refused'}[message?.outcome]) || null;
+  const walletResult={disposition,receipt:settled?.receipt??null};
+  if(request?.transaction&&stage.startsWith('transaction-')){
+    if(disposition==='declined')stage='transaction-declined';
+    if(disposition==='refused')stage='transaction-access-error';
+    if(disposition==='failed')stage='transaction-wallet-error';
+    if(disposition==='answered'&&settled.receipt==='recorded'&&stage!=='transaction-late-result')stage='transaction-done';
+  }
   const deadlines = [request?.expiresAt, Number.isSafeInteger(message?.deadlineAt) ? Math.floor(message.deadlineAt / 1000) : null].filter(Number.isSafeInteger);
   const waitSeconds = deadlines.length && Number.isSafeInteger(nowSeconds) ? Math.max(0, Math.min(...deadlines) - nowSeconds) : input.waitSeconds;
   let account=input.account;
@@ -84,7 +102,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
     const networks={'eip155:1':'Ethereum','eip155:8453':'Base','eip155:20':'Elastos Smart Chain','bip122:000000000019d6689c085ae165831e93':'Bitcoin'};
     account={name:providerCopy[provider.providerId]||'Your wallet',mark:provider.providerId==='unisat'?'unisat':provider.providerId==='io.metamask'?'metamask':'wallet',connection:null,accounts:[{address:provider.firstAccount,networks:[networks[provider.network]||'Selected network']}]};
   }
-  return connectionView({ ...input, stage, provider, summary: request, account, waitSeconds, alternativeAllowed: reduceAlternative(alternative),
+  return connectionView({ ...input, stage, provider, summary: request, account, waitSeconds, walletResult, alternativeAllowed: reduceAlternative(alternative),
     otherRequests: otherSummaries.map(s => reduceSummary(s, { connector, audience })).filter(Boolean) });
 }
 
@@ -102,7 +120,7 @@ function accountDisplay(account, window, summary) {
 }
 
 export function connectionView(input) {
-  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork'];
+  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult'];
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
   const { window, stage } = input;
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
@@ -110,7 +128,7 @@ export function connectionView(input) {
   const provider = input.provider ? reduceProvider(input.provider) : null;
   requireValue(!provider?.providerId || (window === 'unisat' ? provider.providerId === 'unisat' : window === 'metamask' ? provider.providerId !== 'unisat' : true), 'provider belongs to window');
   requireValue(!provider || (window === 'unisat' ? provider.alternatives.length === 0 : provider.alternatives.every(p=>p!=='unisat')), 'provider alternatives belong to window');
-  const summary = input.summary ? clone(input.summary) : null;
+  const summary = input.summary ? summaryProjection(input.summary) : null;
   requireValue(!screen.request || summary && bounded(summary.id,256) && bounded(summary.app,128) && bounded(summary.detail,2048) && ['Sign a message','Send transaction'].includes(summary.title) && (summary.site===null || displayOrigin(summary.site)===summary.site), 'reduced selected request summary');
   const account = accountDisplay(input.account, window, summary);
   const safety = window === 'walletconnect' ? input.localSafety ?? null : provider?.paymentPending ?? null;
@@ -125,14 +143,24 @@ export function connectionView(input) {
   });
   const action = a => ({ id: a.id, label: parts(a.label), primary: a === screen.primary || a === screen.requestAction, quiet: a.quiet });
   let notice = screen.notice || '';
-  const transactionRisk = safety !== false || (summary?.transaction && (screen.dispatched || /timeout|cancelled|reopened|error|removed/.test(stage)));
+  const result=input.walletResult||{disposition:null,receipt:null};
+  requireValue(plain(result)&&Object.keys(result).length===2&&[null,'answered','declined','refused','failed'].includes(result.disposition)&&[null,'recorded','recording_failed'].includes(result.receipt),'closed wallet result');
+  const knownNotSent=['declined','refused'].includes(result.disposition);
+  requireValue(!knownNotSent||!summary?.transaction||['transaction-declined','transaction-access-error'].includes(stage),'known transaction outcome stage');
+  const transactionRisk = safety !== false || (!knownNotSent && summary?.transaction && (screen.dispatched || /timeout|cancelled|reopened|error|removed/.test(stage)));
   if (transactionRisk) notice = notice.replace(/If .*?Reload control\./g, '').replace(/Enable .*?Open .*? from Wallet\./g, 'Close this window and check your wallet.');
   let actions = screen.requestPicker ? [] : [screen.primary, ...(screen.secondary || []), screen.requestAction, screen.reviewAction].filter(Boolean).map(action);
   if (window !== 'metamask' || input.alternativeAllowed !== true || screen.request || screen.account || transactionRisk) actions = actions.filter(a => a.id !== 'use-walletconnect');
   if (!screen.qr && !screen.requestPicker && !actions.length && !screen.afterAnswer && window !== 'panel') actions.push({id:'close-window',label:parts('Close window'),primary:true,quiet:false});
   if(actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${screen.status||''} ${notice}`))notice=`Close this window. ${notice}`.trim();
-  const answered = !!(screen.afterAnswer || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed)|transaction-(done|declined|late-result))$/.test(stage));
+  if(knownNotSent&&result.receipt==='recording_failed')notice+=' Home cannot save that answer.';
+  const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed)|transaction-(done|declined|access-error|late-result))$/.test(stage));
   let outcome = parts(screen.status);
+  if(summary?.transaction&&result.disposition==='answered'&&result.receipt!=='recorded'){
+    outcome=parts('The wallet returned a transaction result. Home cannot save it.');
+    notice='Check {{wallet}} and Wallet activity before sending again.';
+    actions=actions.filter(a=>a.id!=='send-request'&&a.id!=='use-walletconnect');
+  }
   const consumedSend = summary && summary.status !== 'pending' && actions.some(a=>a.id==='send-request');
   if(consumedSend){actions=actions.filter(a=>!['send-request','open-wallet'].includes(a.id));actions.unshift({id:'open-wallet',label:parts('Review in Wallet'),primary:true,quiet:false});outcome=parts('Review this request in Wallet.');}
   let focus = screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : null;
@@ -146,7 +174,7 @@ export function connectionView(input) {
   requireValue(wait === null || Number.isSafeInteger(wait) && wait >= 0 && wait <= 86400, 'wait seconds supplied by owner');
   requireValue(!screen.qr || bounded(input.qrData, 200000) && /^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(input.qrData), 'local PNG QR data');
   requireValue(input.otherRequests===undefined||Array.isArray(input.otherRequests)&&input.otherRequests.length<=100,'bounded request choices');
-  const choices = screen.choices ? (input.otherRequests || []).slice(0, screen.choices === 3 ? 2 : 1).map(clone) : [];
+  const choices = screen.choices ? (input.otherRequests || []).slice(0, screen.choices === 3 ? 2 : 1).map(summaryProjection) : [];
   if (screen.requestPicker && summary) choices.unshift(summary);
   return {
     window, stage, title: brands[window], account, selectedAccount: !!screen.selectedAccount,
@@ -154,7 +182,7 @@ export function connectionView(input) {
     request: screen.request ? summary : null, choices, picker: !!screen.requestPicker,
     queueCount: screen.queueCount ? (input.otherRequests?.length||0)+(screen.afterAnswer?0:1) : 0, status: outcome, notice: parts(notice), afterNote: parts(screen.afterActionsNote),
     wait: wait === null ? null : `Time left: ${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, '0')}`,
-    actions, focus, focusKey, answered, paymentRisk: transactionRisk, compact: input.compact === true,
+    actions, focus, focusKey, answered, walletResult:result, paymentRisk: transactionRisk, compact: input.compact === true,
     qrData: screen.qr ? input.qrData : null, panel: window === 'panel',
     walletconnectAvailable: screen.walletconnectAvailable !== false || !!account,
   };

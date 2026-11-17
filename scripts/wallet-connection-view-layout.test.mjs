@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { resolve, extname } from 'node:path';
 import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
-import { states, pictures, fixtureView } from './wallet-connection-view-fixtures.mjs';
+import { states, pictures, pictureViewports, fixtureView } from './wallet-connection-view-fixtures.mjs';
 import { layoutFailures } from './lib/wallet-connection-view-rules.mjs';
 import { viewText } from '../capsules/_shared/wallet-connection-view.mjs';
 
@@ -55,7 +55,10 @@ for (const engine of ['chromium','webkit']) await test(`extension_request_feedba
       else{await page.setViewportSize({width:size.width,height:size.height});await page.goto('http://wallet-view.test/fixture');}
       const surface=size.compact?page.frames().find(f=>f.url()==='http://wallet-view.test/fixture'):page;
       const actualSize=size.compact?frameGeometry[engine][size.name]:size;
+      let currentViewport=page.viewportSize();
       for(const row of states){
+        const rowSize=size.compact?actualSize:pictureViewports[row.window][size.name];
+        if(!size.compact&&(currentViewport.width!==rowSize.width||currentViewport.height!==rowSize.height)){await page.setViewportSize(rowSize);currentViewport=rowSize;}
         const view=fixtureView(row,{compact:!!size.compact});
         const observed=await surface.evaluate(async({view,theme,visibleFrame})=>{
           const {renderConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
@@ -66,7 +69,7 @@ for (const engine of ['chromium','webkit']) await test(`extension_request_feedba
           const focus=view.focus==='outcome'||view.focus==='accounts'?root.querySelector(`[data-focus="${view.focus}"]`):[...root.querySelectorAll('button')].find(b=>b.dataset.action===view.focus);
           focus?.focus({preventScroll:true});
           // Start from a scrolled identity/list, then re-render the resulting state.
-          if(view.compact)root.querySelector('.connection-content').scrollTop=10000;
+          if(view.compact&&!view.panel)root.querySelector('.connection-content').scrollTop=10000;
           const box=e=>{const b=e.getBoundingClientRect();return {top:b.top,bottom:b.bottom,left:b.left,right:b.right,width:b.width,height:b.height};};
           const shown=e=>{const b=box(e);return b.width>0&&b.height>0&&b.top>=-1&&b.left>=-1&&b.bottom<=Math.min(innerHeight,visibleFrame.visibleHeight??innerHeight)+1&&b.right<=Math.min(innerWidth,visibleFrame.visibleWidth??innerWidth)+1;};
           const controls=[...root.querySelectorAll('button')].map(b=>({id:b.dataset.action,label:b.textContent,primary:b.classList.contains('el-button-primary'),visible:shown(b),box:box(b)}));
@@ -76,7 +79,7 @@ for (const engine of ['chromium','webkit']) await test(`extension_request_feedba
           const exit=controls.find(b=>b.visible&&['cancel','stop-waiting','close-window','start-over','open-wallet-activity','open-request-app','open-wallet','connect','finish','send-message','restore-access','inbox'].includes(b.id));
           if(exit)[...root.querySelectorAll('button')].find(b=>b.dataset.action===exit.id).click();
           return {controls,feedback,names,paragraphs:[...root.querySelectorAll('p')].filter(p=>p.checkVisibility()).map(p=>p.textContent),focus:document.activeElement.dataset.action||document.activeElement.dataset.focus||null,text:root.innerText,links:root.querySelectorAll('a').length,clicks,scrollWidth:root.scrollWidth,width:innerWidth};
-        },{view,theme,visibleFrame:actualSize});
+        },{view,theme,visibleFrame:rowSize});
         const key=`${engine}/${theme}/${size.name}/${row.designState}`;
         try{
           assert.equal(observed.links,0,key+': zero navigation');
@@ -91,7 +94,7 @@ for (const engine of ['chromium','webkit']) await test(`extension_request_feedba
             const broken=structuredClone(observed);broken.names[0].bidi='normal';
             assert(layoutFailures(view,broken).includes('isolation'),key+': broken isolation escaped');
           }
-          assert(observed.scrollWidth<=actualSize.width+1,key+': horizontal overflow');
+          assert(observed.scrollWidth<=rowSize.width+1,key+': horizontal overflow');
           for(const name of observed.names){assert.equal(name.dir,'auto');assert.equal(name.bidi,'isolate');assert.equal(name.overflow,'hidden');assert.equal(name.whiteSpace,'nowrap');}
           if(view.focus)assert.equal(observed.focus,view.focus,key+': focus');
           if(view.wait||view.answered||/busy|timeout|cancelled|preparing|disconnecting/.test(row.stage)){

@@ -2210,7 +2210,7 @@
         "requesting_origin": "https://example.org",
         "expires_at": 1800000600
       },
-      "provider": "state-io.metamask",
+      "provider": "settled-refused-recorded",
       "safety": "state-payment-true",
       "alternative": "extension-walletconnect-wallet-metamask"
     },
@@ -2786,7 +2786,7 @@
         "requesting_origin": "https://example.org",
         "expires_at": 1800000600
       },
-      "provider": "outcome-declined",
+      "provider": "settled-declined-recorded",
       "safety": "state-payment-false",
       "alternative": "extension-walletconnect-wallet-metamask"
     },
@@ -2912,7 +2912,7 @@
         "requesting_origin": "https://example.org",
         "expires_at": 1800000600
       },
-      "provider": "state-io.metamask",
+      "provider": "settled-failed-recorded",
       "safety": "state-payment-true",
       "alternative": "extension-walletconnect-wallet-metamask"
     },
@@ -2954,7 +2954,7 @@
         "requesting_origin": "https://example.org",
         "expires_at": 1800000600
       },
-      "provider": "state-io.metamask",
+      "provider": "transaction-recorded",
       "safety": "state-payment-false",
       "alternative": "extension-walletconnect-wallet-metamask"
     },
@@ -3256,7 +3256,7 @@
         "requesting_origin": "https://example.org",
         "expires_at": 1800000600
       },
-      "provider": "state-io.metamask",
+      "provider": "transaction-recorded",
       "safety": "state-payment-false",
       "alternative": "extension-walletconnect-wallet-metamask"
     },

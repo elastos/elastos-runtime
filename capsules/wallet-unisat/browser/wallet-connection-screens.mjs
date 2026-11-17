@@ -1067,8 +1067,8 @@ export const screens = {
       "focus": "open-request-app"
     },
     "transaction-access-error": {
-      "status": "Transaction result unknown.",
-      "notice": "Check {{wallet}} before sending again. Wallet activity shows any result received.",
+      "status": "{{wallet}} did not allow this transaction.",
+      "notice": "Review Wallet activity before starting a new request.",
       "account": true,
       "request": true,
       "outcome": true,

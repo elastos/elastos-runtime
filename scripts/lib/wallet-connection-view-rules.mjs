@@ -9,6 +9,7 @@ export function ruleFailures(view) {
   const endsSituation = ['close-window','start-over','open-request-app','open-wallet-activity','inbox','cancel','stop-waiting','connect','finish','send-message','restore-access'];
   if (/busy|timeout|cancelled|disconnecting|preparing/.test(view.stage) && !ids.some(id => endsSituation.includes(id))) failures.push('exit');
   if (view.paymentRisk && (/reload/i.test(text) || ids.includes('use-walletconnect'))) failures.push('payment');
+  if(['declined','refused'].includes(view.walletResult?.disposition)&&/result unknown|still waiting|has not answered/i.test(text))failures.push('known-result');
   if ((view.window === 'unisat' || view.request || view.showAccount) && ids.includes('use-walletconnect')) failures.push('capability');
   const primary = actions.find(a => a.primary);
   if(primary?.id==='close-window'&&!/close (this )?window/i.test(text))failures.push('sentence');

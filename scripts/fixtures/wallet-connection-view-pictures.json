@@ -3906,5 +3906,63 @@
       },
       "wait": null
     }
-  ]
+  ],
+  "viewports": {
+    "walletconnect": {
+      "390": {
+        "width": 390,
+        "height": 844
+      },
+      "1280": {
+        "width": 1280,
+        "height": 720
+      },
+      "window": {
+        "width": 480,
+        "height": 522
+      }
+    },
+    "metamask": {
+      "390": {
+        "width": 390,
+        "height": 844
+      },
+      "1280": {
+        "width": 1280,
+        "height": 720
+      },
+      "window": {
+        "width": 480,
+        "height": 522
+      }
+    },
+    "unisat": {
+      "390": {
+        "width": 390,
+        "height": 844
+      },
+      "1280": {
+        "width": 1280,
+        "height": 720
+      },
+      "window": {
+        "width": 480,
+        "height": 522
+      }
+    },
+    "panel": {
+      "390": {
+        "width": 390,
+        "height": 844
+      },
+      "1280": {
+        "width": 1280,
+        "height": 720
+      },
+      "window": {
+        "width": 1040,
+        "height": 682
+      }
+    }
+  }
 }

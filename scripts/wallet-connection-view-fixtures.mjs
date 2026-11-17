@@ -3,7 +3,9 @@ import { reduceConnection } from '../capsules/_shared/wallet-connection-view.mjs
 
 export const shared = JSON.parse(readFileSync(new URL('./fixtures/wallet-connector-v2-messages.json', import.meta.url)));
 export const states = JSON.parse(readFileSync(new URL('./fixtures/wallet-connection-view-states.json', import.meta.url))).states;
-export const pictures = JSON.parse(readFileSync(new URL('./fixtures/wallet-connection-view-pictures.json', import.meta.url))).states;
+const pictureFixture = JSON.parse(readFileSync(new URL('./fixtures/wallet-connection-view-pictures.json', import.meta.url)));
+export const pictures = pictureFixture.states;
+export const pictureViewports = pictureFixture.viewports;
 const png = `data:image/png;base64,${readFileSync(new URL('./fixtures/wallet-connection-view-qr.png', import.meta.url)).toString('base64')}`;
 
 export function fixtureView(row, { compact = false, sharedFixture = shared, previousFocus } = {}) {
