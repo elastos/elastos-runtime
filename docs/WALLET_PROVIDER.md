@@ -305,7 +305,9 @@ with the normal completion bindings. The request stays dismissed; Activity shows
 "Sent from wallet after request was dismissed" with the hash and a sent mark.
 Runtime logs `wallet.approval.sent_after_dismissal` for this receipt, and the
 connector reports "Request dismissed. Transaction sent from wallet."
-An unfinished prompt expires after the grace period; other connectors keep their normal TTL.
+An unfinished WalletConnect prompt expires after the grace period. Other
+connectors keep their signing TTL; [N3](#n3-outside-wallet-requests) defines
+MetaMask's receipt-only exception after this work.
 Runtime checks the returned
 transaction hash's format only. The phone wallet confirms the transaction;
 the hash alone does not prove that it matches the approved payload. A completion error keeps the
@@ -508,8 +510,10 @@ with Dismiss under [the existing receipt rules](#first-shippable-slice).
 Home request. Dismiss closes an eligible handed-off WalletConnect transaction
 locally, not in the wallet. After Reject/Dismiss, clear selection before refresh
 and retain the acknowledgement; Activity remains a separate action. A consumed
-ID is never resent. Result unknown must stay explicit when Home lacks a receipt;
-a returned hash alone establishes neither chain confirmation nor that the
+ID is never resent. Result unknown is reserved for a send whose hash/result
+Home has not received. A known but unrecorded hash uses
+[Home's receipt-status rule](HOME_SHELL_HOST_CONTRACT.md#n2-waiting-settlement-and-memory).
+A returned hash alone establishes neither chain confirmation nor that the
 transaction matches the payload.
 
 **Today.** MetaMask transaction completion expires with its approval request;

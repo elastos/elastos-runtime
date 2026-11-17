@@ -327,9 +327,10 @@ prompts and network prompts never change it. Approval becomes `handed_off`
 when Runtime handoff returns. It becomes `sent` only at the ownership/payload
 signature or transaction send call boundary. That means the call was made,
 not that a signature, broadcast or chain confirmation succeeded. Only a
-transaction whose payload call was made and whose wait ended before its
-receipt was recorded uses `unknown`. A later recorded hash resolves Runtime's
-receipt state, without resolving the ended effect a second time. `waitEnd` is non-null only with `outcome:"stopped"`: `user` or
+transaction whose send call was made and whose wait ended before Home
+received its hash uses `unknown`. A known hash uses sent even if Runtime
+recording fails. A later hash updates receipt state through the advisory,
+without resolving the ended effect a second time. `waitEnd` is non-null only with `outcome:"stopped"`: `user` or
 `deadline`. Final effect results retain the last absolute `deadlineAt`.
 
 **After this work.** Check always ends at `stage:"checking"`,
