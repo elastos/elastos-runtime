@@ -6,7 +6,7 @@ import { canSignalWorkerGroup, spawnOwnedTestWorker } from "./owned-test-worker.
 
 async function stopExactChild(child) {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  const exit = once(child, "exit");
+  const exit = once(child, "exit", { signal: AbortSignal.timeout(30_000) });
   child.kill("SIGKILL");
   await exit;
 }
@@ -48,7 +48,7 @@ test("verified new worker group stops while a neighbouring process survives", as
   assert.equal(group(worker.child.pid), worker.child.pid);
   assert.notEqual(group(worker.child.pid), group(process.pid));
   assert.notEqual(group(neighbour.pid), group(worker.child.pid));
-  const exit = once(worker.child, "exit");
+  const exit = once(worker.child, "exit", { signal: AbortSignal.timeout(30_000) });
   assert.equal(worker.stop(), true);
   const [code, signal] = await exit;
   assert.equal(code, null);
@@ -64,7 +64,7 @@ test("an exited worker cannot authorize a later group signal", async t => {
   const neighbour = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
   t.after(() => stopExactChild(neighbour));
   const worker = spawnOwnedTestWorker(["-e", ""], { stdio: "ignore" });
-  await once(worker.child, "exit");
+  await once(worker.child, "exit", { signal: AbortSignal.timeout(30_000) });
   assert.equal(worker.child.exitCode, 0);
   assert.equal(worker.stop(), false);
   assert.equal(process.kill(neighbour.pid, 0), true);

@@ -41,7 +41,7 @@ function suite(t, name, timeout = 10_000, overrides = {}) {
     writeFileSync(path, script.replace("scripts/run-node-tests.mjs ", `scripts/run-node-tests.mjs --timeout=${timeout} `));
   }
   return spawnSync("bash", [join(root, "scripts/test-behaviour.sh")], {
-    cwd: root, env: { ...env, BEHAVIOUR_INPUTS: inputs }, encoding: "utf8", timeout: 20_000, maxBuffer: 5 * 1024 * 1024,
+    cwd: root, env: { ...env, BEHAVIOUR_INPUTS: inputs }, encoding: "utf8", timeout: 60_000, maxBuffer: 5 * 1024 * 1024,
   });
 }
 
@@ -71,8 +71,8 @@ test("behaviour gate waits for tests declared by a live handle", t => {
 });
 
 test("runner bounds a hung test and names it", () => {
-  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=1500", join(fixtures, "hang.mjs")], {
-    encoding: "utf8", timeout: 8000,
+  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=3000", join(fixtures, "hang.mjs")], {
+    encoding: "utf8", timeout: 30_000,
   });
   assert.ifError(result.error);
   assert.notEqual(result.status, 0);
@@ -81,18 +81,18 @@ test("runner bounds a hung test and names it", () => {
 
 for (const [name, title] of [["blocked.mjs", "blocked event loop"], ["open-handle.mjs", "test with leaked interval"]]) {
   test(`runner stops ${name}`, () => {
-    const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=1500", join(fixtures, name)], {
-      encoding: "utf8", timeout: 8000,
+    const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=3000", join(fixtures, name)], {
+      encoding: "utf8", timeout: 30_000,
     });
     assert.ifError(result.error);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /timed out after 3000ms/);
+    assert.match(result.stderr, /timed out after 6000ms/);
     assert.ok(result.stderr.includes(title), result.stderr);
   });
 }
 
 test("runner names a killed test", () => {
-  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), join(fixtures, "killed.mjs")], { encoding: "utf8", timeout: 8000 });
+  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), join(fixtures, "killed.mjs")], { encoding: "utf8", timeout: 30_000 });
   assert.ifError(result.error);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /first unfinished: killed test/);
@@ -106,7 +106,7 @@ test("behaviour gate reports every result under pipe backpressure", t => {
 });
 
 test("runner accepts a completed plain assertion script", () => {
-  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), join(fixtures, "assertions.mjs")], { encoding: "utf8", timeout: 8000 });
+  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), join(fixtures, "assertions.mjs")], { encoding: "utf8", timeout: 30_000 });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /plain assertions completed/);
@@ -121,8 +121,8 @@ test("repository gate entry points keep the completion supervisor", () => {
 });
 
 test("runner permits a whole-file assertion journey beyond one test budget", () => {
-  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=1500", join(fixtures, "slow-assertions.mjs")], {
-    encoding: "utf8", timeout: 8000,
+  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=3000", join(fixtures, "slow-assertions.mjs")], {
+    encoding: "utf8", timeout: 30_000,
   });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
@@ -130,7 +130,7 @@ test("runner permits a whole-file assertion journey beyond one test budget", () 
 });
 
 test("completed worker stays complete when its summary is buffered behind another file", t => {
-  const result = suite(t, "pass.mjs", 1500, {
+  const result = suite(t, "pass.mjs", 3000, {
     "capsules/*/browser/*.test.mjs": "progress.mjs",
     "scripts/model-preparation-failure-smoke.mjs": "long-progress.mjs",
   });
@@ -144,10 +144,10 @@ test("two stalled workers shut down without a second process-group kill", t => {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const files = ["one.mjs", "two.mjs"].map(name => join(root, name));
   for (const file of files) cpSync(join(fixtures, "open-handle.mjs"), file);
-  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=1500", ...files], { encoding: "utf8", timeout: 8000 });
+  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=3000", ...files], { encoding: "utf8", timeout: 30_000 });
   assert.ifError(result.error);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /timed out after 3000ms/);
+  assert.match(result.stderr, /timed out after 6000ms/);
   assert.doesNotMatch(result.stderr, /kill EPERM|run-node-tests.mjs:\d/);
 });
 
@@ -158,10 +158,10 @@ test("supervisor delegates group signals to the ownership-checked worker", () =>
 });
 
 test("synchronous test starts refresh the deadline while reporter events are buffered", () => {
-  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=1500", join(fixtures, "synchronous-progress.mjs")], {
-    encoding: "utf8", timeout: 10_000,
+  const result = spawnSync(process.execPath, [join(scripts, "run-node-tests.mjs"), "--timeout=3000", join(fixtures, "synchronous-progress.mjs")], {
+    encoding: "utf8", timeout: 30_000,
   });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /pass 8/);
+  assert.match(result.stdout, /pass 16/);
 });

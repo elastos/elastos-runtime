@@ -6,14 +6,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scripts = dirname(fileURLToPath(import.meta.url));
 const runner = join(scripts, "run-node-tests.mjs");
 const fixtures = join(scripts, "fixtures/node-test-runner");
+const processWait = 30_000; // Liveness bound, not a scheduling/performance assertion.
 const env = { ...process.env };
 delete env.NODE_TEST_CONTEXT;
-function run(name, args = [], extra = {}, limit = 10_000) {
+function run(name, args = [], extra = {}, limit = 30_000) {
   const result = spawnSync(process.execPath, [runner, ...args, join(fixtures, name)], {
     env: { ...env, ...extra }, encoding: "utf8", timeout: limit,
   });
@@ -24,14 +25,20 @@ function identity(pid) {
   try {
     const row = execFileSync("ps", ["-p", String(pid), "-o", "pid=,ppid=,pgid=,lstart=,stat=,command="], { encoding: "utf8", timeout: 5000 }).trim();
     const a = row.split(/\s+/);
-    if (a.length < 10 || a[8].includes("Z")) return null;
+    assert.ok(a.length >= 10, `unreadable process identity: ${row}`);
+    if (a[8].includes("Z")) return null; // A zombie has exited; reaping belongs to its parent.
     return { pid: Number(a[0]), parent: Number(a[1]), group: Number(a[2]), birth: a.slice(3, 8).join(" "), command: a.slice(9).join(" ") };
-  } catch { return null; }
+  } catch (error) {
+    // ps exits 1 with empty output for an absent PID. Inspection errors are
+    // failures, never evidence that a worker exited.
+    if (error.status === 1 && !String(error.stdout).trim() && !String(error.stderr).trim()) return null;
+    throw error;
+  }
 }
 const same = (a, b) => Boolean(a && b && a.pid === b.pid && a.group === b.group && a.birth === b.birth && a.command === b.command);
-async function until(predicate, limit = 3000) {
-  const end = Date.now() + limit;
-  while (Date.now() < end) {
+async function until(predicate, limit = processWait) {
+  const end = performance.now() + limit;
+  while (performance.now() < end) {
     if (predicate()) return true;
     await delay(25);
   }
@@ -39,7 +46,7 @@ async function until(predicate, limit = 3000) {
 }
 async function stopChild(child) {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  const ended = once(child, "exit");
+  const ended = once(child, "exit", { signal: AbortSignal.timeout(processWait) });
   child.kill("SIGKILL");
   await ended;
 }
@@ -52,21 +59,27 @@ for (const signal of ["SIGHUP", "SIGKILL", "gate-group-SIGKILL"]) {
     const neighbour = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
     t.after(() => stopChild(neighbour));
     const gate = spawn(process.execPath, [join(fixtures, "supervisor-death-gate.mjs"), runner, join(fixtures, "orphan-blocked.mjs")], {
-      detached: true, env: { ...env, NODE_TEST_GUARD_READY: ready }, stdio: ["ignore", "ignore", "pipe", "ipc"],
+      detached: true, env: { ...env, NODE_TEST_GUARD_READY: ready,
+        NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(join(fixtures, "pause-ready-write.mjs")).href}` }, stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     let errors = "";
     gate.stderr.on("data", data => { errors = (errors + data).slice(-8192); });
     t.after(() => stopChild(gate));
-    const [{ supervisor }] = await once(gate, "message");
+    const [{ supervisor }] = await once(gate, "message", { signal: AbortSignal.timeout(processWait) });
     const owned = [];
     t.after(() => {
       // Cleanup uses only exact recorded descendant PIDs, including on the
       // expected before-repair failure. It never signals a process group.
       for (const recorded of owned.reverse()) {
-        if (same(recorded, identity(recorded.pid))) process.kill(recorded.pid, "SIGKILL");
+        if (recorded && same(recorded, identity(recorded.pid))) process.kill(recorded.pid, "SIGKILL");
       }
     });
     owned.push(identity(supervisor));
+    // Hold the actual readiness writer after open and before write. The final
+    // name must stay absent until the complete JSON is atomically published.
+    assert.equal(await until(() => existsSync(`${ready}.opened`)), true, "readiness writer opened");
+    assert.equal(existsSync(ready), false, "readiness published before its JSON write completed");
+    writeFileSync(`${ready}.release`, "");
     assert.equal(await until(() => existsSync(ready)), true, "blocked test started");
     const pids = JSON.parse(readFileSync(ready, "utf8"));
     owned.push(identity(pids.worker));
@@ -97,8 +110,8 @@ test("N2 absolute symlink input completes without a false declaration", t => {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const alias = join(root, "alias");
   symlinkSync(fixtures, alias, "dir");
-  const result = spawnSync(process.execPath, [runner, "--timeout=1500", join(alias, "pass.mjs")], {
-    env, encoding: "utf8", timeout: 8000,
+  const result = spawnSync(process.execPath, [runner, join(alias, "pass.mjs")], {
+    env, encoding: "utf8", timeout: 30_000,
   });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
@@ -106,7 +119,7 @@ test("N2 absolute symlink input completes without a false declaration", t => {
 
 for (const output of ["stdout", "stderr"]) {
   test(`N3 plain script ${output} refreshes file inactivity`, () => {
-    const result = run("output-progress.mjs", ["--timeout=1500"], { NODE_TEST_GUARD_OUTPUT: output });
+    const result = run("output-progress.mjs", ["--timeout=3000"], { NODE_TEST_GUARD_OUTPUT: output });
     assert.equal(result.status, 0, result.stderr);
     assert.ok((result.stdout + result.stderr).includes("script progress 7"));
   });
@@ -135,7 +148,7 @@ test("N6 early exit explains how a plain script should finish", () => {
 });
 
 test("F1 a printing loop reaches the fixed file upper limit", () => {
-  const result = run("printing-loop.mjs", ["--timeout=1500"], {}, 35_000);
+  const result = run("printing-loop.mjs", ["--timeout=1500"], {}, 55_000);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /printing-loop.mjs: upper limit.*30000ms/);
   assert.match(result.stdout, /Node test guard: FAIL \(exit 1\)/);
@@ -164,12 +177,12 @@ for (const mode of ["unavailable", "wrong-group"]) {
         NODE_TEST_GUARD_FAIL_CHECK: marker, NODE_TEST_GUARD_CHECK_MODE: mode }, stdio: ["ignore", "ignore", "ignore", "ipc"],
     });
     t.after(() => stopChild(gate));
-    const [{ supervisor }] = await once(gate, "message");
+    const [{ supervisor }] = await once(gate, "message", { signal: AbortSignal.timeout(processWait) });
     const owned = [identity(supervisor)];
     t.after(() => {
-      for (const p of owned.reverse()) if (same(p, identity(p.pid))) process.kill(p.pid, "SIGKILL");
+      for (const p of owned.reverse()) if (p && same(p, identity(p.pid))) process.kill(p.pid, "SIGKILL");
     });
-    assert.equal(await until(() => existsSync(ready), 10_000), true);
+    assert.equal(await until(() => existsSync(ready)), true);
     const pids = JSON.parse(readFileSync(ready, "utf8"));
     const leader = identity(pids.worker), cli = identity(pids.runner), file = identity(pids.test);
     owned.push(leader, cli, file);
