@@ -280,6 +280,7 @@ pub(super) fn notification(
                     .ok()
                     .is_some_and(|inner| !inner.sockets.is_empty())));
     Some(HomeNotificationEntrySummary {
+            requesting_origin: None,
         id: "walletconnect-internet:permission".into(),
         source_app: WALLET_WALLETCONNECT_CAPSULE_ID.into(),
         kind: if pending {

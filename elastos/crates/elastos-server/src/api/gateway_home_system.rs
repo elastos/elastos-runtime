@@ -5295,6 +5295,7 @@ pub(super) fn append_home_service_access_notifications(
             approval_effect.to_string()
         };
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: None,
             id,
             source_app: INBOX_CAPSULE_ID.to_string(),
             kind: "service_access_request".to_string(),
@@ -5323,6 +5324,7 @@ pub(super) fn append_home_service_access_notifications(
         let (service_noun, _) =
             home_services_request_notification_copy(&request.service_kind, &request.service_uri);
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: None,
             id,
             source_app: INBOX_CAPSULE_ID.to_string(),
             kind: "service_access_grant".to_string(),

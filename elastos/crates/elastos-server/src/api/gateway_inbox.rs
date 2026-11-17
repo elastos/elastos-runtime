@@ -158,6 +158,7 @@ pub(super) fn append_hosted_route_notifications(
         notifications.unread_count += 1;
         notifications.attention_count += 1;
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: None,
             id: format!("external-http-request:{}", route.id),
             source_app: INBOX_CAPSULE_ID.to_string(),
             kind: "hosted_route_decision".to_string(),
@@ -194,6 +195,7 @@ pub(super) fn append_wallet_approval_notifications(
             request.capsule_id.clone()
         };
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: request.requesting_origin.clone(),
             id: format!("wallet-approval-request:{}", request.request_id),
             source_app: request.capsule_id.clone(),
             kind: "wallet_approval_request".to_string(),
@@ -206,7 +208,7 @@ pub(super) fn append_wallet_approval_notifications(
                 app: WALLET_CAPSULE_ID.to_string(),
                 action_id: format!(
                     "{}:{}",
-                    if request.intent == "browser_account_access" {
+                    if request.intent == "browser_account_access" || !is_managed_wallet_proof_type(&request.proof_type) || request.connector_id.is_some() {
                         "wallet-review-request"
                     } else {
                         "wallet-approve-request"
@@ -250,6 +252,7 @@ pub(super) fn append_runtime_capability_notifications(
         notifications.unread_count += 1;
         notifications.attention_count += 1;
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: None,
             id: format!("capability-request:{}", request.request_id),
             source_app: SYSTEM_CAPSULE_ID.to_string(),
             kind: "capability_request".to_string(),

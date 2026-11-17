@@ -74,6 +74,7 @@ pub(super) fn append_inspect_action_notifications(
         notifications.unread_count += 1;
         notifications.attention_count += 1;
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: None,
             id: format!("inspect-action-request:{request_id}"),
             source_app: SYSTEM_CAPSULE_ID.to_string(),
             kind: "inspect_action_request".to_string(),

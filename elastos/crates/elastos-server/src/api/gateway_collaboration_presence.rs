@@ -485,6 +485,7 @@ pub(super) fn community_presence_request_notification(
     )
     .ok()??;
     Some(HomeNotificationEntrySummary {
+            requesting_origin: None,
         id: format!("community-presence-request:{issued_at}"),
         source_app: CHAT_ROOM_CAPSULE_ID.to_string(),
         kind: "community_presence_request".to_string(),

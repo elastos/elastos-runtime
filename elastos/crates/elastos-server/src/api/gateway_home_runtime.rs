@@ -1781,6 +1781,7 @@ pub(super) fn home_notifications_summary(
             .entries
             .into_iter()
             .map(|entry| HomeNotificationEntrySummary {
+            requesting_origin: None,
                 id: entry.id,
                 source_app: entry.source_app,
                 kind: entry.kind,
