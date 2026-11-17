@@ -345,6 +345,7 @@ impl WalletProvider {
     pub(super) fn approval_requests(
         &mut self,
         principal_id: &str,
+        session_id: &str,
         include_resolved: bool,
     ) -> Response {
         if let Err(response) = self.ensure_initialized() {
@@ -359,6 +360,10 @@ impl WalletProvider {
             .approval_requests
             .iter()
             .filter(|request| request.principal_id == principal_id)
+            .filter(|request| {
+                request.status != ApprovalStatus::Pending
+                    || (!request.session_id.is_empty() && request.session_id == session_id)
+            })
             .filter(|request| include_resolved || request.status == ApprovalStatus::Pending)
             .collect::<Vec<_>>();
         Response::ok(json!({ "approval_requests": requests }))

@@ -318,7 +318,7 @@ impl WalletProvider {
                 self.attach_validated_chain_outcome(&request.authority, outcome)
             }
             WalletProviderOperationV2::ListApprovals { include_resolved } => {
-                self.approval_requests(principal_id, *include_resolved)
+                self.approval_requests(principal_id, session_id, *include_resolved)
             }
             WalletProviderOperationV2::RejectApproval { request_id, reason } => {
                 self.reject_approval(principal_id, session_id, actor, request_id, reason)
