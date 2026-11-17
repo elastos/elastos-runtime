@@ -16,6 +16,60 @@ const MAX_EIP6963_PROVIDERS = 32;
 const MAX_EFFECT_REQUESTS_PER_FRAME = 64;
 const OPAQUE_FRAME_TARGET = "*";
 const eip6963Providers = [];
+// Only an already admitted effect can identify the recipient. The existing
+// clipboard lifetime binds this subscription to that same live document.
+const walletEventRecipients = new Map();
+const walletEventProviders = new Map();
+const observedWalletProviders = new WeakSet();
+const WALLET_EVENT_TYPE = "home:wallet-connector-event";
+
+function rememberWalletEventRecipient(event, context) {
+  const lifetime = context.clipboardState;
+  if (!event.source || event.source !== context.source || lifetime?.retired
+    || !lifetime?.generation) return;
+  walletEventRecipients.set(context.targetId, {
+    source: event.source, lifetime, generation: lifetime.generation,
+  });
+}
+
+function walletEventValue(connectorId, name, value) {
+  if (name === "disconnect") return null;
+  if (name === "accountsChanged") {
+    const pattern = connectorId === METAMASK_CONNECTOR_ID
+      ? /^0x[0-9a-fA-F]{40}$/ : /^(?:bc1|[13])[A-Za-z0-9]{20,100}$/;
+    if (!Array.isArray(value) || value.length > 8
+      || value.some(account => typeof account !== "string" || !pattern.test(account))) return undefined;
+    return [...value];
+  }
+  if (connectorId === METAMASK_CONNECTOR_ID && name === "chainChanged") {
+    return typeof value === "string" && /^0x[0-9a-fA-F]{1,16}$/.test(value) ? value : undefined;
+  }
+  if (connectorId === UNISAT_CONNECTOR_ID && name === "networkChanged") {
+    return ["livenet", "testnet", "unknown"].includes(value) ? value : undefined;
+  }
+  return undefined;
+}
+
+function observeWalletProvider(provider, connectorId) {
+  walletEventProviders.set(connectorId, provider);
+  if (observedWalletProviders.has(provider) || typeof provider.on !== "function") return;
+  observedWalletProviders.add(provider);
+  for (const name of ["accountsChanged", connectorId === METAMASK_CONNECTOR_ID
+    ? "chainChanged" : "networkChanged", "disconnect"]) {
+    provider.on(name, value => {
+      if (walletEventProviders.get(connectorId) !== provider) return;
+      const payload = walletEventValue(connectorId, name, value);
+      const recipient = walletEventRecipients.get(connectorId);
+      if (payload === undefined || !recipient) return;
+      if (recipient.lifetime.retired || recipient.lifetime.generation !== recipient.generation
+        || recipient.source.closed) {
+        walletEventRecipients.delete(connectorId);
+        return;
+      }
+      recipient.source.postMessage({ type: WALLET_EVENT_TYPE, connectorId, event: name, value: payload }, OPAQUE_FRAME_TARGET);
+    });
+  }
+}
 let eip6963Overflow = false;
 
 installEip6963Discovery();
@@ -64,6 +118,7 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
   while (state.requestIds.size >= MAX_EFFECT_REQUESTS_PER_FRAME) {
     state.requestIds.delete(state.requestIds.values().next().value);
   }
+  rememberWalletEventRecipient(event, context);
   state.requestIds.add(requestId);
   state.inFlight = true;
   performConnectorEffect(connectorId, context.homeToken, action)
@@ -174,6 +229,7 @@ async function performConnectorEffect(connectorId, connectorToken, action) {
 
 async function linkEvmWallet(connectorToken) {
   const provider = selectMetaMaskCompatibleProvider();
+  observeWalletProvider(provider, METAMASK_CONNECTOR_ID);
   const accounts = await provider.request({ method: "eth_requestAccounts" });
   const address = requireEvmAddress(firstProviderAccount(accounts));
   const chainId = requireEvmChainId(await provider.request({ method: "eth_chainId" }));
@@ -204,6 +260,7 @@ async function linkEvmWallet(connectorToken) {
 
 async function linkBitcoinWallet(connectorToken) {
   const provider = requireUniSatProvider();
+  observeWalletProvider(provider, UNISAT_CONNECTOR_ID);
   const account = await requestUniSatAccount(provider);
   const challengeResult = await runtimePost(
     "/api/apps/home/wallet-connector/bitcoin/link/challenge",
@@ -233,6 +290,7 @@ async function completeApproval(connectorId, connectorToken, approvalRequestId) 
   const provider = connectorId === METAMASK_CONNECTOR_ID
     ? selectMetaMaskCompatibleProvider()
     : requireUniSatProvider();
+  observeWalletProvider(provider, connectorId);
   const encodedRequestId = encodeURIComponent(approvalRequestId);
   const response = await runtimePost(
     `/api/apps/home/wallet-connector/approvals/${encodedRequestId}/handoff`,
