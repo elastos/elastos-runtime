@@ -1,9 +1,10 @@
 import { readFile, mkdir } from "node:fs/promises";
 import { extname } from "node:path";
+import { pathToFileURL } from "node:url";
 import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "../product-smoke-browser.mjs";
 
 export const packets = JSON.parse(await readFile(new URL("../fixtures/wallet-connector-v2-messages.json", import.meta.url)));
-const root = new URL("../../", import.meta.url);
+const root = process.env.WALLET_RUNTIME_SOURCE ? pathToFileURL(`${process.env.WALLET_RUNTIME_SOURCE}/`) : new URL("../../", import.meta.url);
 const types = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html", ".png": "image/png", ".woff2": "font/woff2", ".svg": "image/svg+xml" };
 
 // Serve the real capsule files. The fixture supplies only Runtime HTTP and
