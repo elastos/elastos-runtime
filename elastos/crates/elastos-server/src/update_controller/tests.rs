@@ -5771,19 +5771,43 @@ fn linked_ready_test_binary(repository: &Path, profile: &OsStr) -> &'static Path
             .current_dir(repository)
             .args(["test", "--manifest-path"])
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
-            .args(["-p", "elastos-server", "--bin", "elastos", "--no-run", "--message-format=json", "--locked", "--offline", "--jobs", "1", "--profile"])
+            .args([
+                "-p",
+                "elastos-server",
+                "--bin",
+                "elastos",
+                "--no-run",
+                "--message-format=json",
+                "--locked",
+                "--offline",
+                "--jobs",
+                "1",
+                "--profile",
+            ])
             .arg(profile)
             .env_remove("CARGO_MAKEFLAGS")
-            .output().unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        String::from_utf8(output.stdout).unwrap().lines()
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
             .find_map(|message| {
-                if message["reason"] == "compiler-artifact" && message["target"]["name"] == "elastos"
-                    && message["profile"]["test"].as_bool() == Some(true) {
+                if message["reason"] == "compiler-artifact"
+                    && message["target"]["name"] == "elastos"
+                    && message["profile"]["test"].as_bool() == Some(true)
+                {
                     message["executable"].as_str().map(PathBuf::from)
-                } else { None }
-            }).expect("Cargo built the real ready-callback test binary")
+                } else {
+                    None
+                }
+            })
+            .expect("Cargo built the real ready-callback test binary")
     })
 }
 
@@ -5829,7 +5853,10 @@ fn linked_start_binary(directory: &Path, version: &str) -> Vec<u8> {
         .arg(profile)
         .args(["--", "-C", "strip=debuginfo"])
         .env_remove("CARGO_MAKEFLAGS")
-        .env("ELASTOS_LINKED_FIXTURE_READY_TEST_EXE", linked_ready_test_binary(repository, profile))
+        .env(
+            "ELASTOS_LINKED_FIXTURE_READY_TEST_EXE",
+            linked_ready_test_binary(repository, profile),
+        )
         .env("ELASTOS_LINKED_FIXTURE_VERSION", version)
         .env("ELASTOS_LINKED_FIXTURE_TEST_EXE", &harness)
         .env(
@@ -5953,7 +5980,9 @@ impl LinkedStartFixture {
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child()).unwrap();
         let mut command = self.command(&self.alias, std::env::consts::OS);
         command.args(["home", "--browser"]);
-        if no_open { command.arg("--no-open"); }
+        if no_open {
+            command.arg("--no-open");
+        }
         self.process = Some(child::OwnedChild::spawn(&mut command).unwrap());
         let accepted = tokio::time::timeout(READY_TIMEOUT, async {
             loop {
@@ -6026,7 +6055,9 @@ impl LinkedStartFixture {
 
     async fn update_with_outcome(&mut self, version: &str, phase: &str) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let previous = load_trusted_sources(self.data()).unwrap().sources[0].installed_version.clone();
+        let previous = load_trusted_sources(self.data()).unwrap().sources[0]
+            .installed_version
+            .clone();
         self.stage_update(version);
         let stream = self.stream.as_mut().unwrap();
         stream.write_all(b"U").await.unwrap();
@@ -6039,7 +6070,14 @@ impl LinkedStartFixture {
         );
         let source = load_trusted_sources(self.data()).unwrap().sources.remove(0);
         assert_eq!(status(self.data()).unwrap().unwrap().phase, phase);
-        assert_eq!(source.installed_version, if phase == "updated" { version } else { &previous });
+        assert_eq!(
+            source.installed_version,
+            if phase == "updated" {
+                version
+            } else {
+                &previous
+            }
+        );
         if phase == "updated" {
             assert_eq!(Path::new(&source.install_path), self.fixture.binary);
         }
@@ -6051,29 +6089,50 @@ impl LinkedStartFixture {
         let mut stream = self.stream.take().unwrap();
         stream.write_all(b"I").await.unwrap();
         let mut byte = [0];
-        assert_eq!(tokio::time::timeout(READY_TIMEOUT, stream.read(&mut byte)).await.unwrap().unwrap(), 0);
+        assert_eq!(
+            tokio::time::timeout(READY_TIMEOUT, stream.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
         let mut process = self.process.take().unwrap();
         tokio::time::timeout(READY_TIMEOUT, async {
             while process.observed_exit().unwrap().is_none() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         process.stop().await.unwrap();
         let transaction = InstallTransaction::acquire(self.data(), &self.fixture.binary).unwrap();
-        assert_eq!(transaction.restart_record().unwrap().phase, RestartPhase::CandidateReady);
+        assert_eq!(
+            transaction.restart_record().unwrap().phase,
+            RestartPhase::CandidateReady
+        );
     }
 
     fn assert_quiet_launches(&self, versions: &[&str]) {
         let receipt: Receipt = read_private_json(&self.fixture.directory.join(RECEIPT)).unwrap();
         assert_eq!(receipt.binary, fs::canonicalize(&self.alias).unwrap());
-        assert!(receipt.launch.args.contains(&BASE64.encode(b"--no-open")), "quiet choice lost from receipt");
+        assert!(
+            receipt.launch.args.contains(&BASE64.encode(b"--no-open")),
+            "quiet choice lost from receipt"
+        );
         assert_eq!(receipt.launch.sha256().unwrap(), receipt.launch_sha256);
-        let events: Vec<Value> = fs::read_to_string(self.data().join("linked-start-launches.jsonl")).unwrap()
-            .lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let events: Vec<Value> =
+            fs::read_to_string(self.data().join("linked-start-launches.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
         assert_eq!(events.len(), versions.len(), "{events:?}");
         for (event, version) in events.iter().zip(versions) {
             assert_eq!(event["version"], *version);
-            assert_eq!(event["marker"], "1", "quiet launch lost suppression: {event}");
+            assert_eq!(
+                event["marker"], "1",
+                "quiet launch lost suppression: {event}"
+            );
             assert_eq!(event["args"], json!(["home", "--browser"]));
         }
     }
@@ -6124,7 +6183,9 @@ async fn linked_start_controller_fixture() {
     stream.write_all(b"R").await.unwrap();
     loop {
         let action = stream.read_u8().await.unwrap();
-        if action == b'S' { break; }
+        if action == b'S' {
+            break;
+        }
         assert!(matches!(action, b'U' | b'I'));
         let request: UpdateRequest =
             read_private_json(&data.join("linked-start-update.json")).unwrap();
@@ -6147,16 +6208,30 @@ async fn linked_start_controller_fixture() {
                 Box::pin(async move { bytes.context("linked interrupted-update payload missing") })
             });
             queue_update(&data, request.clone()).unwrap();
-            fs::rename(controller.directory.join(REQUEST), controller.directory.join(ACTIVE_REQUEST)).unwrap();
+            fs::rename(
+                controller.directory.join(REQUEST),
+                controller.directory.join(ACTIVE_REQUEST),
+            )
+            .unwrap();
             controller.request = Some(request.clone());
-            controller.previous_binary_sha256 = admit_for_update(&data, &controller.receipt.binary, &source, &fetch).await.unwrap();
+            controller.previous_binary_sha256 =
+                admit_for_update(&data, &controller.receipt.binary, &source, &fetch)
+                    .await
+                    .unwrap();
             controller.previous_version = source.installed_version;
             let mut owner = RealRestartOwner {
-                controller, starts: Vec::new(), stops: 0, candidate_process: None,
-                candidate_exit: None, candidate_phase: None,
+                controller,
+                starts: Vec::new(),
+                stops: 0,
+                candidate_process: None,
+                candidate_exit: None,
+                candidate_phase: None,
                 interrupt_after_ready: Some(RestartPhase::CandidateReady),
             };
-            let result = crate::update::on_heap(|| crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut owner)).await;
+            let result = crate::update::on_heap(|| {
+                crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut owner)
+            })
+            .await;
             panic!("linked interruption fixture must stop at CandidateReady: {result:?}");
         }
         let (_, server, serving) =
@@ -6171,8 +6246,15 @@ async fn linked_start_controller_fixture() {
         });
         assert!(keep_running, "published status: {update_status:#?}");
         let update_status = update_status.unwrap().unwrap();
-        assert!(matches!(update_status.phase.as_str(), "updated" | "restored"), "{update_status:#?}");
-        assert_eq!(controller.receipt.launch.sha256().unwrap(), initial_launch_sha256, "controller lost its stored start choice");
+        assert!(
+            matches!(update_status.phase.as_str(), "updated" | "restored"),
+            "{update_status:#?}"
+        );
+        assert_eq!(
+            controller.receipt.launch.sha256().unwrap(),
+            initial_launch_sha256,
+            "controller lost its stored start choice"
+        );
         server.close().await;
         serving.await.unwrap();
         stream.write_all(b"U").await.unwrap();
@@ -6230,7 +6312,9 @@ async fn linked_start_journey_quiet_restart_recovery() {
     sources.sources[0].install_path = fixture.alias.to_str().unwrap().into();
     crate::sources::save_trusted_sources(fixture.data(), &sources).unwrap();
     fixture.start_with_choice(true).await;
-    assert!(!InstallTransaction::has_pending_recovery(&fixture.fixture.binary));
+    assert!(!InstallTransaction::has_pending_recovery(
+        &fixture.fixture.binary
+    ));
     assert_eq!(status(fixture.data()).unwrap().unwrap().phase, "updated");
     fixture.assert_quiet_launches(&["0.7.0", "0.7.1", "0.7.1"]);
     fixture.stop().await;

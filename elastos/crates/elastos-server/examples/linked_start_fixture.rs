@@ -1,7 +1,7 @@
 //! Native unit-test fixture. Cargo builds this example against the candidate library.
 
-use std::os::unix::process::CommandExt;
 use std::io::Write;
+use std::os::unix::process::CommandExt;
 
 const VERSION: &str = match option_env!("ELASTOS_LINKED_FIXTURE_VERSION") {
     Some(version) => version,
@@ -34,16 +34,32 @@ fn main() {
         let callback = std::process::Command::new(fixture_setting(option_env!(
             "ELASTOS_LINKED_FIXTURE_READY_TEST_EXE"
         )))
-        .args(["--exact", "gateway_entry::tests::home_browser_ready_fixture", "--ignored", "--nocapture"])
+        .args([
+            "--exact",
+            "gateway_entry::tests::home_browser_ready_fixture",
+            "--ignored",
+            "--nocapture",
+        ])
         .env("QUIET_START_TEST_NO_OPEN", "0")
-        .output().unwrap();
-        assert!(callback.status.success(), "real ready callback failed: {callback:?}");
+        .output()
+        .unwrap();
+        assert!(
+            callback.status.success(),
+            "real ready callback failed: {callback:?}"
+        );
         let observation = serde_json::json!({
             "version": VERSION, "args": &args[1..],
             "marker": std::env::var("ELASTOS_UPDATE_RESTART").unwrap(),
         });
-        writeln!(std::fs::OpenOptions::new().create(true).append(true)
-            .open("linked-start-launches.jsonl").unwrap(), "{observation}").unwrap();
+        writeln!(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("linked-start-launches.jsonl")
+                .unwrap(),
+            "{observation}"
+        )
+        .unwrap();
         if VERSION == "0.7.1" && std::path::Path::new("linked-start-candidate-fail").exists() {
             std::process::exit(7);
         }
@@ -65,7 +81,9 @@ fn main() {
             .enable_all()
             .build()
             .unwrap()
-            .block_on(elastos_server::update_controller::enter_browser_home(args.iter().any(|arg| arg == "--no-open")))
+            .block_on(elastos_server::update_controller::enter_browser_home(
+                args.iter().any(|arg| arg == "--no-open"),
+            ))
             .unwrap();
         if std::env::var_os("LINKED_START_EXPECT_REFUSAL").is_some() {
             assert_ne!(
