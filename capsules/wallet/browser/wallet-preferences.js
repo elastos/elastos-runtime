@@ -6,10 +6,13 @@ import {
   readStoredBoolean,
   readStoredValue,
   storeValue,
+  isPasskeyManagedAccount,
+  walletDisplay,
 } from "./wallet-format.js?v=wallet-20260720k";
 import {
   actionButton,
   methodMark,
+  walletDisplayMark,
   textNode,
 } from "./wallet-render.js?v=wallet-20260720k";
 
@@ -147,12 +150,19 @@ export function createWalletPreferences({
     row.className = "wallet-method wallet-method-account";
     const monogram = accountMonogram(account);
     const body = document.createElement("div");
-    body.append(
-      textNode("strong", account.name),
-      textNode("span", `${account.network} · ${shortAddress(account.address)}`),
-    );
+    const name = textNode("strong", account.name, "wallet-card-name");
+    name.dir = "auto";
+    body.append(name, textNode("span", `${account.network} · ${shortAddress(account.address)}`));
+    const display = walletDisplay(account);
+    if (!isPasskeyManagedAccount(account) && display.name !== account.name) {
+      const walletName = textNode("span", display.name, "wallet-display-name");
+      walletName.dir = "auto";
+      body.append(walletName);
+    }
     row.append(
-      methodMark(account.method || "unknown", monogram, true, account.chain_namespace),
+      isPasskeyManagedAccount(account)
+        ? methodMark(account.method || "unknown", monogram, true, account.chain_namespace)
+        : walletDisplayMark(display.mark),
       body,
     );
     const remove = actionButton("Remove", "walletRemoveAccount", account.account_id, true);

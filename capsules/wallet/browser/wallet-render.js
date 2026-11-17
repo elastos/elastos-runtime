@@ -138,7 +138,7 @@ export function accountCard(account, displayedAccountId = "", { privacyMode, pri
   return card;
 }
 
-function walletDisplayMark(key) {
+export function walletDisplayMark(key) {
   const mark = document.createElement("span");
   mark.className = "wallet-method-mark wallet-method-mark-icon";
   mark.setAttribute("aria-hidden", "true");

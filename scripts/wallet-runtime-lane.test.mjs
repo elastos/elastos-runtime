@@ -147,6 +147,10 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   assert.match(await mark.getAttribute("src"), /icons\/icon-64.png$/);
   assert.equal(await mark.getAttribute("alt"), "");
   assert.equal(await r.frame.locator(".wallet-account svg[onload]").count(), 0);
+  const linked = r.frame.locator(".wallet-method-account");
+  assert.equal(await linked.locator("strong").textContent(), name);
+  assert.equal(await linked.locator("strong").evaluate(el => el.dir), "auto");
+  assert.match(await linked.locator("img").getAttribute("src"), /icons\/icon-64.png$/);
   await r.capture("wallet-linked-light-window.png");
   assert.deepEqual(r.errors, []);
 });
@@ -158,6 +162,7 @@ test("n4_old_record_and_reopened_window: legacy Wallet fallback", async t => {
   await r.frame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Your wallet" }).waitFor();
   await r.page.reload();
   await r.frame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Your wallet" }).waitFor();
+  assert.match(await r.frame.locator(".wallet-method-account img").getAttribute("src"), /icons\/icon-64.png$/);
   await r.capture("wallet-linked-unknown-light-window.png");
   assert.deepEqual(r.errors, []);
 });
