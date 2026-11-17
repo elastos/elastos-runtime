@@ -23,6 +23,7 @@ export function createWalletRequests({
   clearRequestSelection = () => {},
 }) {
   let acknowledgement = null;
+  const decisions = new Map();
   let visibleRequests = [];
 
   function renderRequests(requests, focusRequestId = "") {
@@ -162,16 +163,15 @@ export function createWalletRequests({
   }
 
   function requestsWithDecisions(requests) {
-    if (!acknowledgement) return requests;
-    const known = { ...acknowledgement };
-    delete known.localAcknowledgement;
-    let found = false;
-    const merged = requests.map(request => {
-      if (readText(request.request_id) !== known.request_id) return request;
-      found = true;
-      return request.transaction_hash || ["completed", "rejected"].includes(request.status) ? request : known;
-    });
-    if (!found) merged.push(known);
+    if (!decisions.size) return requests;
+    const merged = [...requests];
+    for (const [id, decision] of decisions) {
+      const known = { ...decision };
+      delete known.localAcknowledgement;
+      const index = merged.findIndex(request => readText(request.request_id) === id);
+      if (index < 0) merged.push(known);
+      else if (!merged[index].transaction_hash && !["completed", "rejected"].includes(merged[index].status)) merged[index] = known;
+    }
     return merged;
   }
 
@@ -248,6 +248,7 @@ export function createWalletRequests({
       if (request) {
         acknowledgement = { ...request, request_id: requestId, status:"rejected",
           localDecisionKind:result?.receipt_status === "dismissed" ? "dismissed" : "rejected", localAcknowledgement:message };
+        decisions.set(requestId, acknowledgement);
         renderRequests(visibleRequests.filter(r => readText(r.request_id) !== requestId));
       }
       clearRequestSelection();
@@ -270,7 +271,7 @@ export function createWalletRequests({
     onRequestClick,
     openPendingReview,
     requestsWithDecisions,
-    pendingWalletRequests: requests => pendingRequests(requests).filter(request => readText(request.request_id) !== acknowledgement?.request_id),
+    pendingWalletRequests: requests => pendingRequests(requestsWithDecisions(requests)),
     renderRequests,
   };
 }

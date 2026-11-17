@@ -16,6 +16,7 @@
       walletconnectInternet: null,
       readGeneration: 0,
       walletAcknowledgement: null,
+      walletDecisions: new Set(),
     };
 
     const elements = {
@@ -335,7 +336,7 @@
     async function loadInbox() {
       const generation = ++state.readGeneration;
       const payload = await api("/api/apps/inbox/summary");
-      const entries = inboxEntries(payload).filter(entry => entry.id !== state.walletAcknowledgement?.id);
+      const entries = inboxEntries(payload);
       let permission = null;
       if (entries.some(e => e.kind === "walletconnect_internet_request" || e.kind === "walletconnect_internet_decision")) {
         try { permission = await api("/api/apps/wallet-walletconnect/internet"); } catch (_) {}
@@ -374,7 +375,8 @@
           action_ref: actionId ? { app: "inbox", action_id: actionId } : null,
         });
       }
-      return entries.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+      return entries.filter(entry => !state.walletDecisions.has(entry.id))
+        .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
     }
 
     function requestInboxRefresh() {
@@ -811,6 +813,7 @@
             const message = outcome.message?.startsWith("Request dismissed.")
               ? "Request dismissed. Check your connected wallet before sending again." : "Request rejected.";
             state.walletAcknowledgement = { ...entry, read: true, severity: "info", action_ref: null, localAcknowledgement: message };
+            state.walletDecisions.add(id);
             state.entries = state.entries.filter(e => e.id !== id);
             state.selectedId = "";
             state.requestedSelectionId = "";
