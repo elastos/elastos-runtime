@@ -1,7 +1,7 @@
 import {installWalletConnectStorage} from './walletconnect-storage.mjs';
 import {createWalletConnectClient} from './walletconnect-client.mjs';
 import {mountConnection, captureConnectionPresentation, connectionKey} from './wallet-connection-view.mjs';
-import {windowPresentation, walletConnectView, errorStage, baseActions, signableRequest, connectorId} from './walletconnect-window-state.mjs';
+import {windowPresentation, walletConnectView, errorStage, baseActions, signableRequest, connectorId, sameAccount} from './walletconnect-window-state.mjs';
 import {createHomeClipboardClient} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
 
 const CONNECTOR_ID = connectorId;
@@ -12,6 +12,7 @@ const runtimeOrigin = new URL(import.meta.url).origin;
 const clearMemory = installWalletConnectStorage(window);
 let hostEffectInFlight = false, walletStateRevision = 0, connectionCheckInFlight = false, actionEpoch = 0;
 let walletChanged=false;
+let walletChange;
 let effectPhase = 'idle';
 let currentPhase = 'idle', connectionState, linkedAccounts = [], requests = [], accountsLoaded = false;
 let recoveryAction, launchExpired = false, ownerConsentNeeded = false, connectionNeedsReplacement = false;
@@ -44,6 +45,10 @@ const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemor
   onPhase(phase, detail) {
     if (phase === 'changed') {
       walletChanged ||= detail?.selectionChanged === true;
+      if (detail?.selectionChanged) {
+        const previous=connectionState?.session,next=detail.connection?.session;
+        walletChange=!next?.address ? undefined : !sameAccount(previous?.address,next.address) ? 'account-changed' : previous?.chain !== next.chain ? 'network-changed' : walletChange;
+      }
       // Wallet notifications carry facts locally. Home authority stays on the base routes.
       clipboardFeedback='';
       if (detail?.connection) connectionState={...connectionState,...detail.connection};
@@ -143,7 +148,7 @@ function draw() {
   const now = Math.floor(Date.now()/1000);
   const presentation = windowPresentation({loading:!accountsLoaded,connection:connectionState,accounts:linkedAccounts,requests:connectionPage ? [] : requests,busy:hostEffectInFlight && !outcome,
     phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
-    outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
+    outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,walletChange,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
     paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)?.outcome))},now);
   if (connectionPage === 'access' && !hostEffectInFlight && !launchExpired) presentation.input.stage=permissionStatus === 'granted' ? 'internet-ready' : 'nothing-saved';
   if (connectionPage) presentation.otherRequests=requests;
@@ -222,7 +227,7 @@ async function refreshWalletState() {
   if (first) checkConnection().catch(()=>{});
 }
 function copyFeedbackKey() {return `${renderKey}:${currentView?.account?.accounts[0]?.address || ''}`;}
-function resetFeedback() {homeReadFailed=false;connectionPage=undefined;showPicker=false;proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;outcome=undefined;clipboardFeedback='';deadline=undefined;}
+function resetFeedback() {homeReadFailed=false;connectionPage=undefined;showPicker=false;proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;walletChange=undefined;outcome=undefined;clipboardFeedback='';deadline=undefined;}
 async function onConnect({fresh=true}={}) {
   if (hostEffectInFlight || launchExpired) return;
   resetFeedback();activeRequest=undefined;connectionNeedsReplacement=false;

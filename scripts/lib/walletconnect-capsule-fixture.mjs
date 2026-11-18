@@ -20,7 +20,7 @@ export async function exerciseWalletConnect(scenario='valid') {
       ? new Error('The QR code expired. Select Connect wallet for a new one.')
       : Object.assign(new Error(expiredMessage),{code:6});
   };
-  const provider={chainId:20,connected:true,session:{expiry:clock()/1000+3600,namespaces:{eip155:{chains:['eip155:1','eip155:20'],accounts:[`eip155:20:${address}`,...(scenario==='signature-approved-chain-change-during-send'?[`eip155:1:${address}`]:[])],methods:scenario==='typed-unavailable'?['personal_sign']:['personal_sign','eth_sendTransaction','eth_signTypedData_v4']}}},signer:{client:{core:{relayer:{connected:true}}}},
+  const provider={accounts:scenario==='link-shown-account-mismatch'?[`0x${'cd'.repeat(20)}`]:undefined,chainId:20,connected:true,session:{expiry:clock()/1000+3600,namespaces:{eip155:{chains:['eip155:1','eip155:20'],accounts:[`eip155:20:${address}`,...(scenario==='signature-approved-chain-change-during-send'?[`eip155:1:${address}`]:[])],methods:scenario==='typed-unavailable'?['personal_sign']:['personal_sign','eth_sendTransaction','eth_signTypedData_v4']}}},signer:{client:{core:{relayer:{connected:true}}}},
     on:(name,fn)=>events.set(name,fn),async request(input,expiry){calls.push({...input,expiry});
       if(input.method==='eth_accounts')return [scenario==='wrong-account'||changed&&kind==='account-change-during-send'?`0x${'ab'.repeat(20)}`:address];
       if(input.method==='eth_chainId'&&scenario.startsWith('numeric-chain'))return 20;

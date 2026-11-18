@@ -1,3 +1,7 @@
 /* The shared view owns all visible layout. The window owns its viewport. */
 html, body, #wallet-window { margin: 0; width: 100%; height: 100%; overflow: hidden; }
-#wallet-window > main { height: 100%; min-height: 0; overflow: auto; }
+#wallet-window > main { height: 100%; min-height: 0; overflow: auto; justify-content: safe center; }
+/* Home's fixed window scrolls the complete card, including the required signer. */
+#wallet-window .connection-content,
+#wallet-window .connection-request,
+#wallet-window .connection-identity { flex-shrink: 0; }

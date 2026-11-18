@@ -5,6 +5,13 @@ import {windowFixture,observeWindowErrors,walletWindowLifetime} from './lib/wall
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
+test('B16 the shown account must match eth_accounts before Home receives a proof',async()=>{
+ const {exerciseWalletConnect}=await import('./lib/walletconnect-capsule-fixture.mjs');
+ const result=await exerciseWalletConnect('link-shown-account-mismatch');
+ assert.equal(result.error,'Select an account in your phone wallet.');
+ assert.equal(result.calls.some(call=>call.method==='personal_sign'),false);
+ assert.equal(result.routes.some(call=>call.path.endsWith('/challenge')||call.path.endsWith('/verify')),false);
+});
 async function until(fn,message,ms=20000){const end=Date.now()+ms;while(!fn()){assert.ok(Date.now()<end,message);await delay(25);}}
 async function setup(t){
  const fixture=await windowFixture();const peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});

@@ -7,6 +7,18 @@ import {windowFixture,observeWindowErrors,walletWindowLifetime} from './lib/wall
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 const output=process.env.WALLETCONNECT_WINDOW_SCREENS;
+for(const engine of ['chromium','webkit'])for(const change of ['supported network','unsupported network','empty accounts'])test(`selection notice says only the true sentence for ${change} in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);await r.link();
+ if(change==='empty accounts')await r.peer.emptyAccounts();else await r.peer.changeChain(change==='supported network'?'eip155:1':'eip155:137');
+ const stage=change==='empty accounts'?'account-unavailable-unknown':change==='supported network'?'network-changed':'network-unsupported';
+ await r.state(stage);
+ const text=await r.frame.locator('main').innerText();
+ const sentence=change==='empty accounts'?'Your wallet is not showing an account.':change==='supported network'?'Your wallet is using a different network.':'This network is not supported here.';
+ assert.equal(text.split(sentence).length-1,1,'the true status appears once');
+ assert.doesNotMatch(text,/Your wallet is using a different account\./);
+ if(change!=='empty accounts')assert.doesNotMatch(text,/Your wallet is not showing an account\./);
+ await r.capture(stage+'-true-notice');
+});
 const sourceIdentity={commit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),dirty:Boolean(execFileSync('git',['status','--porcelain','--untracked-files=no'],{encoding:'utf8'}).trim())};
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn,label,ms=20000){const end=Date.now()+ms;while(!await fn()){assert.ok(Date.now()<end,label);await pause(25);}}
@@ -59,6 +71,10 @@ async function setup(t,engine,mutation){
  const sourceHashes=Object.fromEntries(await Promise.all(['index.html','style.css','wallet-walletconnect.js','walletconnect-client.mjs','walletconnect-window-state.mjs','walletconnect-pairing.mjs','qrcode.mjs','wallet-connection-view.mjs','wallet-connection-screens.mjs','wallet-connection-view.css'].map(async name=>[name,createHash('sha256').update(await readFile(new URL('../capsules/wallet-walletconnect/browser/'+name,import.meta.url))).digest('hex')])));
  async function capture(name){
   await assertSharedTree();
+  if(name==='request-busy'){
+   const fits=await frame.locator('.connection-request-account').evaluate(node=>{const owner=node.closest('.connection-identity'),r=node.getBoundingClientRect(),p=owner.getBoundingClientRect();return r.top>=p.top&&r.bottom<=p.bottom+1&&owner.scrollHeight<=owner.clientHeight+1;});
+   assert.equal(fits,true,'the complete required-account line fits above the notice');
+  }
   if(!output)return;
   await mkdir(`${output}/${engine}`,{recursive:true});
   for(const theme of ['dark','light']){
@@ -185,7 +201,7 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
   await r.page.route('**/internet',route=>route.request().method()==='GET'?route.fulfill({status:503,body:'Fixture Home status unavailable'}):route.continue());
   await r.peer.deleteConnection();
  }
- if(event==='account'||event==='session-account'||event==='network'||event==='empty')await r.state(phase==='signature'?'request-busy':phase==='result'?'request-done':event==='empty'?'account-unavailable-unknown':'account-changed');
+ if(event==='account'||event==='session-account'||event==='network'||event==='empty')await r.state(phase==='signature'?'request-busy':phase==='result'?'request-done':event==='empty'?'account-unavailable-unknown':event==='network'?'network-changed':'account-changed');
  else if(event==='removed')await r.state(phase==='signature'?'request-sent-wallet-removed':phase==='result'?'request-done':'wallet-removed');
  else await pause(250);
  if(event==='removed'&&phase==='result')await r.frame.getByText(/Your wallet removed this connection\./).waitFor();
