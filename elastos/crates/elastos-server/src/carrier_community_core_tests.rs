@@ -639,7 +639,25 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
             s.senders.len(),
         )
     };
-    let posts = f.exchange("more than120 actual actor replacements").await;
+    // Subscribing creates the local channel before asynchronous peer admission.
+    // Wait for the new receiver's neighbour, as the product does before Send;
+    // the exact posts below remain the proof that the recovered path works.
+    let ready = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let health = f.provider.send_raw(&serde_json::json!({"op":"gossip_topic_health","topic":f.topic})).await.unwrap();
+            if health["data"]["peer_count"].as_u64().unwrap_or(0) > 0
+                && health["data"]["receiver_alive"] == true
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await;
+    let posts = if ready.is_ok() {
+        f.exchange("more than120 actual actor replacements").await
+    } else {
+        Err(anyhow::anyhow!("new actor did not admit its neighbour within30seconds"))
+    };
     let connections_closed = wait_for(
         || {
             f.hub
