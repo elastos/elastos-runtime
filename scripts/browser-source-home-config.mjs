@@ -79,6 +79,9 @@ function parseArgs(argv) {
       return argv[i];
     };
     switch (arg) {
+      case "--walletconnect-socket-paths":
+        args.walletconnectSocketPaths = true;
+        break;
       case "--help":
       case "-h":
         console.log(usage());
@@ -94,6 +97,14 @@ function parseArgs(argv) {
         break;
       case "--vm-supervisor":
         args.vmSupervisor = next();
+        break;
+      case "--exit-adapter-socket":
+        args.exitAdapterSocket = next();
+        validateAbsolute(arg, args.exitAdapterSocket);
+        break;
+      case "--exit-relay-socket":
+        args.exitRelaySocket = next();
+        validateAbsolute(arg, args.exitRelaySocket);
         break;
       case "--vm-control-socket":
         args.vmControlSocket = next();
@@ -708,6 +719,13 @@ function main() {
       throw new Error("--platform must be linux-amd64, linux-arm64, or darwin-arm64");
     }
     validateAbsolute("--data-dir", args.dataDir);
+    if (args.walletconnectSocketPaths) {
+      console.log(JSON.stringify({
+        adapter: runtimeSocketPath(args, "wc-adapter"),
+        relay: runtimeSocketPath(args, "wc-relay"),
+      }));
+      return;
+    }
     const outDir = args.outDir || path.join(args.dataDir, "config");
     validateAbsolute("--out-dir", outDir);
     if (args.platform === "linux-amd64") {
@@ -724,8 +742,8 @@ function main() {
         files: ["browser-engine-adapter.json", "browser-viewer-ingress.json"] }));
       return;
     }
-    const adapterSocket = runtimeSocketPath(args, "exit-adapter");
-    const relaySocket = runtimeSocketPath(args, "exit-relay");
+    const adapterSocket = args.exitAdapterSocket || runtimeSocketPath(args, "exit-adapter");
+    const relaySocket = args.exitRelaySocket || runtimeSocketPath(args, "exit-relay");
     const sourceEnv = runtimeTurnEnv(args);
     const selectedControlLauncher =
       args.vmControlLauncher ||

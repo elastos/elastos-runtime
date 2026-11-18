@@ -14,6 +14,9 @@ pub(crate) fn sign_browser_personal_sign_approval(
     validate_browser_personal_sign_payload(
         &request.payload,
         &LinkedAccount {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
             account_id: request.account_id.clone(),
             principal_id: request.principal_id.clone(),
             proof_binding_id: request.proof_binding_id.clone(),
@@ -78,6 +81,9 @@ pub(crate) fn sign_browser_typed_data_approval(
     validate_browser_typed_data_sign_payload(
         &request.payload,
         &LinkedAccount {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
             account_id: request.account_id.clone(),
             principal_id: request.principal_id.clone(),
             proof_binding_id: request.proof_binding_id.clone(),

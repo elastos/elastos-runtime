@@ -67,6 +67,7 @@ function defaultState() {
     balanceCalls: [],
     qrCalls: [],
     sendBodies: [],
+    rejectBodies: [],
     defaultBodies: [],
     renameBodies: [],
     deleteBodies: [],
@@ -337,6 +338,13 @@ async function startServer() {
         json(response, 200, summaryResponse(state));
         return;
       }
+      if (url.pathname === "/api/apps/wallet/wallet/approvals/approved-send/reject" && request.method === "POST") {
+        assert(request.headers["x-elastos-home-token"] === "wallet-home-token", "dismissal carries Wallet authority");
+        state.rejectBodies.push(await readBody(request));
+        state.approvals[0].status = "rejected";
+        json(response, 200, { approval_requests: state.approvals, receipt_status: "dismissed", note: "Request dismissed. Check your connected wallet before sending again." });
+        return;
+      }
       if (url.pathname === "/api/wallet/prices" && request.method === "GET") {
         state.priceCalls += 1;
         json(response, 200, {
@@ -536,6 +544,7 @@ async function run() {
   const tempDir = await mkdtemp(join(tmpdir(), "wallet-uiux-"));
   const desktopShot = join(tempDir, "wallet-desktop-1280x900.png");
   const narrowShot = join(tempDir, "wallet-narrow-640x900.png");
+  const latePhoneShot = join(tempDir, "wallet-late-receipt-phone.png");
   const browser = await chromium.launch({
     ...productSmokeLaunchOptions(),
     headless: true,
@@ -855,9 +864,57 @@ async function run() {
     }));
     assert(railState.presentation === "rail" && railState.heroNavHidden, "Rail mode must keep the reviewed Wallet rail presentation.");
     await assertNoErrors(railPage, server, "rail");
+    server.state.approvals = [{ ...railFixtureState.approvals[0], request_id: "approved-send",
+      status: "approved", intent: "transaction_intent", connector_id: "wallet-walletconnect",
+      approved_at: Math.floor(Date.now() / 1000) - 13 * 3600 - 290,
+      created_at: Math.floor(Date.now() / 1000) - 13 * 3600 - 300,
+      expires_at: Math.floor(Date.now() / 1000) - 13 * 3600 }];
+    await railPage.goto(`${server.baseUrl}/fixture-host.html?mode=window`, { waitUntil: "networkidle" });
+    const dismissFrame = await walletFrame(railPage);
+    await dismissFrame.locator(".wallet-account").waitFor({ state: "visible" });
+    assert(await dismissFrame.locator("#wallet-approvals-badge").textContent() === "1", "WalletConnect unfinished send counts in Activity");
+    await dismissFrame.locator("#wallet-activity-open").click();
+    const approvedCard = dismissFrame.locator('[data-wallet-request-id="approved-send"]');
+    await approvedCard.waitFor({ state: "visible" });
+    assert((await approvedCard.textContent()).includes("does not cancel"), "dismissal explains ownership of the wallet transaction");
+    assert(await approvedCard.getByRole("button").count() === 1, "approved send offers Dismiss without another approval");
+    await approvedCard.getByRole("button", { name: "Dismiss", exact: true }).click();
+    await approvedCard.waitFor({ state: "detached" });
+    assert(server.state.rejectBodies.length === 1, "one dismissal reaches Runtime");
+    assert((await dismissFrame.locator("#wallet-status").textContent()).startsWith("Request dismissed."), "person sees dismissal confirmation");
+    server.state.approvals[0].transaction_hash = `0x${"a".repeat(64)}`;
+    server.state.approvals[0].completed_at = Math.floor(Date.now() / 1000);
+    await railPage.reload({ waitUntil: "networkidle" });
+    const lateFrame = await walletFrame(railPage);
+    await lateFrame.locator(".wallet-account").waitFor({ state: "visible" });
+    await lateFrame.locator("#wallet-activity-open").click();
+    const lateRow = lateFrame.locator(".wallet-activity-row");
+    assert(await lateRow.count() === 1, "late receipt stays on one Activity line");
+    assert((await lateRow.textContent()).includes("Sent from wallet after request was dismissed"), "late receipt explains the dismissed send");
+    assert((await lateRow.textContent()).includes(server.state.approvals[0].transaction_hash), "late receipt keeps the full hash available");
+    await railPage.setViewportSize({ width: 390, height: 844 });
+    await lateFrame.locator("#wallet-activity-drawer").evaluate(async drawer => {
+      await Promise.all(drawer.getAnimations().map(animation => animation.finished));
+    });
+    const lateBounds = await lateRow.evaluate(row => ({ right: row.getBoundingClientRect().right, width: window.innerWidth, scroll: document.documentElement.scrollWidth }));
+    assert(lateBounds.right <= lateBounds.width && lateBounds.scroll <= lateBounds.width, "full late hash fits the phone Activity row", lateBounds);
+    await screenshot(lateFrame, latePhoneShot);
+    console.log(`Wallet late receipt phone PASS: ${JSON.stringify(lateBounds)}`);
+    await railPage.setViewportSize({ width: 640, height: 900 });
+    for (const connector_id of ["wallet-metamask", "wallet-unisat"]) {
+      server.state.approvals = [{ ...server.state.approvals[0], status: "approved", connector_id, expires_at: Math.floor(Date.now() / 1000) + 300, transaction_hash: undefined }];
+      await railPage.reload({ waitUntil: "networkidle" });
+      const otherFrame = await walletFrame(railPage);
+      await otherFrame.locator(".wallet-account").waitFor({ state: "visible" });
+      assert(await otherFrame.locator("#wallet-approvals-badge").isHidden(), `${connector_id} keeps the normal Activity badge`);
+      await otherFrame.locator("#wallet-activity-open").click();
+      assert(await otherFrame.locator('[data-wallet-request-id="approved-send"]').count() === 0, `${connector_id} stays out of the pending list`);
+    }
+    await assertNoErrors(railPage, server, "dismissal");
+    console.log("Wallet approved-send dismissal PASS: visible recovery card, Dismiss, one Runtime request, removed after refresh");
     await railPage.close();
 
-    console.log(`wallet-product-layout-smoke: OK\n${desktopShot}\n${narrowShot}`);
+    console.log(`wallet-product-layout-smoke: OK\n${desktopShot}\n${narrowShot}\n${latePhoneShot}`);
   } finally {
     await browser.close().catch(() => {});
     await server.close().catch(() => {});

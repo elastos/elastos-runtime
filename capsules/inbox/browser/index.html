@@ -633,9 +633,9 @@
       min-height: var(--el-touch-target);
       padding-inline: 14px;
     }
-    #browser-internet-confirm {border:1px solid var(--line);border-radius:16px;max-width:440px;padding:24px;color:var(--ink);background:var(--panel);}
-    #browser-internet-confirm::backdrop {background:rgba(0,0,0,.3);}
-    #browser-internet-confirm .entry-actions {justify-content:flex-end;}
+    #browser-internet-confirm, #walletconnect-internet-confirm {border:1px solid var(--line);border-radius:16px;max-width:440px;padding:24px;color:var(--ink);background:var(--panel);}
+    #browser-internet-confirm::backdrop, #walletconnect-internet-confirm::backdrop {background:rgba(0,0,0,.3);}
+    #browser-internet-confirm .entry-actions, #walletconnect-internet-confirm .entry-actions {justify-content:flex-end;}
   </style>
 </head>
 <body>
@@ -686,6 +686,12 @@
   <dialog id="browser-internet-confirm" aria-labelledby="browser-internet-question">
     <form method="dialog">
       <p id="browser-internet-question">Turn off internet access for Browser? Open Browser windows stop loading pages.</p>
+      <div class="entry-actions"><button class="entry-action" value="cancel">Cancel</button><button class="entry-action danger" value="off">Turn Off</button></div>
+    </form>
+  </dialog>
+  <dialog id="walletconnect-internet-confirm" aria-labelledby="walletconnect-internet-question">
+    <form method="dialog">
+      <p id="walletconnect-internet-question">Turn off internet access for WalletConnect? Any phone wallet connected through it is disconnected, and you scan a new code to connect again.</p>
       <div class="entry-actions"><button class="entry-action" value="cancel">Cancel</button><button class="entry-action danger" value="off">Turn Off</button></div>
     </form>
   </dialog>

@@ -25,6 +25,7 @@ const HOME_PUBLISH_CAPSULES: &[&str] = &[
     "people",
     "wallet-metamask",
     "wallet-unisat",
+    "wallet-walletconnect",
     "wallet",
     "browser",
     "documents",
@@ -2281,12 +2282,7 @@ mod tests {
         assert_eq!(selected, expected);
         assert!(selected.contains(&"archive-manager".to_string()));
         // Hidden in 0.8.0: still published as release assets for `setup --with`.
-        for hidden in [
-            "services",
-            "wallet-walletconnect",
-            "content-block-graph-provider",
-            "elacity-player",
-        ] {
+        for hidden in ["services", "content-block-graph-provider", "elacity-player"] {
             assert!(!selected.contains(&hidden.to_string()), "{hidden}");
         }
         assert!(selected.contains(&"chain-provider".to_string()));

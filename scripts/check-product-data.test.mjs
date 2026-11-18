@@ -202,7 +202,7 @@ for (const [name, mutate, message] of [
   ["unknown profile component", (value) => value.profiles.home.components.push("missing-provider"), /unknown component/],
   ["missing Wallet dependency", (value) => value.profiles.home.components = value.profiles.home.components.filter((entry) => entry !== "wallet-provider"), /Wallet\/Browser dependency/],
   ["Elacity Player without its protected providers", (value) => value.profiles.home.components.push("elacity-player"), /must occur once/],
-  ...["services", "wallet-walletconnect", "content-block-graph-provider", "media-tools"].map((name) =>
+  ...["services", "content-block-graph-provider", "media-tools"].map((name) =>
     [`hidden ${name} in default Home`, (value) => value.profiles.home.components.push(name), /hidden in 0\.8\.0/]),
   ["hidden component no longer published", (value) => delete value.external["content-block-graph-provider"], /stays published for --with/],
   ["default public edge service", (value) => value.profiles.home.components.push("tunnel-provider"), /developer --with component/],

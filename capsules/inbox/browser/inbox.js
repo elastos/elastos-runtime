@@ -1,3 +1,4 @@
+    const WALLET_REQUEST_UNAVAILABLE = "This request is unavailable. Return to the app and ask for a new request.";
     const INBOX_SAFETY_REFRESH_MS = 5 * 60 * 1000;
     const launchParams = new URLSearchParams(window.location.search);
     const homeParentOrigin = launchParams.get("home_origin") || "";
@@ -12,6 +13,11 @@
       filter: "all",
       requestedSelectionId: requestedNotificationId.trim(),
       selectedId: requestedNotificationId.trim(),
+      walletconnectInternet: null,
+      readGeneration: 0,
+      walletAcknowledgement: null,
+      focusWalletAcknowledgement: false,
+      walletDecisions: new Set(),
     };
 
     const elements = {
@@ -242,6 +248,18 @@
       const response = await fetch(path, request);
       if (!response.ok) {
         const text = await response.text();
+        let conflict = false;
+        try {
+          const body = JSON.parse(text);
+          conflict = response.status === 409 && body.schema === "elastos.home.wallet-connector.effect.error/v1"
+            && body.code === "conflict" && Object.keys(body).length === 2;
+        } catch (_) {}
+        if (conflict) {
+          const error = new Error("This request has changed. Refresh Inbox and review the current request.");
+          error.status = 409;
+          try { await loadInbox(); } catch (_) {}
+          throw error;
+        }
         const error = new Error(publicInboxText(text, "Inbox could not complete the request."));
         error.status = response.status;
         throw error;
@@ -287,9 +305,24 @@
             resolve(stepUpToken);
             return;
           }
-          reject(new Error(typeof result.error === "string" && result.error.trim()
-            ? result.error.trim()
-            : "Passkey verification failed."));
+          const message = typeof result.error === "string" && result.error.trim()
+            ? result.error.trim() : "Passkey verification failed.";
+          let conflict = false;
+          if (["walletconnect.internet.grant", "walletconnect.internet.revoke"].includes(operation)
+            && /^request failed: 409\b/.test(message)) {
+            try {
+              const body = JSON.parse(message.slice(message.indexOf("{")));
+              conflict = Object.keys(body).length === 2
+                && body.schema === "elastos.home.wallet-connector.effect.error/v1" && body.code === "conflict";
+            } catch (_) {}
+          }
+          if (conflict) {
+            const error = new Error("This request has changed. Refresh Inbox and review the current request.");
+            error.status = 409;
+            loadInbox().catch(() => {}).finally(() => reject(error));
+            return;
+          }
+          reject(new Error(message));
         };
         window.addEventListener("message", onResult);
         window.top.postMessage({
@@ -317,8 +350,16 @@
     }
 
     async function loadInbox() {
+      const generation = ++state.readGeneration;
       const payload = await api("/api/apps/inbox/summary");
-      state.entries = inboxEntries(payload);
+      const entries = inboxEntries(payload);
+      let permission = null;
+      if (entries.some(e => e.kind === "walletconnect_internet_request" || e.kind === "walletconnect_internet_decision")) {
+        try { permission = await api("/api/apps/wallet-walletconnect/internet"); } catch (_) {}
+      }
+      if (generation !== state.readGeneration) return;
+      state.entries = entries;
+      state.walletconnectInternet = permission;
       renderInbox();
       markVisibleRead();
       notifyHome();
@@ -350,7 +391,8 @@
           action_ref: actionId ? { app: "inbox", action_id: actionId } : null,
         });
       }
-      return entries.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+      return entries.filter(entry => !state.walletDecisions.has(entry.id))
+        .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
     }
 
     function requestInboxRefresh() {
@@ -376,6 +418,8 @@
     }
 
     function setFilter(filter) {
+      state.walletAcknowledgement = null;
+      state.focusWalletAcknowledgement = false;
       state.filter = filter === "review" ? "review" : "all";
       for (const button of elements.filterButtons) {
         const active = button.dataset.filter === state.filter;
@@ -387,7 +431,7 @@
     }
 
     function pendingRequestEntries() {
-      return state.entries.filter((entry) => entry && entry.kind !== "home_update_available" && entry.kind !== "service_access_grant" && entry.kind !== "hosted_route_history" && entry.kind !== "browser_internet_decision");
+      return state.entries.filter((entry) => entry && entry.kind !== "home_update_available" && entry.kind !== "walletconnect_internet_decision" && entry.kind !== "service_access_grant" && entry.kind !== "hosted_route_history" && entry.kind !== "browser_internet_decision");
     }
 
     function renderInbox() {
@@ -408,12 +452,16 @@
           ? state.requestedSelectionId
           : requestedSelectionMissing
           ? ""
-          : entries.length ? entryId(entries[0]) : "";
+          : state.walletAcknowledgement ? "" : entries.length ? entryId(entries[0]) : "";
       }
       elements.entryRows.replaceChildren();
       if (presentation === "rail") {
         for (const entry of entries) {
           elements.entryRows.appendChild(createRailCard(entry));
+        }
+        if (state.walletAcknowledgement) {
+          elements.entryRows.appendChild(createRailCard(state.walletAcknowledgement));
+          focusWalletAcknowledgement(elements.entryRows);
         }
         elements.entryDetail.replaceChildren();
       } else {
@@ -421,18 +469,19 @@
           elements.entryRows.appendChild(createRow(entry));
         }
         renderDetail(
-          entries.find((entry) => entryId(entry) === state.selectedId) || null,
+          entries.find((entry) => entryId(entry) === state.selectedId) || state.walletAcknowledgement,
           requestedSelectionMissing,
         );
       }
-      const empty = entries.length === 0;
+      const empty = entries.length === 0 && !state.walletAcknowledgement;
       elements.emptyState.classList.toggle("hidden", !empty);
       elements.entrySplit.classList.toggle("hidden", empty);
       elements.emptyTitle.textContent =
         state.filter === "review" && state.entries.length !== 0
           ? "No requests need review"
           : "No requests";
-      setStatus(pendingCount === 0 ? "" : `${pendingCount} pending.`);
+      setStatus(requestedSelectionMissing && state.requestedSelectionId.startsWith("wallet-approval-request:")
+        ? WALLET_REQUEST_UNAVAILABLE : pendingCount === 0 ? "" : `${pendingCount} pending.`);
       notifyRailChrome();
     }
 
@@ -466,6 +515,8 @@
       row.append(top, snippet);
       row.addEventListener("click", () => {
         state.requestedSelectionId = "";
+        state.walletAcknowledgement = null;
+        state.focusWalletAcknowledgement = false;
         state.selectedId = entryId(entry);
         renderInbox();
       });
@@ -498,44 +549,89 @@
       fillEntryActions(actions, entry);
 
       card.append(top, snippet, actions);
+      const site = walletRequestSite(entry);
+      if (site) card.insertBefore(site, actions);
       return card;
     }
 
-    function confirmBrowserInternetOff() {
-      const dialog = document.querySelector("#browser-internet-confirm");
+    function confirmInternetOff(service = "browser") {
+      const dialog = document.querySelector(`#${service}-internet-confirm`);
       return new Promise(resolve => {
+        dialog.returnValue = "cancel";
         dialog.addEventListener("close", () => resolve(dialog.returnValue === "off"), {once:true});
         dialog.showModal();dialog.querySelector('[value="cancel"]').focus();
       });
     }
 
-    async function allowBrowserInternet(actionId) {
+    async function allowInternet(actionId, service = "browser") {
+      const walletconnect = service === "walletconnect";
+      const path = walletconnect ? "/api/apps/wallet-walletconnect/internet" : "/api/apps/browser/internet";
       setButtonsDisabled(true);
       try {
-        const current = actionId ? await api("/api/apps/browser/internet")
-          : await api("/api/apps/browser/internet", {method:"POST",body:JSON.stringify({action:"request"})});
-        const expected = "browser-internet-allow:" + current.request?.request_id;
+        const current = actionId ? await api(path)
+          : await api(path, {method:"POST",body:JSON.stringify({action:"request"})});
+        const expected = `${service}-internet-allow:` + (walletconnect ? current.request?.id : current.request?.request_id);
         if (current.status !== "requested" || (actionId && actionId !== expected)) {
+          await loadInbox();
           throw new Error("This request has changed. Refresh Inbox and review the current request.");
         }
-        const stepUpToken = await requestPasskeyStepUp("browser.internet.grant", current.request);
+        const stepUpToken = await requestPasskeyStepUp(`${service}.internet.grant`, current.request);
         await inboxAction(expected, {step_up_token:stepUpToken});
-        setStatus("Browser can open websites.");await loadInbox();notifyHome();
-        window.top.postMessage({type:"home:focus-browser",homeToken:state.homeToken,requestId:current.request.request_id},homeParentOrigin);
+        if (!walletconnect) setStatus("Browser can open websites.");
+        await loadInbox();notifyHome();
+        window.top.postMessage(walletconnect
+          ? {type:"home:open-target",homeToken:state.homeToken,target:"wallet-walletconnect",query:{}}
+          : {type:"home:focus-browser",homeToken:state.homeToken,requestId:current.request.request_id},homeParentOrigin);
       } finally {setButtonsDisabled(false);}
     }
 
     function fillEntryActions(actions, entry) {
+      if (entry.localAcknowledgement) {
+        const result = document.createElement("p");
+        result.textContent = entry.localAcknowledgement;
+        result.setAttribute("role", "status");
+        result.setAttribute("tabindex", "-1");
+        actions.appendChild(result);
+        return;
+      }
       const actionId = entry.action_ref && entry.action_ref.action_id;
       if (entry.kind === "home_update_available") {
         actions.appendChild(createButton("Open System", () => openSource("system", { settings: "about", focus: "update" })));
         actions.appendChild(createActionButton("Dismiss", "notification-dismiss:" + entry.id));
         return;
       }
+      if (entry.kind === "walletconnect_internet_request" || entry.kind === "walletconnect_internet_decision") {
+        const path = "/api/apps/wallet-walletconnect/internet";
+        const turnOff = async () => {
+          if (!await confirmInternetOff("walletconnect")) return;
+          setButtonsDisabled(true);
+          try {
+            const current = await api(path);
+            const stepUpToken = current.status === "revoked" ? undefined : await requestPasskeyStepUp("walletconnect.internet.revoke", current.request);
+            await inboxAction(actionId, { step_up_token: stepUpToken });
+            await loadInbox(); notifyHome();
+          } catch (error) {
+            if (error.status !== 409) {
+              try { await loadInbox(); } catch (_) {}
+            }
+            throw error;
+          } finally { setButtonsDisabled(false); }
+        };
+        if (entry.kind === "walletconnect_internet_request" && actionId?.startsWith("walletconnect-internet-allow:")) {
+          actions.appendChild(createActionButton("Don't Allow", actionId.replace("-allow:", "-deny:")));
+          actions.appendChild(createButton("Allow", () => allowInternet(actionId, "walletconnect"), "primary"));
+        } else if (actionId?.startsWith("walletconnect-internet-turn-off:")) {
+          const cleaning = state.walletconnectInternet?.status === "revoked";
+          actions.appendChild(createButton(cleaning ? "Finish disconnecting" : "Turn Off", turnOff, "danger"));
+        } else if (entry.kind === "walletconnect_internet_decision") {
+          actions.appendChild(createButton("Allow", () => allowInternet(null, "walletconnect"), "primary"));
+        }
+        return;
+      }
       if (entry.kind === "browser_internet_decision") {
         if (actionId?.startsWith("browser-internet-turn-off:")) {
           actions.appendChild(createButton("Turn Off", async () => {
-            if (!await confirmBrowserInternetOff()) return;
+            if (!await confirmInternetOff()) return;
             setButtonsDisabled(true);
             try {
               const current = await api("/api/apps/browser/internet");
@@ -545,12 +641,14 @@
             } finally { setButtonsDisabled(false); }
           }, "danger"));
         } else if (actionId === "browser-internet-request") {
-          actions.appendChild(createButton("Allow", () => allowBrowserInternet(), "primary"));
+          actions.appendChild(createButton("Allow", () => allowInternet(), "primary"));
         }
         return;
       }
       // A request Inbox decides itself has no other app to open.
-      if (entry.kind !== "browser_internet_request" && typeof entry.source_app === "string" && entry.source_app.trim() && entry.source_app.trim() !== "inbox") {
+      if (entry.kind !== "browser_internet_request"
+        && !(entry.kind === "wallet_approval_request" && actionId?.startsWith("wallet-review-request:"))
+        && typeof entry.source_app === "string" && entry.source_app.trim() && entry.source_app.trim() !== "inbox") {
         // A direct-message notice opens its own conversation in Chat.
         const query = typeof actionId === "string" && actionId.startsWith("chat-open-direct:")
           ? { conversation_id: actionId.slice("chat-open-direct:".length) } : {};
@@ -559,7 +657,7 @@
 
       if (typeof actionId === "string" && actionId.startsWith("browser-internet-allow:")) {
         actions.appendChild(createActionButton("Don't Allow", actionId.replace("browser-internet-allow:", "browser-internet-deny:")));
-        actions.appendChild(createButton("Allow", () => allowBrowserInternet(actionId), "primary"));
+        actions.appendChild(createButton("Allow", () => allowInternet(actionId), "primary"));
       } else if (typeof actionId === "string" && actionId.startsWith("room-approve-request:")) {
         actions.appendChild(createActionButton("Approve", actionId, "primary"));
         actions.appendChild(createActionButton("Deny", "room-deny-request:" + actionId.slice("room-approve-request:".length), "danger"));
@@ -619,7 +717,8 @@
         const placeholder = document.createElement("div");
         placeholder.className = "entry-detail-placeholder";
         placeholder.textContent = requestedSelectionMissing
-          ? "That request is no longer available. Select another request."
+          ? state.requestedSelectionId.startsWith("wallet-approval-request:")
+            ? WALLET_REQUEST_UNAVAILABLE : "That request is no longer available. Select another request."
           : "Select a request";
         elements.entryDetail.appendChild(placeholder);
         return;
@@ -661,6 +760,35 @@
       actions.className = "entry-actions";
       fillEntryActions(actions, entry);
       elements.entryDetail.append(titleRow, time, body, actions);
+      const site = walletRequestSite(entry);
+      if (site) elements.entryDetail.insertBefore(site, actions);
+      if (entry.localAcknowledgement) {
+        focusWalletAcknowledgement(actions);
+      }
+    }
+
+    function focusWalletAcknowledgement(container) {
+      if (!state.focusWalletAcknowledgement) return;
+      state.focusWalletAcknowledgement = false;
+      const result = container.querySelector('[role="status"]');
+      result?.focus({ preventScroll: true });
+      result?.scrollIntoView({ block: "nearest" });
+    }
+
+    function walletRequestSite(entry) {
+      const origin = entry.requesting_origin;
+      if (entry.kind !== "wallet_approval_request" || entry.source_app !== "browser" || typeof origin !== "string" || origin.length > 512
+        || !/^https?:\/\/[!-~]+$/.test(origin) || /[\/?#@\\]/.test(origin.slice(origin.indexOf("//") + 2))) return null;
+      try { if (new URL(origin).origin !== origin) return null; } catch (_) { return null; }
+      const row = document.createElement("p");
+      const label = document.createElement("small");
+      label.textContent = "Site reported by Browser";
+      const value = document.createElement("span");
+      value.textContent = origin;
+      value.dir = "auto";
+      value.style.cssText = "display:block;unicode-bidi:isolate;overflow-wrap:anywhere";
+      row.append(label, value);
+      return row;
     }
 
     function createFactList(text) {
@@ -711,8 +839,26 @@
     async function runAction(actionId) {
       setButtonsDisabled(true);
       try {
-        await inboxAction(actionId);
+        const outcome = await inboxAction(actionId);
+        if (actionId.startsWith("wallet-reject-request:")) {
+          const id = "wallet-approval-request:" + actionId.slice("wallet-reject-request:".length);
+          const entry = state.entries.find(e => e.id === id);
+          if (entry) {
+            const message = outcome.message?.startsWith("Request dismissed.")
+              ? "Request dismissed. Check your connected wallet before sending again." : "Request rejected.";
+            state.walletAcknowledgement = { ...entry, read: true, severity: "info", action_ref: null, localAcknowledgement: message };
+            state.walletDecisions.add(id);
+            state.focusWalletAcknowledgement = true;
+            state.entries = state.entries.filter(e => e.id !== id);
+            state.selectedId = "";
+            state.requestedSelectionId = "";
+            renderInbox();
+          }
+        }
         await loadInbox();
+        if (actionId.startsWith("wallet-reject-request:") && !state.walletAcknowledgement) {
+          setStatus(outcome.message || "Request rejected.");
+        }
       } catch (error) {
         if (error && error.status === 503) {
           try {
@@ -893,6 +1039,7 @@
         .filter((entry) => entry && entry.id && !entry.read
           && entry.kind !== "wallet_approval_request"
           && entry.kind !== "browser_internet_request"
+          && entry.kind !== "walletconnect_internet_request"
           && entry.kind !== "contact_request" && entry.kind !== "service_access_request")
         .map((entry) => entry.id);
       if (unreadIds.length === 0) {

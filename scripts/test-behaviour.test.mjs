@@ -14,6 +14,7 @@ function fixture(t, ci = "") {
   const inputs = join(root, "inputs");
   const log = join(root, "commands.jsonl");
   const npmLog = join(root, "npm.json");
+  const sdkNpmLog = join(root, "sdk-npm.json");
   const installer = `const fs = require("node:fs"), path = require("node:path");
     fs.appendFileSync(process.env.INPUTS_LOG, JSON.stringify({
       revision: __BUILD__, args: process.argv.slice(2),
@@ -47,6 +48,13 @@ function fixture(t, ci = "") {
   writeFileSync(join(bin, "npm"), `#!/usr/bin/env node
     const fs = require("node:fs"), path = require("node:path");
     const args = process.argv.slice(2);
+    if (args[0] === "ci") {
+      fs.writeFileSync(process.env.SDK_NPM_LOG, JSON.stringify(args));
+      const sdk = path.join(args[args.indexOf("--prefix") + 1], "node_modules", "@walletconnect", "sign-client");
+      fs.mkdirSync(sdk, { recursive: true });
+      fs.writeFileSync(path.join(sdk, "package.json"), JSON.stringify({ version:"2.23.9" }));
+      process.exit(0);
+    }
     fs.writeFileSync(process.env.NPM_LOG, JSON.stringify(args));
     const nodeRoot = path.join(args[args.indexOf("--prefix") + 1], "node_modules", "node");
     fs.mkdirSync(path.join(nodeRoot, "bin"), { recursive: true });
@@ -54,11 +62,11 @@ function fixture(t, ci = "") {
     fs.writeFileSync(path.join(nodeRoot, "bin", "node"), process.env.NODE_FIXTURE_BIN, { mode: 0o755 });
   `, { mode: 0o755 });
   const env = { ...process.env, CI: ci, BEHAVIOUR_INPUTS: inputs, INPUTS_LOG: log,
-    NPM_LOG: npmLog, NODE_FIXTURE_BIN: nodeLauncher, PATH: `${bin}:${process.env.PATH}`,
+    NPM_LOG: npmLog, SDK_NPM_LOG: sdkNpmLog, NODE_FIXTURE_BIN: nodeLauncher, PATH: `${bin}:${process.env.PATH}`,
     PLAYWRIGHT_BROWSERS_PATH: join(root, "cache"), PLAYWRIGHT_SKIP_BROWSER_GC: "0" };
   delete env.FAIL_REVISION;
   delete env.FIXTURE_NODE_VERSION;
-  return { env, log, npmLog, nodeRoot, run: () => spawnSync("bash", [script, "inputs"], { env, encoding: "utf8", timeout: 10_000 }) };
+  return { env, log, npmLog, sdkNpmLog, nodeRoot, run: () => spawnSync("bash", [script, "inputs"], { env, encoding: "utf8", timeout: 10_000 }) };
 }
 
 for (const ci of ["", "true"]) {
@@ -100,4 +108,16 @@ test("behaviour inputs reject a missing pinned installer binary instead of using
   const result = run();
   assert.notEqual(result.status, 0, result.stderr);
   assert.match(result.stderr, /node\/bin\/node.*(?:No such file|not found)/);
+});
+
+
+test("behaviour inputs install the locked WalletConnect graph for a clean checkout", t => {
+  const {env,sdkNpmLog,run}=fixture(t);
+  const result=run();
+  assert.equal(result.status,0,result.stderr);
+  const prefix=join(env.BEHAVIOUR_INPUTS,"walletconnect");
+  assert.deepEqual(JSON.parse(readFileSync(sdkNpmLog,"utf8")),[
+    "ci","--prefix",prefix,"--ignore-scripts","--no-audit","--no-fund",
+  ]);
+  assert.equal(readFileSync(join(prefix,"package-lock.json"),"utf8"),readFileSync(new URL("./walletconnect/package-lock.json",import.meta.url),"utf8"));
 });

@@ -81,6 +81,11 @@ pub(crate) struct BrowserInternetService {
     generation: Mutex<Option<Generation>>,
 }
 impl BrowserInternetService {
+    pub(super) fn capability_manager(&self) -> anyhow::Result<Arc<CapabilityManager>> {
+        self.manager
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Runtime internet authority is unavailable"))
+    }
     pub(crate) fn new(manager: Option<Arc<CapabilityManager>>) -> Self {
         Self {
             manager,
@@ -388,6 +393,7 @@ pub(super) fn notification(
         Consent::Requested { request_id, at, .. } => {
             let request = grant_request(&record).ok()?;
             return Some(HomeNotificationEntrySummary {
+                requesting_origin: None,
                 id: "browser-internet:permission".into(),
                 source_app: BROWSER_CAPSULE_ID.into(),
                 kind: "browser_internet_request".into(),
@@ -429,6 +435,7 @@ pub(super) fn notification(
         ),
     };
     Some(HomeNotificationEntrySummary {
+        requesting_origin: None,
         id: "browser-internet:permission".into(),
         source_app: BROWSER_CAPSULE_ID.into(),
         kind: "browser_internet_decision".into(),

@@ -64,6 +64,7 @@ const request = {
   status: "pending",
   intent: "browser_account_access",
   capsule_id: "browser",
+  requesting_origin: "https://dapp.example",
   reason: "Browser origin requests exact account access",
   account_id: "wallet:eip155:20:0x1111111111111111111111111111111111111111",
   address: "0x1111111111111111111111111111111111111111",
@@ -93,6 +94,7 @@ const rendered = descendants(requestsNode);
 assert(rendered.some((node) => node.textContent === "Browser account access"));
 assert(rendered.some((node) => node.textContent === "Review exact account access"));
 assert(rendered.some((node) => node.textContent === "https://dapp.example"));
+assert(!rendered.some((node) => node.textContent === "https://dapp.example/connect"));
 assert(rendered.some((node) => node.textContent === "eip155:20, eip155:8453"));
 assert(rendered.some((node) => node.tagName === "BUTTON" && node.textContent === "Allow"));
 

@@ -71,6 +71,11 @@ const HOME_CLIPBOARD_TARGET_PURPOSE_POLICY = Object.freeze({
     }),
   }),
   "wallet-walletconnect": Object.freeze({
+    "wallet.connection-link": Object.freeze({
+      operations: Object.freeze(["write"]),
+      maxUtf8Bytes: 2048,
+      kind: "walletconnect-uri",
+    }),
     "wallet.address": Object.freeze({
       operations: Object.freeze(["write"]),
       maxUtf8Bytes: 256,
@@ -200,6 +205,9 @@ export function homeClipboardValidWriteText(
       text === text.trim() &&
       !/[\s\u0000-\u001f\u007f]/u.test(text)
     );
+  }
+  if (policy.kind === "walletconnect-uri") {
+    return text === text.trim() && /^wc:[a-f0-9]{64}@2\?[^\s\u0000-\u001f\u007f]+$/u.test(text);
   }
   if (policy.kind === "resource-uri") {
     return (

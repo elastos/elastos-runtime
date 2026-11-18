@@ -1664,6 +1664,7 @@ dependencies = [
  "axum",
  "axum-server",
  "base64",
+ "bs58",
  "bytes",
  "cid",
  "clap",
@@ -1686,8 +1687,10 @@ dependencies = [
  "elastos-storage",
  "elastos-tls",
  "elastos-wallet-contract",
+ "exit-provider",
  "flate2",
  "futures-lite",
+ "futures-util",
  "getrandom 0.2.17",
  "hex",
  "hkdf",
@@ -1702,6 +1705,7 @@ dependencies = [
  "qrcodegen",
  "rand 0.10.2",
  "rand 0.8.7",
+ "rcgen",
  "reqwest 0.12.28",
  "rustls",
  "semver",
@@ -1714,6 +1718,8 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
  "toml",
  "tower",
  "tower-http 0.5.2",
@@ -1722,6 +1728,7 @@ dependencies = [
  "url",
  "wasm-encoder 0.236.1",
  "wasmparser 0.236.1",
+ "webpki-roots 1.0.10",
  "x-wing",
  "x25519-dalek 2.0.1",
  "zeroize",
@@ -1899,6 +1906,15 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "exit-provider"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -5590,8 +5606,12 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5855,6 +5875,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.7",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

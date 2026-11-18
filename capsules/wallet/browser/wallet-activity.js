@@ -1,4 +1,4 @@
-import { readText, relativeTime, requestTitle, shortAddress } from "./wallet-format.js?v=wallet-20260523a";
+import { readText, relativeTime, requestTitle, requestingAppName, shortAddress } from "./wallet-format.js?v=wallet-20260523a";
 
 export function createWalletActivity({ activityNode, textNode }) {
   function renderActivity(requests) {
@@ -26,23 +26,35 @@ export function createWalletActivity({ activityNode, textNode }) {
 }
 
 export function pendingRequests(requests) {
-  return requests.filter((request) => readText(request.status) === "pending");
+  // WalletConnect keeps an approved send through its receipt grace period.
+  return requests.filter((request) => readText(request.status) === "pending"
+    || (readText(request.status) === "approved"
+      && readText(request.intent) === "transaction_intent"
+      && readText(request.connector_id) === "wallet-walletconnect"));
 }
 
 export function activityTime(request) {
   return Number(request.completed_at || request.created_at || 0);
 }
 
+function decisionWasDismissed(request) {
+  return Boolean(request.approved_at) || request.localDecisionKind === "dismissed";
+}
+
 export function activityIcon(request) {
   const status = readText(request.status);
-  if (status === "completed") return "✓";
+  if (request.transaction_hash || status === "completed") return "✓";
+  if (status === "rejected" && decisionWasDismissed(request)) return "·";
   if (status === "rejected" || status === "expired") return "×";
   return "!";
 }
 
 export function activityTitle(request) {
   const status = readText(request.status);
-  const capsule = readText(request.capsule_id) || "Capsule";
+  const capsule = requestingAppName(request);
+  if (request.transaction_hash && status === "rejected" && decisionWasDismissed(request)) {
+    return `${capsule} · Sent from wallet after request was dismissed`;
+  }
   if (request.transaction_hash) {
     return `${capsule} · Sent transaction`;
   }
@@ -50,6 +62,9 @@ export function activityTitle(request) {
     return `${capsule} · Approved ${requestTitle(request)}`;
   }
   if (status === "rejected") {
+    if (request.intent === "transaction_intent" && decisionWasDismissed(request) && readText(request.connector_id)) {
+      return `${capsule} · Dismissed transaction request`;
+    }
     return `${capsule} · Rejected ${requestTitle(request)}`;
   }
   if (status === "expired") {
@@ -64,7 +79,8 @@ export function activitySubtitle(request) {
     parts.push(shortAddress(request.address));
   }
   if (request.transaction_hash) {
-    parts.push(`tx ${shortAddress(request.transaction_hash)}`);
+    const dismissed = request.status === "rejected" && decisionWasDismissed(request);
+    parts.push(`tx ${dismissed ? readText(request.transaction_hash) : shortAddress(request.transaction_hash)}`);
   } else if (request.reason) {
     parts.push(readText(request.reason));
   }

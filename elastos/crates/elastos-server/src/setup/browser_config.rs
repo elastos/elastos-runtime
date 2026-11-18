@@ -5,6 +5,27 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const GENERATOR: &str = include_str!("../../../../../scripts/browser-source-home-config.mjs");
+/// Browser and WalletConnect share the short IPC names used by the source-home generator.
+pub(super) fn runtime_socket_path(data: &Path, platform: &str, role: &str) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    // Match path.resolve in the generator: normalize lexical components, preserving symlinks.
+    let mut absolute = PathBuf::new();
+    for component in data.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                absolute.pop();
+            }
+            std::path::Component::CurDir => {}
+            component => absolute.push(component.as_os_str()),
+        }
+    }
+    let scope = hex::encode(Sha256::digest(absolute.to_string_lossy().as_bytes()));
+    PathBuf::from(format!(
+        "/tmp/elastos-browser-{platform}-{}-{role}.sock",
+        &scope[..16]
+    ))
+}
+
 const CONFIG_FILES: [&str; 4] = [
     "exit-provider.json",
     "browser-local-exit.json",
@@ -676,6 +697,12 @@ fn generate_with_migration(
         .arg(data)
         .args(["--platform", platform, "--out-dir"])
         .arg(staged.path())
+        .arg("--vm-control-socket")
+        .arg(runtime_socket_path(data, platform, "vm-control"))
+        .arg("--exit-adapter-socket")
+        .arg(runtime_socket_path(data, platform, "exit-adapter"))
+        .arg("--exit-relay-socket")
+        .arg(runtime_socket_path(data, platform, "exit-relay"))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -714,6 +741,41 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use sha2::Digest;
+
+    #[test]
+    fn walletconnect_and_browser_native_socket_names_match_the_existing_generator() {
+        for platform in ["darwin-arm64", "linux-amd64", "linux-arm64"] {
+            let data = Path::new("/tmp/Application Support/long folder/../elastos");
+            let mut child = Command::new("node")
+                .args([
+                    "--input-type=module",
+                    "-",
+                    "--walletconnect-socket-paths",
+                    "--data-dir",
+                ])
+                .arg(data)
+                .args(["--platform", platform])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(GENERATOR.as_bytes())
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(output.status.success());
+            let names: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            for (field, role) in [("adapter", "wc-adapter"), ("relay", "wc-relay")] {
+                assert_eq!(
+                    names[field].as_str().unwrap(),
+                    runtime_socket_path(data, platform, role).to_str().unwrap()
+                );
+            }
+        }
+    }
 
     #[test]
     fn native_host_probe_requires_its_contract_and_has_a_deadline() {

@@ -120,6 +120,7 @@ async fn start_gateway_server_with_shutdown(
         collaboration_presence_product_port: collaboration.presence_product_port,
         collaboration_discovery_service: collaboration.discovery_service,
         browser_internet,
+        walletconnect: Default::default(),
         identity_manager: Arc::new(OnceLock::new()),
         cache_dir,
         data_dir: data_dir.clone(),

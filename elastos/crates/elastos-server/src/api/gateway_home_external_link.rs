@@ -36,7 +36,13 @@ pub(super) async fn home_external_link(
         )
             .into_response();
     }
-    let app = match home_external_link_app(&state.data_dir, &headers, &input.app_token) {
+    let app = {
+        let data = state.data_dir.clone();
+        let headers = headers.clone();
+        let token = input.app_token.clone();
+        blocking_capsule_inventory(move || home_external_link_app(&data, &headers, &token)).await
+    };
+    let app = match app {
         Ok(app) => app,
         Err(err) => return (StatusCode::FORBIDDEN, err.to_string()).into_response(),
     };

@@ -109,6 +109,11 @@ pub(super) async fn append_inbox_requests(
         notifications.attention_count += usize::from(card.severity == "attention");
         notifications.entries.push(card);
     }
+    if let Some(card) = gateway_walletconnect::notification(state, context) {
+        notifications.unread_count += usize::from(!card.read);
+        notifications.attention_count += usize::from(card.severity == "attention");
+        notifications.entries.push(card);
+    }
     append_wallet_approval_notifications(notifications, wallet_approvals);
     // Runtime capability requests are the admin's to answer.
     if ensure_admin_context(&state.data_dir, context).is_ok() {
@@ -157,6 +162,7 @@ pub(super) fn append_hosted_route_notifications(
         notifications.unread_count += 1;
         notifications.attention_count += 1;
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: None,
             id: format!("external-http-request:{}", route.id),
             source_app: INBOX_CAPSULE_ID.to_string(),
             kind: "hosted_route_decision".to_string(),
@@ -187,12 +193,12 @@ pub(super) fn append_wallet_approval_notifications(
     for request in approval_requests {
         notifications.unread_count += 1;
         notifications.attention_count += 1;
-        let capsule = if request.capsule_id.trim().is_empty() {
-            "A capsule".to_string()
-        } else {
-            request.capsule_id.clone()
-        };
+        let capsule = request
+            .requesting_app_name
+            .as_deref()
+            .unwrap_or("Requesting app");
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: request.requesting_origin.clone(),
             id: format!("wallet-approval-request:{}", request.request_id),
             source_app: request.capsule_id.clone(),
             kind: "wallet_approval_request".to_string(),
@@ -205,7 +211,10 @@ pub(super) fn append_wallet_approval_notifications(
                 app: WALLET_CAPSULE_ID.to_string(),
                 action_id: format!(
                     "{}:{}",
-                    if request.intent == "browser_account_access" {
+                    if request.intent == "browser_account_access"
+                        || !is_managed_wallet_proof_type(&request.proof_type)
+                        || request.connector_id.is_some()
+                    {
                         "wallet-review-request"
                     } else {
                         "wallet-approve-request"
@@ -249,6 +258,7 @@ pub(super) fn append_runtime_capability_notifications(
         notifications.unread_count += 1;
         notifications.attention_count += 1;
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: None,
             id: format!("capability-request:{}", request.request_id),
             source_app: SYSTEM_CAPSULE_ID.to_string(),
             kind: "capability_request".to_string(),
@@ -286,10 +296,10 @@ fn wallet_approval_title(intent: &str) -> String {
         "capability_grant" => "Wallet access request".to_string(),
         "credential" => "Credential signing request".to_string(),
         "publish_envelope" => "Publish approval request".to_string(),
-        "transaction_intent" => "Transaction approval request".to_string(),
+        "transaction_intent" => "Send transaction".to_string(),
         "browser_account_access" => "Browser account access request".to_string(),
-        "browser_personal_sign" => "Browser signature request".to_string(),
-        "browser_typed_data_sign" => "Browser typed data signature request".to_string(),
+        "browser_personal_sign" => "Sign a message".to_string(),
+        "browser_typed_data_sign" => "Sign typed data".to_string(),
         "bitcoin_bip322_proof" => "Bitcoin proof request".to_string(),
         "revocation" => "Revocation approval request".to_string(),
         _ => "Wallet approval request".to_string(),
@@ -399,6 +409,15 @@ async fn dispatch_inbox_action(
     {
         return gateway_update_notice::acknowledge(&state.data_dir, context, action_id).await;
     }
+    if action_id.starts_with("walletconnect-internet-") {
+        return gateway_walletconnect::answer(
+            state,
+            launch,
+            action_id,
+            action.step_up_token.as_deref(),
+        )
+        .await;
+    }
     let data_dir = &state.data_dir;
     // Entries one account owns, such as its direct messages, change only for
     // that account.
@@ -505,7 +524,7 @@ async fn dispatch_inbox_action(
         return Ok(outcome.message);
     }
     if let Some(request_id) = action_id.strip_prefix("wallet-reject-request:") {
-        runtime_wallet_data(
+        let rejected = runtime_wallet_data(
             state,
             authority,
             elastos_wallet_contract::WalletProviderOperationV2::RejectApproval {
@@ -514,19 +533,33 @@ async fn dispatch_inbox_action(
             },
         )
         .await?;
+        let dismissed = wallet_approval_is_dismissal(&rejected["approval_request"]);
         append_wallet_approval_audit(
             data_dir,
             WalletApprovalAuditInput {
                 capsule_id: INBOX_CAPSULE_ID,
-                event_type: "wallet.approval.rejected",
+                event_type: if dismissed {
+                    "wallet.approval.dismissed"
+                } else {
+                    "wallet.approval.rejected"
+                },
                 principal_id: &context.principal_id,
                 session_id: &context.session_id,
                 request_id,
-                result: "rejected",
-                reason: "Wallet approval rejected through Runtime authority",
+                result: if dismissed { "dismissed" } else { "rejected" },
+                reason: if dismissed {
+                    elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON
+                } else {
+                    "Wallet approval rejected through Runtime authority"
+                },
             },
         )?;
-        return Ok("Rejected wallet request.".to_string());
+        return Ok(if dismissed {
+            "Request dismissed. Check your connected wallet before sending again."
+        } else {
+            "Rejected wallet request."
+        }
+        .to_string());
     }
     if let Some(request_id) = action_id.strip_prefix("capability-approve-request:") {
         return approve_runtime_capability_request(data_dir, request_id).await;

@@ -16,7 +16,7 @@ use bindings::{
     resolve_capsule_method_binding, static_capsule_method_binding, RuntimeCapsuleAffordanceBinding,
 };
 pub(super) use read_model::{
-    capsule_catalog_summary, capsule_interface_registry_summary,
+    capsule_catalog_summary, capsule_catalog_summary_async, capsule_interface_registry_summary,
     capsule_interface_registry_summary_from_catalog, CapsuleCatalogResponse,
     CapsuleInterfaceRegistryResponse,
 };
@@ -34,10 +34,19 @@ pub(super) async fn capsule_catalog(
     headers: HeaderMap,
 ) -> Response {
     let result = async {
-        let context = require_capsule_catalog_token(&state.data_dir, &headers)?;
+        let context = {
+            let data = state.data_dir.clone();
+            let headers = headers.clone();
+            blocking_capsule_inventory(move || require_capsule_catalog_token(&data, &headers)).await
+        }?;
         let catalog = caller_capsule_catalog_summary(&state, &context).await;
         anyhow::ensure!(
-            require_capsule_catalog_token(&state.data_dir, &headers)? == context,
+            {
+                let data = state.data_dir.clone();
+                let headers = headers.clone();
+                blocking_capsule_inventory(move || require_capsule_catalog_token(&data, &headers))
+                    .await
+            }? == context,
             "catalog authority changed"
         );
         Ok::<_, anyhow::Error>(catalog)
@@ -101,7 +110,7 @@ async fn caller_capsule_catalog_rows(
         // Catalog trust may be revoked while the provider is answering. Rebuild
         // its signed rows while retaining ordinary installed app inventory.
         // Each signed model CID keeps its own admission and offer projection.
-        let initial = capsule_catalog_summary(&state.data_dir);
+        let initial = capsule_catalog_summary_async(&state.data_dir).await;
         let mut projections = Vec::new();
         for row in &initial.capsules {
             if row.model_content.is_some() {
@@ -120,7 +129,7 @@ async fn caller_capsule_catalog_rows(
                 }
             }
         }
-        let mut catalog = capsule_catalog_summary(&state.data_dir);
+        let mut catalog = capsule_catalog_summary_async(&state.data_dir).await;
         project_model_memory_fit(
             &mut catalog,
             elastos_common::host_memory::observe_host_memory(std::env::consts::OS).ok(),
@@ -159,7 +168,7 @@ async fn caller_capsule_catalog_rows(
     #[cfg(not(unix))]
     {
         let _ = context;
-        capsule_catalog_summary(&state.data_dir)
+        capsule_catalog_summary_async(&state.data_dir).await
     }
 }
 
@@ -167,7 +176,12 @@ pub(super) async fn capsule_interfaces(
     State(state): State<GatewayState>,
     headers: HeaderMap,
 ) -> Response {
-    match require_capsule_catalog_token(&state.data_dir, &headers) {
+    let inventory_result = {
+        let data = state.data_dir.clone();
+        let headers = headers.clone();
+        blocking_capsule_inventory(move || require_capsule_catalog_token(&data, &headers)).await
+    };
+    match inventory_result {
         Ok(_) => Json(
             capsule_interface_registry_summary_with_bindings(
                 &state.data_dir,
@@ -189,7 +203,7 @@ pub(super) async fn capsule_interface_registry_summary_with_bindings(
     registry: Option<&elastos_runtime::provider::ProviderRegistry>,
 ) -> read_model::CapsuleInterfaceRegistryResponse {
     capsule_interface_registry_summary_with_bindings_from_catalog(
-        &capsule_catalog_summary(data_dir),
+        &capsule_catalog_summary_async(data_dir).await,
         registry,
     )
     .await
@@ -252,7 +266,12 @@ pub(super) async fn capsule_interface_invoke(
     owner: Option<Extension<ModelPreparationOwner>>,
     Json(request): Json<CapsuleInterfaceInvokeRequest>,
 ) -> Response {
-    let resolved = match resolve_capsule_affordance(&state.data_dir, &request) {
+    let resolved = {
+        let data = state.data_dir.clone();
+        let request = request.clone();
+        blocking_capsule_inventory(move || resolve_capsule_affordance(&data, &request)).await
+    };
+    let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(err) => {
             return capsule_invoke_request_error(
@@ -405,7 +424,11 @@ pub(super) async fn capsule_interface_invoke(
             &headers,
             &[resolved.capsule.as_str()],
         );
-        let method = resolve_capsule_affordance(&state.data_dir, &request);
+        let method = {
+            let data = state.data_dir.clone();
+            let request = request.clone();
+            blocking_capsule_inventory(move || resolve_capsule_affordance(&data, &request)).await
+        };
         if !current.is_ok_and(|(_, current)| current == context)
             || !method.is_ok_and(|current| {
                 serde_json::to_value(&current.method).ok()
@@ -766,7 +789,7 @@ async fn dispatch_capsule_launch_affordance(
         ));
     }
 
-    let catalog = capsule_catalog_summary(&state.data_dir);
+    let catalog = capsule_catalog_summary_async(&state.data_dir).await;
     let catalog_target = catalog
         .capsules
         .iter()
@@ -790,7 +813,12 @@ async fn dispatch_capsule_launch_affordance(
         .launch_target
         .as_deref()
         .unwrap_or(catalog_target.name.as_str());
-    let target_summary = home_launch_target(&state.data_dir, target_name).ok_or_else(|| {
+    let target_summary = {
+        let data = state.data_dir.clone();
+        let target = target_name.to_string();
+        blocking_capsule_inventory(move || home_launch_target(&data, &target)).await
+    }
+    .ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             "target_not_found",
@@ -890,7 +918,7 @@ fn capsule_invoke_request_error(
         .into_response()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CapsuleInterfaceInvokeRequest {
     request_id: String,
@@ -1162,6 +1190,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.path().to_path_buf(),
             data_dir: data_dir.path().to_path_buf(),
@@ -1992,6 +2021,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.path().to_path_buf(),
             data_dir: data_dir.path().to_path_buf(),

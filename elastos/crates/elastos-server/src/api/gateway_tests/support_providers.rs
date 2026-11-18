@@ -4790,6 +4790,7 @@ impl Provider for MockWalletProvider {
                 WalletProviderOperationV2::ListApprovals { include_resolved } => json!({
                     "op": "approval_requests",
                     "principal_id": wallet_request.authority.principal_id,
+                    "session_id": wallet_request.authority.session_id,
                     "include_resolved": include_resolved,
                 }),
                 WalletProviderOperationV2::RejectApproval { request_id, reason } => json!({
@@ -5737,9 +5738,15 @@ impl MockWalletProvider {
                     }));
                 };
                 account["revoked_at"] = json!(crate::auth::now_ts());
+                let account = account.clone();
+                let remaining = accounts.iter().filter(|candidate| {
+                    candidate["principal_id"] == account["principal_id"]
+                        && candidate["connector_id"] == account["connector_id"]
+                        && candidate["revoked_at"].is_null()
+                }).count();
                 Ok(json!({
                     "status": "ok",
-                    "data": { "account": account.clone() }
+                    "data": { "account": account, "connector_accounts_remaining":remaining }
                 }))
             }
             Some("rename_account") => {
@@ -5977,6 +5984,7 @@ impl MockWalletProvider {
             }
             Some("approval_requests") => {
                 let principal_id = required_test_str(request, "principal_id")?;
+                let session_id = required_test_str(request, "session_id")?;
                 let include_resolved = request
                     .get("include_resolved")
                     .and_then(|value| value.as_bool())
@@ -5989,6 +5997,12 @@ impl MockWalletProvider {
                             .get("principal_id")
                             .and_then(|value| value.as_str())
                             == Some(principal_id)
+                    })
+                    .filter(|approval| {
+                        approval.get("status").and_then(Value::as_str) != Some("pending")
+                            || (!session_id.is_empty()
+                                && approval.get("session_id").and_then(Value::as_str)
+                                    == Some(session_id))
                     })
                     .filter(|approval| {
                         include_resolved
@@ -6193,6 +6207,16 @@ impl MockWalletProvider {
                         "message": "wallet approval request not found"
                     }));
                 };
+                let approved_send = approval["status"] == "approved"
+                    && approval["intent"] == "transaction_intent"
+                    && approval["connector_id"] == "wallet-walletconnect";
+                if approval["status"] != "pending" && !approved_send {
+                    return Ok(json!({
+                        "status": "error",
+                        "code": "invalid_request",
+                        "message": "wallet approval request cannot be rejected"
+                    }));
+                }
                 approval["status"] = serde_json::Value::String("rejected".to_string());
                 Ok(json!({
                     "status": "ok",
@@ -6221,7 +6245,7 @@ impl MockWalletProvider {
                     return Ok(json!({
                         "status": "error",
                         "code": "invalid_request",
-                        "message": "wallet approval request is not pending"
+                        "message": "wallet approval request cannot be rejected"
                     }));
                 }
                 if !approval
@@ -6383,7 +6407,9 @@ impl MockWalletProvider {
                         "message": "wallet approval request belongs to a different connector"
                     }));
                 }
-                approval["status"] = serde_json::Value::String("completed".to_string());
+                if approval["status"] != "rejected" {
+                    approval["status"] = serde_json::Value::String("completed".to_string());
+                }
                 if approval.get("intent").and_then(|value| value.as_str())
                     == Some("transaction_intent")
                 {
@@ -6579,4 +6605,27 @@ impl MockWalletProvider {
             })),
         }
     }
+}
+
+pub(super) fn seed_walletconnect_connector_config(data_dir: &std::path::Path) {
+    let sdk = b"// pinned test WalletConnect SDK asset\n";
+    let sdk_path = data_dir.join(WALLETCONNECT_SDK_PATH);
+    std::fs::create_dir_all(sdk_path.parent().unwrap()).unwrap();
+    std::fs::write(&sdk_path, sdk).unwrap();
+    let sdk_sha256 = format!("{:x}", Sha256::digest(sdk));
+
+    let config_path = data_dir.join(WALLETCONNECT_CONFIG_PATH);
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        config_path,
+        serde_json::to_vec(&json!({
+            "schema": WALLETCONNECT_CONFIG_SCHEMA,
+            "project_id": "test_walletconnect_project",
+            "sdk_package": WALLETCONNECT_SDK_PACKAGE,
+            "sdk_version": "1.0.0",
+            "sdk_sha256": sdk_sha256
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 }

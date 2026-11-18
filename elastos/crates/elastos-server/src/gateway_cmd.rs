@@ -275,7 +275,8 @@ where
             wait_for_public_tunnel_url(&provider_registry, std::time::Duration::from_secs(90))
                 .await?;
         let public_base = format!("{}/", url.trim_end_matches('/'));
-        let public_apps = api::browser_capsules::list_launchable_browser_capsules(&data_dir)
+        let public_apps = api::browser_capsules::list_launchable_browser_capsules_async(&data_dir)
+            .await
             .into_iter()
             .map(|app| app.name)
             .collect::<Vec<_>>();

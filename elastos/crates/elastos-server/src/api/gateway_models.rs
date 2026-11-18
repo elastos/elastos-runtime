@@ -611,6 +611,12 @@ struct SystemWalletAccountSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     connector_id: Option<String>,
     linked_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wallet_display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wallet_mark: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -623,6 +629,8 @@ struct SystemWalletDefaultSummary {
 
 #[derive(Debug, Clone, Default, Serialize)]
 struct SystemWalletApprovalsSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_status: Option<String>,
     available: bool,
     pending_count: usize,
     approval_requests: Vec<SystemWalletApprovalSummary>,
@@ -634,6 +642,10 @@ struct SystemWalletApprovalsSummary {
 
 #[derive(Debug, Clone, Serialize)]
 struct SystemWalletApprovalSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requesting_app_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requesting_origin: Option<String>,
     request_id: String,
     status: String,
     intent: String,
@@ -641,6 +653,7 @@ struct SystemWalletApprovalSummary {
     resource: String,
     reason: String,
     account_id: String,
+    chain_namespace: String,
     address: String,
     proof_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -651,6 +664,8 @@ struct SystemWalletApprovalSummary {
     expires_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approved_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     transaction_hash: Option<String>,
 }
@@ -851,6 +866,8 @@ struct HomeNotificationsSummary {
 
 #[derive(Default, Serialize)]
 struct HomeNotificationEntrySummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    requesting_origin: Option<String>,
     id: String,
     source_app: String,
     kind: String,

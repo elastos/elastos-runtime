@@ -234,6 +234,7 @@ product-ui-browser:
     node scripts/system-window-policy-browser-smoke.mjs
     node scripts/chat-room-configured-layout-smoke.mjs
     node scripts/home-phone-layout-smoke.mjs
+    node scripts/wallet-product-layout-smoke.mjs
 
 # Real source Home headers and app scripts in Chromium and WebKit.
 # On the Mac, run under the shared lease: elastos-heavy just product-ui-capsule-browser.

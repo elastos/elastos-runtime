@@ -16,6 +16,10 @@
       </div>
       <div class="wallet-actions">
         <button id="wallet-connect" class="wallet-button" type="button">Connect wallet</button>
+        <button id="wallet-finish" class="wallet-button" type="button" hidden>Finish linking</button>
+        <button id="wallet-cancel" class="wallet-button wallet-button-secondary" type="button" hidden>Cancel</button>
+        <button id="wallet-disconnect" hidden class="wallet-button wallet-button-secondary" type="button">Disconnect</button>
+        <span id="wallet-connection" role="status">Ready to connect</span>
       </div>
       <p id="wallet-status" class="wallet-status" hidden></p>
     </section>
@@ -23,7 +27,7 @@
     <section class="wallet-panel">
       <div class="wallet-section-heading">
         <div class="wallet-section-title">
-          <h2>Connected accounts</h2>
+          <h2>Linked accounts</h2>
           <span id="wallet-state" class="wallet-state">0 linked</span>
         </div>
       </div>
@@ -37,6 +41,6 @@
       <div id="wallet-requests" class="wallet-requests" aria-live="polite"></div>
     </section>
   </main>
-  <script type="module" src="./wallet-walletconnect.js?v=wallet-walletconnect-20260726a"></script>
+  <script type="module" src="./wallet-walletconnect.js?v=wallet-walletconnect-20261115a"></script>
 </body>
 </html>

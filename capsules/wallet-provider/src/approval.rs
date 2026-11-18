@@ -345,6 +345,7 @@ impl WalletProvider {
     pub(super) fn approval_requests(
         &mut self,
         principal_id: &str,
+        session_id: &str,
         include_resolved: bool,
     ) -> Response {
         if let Err(response) = self.ensure_initialized() {
@@ -359,6 +360,10 @@ impl WalletProvider {
             .approval_requests
             .iter()
             .filter(|request| request.principal_id == principal_id)
+            .filter(|request| {
+                request.status != ApprovalStatus::Pending
+                    || (!request.session_id.is_empty() && request.session_id == session_id)
+            })
             .filter(|request| include_resolved || request.status == ApprovalStatus::Pending)
             .collect::<Vec<_>>();
         Response::ok(json!({ "approval_requests": requests }))
@@ -397,7 +402,14 @@ impl WalletProvider {
         }) else {
             return Response::error("not_found", "wallet approval request not found");
         };
-        if request.session_id != session_id {
+        let approved_connector_transaction = request.status == ApprovalStatus::Approved
+            && request.intent == "transaction_intent"
+            && request.connector_id.as_deref() == Some("wallet-walletconnect");
+        // Dismissal grants no signing authority. The request's person may clear
+        // an approved external send from an owner surface after signing in again.
+        let owner_dismissal =
+            approved_connector_transaction && matches!(actor, "wallet" | "system" | "inbox");
+        if request.session_id != session_id && !owner_dismissal {
             return Response::error(
                 "invalid_request",
                 "wallet approval request belongs to a different Runtime session",
@@ -409,12 +421,19 @@ impl WalletProvider {
                 "wallet approval request belongs to a different connector",
             );
         }
-        if request.status != ApprovalStatus::Pending {
-            return Response::error("invalid_request", "wallet approval request is not pending");
+        if request.status != ApprovalStatus::Pending && !owner_dismissal {
+            return Response::error(
+                "invalid_request",
+                "wallet approval request cannot be rejected",
+            );
         }
         request.status = ApprovalStatus::Rejected;
         request.resolved_at = Some(now);
-        request.rejection_reason = Some(reason.trim().to_string());
+        request.rejection_reason = Some(if owner_dismissal {
+            elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON.to_string()
+        } else {
+            reason.trim().to_string()
+        });
         let request = request.clone();
         if let Err(err) = self.save() {
             return Response::error("storage_error", err);
@@ -583,7 +602,15 @@ impl WalletProvider {
             if request.status == ApprovalStatus::Expired {
                 return Response::error("invalid_request", "wallet approval request expired");
             }
-            if request.status != ApprovalStatus::Approved {
+            let late_transaction_receipt = request.status == ApprovalStatus::Rejected
+                && request.approved_at.is_some()
+                && request.intent == "transaction_intent"
+                && request.connector_id.as_deref() == Some("wallet-walletconnect")
+                && request.signed_result.is_none()
+                && request.expires_at.saturating_add(
+                    elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS,
+                ) > now;
+            if request.status != ApprovalStatus::Approved && !late_transaction_receipt {
                 return Response::error(
                     "invalid_request",
                     "wallet approval request must be approved before completion",
@@ -645,6 +672,9 @@ impl WalletProvider {
                 return Response::error("invalid_request", err);
             }
             let account = LinkedAccount {
+                provider_id: None,
+                wallet_display_name: None,
+                wallet_mark: None,
                 account_id: request_snapshot.account_id.clone(),
                 principal_id: request_snapshot.principal_id.clone(),
                 proof_binding_id: request_snapshot.proof_binding_id.clone(),
@@ -811,8 +841,11 @@ impl WalletProvider {
             completed_at: now,
         };
         let request = &mut self.store.approval_requests[request_index];
-        request.status = ApprovalStatus::Completed;
-        request.resolved_at = Some(now);
+        // A late phone receipt records the send while preserving the owner's dismissal.
+        if request.status != ApprovalStatus::Rejected {
+            request.status = ApprovalStatus::Completed;
+            request.resolved_at = Some(now);
+        }
         request.completed_at = Some(now);
         request.signature_receipt = Some(receipt.clone());
         request.signed_result = signed_result;

@@ -86,6 +86,7 @@ const HOME_GUI_AUTHORIZED_ATTACHMENT_SCHEMA =
 const WALLET_CONNECTOR_TARGET_TITLES = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
+  "wallet-walletconnect": "WalletConnect",
 });
 const WALLET_CONNECTOR_TARGETS = new Set(
   Object.keys(WALLET_CONNECTOR_TARGET_TITLES),
@@ -95,6 +96,7 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   "home-agent": new Set(["marketplace", "system", "inbox"]),
   "archive-manager": new Set(["library"]),
   browser: new Set(["library", "inbox"]),
+  "wallet-walletconnect": new Set(["inbox"]),
   "chat-room": new Set(["library", "people", "inbox"]),
   "gba-emulator": new Set(["library"]),
   "home-cli": "visible-target",
@@ -104,7 +106,7 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   marketplace: "runtime-target",
   people: new Set(["chat-room", "inbox", "system"]),
   system: "visible-target",
-  "wallet": new Set(["wallet-metamask", "wallet-unisat"]),
+  "wallet": new Set(["wallet-metamask", "wallet-unisat", "wallet-walletconnect"]),
 });
 const SHELL_MESSAGE_DELIVER_TARGET_SOURCES = Object.freeze({
   "chat-room": new Set(["documents"]),
@@ -209,7 +211,7 @@ async function switchToHomeGuiAndOpenTarget(context, target, options = {}) {
 async function launchWalletConnectorFromTrustedSource(context, target) {
   if (
     context.kind !== "app-frame" ||
-    context.targetId !== "wallet" ||
+    !(context.targetId === "wallet" || context.targetId === "inbox" && target === "wallet-walletconnect") ||
     !WALLET_CONNECTOR_TARGETS.has(target)
   ) {
     throw new Error("Home denied the Wallet connector launch");
@@ -2207,6 +2209,12 @@ window.addEventListener("message", (event) => {
       }
     }
   }
+  if (context.targetId === "wallet-walletconnect" && target === "inbox") {
+    if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      || !data.query || typeof data.query !== "object" || Array.isArray(data.query)
+      || !hasExactMessageKeys(data.query, ["notification_id"])
+      || data.query.notification_id !== "walletconnect-internet:permission") return;
+  }
   if (context.targetId === "chat-room" && ["people", "inbox"].includes(target)) {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
       || !data.query || typeof data.query !== "object" || Array.isArray(data.query)) return;
@@ -2230,10 +2238,12 @@ window.addEventListener("message", (event) => {
        !marketplaceAssistantHandoffQuery(data.query))) return;
   if (
     context.kind === "app-frame" &&
-    context.targetId === "wallet" &&
+    (context.targetId === "wallet" || context.targetId === "inbox" && target === "wallet-walletconnect") &&
     WALLET_CONNECTOR_TARGETS.has(target)
   ) {
-    if (!hasExactMessageKeys(data, ["type", "target", "homeToken"])) {
+    const inboxReturn = context.targetId === "inbox";
+    if (!hasExactMessageKeys(data, inboxReturn ? ["type", "target", "homeToken", "query"] : ["type", "target", "homeToken"])
+      || inboxReturn && (!data.query || typeof data.query !== "object" || Array.isArray(data.query) || Object.keys(data.query).length !== 0)) {
       console.warn("home ignored malformed Wallet connector launch", target);
       return;
     }
@@ -2492,6 +2502,8 @@ function canOpenTargetFromHomeMessage(context, target) {
   if (context.kind === "home") {
     return true;
   }
+  // Inbox returns the user to the connector after its internet consent step.
+  if (context.kind === "app-frame" && context.targetId === "inbox" && target === "wallet-walletconnect") return true;
   const policy = SHELL_MESSAGE_OPEN_TARGET_SOURCES[context.targetId];
   if (!policy) {
     return false;

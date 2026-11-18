@@ -12,6 +12,13 @@ pub(in crate::api::gateway) const CAPSULE_CATALOG_SCHEMA: &str = "elastos.capsul
 pub(in crate::api::gateway) const CAPSULE_INTERFACE_REGISTRY_SCHEMA: &str =
     "elastos.capsules.interfaces/v1";
 
+pub(in crate::api::gateway) async fn capsule_catalog_summary_async(
+    data_dir: &std::path::Path,
+) -> CapsuleCatalogResponse {
+    let data = data_dir.to_path_buf();
+    blocking_capsule_inventory(move || capsule_catalog_summary(&data)).await
+}
+
 pub(in crate::api::gateway) fn capsule_catalog_summary(
     data_dir: &std::path::Path,
 ) -> CapsuleCatalogResponse {

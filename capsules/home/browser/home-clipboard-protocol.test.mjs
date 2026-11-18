@@ -11,6 +11,20 @@ import {
   homeClipboardValidWriteText,
 } from "./home-clipboard-protocol.js";
 
+test("WalletConnect alone can copy a bounded connection link, with write authority only", () => {
+  const purpose = "wallet.connection-link";
+  const uri = `wc:${"01".repeat(32)}@2?symKey=${"02".repeat(32)}&relay-protocol=irn&expiryTimestamp=1800000000`;
+  assert.equal(homeClipboardOperationAllowed("wallet-walletconnect", purpose, "write"), true);
+  assert.equal(homeClipboardOperationAllowed("wallet-walletconnect", purpose, "read"), false);
+  assert.equal(homeClipboardValidWriteText("wallet-walletconnect", purpose, uri), true);
+  for (const target of ["wallet", "wallet-metamask", "wallet-unisat", "browser"]) {
+    assert.equal(homeClipboardOperationAllowed(target, purpose, "write"), false);
+  }
+  for (const text of ["", "https://example.test", uri + "\n", " " + uri, uri + "x".repeat(2048)]) {
+    assert.equal(homeClipboardValidWriteText("wallet-walletconnect", purpose, text), false);
+  }
+});
+
 test("target and purpose lookup accepts own policy entries only", () => {
   assert.equal(homeClipboardTargetSupported("browser"), true);
   assert.equal(homeClipboardTargetSupported("chat-room"), true);
