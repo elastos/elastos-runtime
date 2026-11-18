@@ -268,6 +268,29 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
   });
 }
 
+test('fixture close retires an in-flight Home read', { timeout: 10000 }, async () => {
+  const browser = await playwright.chromium.launch({ headless: true });
+  try {
+    const f = await fixture(browser, 'metamask');
+    await f.state('ready');
+    const entered = Promise.withResolvers(), finished = Promise.withResolvers();
+    const closed = f.context.waitForEvent('close');
+    const evaluate = f.top.evaluate.bind(f.top);
+    // Hold the real /api/ handler at its page read until teardown closes the
+    // context. This fixes the race ordering without a timer or a retry.
+    f.top.evaluate = async (...args) => {
+      entered.resolve();
+      await closed;
+      try { return await evaluate(...args); }
+      finally { finished.resolve(); }
+    };
+    await f.frame.evaluate(() => { void fetch('http://extensions.test/api/fixture-close').catch(() => {}); });
+    await entered.promise;
+    await f.close();
+    await finished.promise;
+  } finally { await browser.close(); }
+});
+
 test('live-window regression oracle rejects deliberate breaks', { timeout: 50000 }, async () => {
   const browser = await playwright.chromium.launch({ headless: true });
   try {
@@ -348,7 +371,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
       const requestPair = ['wrong linked signer', 'expiry hidden by wallet state', 'overdue event before timer'].includes(name);
       const f = await fixture(browser, 'metamask', { saved: !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived', 'background focus stolen'].includes(name), requests: requestPair ? 'multiple' : !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived', 'background focus stolen'].includes(name), extraHomeAccount: requestPair, mutate });
       try { await assert.rejects(oracle(f), undefined, name + ' must fail the live oracle'); }
-      finally { await f.context.close(); }
+      finally { await f.close(); }
     }
   } finally { await browser.close(); }
 });
