@@ -526,7 +526,7 @@ try {
   await wallet.waitForSelector("#wallet-settings-open", { timeout: 15_000 });
   const connectorLabels = Object.freeze({
     "wallet-metamask": "Connect wallet",
-    "wallet-unisat": "Connect UniSat",
+    "wallet-unisat": "Connect wallet",
     "wallet-walletconnect": "Connect wallet",
   });
   const walletWindowBeforeConnectors = await homeWindowSnapshot(
@@ -557,9 +557,10 @@ try {
     }, { connectorTarget: target });
     await waitFor(() => frameFor(page, target), 15_000, `${target} connector UI`);
     const connector = frameFor(page, target);
-    await connector.waitForSelector("#wallet-connect", { timeout: 15_000 });
+    const connectSelector = target === "wallet-walletconnect" ? "#wallet-connect" : '[data-action="connect"]';
+    await connector.waitForSelector(connectSelector, { timeout: 15_000 });
     assert(
-      await connector.locator("#wallet-connect").textContent() === connectLabel,
+      await connector.locator(connectSelector).textContent() === connectLabel,
       `${target} did not render its credential-free UI`,
     );
 
@@ -630,8 +631,14 @@ try {
       `${target} click attached more than one connector window`,
     );
 
+    if (["wallet-metamask", "wallet-unisat"].includes(target)) {
+      assert(Math.round(connectorWindow.rect.width) === 480 && Math.round(connectorWindow.rect.height) === 560,
+        `${target} uses its real connector window size`, connectorWindow.rect);
+      const content = await connector.evaluate(() => ({width:innerWidth,height:innerHeight}));
+      assert(content.width === 480 && content.height === 522, `${target} leaves Home's 38px title bar`, content);
+    }
     if (target === "wallet-metamask") {
-      state.approvalRequests = [{request_id:"metamask-second",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"Second MetaMask request",chain_namespace:"eip155:20",expires_at:Math.floor(Date.now()/1000)+600}];
+      state.approvalRequests = [{request_id:"metamask-second",capsule_id:"browser",address:"0x3333333333333333333333333333333333333333",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"Second MetaMask request",chain_namespace:"eip155:20",expires_at:Math.floor(Date.now()/1000)+600}];
       // Wallet's real request card opens the second request while the first connector stays open.
       await homeGui.evaluate(() => document.querySelector('.window[data-target="wallet"] iframe').contentWindow.postMessage({type:'elastos:wallet-refresh'},'*'));
       await homeGui.locator('.window[data-target="wallet"] .window-head').click({position:{x:80,y:14}});
