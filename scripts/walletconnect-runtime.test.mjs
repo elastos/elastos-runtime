@@ -60,6 +60,27 @@ test("SDK storage serializes Runtime writes and recovers through a fresh adapter
   await assert.rejects(broken.setItem("session", "x"), /refused/);
 });
 
+test("retired storage discards only obsolete SDK work and keeps live errors visible", async () => {
+  let writes = 0, release;
+  const held = new Promise(resolve => { release = resolve; });
+  const storage = runtimeStorage(async () => { writes++; await held; });
+  const accepted = storage.setItem("accepted", "value");
+  await Promise.resolve();
+  const queued = storage.setItem("queued", "obsolete");
+  storage.retire();
+  release();
+  await Promise.all([accepted, queued, storage.setItem("late", "obsolete"), storage.removeItem("session")]);
+  assert.equal(writes, 1, "retirement fences queued and later writes at dispatch");
+  assert.deepEqual(await storage.getKeys(), []);
+  assert.deepEqual(await storage.getEntries(), []);
+  assert.equal(await storage.getItem("session"), undefined);
+  const fresh = runtimeStorage(async () => { throw new Error("Home refused the live write"); });
+  await assert.rejects(fresh.setItem("session", "needed"), /Home refused the live write/);
+  await assert.rejects(fresh.getKeys(), /Home refused the live write/);
+  await storage.setItem("after a fresh Core", "still obsolete");
+  assert.equal(writes, 1, "a fresh Core cannot revive retired storage");
+});
+
 test("a refused or closed Runtime admission rejects SDK registration before ready", async () => {
   let native;
   class Native {
