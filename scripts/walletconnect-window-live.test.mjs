@@ -43,7 +43,11 @@ async function setup(t,engine,mutation){
  });
  t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();assert.deepEqual(errors,[],'every live walk rejects unexpected page errors');});
  let frame;
- async function reopen(){await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await frame.locator('main[data-state]').waitFor();}
+ async function reopen(){
+  await until(()=>fixture.pendingDeliveryAcks()===0,'prior relay delivery acknowledged before a planned reopen');
+  await page.waitForLoadState('networkidle');
+  await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await frame.locator('main[data-state]').waitFor();
+ }
  await reopen();await frame.locator('main[data-state="internet-ready"],main[data-state="link-error"]').waitFor();
  const state=async name=>{try{await frame.locator(`[data-state="${name}"]`).waitFor({timeout:20000});}catch(error){throw new Error('Expected '+name+'; current screen: '+await frame.locator('main').innerText()+'; peer: '+JSON.stringify(peer.trace.slice(-6))+'; verified: '+fixture.state.verified,{cause:error});}};
  async function assertSharedTree(){assert.equal(await frame.locator('body > :not(#wallet-window):not(script)').count(),0,'visible DOM belongs to the shared view');assert.equal(await frame.locator('#wallet-window > :not(main.connection-window)').count(),0);}
@@ -440,6 +444,23 @@ for(const engine of ['chromium','webkit'])test(`an expired Home-approved transac
  const r=await setup(t,engine);await r.link();await r.approval('already-sent-expired',{intent:'transaction_intent'});r.peer.choose({request:'silent'});await r.click('send-request');await r.state('transaction-phone');await until(()=>r.peer.trace.filter(row=>row.kind==='request').length>=2,'phone holds the actual transaction');assert.equal(r.fixture.state.approvals[0].status,'approved');
  await r.page.goto('about:blank');r.fixture.state.approvals[0].expires_at=Math.floor(Date.now()/1000)-1;await r.reopen();await r.state('transaction-reopened');assert.equal(await r.frame.locator('[data-action=send-request],[data-action=start-over]').count(),0);await r.capture('expired-approved-transaction-reopened');
  await r.peer.deleteConnection();await r.state('transaction-wallet-removed');await r.capture('expired-approved-transaction-wallet-removed');assert.equal(r.fixture.state.completed,0);assert.equal(r.peer.trace.filter(row=>row.kind==='request').length,2,'reopen and deletion send no second transaction');assert.deepEqual(r.errors,[]);
+});
+for(const engine of ['chromium','webkit'])test(`a saved silent proof waits for the old phone prompt before its fresh proof in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.filter(row=>row.kind==='request').length===1,'phone holds the original proof');
+ await r.reopen();await r.state('saved-unlinked');await r.capture('saved-unfinished-proof');assert.equal(r.fixture.state.verified,0);assert.equal(r.fixture.state.accounts.length,0);assert.equal(await r.frame.locator('.connection-qr').count(),0);assert.equal(r.peer.trace.filter(row=>row.kind==='request').length,1,'restore alone sends no proof');
+ const oldChallenge=r.fixture.state.challenge.message;await r.click('finish');await r.state('link-wait');await until(()=>r.fixture.state.challenge.message!==oldChallenge,'Finish creates a fresh Home challenge');await r.capture('saved-proof-retry-wait');
+ assert.equal(r.peer.trace.filter(row=>row.kind==='request').length,1,'the pinned SDK still waits for the old phone prompt');
+ await r.peer.answer('sign');await until(()=>r.peer.trace.filter(row=>row.kind==='request').length===2,'phone receives the new proof after answering the old prompt');assert.equal(r.fixture.state.verified,0,'the valid old signature cannot link the fresh challenge');await r.state('link-wait');
+ await r.peer.answer('sign');await r.state('linked');assert.equal(r.fixture.state.verified,1);assert.equal(r.fixture.state.accounts[0].chain_namespace,'eip155:8453');assert.equal(r.peer.trace.filter(row=>row.kind==='proposal').length,1,'explicit Finish reuses the saved session');
+});
+for(const engine of ['chromium','webkit'])for(const kind of ['connection','request'])test(`neutral preparation names the existing ${kind} action in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);
+ if(kind==='connection'){r.peer.choose({request:'reject'});await r.qr();await r.pair();await r.state('link-declined');r.peer.choose({request:'sign'});}
+ else {await r.link();await r.approval('preparation-message');}
+ let release,entered;const held=new Promise(resolve=>{release=resolve;}),waiting=new Promise(resolve=>{entered=resolve;});
+ await r.page.route(kind==='connection'?'**/auth/evm/challenge':'**/approve',async route=>{entered();await held;await route.continue();});t.after(()=>release());
+ await r.click(kind==='connection'?'finish':'send-request');await waiting;await r.state('preparing-qr');assert.match(await r.frame.locator('main').innerText(),new RegExp(`Preparing ${kind}\\.`));await r.capture(`preparing-${kind}`);release();
+ await r.state(kind==='connection'?'linked':'request-done');assert.equal(r.fixture.state.verified,1);assert.equal(r.fixture.state.completed,kind==='connection'?0:1);
 });
 
 for(const engine of ['chromium','webkit'])test(`Stop waiting cleanup failure has a working fresh-connection recovery in ${engine}`,{timeout:60000},async t=>{
