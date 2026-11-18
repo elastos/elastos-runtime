@@ -188,9 +188,10 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await walletFrame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,100)));
     };
     if(!guardCase || guardCase==='double-run') {
-    // Matching Allow resumes once; a new Connect click consumes the old saved action first.
+    // The visible Cancel consumes the saved Connect before a fresh Connect after Allow.
     status='off';await reload();await invoke('connect');
     await wallet.locator('[data-state=internet-pending] [data-action=inbox]:enabled,[data-state=request-internet-pending] [data-action=inbox]:enabled').waitFor();await page.evaluate(()=>inbox.style.display='none');
+    await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
     status='granted';
     await invoke('connect');
     await wallet.locator('[data-focus=outcome]').filter({hasText:'Connected.'}).waitFor();
@@ -198,7 +199,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const oncePosts=permissionPosts;
     await settlePermission();
     assert.equal(permissionPosts,oncePosts,'double-run: saved Connect cannot start another permission post');
-    assert.equal(verified,1,'Connect before the first Allow poll consumes the saved action');
+    assert.equal(verified,1,'visible Cancel consumes the saved action before the new Connect');
     // An uninterrupted request continues once from its matching Allow.
     status='off';await reload();await invoke('connect');
     await wallet.locator('[data-state=internet-pending] [data-action=inbox]:enabled,[data-state=request-internet-pending] [data-action=inbox]:enabled').waitFor();await page.evaluate(()=>inbox.style.display='none');status='granted';
