@@ -270,7 +270,7 @@ for(const engine of ['chromium','webkit'])test(`background wallet redraw keeps H
  const r=await setup(t,engine);await r.link();await focusWithKeyboard(r,'copy-address');
  await r.page.evaluate(()=>{const input=document.createElement('input');input.id='home-note';input.style.position='fixed';input.style.top='0';document.body.append(input);input.focus();});
  await r.page.keyboard.press('x');assert.deepEqual(await r.page.evaluate(()=>({focused:document.hasFocus(),value:document.querySelector('#home-note').value})),{focused:true,value:'x'},'Home owns the native keystroke before the wallet redraw');
- await r.peer.updateSession();await pause(250);assert.equal(await r.page.evaluate(()=>document.activeElement.id),'home-note','a wallet update keeps the Home input focused');
+ const prior=await r.frame.locator('main').elementHandle();await r.peer.updateSession();await prior.waitForElementState('hidden',{timeout:20000});await prior.dispose();assert.equal(await r.page.evaluate(()=>document.activeElement.id),'home-note','a wallet update redraw keeps the Home input focused');
  await r.frame.evaluate(()=>window.focus());await refreshAndWaitForRedraw(r);assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.action),'copy-address','returning restores the same account action');assert.deepEqual(r.errors,[]);
 });
 
