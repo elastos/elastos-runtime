@@ -29,6 +29,7 @@ struct LocalHub {
     input: mpsc::Sender<HubInput>,
     stalled: Arc<AtomicBool>,
     accepted: Arc<AtomicUsize>,
+    closed: Arc<AtomicUsize>,
     posts: Arc<std::sync::Mutex<Vec<String>>>,
     traffic: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u64>>>,
     task: tokio::task::JoinHandle<()>,
@@ -45,6 +46,7 @@ impl LocalHub {
         let (input, mut receiver) = mpsc::channel(256);
         let stalled = Arc::new(AtomicBool::new(false));
         let accepted = Arc::new(AtomicUsize::new(0));
+        let closed = Arc::new(AtomicUsize::new(0));
         let posts = Arc::new(std::sync::Mutex::new(Vec::new()));
         let traffic = Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
         let task = tokio::spawn({
@@ -52,6 +54,7 @@ impl LocalHub {
             let input = input.clone();
             let stalled = stalled.clone();
             let accepted = accepted.clone();
+            let closed = closed.clone();
             let posts = posts.clone();
             let traffic = traffic.clone();
             async move {
@@ -101,6 +104,7 @@ impl LocalHub {
                             let Some(incoming) = incoming else { break; };
                             let input = input.clone();
                             let accepted = accepted.clone();
+                            let closed = closed.clone();
                             let traffic = traffic.clone();
                             tasks.spawn(async move {
                                 if let Ok(connection) = incoming.await {
@@ -108,6 +112,7 @@ impl LocalHub {
                                     let peer = connection.remote_id();
                                     let id = connection.stable_id() as u64;
                                     let _ = serve_connection(connection, topic, input.clone(), traffic).await;
+                                    closed.fetch_add(1, Ordering::SeqCst);
                                     let _ = input.send(HubInput::Disconnected(peer,id)).await;
                                 }
                             });
@@ -151,6 +156,7 @@ impl LocalHub {
             input,
             stalled,
             accepted,
+            closed,
             posts,
             traffic,
             task,
@@ -561,9 +567,15 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
         crate::collaboration_carrier::CommunityLinkWatchdog::new(Duration::from_secs(60));
     let start = tokio::time::Instant::now();
     let mut rebuilt = 0;
+    let expected_lookups = f.home.endpoint.address_lookup().unwrap().len();
+    let before_sockets = open_socket_count(std::env::consts::OS);
     for n in 0..124 {
         let now = start + Duration::from_secs(n * 900);
         if let Some(step) = watchdog.observe(None, None, now) {
+            let (old_actor, old_receivers) = {
+                let state = f.home.gossip_state.lock().await;
+                (state.gossip.clone(), state.receiver_tasks.values().map(|task| task.abort_handle()).collect::<Vec<_>>())
+            };
             match step {
                 crate::collaboration_carrier::CommunityLinkStep::Rejoin => {
                     f.provider
@@ -581,6 +593,11 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
                     rebuilt += 1;
                 }
             }
+            if step == crate::collaboration_carrier::CommunityLinkStep::Rebuild {
+                assert!(old_receivers.iter().all(|task| task.is_finished()), "old receivers are joined before rebuild returns");
+                let stopped = tokio::time::timeout(Duration::from_secs(2), old_actor.subscribe(topic_hash(&f.topic), Vec::new())).await;
+                assert!(matches!(stopped, Ok(Err(_))), "the retired actor has closed its local control channel");
+            }
             watchdog.step_finished(now);
         }
     }
@@ -593,12 +610,16 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
         )
     };
     let posts = f.exchange("more than120 actual actor replacements").await;
+    let connections_closed = wait_for(|| f.hub.accepted.load(Ordering::SeqCst).saturating_sub(f.hub.closed.load(Ordering::SeqCst)) == 1, 20).await;
+    let after_sockets = open_socket_count(std::env::consts::OS);
     f.stop().await;
     posts.unwrap();
+    assert!(connections_closed, "only the current gossip connection remains");
+    if let (Some(before), Some(after)) = (before_sockets, after_sockets) { assert!(after <= before, "socket descriptors stay bounded: {before} -> {after}"); }
     assert!(rebuilt > 120, "rebuilds continue:{rebuilt}");
     assert_eq!(
         (lookups, receivers, senders),
-        (2, 1, 1),
+        (expected_lookups, 1, 1),
         "owned state stays bounded"
     );
 }
@@ -665,4 +686,24 @@ async fn community_core_real_log_rate_keeps_the_reason_without_private_text() {
     );
     assert!(!logs.contains("private-fixture-sentinel"));
     assert!(logs.lines().all(|line| line.len() < 256));
+}
+
+fn open_socket_count(platform: &str) -> Option<usize> {
+    if platform != "linux" { return None; }
+    Some(std::fs::read_dir("/proc/self/fd").ok()?.filter_map(|entry| {
+        std::fs::read_link(entry.ok()?.path()).ok()
+    }).filter(|target| target.to_string_lossy().starts_with("socket:")).count())
+}
+
+#[tokio::test]
+async fn community_core_real_health_query_failures_repair_despite_a_remembered_peer() {
+    let f=Fixture::start().await;f.exchange("initial health query").await.unwrap();
+    f.faults.cached_peer.store(true,Ordering::SeqCst);
+    f.faults.health_fails.store(true,Ordering::SeqCst);
+    let repaired=wait_for(||f.faults.repairs.load(Ordering::SeqCst)>0,100).await;
+    let honest=!f.connected.load(Ordering::SeqCst);
+    f.faults.health_fails.store(false,Ordering::SeqCst);f.faults.cached_peer.store(false,Ordering::SeqCst);
+    let healthy=wait_for(||f.connected.load(Ordering::SeqCst),40).await;
+    let posts=f.exchange("health-query failure recovery").await;
+    f.stop().await;assert!(repaired);assert!(honest);assert!(healthy);posts.unwrap();
 }

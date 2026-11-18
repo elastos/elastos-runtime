@@ -354,20 +354,12 @@ pub async fn start_collaboration_runtime_service(
     // A local initial join can fail while Carrier is starting. Keep the service
     // and its visible status alive so the same bounded worker can repair it.
     tracing::info!("collaboration startup: joining the configured Community topic");
-    let joined = if core.community_membership().joined() {
-        match tokio::time::timeout(
-            COMMUNITY_LINK_HEALTH_TIMEOUT,
-            join_collaboration_network(carrier.clone(), &profile),
-        )
-        .await
-        {
-            Ok(Ok(joined)) => joined,
-            _ => crate::collaboration_carrier::JoinedCollaborationNetwork::pending(
-                carrier, &profile,
-            )?,
-        }
-    } else {
-        crate::collaboration_carrier::JoinedCollaborationNetwork::pending(carrier, &profile)?
+    let joined = match tokio::time::timeout(
+        COMMUNITY_LINK_HEALTH_TIMEOUT,
+        join_collaboration_network(carrier.clone(), &profile),
+    ).await {
+        Ok(Ok(joined)) => joined,
+        _ => crate::collaboration_carrier::JoinedCollaborationNetwork::pending(carrier, &profile)?,
     }
     .with_runtime_node_id(runtime_node_id);
     tracing::info!("Community worker is starting; Runtime will check the link");
@@ -696,6 +688,12 @@ pub(crate) async fn run_community_link_watchdog_with_timing<L: CommunityLink>(
         let bootstrap_failure = link.bootstrap_failure();
         if role == Ok(&false) {
             let now = tokio::time::Instant::now();
+            let failure = bootstrap_failure.or_else(|| match &health {
+                Err(_) => Some("topic health timed out"),
+                Ok(Err(error)) => Some(community_failure_reason(error, "topic health failed")),
+                Ok(Ok(_)) => None,
+            });
+            failure_log.lock().unwrap_or_else(std::sync::PoisonError::into_inner).observe(failure, now);
             let connected = matches!(&health, Ok(Ok(health)) if health.peer_count > 0)
                 && bootstrap_failure.is_none();
             recovery_status(CommunityRecoveryView {
