@@ -4926,6 +4926,8 @@ mod tests {
         first: std::sync::atomic::AtomicBool,
         fail_first: bool,
         timeout_first: bool,
+        restore_failures: std::sync::atomic::AtomicUsize,
+        node: bool,
         bootstrap_node_id: String,
         local_ticket: serde_json::Value,
         requests: Mutex<Vec<(String, u64)>>,
@@ -4956,13 +4958,17 @@ mod tests {
                 .unwrap()
                 .push((op.to_string(), self.started.elapsed().as_secs()));
             if op == "gossip_join_exact" {
-                if self.first.swap(false, SeqCst) && self.fail_first {
+                let first = self.first.swap(false, SeqCst);
+                if first && self.fail_first {
                     if self.timeout_first {
                         return std::future::pending().await;
                     }
                     return Err(ProviderError::Provider(
                         "join_timeout private-fixture-sentinel".into(),
                     ));
+                }
+                if !first && self.restore_failures.fetch_update(SeqCst, SeqCst, |left| left.checked_sub(1)).is_ok() {
+                    return Err(ProviderError::Provider("join_timeout private-fixture-sentinel".into()));
                 }
                 self.joined.store(true, SeqCst);
                 return Ok(serde_json::json!({"status":"ok", "data":{"topic":request["topic"]}}));
@@ -4994,7 +5000,7 @@ mod tests {
             }
             Ok(match op {
                 "gossip_topic_health" => {
-                    serde_json::json!({"status":"ok", "data":{"topic":request["topic"], "peer_count":1, "received_frames":0, "receiver_alive":true}})
+                    serde_json::json!({"status":"ok", "data":{"topic":request["topic"], "peer_count":usize::from(!self.node), "received_frames":0, "receiver_alive":true}})
                 }
                 "gossip_peek" => {
                     serde_json::json!({"status":"ok", "data":{"messages":[], "scanned":0, "limit":32, "cursor":0, "next_cursor":0}})
@@ -5015,7 +5021,49 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Fix1Role { Home, NodeEmpty, NodeSelf }
+
+    fn fix1_profile(data_root: &Path, key: &SigningKey, role: Fix1Role) -> (CollaborationStartupConfiguration, String, serde_json::Value) {
+        // Empty bootstrap lists describe a node that must not rebuild itself.
+        // This is a Home fixture with a different, verified local bootstrap.
+        fn ticket(key: &iroh::SecretKey) -> String {
+            let addr = iroh::EndpointAddr::from_parts(
+                key.public(),
+                [iroh::TransportAddr::Ip("127.0.0.1:12345".parse().unwrap())],
+            );
+            data_encoding::BASE32_NOPAD
+                .encode(
+                    &serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":[addr]}))
+                        .unwrap(),
+                )
+                .to_ascii_lowercase()
+        }
+        let local_key = iroh::SecretKey::from_bytes(&key.to_bytes());
+        let bootstrap_key = if role == Fix1Role::NodeSelf { iroh::SecretKey::from_bytes(&key.to_bytes()) }
+            else { iroh::SecretKey::from_bytes(&[197; 32]) };
+        let bootstrap_node_id = bootstrap_key.public().to_string();
+        let material = config_material_with_bootstraps(
+            true,
+            if role == Fix1Role::NodeEmpty { vec![] } else { vec![crate::collaboration_network::CollaborationBootstrapPeer {
+                node_id: bootstrap_node_id.clone(),
+                connect_ticket: ticket(&bootstrap_key),
+            }] },
+        );
+        write_config(
+            data_root,
+            &canonical_startup_config_bytes(&config_file(&material)).unwrap(),
+        );
+        let config = load_and_accept_collaboration_startup_configuration(data_root).unwrap();
+        let local_ticket = serde_json::json!({"node_id":local_key.public().to_string(), "ticket":ticket(&local_key)});
+        (config, bootstrap_node_id, local_ticket)
+    }
+
     async fn fix1_missing_topic_lifecycle(fail_first: bool, timeout_first: bool) {
+        fix1_lifecycle_case(fail_first, timeout_first, 0, Fix1Role::Home).await;
+    }
+
+    async fn fix1_lifecycle_case(fail_first: bool, timeout_first: bool, restore_failures: usize, role: Fix1Role) {
         use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
         #[derive(Clone)]
         struct Writer(Arc<Mutex<Vec<u8>>>);
@@ -5038,43 +5086,16 @@ mod tests {
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
         let (temp, _) = configured_root(true);
-        // Empty bootstrap lists describe a node that must not rebuild itself.
-        // This is a Home fixture with a different, verified local bootstrap.
-        fn ticket(key: &iroh::SecretKey) -> String {
-            let addr = iroh::EndpointAddr::from_parts(
-                key.public(),
-                [iroh::TransportAddr::Ip("127.0.0.1:12345".parse().unwrap())],
-            );
-            data_encoding::BASE32_NOPAD
-                .encode(
-                    &serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":[addr]}))
-                        .unwrap(),
-                )
-                .to_ascii_lowercase()
-        }
-        let bootstrap_key = iroh::SecretKey::from_bytes(&[197; 32]);
-        let bootstrap_node_id = bootstrap_key.public().to_string();
-        let material = config_material_with_bootstraps(
-            true,
-            vec![crate::collaboration_network::CollaborationBootstrapPeer {
-                node_id: bootstrap_node_id.clone(),
-                connect_ticket: ticket(&bootstrap_key),
-            }],
-        );
-        write_config(
-            temp.path(),
-            &canonical_startup_config_bytes(&config_file(&material)).unwrap(),
-        );
-        let config = load_and_accept_collaboration_startup_configuration(temp.path()).unwrap();
         let (key, _) = generate_keypair();
-        let local_key = iroh::SecretKey::from_bytes(&key.to_bytes());
-        let local_ticket = serde_json::json!({"node_id":local_key.public().to_string(), "ticket":ticket(&local_key)});
+        let (config, bootstrap_node_id, local_ticket) = fix1_profile(temp.path(), &key, role);
         let carrier = Arc::new(Fix1MissingTopicCarrier {
             started: tokio::time::Instant::now(),
             joined: AtomicBool::new(false),
             first: AtomicBool::new(true),
             fail_first,
             timeout_first,
+            restore_failures: std::sync::atomic::AtomicUsize::new(restore_failures),
+            node: role != Fix1Role::Home,
             bootstrap_node_id,
             local_ticket,
             requests: Mutex::new(Vec::new()),
@@ -5104,7 +5125,8 @@ mod tests {
             .iter()
             .filter(|(op, _)| op == "gossip_join_exact")
             .count();
-        for second in 1..=80 {
+        let bound = if restore_failures == 0 { 80 } else { 150 };
+        for second in 1..=bound {
             tokio::time::sleep(Duration::from_secs(1)).await;
             if second == 10 {
                 assert_eq!(
@@ -5131,8 +5153,23 @@ mod tests {
             "paced repair restores the absent topic: {:?}",
             carrier.requests.lock().unwrap()
         );
-        assert!(outage.elapsed() <= Duration::from_secs(80));
-        assert_eq!(fix1_read_status(&app, &token).await["state"], "connected");
+        assert!(outage.elapsed() <= Duration::from_secs(bound));
+        let expected = if role == Fix1Role::Home { "connected" } else { "waiting_for_peers" };
+        assert_eq!(fix1_read_status(&app, &token).await["state"], expected);
+        let settled_requests = carrier.requests.lock().unwrap().clone();
+        let join_times: Vec<_> = settled_requests.iter().filter(|(op, _)| op == "gossip_join_exact").map(|(_, at)| *at).collect();
+        assert!(join_times.windows(2).all(|pair| pair[1] - pair[0] >= 60), "joins stay paced: {join_times:?}");
+        let rebuilds = settled_requests.iter().filter(|(op, _)| op == "gossip_rebuild").count();
+        if role != Fix1Role::Home { assert_eq!(rebuilds, 0, "nodes restore only their missing topic"); }
+        // A repaired topic remains healthy beyond the longest retry timer.
+        for _ in 0..915 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert_eq!(fix1_read_status(&app, &token).await["state"], expected);
+        }
+        let stable = carrier.requests.lock().unwrap();
+        assert_eq!(stable.iter().filter(|(op, _)| op == "gossip_join_exact").count(), join_times.len());
+        assert_eq!(stable.iter().filter(|(op, _)| op == "gossip_rebuild").count(), rebuilds);
+        drop(stable);
         service.shutdown().await.unwrap();
         let logs = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
         let incoming: Vec<_> = logs
@@ -5140,7 +5177,7 @@ mod tests {
             .filter(|line| line.contains("collaboration incoming cycle failed"))
             .collect();
         assert!(
-            incoming.len() <= 2,
+            incoming.len() <= (bound / 60 + 1) as usize,
             "incoming logs stay minute-bounded: {}",
             incoming.len()
         );
@@ -5158,4 +5195,64 @@ mod tests {
     async fn community_fix1_missing_topic_is_restored_on_schedule() {
         fix1_missing_topic_lifecycle(false, false).await;
     }
+    #[tokio::test(start_paused = true)]
+    async fn community_fix1_failed_first_restore_recovers_after_rebuild_and_stays_healthy() {
+        fix1_lifecycle_case(true, false, 1, Fix1Role::Home).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn community_fix1_node_first_join_restores_without_rebuilding_other_homes() {
+        fix1_lifecycle_case(true, false, 1, Fix1Role::NodeEmpty).await;
+        fix1_lifecycle_case(true, true, 0, Fix1Role::NodeSelf).await;
+    }
+
+    struct Fix1AddressLink {
+        network: crate::collaboration_carrier::JoinedCollaborationNetwork,
+        started: tokio::time::Instant,
+    }
+    impl CommunityLink for Fix1AddressLink {
+        fn record_bootstrap_failure(&self, reason: Option<&'static str>) { self.network.record_bootstrap_failure(reason); }
+        fn bootstrap_failure(&self) -> Option<&'static str> { self.network.bootstrap_failure() }
+        async fn restore_bootstrap(&self) -> anyhow::Result<()> { self.network.restore_bootstrap().await }
+        async fn recovers_its_link(&self) -> anyhow::Result<bool> { self.network.recovers_its_link().await }
+        async fn link_health(&self) -> anyhow::Result<CommunityLinkHealth> { self.network.link_health().await }
+        fn host_addresses(&self) -> Option<crate::collaboration_carrier::CommunityHostAddresses> {
+            let address = if self.started.elapsed() < Duration::from_secs(5) { "192.0.2.1" } else { "192.0.2.2" };
+            Some(std::iter::once(address.parse().unwrap()).collect())
+        }
+        async fn rejoin(&self) -> anyhow::Result<()> { self.network.rejoin().await }
+        async fn rebuild_gossip(&self) -> anyhow::Result<usize> { self.network.rebuild_gossip().await }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn community_fix1_address_change_restores_missing_topic_on_first_rebuild() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        let (temp, _) = configured_root(true);
+        let (key, _) = generate_keypair();
+        let (config, bootstrap_node_id, local_ticket) = fix1_profile(temp.path(), &key, Fix1Role::Home);
+        let CollaborationNetworkConfiguration::Configured { profile, grant: Some(grant) } = config.configuration else { panic!("configured Home") };
+        let carrier = Arc::new(Fix1MissingTopicCarrier {
+            started: tokio::time::Instant::now(), joined: AtomicBool::new(false), first: AtomicBool::new(true),
+            fail_first: false, timeout_first: false, restore_failures: AtomicUsize::new(0), node: false,
+            bootstrap_node_id, local_ticket, requests: Mutex::new(Vec::new())
+        });
+        let product = CollaborationChatProductPort::new(Arc::new(CollaborationCore::new(temp.path(), key.clone(), (*profile).clone(), grant, CHAT_ROOM_CAPSULE).unwrap())).unwrap();
+        let (app, token) = fix1_status_route(product.clone()).await;
+        let link = Fix1AddressLink { network: crate::collaboration_carrier::JoinedCollaborationNetwork::pending(carrier.clone(), &profile).unwrap()
+            .with_runtime_node_id(iroh::SecretKey::from_bytes(&key.to_bytes()).public()), started: tokio::time::Instant::now() };
+        let (stop, rx) = watch::channel(false); let (_membership, joined) = watch::channel(true);
+        let check = async {
+            for second in 1..=955 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if second >= 40 { assert_eq!(fix1_read_status(&app, &token).await["state"], "connected"); }
+            }
+            stop.send(true).unwrap();
+        };
+        tokio::join!(run_test_link_watchdog(rx, joined, &link, |view| product.set_community_recovery(view)), check);
+        let requests = carrier.requests.lock().unwrap();
+        let rebuilds: Vec<_> = requests.iter().filter(|(op, _)| op=="gossip_rebuild").collect();
+        assert_eq!(rebuilds.len(), 1); assert!(rebuilds[0].1 < 60, "address hint selects the first rebuild");
+        assert_eq!(requests.iter().filter(|(op, _)| op=="gossip_join_exact").count(), 1);
+    }
+
 }

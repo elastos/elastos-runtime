@@ -3433,6 +3433,18 @@ mod tests {
     }
 
     #[test]
+    fn community_fix1_cli_missing_status_has_no_dangling_delivery_pointer() {
+        let mut snapshot = sample_snapshot_with_components(&[]);
+        snapshot.runtime.peer_count = Some(0);
+        snapshot.runtime.community = None;
+        let mut output = Vec::new();
+        write_home_state_probe(&mut output, &snapshot).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("  Delivery:  checking\n"));
+        assert!(!text.contains("see Community status above"));
+    }
+
+    #[test]
     fn community_fix1_cli_bootstrap_line_requires_the_shared_node_state() {
         let mut snapshot = sample_snapshot_with_components(&[]);
         snapshot.runtime.peer_count = Some(0);
