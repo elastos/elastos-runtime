@@ -53,7 +53,14 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const page=await browser.newPage({viewport:{width:1000,height:850}});
     await page.route('**/*',route=>new URL(route.request().url()).origin===`http://127.0.0.1:${server.address().port}`?route.continue():route.abort());
     const errors=[];page.on('pageerror',error=>{errors.push(error.message);if(process.env.WALLETCONNECT_ERROR_DIAGNOSTICS)console.error(JSON.stringify({message:error.message,stack:error.stack}));});
-    await page.addInitScript(()=>{window.fixtureIntervals=[];window.fixtureIntervalIDs=[];const native=setInterval;window.setInterval=(fn,ms,...args)=>{window.fixtureIntervals.push(ms);if(ms===1000||ms===5000)window.fixtureStatusPoll=fn;const id=native(fn,ms,...args);window.fixtureIntervalIDs.push(id);return id;};});
+    await page.addInitScript(()=>{
+      window.fixtureIntervals=[];window.fixtureIntervalIDs=[];window.fixtureClosing=false;window.fixturePendingFetches=0;
+      const track=call=>{window.fixturePendingFetches++;try{return Promise.resolve(call()).finally(()=>window.fixturePendingFetches--);}catch(error){window.fixturePendingFetches--;throw error;}};
+      const nativeFetch=window.fetch.bind(window);window.fetch=(...args)=>track(()=>nativeFetch(...args).then(response=>{
+        for(const key of ['json','text','arrayBuffer']){const read=response[key].bind(response);response[key]=(...args)=>track(()=>read(...args));}return response;
+      }));
+      const native=setInterval;window.setInterval=(fn,ms,...args)=>{window.fixtureIntervals.push(ms);if(ms===1000||ms===5000)window.fixtureStatusPoll=fn;if(window.fixtureClosing)return 0;const id=native(fn,ms,...args);window.fixtureIntervalIDs.push(id);return id;};
+    });
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     const wallet=page.frameLocator('#wallet'),inbox=page.frameLocator('#inbox');
     const screenshotNames=new Set((process.env.WALLETCONNECT_SCREENSHOT_NAMES||'').split(',').filter(Boolean));
@@ -62,6 +69,11 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const guardCase=process.env.WALLETCONNECT_GUARD_CASE;
     const initialWalletFrame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));
     const walletFrame=initialWalletFrame;
+    const drainForReload=async()=>{
+      if(process.env.WALLETCONNECT_SKIP_RELOAD_DRAIN)return;
+      await walletFrame.evaluate(()=>{window.fixtureClosing=true;for(const id of window.fixtureIntervalIDs)clearInterval(id);});
+      await walletFrame.waitForFunction(()=>window.fixturePendingFetches===0);
+    };
     const invoke=async(action,requestId)=>{
       const end=Date.now()+15000;
       while(Date.now()<end){
@@ -155,7 +167,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await inbox.locator('#entry-detail').getByRole('button',{name:'Allow',exact:true}).click();
     await allowed;
     assert.equal(status,'granted');
-    failSummary=true;await Promise.all([walletFrame.waitForNavigation({waitUntil:'load'}),walletFrame.evaluate(()=>location.reload())]);
+    failSummary=true;await drainForReload();await Promise.all([walletFrame.waitForNavigation({waitUntil:'load'}),walletFrame.evaluate(()=>location.reload())]);
     try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Home could not load your wallet requests.'}).waitFor({timeout:5000}); } catch(error) {console.log({status:await wallet.locator('main').innerText(),hasLaunch:await walletFrame.evaluate(()=>!!location.hash),errors});throw error;}
     for(const value of ['dark','light']){await theme(value);await shot(`r16-error-${value}`);}
     assert.deepEqual(errors,[]);
@@ -176,10 +188,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     `}));
     failSummary=false;
     const reload=async()=>{
-      if(!process.env.WALLETCONNECT_SKIP_RELOAD_DRAIN){
-        await walletFrame.evaluate(()=>{for(const id of window.fixtureIntervalIDs)clearInterval(id);});
-        await page.waitForLoadState('networkidle');
-      }
+      await drainForReload();
       await Promise.all([walletFrame.waitForNavigation({waitUntil:'load'}),page.waitForResponse(response=>response.url().endsWith('/wallet/approvals')),page.waitForResponse(response=>response.url().endsWith('/wallet/accounts')),walletFrame.evaluate(()=>location.reload())]);
       await wallet.locator('.connection-content').waitFor();
       if(approvalRequests.length)await wallet.locator('.connection-request,[data-action=view-requests]').first().waitFor();
