@@ -28,6 +28,15 @@ const playwright = requireProductSmokePlaywright();
 const engineSkip = engine => engine === 'webkit' && !existsSync(playwright.webkit.executablePath()) ? 'WebKit input is required for the explicit Mac acceptance run.' : false;
 const other = kind => kind === 'metamask' ? '0x'+'2'.repeat(40) : 'bc1q'+'b'.repeat(38);
 
+async function assertReadAfter(f,before) {
+  for(let i=0;i<100&&f.completedReads.length<before+2;i++) {
+    await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert(f.completedReads.length>=before+2,'both Home reads must finish');
+  await f.frame.evaluate(()=>new Promise(resolve=>queueMicrotask(resolve)));
+}
+
 async function preflight(f, kind, fault, type) {
   await f.state(type === 'transaction' ? 'transaction-waiting' : type === 'typed' ? 'request-typed-data' : 'request-waiting');
   await f.top.evaluate(({fault,other}) => {
@@ -51,9 +60,11 @@ async function preflight(f, kind, fault, type) {
   assert.equal(first.requests[0].status,'approved');
   assert.equal(first.calls.filter(c=>['personal_sign','eth_signTypedData_v4','signMessage','eth_sendTransaction'].includes(c.method)).length,0,'Home refused before signing');
   await f.top.evaluate(()=>{testState.walletAddress=testState.address;testState.network='livenet';testState.refuseSwitch=false;});
+  const beforeRead=f.completedReads.length;
   await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));
+  await assertReadAfter(f,beforeRead);
   await f.state('request-consumed');
-  assert.equal(await f.frame.locator('body').innerText(),text,'the cause stays after the wallet correction and a read');
+  assert.equal(await f.frame.locator('body').innerText(),text,'the cause stays after the wallet correction and a completed read');
   await f.top.evaluate(kind=>emitWallet(kind==='unisat'?'networkChanged':'chainChanged',kind==='unisat'?'livenet':'0x14'),kind);
   await f.top.clock.runFor(301000);await f.state('request-consumed');
   assert.equal(await f.frame.locator('body').innerText(),text,'expiry and wallet events keep the refusal');

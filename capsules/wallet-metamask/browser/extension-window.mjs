@@ -87,6 +87,19 @@ export function startExtensionWindow(kind, homeClipboard) {
     return Number.isSafeInteger(deadline) ? Math.min(86400, Math.max(0, deadline - now())) : 0;
   }
 
+  // Preserve a reused live region, and isolate each dynamic value just as
+  // the shared renderer does. This is the two-copy fallback missing in r5.
+  function feedbackText(node, parts) {
+    const text = parts.map(part => typeof part === 'string' ? part : part.value).join('');
+    if (node.textContent === text) return;
+    node.replaceChildren(...parts.map(part => {
+      if (typeof part === 'string') return document.createTextNode(part);
+      const value = document.createElement('bdi');
+      value.dir = 'auto'; value.className = 'connection-isolated'; value.textContent = part.value;
+      return value;
+    }));
+  }
+
   // Home owns every effect. These are the intents this v1 window can perform.
   const supported = ['connect', 'restore-access', 'send-message', 'send-request',
     'stop-waiting', 'close-window', 'copy-address', 'select-request', 'view-requests', 'refresh-status'];
@@ -113,13 +126,14 @@ export function startExtensionWindow(kind, homeClipboard) {
       root.dataset.state = 'request-consumed';
       root.dataset.extensionFeedback = 'consumed';
       const wallet = kind === 'metamask' ? 'your browser wallet' : 'UniSat';
-      const needed = refusal.cause === 'account' ? `account ${refusal.address}` : `network ${refusal.network}`;
-      root.querySelector('.connection-status').textContent = `${wallet} was using a different ${refusal.cause}. This request needed ${needed}.`;
-      root.querySelector('.connection-notice').textContent = `This request can no longer be sent. Select ${needed} in ${wallet}. After switching, return to ${selected.app} and make a new request.`;
+      const needed = refusal.cause === 'account' ? refusal.address : refusal.network;
+      const app = selected.actor === 'browser' && selected.site ? selected.site : selected.app;
+      feedbackText(root.querySelector('.connection-status'), [wallet[0].toUpperCase()+wallet.slice(1), ` was using a different ${refusal.cause}. This request needed ${refusal.cause} `, {value:needed}, '.']);
+      feedbackText(root.querySelector('.connection-notice'), [`This request can no longer be sent. Select ${refusal.cause} `, {value:needed}, ` in ${wallet}. After switching, return to `, {value:app}, ' and make a new request.']);
     } else if (['request-wallet-error', 'transaction-wallet-error'].includes(stage)) {
       root.dataset.extensionFeedback = 'unknown-error';
-      root.querySelector('.connection-status').textContent = 'Home could not finish this request.';
-      root.querySelector('.connection-notice').textContent = 'Check your wallet and Wallet activity before making another request.';
+      feedbackText(root.querySelector('.connection-status'), [selected.transaction ? 'Home could not finish this request. The transaction may have been sent.' : 'Home could not finish this request.']);
+      feedbackText(root.querySelector('.connection-notice'), ['Check your wallet and Wallet activity before making another request.']);
     }
     // Some R5 outcome tables still offer only navigation that v1 cannot do.
     // Until the shared capability fallback covers them, reuse its Close part.

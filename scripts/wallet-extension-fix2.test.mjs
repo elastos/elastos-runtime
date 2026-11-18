@@ -39,8 +39,8 @@ for(const engine of ['chromium','webkit']) {
       await f.action('send-request').click();await f.state('request-consumed');
       const value=f.frame.locator('.connection-notice bdi').last();assert.equal(await value.textContent(),app);assert.equal(await value.getAttribute('dir'),'auto');
       assert.equal(await value.evaluate(e=>getComputedStyle(e).unicodeBidi),'isolate');
-      await f.frame.evaluate(()=>{window.copyMutations=0;new MutationObserver(records=>copyMutations+=records.length).observe(document.querySelector('.connection-status'),{childList:true,subtree:true,characterData:true});});
-      await f.top.clock.runFor(2100);assert.equal(await f.frame.evaluate(()=>copyMutations),0);
+      await f.frame.evaluate(()=>{window.copyNode=document.querySelector('.connection-status');window.copyMutations=0;new MutationObserver(records=>copyMutations+=records.length).observe(document.querySelector('.connection-status'),{childList:true,subtree:true,characterData:true});});
+      await f.top.clock.runFor(2100);assert.equal(await f.frame.evaluate(()=>copyMutations),0);assert.equal(await f.frame.evaluate(()=>copyNode===document.querySelector('.connection-status')),true);
     }finally{await f.close();}}finally{await browser.close();}
   });
 }

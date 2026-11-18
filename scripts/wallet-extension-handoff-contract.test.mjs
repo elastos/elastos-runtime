@@ -72,11 +72,12 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
     for(const fault of ['account','network']) {
       const transaction=kind==='metamask';
       const f=await fixture(browser,kind,{saved:true,requests:transaction?'transaction':true});
-      let release;
+      let release,readFinished;
+      const finished=new Promise(resolve=>readFinished=resolve);
       try {
         await f.state(transaction?'transaction-waiting':'request-waiting');
         const gate=new Promise(resolve=>release=resolve);
-        await f.context.route('**/approvals',async route=>{await gate;await route.fulfill({json:{approval_requests:[]}});});
+        await f.context.route('**/approvals',async route=>{await gate;await route.fulfill({json:{approval_requests:[]}});readFinished();});
         await f.top.evaluate(({kind,fault})=>{
           if(fault==='account')testState.walletAddress=kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38);
           else if(kind==='metamask')testState.refuseSwitch=true;
@@ -88,7 +89,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
         assert.equal(await f.action('send-request').count(),0);
         assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');
         await f.top.evaluate(()=>{testState.walletAddress=testState.address;emitWallet('accountsChanged',[testState.address]);});
-        release();await f.state('request-consumed');
+        release();await finished;await f.frame.evaluate(()=>new Promise(resolve=>queueMicrotask(resolve)));await f.state('request-consumed');
         assert.equal(await f.frame.locator('body').innerText(),text);
         assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);
       }finally{release?.();await f.close();}
