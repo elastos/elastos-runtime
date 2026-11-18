@@ -5,24 +5,29 @@ import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
 
 if (!vm.SourceTextModule) {
-  test('passive wallet event host checks', () => {
-    const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--test', import.meta.filename], { encoding: 'utf8', timeout: 20000 });
+  test('passive wallet event host checks', t => {
+    const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+    const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--test-reporter=tap', '--test', import.meta.filename], { env, encoding: 'utf8', timeout: 20000 });
+    assert.equal(result.error, undefined);
+    assert.match(result.stdout, /# tests 10/, 'child must execute every host test');
+    assert.match(result.stdout, /# fail 0/);
     assert.equal(result.status, 0, result.stdout + result.stderr);
+    t.diagnostic('Child executed 10 host tests: 10 passed, 0 failed, 0 skipped.');
   });
 }
 
 // Load the complete host module; replace only its network dependency.
-async function hostFixture(kind) {
+async function hostFixture(kind, mutate = s => s) {
   const listeners = new Map(), messages = [], calls = [], windowListeners = new Map();
   const provider = { on(name, callback) { listeners.set(name, callback); },
     request(call) { calls.push(call); return new Promise(() => {}); },
     requestAccounts() { calls.push('requestAccounts'); return new Promise(() => {}); },
-    getAccounts() {}, getNetwork() {}, signMessage() {} };
+    getAccounts() { calls.push('getAccounts'); }, getNetwork() { calls.push('getNetwork'); }, signMessage() { calls.push('signMessage'); } };
   const source = await readFile(new URL('../capsules/home/browser/home-wallet-connector-host.js', import.meta.url), 'utf8');
   const window = { unisat: provider,
     addEventListener(name, callback) { windowListeners.set(name, callback); }, dispatchEvent() {} };
   const context = vm.createContext({ window, Event, Set, Map, WeakSet, Number, Object });
-  const module = new vm.SourceTextModule(source, { context });
+  const module = new vm.SourceTextModule(mutate(source), { context });
   await module.link(async () => {
     const dependency = new vm.SyntheticModule(['fetchJson'], function () {
       this.setExport('fetchJson', () => { throw Error('unexpected Runtime call'); });
@@ -57,6 +62,7 @@ if (vm.SourceTextModule) for (const kind of ['metamask', 'unisat']) {
     const network = kind === 'metamask' ? 'chainChanged' : 'networkChanged';
     f.listeners.get(network)(kind === 'metamask' ? '0x1' : 'livenet');
     f.listeners.get(network)('x'.repeat(10000));
+    if (kind === 'metamask') f.listeners.get(network)('0x' + '1'.repeat(17));
     f.listeners.get(network)({ secret: 'discard' });
     assert.equal(f.messages.length, 2);
     f.listeners.get('disconnect')({ secret: 'discard' });
@@ -96,4 +102,19 @@ if (vm.SourceTextModule) for (const kind of ['metamask', 'unisat']) test(`${kind
   f.listeners.get('accountsChanged')([]);
   assert.equal(f.messages.filter(x=>x.type==='home:wallet-connector-event').length,0);
   assert.equal(foreign.filter(x=>x.type==='home:wallet-connector-event').length,0);
+});
+
+if (vm.SourceTextModule) for (const kind of ['metamask','unisat']) test(`${kind}: review forwarder breaks K04 K05 K06 K13 K15 fail the guard`, async t => {
+  for (const [id, mutate, check] of [
+    ['K04',s=>s.replace('if (recipient.lifetime.retired || recipient.lifetime.generation !== recipient.generation','if (false'), async f=>{f.invoke();f.lifetime.retired=true;f.listeners.get('accountsChanged')([]);assert.equal(f.messages.length,0);}],
+    ['K05',s=>s.replace('event.source !== context.source','false'), async f=>{const foreign=[];f.invoke({postMessage(packet){foreign.push(packet);}});f.listeners.get('accountsChanged')([]);assert.equal(foreign.length,0);}],
+    ['K06',s=>s.replace('value.length > 8','value.length > 800'), async f=>{f.invoke();f.listeners.get('accountsChanged')(Array(9).fill(kind==='metamask'?'0x'+'1'.repeat(40):'bc1q'+'a'.repeat(38)));assert.equal(f.messages.length,0);}],
+    ...(kind==='metamask'?[['K13',s=>s.replace('{1,16}', '{1,}'),async f=>{f.invoke();f.listeners.get('chainChanged')('0x'+'1'.repeat(17));assert.equal(f.messages.length,0);}]]:[]),
+    ['K15',s=>s.replace('if (walletEventProviders.get(connectorId) !== provider) return;',"if (walletEventProviders.get(connectorId) !== provider) return; provider.request({method:'eth_accounts'});"),async f=>{f.invoke();const n=f.calls.length;f.listeners.get('accountsChanged')([]);assert.equal(f.calls.length,n);}],
+  ]) {
+    const source=await readFile(new URL('../capsules/home/browser/home-wallet-connector-host.js',import.meta.url),'utf8');assert.notEqual(mutate(source),source,id);
+    await check(await hostFixture(kind));
+    await assert.rejects(check(await hostFixture(kind,mutate)),{code:'ERR_ASSERTION'},id);
+    t.diagnostic(id+': break caught');
+  }
 });
