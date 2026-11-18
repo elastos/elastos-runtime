@@ -71,10 +71,10 @@ async function activate(page,resize){
  const events=await page.evaluate(()=>window.approvalActivations);assert.equal(events.length,3);assert(events.every(e=>e.visible),'site final line visible at pointer, Enter and Space activation');
  return events;
 }
-describe('structural approval access and paint',{concurrency:false,timeout:exhaustivePaint?1800000:360000},()=>{
+describe('structural approval access and paint',{concurrency:false,timeout:exhaustivePaint||!ciSmoke?1800000:360000},()=>{
 for(const engine of ['chromium','webkit']){
  const optional=engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE;
- test(`F1: full origins and fixed feedback in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false,timeout:exhaustivePaint?900000:175000},async t=>{
+ test(`F1: full origins and fixed feedback in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false,timeout:exhaustivePaint||!ciSmoke?900000:175000},async t=>{
   const receipts=[];
   const runScale=async scale=>{
    // At 200% effective browser zoom, a physical window contains half as many CSS pixels.
