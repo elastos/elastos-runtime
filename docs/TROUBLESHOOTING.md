@@ -109,7 +109,13 @@ outgoing failure logs use the same change and minute rule. While a check runs,
 status says **It is checking the link**. A future-check countdown rounds up to
 a whole second.
 
-A peer count is local evidence. A neighbour can remain remembered while a
+A later repair can restore a missing topic after an earlier attempt failed.
+Topic health clears the pending state when the subscription exists again.
+A bootstrap Runtime restores its own missing topic with paced joins and keeps
+its actor, so existing Home links stay active.
+
+The command line's known-peer count covers all Carrier topics. Community
+status uses its own topic. A peer count is local evidence. A neighbour can remain remembered while a
 node silently stops carrying messages and every local operation succeeds.
 This condition remains outside automatic detection by these local checks.
 

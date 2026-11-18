@@ -1760,6 +1760,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn community_fix1_missing_sender_does_not_grant_node_topic_repair() {
+        let (signer, _) = generate_keypair();
+        let own = ticket_for(24);
+        let bootstrap = ticket_for(25);
+        let profile = verified_profile(&signer, "sender-is-not-topic", 1, None, vec![bootstrap.clone()]);
+        let topic = collaboration_topic(&profile);
+        let carrier = FakeCarrier::new([
+            remember_ok(&bootstrap.node_id),
+            join_ok(&topic),
+            local_ticket(&own),
+            topic_peers(&topic, &[]),
+            FakeReply::Value(serde_json::json!({"status":"error", "code":"not_joined", "message":"sender is missing"})),
+        ]);
+        let joined = join_collaboration_network(carrier.clone(), &profile).await.unwrap();
+        assert!(joined.restore_missing_bootstrap_peers().await.is_err());
+        assert!(!joined.topic_is_pending(), "only topic health can establish absence");
+        assert_eq!(carrier.requests().iter().filter(|request| request["op"] == "gossip_join_exact").count(), 1);
+    }
+
+    #[tokio::test]
     async fn collaboration_carrier_retries_missing_bootstrap_after_a_failed_join() {
         let (signer, _) = generate_keypair();
         let own = ticket_for(24);
