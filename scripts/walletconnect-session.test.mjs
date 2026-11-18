@@ -63,7 +63,9 @@ for (const [name,approved,rejection] of [['Base only',['eip155:8453']],['unsuppo
     } finally {
       await page?.evaluate(()=>window.cleanup?.()).catch(()=>{});
       for(const session of wallet?.session.getAll()||[])await wallet.disconnect({topic:session.topic,reason:{code:6000,message:'Fixture ended'}}).catch(()=>{});
+      wallet?.core.heartbeat.stop();
       await wallet?.core.relayer.transportClose().catch(()=>{});
+      wallet?.removeAllListeners();
       await browser?.close();for(const socket of relay.clients)socket.terminate();
       await new Promise(resolve=>relay.close(resolve));server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
     }
