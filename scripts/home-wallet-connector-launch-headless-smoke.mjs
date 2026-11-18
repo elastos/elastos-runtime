@@ -274,6 +274,11 @@ async function handleApi(req, res, url) {
     return true;
   }
   for (const [target, token] of Object.entries(connectorTokens)) {
+    if (url.pathname === `/api/apps/${target}/internet` && req.method === "GET") {
+      if (!requireToken(req, token, res)) return true;
+      json(res, 200, { status: "off" });
+      return true;
+    }
     if (
       url.pathname === `/api/apps/${target}/wallet/accounts` &&
       req.method === "GET"
@@ -557,7 +562,7 @@ try {
     }, { connectorTarget: target });
     await waitFor(() => frameFor(page, target), 15_000, `${target} connector UI`);
     const connector = frameFor(page, target);
-    const connectSelector = target === "wallet-walletconnect" ? "#wallet-connect" : '[data-action="connect"]';
+    const connectSelector = '[data-action="connect"]';
     await connector.waitForSelector(connectSelector, { timeout: 15_000 });
     assert(
       await connector.locator(connectSelector).textContent() === connectLabel,
