@@ -35,7 +35,28 @@ try {
     result={connectorId:'wallet-metamask',providerMethods:methods,runtimeEndpoints:observed.runtimeCalls.map(c=>c.url),authorityTransport:'fragment',effectOwner:'home-host'};
   }finally{await f.close();}
 }finally{await browser.close();}
-const {exerciseWalletConnect}=await import('./lib/walletconnect-capsule-fixture.mjs');
-const wc=await exerciseWalletConnect();
-if(wc.error)throw Error(wc.error);
-console.log(JSON.stringify({ok:true,results:[result,{connectorId:'wallet-walletconnect',effectOwner:'capsule',result:wc.result}]},null,2));
+// The WalletConnect half must open the real window and use its visible Send
+// control too. A client-only fixture cannot detect a missing window/control.
+const {windowFixture,observeWindowErrors,walletWindowLifetime}=await import('./lib/walletconnect-phone-window-fixture.mjs');
+const {scriptedPhoneWallet}=await import('./lib/walletconnect-phone-wallet.mjs');
+const home=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:home.origin.replace('http','ws')});
+const wcBrowser=await requireProductSmokePlaywright().chromium.launch({headless:true});
+const page=await wcBrowser.newPage({viewport:{width:480,height:560}}),{errors}=observeWindowErrors(page,home);
+await page.route('**/*',route=>new URL(route.request().url()).origin===home.origin?route.continue():route.abort());
+const settle=await walletWindowLifetime(page,home);let frame,wc;
+const state=name=>frame.locator(`main[data-state="${name}"]`).waitFor({timeout:20000});
+try{
+ await page.goto(home.origin);frame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));
+ assert(frame,'Home opens the WalletConnect frame');
+ await state('internet-ready');await frame.locator('[data-action=connect]:visible:enabled').click();await state('qr-shown');
+ await frame.getByRole('button',{name:'Copy link',exact:true}).click();await frame.getByText('Link copied.',{exact:true}).waitFor();
+ await peer.pair(await page.evaluate(()=>window.copied));await state('linked');assert.equal(home.state.verified,1);
+ home.state.approvals=[{request_id:'transaction-smoke',connector_id:'wallet-walletconnect',capsule_id:'browser',requesting_origin:'https://example.test',reason:'Review the fixture transaction',status:'pending',intent:'transaction_intent',proof_type:'siwe',address:peer.address,chain_namespace:'eip155:8453',expires_at:Math.floor(Date.now()/1000)+600}];
+ await frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await state('transaction-waiting');
+ await frame.locator('[data-action=send-request]:visible:enabled').click();await state('transaction-done');
+ assert.equal(home.state.completed,1);assert.equal(home.state.approvals[0].status,'completed');
+ assert.match(home.state.transactionHash,/^0x[0-9a-fA-F]{64}$/);assert.equal(home.state.transactionHash,peer.lastTransactionHash,'Home records the exact hash of the disposable transaction the phone signed');
+ assert.equal(peer.trace.filter(event=>event.kind==='request'&&event.method==='eth_sendTransaction').length,1);
+ wc={status:home.state.approvals[0].status,effect:'transaction',transaction_hash:home.state.transactionHash};
+}finally{try{await settle(frame);}finally{await peer.stop();await wcBrowser.close();await home.stop();}assert.deepEqual(errors,[]);}
+console.log(JSON.stringify({ok:true,results:[result,{connectorId:'wallet-walletconnect',effectOwner:'capsule',result:wc}]},null,2));
