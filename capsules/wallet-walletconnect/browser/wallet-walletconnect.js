@@ -270,10 +270,10 @@ async function cancelWalletWait() {
   const sentId=dispatchedRequestId;
   const unsent=Boolean(pendingEffect) || activeRequest && activeRequest.request_id !== sentId;
   ++actionEpoch;pendingEffect=undefined;resetFeedback();unrecordedHash=knownHash;dispatchedRequestId=sentId;
-  try {await connector.effect({kind:'cancel'});connectionState=undefined;
+  try {currentPhase='disconnecting';draw();await connector.effect({kind:'cancel'});connectionState=undefined;
     if (unsent) {activeRequest=undefined;outcome=undefined;}
     else outcome=phase === 'ownership' ? 'link-cancelled' : phase === 'signature' ? 'request-cancelled' : phase === 'transaction' ? 'transaction-cancelled' : 'qr-cancelled';
-  } catch(error){showError(error);}
+  } catch {outcome=activeRequest?.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'link-error';draw();}
   finally {hostEffectInFlight=false;currentPhase='idle';draw();watchConnection();refreshWalletState().catch(()=>{});}
 }
 async function requestCapsuleWalletEffect(action) {
