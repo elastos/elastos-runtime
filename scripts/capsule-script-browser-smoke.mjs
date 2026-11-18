@@ -157,3 +157,5 @@ await import('./wallet-connection-view-origin.test.mjs');
 
 await import('./wallet-connection-view-round4.test.mjs');
 await import('./wallet-connection-view-live-needs.test.mjs');
+
+await import('./wallet-connection-view-round5.test.mjs');

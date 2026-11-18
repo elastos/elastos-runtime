@@ -44,6 +44,7 @@ test('shared view layout uses the WebKit-equipped content-sandbox harness',()=>{
   assert(smoke.includes("await import('./wallet-connection-view-origin.test.mjs')"));
   assert(smoke.includes("await import('./wallet-connection-view-round4.test.mjs')"));
   assert(smoke.includes("await import('./wallet-connection-view-live-needs.test.mjs')"));
+  assert(smoke.includes("await import('./wallet-connection-view-round5.test.mjs')"));
   assert(smoke.includes("process.env.WALLET_VIEW_BROWSER_SMOKE='1'"));
   assert(job.includes('playwright" install webkit --with-deps'));
   assert(job.includes('ELASTOS_PLAYWRIGHT_MODULE:'));
