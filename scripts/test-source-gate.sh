@@ -33,7 +33,7 @@ product_ui() {
   node scripts/home-shell-recovery-smoke.mjs
   node scripts/home-agent-shell-smoke.mjs
   node scripts/people-discovery-smoke.mjs
-  node --test scripts/walletconnect-capsule.test.mjs
+  node scripts/run-node-tests.mjs scripts/walletconnect-capsule.test.mjs
   node scripts/home-clipboard-source-gate.mjs
   node scripts/run-node-tests.mjs scripts/home-clipboard-source-gate.test.mjs
   node scripts/public-copy-entropy-check.mjs
