@@ -41,7 +41,7 @@ function installProvider({ kind, address }) {
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   const replay = recording ? await replayInput(recording) : null;
@@ -161,7 +161,7 @@ export function renderConnection(document,view) {
       // matches sourceTestFile to the exact-tree passing process receipt.
       await writeFile(join(dir, 'capture.json'), JSON.stringify({ qualification:'staged-requires-passing-file-result',
         sourceTestFile:resolve(process.argv[1]), capturedAt:Date.now(), candidate, clean:true,
-        fixture:{kind,oldHost,oldWindow,readFailure,recording:recording||null,saved,requests,launch,noHomeWallet,extraHomeAccount},
+        fixture:{kind,oldHost,oldWindow,readFailure,pictureContext,recording:recording||null,saved,requests,launch,noHomeWallet,extraHomeAccount},
         pngs,engine:browser.browserType().name(),viewport:{width:480,height:560},content:{width:480,height:522},...copy },null,2));
     }
   };

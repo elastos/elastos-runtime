@@ -307,7 +307,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     else return;
     if (['network-changed', 'request-network-testnet', 'request-network-declined'].includes(preflightFailure) && (data.event === 'networkChanged' && data.value === 'livenet' || data.event === 'chainChanged' && selected && `eip155:${BigInt(data.value)}` === requestNetworks.get(selected.id))) preflightFailure = null;
     revision += 1;
-    if (!operation && !uncertain && !fixedOutcome && !pendingVerificationRequired) { stage = chooseStage(); readFailed = false; }
+    if (!operation && !uncertain && !fixedOutcome && (!pendingVerificationRequired || checkingPreflight && !readFailed)) { stage = chooseStage(); readFailed = false; }
     draw();
   }
 

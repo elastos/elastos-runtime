@@ -68,3 +68,37 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
     }finally{await bad.close();}
   }finally{await browser.close();}
 });
+
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: verifying a refusal keeps Send disabled and follows wallet corrections`,{timeout:30000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async()=>{
+  const browser=await playwright[engine].launch({headless:true});try{
+    for(const fault of ['account','network']) {
+      const transaction=kind==='metamask';
+      const f=await fixture(browser,kind,{saved:true,requests:transaction?'transaction':true,pictureContext:'pending-list response held; Runtime has already consumed the handoff'});
+      let release;
+      try {
+        await f.state(transaction?'transaction-waiting':'request-waiting');
+        const gate=new Promise(resolve=>release=resolve);
+        await f.context.route('**/approvals',async route=>{await gate;await route.fulfill({json:{approval_requests:[]}});});
+        await f.top.evaluate(({kind,fault})=>{
+          if(fault==='account')testState.walletAddress=kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38);
+          else if(kind==='metamask')testState.refuseSwitch=true;
+          else testState.network='testnet';
+        },{kind,fault});
+        await f.action('send-request').click();
+        await f.state(fault==='account'?'request-unsendable':kind==='metamask'?'request-network-declined':'request-network-testnet');
+        assert.equal(await f.action('send-request').isDisabled(),true);
+        assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');
+        if(fault==='account') {
+          await f.frame.evaluate(()=>{window.corrected=false;addEventListener('message',function watch(e){if(e.data?.type==='home:wallet-connector-event'){corrected=true;removeEventListener('message',watch);}});});
+          await f.top.evaluate(()=>{testState.walletAddress=testState.address;emitWallet('accountsChanged',[testState.address]);});
+          await f.frame.waitForFunction(()=>corrected);await f.state(transaction?'transaction-waiting':'request-waiting');
+          assert.equal(await f.action('send-request').isDisabled(),true,'the wallet correction alone cannot prove pending status');
+          assert.doesNotMatch(await f.frame.locator('body').innerText(),/not providing.*account/i);
+        }
+        assert.equal(await f.top.evaluate(()=>testState.effects.length),1);
+        release();await f.state('request-unavailable');assert.equal(await f.action('send-request').count(),0);
+        assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);
+      }finally{release?.();await f.close();}
+    }
+  }finally{await browser.close();}
+});
