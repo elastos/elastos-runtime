@@ -5,7 +5,7 @@ import {titleSources as sourceFixture,rustTitlePath as rustPath,assertTitleSourc
 import {writeFile} from 'node:fs/promises';
 import * as product from '../capsules/_shared/wallet-connection-view.mjs';
 import {shared,states,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
-import {execFileSync} from 'node:child_process';
+const round4Source=JSON.parse(readFileSync(new URL('./fixtures/wallet-connection-round4-source.json',import.meta.url))).source;
 import {approvalArguments,approvalCatalog} from './lib/wallet-connection-approval-cases.mjs';
 import {withTestView} from './lib/wallet-connection-test-module.mjs';
 import {browserFixture,playwright,temporaryProof} from './lib/wallet-connection-browser-fixture.mjs';
@@ -68,7 +68,7 @@ for(const engine of ['chromium','webkit']){const skip=engine==='webkit'&&!exists
  });
  test('R5 P1: an approved same-card request keeps scroll and focuses its outcome in '+engine,{skip},async()=>{
  const got=await variant(engine,null,f=>focusGuard(f,engine,true));
- for(const mutate of [s=>s.replace('||target(view.focus,view.focusKey)',''),()=>execFileSync('git',['show','0819dba0b:capsules/_shared/wallet-connection-view.mjs'],{encoding:'utf8'})])await assert.rejects(()=>variant(engine,mutate,f=>focusGuard(f,engine)),assert.AssertionError);
+ for(const mutate of [s=>s.replace('||target(view.focus,view.focusKey)',''),()=>round4Source])await assert.rejects(()=>variant(engine,mutate,f=>focusGuard(f,engine)),assert.AssertionError);
  receipts.push({engine,case:'P1',...got,result:'PASS / product fallback break and pinned old product CAUGHT'});
  });
  test('R5: Runtime resolution and neutral extension cards render literally in '+engine,{skip},async()=>variant(engine,null,async f=>{
@@ -94,12 +94,12 @@ test('R5: direct guards reject every escaped source break',async t=>{
  for(const[name,mutate,guard]of mutations)await t.test(name,()=>withTestView({mutateSource:source=>{const changed=mutate(source);assert.notEqual(changed,source,'source break applies');return changed;}},async api=>{await assert.rejects(async()=>guard(api),assert.AssertionError);t.diagnostic(name+': CAUGHT');}));
 });
 
-test('R5: corrected F-B guard rejects the pinned round-four product notice',()=>withTestView({mutateSource:()=>execFileSync('git',['show','0819dba0b:capsules/_shared/wallet-connection-view.mjs'],{encoding:'utf8'})},api=>assert.throws(()=>busyGuard(api),assert.AssertionError)));
+test('R5: corrected F-B guard rejects the pinned round-four product notice',()=>withTestView({mutateSource:()=>round4Source},api=>assert.throws(()=>busyGuard(api),assert.AssertionError)));
 
 test('R5: capability copy cannot replace a returned transaction recovery or its save failure',()=>{
  for(const window of ['metamask','walletconnect'])for(const supportedActions of [[],['close-window'],['check-access']]){
   const summary=product.reduceSummary(raw(window,{intent:'transaction_intent'}),{connector:'wallet-'+window});
-  const v=product.connectionView({window,stage:'transaction-wallet-error',summary,walletResult:{disposition:'answered',receipt:'recording_failed'},supportedActions});assert.match(product.viewText(v.status),/returned a transaction result/);assert.match(words(v),/Wallet activity before sending again/);assert.doesNotMatch(words(v),/still be waiting|account and connection/);
+  const v=product.connectionView({window,stage:'transaction-timeout',summary,walletResult:{disposition:'answered',receipt:'recording_failed'},supportedActions});assert.match(product.viewText(v.status),/returned a transaction result/);assert.match(words(v),/Wallet activity before sending again/);assert.doesNotMatch(words(v),/still be waiting|account and connection/);
   const refused=product.connectionView({window,stage:'transaction-declined',summary,walletResult:{disposition:'declined',receipt:'recording_failed'},supportedActions});assert.match(words(refused),/Home cannot save that answer/);
  }
 });

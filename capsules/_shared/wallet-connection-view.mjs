@@ -181,9 +181,9 @@ export function connectionView(input) {
   const home = displayOrigin(input.homeOrigin);
   requireValue(input.targetNetwork===undefined||bounded(input.targetNetwork,80),'requested network label');
   const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: summary?.app || context?.app || 'Browser', site: summary?.site || context?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
-  const parts = text => (text || '').split(/(\{\{(?:wallet|alternative|app|site|home|network)\}\})/).filter(Boolean).map(value => {
+  const parts = text => (text || '').split(/(\{\{(?:wallet|alternative|app|site|home|network)\}\})/).filter(Boolean).map((value,index) => {
     const key = value.match(/^\{\{(.+)\}\}$/)?.[1];
-    return key ? { kind: key === 'alternative' ? 'wallet' : key, text: values[key] } : { kind: 'copy', text: value };
+    return key ? { kind: key === 'alternative' ? 'wallet' : key, text: key==='wallet'&&extension&&!providerName&&index===0?'Your browser wallet':values[key] } : { kind: 'copy', text: value };
   });
   const action = a => ({ id: a.id, label: parts(a.label), primary: a === screen.primary || a === screen.requestAction, quiet: a.quiet });
   let notice = screen.notice || '';
