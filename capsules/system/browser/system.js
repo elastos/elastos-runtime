@@ -2742,6 +2742,7 @@ function confirmPasskeyRemoval(button) {
       resolve(passkeyRemoveDialog.returnValue === "remove");
     }, { once: true });
     passkeyRemoveDialog.showModal();
+    passkeyRemoveDialog.querySelector('button[value="cancel"]').focus({ preventScroll: true });
   });
 }
 

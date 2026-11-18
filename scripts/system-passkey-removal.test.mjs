@@ -47,6 +47,10 @@ async function fixture(run) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     page.setDefaultTimeout(5000);
     const errors = [];
+    const consoleErrors = [];
+    page.on("console", message => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
     page.on("pageerror", error => errors.push(error.message));
     const open = async (keys, options = {}) => {
       passkeys = keys.map(key => ({ ...key }));
@@ -59,7 +63,7 @@ async function fixture(run) {
       await frame.waitForSelector(".account-row");
       return frame;
     };
-    await run({ page, open, writes, listReads: () => listReads });
+    await run({ page, open, writes, consoleErrors, listReads: () => listReads });
     assert.deepEqual(errors, []);
     assert.deepEqual(server.requestFailures, []);
   } finally {
@@ -219,5 +223,20 @@ test("only the removal 409 shows its sentence and refreshes the stale list", asy
         }
       }
     }
+  });
+});
+
+
+test("System opens passkey removal with Cancel focused and no cross-origin autofocus error", async () => {
+  await fixture(async ({ page, open, writes, consoleErrors }) => {
+    const frame = await open([owner, guest]);
+    assert.equal(await frame.evaluate(() => window.origin), "null");
+    await frame.locator(".account-row").last().locator(".passkey-remove").click();
+    const cancel = frame.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true });
+    assert.equal(await cancel.evaluate(button => button === document.activeElement), true);
+    await cancel.click();
+    assert.equal(await frame.getByRole("dialog").count(), 0);
+    assert.equal(writes.length, 0);
+    assert.deepEqual(consoleErrors.filter(message => /autofocus/i.test(message)), []);
   });
 });
