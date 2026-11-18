@@ -165,7 +165,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     if (current !== provider) {
       provider = current;
       observedAccounts=Array.isArray(current.accounts) ? [...current.accounts.slice(0,8)] : undefined;
-      const facts=()=>`${current.chainId}:${String(observedAccounts?.[0] || '').toLowerCase()}`;
+      const facts=()=>`${current.chainId}:${observedAccounts === undefined ? 'unknown' : String(observedAccounts[0] || '').toLowerCase()}`;
       let selection=facts();
       const permitsProof=()=>{const ns=current.session?.namespaces?.eip155;return Boolean(ns?.accounts?.some(value=>same(value,`eip155:${current.chainId}:${observedAccounts?.[0]}`))) && (!Array.isArray(ns.methods) || ns.methods.includes('personal_sign'));};
       let proofAllowed=permitsProof();
