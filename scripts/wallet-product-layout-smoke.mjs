@@ -883,7 +883,7 @@ async function run() {
     await acknowledgement.filter({ hasText: "Request dismissed." }).waitFor({ state: "visible" });
     assert(await approvedCard.getByRole("button").count() === 0, "acknowledgement offers no second decision");
     assert(server.state.rejectBodies.length === 1, "one dismissal reaches Runtime");
-    await dismissFrame.locator("#wallet-activity-drawer [data-wallet-close-drawer]").click();
+    await dismissFrame.locator("#wallet-settings-open").click();
     await approvedCard.waitFor({ state: "detached" });
     server.state.approvals[0].transaction_hash = `0x${"a".repeat(64)}`;
     server.state.approvals[0].completed_at = Math.floor(Date.now() / 1000);

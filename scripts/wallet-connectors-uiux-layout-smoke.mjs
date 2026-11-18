@@ -94,6 +94,8 @@ const connectors = Object.freeze([
         {
           request_id: "walletconnect-request-1",
           connector_id: "wallet-walletconnect",
+          status: "pending",
+          chain_namespace: "eip155:8453",
           intent: "transaction_intent",
           proof_type: "siwe",
           capsule_id: "services",
