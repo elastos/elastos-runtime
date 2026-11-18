@@ -246,11 +246,25 @@ test('live-window regression oracle rejects five deliberate breaks', { timeout: 
       ['draw outside shared view', s => s.replace('const root = renderConnection(document, view);', "const root = renderConnection(document, view); root.append(document.createElement('aside'));"), async f => {
         assert.equal(await f.frame.locator('main aside').count(), 0);
       }],
+      ['accepted proof after disconnect', s => s.replace("if (disconnected) return linkObserved ? 'account-unavailable' : 'link-error';", "if (disconnected) return 'link-error';"), async f => {
+        await f.top.evaluate(() => Object.defineProperty(testState, 'mode', {
+          configurable: true, get() { return testState.calls.at(-1)?.method === 'personal_sign' ? 'pending' : 'approve'; },
+        }));
+        await f.action('connect').click(); await f.state('extension-wait');
+        await f.top.waitForFunction(() => testState.pending.some(p => p.method === 'personal_sign'));
+        await f.top.evaluate(() => {
+          emitWallet('disconnect', { code: 4900 });
+          Object.defineProperty(testState, 'mode', { configurable: true, value: 'approve' });
+          const pending = testState.pending.shift(); pending.resolve(pending.result);
+        });
+        await f.top.waitForFunction(() => testState.receipts.length === 1);
+        await f.state('account-unavailable');
+      }],
     ];
     for (const [name, mutate, oracle] of mutations) {
       const source = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
       assert.notEqual(mutate(source), source, name + ' mutation applies');
-      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: name !== 'state mapped wrong', mutate });
+      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: !['state mapped wrong', 'accepted proof after disconnect'].includes(name), mutate });
       try { await assert.rejects(oracle(f), undefined, name + ' must fail the live oracle'); }
       finally { await f.context.close(); }
     }
