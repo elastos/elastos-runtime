@@ -61,7 +61,7 @@ for(const engine of ['chromium','webkit'])test('live needs: rendering and QR car
  const f=await browserFixture(engine,{width:480,height:560});
  const mount=async args=>f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));await document.fonts.ready;},args);
  try{
-  for(const row of live){await mount([{window:row.window,stage:row.stage,supportedActions:['close-window','refresh-status','connect','send-message','start-over','cancel']}]);assert((await f.page.locator('main').innerText()).length);}
+  for(const row of live){await mount([{window:row.window,stage:row.stage,supportedActions:['close-window','refresh-status','connect','send-message','start-over','cancel']}]);assert((await f.page.locator('main').innerText()).length);if(process.env.WALLET_VIEW_CAPTURE==='1')await f.page.screenshot({path:proof.path+`/local-${row.window}-${row.stage}-${engine}.png`});}
   // Capability filtering covers model actions plus renderer-only account/picker/panel controls.
   for(const row of [...states,...live]){
    const args=row.local?fixtureArguments(row):[{window:row.window,stage:row.stage}];args[0].supportedActions=[];await mount(args);assert.equal(await f.page.locator('button').count(),0,row.window+'/'+row.stage);
