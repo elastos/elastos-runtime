@@ -13,6 +13,7 @@ const breaks = {
   saved:s=>s.replace('const rows = address ? row ? [row] : [] : candidates;', 'const rows = address ? row ? [row] : [] : [];'),
   read:s=>s.replace("action === 'connect' && readFailed","false"),
   disconnect:s=>s.replace('if (data.value.length) disconnected = false;',''),
+  'link-request':s=>s.replace('if (next?.id !== selected?.id) preflightFailure = null;',''),
   'read-event':s=>s.replace('stage = chooseStage(); readFailed = false;', 'stage = chooseStage();'),
   removed:s=>s.replace("if (selected.status === 'pending') { stage = 'request-unavailable'; fixedOutcome = true; }","if (stage === 'request-waiting') { stage = 'request-unavailable'; fixedOutcome = true; }"),
   network:s=>s.replace('if (selected && requestNetworks.has(selected.id)) return [networkName(requestNetworks.get(selected.id))];',''),
@@ -195,6 +196,17 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
       ['disconnect',{},async f=>{await f.action('connect').click();await f.state('linked');await f.top.evaluate(()=>emitWallet('disconnect',{}));await f.state('account-unavailable');await f.top.evaluate(()=>emitWallet('accountsChanged',[testState.address]));await f.state('linked');}],
       ['read',{readFailure:503},async f=>{await f.state('link-error');let n=0;await f.context.route('**/api/**',r=>{n++;return r.fulfill({json:r.request().url().endsWith('/accounts')?{accounts:[]}:{approval_requests:[]}});});await f.action('connect').click();await f.state('ready');assert.equal(n,2);assert.equal(await f.top.evaluate(()=>testState.effects.length),0);}],
       ['removed',{saved:true,requests:true},f=>disappeared(f,kind)],
+      ['link-request',{},async f=>{
+        await f.top.evaluate(value=>testState.accountDuringChallenge=value,other(kind));
+        await f.action('connect').click();await f.state('account-unavailable');
+        await f.top.evaluate(kind=>{
+          testState.accountDuringChallenge=null;testState.walletAddress=testState.address;testState.linked=true;
+          testState.requests=[{request_id:'arrived',capsule_id:'browser',connector_id:'wallet-'+kind,intent:kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',proof_type:kind==='metamask'?'siwe':'bip322_simple',address:testState.address,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93',status:'pending',reason:'Arrived after link failure',expires_at:Math.floor(Date.now()/1000)+300}];
+        },kind);
+        await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));await f.state('request-waiting');
+        await f.action('send-request').click();await f.state('request-done');assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
+        assert.deepEqual(await f.top.evaluate(()=>testState.effects.map(e=>e.action.kind)),['link','approve']);
+      }],
       ['read-event',{},async f=>{
         await f.action('connect').click();await f.state('linked');
         await f.context.route('**/api/**',r=>r.fulfill({status:503,json:{error:'fixture read error'}}));

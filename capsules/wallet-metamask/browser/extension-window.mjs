@@ -165,7 +165,9 @@ export function startExtensionWindow(kind, homeClipboard) {
           if (selected && !requests.some(request => request.request_id === selected.id)) {
             if (selected.status === 'pending') { stage = 'request-unavailable'; fixedOutcome = true; }
           } else {
-            selected = reduceSummary(requests.find(r => r.request_id === selected?.id) || requests[0], { connector: CONNECTOR_ID });
+            const next = reduceSummary(requests.find(r => r.request_id === selected?.id) || requests[0], { connector: CONNECTOR_ID });
+            if (next?.id !== selected?.id) preflightFailure = null;
+            selected = next;
             stage = chooseStage();
           }
         }
