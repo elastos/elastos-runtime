@@ -5010,8 +5010,8 @@ mod tests {
     enum Fix1Role { Home, NodeEmpty, NodeSelf }
 
     fn fix1_profile(data_root: &Path, key: &SigningKey, role: Fix1Role) -> (CollaborationStartupConfiguration, String, serde_json::Value) {
-        // Empty bootstrap lists describe a node that must not rebuild itself.
-        // This is a Home fixture with a different, verified local bootstrap.
+        // Sign the intended role: a distinct bootstrap selects Home;
+        // empty and self-bootstrap lists select a protected node.
         fn ticket(key: &iroh::SecretKey) -> String {
             let addr = iroh::EndpointAddr::from_parts(
                 key.public(),
@@ -5151,10 +5151,11 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(1)).await;
             assert_eq!(fix1_read_status(&app, &token).await["state"], expected);
         }
-        let stable = carrier.requests.lock().unwrap();
-        assert_eq!(stable.iter().filter(|(op, _)| op == "gossip_join_exact").count(), join_times.len());
-        assert_eq!(stable.iter().filter(|(op, _)| op == "gossip_rebuild").count(), rebuilds);
-        drop(stable);
+        {
+            let stable = carrier.requests.lock().unwrap();
+            assert_eq!(stable.iter().filter(|(op, _)| op == "gossip_join_exact").count(), join_times.len());
+            assert_eq!(stable.iter().filter(|(op, _)| op == "gossip_rebuild").count(), rebuilds);
+        }
         service.shutdown().await.unwrap();
         let logs = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
         let incoming: Vec<_> = logs
