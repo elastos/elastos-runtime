@@ -701,12 +701,8 @@ pub(crate) async fn run_community_link_watchdog_with_timing<L: CommunityLink>(
                 checked_at: now,
                 checked_wall_at: timing.wall_clock.now(),
                 wall_clock: timing.wall_clock,
-                retry_at: now,
-                reason: if connected {
-                    None
-                } else {
-                    Some("waiting for Community peers")
-                },
+                retry_at: now + timing.cadence,
+                reason: failure.or((!connected).then_some("waiting for Community peers")),
             });
             return;
         }
@@ -4486,6 +4482,31 @@ mod tests {
             ],
             "the 60 s spacing and backoff hold although frames arrive"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn community_recovery_bootstrap_role_keeps_local_failure_in_status() {
+        let link = FakeCommunityLink::new(FakeLinkScript {
+            bootstrap_node: true,
+            peers: true,
+            bootstrap_failure_until: Some(Duration::from_secs(100)),
+            ..Default::default()
+        });
+        let (_shutdown, shutdown_rx) = watch::channel(false);
+        let (_membership, joined) = watch::channel(true);
+        let views = Mutex::new(Vec::new());
+        tokio::select! {
+            _ = run_test_link_watchdog(shutdown_rx, joined, &link, |view| {
+                views.lock().unwrap().push(view);
+            }) => panic!("watchdog remains active"),
+            _ = tokio::time::sleep(Duration::from_secs(12)) => {}
+        }
+        let views = views.lock().unwrap();
+        let failure = views.last().unwrap();
+        assert!(!failure.connected);
+        assert_eq!(failure.reason, Some("bootstrap join timed out"));
+        assert!(failure.retry_at > failure.checked_at);
+        assert!(link.steps().is_empty(), "a bootstrap node retains its role");
     }
 
     #[tokio::test(start_paused = true)]
