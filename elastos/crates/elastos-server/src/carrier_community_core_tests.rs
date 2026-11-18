@@ -626,7 +626,7 @@ async fn community_core_real_failed_rejoin_after_sender_removal_rebuilds_and_del
     assert!(rebuilt);
     assert!(
         healthy,
-        "a rebuilt topic clears pending and becomes connected"
+        "a rebuilt recorded topic becomes connected after its sender was removed"
     );
     posts.unwrap();
 }

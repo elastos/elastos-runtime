@@ -696,19 +696,22 @@ impl CommunityLink for JoinedCollaborationNetwork {
     }
 
     async fn rebuild_gossip(&self) -> anyhow::Result<usize> {
-        let response = self
-            .carrier
-            .send_raw(&serde_json::json!({ "op": "gossip_rebuild" }))
-            .await
-            .context("Carrier gossip_rebuild failed for collaboration network")?;
-        require_bounded_response(&response)?;
-        let rebuilt: RebuildData = require_ok_response(response, "gossip_rebuild")?;
+        let rebuilt: anyhow::Result<RebuildData> = async {
+            let response = self
+                .carrier
+                .send_raw(&serde_json::json!({ "op": "gossip_rebuild" }))
+                .await
+                .context("Carrier gossip_rebuild failed for collaboration network")?;
+            require_bounded_response(&response)?;
+            require_ok_response(response, "gossip_rebuild")
+        }
+        .await;
         if self.topic_is_pending() {
-            // A rebuild restores recorded topics; a missing subscription needs
-            // its verified exact join as part of the same paced attempt.
+            // A missing subscription can join even if replacing the actor failed.
+            // This remains part of the same paced repair attempt.
             self.restore_absent_topic().await?;
         }
-        Ok(rebuilt.topics)
+        Ok(rebuilt?.topics)
     }
 }
 
@@ -1757,6 +1760,28 @@ mod tests {
             assert_eq!(joined.recovers_its_link().await.unwrap(), recovers);
             assert!(carrier.requests().is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn community_fix1_failed_actor_rebuild_still_restores_a_pending_topic() {
+        let (signer, _) = generate_keypair();
+        let bootstrap = ticket_for(26);
+        let profile = verified_profile(&signer, "rebuild-busy", 1, None, vec![bootstrap.clone()]);
+        let topic = collaboration_topic(&profile);
+        let carrier = FakeCarrier::new([
+            FakeReply::Value(serde_json::json!({"status":"error", "code":"recovery_busy"})),
+            remember_ok(&bootstrap.node_id),
+            join_ok(&topic),
+            FakeReply::Value(serde_json::json!({"status":"ok", "data":{
+                "topic":topic, "peer_count":1, "received_frames":0, "receiver_alive":true
+            }})),
+        ]);
+        let joined = JoinedCollaborationNetwork::pending(carrier.clone(), &profile).unwrap();
+        assert!(joined.rebuild_gossip().await.unwrap_err().to_string().contains("recovery_busy"));
+        assert_eq!(carrier.requests().iter().map(|request| request["op"].as_str().unwrap()).collect::<Vec<_>>(),
+            ["gossip_rebuild", "remember_peer", "gossip_join_exact"]);
+        assert_eq!(joined.link_health().await.unwrap().peer_count, 1);
+        assert!(!joined.topic_is_pending());
     }
 
     #[tokio::test]
