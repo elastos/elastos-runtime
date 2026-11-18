@@ -39,8 +39,6 @@ pub(crate) const MAX_STARTUP_CONFIG_BYTES: usize = 3 * 1024 * 1024;
 const COLLABORATION_WORKER_CADENCE: Duration = Duration::from_secs(5);
 const COLLABORATION_LIVE_CADENCE: Duration = Duration::from_millis(500);
 const COLLABORATION_BOOTSTRAP_CADENCE: Duration = Duration::from_secs(1);
-#[cfg(test)]
-const COLLABORATION_BOOTSTRAP_CADENCE: Duration = Duration::from_secs(1);
 const COMMUNITY_LINK_WATCHDOG_CADENCE: Duration = Duration::from_secs(5);
 const COMMUNITY_LINK_HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 /// A rebuild leaves the old actor (2 s) and joins each topic (5 s each).
