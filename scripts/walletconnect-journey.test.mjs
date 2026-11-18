@@ -55,6 +55,9 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const errors=[];page.on('pageerror',error=>{errors.push(error.message);if(process.env.WALLETCONNECT_ERROR_DIAGNOSTICS)console.error(JSON.stringify({message:error.message,stack:error.stack}));});
     await page.addInitScript(()=>{
       window.fixtureIntervals=[];window.fixtureIntervalIDs=[];window.fixtureClosing=false;window.fixturePendingFetches=0;
+      const listeners=[],add=window.addEventListener.bind(window),remove=window.removeEventListener.bind(window);
+      window.addEventListener=(type,listener,options)=>{if(['focus','message','online','offline'].includes(type)){if(window.fixtureClosing)return;listeners.push({type,listener,options});}return add(type,listener,options);};
+      window.fixtureStopInputs=()=>{for(const row of listeners)remove(row.type,row.listener,row.options);listeners.length=0;};
       const track=call=>{window.fixturePendingFetches++;try{return Promise.resolve(call()).finally(()=>window.fixturePendingFetches--);}catch(error){window.fixturePendingFetches--;throw error;}};
       const nativeFetch=window.fetch.bind(window);window.fetch=(...args)=>track(()=>nativeFetch(...args).then(response=>{
         for(const key of ['json','text','arrayBuffer']){const read=response[key].bind(response);response[key]=(...args)=>track(()=>read(...args));}return response;
@@ -71,7 +74,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const walletFrame=initialWalletFrame;
     const drainForReload=async()=>{
       if(process.env.WALLETCONNECT_SKIP_RELOAD_DRAIN)return;
-      await walletFrame.evaluate(()=>{window.fixtureClosing=true;for(const id of window.fixtureIntervalIDs)clearInterval(id);});
+      await walletFrame.evaluate(()=>{window.fixtureClosing=true;window.fixtureStopInputs();for(const id of window.fixtureIntervalIDs)clearInterval(id);});
       await walletFrame.waitForFunction(()=>window.fixturePendingFetches===0);
     };
     const invoke=async(action,requestId)=>{
