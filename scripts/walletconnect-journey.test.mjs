@@ -49,7 +49,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
   let browser;const evidence=process.env.WALLETCONNECT_SCREENSHOTS;
   if(evidence)mkdirSync(evidence,{recursive:true});
   try {
-    const {chromium}=await importProductSmokePlaywright();browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
+    const engine=process.env.WALLETCONNECT_TEST_ENGINE || 'chromium';const engines=await importProductSmokePlaywright();browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
     const page=await browser.newPage({viewport:{width:1000,height:850}});
     await page.route('**/*',route=>new URL(route.request().url()).origin===`http://127.0.0.1:${server.address().port}`?route.continue():route.abort());
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
@@ -62,13 +62,16 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const guardCase=process.env.WALLETCONNECT_GUARD_CASE;
     const initialWalletFrame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));
     const walletFrame=initialWalletFrame;
-    // Exercise the existing controller guards even when the shared screen now
-    // withholds a competing action. Real visible journeys have a protocol peer.
-    const invoke=async(action,requestId)=>walletFrame.evaluate(({action,requestId})=>{
-      const button=document.createElement('button');button.dataset.action=action;
-      button.dataset.walletRequestSign=requestId || document.querySelector('.connection-request')?.dataset.requestId || '';
-      document.querySelector('#wallet-window').append(button);button.click();button.remove();
-    },{action,requestId});
+    const invoke=async(action,requestId)=>{
+      await page.evaluate(()=>inbox.style.display='none');
+      const control=wallet.locator(`[data-action="${action}"]:visible`).first();
+      for(let i=0;i<3&&!await control.count();i++){
+        const back=wallet.locator('[data-action=back-to-connection]:visible').first();
+        if(await back.count())await back.click();
+        else {const cancel=wallet.locator('[data-action=cancel]:visible');if(await cancel.count())await cancel.click();else break;}
+      }
+      await control.click();
+    };
 
     if(!guardCase) {
     await wallet.locator('.connection-content').waitFor();
@@ -202,7 +205,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await invoke('connect');
       await walletFrame.waitForFunction(()=>typeof window.finishPhone==='function');
       releaseConnectionStatus();await walletFrame.evaluate(()=>window.heldStatusPoll);
-      assert.equal(await wallet.locator('[data-focus=outcome]').textContent(),'Open Your wallet on your phone and sign the message to confirm this account is yours.','an older Allow response cannot replace an active connection instruction');
+      assert.equal(await wallet.locator('[data-focus=outcome]').textContent(),'Open your wallet on your phone and sign the message to confirm this account is yours.','an older Allow response cannot replace an active connection instruction');
       assert.equal(await wallet.locator('[data-action=connect]:enabled,[data-action=start-over]:enabled').count(),0);
       await walletFrame.evaluate(()=>{window.phoneWait=false;window.finishPhone();});
       try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Connected.'}).waitFor({timeout:10000}); } catch { assert.fail('After the phone reply: '+await wallet.locator('[data-focus=outcome]').textContent()); }
@@ -331,8 +334,10 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     releaseApprovalList();
     await walletFrame.waitForFunction(reads=>window.fixtureApprovalReads>reads,reads);
     assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),0,'a late Home return cannot restore a consumed Review');
-    await t.test('a result offers its local return to the waiting request list',{todo:'Shared view local-return integration (#575); the lane owns no shared files.'},async()=>{
-      assert.equal(await wallet.locator('[data-action=view-requests],[data-action=back-to-connection]').count(),1);
+    await t.test('a result offers its local return to the waiting request list',{},async()=>{
+      await wallet.getByRole('button',{name:'View requests',exact:true}).click();
+      await wallet.getByRole('button',{name:'View request',exact:true}).first().click();
+      await wallet.getByRole('button',{name:/^Send to /}).waitFor();
     });
     assert.deepEqual(errors,[]);
   } finally {await browser?.close();for(const socket of relay.clients)socket.terminate();await new Promise(resolve=>relay.close(resolve));server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
@@ -360,7 +365,7 @@ for (const ending of ['decline','expiry','cancel','disconnect']) for (const retu
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
     let browser;
     try {
-      const {chromium}=await importProductSmokePlaywright();browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});const page=await browser.newPage();
+      const engine=process.env.WALLETCONNECT_TEST_ENGINE || 'chromium';const engines=await importProductSmokePlaywright();browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});const page=await browser.newPage();
       await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
       await page.route('**/vendor/reown-appkit.js?*',route=>route.fulfill({contentType:'text/javascript',body:`
         const provider={chainId:20,connected:true,session:{expiry:Date.now()/1000+3600,namespaces:{eip155:{accounts:['eip155:20:0x'+'12'.repeat(20)]}}},signer:{client:{core:{relayer:{connected:true}}}},on(){},async request({method}){return method==='eth_accounts'?['0x'+'12'.repeat(20)]:method==='eth_chainId'?20:'0x'+'ab'.repeat(65);}};
@@ -372,11 +377,11 @@ for (const ending of ['decline','expiry','cancel','disconnect']) for (const retu
         export async function disconnectWalletConnectEvm(){if(window.holdDisconnect)await new Promise(resolve=>window.endDisconnect=resolve);}
       `}));
       await page.goto(origin);const frame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));const wallet=page.frameLocator('#wallet');
-      const connect=()=>frame.evaluate(()=>{const button=document.createElement('button');button.dataset.action='connect';document.querySelector('#wallet-window').append(button);button.click();button.remove();});
+      const connect=async()=>{for(let i=0;i<2&&!await wallet.locator('[data-action=connect]').count();i++)await wallet.getByRole('button',{name:'Back to connection',exact:true}).click();await wallet.getByRole('button',{name:'Connect wallet',exact:true}).click();};
       await wallet.locator('[data-wallet-request-sign="first"]:enabled').waitFor();
       if(ending==='disconnect'){
         await connect();await wallet.locator('[data-wallet-request-sign=first]:enabled').waitFor();
-        await frame.evaluate(()=>{window.holdDisconnect=true;const button=document.createElement('button');button.dataset.action='disconnect';document.querySelector('#wallet-window').append(button);button.click();button.remove();});await frame.waitForFunction(()=>!!window.endDisconnect);
+        await frame.evaluate(()=>window.holdDisconnect=true);await wallet.getByRole('button',{name:'Back to connection',exact:true}).click();await wallet.getByRole('button',{name:'Disconnect',exact:true}).click();await frame.waitForFunction(()=>!!window.endDisconnect);
       }else{
         await frame.evaluate(()=>window.holdLink=true);await connect();await wallet.locator('[role=dialog]').waitFor();
       }
@@ -391,7 +396,7 @@ for (const ending of ['decline','expiry','cancel','disconnect']) for (const retu
       // Wait for a possible final refresh, then inspect without any extra focus or visibility event.
       await wallet.locator('main').waitFor();await frame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,100)));
       assert.equal(await wallet.locator('[data-wallet-request-sign="first"]').count(),0,'ending the action refreshes the stale list');
-      await frame.evaluate(()=>{window.holdLink=false;window.holdDisconnect=false;});await connect();
+      await frame.evaluate(()=>{window.holdLink=false;window.holdDisconnect=false;});await wallet.getByRole('button',{name:'View requests',exact:true}).click();await wallet.locator('[data-focus-key="select-request:next"]').click();
       await wallet.locator('[data-wallet-request-sign="next"]:enabled').waitFor();
       assert.equal(await wallet.locator('[data-wallet-request-sign="next"]').isEnabled(),true,'the pending request is ready for Review');
       assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),1,'unsupported and approved requests have their own recovery controls');
@@ -441,7 +446,7 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   let browser;
   try {
-    const {chromium}=await importProductSmokePlaywright();browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
+    const engine=process.env.WALLETCONNECT_TEST_ENGINE || 'chromium';const engines=await importProductSmokePlaywright();browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
     const page=await browser.newPage({viewport:{width:1000,height:850}});
     const origin=`http://127.0.0.1:${server.address().port}`;
     await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());

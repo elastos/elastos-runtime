@@ -1,6 +1,6 @@
 import {installWalletConnectStorage} from './walletconnect-storage.mjs';
 import {createWalletConnectClient} from './walletconnect-client.mjs';
-import {renderConnection, connectionKey} from './wallet-connection-view.mjs';
+import {mountConnection, captureConnectionPresentation, connectionKey} from './wallet-connection-view.mjs';
 import {windowPresentation, walletConnectView, errorStage, baseActions, signableRequest, connectorId} from './walletconnect-window-state.mjs';
 import {createHomeClipboardClient} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
 
@@ -16,7 +16,9 @@ let effectPhase = 'idle';
 let currentPhase = 'idle', connectionState, linkedAccounts = [], requests = [], accountsLoaded = false;
 let recoveryAction, launchExpired = false, ownerConsentNeeded = false, connectionNeedsReplacement = false;
 let pendingEffect, permissionStatus, connectionReturnPending = false, connectionTimer, connectionInterval;
-let rememberedFocus;
+let rememberedFocus, mounted;
+let connectionPage, homeReadFailed=false;
+const requestOutcomes=new Map();
 let unrecordedHash,proofAccount;
 let dispatchedRequestId;
 let outcome, activeRequest, selectedId, deadline, qrData, qrControls, currentView, renderKey;
@@ -46,8 +48,8 @@ const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemor
       clipboardFeedback='';
       const identityEvent=detail?.selectionChanged === true;
       const retained=knownOutcome() || activeRequest?.intent === 'transaction_intent' && Boolean(outcome);
-      if (identityEvent && !retained) outcome=undefined;
-      if (!hostEffectInFlight && identityEvent && !retained) activeRequest=undefined;
+      if (identityEvent && !retained && !dispatchedRequestId) outcome=undefined;
+      if (!hostEffectInFlight && identityEvent && !retained && !dispatchedRequestId) activeRequest=undefined;
       refreshReturnedWindow();
       return;
     }
@@ -65,15 +67,18 @@ const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemor
 
 root.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
-  if (!button || button.disabled || !root.contains(button)) return;
+  if (!button || button.disabled || !mounted?.root.contains(button)) return;
   const action = button.dataset.action;
   if (action === 'connect' || action === 'start-over') return onConnect();
-  if (action === 'finish') return onConnect({fresh:false});
+  if (action === 'finish' || action === 'send-message') return onConnect({fresh:false});
   if (action === 'cancel') return qrControls ? qrControls.cancel() : cancelWalletWait();
   if (action === 'stop-waiting') return cancelWalletWait();
   if (action === 'disconnect') return disconnect();
   if (action === 'inbox') return showInternetRequest();
-  if (action === 'check-access' || action === 'check-status') {
+  if (action === 'back-to-connection') {
+    connectionPage=connectionPage === 'overview' ? 'access' : 'overview';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
+  }
+  if (action === 'check-access' || action === 'check-status' || action === 'refresh-status') {
     outcome = undefined;activeRequest = undefined;
     await refreshWalletState().catch(()=>{});
     await checkConnection();draw();return;
@@ -85,9 +90,9 @@ root.addEventListener('click', async event => {
   }
   if (action === 'select-request') {
     selectedId = button.dataset.focusKey.slice('select-request:'.length);showPicker=false;
-    outcome = undefined;activeRequest = undefined;draw();return;
+    connectionPage=undefined;outcome = requestOutcomes.get(selectedId);activeRequest = requests.find(row=>row.request_id===selectedId);draw();return;
   }
-  if (action === 'view-requests') {outcome=undefined;activeRequest=undefined;selectedId=undefined;showPicker=true;draw();return;}
+  if (action === 'view-requests') {connectionPage=undefined;outcome=undefined;activeRequest=undefined;selectedId=undefined;showPicker=true;draw();return;}
   if (action === 'copy-link' || action === 'copy-address') {
     const copyingQR=qrControls,copyingStage=copyFeedbackKey();
     copying=true;button.disabled = true;
@@ -95,9 +100,9 @@ root.addEventListener('click', async event => {
       if (action === 'copy-link') await copyingQR.copy();
       else await homeClipboard.writeText(button.dataset.focusKey.slice('copy-address:'.length),{purpose:'wallet.address'});
       if (copyFeedbackKey() !== copyingStage || action === 'copy-link' && qrControls !== copyingQR) return;
-      clipboardFeedback = action === 'copy-link' ? 'Connection link copied. Open it in your wallet app.' : 'Address copied.';
+      clipboardFeedback = action === 'copy-link' ? 'link-copied' : 'address-copied';
       clipboardFeedbackKey=copyingStage;
-    } catch { if (copyFeedbackKey() !== copyingStage || action === 'copy-link' && qrControls !== copyingQR) return;clipboardFeedbackKey=copyingStage;clipboardFeedback = action === 'copy-link' ? 'Home could not copy the connection link. Select Copy link to try again.' : 'Home could not copy the address. Select Copy to try again.'; }
+    } catch { if (copyFeedbackKey() !== copyingStage || action === 'copy-link' && qrControls !== copyingQR) return;clipboardFeedbackKey=copyingStage;clipboardFeedback = 'copy-failed'; }
     finally { copying=false;button.disabled = false;draw(); }
   }
 });
@@ -113,6 +118,7 @@ root.addEventListener('keydown',event=>{
   if (result.intent === 'cancel') qrControls?.cancel();
   else root.querySelector(`[data-action="${result.focus}"]`)?.focus();
 });
+window.addEventListener('pagehide',()=>mounted?.dispose());
 window.addEventListener('focus',()=>{
   if (!root.contains(document.activeElement) && rememberedFocus?.key === renderKey) {
     const target=[...root.querySelectorAll('[data-action],[data-focus]')].find(node=>rememberedFocus.action ? node.dataset.action===rememberedFocus.action&&node.dataset.focusKey===rememberedFocus.focusKey : node.dataset.focus===rememberedFocus.outcome);
@@ -126,55 +132,27 @@ window.addEventListener('message',event=>{
 });
 
 function draw() {
+  if(mounted){const saved=captureConnectionPresentation(mounted.root);if(saved.action)rememberedFocus={key:renderKey,action:saved.action,focusKey:saved.key,outcome:saved.action};}
   const now = Math.floor(Date.now()/1000);
-  const presentation = windowPresentation({connection:connectionState,accounts:linkedAccounts,requests,busy:hostEffectInFlight && !outcome,
+  const presentation = windowPresentation({loading:!accountsLoaded,connection:connectionState,accounts:linkedAccounts,requests:connectionPage ? [] : requests,busy:hostEffectInFlight && !outcome,
     phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
-    outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,dispatchedRequestId},now);
-  const requestReady=['request-waiting','request-multiple','transaction-waiting','request-new-connection'].includes(presentation.input.stage);
-  if (connectionNeedsReplacement && requestReady && !hostEffectInFlight) presentation.input.stage = 'request-new-connection';
-  if (showPicker && requestReady && presentation.request && requests.length > 0) presentation.input.stage = 'request-list';
-  const stage = presentation.input.stage;
+    outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,dispatchedRequestId,connectionPage,
+    paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)))},now);
+  if (connectionPage === 'access' && !hostEffectInFlight && !launchExpired) presentation.input.stage=permissionStatus === 'granted' ? 'internet-ready' : 'internet-off';
+  if (connectionPage) presentation.otherRequests=requests;
+  if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
+  if (showPicker && requests.length && !hostEffectInFlight) {
+    presentation.input.stage='request-list';presentation.input.transactionHash=undefined;presentation.input.walletResult=undefined;presentation.request=requests.find(row=>row.request_id===selectedId)||requests[0];
+    presentation.otherRequests=requests.filter(row=>row.request_id!==presentation.request.request_id);
+  }
+  if (clipboardFeedback && clipboardFeedbackKey === `${presentation.input.stage}:${(presentation.input.stage.startsWith('request-') || presentation.input.stage.startsWith('transaction-') || presentation.input.stage==='checking-response' ? presentation.request?.request_id : '') || ''}:${presentation.input.account?.accounts[0]?.address || ''}`) presentation.input.copyFeedback=clipboardFeedback;
+  if (hostEffectInFlight) presentation.input.supportedActions=presentation.input.supportedActions.filter(id=>['cancel','stop-waiting','copy-link'].includes(id));
   currentView=walletConnectView(presentation);
-  const key = `${stage}:${currentView.request?.id || ''}`;
-  const previous = root.querySelector('main');
-  const focus = document.activeElement;
-  const same = key === renderKey;
-  const scroll = same ? {top:previous?.scrollTop || 0,content:previous?.querySelector('.connection-content')?.scrollTop || 0} : null;
-  const focusAction = same && root.contains(focus) ? focus.dataset.action : null;
-  const focusKey = focusAction ? focus.dataset.focusKey : null;
-  const focusOutcome = same && root.contains(focus) ? focus.dataset.focus : null;
-  const hadFocus=document.hasFocus();
-  if(root.contains(focus)&&(focus.dataset.action||focus.dataset.focus))rememberedFocus={key:renderKey,action:focus.dataset.action,focusKey:focus.dataset.focusKey,outcome:focus.dataset.focus};
-  const tree = renderConnection(document,currentView);
-  // The shared owner's capability input is pending. Withhold N1 intents; retain
-  // only base actions, so every visible control has an existing effect.
-  for (const button of tree.querySelectorAll('[data-action]')) {
-    if (!baseActions.has(button.dataset.action) || button.dataset.action === 'finish' && (!connectionState?.session?.address || !/^eip155:(1|20|8453|11155111)$/.test(connectionState.session.chain))) button.remove();
-    else if (copying && ['copy-link','copy-address'].includes(button.dataset.action)) button.disabled=true;
-    else if (hostEffectInFlight && !['cancel','stop-waiting','copy-link'].includes(button.dataset.action)) button.disabled = true;
-  }
-  if (presentation.checkingMessage) {tree.querySelector('[data-focus=outcome]').textContent=presentation.checkingMessage;tree.querySelector('.connection-wait')?.remove();tree.querySelector('.connection-notice').textContent='Stopping here ends this wait. Home may still record the response.';}
-  if (presentation.connectionNotice) {const node=tree.querySelector('[data-focus=outcome],.connection-wait,.connection-notice');if(node)node.textContent+=' '+presentation.connectionNotice;}
-  if (presentation.hashNotice) {const node=tree.querySelector('.connection-notice');node.textContent+='\n'+presentation.hashNotice;node.style.whiteSpace='pre-line';node.style.overflowWrap='anywhere';node.style.userSelect='text';}
-  if (presentation.preparingMessage) tree.querySelector('[data-focus=outcome]').textContent=presentation.preparingMessage;
-  if (clipboardFeedback && clipboardFeedbackKey === `${key}:${currentView.account?.accounts[0]?.address || ''}`) {
-    const status = tree.querySelector('.connection-dialog p:last-of-type') || tree.querySelector('[data-focus="outcome"]');
-    if (status) {status.textContent=clipboardFeedback;status.setAttribute('role','status');status.setAttribute('aria-live','polite');}
-  }
-  for (const button of tree.querySelectorAll('[data-action=send-request]')) {button.dataset.walletRequestSign=presentation.request.request_id;button.dataset.walletRequestIntent=presentation.request.intent;}
-  root.replaceChildren(tree);renderKey=key;
-  if (scroll) {tree.scrollTop=scroll.top;const content=tree.querySelector('.connection-content');if(content)content.scrollTop=scroll.content;}
-  const controls = [...tree.querySelectorAll('[data-action]')];
-  if (!hadFocus) return;
-  if (focusAction) {
-    const target = controls.find(node=>node.dataset.action === focusAction && node.dataset.focusKey === focusKey);
-    if(target)target.focus({preventScroll:true});
-  } else if (focusOutcome) {
-    [...tree.querySelectorAll('[data-focus]')].find(node=>node.dataset.focus===focusOutcome)?.focus({preventScroll:true});
-  } else if (!same) {
-    const target = controls.find(node=>node.dataset.action === currentView.focus) || tree.querySelector(`[data-focus="${currentView.focus}"]`);
-    target?.focus({preventScroll:true});
-  }
+  const key=`${currentView.stage}:${currentView.request?.id || ''}`;
+  mounted=mountConnection(root,currentView,mounted);renderKey=key;
+  for (const button of mounted.root.querySelectorAll('[data-action=send-request]')) {button.dataset.walletRequestSign=currentView.request.id;button.dataset.walletRequestIntent=presentation.request.intent;}
+  if(copying)for(const button of mounted.root.querySelectorAll('[data-action=copy-link],[data-action=copy-address]'))button.disabled=true;
+
 }
 
 function watchConnection() {
@@ -227,12 +205,13 @@ async function refreshWalletState() {
   linkedAccounts=Array.isArray(accountSummary?.accounts) ? accountSummary.accounts : [];
   requests=(Array.isArray(requestSummary?.approval_requests) ? requestSummary.approval_requests : []).filter(signableRequest).map(row=>({...row,capsule_id:readText(row.capsule_id)}));
   if (selectedId && !requests.some(row=>row.request_id===selectedId)) selectedId=undefined;
+  if(activeRequest&&!hostEffectInFlight&&!outcome&&activeRequest.request_id!==dispatchedRequestId&&!requests.some(row=>row.request_id===activeRequest.request_id))activeRequest=undefined;
   if (outcome==='request-done' && activeRequest && requests.some(row=>row.request_id !== activeRequest.request_id)) outcome='request-next';
-  const first=!accountsLoaded;accountsLoaded=true;draw();
+  homeReadFailed=false;const first=!accountsLoaded;accountsLoaded=true;draw();
   if (first) checkConnection().catch(()=>{});
 }
 function copyFeedbackKey() {return `${renderKey}:${currentView?.account?.accounts[0]?.address || ''}`;}
-function resetFeedback() {proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;outcome=undefined;clipboardFeedback='';deadline=undefined;}
+function resetFeedback() {connectionPage=undefined;showPicker=false;proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;outcome=undefined;clipboardFeedback='';deadline=undefined;}
 async function onConnect({fresh=true}={}) {
   if (hostEffectInFlight || launchExpired) return;
   resetFeedback();activeRequest=undefined;connectionNeedsReplacement=false;
@@ -273,7 +252,7 @@ async function cancelWalletWait() {
   try {currentPhase='disconnecting';draw();await connector.effect({kind:'cancel'});connectionState=undefined;
     if (unsent) {activeRequest=undefined;outcome=undefined;}
     else outcome=phase === 'ownership' ? 'link-cancelled' : phase === 'signature' ? 'request-cancelled' : phase === 'transaction' ? 'transaction-cancelled' : 'qr-cancelled';
-  } catch {outcome=!unsent && activeRequest?.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'link-error';draw();}
+  } catch {outcome=!unsent && activeRequest?.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'disconnect-error';draw();}
   finally {hostEffectInFlight=false;currentPhase='idle';draw();watchConnection();refreshWalletState().catch(()=>{});}
 }
 async function requestCapsuleWalletEffect(action) {
@@ -304,6 +283,7 @@ async function requestCapsuleWalletEffect(action) {
     if (epoch === actionEpoch && !awaitingAccess()) {connectionNeedsReplacement=Boolean(error.freshConnection);outcome=errorStage(error,action,effectPhase);draw();}
     throw error;
   } finally {
+    if (action.kind === 'approve' && activeRequest && outcome) requestOutcomes.set(activeRequest.request_id,outcome);
     if (epoch === actionEpoch) {
       hostEffectInFlight=false;currentPhase='idle';effectPhase='idle';
       deadline=undefined;
@@ -340,6 +320,6 @@ function notifyHomeSummaryChanged() {if(frameHomeToken && homeOrigin && window.t
 function readText(value) {return typeof value === 'string' ? value.trim() : '';}
 function knownOutcome() {return ['linked','request-done','request-next','transaction-done','request-declined','transaction-declined'].includes(outcome);}
 function awaitingAccess() {return Boolean(pendingEffect) || permissionStatus !== 'granted' && Boolean(ownerConsentNeeded || activeRequest && activeRequest.request_id !== dispatchedRequestId);}
-function showError(error) {if(!launchExpired && !hostEffectInFlight && !knownOutcome()){outcome=activeRequest ? errorStage(error,recoveryAction,effectPhase) : 'link-error';}draw();}
+function showError(error) {homeReadFailed=true;if(!launchExpired && !hostEffectInFlight && !knownOutcome()){outcome=activeRequest ? errorStage(error,recoveryAction,effectPhase) : 'link-error';}draw();}
 
 draw();watchConnection();refreshWalletState().catch(showError);

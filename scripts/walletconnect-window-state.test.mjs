@@ -22,11 +22,11 @@ const cases=[
  ['request-waiting',{...initial,requests:[request]}],['request-multiple',{...initial,requests:[request,{...request,request_id:'request-2'}]}],
  ['request-phone',{...initial,busy:true,phase:'signature',activeRequest:request}],
  ['transaction-phone',{...initial,busy:true,phase:'transaction',activeRequest:{...request,intent:'transaction_intent'}}],
- ['request-unsendable',{...initial,requests:[{...request,intent:'browser_typed_data_sign'}]}],
- ['request-expired',{...initial,requests:[{...request,expires_at:now-1}]}],
- ['transaction-deadline',{...initial,requests:[{...request,intent:'transaction_intent',expires_at:now+250}]}],
+ ['request-unsendable',{...initial,selectedId:'request-1',requests:[{...request,intent:'browser_typed_data_sign'}]}],
+ ['request-expired',{...initial,selectedId:'request-1',requests:[{...request,expires_at:now-1}]}],
+ ['transaction-deadline',{...initial,selectedId:'request-1',requests:[{...request,intent:'transaction_intent',expires_at:now+250}]}],
  ['transaction-waiting',{...initial,requests:[{...request,intent:'transaction_intent'}]}],
- ['transaction-reopened',{...initial,requests:[{...request,intent:'transaction_intent',status:'approved'}]}],
+ ['transaction-reopened',{...initial,selectedId:'request-1',requests:[{...request,intent:'transaction_intent',status:'approved'}]}],
  ['request-waiting',{permission:'granted',requests:[request]}],
  ['request-internet-off',{connection:{},permission:'revoked',requests:[request]}],
  ['request-internet-pending',{permission:'requested',pending:{},requests:[request]}],
@@ -54,7 +54,7 @@ for(const key of ['signatureError','consumed'])test(`consumed ${key} keeps Home 
 test('account confirmation discards a latent request address after a wallet update',()=>{
  const next='0x'+'34'.repeat(20);
  const p=windowPresentation({...initial,connection:{session:{...session,address:next}},walletChanged:true,outcome:'request-unavailable',activeRequest:request},now);
- const view=walletConnectView(p);assert.equal(view.stage,'saved-unlinked');assert.equal(view.request,null);assert.equal(view.account.accounts[0].address,next);
+ const view=walletConnectView(p);assert.equal(view.stage,'account-changed');assert.equal(view.request,null);assert.equal(view.account.accounts[0].address,next);
 });
 test('linking with another request pending still confirms the wallet-selected account',()=>{
  const next='0x'+'34'.repeat(20);
@@ -101,10 +101,10 @@ for(const left of [50,1500])test(`a sent request shows the bounded wallet wait f
 for(const outcome of ['request-declined','transaction-declined'])for(const ended of [{permission:'revoked'},{connection:{removed:true}},{connection:{expired:true}}])test(`known ${outcome} survives ${JSON.stringify(ended)}`,()=>{
  const view=walletConnectView(windowPresentation({...initial,...ended,activeRequest:{...request,status:'approved',intent:outcome.startsWith('transaction')?'transaction_intent':'credential'},dispatchedRequestId:request.request_id,outcome},now));assert.equal(view.stage,outcome);
 });
-test('disconnect failure stays on a non-request recovery screen',()=>assert.equal(errorStage(new Error('Could not clear connection'),{kind:'disconnect'},'disconnecting'),'link-error'));
+test('disconnect failure stays on a non-request recovery screen',()=>assert.equal(errorStage(new Error('Could not clear connection'),{kind:'disconnect'},'disconnecting'),'disconnect-error'));
 test('a transaction consumed elsewhere retains unknown-result recovery',()=>assert.equal(errorStage(new Error(messages.consumed),{kind:'approve',intent:'transaction_intent'},'starting'),'transaction-wallet-error'));
 for(const phase of ['starting','signature','idle'])test(`Home failure in ${phase} never claims the wallet failed to sign`,()=>assert.equal(errorStage(new Error('Runtime returned an invalid signature request.'),{kind:'approve'},phase),'request-unavailable'));
-test('an unsent expired request is not offered a connection-and-resend recovery',()=>assert.equal(windowPresentation({...initial,connection:{expired:true},requests:[{...request,expires_at:now-1}]},now).input.stage,'request-expired'));
+test('an unsent expired request is not offered a connection-and-resend recovery',()=>assert.equal(windowPresentation({...initial,selectedId:'request-1',connection:{expired:true},requests:[{...request,expires_at:now-1}]},now).input.stage,'request-expired'));
 
 for(const [ending,extra,expected] of [
  ['deadline',{},'transaction-reopened'],
@@ -113,7 +113,7 @@ for(const [ending,extra,expected] of [
  ['access loss',{permission:'revoked'},'transaction-wallet-error'],
 ])test(`approved transaction reopened after ${ending} keeps unknown-result recovery`,()=>{
  const row={...request,intent:'transaction_intent',status:'approved',expires_at:now-1};
- const view=walletConnectView(windowPresentation({...initial,...extra,requests:[row]},now));
+ const view=walletConnectView(windowPresentation({...initial,...extra,selectedId:'request-1',requests:[row]},now));
  assert.equal(view.stage,expected);assert.ok(view.actions.every(action=>!['send-request','start-over','connect'].includes(action.id)));
  assert.match(view.notice.map(part=>part.text).join(''),/Check .*wallet.*before sending again/);
 });
@@ -126,7 +126,7 @@ test('wallet removal after dispatch keeps the sent-message removal state',()=>{
 test('a linked outcome cannot label a newly reported account as linked',()=>{
  const next={...session,address:'0x'+'34'.repeat(20)};
  const view=walletConnectView(windowPresentation({...initial,connection:{session:next},outcome:'linked',walletChanged:true},now));
- assert.equal(view.stage,'saved-unlinked');assert.equal(view.account.accounts[0].address,next.address);assert.ok(view.actions.some(action=>action.id==='finish'));
+ assert.equal(view.stage,'account-changed');assert.equal(view.account.accounts[0].address,next.address);assert.ok(view.actions.some(action=>action.id==='send-message'));
 });
 
 test('a recorded dispatch and wallet removal outrank a generic unavailable error',()=>{
@@ -136,5 +136,18 @@ test('a recorded dispatch and wallet removal outrank a generic unavailable error
 test('a linked outcome keeps its proven account while the list read waits',()=>{
  const facts={...initial,accounts:[],outcome:'linked',walletChanged:true,proofAccount:{address,chain:session.chain}};
  assert.equal(windowPresentation(facts,now).input.stage,'linked');
- assert.equal(windowPresentation({...facts,outcome:undefined,proofAccount:undefined},now).input.stage,'saved-unlinked','a restored session cannot use an earlier in-memory proof');
+ assert.equal(windowPresentation({...facts,outcome:undefined,proofAccount:undefined},now).input.stage,'account-changed','a restored session cannot use an earlier in-memory proof');
+});
+
+for (const status of ['rejected','dismissed']) test(`final view maps the explicit ${status} record`,()=>{
+ const view=walletConnectView(windowPresentation({...initial,selectedId:request.request_id,requests:[{...request,status,expires_at:now-1}]},now));
+ assert.equal(view.stage,`request-${status}`);assert.ok(view.actions.some(a=>a.id==='back-to-connection'));
+});
+for (const blocked of [{status:'approved',intent:'transaction_intent'},{intent:'browser_typed_data_sign'},{expires_at:now-1}])test(`F1 default skips a lone blocked record ${JSON.stringify(blocked)}`,()=>{
+ const view=walletConnectView(windowPresentation({...initial,requests:[{...request,...blocked}]},now));
+ assert.equal(view.stage,'linked');assert.ok(view.actions.some(a=>a.id==='back-to-connection'));assert.equal(view.queueCount,1);
+});
+test('safe account retry uses explicit false safety and the supported-actions interface',()=>{
+ const p=windowPresentation({...initial,outcome:'link-error'},now);assert.equal(p.input.localSafety,false);
+ assert.ok(walletConnectView(p).actions.some(a=>a.id==='connect'));
 });
