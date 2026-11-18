@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { walletViewAssets, validateWalletViewAssets } from './check-product-data.mjs';
 
-test('real release staging and archives carry identical inactive view bytes in all three capsules', () => {
+test('real release staging and archives carry identical shared view bytes in all three capsules', () => {
   validateWalletViewAssets(resolve('.'));
   const temporary=temporaryDirectory('wallet-view-package-'),scratch=temporary.path;
   const hashes={};
@@ -24,9 +24,7 @@ test('real release staging and archives carry identical inactive view bytes in a
         assert.deepEqual(unpacked.stdout,readFileSync(`capsules/_shared/${asset}`),member);
         hashes[name][asset]=createHash('sha256').update(unpacked.stdout).digest('hex');
       }
-      const entry=readFileSync(`capsules/${name}/browser/index.html`,'utf8');
-      const controller=readFileSync(`capsules/${name}/browser/${name}.js`,'utf8');
-      assert(!entry.includes('wallet-connection-view')&&!controller.includes('wallet-connection-view'),'live window stays on its existing controller');
+
     }
     const receipt=process.env.WALLET_VIEW_PACKAGE_RECEIPT||join(scratch,'receipt.json');
     mkdirSync(dirname(receipt),{recursive:true});

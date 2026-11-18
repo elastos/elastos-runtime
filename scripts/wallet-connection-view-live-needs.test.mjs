@@ -1,0 +1,78 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync,existsSync} from 'node:fs';
+import {writeFile} from 'node:fs/promises';
+import {connectionView,reduceConnection,reduceSummary,connectionKey,viewText,connectionActionIds,stageNames} from '../capsules/_shared/wallet-connection-view.mjs';
+import {shared,states,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
+import {browserFixture,playwright,temporaryProof} from './lib/wallet-connection-browser-fixture.mjs';
+const live=JSON.parse(readFileSync(new URL('./fixtures/wallet-connection-live-view-states.json',import.meta.url))).states;
+const seed=shared.n7PrivateSummaries.find(r=>r.id==='site-wallet-metamask').summary;
+const source=id=>shared.messages.find(r=>r.id===id).message;
+const projection=(patch={})=>reduceSummary({...seed,...patch},{connector:'wallet-metamask'});
+const account={name:'MetaMask',mark:'metamask',connection:null,accounts:[{address:'0x1122334455667788990011223344556677889900',networks:['Base']}]};
+test('live needs: all added stages have named window-local production fixtures',async t=>{
+ for(const row of live)await t.test(row.window+'/'+row.stage,()=>{assert(stageNames[row.window].includes(row.stage));const v=connectionView({window:row.window,stage:row.stage});assert.equal(v.stage,row.stage);});
+});
+test('live needs: a supported-action projection withholds authority and keeps manual recovery',()=>{
+ for(const row of states){
+  const args=fixtureArguments(row),original=reduceConnection(...args);args[0].supportedActions=[];
+  const v=reduceConnection(...args);assert.deepEqual(v.actions,[],row.designState);assert.equal(viewText(v.status),viewText(original.status));assert.match(viewText(v.notice),/Home’s window controls/);
+ }
+ assert(!connectionView({window:'unisat',stage:'ready',supportedActions:['use-walletconnect']}).actions.length,'an allow-list cannot invent a compatible connector');
+ assert.throws(()=>connectionView({window:'metamask',stage:'ready',supportedActions:['invented-route']}),/closed supported actions/);
+ assert.throws(()=>connectionView({window:'metamask',stage:'ready',supportedActions:['connect','connect']}),/closed supported actions/);
+});
+test('live needs: stopped recovery retains the unanswered operation without a dead Check again instruction',()=>{
+ for(const window of ['walletconnect','metamask','unisat'])for(const stage of ['request-timeout','request-cancelled']){
+  const args=fixtureArguments(states.find(r=>r.window===window&&r.stage===stage));args[0].supportedActions=['close-window'];const v=reduceConnection(...args),copy=viewText(v.notice);
+  assert.doesNotMatch(copy,/Check again|Check access|Check status/);assert.match(copy,/may still be waiting|later answer/);assert(v.actions.every(a=>a.id==='close-window'));
+ }
+});
+test('live needs: request kind titles and expired status use Runtime vocabulary',()=>{
+ const titles={auth_challenge:'Wallet sign-in request',capability_grant:'Wallet access request',credential:'Credential signing request',publish_envelope:'Publish approval request',transaction_intent:'Send transaction',browser_account_access:'Browser account access request',browser_personal_sign:'Sign a message',browser_typed_data_sign:'Sign typed data',bitcoin_bip322_proof:'Bitcoin proof request',revocation:'Revocation approval request',new_unknown_intent:'Approval request'};
+ for(const [intent,title]of Object.entries(titles))assert.equal(projection({intent}).title,title);
+ const view=reduceConnection({window:'metamask',stage:'request-waiting'},{summary:{...seed,status:'expired'},nowSeconds:1800000001});assert.equal(view.stage,'request-expired');assert.equal(view.request.status,'expired');assert(!view.actions.some(a=>a.id==='send-request'));
+});
+test('live needs: connection notices preserve a recorded transaction and its required account',()=>{
+ const row=states.find(r=>r.designState==='metamask/transaction-done'),args=fixtureArguments(row),original=reduceConnection(...args);
+ for(const connectionNotice of ['account-changed','network-changed','transport-unavailable','connection-removed','connection-expired','provider-unavailable']){
+  args[0]={...args[0],connectionNotice,currentSelection:{address:'0x9999999999999999999999999999999999999999',network:'Ethereum'},localReturn:true};const v=reduceConnection(...args);
+  assert.equal(viewText(v.status),viewText(original.status));assert.deepEqual(v.walletResult,original.walletResult);assert.equal(v.request.id,original.request.id);assert(v.connectionNotice.length);assert(v.requiredAccount);assert(v.actions.some(a=>a.id==='back-to-connection'));assert.equal(v.focus,'outcome');
+ }
+ assert.throws(()=>connectionView({window:'metamask',stage:'ready',connectionNotice:'raw wallet text'}),/closed connection notice/);
+ assert.throws(()=>connectionView({window:'metamask',stage:'ready',currentSelection:{address:'a',network:'b',html:'c'}}),/closed current selection/);
+});
+test('live needs: full picker and account display keep a fourth and ninth row reachable',()=>{
+ const summary=projection(),otherRequests=Array.from({length:20},(_,i)=>({...summary,id:'request-'+i}));
+ const view=connectionView({window:'metamask',stage:'request-list',summary,otherRequests});assert.equal(view.choices.length,21);assert.equal(view.choices.at(-1).id,'request-19');
+ const many={...account,accounts:Array.from({length:20},(_,i)=>({address:'0x'+String(i).padStart(40,'0'),networks:['Base']}))};assert.equal(connectionView({window:'metamask',stage:'linked',account:many}).account.accounts.length,20);
+ assert.throws(()=>connectionView({window:'metamask',stage:'linked',account:{...many,accounts:Array(101).fill(many.accounts[0])}}),/account rows/);
+});
+test('live needs: clipboard feedback is closed local copy and QR keys respect supplied capabilities',()=>{
+ const args=fixtureArguments(states.find(r=>r.stage==='qr-shown'));
+ for(const copyFeedback of ['link-copied','address-copied','copy-failed']){args[0].copyFeedback=copyFeedback;assert(reduceConnection(...args).copyFeedback.length);}
+ args[0].supportedActions=['copy-link'];const view=reduceConnection(...args);assert.equal(connectionKey(view,{key:'Escape'}),null);assert.equal(connectionKey(view,{key:'Tab',action:'copy-link'}).focus,'copy-link');
+ assert.throws(()=>connectionView({window:'metamask',stage:'ready',copyFeedback:'wallet wrote this'}),/closed copy feedback/);
+});
+
+const proof=await temporaryProof('wallet-live-view-',process.env.WALLET_VIEW_PROOF_DIR);const receipts=[];
+test.after(async()=>{try{await writeFile(proof.path+'/live-needs.json',JSON.stringify(receipts,null,2)+'\n');}finally{await proof.cleanup();}});
+for(const engine of ['chromium','webkit'])test('live needs: rendering and QR card containment in '+engine,{skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit runs in content-sandbox CI':false},async()=>{
+ const f=await browserFixture(engine,{width:480,height:560});
+ const mount=async args=>f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));await document.fonts.ready;},args);
+ try{
+  for(const row of live){await mount([{window:row.window,stage:row.stage,supportedActions:['close-window','refresh-status','connect','send-message','start-over','cancel']}]);assert((await f.page.locator('main').innerText()).length);}
+  // Capability filtering covers model actions plus renderer-only account/picker/panel controls.
+  for(const row of [...states,...live]){
+   const args=row.local?fixtureArguments(row):[{window:row.window,stage:row.stage}];args[0].supportedActions=[];await mount(args);assert.equal(await f.page.locator('button').count(),0,row.window+'/'+row.stage);
+  }
+  const approvalArgs=fixtureArguments(states.find(r=>r.designState==='metamask/request-waiting'));approvalArgs[0].supportedActions=['send-request'];await mount(approvalArgs);assert.equal(await f.page.evaluate(()=>document.activeElement.dataset.focus),'dismissal');assert.equal(await f.page.locator('button').count(),1);assert.match(await f.page.locator('.connection-card-start').innerText(),/Home’s window controls/);
+  const qrArgs=fixtureArguments(states.find(r=>r.stage==='qr-shown'));qrArgs[0].copyFeedback='copy-failed';await mount(qrArgs);
+  const box=await f.page.evaluate(()=>{const card=document.querySelector('.connection-dialog').getBoundingClientRect(),qr=document.querySelector('.connection-qr').getBoundingClientRect();return {card:{top:card.top,bottom:card.bottom},qr:{width:qr.width,height:qr.height},controls:[...document.querySelectorAll('button')].map(b=>({top:b.getBoundingClientRect().top,bottom:b.getBoundingClientRect().bottom})),feedback:document.querySelector('.connection-copy-feedback')?.textContent};});
+  assert.equal(box.feedback,'Could not copy. Try again.');assert(box.qr.width>=128,'normal QR does not use compact 56px sizing');assert(box.controls.every(b=>b.top>=box.card.top&&b.bottom<=box.card.bottom&&b.bottom<=560),'QR border encloses both controls within the viewport');await f.page.screenshot({path:proof.path+'/qr-contained-'+engine+'.png'});
+  await f.page.setViewportSize({width:320,height:182});const summary=projection(),otherRequests=Array.from({length:20},(_,i)=>({...summary,id:'extra-'+i}));
+  await f.page.evaluate(async({summary,otherRequests})=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.connectionView({window:'metamask',stage:'request-list',summary,otherRequests,compact:true}));},{summary,otherRequests});
+  const last=f.page.locator('[data-focus-key="select-request:extra-19"]');await last.scrollIntoViewIfNeeded();await last.click();assert(await last.isVisible());
+  receipts.push({engine,stages:live.length,supportedActionPaths:states.length+live.length,pickerRows:21,qr:box,result:'PASS'});
+ }finally{await f.close();}
+});

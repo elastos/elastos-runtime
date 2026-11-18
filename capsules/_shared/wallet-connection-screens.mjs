@@ -2267,5 +2267,22 @@ const definitions = {
   }
 };
 
+// Current-plumbing presentation states. Effects remain with the mounting window.
+for(const window of ['walletconnect','metamask','unisat']){
+  const close={id:'close-window',label:'Close window',quiet:false};
+  const refresh={id:'refresh-status',label:'Check again',quiet:false};
+  Object.assign(definitions[window],{
+    'wallet-loading':{status:'Loading your wallet connections.',primary:close},
+    'wallet-unavailable':{status:'Home could not load your wallet connections.',primary:refresh,secondary:[close],focus:'refresh-status'},
+    'home-wallet-required':{status:'Create or import an account in Wallet to continue.',primary:{id:'open-wallet',label:'Open Wallet',quiet:false},secondary:[close]},
+    'provider-unavailable':{status:'The connection to your browser wallet is unavailable.',notice:'Open {{wallet}} to check its connection.',primary:refresh,secondary:[close]},
+    'account-changed':{requiresSafeRetry:true,status:'Your wallet is using a different account.',notice:'Link this account before using it in Home.',primary:{id:window==='walletconnect'?'send-message':'connect',label:window==='walletconnect'?'Send message':'Connect',quiet:false},secondary:window==='walletconnect'?[{id:'start-over',label:'Get new QR code',quiet:false},close]:[close],account:true},
+    'account-unavailable-unknown':{requiresSafeRetry:true,status:'Your wallet is not showing an account.',notice:'Open {{wallet}} and choose an account, then connect again.',primary:{id:'connect',label:'Connect',quiet:false},secondary:[close]},
+    'network-unsupported':{status:'This network is not supported here.',notice:'Choose a supported network in {{wallet}}.',primary:close},
+    'preparing-request':{status:'Preparing request.',primary:{id:'cancel',label:'Cancel',quiet:false}},
+    'preparing-connection':{status:'Preparing connection.',primary:{id:'cancel',label:'Cancel',quiet:false}}
+  });
+}
+
 const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const screens = freeze(definitions);

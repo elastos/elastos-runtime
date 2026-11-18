@@ -16,6 +16,10 @@ import { screens } from './wallet-connection-screens.mjs';
 const renderedViews = new WeakSet();
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 const appLabels = {browser:'Browser', notes:'Notes'};
+const requestTitles={auth_challenge:'Wallet sign-in request',capability_grant:'Wallet access request',credential:'Credential signing request',publish_envelope:'Publish approval request',transaction_intent:'Send transaction',browser_account_access:'Browser account access request',browser_personal_sign:'Sign a message',browser_typed_data_sign:'Sign typed data',bitcoin_bip322_proof:'Bitcoin proof request',revocation:'Revocation approval request'};
+const requestTitleValues=[...Object.values(requestTitles),'Approval request'];
+const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','transport-unavailable':'The connection to your wallet was lost.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your browser wallet is unavailable.'};
+const copyFeedbacks={'link-copied':'Link copied.','address-copied':'Address copied.','copy-failed':'Could not copy. Try again.'};
 const brands = { walletconnect: 'WalletConnect', metamask: 'MetaMask', unisat: 'UniSat', panel: 'Wallet' };
 // H:754 (busy recovery), H:767-779 (unknown cross-window work).
 const unknownRecoveryStages = new Set(['extension-busy','link-busy','request-busy']);
@@ -28,6 +32,7 @@ const plain = (value) => value !== null && typeof value === 'object' && !Array.i
 const requireValue = (valid, message) => { if (!valid) throw new TypeError(message); };
 const boolOrNull = (value) => value === null || typeof value === 'boolean';
 const clone = (value) => structuredClone(value);
+export const connectionActionIds=Object.freeze([...new Set([...Object.values(screens).flatMap(window=>Object.values(window).flatMap(screen=>[screen.primary,...(screen.secondary||[]),screen.requestAction,screen.reviewAction].filter(Boolean).map(a=>a.id))),'copy-address','disconnect','copy-link','select-request','view-requests','create','import','use-metamask','use-unisat','back-to-connection'])]);
 export const stageNames = Object.freeze(Object.fromEntries(Object.entries(screens).map(([key, value]) => [key, Object.freeze(Object.keys(value))])));
 
 export function reduceProvider(snapshot) {
@@ -55,11 +60,11 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
   const app = bounded(summary.requesting_app_name, 128) && summary.requesting_app_name ? summary.requesting_app_name : appLabels[summary.capsule_id] || 'Requesting app';
   return {
     id: summary.request_id, app, actor: summary.capsule_id,
-    title: transaction ? 'Send transaction' : summary.intent === 'browser_typed_data_sign' ? 'Sign typed data' : 'Sign a message', transaction,
+    title: requestTitles[summary.intent]||'Approval request', transaction,
     detail: bounded(summary.reason, 2048) ? summary.reason : '',
     site: summary.capsule_id === 'browser' ? displayOrigin(summary.requesting_origin) : null,
     address: bounded(summary.address, 128) ? summary.address : null,
-    status: ['pending', 'approved', 'rejected', 'dismissed', 'completed'].includes(summary.status) ? summary.status : 'unavailable',
+    status: ['pending', 'approved', 'rejected', 'dismissed', 'completed','expired'].includes(summary.status) ? summary.status : 'unavailable',
     expiresAt: Number.isSafeInteger(summary.expires_at) ? summary.expires_at : null,
   };
 }
@@ -67,7 +72,7 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
 function summaryProjection(value) {
   const keys=['id','app','actor','title','transaction','detail','site','address','status','expiresAt'];
   requireValue(plain(value)&&Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k)), 'closed reduced request');
-  requireValue(bounded(value.id,256)&&bounded(value.app,128)&&bounded(value.actor,128)&&bounded(value.detail,2048)&&typeof value.transaction==='boolean'&&['Sign a message','Sign typed data','Send transaction'].includes(value.title), 'reduced request fields');
+  requireValue(bounded(value.id,256)&&bounded(value.app,128)&&bounded(value.actor,128)&&bounded(value.detail,2048)&&typeof value.transaction==='boolean'&&requestTitleValues.includes(value.title), 'reduced request fields');
   requireValue(value.site===null||value.actor==='browser'&&displayOrigin(value.site)===value.site, 'reduced site');
   return clone(value);
 }
@@ -110,6 +115,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
     if(disposition==='answered')stage='request-done';
   }
   if(request && message?.outcome==='request_unavailable')stage='request-unavailable';
+  if(request?.status==='expired'&&!disposition&&!screens[input.window]?.[stage]?.dispatched&&!screens[input.window]?.[stage]?.afterAnswer&&stage!=='request-unavailable')stage='request-expired';
   const deadlines = [request?.expiresAt, Number.isSafeInteger(message?.deadlineAt) ? Math.floor(message.deadlineAt / 1000) : null].filter(Number.isSafeInteger);
   requireValue(!deadlines.length||Number.isSafeInteger(nowSeconds),'explicit clock for contract deadline');
   const waitSeconds = deadlines.length && Number.isSafeInteger(nowSeconds) ? Math.max(0, Math.min(...deadlines) - nowSeconds) : input.waitSeconds;
@@ -124,7 +130,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
 
 function accountDisplay(account, window, summary) {
   if (!account) return null;
-  requireValue(plain(account) && Array.isArray(account.accounts) && account.accounts.length > 0 && account.accounts.length <= 8, 'account rows');
+  requireValue(plain(account) && Array.isArray(account.accounts) && account.accounts.length > 0 && account.accounts.length <= 100, 'account rows');
   const validName = bounded(account.name, 40) && new TextEncoder().encode(account.name).length <= 160 && account.name;
   const name = validName ? account.name : 'Your wallet';
   const mark = !validName || window === 'walletconnect' || account.connection === 'WalletConnect' ? 'wallet' : ['wallet', 'metamask', 'unisat'].includes(account.mark) ? account.mark : 'wallet';
@@ -136,11 +142,18 @@ function accountDisplay(account, window, summary) {
 }
 
 export function connectionView(input) {
-  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext'];
+  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn'];
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
   const { window, stage } = input;
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
   const screen = screens[window][stage];
+  const supported=input.supportedActions===undefined?null:input.supportedActions;
+  requireValue(supported===null||Array.isArray(supported)&&supported.length<=connectionActionIds.length&&new Set(supported).size===supported.length&&supported.every(a=>connectionActionIds.includes(a)),'closed supported actions');
+  requireValue(input.copyFeedback===undefined||Object.hasOwn(copyFeedbacks,input.copyFeedback),'closed copy feedback');
+  requireValue(input.connectionNotice===undefined||Object.hasOwn(connectionNotices,input.connectionNotice),'closed connection notice');
+  requireValue(input.localReturn===undefined||typeof input.localReturn==='boolean','local return flag');
+  const currentSelection=input.currentSelection?clone(input.currentSelection):null;
+  requireValue(!currentSelection||plain(currentSelection)&&Object.keys(currentSelection).length===2&&bounded(currentSelection.address,128)&&bounded(currentSelection.network,80),'closed current selection');
   const provider = input.provider ? reduceProvider(input.provider) : null;
   requireValue(!provider?.providerId || (window === 'unisat' ? provider.providerId === 'unisat' : window === 'metamask' ? provider.providerId !== 'unisat' : true), 'provider belongs to window');
   requireValue(!provider || (window === 'unisat' ? provider.alternatives.length === 0 : provider.alternatives.every(p=>p!=='unisat')), 'provider alternatives belong to window');
@@ -151,7 +164,7 @@ export function connectionView(input) {
   const requestId=summary?.id||context?.id||null;
   const transactionDisplay = input.transactionDisplay ? clone(input.transactionDisplay) : null;
   if(transactionDisplay)requireValue(summary?.transaction && plain(transactionDisplay) && Object.keys(transactionDisplay).length===4 && bounded(transactionDisplay.destination,128) && bounded(transactionDisplay.network,80) && (transactionDisplay.amount===null&&transactionDisplay.asset===null || bounded(transactionDisplay.amount,80)&&/^[0-9]+(?:\.[0-9]+)?$/.test(transactionDisplay.amount)&&bounded(transactionDisplay.asset,16)), 'closed computed transaction display');
-  requireValue(!screen.request || summary && bounded(summary.id,256) && bounded(summary.app,128) && bounded(summary.detail,2048) && ['Sign a message','Sign typed data','Send transaction'].includes(summary.title) && (summary.site===null || displayOrigin(summary.site)===summary.site), 'reduced selected request summary');
+  requireValue(!screen.request || summary && bounded(summary.id,256) && bounded(summary.app,128) && bounded(summary.detail,2048) && requestTitleValues.includes(summary.title) && (summary.site===null || displayOrigin(summary.site)===summary.site), 'reduced selected request summary');
   const account = accountDisplay(input.account, window, summary);
   const safety = window === 'walletconnect' ? input.localSafety ?? null : provider?.paymentPending ?? null;
   requireValue(boolOrNull(safety), 'payment safety');
@@ -183,6 +196,7 @@ export function connectionView(input) {
     const close=actions.find(a=>a.id==='close-window')||{id:'close-window',label:parts('Close window'),primary:true,quiet:false};
     actions=[close,...actions.filter(a=>a.id!=='close-window')];
   }
+  if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Wallet activity before trying again.';actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
   const unknownLinkRecovery=safety===null&&stage==='link-error';
   if(unknownLinkRecovery){notice='Close this window. Check your wallet and Wallet activity before trying again.';actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
   if(stage==='disconnecting')notice='Disconnecting continues after you close this window.';
@@ -196,28 +210,43 @@ export function connectionView(input) {
   }
   const consumedSend = summary && summary.status !== 'pending' && actions.some(a=>a.id==='send-request');
   if(consumedSend){actions=actions.filter(a=>!['send-request','open-wallet'].includes(a.id));actions.unshift({id:'open-wallet',label:parts('Review in Wallet'),primary:true,quiet:false});outcome=parts('Review this request in Wallet.');}
+  if (screen.qr) actions = [{id:'copy-link',label:parts('Copy link'),primary:false,quiet:false},{id:'cancel',label:parts('Cancel'),primary:false,quiet:false}];
+  if(screen.requiresSafeRetry&&safety!==false){const close=actions.find(a=>a.id==='close-window');if(close){close.primary=true;close.quiet=false;}}
+  if(input.localReturn&&answered)actions.push({id:'back-to-connection',label:parts('Back to connection'),primary:false,quiet:true});
+  if(supported){
+    const removed=actions.filter(a=>!supported.includes(a.id));actions=actions.filter(a=>supported.includes(a.id));
+    if(removed.some(a=>['check-access','check-status'].includes(a.id))){
+      notice=answered?'Return to {{app}} to make a new request.':screen.dispatched||/timeout|cancelled/.test(stage)?'An operation may still be waiting in {{wallet}}. Closing this window does not cancel it. Home will ignore a later answer.':'Open {{wallet}} to check its account and connection.';
+      if(summary?.transaction&&!knownNotSent)notice='The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Wallet activity before trying again.';
+    }
+    if(removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
+    if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
+    if(!supported.includes('close-window')&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id))))notice+=' Close this window with Home’s window controls.';
+    if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window')||actions.find(a=>a.id==='back-to-connection');if(next){next.primary=true;next.quiet=false;}}
+  }
   const approvalSite = !screen.requestPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
-  if(approvalSite&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});
-  let focus = approvalSite || unknownRecovery || unknownLinkRecovery ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
+  if(approvalSite&&(!supported||supported.includes('close-window'))&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});
+  let focus = approvalSite || unknownRecovery || unknownLinkRecovery || screen.requiresSafeRetry&&safety!==false ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
+  if(approvalSite&&supported&&!supported.includes('close-window'))focus='dismissal';
+  if(focus&&!['outcome','accounts','dismissal'].includes(focus)&&!actions.some(a=>a.id===focus)&&!( ['select-request','copy-address'].includes(focus)&&(!supported||supported.includes(focus))))focus=actions.find(a=>a.primary)?.id|| (outcome.length?'outcome':null);
   let focusKey=null;
   const previous=input.previousFocus;
   const sameCard=previous?.window===window&&previous.stage===stage&&previous.requestId===requestId;
   const legacyFocus=previous?.stage===stage&&!approvalSite&&!answered&&!screen.qr;
   if((sameCard||legacyFocus)&&!screen.qr){
     if(sameCard&&previous.action===null)focus=null;
-    else if(bounded(previous.action,40)&&bounded(previous.key,512)&&['copy-address','select-request',...actions.map(a=>a.id)].includes(previous.action)){focus=previous.action;focusKey=previous.key;}
-    else if(sameCard&&['outcome','accounts'].includes(previous.action))focus=previous.action;
+    else if((!supported||supported.includes(previous.action))&&bounded(previous.action,40)&&bounded(previous.key,512)&&['copy-address','select-request',...actions.map(a=>a.id)].includes(previous.action)){focus=previous.action;focusKey=previous.key;}
+    else if(sameCard&&['outcome','accounts','dismissal'].includes(previous.action))focus=previous.action;
   }
-  if (screen.qr) actions = [{id:'copy-link',label:parts('Copy link'),primary:false,quiet:false},{id:'cancel',label:parts('Cancel'),primary:false,quiet:false}];
   const wait = screen.wait && !answered && !screen.requestPicker && !consumedSend ? input.waitSeconds : null;
   requireValue(wait === null || Number.isSafeInteger(wait) && wait >= 0 && wait <= 86400, 'wait seconds supplied by owner');
   requireValue(!screen.qr || bounded(input.qrData, 200000) && /^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(input.qrData), 'local PNG QR data');
   requireValue(input.otherRequests===undefined||Array.isArray(input.otherRequests)&&input.otherRequests.length<=100,'bounded request choices');
-  const choices = screen.choices ? (input.otherRequests || []).slice(0, screen.choices === 3 ? 2 : 1).map(summaryProjection) : [];
+  const choices = screen.choices ? (screen.requestPicker?(input.otherRequests||[]):(input.otherRequests || []).slice(0, screen.choices === 3 ? 2 : 1)).map(summaryProjection) : [];
   if (screen.requestPicker && summary) choices.unshift(summary);
   const view = {
-    window, stage, requestId, context, title: brands[window], account, selectedAccount: !!screen.selectedAccount,
-    showAccount: !!screen.account, requiredAccount: !!screen.requiredAccount, disconnect: screen.disconnect !== false && window === 'walletconnect',
+    window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, localReturn:input.localReturn===true, title: brands[window], account, selectedAccount: !!screen.selectedAccount,
+    showAccount: !!screen.account, requiredAccount: !!screen.requiredAccount||!!(summary&&currentSelection&&(summary.address&&summary.address!==currentSelection.address||account?.accounts[0].networks[0]!==currentSelection.network)), disconnect: screen.disconnect !== false && window === 'walletconnect',
     request: screen.request ? summary : null, transactionDisplay, choices, picker: !!screen.requestPicker,
     queueCount: screen.queueCount ? (input.otherRequests?.length||0)+(screen.afterAnswer?0:1) : 0, status: outcome, notice: parts(notice.trim()), afterNote: parts(screen.afterActionsNote),
     wait: wait === null ? null : `Time left: ${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, '0')}`,
@@ -233,9 +262,9 @@ export const viewText = parts => parts.map(p => p.text).join('');
 /** Keyboard decisions only; the mounting window applies focus/preventDefault. */
 export function connectionKey(view, {key, shiftKey = false, action} = {}) {
   if(!view.qrData)return null;
-  if(key==='Escape')return {intent:'cancel',focus:null};
+  if(key==='Escape')return view.actions.some(a=>a.id==='cancel')?{intent:'cancel',focus:null}:null;
   if(key!=='Tab')return null;
-  const ids=['copy-link','cancel'];
+  const ids=['copy-link','cancel'].filter(id=>view.actions.some(a=>a.id===id));if(!ids.length)return null;
   const index=ids.indexOf(action);
   return {intent:null,focus:ids[(index+(shiftKey?-1:1)+ids.length)%ids.length]};
 }
@@ -261,12 +290,13 @@ export function renderConnection(document, view) {
     return element;
   };
   const icon = mark => { const img = el('img'); img.src = `./connection-${mark}.png`; img.alt = ''; return img; };
+  const supports=id=>!view.supportedActions||view.supportedActions.includes(id);
   const isolated = (value, kind) => [{ kind, text: value }];
   const button = a => { const b = el('button', a.label, `el-button${a.primary ? ' el-button-primary' : ''}${a.quiet ? ' connection-quiet' : ''}`); b.type = 'button'; b.tabIndex = 0; b.dataset.action = a.id; b.dataset.focusKey=a.key||a.id; return b; };
   const short = a => a.startsWith('bc1') ? `${a.slice(0,8)}…${a.slice(-6)}` : `${a.slice(0,6)}…${a.slice(-4)}`;
   const root = el('main', null, `connection-window${view.panel ? ' connection-panel' : ''}${view.compact ? ' connection-compact' : ''}`);
   const approvalSite = (view.request?.site||view.context?.site) && !view.picker && view.actions.some(a=>approves(a.id));
-  if(approvalSite)root.classList.add('connection-approval-window');
+  if(approvalSite)root.classList.add('connection-approval-window');if(view.picker)root.classList.add('connection-picker');
   root.dataset.state = view.stage;root.dataset.window=view.window;root.dataset.requestId=view.requestId||'';root.dataset.scrollKey='root';
   const heading = el('header', null, 'connection-heading');
   if (!view.panel) heading.append(icon(view.window));
@@ -284,22 +314,22 @@ export function renderConnection(document, view) {
     const card = el('article',null,`connection-card ${selected ? 'connection-selected' : 'connection-account'}`);
     const h = el('div',null,'connection-account-header');
     if (!selected) h.append(icon(account.mark));
-    const joinedHeading = !view.panel && !selected && view.window !== 'walletconnect' && account.name === view.title && view.showAccount && !view.request;
+    const joinedHeading = !view.panel && !selected && view.window !== 'walletconnect' && account.name === view.title && view.showAccount && !view.request && !view.context;
     if(joinedHeading){h.replaceChildren(heading);if(!view.compact&&view.status.length)h.append(status);}
     else h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(account.name,'wallet'),'connection-account-name'));
-    if(view.panel)h.append(button({id:'open-wallet',label:isolated('Manage','copy'),quiet:true}));
+    if(view.panel&&supports('open-wallet'))h.append(button({id:'open-wallet',label:isolated('Manage','copy'),quiet:true}));
     card.append(h);
     if(account.connection && (view.panel||view.window!=='walletconnect'))card.append(el('p','via WalletConnect','connection-note connection-via'));
     for (const row of account.accounts) {
       const r=el('div',null,'connection-address-row');r.append(el('code',isolated(short(row.address),'address'),'connection-address'));
-      if(!selected){const copy=button({id:'copy-address',label:isolated('Copy','copy'),key:`copy-address:${row.address}`});copy.setAttribute('aria-label',`Copy address ${short(row.address)}`);r.append(copy);}
+      if(!selected&&supports('copy-address')){const copy=button({id:'copy-address',label:isolated('Copy','copy'),key:`copy-address:${row.address}`});copy.setAttribute('aria-label',`Copy address ${short(row.address)}`);r.append(copy);}
       card.append(r,el('p',row.networks.flatMap((network,i)=>[...(i?[{kind:'copy',text:' · '}]:[]),...isolated(network,'network')]),'connection-network'));
     }
-    if(view.disconnect&&!selected){const foot=el('div',null,'connection-account-foot');foot.append(button({id:'disconnect',label:isolated('Disconnect','copy'),quiet:true}));card.append(foot);}
+    if(view.disconnect&&!selected&&supports('disconnect')){const foot=el('div',null,'connection-account-foot');foot.append(button({id:'disconnect',label:isolated('Disconnect','copy'),quiet:true}));card.append(foot);}
     return card;
   }
   function siteIdentity(origin) {
-    const row=el('div',null,'connection-site-row');row.append(el('span','Site reported by Browser: '));
+    const row=el('div',null,'connection-site-row');row.append(el('span','Site reported by Browser'),document.createTextNode(': '));
     const site=el('bdi',null,'connection-isolated connection-site');site.dir='auto';
     const authority=origin.indexOf('://')+3, labels=origin.slice(authority).split('.'), tail=labels.splice(Math.max(0,labels.length-3));
     site.append(document.createTextNode(origin.slice(0,authority)));
@@ -329,10 +359,10 @@ export function renderConnection(document, view) {
   if(view.panel){
     const accounts=el('section',null,'connection-accounts');const h=el('h2','Accounts');h.dataset.focus='accounts';h.tabIndex=-1;accounts.append(h);
     if(view.account)accounts.append(accountCard(view.account));
-    const row=el('div',null,'connection-actions');row.append(button({id:'create',label:isolated('Create account','copy')}),button({id:'import',label:isolated('Import account','copy'),quiet:true}));accounts.append(row);content.append(accounts);
+    const row=el('div',null,'connection-actions');if(supports('create'))row.append(button({id:'create',label:isolated('Create account','copy')}));if(supports('import'))row.append(button({id:'import',label:isolated('Import account','copy'),quiet:true}));accounts.append(row);content.append(accounts);
     const options=el('section',null,'connection-wallet-options');options.append(el('h2',view.account?'Connect another wallet':'Connect a wallet'));
     const list=el('div',null,'connection-card connection-options-list');
-    for(const kind of ['walletconnect','metamask','unisat']){if(kind==='walletconnect'&&!view.walletconnectAvailable)continue;const b=button({id:`use-${kind}`,label:[]});b.className='connection-option';const label=el('span',null,'connection-option-text');label.append(el('span',brands[kind],'connection-option-label'),document.createTextNode(' '),el('span',kind==='walletconnect'?(view.account?.connection?'Add account':'Connect a wallet app with a QR code'):kind==='unisat'?'Bitcoin extension':'Browser extension','connection-note'));b.append(icon(kind),label,document.createTextNode(' '),el('span','›'));list.append(b);}options.append(list);content.append(options);
+    for(const kind of ['walletconnect','metamask','unisat']){if(!supports(`use-${kind}`))continue;if(kind==='walletconnect'&&!view.walletconnectAvailable)continue;const b=button({id:`use-${kind}`,label:[]});b.className='connection-option';const label=el('span',null,'connection-option-text');label.append(el('span',brands[kind],'connection-option-label'),document.createTextNode(' '),el('span',kind==='walletconnect'?(view.account?.connection?'Add account':'Connect a wallet app with a QR code'):kind==='unisat'?'Bitcoin extension':'Browser extension','connection-note'));b.append(icon(kind),label,document.createTextNode(' '),el('span','›'));list.append(b);}options.append(list);content.append(options);
   }else{
     if(view.showAccount&&view.account&&!view.request)content.append(accountCard(view.account));
     if(view.selectedAccount&&view.account&&!view.request)content.append(accountCard(view.account,true));
@@ -340,9 +370,12 @@ export function renderConnection(document, view) {
     if(view.request&&!view.picker){const card=el('article',null,'connection-card connection-request');const identity=requestIdentity(view.request,card,approvalSite);
       if(view.account){const a=el('div',null,'connection-request-account');if(view.window==='walletconnect')a.append(icon('wallet'));const parts=[];if(view.requiredAccount)parts.push({kind:'copy',text:'Required account · '});if(view.account.name!==view.title)parts.push({kind:'wallet',text:view.account.name},{kind:'copy',text:' · '});parts.push({kind:'address',text:short(view.account.accounts[0].address)},{kind:'copy',text:' · '},...view.account.accounts[0].networks.flatMap((network,i)=>[...(i?[{kind:'copy',text:' · '}]:[]),{kind:'network',text:network}]));a.append(el('span',parts));identity.append(a);}content.append(card);destination=card;}
     if(view.context&&!view.request){const card=el('article',null,'connection-card connection-request');card.dataset.requestId=view.context.id;const identity=el('div',null,'connection-identity');identity.dataset.scrollKey='context:'+view.context.id;const context=el('div',null,'connection-context');if(!view.context.site||view.context.app!=='Browser'){const app=el('bdi',view.context.app,'connection-isolated connection-app');app.dir='auto';context.append(app);}if(view.context.site&&!approvalSite)context.append(siteIdentity(view.context.site));identity.append(context);card.append(identity);content.append(card);destination=card;}
-    if(view.queueCount){const queue=el('div',null,'connection-queue');queue.append(el('h2',`${view.queueCount} requests waiting`));if(!view.picker)queue.append(button({id:'view-requests',label:isolated('View requests','copy'),quiet:true}));content.prepend(queue);}
+    if(view.connectionNotice.length)destination.append(el('p',view.connectionNotice,'connection-note connection-change'));
+    if(view.currentSelection){const p=el('p',null,'connection-note connection-current-selection');p.append(document.createTextNode('Wallet now shows '),el('bdi',view.currentSelection.address,'connection-isolated connection-address'),document.createTextNode(' · '),el('bdi',view.currentSelection.network,'connection-isolated connection-network'));for(const bdi of p.querySelectorAll('bdi'))bdi.dir='auto';destination.append(p);}
+    if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-note connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');destination.append(p);}
+    if(view.queueCount){const queue=el('div',null,'connection-queue');queue.append(el('h2',`${view.queueCount} requests waiting`));if(!view.picker&&supports('view-requests'))queue.append(button({id:'view-requests',label:isolated('View requests','copy'),quiet:true}));content.prepend(queue);}
     if(approvalSite){
-      const top=el('div',null,'connection-card-start');top.append(el('p','More below.','connection-more'),button(view.actions.find(a=>a.id==='close-window')));root.insertBefore(top,heading);
+      const top=el('div',null,'connection-card-start');top.append(el('p','More below.','connection-more'));const close=view.actions.find(a=>a.id==='close-window');if(close)top.append(button(close));else{const manual=el('p','Close with Home’s window controls.','connection-note');manual.dataset.focus='dismissal';manual.tabIndex=-1;top.append(manual);}root.insertBefore(top,heading);
       if(view.status.length)destination.prepend(status);
       if(wait)destination.append(wait);if(notice)destination.append(notice);
       const other=el('div',null,'connection-actions');for(const a of view.actions.filter(a=>!approves(a.id)&&a.id!=='close-window'))other.append(button(a));destination.append(other);
@@ -350,12 +383,12 @@ export function renderConnection(document, view) {
       const approve=el('div',null,'connection-actions connection-approve-actions');for(const a of view.actions.filter(a=>approves(a.id)))approve.append(button(a));unit.append(approve);destination.append(unit);
     }else if(!view.compact){if(view.status.length&&!status.parentNode){if(view.request)destination.prepend(status);else root.append(status);}if(wait)destination.append(wait);if(notice)destination.append(notice);destination.append(controls);}
     else{if(notice)destination.append(notice);if(view.status.length)feedback.append(status);if(wait)feedback.append(wait);feedback.append(controls);}
-    for(const request of view.choices){const card=el('article',null,'connection-card connection-request connection-request-choice');const text=el('div');requestIdentity(request,text);card.append(text,button({id:'select-request',label:isolated('View request','copy'),quiet:true,key:`select-request:${request.id}`}));if(approvalSite)content.insertBefore(card,destination);else content.append(card);}
+    for(const request of view.choices){const card=el('article',null,'connection-card connection-request connection-request-choice');const text=el('div');requestIdentity(request,text);card.append(text);if(supports('select-request'))card.append(button({id:'select-request',label:isolated('View request','copy'),quiet:true,key:`select-request:${request.id}`}));if(approvalSite)content.insertBefore(card,destination);else content.append(card);}
     if(view.afterNote.length){const note=el('p',view.afterNote,'connection-note');if(approvalSite)destination.insertBefore(note,destination.querySelector('.connection-approval-unit'));else content.append(note);}
   }
   root.append(content);
   if(view.compact&&!approvalSite)root.append(feedback);
-  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');const title=el('h2','WalletConnect');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan this QR Code with your phone'),el('p','Or paste the copied link into a wallet app on this computer.'));if(!view.compact)dialog.append(controls);content.append(dialog);}
+  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');const title=el('h2','WalletConnect');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan this QR Code with your phone'),el('p','Or paste the copied link into a wallet app on this computer.'));if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');dialog.append(p);}if(!view.compact)dialog.append(controls);content.append(dialog);}
   return root;
 }
 

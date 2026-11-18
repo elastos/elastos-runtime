@@ -87,3 +87,20 @@ Computed transaction display values are supplied as their own bounded fields; th
 ## Presentation recovery copy
 
 For unknown-safety busy recovery, H:754 and H:763-780 govern Close and Wallet activity. A selected transaction on request-busy says that this transaction may still be waiting in the named wallet, once (H:772-775); it does not attribute that work to another window. Other busy cards describe the unanswered operation and uncertainty about other-window payment work. link-error with unknown safety conservatively withholds Connect pending the contract owner’s retry decision. This presentation choice supplies no producer, payment settlement or new authority.
+
+
+## Existing-plumbing inputs
+
+These optional closed presentation inputs describe what the current window can show. They add no effect, route, permission or Home message.
+
+- `supportedActions`: a unique subset of `connectionActionIds`. Omit it for the design's full controls. A supplied list only removes controls, including account Copy/Disconnect, picker and panel controls and QR keyboard intents. It cannot add a connector or grant an effect. The factory replaces instructions for removed Check controls with fixed recovery copy. Missing navigation uses manual Home/app steps. When this window cannot close itself, Home's frame controls provide dismissal; an approving card puts that instruction at the top and initially focuses it.
+- `copyFeedback`: `link-copied`, `address-copied`, or `copy-failed`. The window supplies its real Clipboard result. Fixed local text appears in an announced status element, including the QR card.
+- `connectionNotice`: `account-changed`, `network-changed`, `transport-unavailable`, `connection-removed`, `connection-expired`, or `provider-unavailable`. This is a secondary fixed notice; it preserves the current wait, transaction hash/result, request and receipt. It never converts a provider disconnect into a wallet refusal or access-removal claim.
+- `currentSelection`: exactly `{address,network}`, with bounds 128 and 80 characters. It is shown separately as isolated text. A differing selection labels the request's account Required account. The window supplies the request-bound address and network together in the account projection, and the live wallet selection here; a missing network must not be guessed from the wallet's new selection.
+- `localReturn`: a boolean. On answered cards it adds the local-only `back-to-connection` intent. The window chooses its own next local screen; this intent sends no Home message and settles no payment.
+
+The window lanes produce `wallet-loading`, `wallet-unavailable`, `home-wallet-required`, `provider-unavailable`, `account-changed`, `account-unavailable-unknown`, `network-unsupported`, `preparing-request` and `preparing-connection` from existing reads and events. Their named local fixtures are in `scripts/fixtures/wallet-connection-live-view-states.json`. Generic extension-wait remains the truthful state when the base gives one terminal link answer. Account recovery retries require proven false payment safety; an unknown snapshot keeps Close/check-Wallet recovery.
+
+The request picker keeps every supplied summary (up to 100 other requests plus the selected one); other designed cards keep their short preview and View requests intent. Account cards accept up to 100 supplied rows and scroll; greater input is refused, not truncated. This is a bounded presentation batch, not a claim about Runtime's maximum account count. A producer needing a larger list needs paging and an agreed source bound. The pure summary reducer preserves Runtime's expired status and known request-kind titles; an unknown intent is Approval request. Existing dismissed input remains compatible with legacy callers and is not a claim that Runtime stores that status.
+
+The default site label element is exactly Site reported by Browser. Its following colon and space are separate fixed punctuation. From app:, Requesting app and the request-unavailable sentence remain unchanged for the designer.

@@ -8,7 +8,7 @@ import { contractCopy } from './lib/wallet-connection-picture-oracle.mjs';
 
 test('closed view covers the three connector tables and Wallet connect panel', () => {
   assert.deepEqual(Object.fromEntries(Object.entries(stageNames).map(([key, rows]) => [key, rows.length])),
-    { walletconnect: 63, metamask: 54, unisat: 42, panel: 11 });
+    { walletconnect: 72, metamask: 63, unisat: 51, panel: 11 });
   assert.throws(() => connectionView({ window: 'metamask', stage: 'raw-wallet-error' }));
 });
 

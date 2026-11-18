@@ -1,6 +1,6 @@
 {
   "sourceCommit": "805ee5dda47993855b394197fb44ccc29e4eb771",
-  "source": "Pinned control inventory, matched to the design state receipt. This is presentation data, not a message fixture.",
+  "source": "Fifty pinned design/control stages plus six current-plumbing account recovery stages requested by the window owners.",
   "minimumSiteFontPx": 13,
   "minimumContrast": 4.5,
   "maximumDecisionGapPx": 8,
@@ -454,6 +454,60 @@
       ],
       "kind": "context",
       "designLine": 428
+    },
+    {
+      "window": "walletconnect",
+      "stage": "account-changed",
+      "actions": [
+        "send-message"
+      ],
+      "kind": "context",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; new window-local stage, no design picture"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "account-unavailable-unknown",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; new window-local stage, no design picture"
+    },
+    {
+      "window": "metamask",
+      "stage": "account-changed",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; new window-local stage, no design picture"
+    },
+    {
+      "window": "metamask",
+      "stage": "account-unavailable-unknown",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; new window-local stage, no design picture"
+    },
+    {
+      "window": "unisat",
+      "stage": "account-changed",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; new window-local stage, no design picture"
+    },
+    {
+      "window": "unisat",
+      "stage": "account-unavailable-unknown",
+      "actions": [
+        "connect"
+      ],
+      "kind": "context",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; new window-local stage, no design picture"
     }
   ],
   "pickerExceptions": [

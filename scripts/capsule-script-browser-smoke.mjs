@@ -156,3 +156,4 @@ process.env.WALLET_VIEW_BROWSER_SMOKE='1';
 await import('./wallet-connection-view-origin.test.mjs');
 
 await import('./wallet-connection-view-round4.test.mjs');
+await import('./wallet-connection-view-live-needs.test.mjs');
