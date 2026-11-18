@@ -4975,6 +4975,14 @@ mod tests {
             if op == "get_ticket" {
                 return Ok(serde_json::json!({"status":"ok", "data":self.local_ticket}));
             }
+            // A remembered neighbour is independent of the local subscription.
+            if op == "list_topic_peers" {
+                return Ok(serde_json::json!({"status":"ok", "data":{"topic":request["topic"], "peers":[self.bootstrap_node_id]}}));
+            }
+            // The real provider reports a missing rejoin as recovery_failed.
+            if op == "gossip_rejoin" && !self.joined.load(SeqCst) {
+                return Ok(serde_json::json!({"status":"error", "code":"recovery_failed", "message":"gossip topic is not joined"}));
+            }
             if !self.joined.load(SeqCst) {
                 return Ok(
                     serde_json::json!({"status":"error", "code":"not_joined", "message":"private-fixture-sentinel"}),
