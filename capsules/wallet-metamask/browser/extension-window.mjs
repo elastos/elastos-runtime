@@ -128,8 +128,10 @@ export function startExtensionWindow(kind, homeClipboard) {
       const wallet = kind === 'metamask' ? 'your browser wallet' : 'UniSat';
       const needed = refusal.cause === 'account' ? refusal.address : refusal.network;
       const app = selected.actor === 'browser' && selected.site ? selected.site : selected.app;
-      feedbackText(root.querySelector('.connection-status'), [wallet[0].toUpperCase()+wallet.slice(1), ` was using a different ${refusal.cause}. This request needed ${refusal.cause} `, {value:needed}, '.']);
+      feedbackText(root.querySelector('.connection-status'), refusal.cause === 'account' ? [wallet[0].toUpperCase()+wallet.slice(1), ` was using a different ${refusal.cause}. This request needed ${refusal.cause} `, {value:needed}, '.'] : ['Home could not confirm the required network. This request needed network ', {value:needed}, '.']);
       feedbackText(root.querySelector('.connection-notice'), [`This request can no longer be sent. Select ${refusal.cause} `, {value:needed}, ` in ${wallet}. After switching, return to `, {value:app}, ' and make a new request.']);
+    } else if (stage === 'network-changed' && preflightFailure === stage && networkEvent !== 'testnet') {
+      root.querySelector('.connection-status')?.replaceChildren();
     } else if (['request-wallet-error', 'transaction-wallet-error'].includes(stage)) {
       root.dataset.extensionFeedback = 'unknown-error';
       feedbackText(root.querySelector('.connection-status'), [selected.transaction ? 'Home could not finish this request. The transaction may have been sent.' : 'Home could not finish this request.']);

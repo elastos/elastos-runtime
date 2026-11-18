@@ -88,8 +88,10 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
         assert.match(text,/This request can no longer be sent/);assert.match(text,/After switching/);assert.doesNotMatch(text,/try again|unknown/i);
         assert.equal(await f.action('send-request').count(),0);
         assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');
-        await f.top.evaluate(()=>{testState.walletAddress=testState.address;emitWallet('accountsChanged',[testState.address]);});
+        await f.top.evaluate(()=>testState.walletAddress=testState.address);
         const beforeRead=await f.frame.evaluate(()=>window.__windowReadsFinished||0);release();await finished;await f.frame.waitForFunction(before=>(window.__windowReadsFinished||0)>before,beforeRead);await f.state('request-consumed');
+        await f.top.evaluate(()=>emitWallet('accountsChanged',[testState.address]));
+        await f.state('request-consumed');
         assert.equal(await f.frame.locator('body').innerText(),text);
         assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);
       }finally{release?.();await f.close();}

@@ -12,7 +12,7 @@ const skip=engine=>engine==='webkit'&&!existsSync(playwright.webkit.executablePa
 for(const engine of ['chromium','webkit']) {
   test(`${engine} MetaMask: recorded plain-object switch rejection stays honestly unclassified by v1`,{skip:skip(engine)},async()=>{
     const browser=await playwright[engine].launch({headless:true});try{const f=await fixture(browser,'metamask',{saved:true,requests:'transaction'});try{
-      await f.state('transaction-waiting');await f.top.evaluate(()=>testState.refuseSwitch='reject');
+      await f.state('transaction-waiting');await f.top.evaluate(rejection=>{testState.refuseSwitch='reject';testState.switchRejection=rejection;},{code:recordedReject.code,message:recordedReject.message});
       await f.action('send-request').click();await f.state('transaction-wallet-error');
       assert.match(await f.frame.locator('body').innerText(),/transaction may have been sent/);
       assert.equal(await f.top.evaluate(()=>testState.calls.filter(c=>c.method==='eth_sendTransaction').length),0);
@@ -44,3 +44,11 @@ for(const engine of ['chromium','webkit']) {
     }finally{await f.close();}}finally{await browser.close();}
   });
 }
+
+for(const engine of ['chromium','webkit'])test(`${engine} UniSat: unconfirmed link network never claims a test network`,{skip:skip(engine)},async()=>{
+  const browser=await playwright[engine].launch({headless:true});try{const f=await fixture(browser,'unisat');try{
+    await f.state('ready');await f.top.evaluate(()=>testState.network='unknown');await f.action('connect').click();await f.state('network-changed');
+    const text=await f.frame.locator('body').innerText();assert.match(text,/Bitcoin mainnet/);assert.doesNotMatch(text,/using a Bitcoin test network/);
+    await f.top.evaluate(()=>testState.network='livenet');await f.action('connect').click();await f.state('linked');assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
+  }finally{await f.close();}}finally{await browser.close();}
+});

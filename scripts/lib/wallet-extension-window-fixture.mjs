@@ -21,7 +21,7 @@ function installProvider({ kind, address }) {
       const s = testState; s.calls.push({ method, params, chain: s.chain, signer: s.walletAddress ?? s.address });
       if (method === 'eth_accounts') return [s.walletAddress ?? s.address];
       if (method === 'eth_chainId') return s.chain;
-      if (method === 'wallet_switchEthereumChain') { if(s.refuseSwitch) return null; if (!s.added) throw {code:4902}; s.chain=params[0].chainId; return null; }
+      if (method === 'wallet_switchEthereumChain') { if(s.refuseSwitch === 'reject') throw {...s.switchRejection}; if(s.refuseSwitch) return null; if (!s.added) throw {code:4902}; s.chain=params[0].chainId; return null; }
       if (method === 'wallet_addEthereumChain') { s.added=true; s.chain=params[0].chainId; return null; }
       if (method === 'eth_sendTransaction') return ask(method,'0x'+'aa'.repeat(32));
       return ask(method, method === 'eth_requestAccounts' ? [s.walletAddress ?? s.address] : '0x' + 'ab'.repeat(65));
@@ -181,7 +181,7 @@ export function renderConnection(document,view) {
         const wallet=kind==='metamask'?'your browser wallet':'UniSat';
         const cause=texts[0].includes('different account.')?'account':'network';
         const needed=cause==='account'?'account '+address:'network '+(kind==='unisat'?'Bitcoin mainnet':requests==='transaction'?'Elastos Smart Chain':'Ethereum');
-        assert.deepEqual(texts,[`${wallet[0].toUpperCase()+wallet.slice(1)} was using a different ${cause}. This request needed ${needed}.`,`This request can no longer be sent. Select ${needed} in ${wallet}. After switching, return to https://shop.example.com and make a new request.`]);
+        assert.deepEqual(texts,[cause==='account'?`${wallet[0].toUpperCase()+wallet.slice(1)} was using a different ${cause}. This request needed ${needed}.`:`Home could not confirm the required network. This request needed ${needed}.`,`This request can no longer be sent. Select ${needed} in ${wallet}. After switching, return to https://shop.example.com and make a new request.`]);
       }
     }
     assert.equal(await frame.evaluate(() => { const root=document.querySelector('#connection-root main'), walk=document.createTreeWalker(root,NodeFilter.SHOW_ALL); do {const n=walk.currentNode; if(n.nodeType!==Node.TEXT_NODE)continue; if(n.nodeType===Node.TEXT_NODE && n.parentElement?.classList.contains('connection-wait') && /^Time left: [0-9]+:[0-9]+$/.test(n.nodeValue)) continue; if(n.nodeType===Node.TEXT_NODE && ['consumed','unknown-error'].includes(root.dataset.extensionFeedback) && (n.parentElement?.closest('.connection-status,.connection-notice'))) continue; if(!__sharedNodes.has(n) || __sharedNodes.get(n)!==n.nodeValue)return false;} while(walk.nextNode());return true;}),true,'all mounted text comes from a shared render or the checked fallback copy'); assert.equal(await frame.evaluate(() => [...document.querySelectorAll('#connection-root *')].every(element => __sharedElements.has(element) || element.tagName==='BDI' && element.className==='connection-isolated' && element.dir==='auto' && element.closest('[data-extension-feedback]') && element.parentElement.matches('.connection-status,.connection-notice'))), true, 'every mounted element must come from the shared renderer'); assert.equal(await frame.locator('body > :not(#connection-root):not(script)').count(), 0); }, async close() { if (recording) await top.evaluate(() => __walletReplay.assertNoViolations()); await context.close(); assert.deepEqual(errors, []); } };
