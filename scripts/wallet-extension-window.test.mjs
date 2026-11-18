@@ -10,6 +10,36 @@ const U = 'bc1q' + 'a'.repeat(38), V = 'bc1q' + 'b'.repeat(38);
 
 import { fixture } from './lib/wallet-extension-window-fixture.mjs';
 
+async function secondRequest(f) {
+  await f.state('request-list');
+  await f.frame.locator('[data-focus-key="select-request:approval-1"]').click();
+  await f.state('request-multiple'); await f.action('send-request').click(); await f.state('request-next');
+  await f.action('view-requests').click(); await f.state('request-list');
+  await f.frame.locator('[data-focus-key="select-request:approval-2"]').click(); await f.state('request-waiting');
+}
+
+async function peerEvent(f, name, value) {
+  await f.frame.evaluate(() => {
+    const observe = event => {
+      if (event.data?.type !== 'home:wallet-connector-event') return;
+      removeEventListener('message', observe); console.debug('extension-fixture:wallet-event');
+    };
+    addEventListener('message', observe);
+  });
+  const observed = f.top.waitForEvent('console', { predicate: message => message.text() === 'extension-fixture:wallet-event', timeout: 3000 });
+  await Promise.all([observed, f.top.evaluate(({ name, value }) => emitWallet(name, value), { name, value })]);
+}
+
+async function overdueEvent(f, name, value) {
+  const instant = await f.top.evaluate(() => Date.now());
+  await f.top.clock.pauseAt(new Date(instant + 10000));
+  try {
+    await f.top.clock.setSystemTime(new Date(instant + 301000));
+    await peerEvent(f, name, value);
+    return await f.frame.evaluate(() => document.querySelector('main').dataset.state);
+  } finally { await f.top.clock.resume(); }
+}
+
 for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) {
   test(`${engine} ${kind}: each passive event during linked, account-proof, signature and result states`, { timeout: 120000, skip: engineSkip(engine) }, async () => {
     const browser = await playwright[engine].launch({ headless: true });
@@ -273,11 +303,22 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
         await f.frame.waitForFunction(() => expiryEventSeen);
         await f.state('window-expired');
       }],
+      ['wrong linked signer', s => s.replace("if (accountEvent && selected && !sameAccount(accountEvent[0], selected.address)) return 'account-unavailable';", ''), async f => {
+        await secondRequest(f); await peerEvent(f, 'accountsChanged', [B]); await f.state('account-unavailable');
+      }],
+      ['expiry hidden by wallet state', s => s.replace('!fixedOutcome && isRequestExpired())', "!fixedOutcome && isRequestExpired() && ['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage))"), async f => {
+        await secondRequest(f); await peerEvent(f, 'accountsChanged', [B]); await f.state('account-unavailable');
+        await f.top.clock.runFor(301000); await f.state('request-expired');
+      }],
+      ['overdue event before timer', s => s.replace("if (isRequestExpired()) { fixedOutcome = true; return 'request-expired'; }", ''), async f => {
+        await secondRequest(f); assert.equal(await overdueEvent(f, 'accountsChanged', [B]), 'request-expired');
+      }],
     ];
     for (const [name, mutate, oracle] of mutations) {
       const source = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
       assert.notEqual(mutate(source), source, name + ' mutation applies');
-      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived'].includes(name), mutate });
+      const requestPair = ['wrong linked signer', 'expiry hidden by wallet state', 'overdue event before timer'].includes(name);
+      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: requestPair ? 'multiple' : !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived'].includes(name), extraHomeAccount: requestPair, mutate });
       try { await assert.rejects(oracle(f), undefined, name + ' must fail the live oracle'); }
       finally { await f.context.close(); }
     }
@@ -337,6 +378,39 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         assert.equal(await f.top.evaluate(() => testState.effects.length), 1);
         await f.action('close-window').focus(); await f.top.keyboard.press('Enter');
         await f.top.waitForFunction(() => testState.closed === true);
+        assert.deepEqual(f.errors, []);
+      } finally { await f.close(); }
+    }
+  } finally { await browser.close(); }
+});
+
+for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) test(`${engine} ${kind}: another linked account cannot satisfy the selected request or hide its expiry`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
+  const browser = await playwright[engine].launch({ headless: true });
+  try {
+    for (const mode of ['recover', 'timer', 'event']) {
+      const f = await fixture(browser, kind, { saved: true, requests: 'multiple', extraHomeAccount: true });
+      try {
+        await secondRequest(f);
+        if (mode === 'event') {
+          assert.equal(await overdueEvent(f, 'accountsChanged', [kind === 'metamask' ? B : V]), 'request-expired');
+          await f.state('request-expired');
+        } else {
+          await peerEvent(f, 'accountsChanged', [kind === 'metamask' ? B : V]); await f.state('account-unavailable');
+          assert.equal(await f.action('send-request').count(), 0);
+          assert.equal(await f.top.evaluate(() => testState.effects.length), 1);
+          if (mode === 'recover') {
+            await peerEvent(f, 'accountsChanged', [kind === 'metamask' ? A : U]); await f.state('request-waiting');
+            assert.equal(await f.top.evaluate(() => testState.effects.length), 1);
+            await f.action('send-request').click(); await f.state('request-done');
+            assert.equal(await f.top.evaluate(() => testState.receipts.length), 2);
+            assert.equal(await f.top.evaluate(() => testState.effects.at(-1).action.approvalRequestId), 'approval-2');
+            continue;
+          }
+          await f.top.clock.runFor(301000); await f.state('request-expired');
+        }
+        await peerEvent(f, 'accountsChanged', [kind === 'metamask' ? A : U]); await f.state('request-expired');
+        assert.equal(await f.action('send-request').count(), 0);
+        assert.equal(await f.top.evaluate(() => testState.effects.length), 1);
         assert.deepEqual(f.errors, []);
       } finally { await f.close(); }
     }

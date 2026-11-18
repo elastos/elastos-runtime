@@ -61,17 +61,19 @@ export function startExtensionWindow(kind, homeClipboard) {
   function chooseStage() {
     if (selected && !validAddress(selected.address)) { fixedOutcome = true; return 'request-unavailable'; }
     if (selected?.status === 'completed') return selected.transaction ? 'transaction-done' : 'request-done';
+    if (isRequestExpired()) { fixedOutcome = true; return 'request-expired'; }
     if (disconnected) return linkObserved ? 'account-unavailable' : 'link-error';
+    if (accountEvent && selected && !sameAccount(accountEvent[0], selected.address)) return 'account-unavailable';
     if (accountEvent?.length === 0) return accounts.length ? 'account-unavailable' : 'ready';
     if (accountEvent && accounts.length && !accounts.some(a => sameAccount(a.address, accountEvent[0]))) return 'account-unavailable';
     if (kind === 'unisat' && networkEvent !== null && networkEvent !== 'livenet') return networkEvent === 'testnet' ? 'network-changed' : 'network-unknown';
     if (requests.length > 1 && !picked) return 'request-list';
-    if (selected) return selected.expiresAt !== null && selected.expiresAt <= now()
-      ? 'request-expired' : requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
+    if (selected) return requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
     return accountView() && (linkObserved || accountEvent?.length) ? 'linked' : 'ready';
   }
 
   function now() { return Math.floor(Date.now() / 1000); }
+  function isRequestExpired() { return selected?.status === 'pending' && selected.expiresAt !== null && selected.expiresAt <= now(); }
   function sameAccount(a, b) { return kind === 'metamask' ? a?.toLowerCase() === b?.toLowerCase() : a === b; }
   function remaining() {
     const deadline = operation ? operation.deadline : selected?.expiresAt;
@@ -248,7 +250,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   window.addEventListener('message', onWalletEvent);
   window.addEventListener('focus', refresh);
   const tick = window.setInterval(() => {
-    if (!operation && !uncertain && !fixedOutcome && selected?.expiresAt !== null && selected?.expiresAt <= now() && ['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage)) { stage = 'request-expired'; fixedOutcome = true; }
+    if (!operation && !uncertain && !fixedOutcome && isRequestExpired()) { stage = 'request-expired'; fixedOutcome = true; }
     if (operation || selected) draw();
   }, 1000);
   window.addEventListener('pagehide', () => {
