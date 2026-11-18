@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, extname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 const baseFixture = JSON.parse(await readFile(new URL('../fixtures/wallet-extension-window-base.json', import.meta.url), 'utf8'));
 for (const file of Object.values(baseFixture.files)) assert.equal(createHash('sha256').update(file.source).digest('hex'), file.sha256);
 import { installScriptedExtension, replayInput } from '../wallet-extension-test/index.mjs';
@@ -131,12 +131,13 @@ export function renderConnection(document,view) {
   if (recording) await top.evaluate(() => __walletReplay.advance(1000));
   const action = id => frame.locator(`[data-action="${id}"]`);
   const state = async expected => { try { await frame.locator(`main[data-state="${expected}"]`).waitFor({ timeout: 3000 }); } catch (e) { throw Error(e.message + JSON.stringify(await frame.locator('body').innerText()) + JSON.stringify(await top.evaluate(() => ({effects:testState.effects,calls:testState.calls,receipts:testState.receipts})))) }
-    if (process.env.EXTENSION_WINDOW_PICTURES && pictures && !mutate) {
-      const dir = join(process.env.EXTENSION_WINDOW_PICTURES, 'windows-' + kind);
+    if (process.env.EXTENSION_WINDOW_PICTURES && pictures && !mutate && !oldHost && !oldWindow) {
       const receipts = process.env.EXTENSION_WINDOW_RECEIPTS || process.env.EXTENSION_WINDOW_PICTURES;
+      const dir = join(receipts, 'window-extensions-captures', randomUUID());
       await mkdir(receipts, {recursive:true});
       await mkdir(dir, { recursive: true });
       const candidate = { head: execFileSync('git', ['rev-parse','HEAD'], {encoding:'utf8'}).trim(), tree: execFileSync('git', ['rev-parse','HEAD^{tree}'], {encoding:'utf8'}).trim() };
+      assert.equal(execFileSync('git', ['status','--porcelain'], {encoding:'utf8'}).trim(), '', 'pictures require a clean tree');
       const copy = await frame.evaluate(() => ({ state: document.querySelector('main').dataset.state,
         sentences: [...document.querySelectorAll('.connection-status,.connection-note,.connection-more')].map(n => n.textContent.trim()).filter(Boolean),
         controls: [...document.querySelectorAll('[data-action]')].map(n => ({action:n.dataset.action,label:n.textContent.trim(),disabled:n.disabled})) }));
@@ -149,8 +150,19 @@ export function renderConnection(document,view) {
         captures.push({theme,bytes});
       }
       await frame.evaluate(() => document.documentElement.removeAttribute('data-el-theme'));
-      for (const {theme,bytes} of captures) await writeFile(join(dir, `${expected}-${theme}.png`), bytes);
-      await writeFile(join(receipts, `window-extensions-copy-${kind}-${expected}.json`), JSON.stringify({ candidate, engine: browser.browserType().name(), viewport: {width:480,height:560}, content: {width:480,height:522}, ...copy }, null, 2));
+      assert.equal(execFileSync('git', ['status','--porcelain'], {encoding:'utf8'}).trim(), '', 'tree changed during capture');
+      assert.equal(execFileSync('git', ['rev-parse','HEAD'], {encoding:'utf8'}).trim(), candidate.head);
+      const pngs = [];
+      for (const {theme,bytes} of captures) {
+        const path = join(dir, `${expected}-${theme}.png`); await writeFile(path, bytes);
+        pngs.push({theme,path,sha256:createHash('sha256').update(bytes).digest('hex')});
+      }
+      // Raw captures are never acceptance by themselves. A single publisher
+      // matches sourceTestFile to the exact-tree passing process receipt.
+      await writeFile(join(dir, 'capture.json'), JSON.stringify({ qualification:'staged-requires-passing-file-result',
+        sourceTestFile:resolve(process.argv[1]), capturedAt:Date.now(), candidate, clean:true,
+        fixture:{kind,oldHost,oldWindow,readFailure,recording:recording||null,saved,requests,launch,noHomeWallet,extraHomeAccount},
+        pngs,engine:browser.browserType().name(),viewport:{width:480,height:560},content:{width:480,height:522},...copy },null,2));
     }
   };
   return { top, frame, context, errors, reads, peerElapsed, action, state, async assertShared() { assert.equal(await frame.evaluate(() => { const root=document.querySelector('#connection-root main'), walk=document.createTreeWalker(root,NodeFilter.SHOW_ALL); do {const n=walk.currentNode; if(n.nodeType===Node.TEXT_NODE && n.parentElement?.classList.contains('connection-wait') && /^Time left: [0-9]+:[0-9]+$/.test(n.nodeValue)) continue; if(!__sharedNodes.has(n) || __sharedNodes.get(n)!==n.nodeValue)return false;} while(walk.nextNode());return true;}),true,'all mounted content comes from a shared render'); assert.equal(await frame.evaluate(() => [...document.querySelectorAll('#connection-root *')].every(element => __sharedElements.has(element))), true, 'every mounted element must come from the shared renderer'); assert.equal(await frame.locator('body > :not(#connection-root):not(script)').count(), 0); }, async close() { if (recording) await top.evaluate(() => __walletReplay.assertNoViolations()); await context.close(); assert.deepEqual(errors, []); } };

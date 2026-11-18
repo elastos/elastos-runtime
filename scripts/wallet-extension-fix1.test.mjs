@@ -9,7 +9,7 @@ const breaks = {
   K07:s=>s.replace('data.value.length > 8','data.value.length > 800'),
   K12:s=>s.replace('const sameFact = lastView?.stage === view.stage && lastView?.request?.id === view.request?.id;','const sameFact = false;'),
   K14:s=>s.replace("event.source !== window.top || event.origin !== homeOrigin || data?.type !== 'home:wallet-connector-event'","data?.type !== 'home:wallet-connector-event'"),
-  B1:s=>s.replace("if (preflightFailure) { stage = preflightFailure; draw(); return; }",''),
+  B1:s=>s.replace("if (action.kind === 'approve') await checkPendingAfterRefusal();","if (action.kind === 'approve') { fixedOutcome = true; stage = 'request-wallet-error'; draw(); }"),
   saved:s=>s.replace('const rows = address ? row ? [row] : [] : candidates;', 'const rows = address ? row ? [row] : [] : [];'),
   read:s=>s.replace("action === 'connect' && readFailed","false"),
   disconnect:s=>s.replace('if (data.value.length) disconnected = false;',''),

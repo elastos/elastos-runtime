@@ -39,7 +39,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
         await bad.top.evaluate(()=>{const send=runtimeFetch;window.runtimeFetch=async(url,init)=>{const result=await send(url,init);if(url.endsWith('/handoff'))testState.requests[0].status='pending';return result;};});
         await refuse(bad,kind);await bad.state('request-unsendable');
         await bad.frame.waitForFunction(()=>!document.querySelector('[data-action="send-request"]').disabled,null,{timeout:3000});
-        await assert.rejects(consumed(bad,kind),error=>error.code==='ERR_ASSERTION'||/locator.waitFor: Timeout/.test(error.message),'the former reusable-handoff model must fail the same UI oracle');
+        await assert.rejects(consumed(bad,kind),error=>/locator.waitFor: Timeout/.test(error.message)&&/request-unavailable/.test(error.message),'the former reusable-handoff model must fail the same UI oracle');
         t.diagnostic(`${oldHost?'pinned':'current'} Home: consumed request hidden; broken pending model shows an enabled retry and fails the UI oracle`);
       }finally{await bad.close();}
     }
