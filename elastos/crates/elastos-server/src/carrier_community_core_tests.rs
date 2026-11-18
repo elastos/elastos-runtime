@@ -1,9 +1,6 @@
 //! Real local sockets and the real recovery worker. Only the node's protocol
 //! dispatch can pause; its endpoint keeps accepting QUIC. No test is a probe.
 use super::*;
-use crate::collaboration_carrier::{
-    CommunityLink, CommunityLinkHealth, JoinedCollaborationNetwork,
-};
 use crate::collaboration_network::*;
 use crate::collaboration_startup::run_community_core_fixture;
 use iroh_gossip::proto::Message as WireMessage;
@@ -18,10 +15,11 @@ use tracing::instrument::WithSubscriber;
 enum HubInput {
     Connected(
         iroh::EndpointId,
+        u64,
         mpsc::Sender<WireMessage<iroh::EndpointId>>,
     ),
-    Disconnected(iroh::EndpointId),
-    Wire(iroh::EndpointId, WireMessage<iroh::EndpointId>),
+    Disconnected(iroh::EndpointId, u64),
+    Wire(iroh::EndpointId, u64, WireMessage<iroh::EndpointId>),
     Timer(Timer<iroh::EndpointId>),
     Post(Vec<u8>, oneshot::Sender<()>),
 }
@@ -63,7 +61,7 @@ impl LocalHub {
                     Default::default(),
                     StdRng::seed_from_u64(451),
                 );
-                let mut output = HashMap::<_, mpsc::Sender<WireMessage<iroh::EndpointId>>>::new();
+                let mut output = HashMap::<_, (u64, mpsc::Sender<WireMessage<iroh::EndpointId>>)>::new();
                 let mut tasks = tokio::task::JoinSet::new();
                 let mut events: Vec<_> = state
                     .handle(
@@ -76,7 +74,7 @@ impl LocalHub {
                     for event in events.drain(..) {
                         match event {
                             OutEvent::SendMessage(peer, message) => {
-                                if let Some(sender) = output.get(&peer) {
+                                if let Some((_, sender)) = output.get(&peer) {
                                     let _ = sender.try_send(message);
                                 }
                             }
@@ -107,8 +105,9 @@ impl LocalHub {
                                 if let Ok(connection) = incoming.await {
                                     accepted.fetch_add(1, Ordering::SeqCst);
                                     let peer = connection.remote_id();
+                                    let id = connection.stable_id() as u64;
                                     let _ = serve_connection(connection, topic, input.clone(), traffic).await;
-                                    let _ = input.send(HubInput::Disconnected(peer)).await;
+                                    let _ = input.send(HubInput::Disconnected(peer,id)).await;
                                 }
                             });
                             continue;
@@ -117,9 +116,13 @@ impl LocalHub {
                         event = receiver.recv() => {
                             let Some(event) = event else { break; };
                             match event {
-                                HubInput::Connected(peer, sender) => { output.insert(peer, sender); continue; }
-                                HubInput::Disconnected(peer) => { output.remove(&peer); InEvent::PeerDisconnected(peer) }
-                                HubInput::Wire(peer, message) => {
+                                HubInput::Connected(peer,id,sender) => { output.insert(peer, (id,sender)); continue; }
+                                HubInput::Disconnected(peer,id) => {
+                                    if output.get(&peer).is_none_or(|current|current.0!=id){continue;}
+                                    output.remove(&peer); InEvent::PeerDisconnected(peer)
+                                }
+                                HubInput::Wire(peer,id,message) => {
+                                    if output.get(&peer).is_none_or(|current|current.0!=id){continue;}
                                     if stalled.load(Ordering::SeqCst) { continue; }
                                     InEvent::RecvMessage(peer, message)
                                 }
@@ -205,8 +208,9 @@ async fn serve_connection(
     traffic: Arc<std::sync::Mutex<std::collections::BTreeMap<String,u64>>>,
 ) -> Result<()> {
     let peer = connection.remote_id();
+    let id = connection.stable_id() as u64;
     let (output, mut messages) = mpsc::channel::<WireMessage<iroh::EndpointId>>(64);
-    input.send(HubInput::Connected(peer, output)).await?;
+    input.send(HubInput::Connected(peer, id, output)).await?;
     let mut send = connection.open_uni().await?;
     write_frame(&mut send, topic.as_bytes()).await?;
     let mut recv = connection.accept_uni().await?;
@@ -222,7 +226,7 @@ async fn serve_connection(
                 let mut bytes = topic.as_bytes().to_vec(); bytes.extend_from_slice(&frame?);
                 let message: WireMessage<iroh::EndpointId> = postcard::from_bytes(&bytes)?;
                 count_wire(&traffic, "from_home", &message);
-                input.send(HubInput::Wire(peer,message)).await?;
+                input.send(HubInput::Wire(peer,id,message)).await?;
             }
             Some(message) = messages.recv() => {
                 let bytes = postcard::to_stdvec(&message)?;
