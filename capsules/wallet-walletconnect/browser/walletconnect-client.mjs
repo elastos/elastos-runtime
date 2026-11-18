@@ -269,7 +269,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     const activeChain = provider?.chainId ? `eip155:${provider.chainId}` : selected?.split(':').slice(0,2).join(':');
     return {status:session ? 'connected':'disconnected',revision:generation,permission,permissionFresh,removed,
       expired:hadSession && sessionExpiry <= Date.now()/1000,cleanupRequired,relayConnected:provider?.signer?.client?.core?.relayer?.connected ?? null,
-      session:session ? {name:String(session.peer?.metadata?.name || 'Your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80),
+      session:session ? {name:String(session.peer?.metadata?.name || 'your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80),
         chain:activeChain,address:typeof activeAddress === 'string' && /^0x[0-9a-fA-F]{40}$/.test(activeAddress) ? activeAddress : undefined} : undefined};
   };
   return { async effect(action) {
@@ -302,7 +302,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       };
       await check();
       operationDispatched = true;
-      onPhase('ownership',{expiresAt:challenge.expires_at,address:signer,chain:namespace,name:String(provider.session?.peer?.metadata?.name || 'Your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80)});
+      onPhase('ownership',{expiresAt:challenge.expires_at,address:signer,chain:namespace,name:String(provider.session?.peer?.metadata?.name || 'your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80)});
       const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]}, 300, 'ownership',signal);
       await check();
       await api('/api/auth/evm/verify',{method:'POST',body:JSON.stringify({message:challenge.message,signature})});
