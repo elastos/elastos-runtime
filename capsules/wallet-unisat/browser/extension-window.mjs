@@ -91,6 +91,12 @@ export function startExtensionWindow(kind, homeClipboard) {
     // These shared recovery paragraphs point to Check access, which the base
     // cannot perform. Keep the true outcome and working Close control.
     if (['extension-timeout', 'extension-cancelled', 'request-timeout', 'request-cancelled'].includes(stage)) root.querySelector('.connection-notice')?.remove();
+    // v1 Home errors do not identify whether the wallet or result recording
+    // failed. Use the shared recovery text without assigning fault to a wallet.
+    if (stage === 'request-wallet-error') {
+      const status = root.querySelector('.connection-status'), notice = root.querySelector('.connection-notice');
+      if (status && notice) { status.replaceChildren(...notice.childNodes); notice.remove(); }
+    }
     if (kind === 'metamask' && stage === 'account-unavailable' && accountEvent?.length === 0) root.querySelector('.connection-notice')?.remove();
     if (!root.querySelector('button:not(:disabled)') && frameHomeToken && homeOrigin && window.top !== window) {
       // Reuse the shared Close control when this base lacks the screen's

@@ -385,3 +385,18 @@ for (const engine of ['chromium','webkit']) test(`${engine} UniSat: recorded loc
     }finally{await f.close();}
   }finally{await browser.close();}
 });
+
+for(const engine of ['chromium','webkit']) for(const kind of ['metamask','unisat']) test(`${engine} ${kind}: a Home completion error does not claim the wallet failed to sign`, {timeout:30000,skip:engineSkip(engine)}, async()=>{
+  const browser=await playwright[engine].launch({headless:true});
+  try{
+    const f=await fixture(browser,kind,{saved:true,requests:true});
+    try{
+      await f.top.evaluate(()=>{const send=window.runtimeFetch;window.runtimeFetch=(url,init)=>url.endsWith('/complete')?Promise.reject(Error('Fixture result recording failed')):send(url,init);});
+      await f.action('send-request').click();await f.state('request-wallet-error');
+      assert.equal(await f.top.evaluate(()=>testState.calls.some(c=>['personal_sign','signMessage'].includes(c.method))),true);
+      assert.doesNotMatch(await f.frame.locator('body').innerText(),/could not sign/i);
+      assert.match(await f.frame.locator('body').innerText(),/try again|new request/i);
+      assert.equal(await f.action('send-request').count(),0);
+    }finally{await f.close();}
+  }finally{await browser.close();}
+});
