@@ -30,6 +30,7 @@ struct LocalHub {
     stalled: Arc<AtomicBool>,
     accepted: Arc<AtomicUsize>,
     closed: Arc<AtomicUsize>,
+    home_shuffle_times: Arc<std::sync::Mutex<std::collections::VecDeque<tokio::time::Instant>>>,
     posts: Arc<std::sync::Mutex<Vec<String>>>,
     traffic: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u64>>>,
     task: tokio::task::JoinHandle<()>,
@@ -47,6 +48,7 @@ impl LocalHub {
         let stalled = Arc::new(AtomicBool::new(false));
         let accepted = Arc::new(AtomicUsize::new(0));
         let closed = Arc::new(AtomicUsize::new(0));
+        let home_shuffle_times = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         let posts = Arc::new(std::sync::Mutex::new(Vec::new()));
         let traffic = Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
         let task = tokio::spawn({
@@ -55,6 +57,7 @@ impl LocalHub {
             let stalled = stalled.clone();
             let accepted = accepted.clone();
             let closed = closed.clone();
+            let home_shuffle_times = home_shuffle_times.clone();
             let posts = posts.clone();
             let traffic = traffic.clone();
             async move {
@@ -106,12 +109,13 @@ impl LocalHub {
                             let accepted = accepted.clone();
                             let closed = closed.clone();
                             let traffic = traffic.clone();
+                            let home_shuffle_times = home_shuffle_times.clone();
                             tasks.spawn(async move {
                                 if let Ok(connection) = incoming.await {
                                     accepted.fetch_add(1, Ordering::SeqCst);
                                     let peer = connection.remote_id();
                                     let id = connection.stable_id() as u64;
-                                    let _ = serve_connection(connection, topic, input.clone(), traffic).await;
+                                    let _ = serve_connection(connection, topic, input.clone(), traffic, home_shuffle_times).await;
                                     closed.fetch_add(1, Ordering::SeqCst);
                                     let _ = input.send(HubInput::Disconnected(peer,id)).await;
                                 }
@@ -157,6 +161,7 @@ impl LocalHub {
             stalled,
             accepted,
             closed,
+            home_shuffle_times,
             posts,
             traffic,
             task,
@@ -213,6 +218,7 @@ async fn serve_connection(
     topic: TopicId,
     input: mpsc::Sender<HubInput>,
     traffic: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u64>>>,
+    home_shuffle_times: Arc<std::sync::Mutex<std::collections::VecDeque<tokio::time::Instant>>>,
 ) -> Result<()> {
     let peer = connection.remote_id();
     let id = connection.stable_id() as u64;
@@ -232,7 +238,11 @@ async fn serve_connection(
             frame = read_frame(&mut recv,GOSSIP_WIRE_MESSAGE_MAX_BYTES+256) => {
                 let mut bytes = topic.as_bytes().to_vec(); bytes.extend_from_slice(&frame?);
                 let message: WireMessage<iroh::EndpointId> = postcard::from_bytes(&bytes)?;
-                count_wire(&traffic, "from_home", &message);
+                if count_wire(&traffic, "from_home", &message) == "from_home:Swarm:Shuffle" {
+                    let mut times = home_shuffle_times.lock().unwrap();
+                    if times.len() == 64 { times.pop_front(); }
+                    times.push_back(tokio::time::Instant::now());
+                }
                 input.send(HubInput::Wire(peer,id,message)).await?;
             }
             Some(message) = messages.recv() => {
@@ -304,7 +314,7 @@ fn count_wire(
     traffic: &std::sync::Mutex<std::collections::BTreeMap<String, u64>>,
     direction: &str,
     message: &WireMessage<iroh::EndpointId>,
-) {
+) -> String {
     let value = serde_json::to_value(message).unwrap();
     let outer = value["message"].as_object().unwrap().iter().next().unwrap();
     let inner = outer
@@ -314,11 +324,9 @@ fn count_wire(
         .map(String::as_str)
         .or_else(|| outer.1.as_str())
         .unwrap_or("other");
-    *traffic
-        .lock()
-        .unwrap()
-        .entry(format!("{direction}:{}:{inner}", outer.0))
-        .or_default() += 1;
+    let key = format!("{direction}:{}:{inner}", outer.0);
+    *traffic.lock().unwrap().entry(key.clone()).or_default() += 1;
+    key
 }
 
 #[derive(Default)]
@@ -648,7 +656,16 @@ async fn community_core_real_quiet_wire_counts_and_status() {
     for (key, count) in before {
         *traffic.entry(key).or_default() -= count;
     }
-    let report = serde_json::json!({"connections_before":connections,"connections_after":f.hub.accepted.load(Ordering::SeqCst),"quiet_traffic":traffic,"repairs":f.faults.repairs.load(Ordering::SeqCst),"disconnected_views":f.disconnected.load(Ordering::SeqCst)-disconnected});
+    let shuffle_times = f.hub.home_shuffle_times.lock().unwrap().iter().copied().collect::<Vec<_>>();
+    // The pinned HyParView backs off through1,2,4,8,16,32seconds, then
+    // schedules60seconds with25% jitter. After the first six sends, every
+    // interval is45..75seconds. One second covers local scheduling variance;
+    // any added Shuffle between normal sends would violate the lower bound.
+    let shuffle_gaps_ms = shuffle_times.windows(2).skip(6).map(|p| p[1].duration_since(p[0]).as_millis()).collect::<Vec<_>>();
+    assert!(!shuffle_gaps_ms.is_empty(), "the production shuffle timer ran");
+    assert!(shuffle_gaps_ms.iter().all(|gap| (44_000..=76_000).contains(gap)), "healthy peer-message cadence stays at the pinned protocol interval");
+    let report = serde_json::json!({"connections_before":connections,"connections_after":f.hub.accepted.load(Ordering::SeqCst),"quiet_traffic":traffic,"home_shuffle_gaps_ms":shuffle_gaps_ms,"repairs":f.faults.repairs.load(Ordering::SeqCst),"disconnected_views":f.disconnected.load(Ordering::SeqCst)-disconnected});
+    if let Ok(path) = std::env::var("COMMUNITY_CORE_QUIET_BASELINE") { compare_develop_wire(&report, &path); }
     if let Ok(path) = std::env::var("COMMUNITY_CORE_QUIET_RECEIPT") {
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     }
@@ -706,4 +723,35 @@ async fn community_core_real_health_query_failures_repair_despite_a_remembered_p
     let healthy=wait_for(||f.connected.load(Ordering::SeqCst),40).await;
     let posts=f.exchange("health-query failure recovery").await;
     f.stop().await;assert!(repaired);assert!(honest);assert!(healthy);posts.unwrap();
+}
+
+fn compare_develop_wire(current: &serde_json::Value, baseline_path: &str) {
+    use sha2::Digest;
+    let path = std::path::Path::new(baseline_path);
+    assert!(path.metadata().unwrap().len() <= 64 * 1024, "baseline receipt is bounded");
+    let baseline: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert!(baseline["head"].as_str().unwrap().starts_with("8f33f07a9"), "committed develop control required");
+    let lock = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock")).unwrap();
+    assert_eq!(baseline["lock_sha256"], hex::encode(sha2::Sha256::digest(lock)), "same pinned library and dependencies");
+    for value in [current, &baseline] {
+        assert_eq!(value["connections_before"], 1);
+        assert_eq!(value["connections_after"], 1);
+        assert_eq!(value["repairs"], 0);
+        assert_eq!(value["disconnected_views"], 0);
+    }
+    let old = baseline["quiet_traffic"].as_object().unwrap();
+    let new = current["quiet_traffic"].as_object().unwrap();
+    let kinds = old.keys().chain(new.keys()).collect::<std::collections::BTreeSet<_>>();
+    for kind in kinds {
+        let a=old.get(kind).and_then(|v|v.as_u64()).unwrap_or(0);
+        let b=new.get(kind).and_then(|v|v.as_u64()).unwrap_or(0);
+        if kind.contains(":Gossip:") { assert_eq!((a,b),(0,0),"no quiet application or probe messages"); }
+        else if kind.ends_with(":Shuffle") || kind.ends_with(":ShuffleReply") {
+            // Six startup delays total47.25..78.75seconds; later delays
+            // are45..75seconds. This1001-second window begins within the
+            // first seven seconds, so14..29messages includes every normal
+            // phase and the one reply that may cross either boundary.
+            assert!((14..=29).contains(&a) && (14..=29).contains(&b), "both trees keep the pinned jittered shuffle budget: {kind} {a}/{b}");
+        } else { assert!(a.abs_diff(b)<=1,"same control traffic outside the jittered shuffle: {kind} {a}/{b}"); }
+    }
 }
