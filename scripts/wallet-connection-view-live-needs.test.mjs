@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync,existsSync} from 'node:fs';
 import {writeFile} from 'node:fs/promises';
 import {connectionView,reduceConnection,reduceSummary,connectionKey,viewText,connectionActionIds,stageNames} from '../capsules/_shared/wallet-connection-view.mjs';
-import {shared,states,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
+import {shared,states,contractStates,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
 import {browserFixture,playwright,temporaryProof} from './lib/wallet-connection-browser-fixture.mjs';
 const live=JSON.parse(readFileSync(new URL('./fixtures/wallet-connection-live-view-states.json',import.meta.url))).states;
 const seed=shared.n7PrivateSummaries.find(r=>r.id==='site-wallet-metamask').summary;
@@ -98,7 +98,7 @@ test('final needs: Home response checking keeps its local stop and never claims 
 });
 test('final needs: blocked and terminal cards retain their outcome with a local picker exit',()=>{
  for(const window of ['walletconnect','metamask','unisat'])for(const stage of ['request-expired','request-unsendable','request-declined','request-wallet-error','request-unavailable']){
-  const row=states.find(r=>r.window===window&&r.stage===stage);if(!row)continue;const args=fixtureArguments(row),before=reduceConnection(...args);args[0].localReturn=true;args[0].showNextRequests=true;args[1].otherSummaries=[{...seed,connector_id:'wallet-'+window,request_id:'another-request'}];const v=reduceConnection(...args);
+  const row=[...states,...contractStates].find(r=>r.window===window&&r.stage===stage);assert(row,window+'/'+stage);const args=fixtureArguments(row),before=reduceConnection(...args);args[0].localReturn=true;args[0].showNextRequests=true;args[1].otherSummaries=[{...seed,connector_id:'wallet-'+window,request_id:'another-request'}];const v=reduceConnection(...args);
   assert.equal(viewText(v.status),viewText(before.status));assert(v.actions.some(a=>a.id==='back-to-connection'),window+'/'+stage);assert.equal(v.queueCount,1);
  }
 });
