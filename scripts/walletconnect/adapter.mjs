@@ -157,6 +157,7 @@ export async function disconnectWalletConnectEvm(options) {
   currentApi = options.api;
   const current = provider;
   const core = ownedCore;
+  const storage = ownedStorage;
   let timer;
   try {
     if (current?.session) await Promise.race([
@@ -165,7 +166,7 @@ export async function disconnectWalletConnectEvm(options) {
     ]);
   } finally {
     globalThis.clearTimeout(timer);
-    ownedStorage?.retire();
+    storage?.retire();
     retired = true;
     stopCore(core,current);
     retireRuntime();

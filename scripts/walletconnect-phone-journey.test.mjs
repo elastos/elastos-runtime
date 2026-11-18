@@ -136,13 +136,16 @@ test('planned phone fixture navigation waits for an actual SDK storage POST',{ti
 
 
 test('retiring an adapter lets an acknowledged late SDK payload finish without new Home writes',{timeout:60000},async t=>{
- const r=await setup(t);await r.link();
+ let r;
+ t.after(async()=>{if(r&&!r.page.isClosed()&&!r.frame.isDetached())await r.frame.evaluate(()=>window.releaseRetiredPayload?.());});
+ r=await setup(t);await r.link();
  await r.frame.evaluate(()=>{
   const core=window.__walletFixtureLifetime.providers.at(-1).signer.client.core;
   const record=core.relayer.recordMessageEvent;
   const trace=window.retirementTrace=[];
   let release;const held=new Promise(resolve=>release=resolve);
-  window.releaseRetiredPayload=()=>{trace.push('release after disconnect');release();};
+  let released=false;
+  window.releaseRetiredPayload=()=>{if(released)return;released=true;trace.push('release after disconnect');release();};
   core.relayer.recordMessageEvent=async function(...args){
    core.relayer.recordMessageEvent=record;
    trace.push('acknowledged payload enters recordMessageEvent');
@@ -151,7 +154,6 @@ test('retiring an adapter lets an acknowledged late SDK payload finish without n
    finally{trace.push('late payload storage finished');}
   };
  });
- t.after(async()=>{if(!r.frame.isDetached())await r.frame.evaluate(()=>window.releaseRetiredPayload?.());});
  await r.peer.emptyAccounts();
  await r.frame.waitForFunction(()=>window.retirementTrace.length===1);
  console.log('Retirement trace: payload held before disconnect');
