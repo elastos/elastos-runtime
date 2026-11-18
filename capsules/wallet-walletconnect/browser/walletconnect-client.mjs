@@ -26,8 +26,8 @@ const approvedNetworks = provider => {
   return new Set([...(namespace?.accounts || []).map(account => account.split(':').slice(0,2).join(':'))]);
 };
 // This module runs only in the connector's opaque frame. Runtime owns approval authority.
-export function createWalletConnectClient({ api, origin, copyLink, onPhase = () => {}, loadAdapter = () => import(`./vendor/reown-appkit.js?instance=${crypto.randomUUID()}`), clearMemory = () => {} }) {
-  let provider, adapter, activeRevision, sessionApi, projectId, pairing, operation, restoring, restoreAttempt, retiring, cleanupPromise, latestPermission, cleanupRequired = false, removed = false, hadSession = false, sessionExpiry = 0, generation = 0;
+export function createWalletConnectClient({ api, origin, copyLink, pairingView, onPhase = () => {}, loadAdapter = () => import(`./vendor/reown-appkit.js?instance=${crypto.randomUUID()}`), clearMemory = () => {} }) {
+  let provider, adapter, activeRevision, sessionApi, projectId, pairing, operation, restoring, restoreAttempt, retiring, cleanupPromise, latestPermission, cleanupRequired = false, removed = false, hadSession = false, sessionExpiry = 0, generation = 0, operationContext, operationDispatched = false, observedAccounts;
   const stopped = 'Home stopped waiting for your wallet. Select Connect wallet for a new QR code.';
   const removedMessage = 'Your phone wallet removed this connection. Select Connect wallet for a new QR code.';
   const muted = message => Object.assign(new Error(message), {tone:'muted'});
@@ -67,6 +67,11 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
   const address = async signal => {
     const accounts = await request({method:'eth_accounts'},undefined,'signature',signal);
     const value = accounts?.[0];
+    // eth_accounts can retain the approved namespace after a wallet notification.
+    // A fresh action must match the account this window can currently display.
+    const shownAccounts=observedAccounts ?? provider.accounts;
+    if (Array.isArray(shownAccounts) && (!shownAccounts[0] || String(shownAccounts[0]).toLowerCase() !== String(value).toLowerCase()))
+      throw muted('Select an account in your phone wallet.');
     if (!/^0x[0-9a-fA-F]{40}$/.test(value || '')) throw new Error('Select an account in your phone wallet.');
     return value;
   };
@@ -104,7 +109,7 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
         if (error.message === 'This wallet window expired. Close it and open WalletConnect again.') throw error;
         throw muted('Home could not clear this connection. Select Connect wallet to try again.');
       }
-      provider = undefined; adapter = undefined; activeRevision = undefined; sessionApi = undefined;
+      provider = undefined; observedAccounts = undefined; adapter = undefined; activeRevision = undefined; sessionApi = undefined;
       cleanupRequired = false; hadSession = false; sessionExpiry = 0; clearMemory();
     })();
     cleanupPromise = task;
@@ -146,13 +151,36 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
     };
   };
   const load = async signal => {
-    if (!adapter) { const loaded = await waitFor(loadAdapter(),signal); signal?.throwIfAborted(); adapter = loaded; }
+    if (!adapter) {
+      const loaded = await waitFor(loadAdapter(),signal);
+      signal?.throwIfAborted();
+      if (pairingView) {
+        const {connectWithView} = await import('./walletconnect-pairing.mjs');
+        adapter = {...loaded, connectWalletConnectEvm:options => connectWithView(loaded, options, pairingView)};
+      } else adapter = loaded;
+    }
     return adapter;
   };
   const adopt = current => {
     if (current !== provider) {
       provider = current;
-      for (const name of ['accountsChanged','chainChanged']) current.on(name,()=>{if(provider === current)generation++;});
+      observedAccounts=Array.isArray(current.accounts) ? [...current.accounts.slice(0,8)] : undefined;
+      for (const name of ['accountsChanged','chainChanged','session_update']) current.on(name,()=>{
+        if (provider !== current) return;
+        if (name === 'accountsChanged') observedAccounts=Array.isArray(current.accounts) ? [...current.accounts.slice(0,8)] : [];
+        else {
+          const approved=(current.session?.namespaces?.eip155?.accounts || []).filter(value=>typeof value === 'string' && value.startsWith(`eip155:${current.chainId}:`)).slice(0,8).map(value=>value.split(':')[2]);
+          if (name === 'session_update' || approved.length && !approved.some(value=>same(value,observedAccounts?.[0]))) observedAccounts=approved;
+        }
+        generation++;
+        if (operationDispatched && operationContext !== 'transaction_intent') operation?.abort(muted(operationContext === 'link'
+          ? 'Wallet changed or the challenge expired. Select Connect wallet to try again.' : walletConnectMessages.consumed));
+        onPhase('changed', {event:name});
+      });
+      const relayer = current.signer?.client?.core?.relayer;
+      for (const name of ['connect','disconnect']) relayer?.on?.(name,()=>{
+        if (provider === current) onPhase('changed', {event:`relay_${name}`});
+      });
       current.on('disconnect',()=>{
         if (provider !== current) return;
         generation++; removed = sessionExpiry > Date.now()/1000;
@@ -211,14 +239,17 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
       try { await restoring; } catch (error) { if (!attempt.signal.aborted) throw error; }
       finally { if (restoreAttempt === attempt) { restoring = undefined; restoreAttempt = undefined; } }
     }
+    if (provider?.session) sessionExpiry = provider.session.expiry;
     const session = provider?.connected && provider.session?.expiry > Date.now()/1000 ? provider.session : undefined;
     const namespace = session?.namespaces?.eip155;
     const accounts = namespace?.accounts || [];
     const selected = accounts.find(value=>value.startsWith(`eip155:${provider.chainId}:`)) || accounts[0];
+    const activeAddress = Array.isArray(observedAccounts) ? observedAccounts[0] : Array.isArray(provider?.accounts) ? provider.accounts[0] : selected?.split(':')[2];
+    const activeChain = provider?.chainId ? `eip155:${provider.chainId}` : selected?.split(':').slice(0,2).join(':');
     return {status:session ? 'connected':'disconnected',revision:generation,permission,removed,
-      expired:hadSession && sessionExpiry <= Date.now()/1000,cleanupRequired,
+      expired:hadSession && sessionExpiry <= Date.now()/1000,cleanupRequired,relayConnected:provider?.signer?.client?.core?.relayer?.connected ?? null,
       session:session ? {name:String(session.peer?.metadata?.name || 'Your phone wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80),
-        chain:selected?.split(':').slice(0,2).join(':'),address:selected?.split(':')[2]} : undefined};
+        chain:activeChain,address:typeof activeAddress === 'string' && /^0x[0-9a-fA-F]{40}$/.test(activeAddress) ? activeAddress : undefined} : undefined};
   };
   return { async effect(action) {
     if (action.kind === 'disconnect' || action.kind === 'cancel') return reset();
@@ -227,6 +258,8 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
     const attempt = new AbortController();
     generation++;
     operation = attempt;
+    operationContext = action.kind;
+    operationDispatched = false;
     const signal = attempt.signal;
     try {
     // Reuse waits for the adapter that owns the saved session. Only reset()
@@ -243,11 +276,12 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
       const challenge = await api('/api/auth/evm/challenge',{method:'POST',body:JSON.stringify({address:signer,chain_id:Number(namespace.split(':')[1])})});
       const check = async () => {
         signal.throwIfAborted();
-        if (!same(await address(signal),signer) || await chain(signal) !== namespace || generation !== revision
+        if (generation !== revision || !same(await address(signal),signer) || await chain(signal) !== namespace
           || !Number.isSafeInteger(challenge.expires_at) || challenge.expires_at <= Date.now()/1000) throw new Error('Wallet changed or the challenge expired. Select Connect wallet to try again.');
       };
       await check();
-      onPhase('ownership');
+      operationDispatched = true;
+      onPhase('ownership',{expiresAt:challenge.expires_at});
       const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]}, 300, 'ownership',signal);
       await check();
       await api('/api/auth/evm/verify',{method:'POST',body:JSON.stringify({message:challenge.message,signature})});
@@ -257,6 +291,7 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
     const path = `wallet/approvals/${encodeURIComponent(action.approvalRequestId)}`;
     const requests = (await api('wallet/approvals')).approval_requests || [];
     const review = requests.find(r=>r.request_id === action.approvalRequestId);
+    operationContext = review?.intent;
     if (!review || review.status !== 'pending') throw Object.assign(new Error(walletConnectMessages.consumed), {tone:'muted'});
     requireNetwork(review.chain_namespace);
     if (!same(review.address,signer) || review.chain_namespace !== namespace) throw new Error('Select the requested account and network in your phone wallet, then review again.');
@@ -272,11 +307,12 @@ export function createWalletConnectClient({ api, origin, copyLink, onPhase = () 
       || binding.chain_namespace !== namespace || !/^0x[0-9a-fA-F]{64}$/.test(handoff.payload_hash || '')) throw new Error('Runtime returned an invalid wallet binding.');
     const check = async () => {
       signal.throwIfAborted();
-      if (!same(await address(signal),signer) || await chain(signal) !== namespace || generation !== revision
+      if (generation !== revision || !same(await address(signal),signer) || await chain(signal) !== namespace
         || !Number.isSafeInteger(binding.expires_at) || binding.expires_at <= Date.now()/1000) throw Object.assign(new Error(walletConnectMessages.consumed), {tone:'muted'});
       return Math.min(600,Math.max(binding.expires_at-Math.ceil(Date.now()/1000),300));
     };
     const expiry = await check();
+    operationDispatched = true;
     onPhase(handoff.intent === 'transaction_intent' ? 'transaction' : 'signature');
     if (handoff.intent === 'transaction_intent') {
       const transaction = handoff.transaction;
