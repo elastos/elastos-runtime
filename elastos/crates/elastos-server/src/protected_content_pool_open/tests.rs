@@ -2896,3 +2896,46 @@ async fn live_same_epoch_open_uses_current_descriptor_and_resumes_one_approval()
         "the actual release carries verified current sequence 2"
     );
 }
+
+/// A mint's original epoch drives the real Open coordinator after a reader
+/// learns a descriptor carrying its successor. Provider ports and session
+/// transports use the same signed test doubles as the other Open tests.
+#[tokio::test]
+async fn original_epoch_opens_and_reads_after_learning_a_signed_successor() {
+    let mut pool = pool(1);
+    let temp = crate::protected_content_config::tests::safe_ancestor_tempdir();
+    let reader = temp.path().join("reader");
+    crate::protected_content_config::tests::owner_only_dir(&reader);
+    let current = crate::custody_pool_resolver::tests::learn_successor_retain_original_for_test(
+        &reader,
+        pool.resolved.signed.clone(),
+        NOW,
+    )
+    .await;
+    assert_eq!(current.epochs().len(), 2);
+    pool.resolved = crate::protected_content_runtime::runtime_custody_pool_for_key_envelope_cached(
+        &reader,
+        pool.binding.key_envelope(),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(pool.resolved.epoch, pool.bundle);
+    assert_eq!(pool.resolved.descriptor.sequence(), 2);
+
+    let keys = PoolDeliveryKeys::default();
+    let (servers, ports, _) = opened_viewer(&pool, &keys).await;
+    assert_eq!(ports.wallet_calls(), 1);
+    let released = ports.released.lock().unwrap().clone();
+    assert_eq!(released.len(), 1);
+    assert_eq!(released[0].statement().pool_descriptor(), &current);
+    let verified = released[0]
+        .verify(RuntimeIssuerPolicyV1::Expected(device_issuer()), NOW)
+        .unwrap();
+    assert_eq!(verified.binding(), &pool.binding);
+
+    let part = ViewerPartIndexV1::DashInit { rendition: 1 };
+    let clear = read_pool_viewer(&handle(), part, &servers, &keys, NOW + 1)
+        .await
+        .unwrap();
+    assert_eq!(clear.as_slice(), clear_part(part).as_slice());
+}

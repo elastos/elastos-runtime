@@ -2950,6 +2950,53 @@ pub(crate) async fn fetch_verified_local_bytes_via_provider(
     fetch_bytes_via_content(registry, cid, path, Some(max_bytes), None, false).await
 }
 
+/// How far a bounded CID read may reach, after the caller admits the read.
+pub(crate) enum CidReadScope {
+    LocalOnly,
+    LocalThenKnownHolders,
+}
+
+/// The holder fallback is for metadata and covers, with its own tighter limit.
+const CID_HOLDER_READ_MAX_BYTES: usize = 4 * 1024 * 1024;
+const CID_HOLDER_READ_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Read a CID from the verified local store and, when allowed, try known
+/// Carrier holders on a local read failure. Reads do not change pin state.
+pub(crate) async fn fetch_bounded_cid_bytes(
+    registry: &ProviderRegistry,
+    cid: &str,
+    path: Option<&str>,
+    max_bytes: usize,
+    scope: CidReadScope,
+) -> anyhow::Result<Vec<u8>> {
+    let local = fetch_verified_local_bytes_via_provider(registry, cid, path, max_bytes).await;
+    let bytes = match (local, scope) {
+        (Ok(bytes), _) => bytes,
+        (Err(error), CidReadScope::LocalOnly) => return Err(error),
+        (Err(error), CidReadScope::LocalThenKnownHolders) => {
+            tracing::debug!(%cid, %error, "cid route: not held here; asking known holders");
+            let bytes = tokio::time::timeout(
+                CID_HOLDER_READ_TIMEOUT,
+                fetch_bytes_from_known_holders_capped(
+                    registry,
+                    cid,
+                    path,
+                    CID_HOLDER_READ_MAX_BYTES,
+                ),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("holder read timed out"))??;
+            anyhow::ensure!(
+                bytes.len() <= CID_HOLDER_READ_MAX_BYTES,
+                "file exceeds the holder read limit"
+            );
+            bytes
+        }
+    };
+    anyhow::ensure!(bytes.len() <= max_bytes, "file exceeds size limit");
+    Ok(bytes)
+}
+
 /// Fetch at most `max_bytes + 1` bytes of a file: the range travels with the
 /// request, so the content plane answers no more than that, and a caller that
 /// gets more than `max_bytes` back knows the file is larger than it accepts

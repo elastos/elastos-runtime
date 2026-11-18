@@ -385,6 +385,14 @@ resolve again; this is not a 20-second budget for the whole Open journey.
 Active viewer reads and the cached listing projection do not perform this
 network refresh.
 
+A signed v3 descriptor can carry more than one epoch. For a mint from an
+earlier epoch to keep opening when a reader learns a newer descriptor, the
+current descriptor must still name that mint's exact epoch bundle and eligible
+original members. Those members must still provide an authorized quorum. The
+resolver selects the bundle by the mint's existing key envelope and uses the
+current descriptor sequence. Pool membership changes and retiring the old
+quorum require a separate handover protocol.
+
 `buy_offer` checks the same thing before any Wallet request, for a new
 attempt and for an earlier attempt whose first Wallet request was never
 raised. Its check fails closed. It is `custody_elsewhere` when no pool this

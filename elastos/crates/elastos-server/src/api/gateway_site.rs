@@ -856,22 +856,7 @@ pub(super) async fn serve_cid_file(
     }
 }
 
-/// The most an app's read may take from a holder: a cover, or an item's
-/// metadata document, never a payload. Anything larger is not what Explore
-/// cards and the offer sheet read.
-const CID_HOLDER_READ_MAX_BYTES: usize = 4 * 1024 * 1024;
-/// How long a holder read may take before the app gets its 404 and moves on.
-const CID_HOLDER_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
-
-/// Fetch a single file from this node's IPFS repo: no network search, pin or
-/// gateway fallback, and content held only by availability replicas is not
-/// served. For this Home's own app (`CidReader::App`) a file the repo lacks
-/// is then read from the holders Carrier knows now, capped at
-/// `CID_HOLDER_READ_MAX_BYTES` and bounded by `CID_HOLDER_READ_TIMEOUT`,
-/// the way the `/listing` route already reads an item's folder (D4,
-/// STAB-20). The public gateway reads its own store only.
-/// The gateway keeps no copy: earlier releases' cache entries are never read.
-/// The local backend refuses a file past `MAX_GATEWAY_FILE_SIZE` while reading.
+/// Apply the admitted reader's scope to the Content read.
 async fn fetch_file_inline(
     state: &GatewayState,
     cid: &str,
@@ -882,40 +867,18 @@ async fn fetch_file_inline(
         .provider_registry
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("gateway provider registry unavailable"))?;
-    let path = (!path.is_empty()).then_some(path);
-    let local = crate::content::fetch_verified_local_bytes_via_provider(
+    let scope = match reader {
+        CidReader::App => crate::content::CidReadScope::LocalThenKnownHolders,
+        CidReader::Public => crate::content::CidReadScope::LocalOnly,
+    };
+    crate::content::fetch_bounded_cid_bytes(
         registry,
         cid,
-        path,
+        (!path.is_empty()).then_some(path),
         MAX_GATEWAY_FILE_SIZE,
+        scope,
     )
-    .await;
-    let bytes = match (local, reader) {
-        (Ok(bytes), _) => bytes,
-        (Err(error), CidReader::Public) => return Err(error),
-        (Err(error), CidReader::App) => {
-            tracing::debug!(%cid, %error, "cid route: not held here; asking known holders");
-            let bytes = tokio::time::timeout(
-                CID_HOLDER_READ_TIMEOUT,
-                crate::content::fetch_bytes_from_known_holders_capped(
-                    registry,
-                    cid,
-                    path,
-                    CID_HOLDER_READ_MAX_BYTES,
-                ),
-            )
-            .await
-            .map_err(|_| anyhow::anyhow!("holder read timed out"))??;
-            if bytes.len() > CID_HOLDER_READ_MAX_BYTES {
-                anyhow::bail!("file exceeds the holder read limit");
-            }
-            bytes
-        }
-    };
-    if bytes.len() > MAX_GATEWAY_FILE_SIZE {
-        anyhow::bail!("file exceeds size limit");
-    }
-    Ok(bytes)
+    .await
 }
 
 // ---------------------------------------------------------------------------

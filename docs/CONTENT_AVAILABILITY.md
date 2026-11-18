@@ -728,6 +728,13 @@ external repair workers.
 
 ## Public Metadata Store
 
+A CID pin records local storage, not permission to serve the CID. Runtime
+admits a gateway read before asking Content to choose a source. A seed's raw
+CID gateway reads only its local store. An admitted Home app can also use
+the existing bounded read from known Carrier holders. The holder applies its
+own sharing rules. Protected-content services check account rights and verify
+the signed content before serving it to an authorized viewer.
+
 A Home has two IPFS stores. Each store is a separate Kubo instance with its
 own repository, coordination file, lock and mode marker.
 

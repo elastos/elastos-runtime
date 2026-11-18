@@ -18526,6 +18526,98 @@ async fn live_stab_real_library_publication_delivers_over_carrier_to_an_entitled
     crate::carrier::tests::shutdown_test_carrier_node(owner_node).await;
 }
 
+/// A cold reader learns a successor descriptor before asking Library for its
+/// first copy. The actual mint remains bound to its original verified epoch.
+#[cfg(unix)]
+#[tokio::test]
+async fn original_epoch_mint_downloads_after_learning_a_signed_successor() {
+    use elastos_protected_content_contracts::{Digest32, KeyEnvelopeIdentityV1};
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+
+    let asset = publish_two_runtime_market_asset().await;
+    let buyer = adoption_buyer_on(&asset, BuyerPool::None).await;
+    let now = crate::auth::now_ts();
+    let original =
+        crate::protected_content_runtime::tests::process_fixture_pool_descriptor_for_test(
+            &asset.process_fixture,
+            elastos_protected_content_contracts::test_fixtures::runtime_issuer(0x5a),
+            now,
+        );
+    let signed_successor =
+        crate::custody_pool_resolver::tests::learn_successor_retain_original_for_test(
+            buyer.runtime.path(),
+            original,
+            now,
+        )
+        .await;
+    let package = &asset.package;
+    let envelope = KeyEnvelopeIdentityV1::from_canonical_bytes(
+        &base64::engine::general_purpose::STANDARD
+            .decode(&package.key_envelope_identity_base64)
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !crate::protected_content_runtime::runtime_custody_composition_holds_key_envelope(
+            buyer.runtime.path(),
+            &buyer.registry,
+            &envelope,
+        )
+        .unwrap(),
+        "an installed local composition could bypass the known-pool resolver"
+    );
+    assert_eq!(signed_successor.epochs().len(), 2);
+    assert!(signed_successor
+        .verify(now)
+        .unwrap()
+        .epoch_for(&envelope)
+        .is_some());
+    reset_mock_chain_raw_requests();
+    let item = adoption_buy_offer_body(package)["item"].clone();
+    let (_, response) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({"item": item}),
+    )
+    .await;
+    assert_eq!(response["status"], "ok", "{response}");
+    assert_eq!(response["data"]["acquisition"], "granted");
+    let id = response["data"]["mint_id"].as_str().unwrap();
+    let local_mint = Digest32::new(hex::decode(id).unwrap().try_into().unwrap());
+    let copy = crate::protected_content_runtime::load_runtime_custody_listing(
+        buyer.runtime.path(),
+        local_mint,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        copy.package.key_envelope_identity_base64,
+        package.key_envelope_identity_base64
+    );
+    assert_eq!(copy.package.content_cid, package.content_cid);
+    assert_eq!(copy.package.content_access_id, package.content_access_id);
+    assert_eq!(
+        mock_chain_raw_request_count("resolve_protected_content_purchase"),
+        0
+    );
+
+    set_mock_protected_content_purchase_access_denied();
+    let (_, refused) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "download_owned_copy",
+        json!({"mint_id": id}),
+    )
+    .await;
+    assert_eq!(refused["status"], "error", "{refused}");
+    assert_eq!(refused["code"], "no_access", "{refused}");
+}
+
 /// No grant, no copy: the refusal says the account has no access, as data,
 /// and nothing is written.
 #[tokio::test]

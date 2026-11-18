@@ -39,6 +39,86 @@ fn descriptor(sequence: u64) -> SignedPoolDescriptorAnyV1 {
     .into()
 }
 
+/// Teach a test reader two successive, verified descriptors through the same
+/// add path as Custody. The successor uses distinct fixture key envelopes
+/// and still advertises every member needed by the original epoch.
+pub(crate) async fn learn_successor_retain_original_for_test(
+    reader: &Path,
+    original: SignedPoolDescriptorAnyV1,
+    now: u64,
+) -> SignedPoolDescriptorAnyV1 {
+    let SignedPoolDescriptorAnyV1::V3(original_v3) = &original else {
+        panic!("the baseline release descriptor must be v3");
+    };
+    let previous = original_v3.statement();
+    let successor_epoch = pool_bundle(|seed| xwing(seed + 8), now);
+    let successor_only = pool_descriptor_with(
+        &successor_epoch,
+        2,
+        ServePolicyV1::DEFAULT,
+        None,
+        runtime_issuer(0x43),
+        now,
+    );
+    let mut members = previous.members().to_vec();
+    for member in successor_only.statement().members() {
+        if !members
+            .iter()
+            .any(|kept| kept.node_public_key() == member.node_public_key())
+        {
+            members.push(member.clone());
+        }
+    }
+    let updated = sign_successor_for_test(original_v3, successor_epoch, members);
+    let address = address_for(*previous.pool());
+    let transport = FakeTransport::describing(&[original.clone(), updated.clone()]);
+    let client = PoolSessionClient::new(&transport);
+    let write = crate::custody_consent::lock_custody_writes().await;
+    let first = add_known_pool_with(&write, reader, &client, &address, now)
+        .await
+        .unwrap();
+    assert_eq!(first.sequence, original.sequence());
+    let newer = add_known_pool_with(&write, reader, &client, &address, now)
+        .await
+        .unwrap();
+    assert_eq!(newer.sequence, updated.sequence());
+    assert_eq!(known_pools(reader).unwrap(), vec![newer]);
+    updated
+}
+
+fn sign_successor_for_test(
+    original: &elastos_protected_content_contracts::SignedPoolDescriptorV3,
+    successor: elastos_protected_content_contracts::PoolEpochBundleV1,
+    members: Vec<elastos_protected_content_contracts::PoolMemberV3>,
+) -> SignedPoolDescriptorAnyV1 {
+    use ed25519_dalek::Signer as _;
+    use elastos_protected_content_contracts::test_fixtures::POOL_AUTHORITY_SEED;
+    use elastos_protected_content_contracts::{PoolDescriptorStatementV3, SignedPoolDescriptorV3};
+
+    let previous = original.statement();
+    let mut epochs = vec![successor];
+    epochs.extend_from_slice(previous.epochs());
+    let statement = PoolDescriptorStatementV3::new(
+        *previous.pool(),
+        previous.sequence() + 1,
+        epochs,
+        members,
+        *previous.serve_policy(),
+        previous.mint_policy().clone(),
+        previous.issued_at(),
+        previous.expires_at(),
+        previous.trust_mode(),
+    )
+    .unwrap();
+    let signature = signing_key(POOL_AUTHORITY_SEED)
+        .sign(&statement.canonical_bytes().unwrap())
+        .to_bytes()
+        .to_vec();
+    SignedPoolDescriptorV3::new(statement, signature)
+        .unwrap()
+        .into()
+}
+
 const BOOTSTRAP_DID: &str = "did:key:z6MkPoolNode01";
 
 fn bootstrap() -> PoolMemberRouteV2 {
@@ -881,6 +961,85 @@ async fn live_same_epoch_real_custody_wrappers_accept_current_descriptor_without
     .into();
     crate::protected_content_runtime::tests::assert_same_epoch_custody_wrapper_boundary_for_test(
         &descriptor,
+        &envelope,
+        now,
+    )
+    .await;
+}
+
+/// An updated descriptor can carry both release-authorized epochs. The old
+/// mint must resolve with its own envelope and the current descriptor sequence
+/// even after the known-pool entry is replaced.
+#[tokio::test]
+async fn original_epoch_release_survives_learning_a_signed_successor() {
+    let now = crate::auth::now_ts();
+    let (_temp, reader) = data_dir();
+    let original = pool_bundle(xwing, now);
+    let successor = pool_bundle(|seed| xwing(seed + 8), now);
+    assert_ne!(
+        original.epoch_identity().unwrap(),
+        successor.epoch_identity().unwrap(),
+        "the new node custody keys must produce a different epoch"
+    );
+    let original_descriptor = pool_descriptor_with(
+        &original,
+        1,
+        ServePolicyV1::DEFAULT,
+        None,
+        runtime_issuer(0x43),
+        now,
+    );
+    let current = sign_successor_for_test(
+        &original_descriptor,
+        successor.clone(),
+        original_descriptor.statement().members().to_vec(),
+    );
+    let encrypted = EncryptedContentIdentityV1::new(Digest32::new([0x31; 32]), 4096).unwrap();
+    let envelope = same_epoch_real_envelope(&original, encrypted, now);
+    let original_item = envelope.key_envelope_identity().unwrap();
+    let successor_item = key_envelope_for(&successor, original_item.encrypted_content());
+    let address = address_for(*current.pool());
+    let transport = FakeTransport::describing(&[original_descriptor.into(), current.clone()]);
+    let client = PoolSessionClient::new(&transport);
+    let registry = Arc::new(ProviderRegistry::new());
+
+    let write = crate::custody_consent::lock_custody_writes().await;
+    let first = add_known_pool_with(&write, &reader, &client, &address, now)
+        .await
+        .unwrap();
+    drop(write);
+    assert_eq!(first.sequence, 1);
+    let cached = crate::protected_content_runtime::runtime_custody_pool_for_key_envelope_cached;
+    assert_eq!(
+        cached(&reader, &original_item, now).unwrap().epoch,
+        original
+    );
+    assert!(cached(&reader, &successor_item, now).is_err());
+
+    let write = crate::custody_consent::lock_custody_writes().await;
+    let updated = add_known_pool_with(&write, &reader, &client, &address, now)
+        .await
+        .unwrap();
+    drop(write);
+    assert_eq!(updated.sequence, 2);
+    assert_eq!(known_pools(&reader).unwrap(), vec![updated]);
+    assert_eq!(
+        cached(&reader, &successor_item, now).unwrap().epoch,
+        successor
+    );
+
+    let resolved = crate::protected_content_runtime::runtime_custody_pool_for_key_envelope(
+        &reader,
+        registry,
+        &original_item,
+        now,
+    )
+    .await
+    .unwrap();
+    assert_eq!(resolved.signed, current);
+    assert_eq!(resolved.epoch, original);
+    crate::protected_content_runtime::tests::assert_same_epoch_custody_wrapper_boundary_for_test(
+        &resolved.signed,
         &envelope,
         now,
     )

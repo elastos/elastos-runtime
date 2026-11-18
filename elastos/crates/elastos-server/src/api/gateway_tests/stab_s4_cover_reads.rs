@@ -155,13 +155,23 @@ impl ReaderHome {
         (status, bytes)
     }
 
-    fn asked_beyond_own_store(&self) -> bool {
-        self.content
-            .requests
-            .lock()
-            .unwrap()
+    fn assert_local_then_known_holders(&self, cid: &str, path: Option<&str>) {
+        let requests = self.content.requests.lock().unwrap();
+        let reads: Vec<_> = requests
             .iter()
-            .any(|request| request.get("local_only") != Some(&Value::Bool(true)))
+            .filter(|request| request["op"] == "fetch")
+            .collect();
+        let [local, holder] = reads.as_slice() else {
+            panic!("expected one local fetch and one holder fetch, got {reads:?}");
+        };
+        assert_eq!(local["cid"], cid);
+        assert_eq!(holder["cid"], cid);
+        assert_eq!(local["path"].as_str(), path);
+        assert_eq!(holder["path"].as_str(), path);
+        assert_eq!(local["local_only"], true);
+        assert_eq!(local["whole_max_bytes"], MAX_GATEWAY_FILE_SIZE);
+        assert_eq!(holder["known_holders_only"], true);
+        assert_eq!(holder["range"], json!({"start": 0, "end": 4 * 1024 * 1024}));
     }
 }
 
@@ -171,12 +181,13 @@ async fn stab_s4_content_route_reads_a_cover_that_a_carrier_holder_serves() {
     let home = reader_home().await;
     let (status, bytes) = home.read(&format!("/content/{COVER_CID}")).await;
     assert_eq!(
-        (status, home.asked_beyond_own_store()),
-        (StatusCode::OK, true),
+        status,
+        StatusCode::OK,
         "a cover another Home serves must reach this Home's own Marketplace app; \
          the /content route asked only this Home's store (local_only) and answered {status}: {}",
         String::from_utf8_lossy(&bytes)
     );
+    home.assert_local_then_known_holders(COVER_CID, None);
     assert_eq!(bytes, PNG);
 }
 
@@ -190,12 +201,14 @@ async fn stab_s4_content_route_reads_the_metadata_document_that_a_carrier_holder
         .read(&format!("/content/{FOLDER_CID}/metadata.json"))
         .await;
     assert_eq!(
-        (status, home.asked_beyond_own_store()),
-        (StatusCode::OK, true),
+        status,
+        StatusCode::OK,
         "an Explore card's metadata document another Home serves must reach this Home's \
          own Marketplace app; /content asked only this Home's store and answered {status}: {}",
         String::from_utf8_lossy(&bytes)
     );
+    home.assert_local_then_known_holders(FOLDER_CID, Some("metadata.json"));
+    assert_eq!(bytes, metadata_json());
 }
 
 /// Home-4's side: the creator's Home serves a protected item's payload,
