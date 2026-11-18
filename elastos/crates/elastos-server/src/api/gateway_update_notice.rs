@@ -217,6 +217,7 @@ pub(super) async fn notification_with_cache(
         return None;
     }
     Some(HomeNotificationEntrySummary {
+        requesting_origin: None,
         id: format!("home-update:{release}"),
         source_app: SYSTEM_CAPSULE_ID.into(),
         kind: "home_update_available".into(),

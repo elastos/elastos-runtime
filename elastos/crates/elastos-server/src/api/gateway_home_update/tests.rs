@@ -1762,6 +1762,7 @@ async fn update_notice_typed_failures_preserve_only_unreachable_confirmed_offer(
         assert!(notice_list(&app, &inbox).await.is_empty());
         notice_seed(dir.path(), CheckOutcome::from(Some(cached_offer()))).await;
         let first = notice_list(&app, &inbox).await;
+        assert!(first.iter().all(|entry| entry.get("requesting_origin").is_none()));
         assert_eq!(first.len(), 1, "retention starts with a real entry");
         notice_seed(dir.path(), CheckOutcome::Unavailable).await;
         assert_eq!(notice_list(&app, &inbox).await, first);
