@@ -52,6 +52,22 @@ test('caught malformed EVM page calls remain visible through the control helper'
   } finally { await browser.close(); }
 });
 
+test('caught unknown member reads remain visible in the installed page', async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const [scenario, member] of [['metamask-before-access', 'enable'], ['unisat-before-access', '_request']]) {
+      const page = await browser.newPage();
+      await page.addInitScript(installScriptedExtension, await replayInput(scenario));
+      await page.goto('data:text/html,<script>addEventListener("eip6963:announceProvider",e=>window.wallet=e.detail.provider); dispatchEvent(new Event("eip6963:requestProvider"));</script>');
+      await page.evaluate(() => __walletReplay.advance(1000));
+      await page.evaluate((member) => { try { void (window.unisat || window.wallet)[member]; } catch {} }, member);
+      assert.equal(await page.evaluate(() => __walletReplay.violations.length), 1);
+      await assert.rejects(page.evaluate(() => __walletReplay.assertNoViolations()), /Wallet replay violations/);
+      await page.close();
+    }
+  } finally { await browser.close(); }
+});
+
 test('headless UniSat waits through unlock and approval, with recorded public event order', async () => {
   const browser = await chromium.launch({ headless: true });
   try {

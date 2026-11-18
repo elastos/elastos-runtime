@@ -67,11 +67,11 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
         const expected=pictures.find(p=>p.window===row.window&&p.stage===row.stage);
         const facts=ruleFacts(row,shared,expected);
         const observed=await surface.evaluate(async({args,theme,visibleFrame})=>{
-          const {renderConnection,reduceConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
+          const {mountConnection,reduceConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
           const view=reduceConnection(...args);
           document.documentElement.dataset.elTheme=theme;
           await document.fonts.load('600 28px Inter');
-      const mount=document.querySelector('#mount');mount.replaceChildren(renderConnection(document,view));
+      const mount=document.querySelector('#mount');window.presentationMount?.dispose();window.presentationMount=mountConnection(mount,view);
           const root=mount.firstChild;
           await document.fonts.ready;
           const focus=view.focus==='outcome'||view.focus==='accounts'?root.querySelector(`[data-focus="${view.focus}"]`):[...root.querySelectorAll('button')].find(b=>b.dataset.action===view.focus);
@@ -124,10 +124,11 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           if(fallbackClose)expectedControls=[{label:'Close window',primary:true}];
           if(facts.approval){const main=expectedControls.filter(c=>c.primary),other=expectedControls.filter(c=>!c.primary&&c.label!=='Close window');expectedControls=[{label:'Close window',primary:false},...other.filter(c=>c.label.startsWith('View request')),...other.filter(c=>!c.label.startsWith('View request')),...main];}
           if(row.unknownSafety&&['link-busy','request-busy','extension-busy'].includes(row.stage))expectedControls=[{label:'Close window',primary:true},...expectedControls.filter(c=>!c.primary&&c.label!=='Close window')];
+          if(row.unknownSafety&&row.stage==='link-error')expectedControls=[{label:'Close window',primary:true}];
           if(row.stage==='disconnecting')expectedControls.push({label:'Close window',primary:true});
           const actual=observed.controls.map(b=>({label:b.label.replace(/\s+/g,' '),primary:b.primary}));
           assert.deepEqual(actual,expectedControls,key+': control order and main control');
-          const expectedFocus=fallbackClose&&facts.focus||row.unknownSafety&&['link-busy','request-busy','extension-busy'].includes(row.stage)?'close-window':facts.focus;
+          const expectedFocus=fallbackClose&&facts.focus||row.unknownSafety&&['link-busy','request-busy','extension-busy','link-error'].includes(row.stage)?'close-window':facts.focus;
           assert.equal(observed.focus,expectedFocus,key+': design focus, with answered-outcome override');
           if(observed.clicks.length)assert.equal(observed.clicks.length,1,key+': exit operable');
           const item={engine,theme,size:size.name,window:row.window,stage:row.stage,unknownSafety:!!row.unknownSafety,controls:observed.controls.map(({id,label,primary})=>({id,label,primary})),focus:observed.focus,text:observed.text,result:'pass'};

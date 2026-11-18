@@ -70,7 +70,7 @@ test('10: real guards filter injected reload and connector offers on error, requ
 
 test('6: known app labels are local copy and absent labels use a sentence-safe fallback',async()=>{
   const {reduceSummary}=await import('../capsules/_shared/wallet-connection-view.mjs');
-  for(const [capsule_id,app]of [['browser','Browser'],['notes','Notes'],['unknown-capsule','Requesting app']])assert.equal(reduceSummary({...summary,capsule_id},{connector:'wallet-metamask'}).app,app);
+  for(const [capsule_id,app]of [['browser','Browser'],['notes','Notes'],['unknown-capsule','Requesting app']]){assert.equal(reduceSummary({...summary,capsule_id,requesting_app_name:app},{connector:'wallet-metamask'}).app,app);assert.equal(reduceSummary({...summary,capsule_id,requesting_app_name:undefined},{connector:'wallet-metamask'}).app,'Requesting app');}
 });
 
 test('10: independent oracles detect real source mutations',async t=>{
@@ -78,12 +78,12 @@ test('10: independent oracles detect real source mutations',async t=>{
  const mutations=[
   {name:'answered request-done loses outcome focus',from:'request-(done|declined',to:'request-(declined',row:state('metamask/request-done'),rule:'answered'},
   {name:'error-stage payment guard removed',from:'timeout|cancelled|reopened|error|removed',to:'timeout|cancelled|reopened|removed',row:{...state('metamask/link-error'),summaryInput:state('metamask/transaction-waiting').summaryInput},injectReload:true,rule:'payment'},
-  {name:'request connector guard removed',from:'screen.request || screen.account || screen.selectedAccount || ',to:'',row:state('metamask/request-waiting'),injectAlternative:true,rule:'capability'},
-  {name:'account connector guard removed',from:'screen.request || screen.account || screen.selectedAccount || ',to:'',row:state('metamask/site-access-ended'),injectAlternative:true,rule:'capability'},
+  {name:'request connector guard removed',from:' || requestScreen || ',to:' || false || ',requestOnly:true,row:state('metamask/request-waiting'),injectAlternative:true,rule:'capability'},
+  {name:'account connector guard removed',from:'screen.account || screen.selectedAccount || ',to:'',row:state('metamask/site-access-ended'),injectAlternative:true,rule:'capability'},
  ];
  for(const m of mutations)await t.test(m.name,async()=>withTestView({
-  mutateSource:source=>{assert(source.includes(m.from));return source.replace(m.from,m.to);},
-  editScreens:s=>{const screen=s[m.row.window][m.row.stage];if(m.injectReload)screen.notice='If the wallet will not open, use the browser Reload control.';if(m.injectAlternative)screen.secondary=[...(screen.secondary||[]),{id:'use-walletconnect',label:'WalletConnect',quiet:true}];},
+  mutateSource:source=>{assert.equal(source.split(m.from).length,2,'mutation must target exactly one guard');return source.replace(m.from,m.to);},
+  editScreens:s=>{const screen=s[m.row.window][m.row.stage];if(m.requestOnly){screen.account=false;screen.selectedAccount=false;}if(m.injectReload)screen.notice='If the wallet will not open, use the browser Reload control.';if(m.injectAlternative)screen.secondary=[...(screen.secondary||[]),{id:'use-walletconnect',label:'WalletConnect',quiet:true}];},
  },async module=>{
   const view=module.reduceConnection(...fixtureArguments(m.row));const failures=ruleFailures(view,{row:m.row,shared,expected:pictures.find(p=>p.window===m.row.window&&p.stage===m.row.stage)});
   assert(failures.includes(m.rule),m.name+' escaped');t.diagnostic(m.name+': caught by '+m.rule);

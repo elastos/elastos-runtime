@@ -59,6 +59,9 @@ unlock followed by approval. `closes side panel` leaves the measured MetaMask
 side-panel call pending; `closes the prompt` is the recorded native notification
 close. A pending-only recording stays pending for all virtual time. The queued
 signature recordings establish waiting, not an eventual signature response.
+An unlock plan must contain a finite recorded `unlock_action_at_ms` or the exact
+recorded phase `unlocked then signed`. Import and default validation require
+this evidence even when the action pins have been regenerated.
 
 `advance(ms)` drives wallet time only. If the test uses Playwright's page
 clock for Home deadlines, advance that clock as well. An approval releases the
@@ -117,12 +120,12 @@ examples before the consumers run; the file models only the proposed default.
 Run the small checks:
 
 ```sh
-node --test scripts/wallet-connector-v2-messages.test.mjs scripts/wallet-extension-replay.test.mjs scripts/wallet-extension-review.test.mjs
+node --test scripts/wallet-connector-v2-messages.test.mjs scripts/wallet-extension-replay.test.mjs scripts/wallet-extension-review.test.mjs scripts/wallet-extension-residual.test.mjs
 WALLET_EXTENSION_RAW=/path/to/original/recordings.json node --test scripts/wallet-extension-replay.test.mjs
 elastos-heavy node --test scripts/wallet-extension-page.test.mjs
 ```
 
-All four test files are also found by the repository behaviour suite's
+All five test files are also found by the repository behaviour suite's
 `scripts/*.test.mjs` glob. The raw-file check is skipped when its explicit input
 is absent; the bundled parity checks still run. To regenerate the bounded
 excerpts and their independent pin, run:
@@ -139,6 +142,21 @@ scenario mapping and each rejection's case ID. Refresh it only through the
 importer with the raw check, then review both diffs. The default run checks the
 pin even when the private raw file is absent. Raw capture changes require a
 reviewed source-digest update by the integrator.
+
+A change to `recording-pin.json` must be reviewed against a passing private raw
+run. Its digest also has an independent anchor in the replay test source; a
+fixture edit plus a hand-updated fixture digest therefore fails the default
+run. Update that source anchor deliberately after the raw comparison and diff
+review. The importer takes raw approval from `approvedRawSha256` in
+`recording-source.mjs`, rather than from the editable pin file.
+Approval/unlock evidence pins bind each case's recorded values, outcomes,
+exact phases (including recorded absence) and action timestamps. A word such
+as "unlock" in unrelated text cannot satisfy that check.
+
+The packet checker reads the handoff/settlement key declarations from the
+pinned contracts in its conformance test. Preserved nested handoff declarations
+also come from the complete old Home module. UUID validation follows the
+contract's version-neutral syntax; producer randomness is a separate property.
 
 ## Recording limits and lane gates
 
@@ -175,8 +193,28 @@ direct stale `eth_accounts` timeout needs its own recording first.
 UniSat's own keys and public method list come from US-10-presence. Its event
 methods live on the stand-in prototype, so the own-key list stays exact. The
 legacy Rabby own-key list comes from R2-BOTH-legacy-shape. Unknown internal
-values remain undefined, and unrecorded method calls fail through the violation
-list. The capture has no complete MetaMask or announced-Rabby key inventory,
+values are guarded getters: reading one records a violation and throws before
+product code can call or use it. Reads of absent wallet members, including
+standard methods on announced providers, also record a violation and throw.
+The `in` operator records a violation for absent wallet names. Membership tests
+for recorded names return their presence without invoking guarded getters.
+Assignment to a guarded or absent string member records a violation before it
+throws. Writes to existing data members retain JavaScript assignment semantics;
+the final surface check still checks their descriptors and types.
+These guards add no own member names. Use `Object.getOwnPropertyNames` and property descriptors
+to inspect the measured surface without invoking it. The final one-line
+`assertNoViolations()` check catches unsupported reads, membership tests and
+assignments even when product code catches the exception. Its surface check
+includes enumerable and non-enumerable own names. Legacy `isConnected()` returns its recorded Boolean from
+R2-BOTH-legacy-shape. The absent `then` property returns `undefined` on reads and
+`false` on membership probes for JavaScript Promise/EventTarget plumbing.
+Event subscriptions require a function and record a violation otherwise.
+The recorded public method list proves names/types, rather than replies. A
+listed method with no imported call case also uses a guarded getter. The
+recorded event stream supports `on`; provider `removeListener`/`once` and
+unrecorded RPC behavior wait for recordings. A lane can test its own generation
+fences with the recorded events, but a pass does not prove provider unsubscribe.
+The capture has no complete MetaMask or announced-Rabby key inventory,
 nor complete prototype/private-member types. Those stand-ins implement the
 measured request/event interface and recorded flags only. A passing test proves
 neither complete object reflection nor private API compatibility.

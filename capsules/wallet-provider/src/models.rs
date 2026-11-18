@@ -12,6 +12,12 @@ pub(super) struct LinkedAccount {
     pub(super) connector_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) wallet_display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) wallet_mark: Option<String>,
     pub(super) linked_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) revoked_at: Option<u64>,

@@ -68,7 +68,7 @@ export function createWalletFlows({
     header.className = options.headerInline
       ? "wallet-modal-header wallet-modal-header-inline"
       : "wallet-modal-header";
-    const heading = textNode("h2", title);
+    const heading = options.headingNode || textNode("h2", title);
     heading.tabIndex = -1;
     header.append(heading, textNode("p", subtitle, "wallet-state"));
     const body = document.createElement("div");

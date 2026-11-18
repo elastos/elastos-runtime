@@ -13,6 +13,7 @@ import {
   METHOD_MONOGRAMS,
   accountDisplayBalance,
   accountName,
+  accountDisplayName,
   cardAddressDisplay,
   cardNetworkLabel,
   chainLabel,
@@ -147,8 +148,15 @@ const {
   onRequestClick,
   openPendingReview,
   pendingWalletRequests,
+  requestsWithDecisions,
   renderRequests,
 } = createWalletRequests({
+  clearRequestSelection: () => {
+    reviewWalletRequestId = "";
+    currentRequests = requestsWithDecisions(currentRequests);
+    renderActivity(currentRequests);
+    renderApprovalsBadge(pendingWalletRequests(currentRequests).length);
+  },
   fetchJson,
   notifyHomeSummaryChanged,
   openApprovalMethod,
@@ -205,7 +213,7 @@ const { canSendFromAccount, openSendFlow } = createWalletSendFlow({
   flowStaticRow,
   formatAmount,
   getCurrentPrices: () => currentPrices,
-  getCurrentRequests: () => currentRequests,
+  getCurrentRequests: () => requestsWithDecisions(currentRequests),
   getDisplayCurrency,
   isPasskeyManagedAccount,
   modalButton,
@@ -509,6 +517,7 @@ async function loadWalletState() {
   ]);
   const walletAccounts = summary && summary.wallet_accounts;
   const walletApprovals = summary && summary.wallet_approvals;
+  const requestsUnavailable = walletApprovals?.available === false;
   currentApprovalMethods = summary && summary.approval_methods
     ? summary.approval_methods
     : {};
@@ -518,17 +527,18 @@ async function loadWalletState() {
   currentDefaults = Array.isArray(walletAccounts && walletAccounts.default_accounts)
     ? walletAccounts.default_accounts
     : [];
-  currentRequests = Array.isArray(walletApprovals && walletApprovals.approval_requests)
-    ? walletApprovals.approval_requests
-    : [];
+  if (!requestsUnavailable) currentRequests = requestsWithDecisions(Array.isArray(walletApprovals && walletApprovals.approval_requests)
+    ? walletApprovals.approval_requests : []);
   currentPrices = prices.prices || {};
   pricesStale = Boolean(prices.stale);
   pricesUnavailable = Boolean(prices.unavailable);
   currentBalanceRows = await loadBalanceRows(currentAccounts);
   renderAll();
+  if (requestsUnavailable) throw new Error("Wallet requests are unavailable.");
 }
 
 function renderAll() {
+  currentRequests = requestsWithDecisions(currentRequests);
   const allAccounts = buildViewAccounts();
   const pending = pendingWalletRequests(currentRequests);
   renderHero(allAccounts);
@@ -548,9 +558,9 @@ function renderWalletReviewRequests() {
     : pending;
   const focusedRequestVisible = renderRequests(reviewRequests, reviewWalletRequestId);
   if (reviewWalletRequestId && focusedRequestVisible) {
-    showStatus("Review and approve this request in Wallet.", "muted");
+    showStatus("Review this request.", "muted");
   } else if (reviewWalletRequestId) {
-    showStatus("This request is unavailable. Choose another request in Inbox.", "muted");
+    showStatus("This request is unavailable. Return to the app and ask for a new request.", "muted");
   }
 }
 
@@ -740,27 +750,29 @@ function renderHeroAccount(accounts) {
   const privacy = getPrivacyMode();
   const addressText = cardAddressDisplay(account.address, { privacy });
   const networkText = cardNetworkLabel(account);
-  const selectionLabel = selectedAccountId ? `Selected · ${account.name}` : `Default · ${account.name}`;
+  const displayName = accountDisplayName(account);
+  const selectionLabel = selectedAccountId ? `Selected · ${displayName}` : `Default · ${displayName}`;
 
   accountCardNode.hidden = false;
   heroSceneNode?.classList.add("has-account-card");
   accountCardNode.classList.toggle("is-selected", Boolean(selectedAccountId));
   accountCardNode.setAttribute("aria-label", `${selectionLabel}. ${networkText}`);
-  accountCardNode.title = `${account.name} · ${account.address}`;
+  accountCardNode.title = `${displayName} · ${account.address}`;
 
   if (accountCardAddressNode) {
     accountCardAddressNode.textContent = addressText;
     accountCardAddressNode.dataset.walletCopyAddress = account.address;
   }
   if (accountCardNameNode) {
-    accountCardNameNode.textContent = account.name;
+    accountCardNameNode.textContent = displayName;
+    accountCardNameNode.dir = "auto";
   }
   if (accountCardNetworkNode) {
     accountCardNetworkNode.textContent = networkText;
   }
   if (accountCardCopyNode) {
     accountCardCopyNode.replaceChildren(
-      copyIconButton(account.address, `Copy ${account.name} address`),
+      copyIconButton(account.address, `Copy ${displayName} address`),
     );
   }
 }

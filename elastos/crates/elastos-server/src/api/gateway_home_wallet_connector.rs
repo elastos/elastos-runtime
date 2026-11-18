@@ -195,6 +195,7 @@ pub(super) async fn home_wallet_connector_evm_link_verify(
     match auth_gateway::evm_verify_for_wallet_link(
         &state,
         auth_gateway::EvmVerifyRequest {
+            wallet_peer_name: None,
             message: input.message,
             signature: input.signature,
         },

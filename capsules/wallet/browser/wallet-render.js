@@ -3,6 +3,9 @@ import {
   assetColor,
   formatAmount,
   shortAddress,
+  walletDisplay,
+  accountDisplayName,
+  isPasskeyManagedAccount,
 } from "./wallet-format.js?v=wallet-20260819f";
 
 const METHOD_ICON_SRC = Object.freeze({
@@ -89,12 +92,23 @@ export function accountCard(account, displayedAccountId = "", { privacyMode, pri
   const addressText = account.network
     ? `${shortAddress(account.address)} (${account.network})`
     : shortAddress(account.address);
+  const accountLabel = textNode("strong", accountDisplayName(account), "wallet-card-name");
+  accountLabel.dir = "auto";
   title.append(
-    textNode("strong", account.name, "wallet-card-name"),
+    accountLabel,
     textNode("span", addressText, "wallet-card-address"),
   );
+  const display = walletDisplay(account);
+  if (!isPasskeyManagedAccount(account) && display.name !== accountDisplayName(account)) {
+    const name = textNode("span", display.name, "wallet-display-name");
+    name.dir = "auto";
+    title.append(name);
+  }
+  const mark = isPasskeyManagedAccount(account)
+    ? methodMark(account.method, account.monogram, false, account.chain_namespace)
+    : walletDisplayMark(display.mark);
   identity.append(
-    methodMark(account.method, account.monogram, false, account.chain_namespace),
+    mark,
     title,
   );
 
@@ -107,7 +121,7 @@ export function accountCard(account, displayedAccountId = "", { privacyMode, pri
   more.type = "button";
   more.textContent = "⋯";
   more.dataset.walletAccountMenu = account.account_id;
-  more.setAttribute("aria-label", `Account actions for ${account.name}`);
+  more.setAttribute("aria-label", `Account actions for ${accountDisplayName(account)}`);
 
   top.append(identity, balance, more);
 
@@ -123,6 +137,19 @@ export function accountCard(account, displayedAccountId = "", { privacyMode, pri
   }
   card.append(top, meta);
   return card;
+}
+
+export function walletDisplayMark(key) {
+  const mark = document.createElement("span");
+  mark.className = "wallet-method-mark wallet-method-mark-icon";
+  mark.setAttribute("aria-hidden", "true");
+  const image = document.createElement("img");
+  image.src = ({ wallet: "./icons/icon-64.png", metamask: "./icons/metamask.png", unisat: "./icons/unisat.png" })[key] || "./icons/icon-64.png";
+  image.alt = "";
+  image.width = 32;
+  image.height = 32;
+  mark.append(image);
+  return mark;
 }
 
 export function emptyHero() {

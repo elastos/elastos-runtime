@@ -1474,6 +1474,9 @@ fn gateway_provider_error_status(scheme: &str, err: &anyhow::Error) -> StatusCod
 }
 
 fn inbox_error_response(err: anyhow::Error) -> Response {
+    if let Some(response) = gateway_walletconnect::consent_conflict_response(&err) {
+        return response;
+    }
     let profile_required = gateway_home_system::profile_required_message(&err);
     let text = profile_required
         .map(str::to_string)
@@ -1509,6 +1512,9 @@ fn inbox_error_response(err: anyhow::Error) -> Response {
 }
 
 fn system_error_response(err: anyhow::Error) -> Response {
+    if let Some(response) = gateway_walletconnect::consent_conflict_response(&err) {
+        return response;
+    }
     if let Some(text) = gateway_home_system::home_appearance_preference_request_message(&err) {
         return (StatusCode::BAD_REQUEST, text.to_string()).into_response();
     }

@@ -202,6 +202,9 @@ impl WalletProvider {
                 address,
                 proof_type,
                 label,
+
+                provider_id,
+                wallet_peer_name,
             } => self.link_account(LinkAccountInput {
                 principal_id: principal_id.to_string(),
                 proof_binding_id: proof_binding_id.clone(),
@@ -210,6 +213,8 @@ impl WalletProvider {
                 proof_type: proof_type.clone(),
                 connector_id: Some(actor.to_string()),
                 label: label.clone(),
+                provider_id: provider_id.clone(),
+                wallet_peer_name: wallet_peer_name.clone(),
             }),
             WalletProviderOperationV2::RevokeAccount { account_id } => {
                 self.revoke_account(principal_id, account_id)
@@ -318,7 +323,7 @@ impl WalletProvider {
                 self.attach_validated_chain_outcome(&request.authority, outcome)
             }
             WalletProviderOperationV2::ListApprovals { include_resolved } => {
-                self.approval_requests(principal_id, *include_resolved)
+                self.approval_requests(principal_id, session_id, *include_resolved)
             }
             WalletProviderOperationV2::RejectApproval { request_id, reason } => {
                 self.reject_approval(principal_id, session_id, actor, request_id, reason)

@@ -18,5 +18,20 @@
     "US-10-reject": "c10c50f645754a567628e288cc7d14b67d11f2922618b1f125afaabeb59363cc",
     "US-12-sign-reject": "c10c50f645754a567628e288cc7d14b67d11f2922618b1f125afaabeb59363cc",
     "R2-US-native-connect-close": "c10c50f645754a567628e288cc7d14b67d11f2922618b1f125afaabeb59363cc"
+  },
+  "actions": {
+    "MM-2-ignore": "8e8d3084f621eec657039e0085b077379a6ea4fc66aef53ccec864f15cffdc16",
+    "MM-5-sign-approve": "cd755f3e355c666f2fdd1197f5a86029e3f9b4d17ada3532de761f611c711156",
+    "R2-MM-native-connect-close": "bdc43bbfcedb730d430a95de95e5e00ab8f05741a83c027ac644396faf5bac12",
+    "R2-MM-send-after-reconnect": "11342f28e1f491468efccba817ac3b7427940dc73533418c305f81528c3693c6",
+    "R2-MM-send-late75": "d120b3e656dd2780dc667570fe2e03870057cb4581c6718e7545e303e976e434",
+    "R2-MM-queue-first": "bec3a350e7b3194dc7cc32c60711bff99aacccc1de267f9429c093c7c8be6552",
+    "R2-US-locked-connect-clean": "271ee8cd245235407479986c5a40210e8038f24028b6854d2f3fc058c0a2dee6",
+    "R2-US-locked-sign-clean": "c40571d2ca3abc485ac14fb9a5e4f99f8fe99d54795c3ab468a8df184be9a5bd",
+    "US-12-locked-sign-repeat": "be51b2cd6998602877f2ec0d36fb916ed4dfc7bf7b425940bbdac6233e1bc05a",
+    "US-10-repeat-second": "ffe94026f665b7c68e91d9a965d644d115b349dd22a348b7f26c76fae234131f",
+    "US-12-after-switch-sign": "253bfb3e3bbefefe1ada843f265ef92cef5f183389a82f131bbab1730ed5fd1e",
+    "R2-BOTH-call-metamask-announced": "f7582963b3030c81bb26deff691afc0c63f816338193c6615695702f7266fc1e",
+    "R2-BOTH-legacy-fresh-events": "7e0f22f64a358d9cb226bad596ccc283c81baece6594ccedfccf6a8b749326f9"
   }
 }

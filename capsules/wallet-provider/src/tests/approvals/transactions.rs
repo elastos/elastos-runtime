@@ -311,6 +311,9 @@ fn external_transaction_handoff_with_expiry(
                 address: external_address.into(),
                 proof_type: "siwe".into(),
                 label: None,
+
+                provider_id: None,
+                wallet_peer_name: None,
             },
         ),
         Response::Ok { .. }

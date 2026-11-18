@@ -4790,6 +4790,7 @@ impl Provider for MockWalletProvider {
                 WalletProviderOperationV2::ListApprovals { include_resolved } => json!({
                     "op": "approval_requests",
                     "principal_id": wallet_request.authority.principal_id,
+                    "session_id": wallet_request.authority.session_id,
                     "include_resolved": include_resolved,
                 }),
                 WalletProviderOperationV2::RejectApproval { request_id, reason } => json!({
@@ -5983,6 +5984,7 @@ impl MockWalletProvider {
             }
             Some("approval_requests") => {
                 let principal_id = required_test_str(request, "principal_id")?;
+                let session_id = required_test_str(request, "session_id")?;
                 let include_resolved = request
                     .get("include_resolved")
                     .and_then(|value| value.as_bool())
@@ -5995,6 +5997,12 @@ impl MockWalletProvider {
                             .get("principal_id")
                             .and_then(|value| value.as_str())
                             == Some(principal_id)
+                    })
+                    .filter(|approval| {
+                        approval.get("status").and_then(Value::as_str) != Some("pending")
+                            || (!session_id.is_empty()
+                                && approval.get("session_id").and_then(Value::as_str)
+                                    == Some(session_id))
                     })
                     .filter(|approval| {
                         include_resolved

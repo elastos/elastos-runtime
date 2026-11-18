@@ -264,6 +264,9 @@ mod browser_wallet_bridge_tests {
 
     fn account(chain_namespace: &str, account_id: &str) -> SystemWalletAccountSummary {
         SystemWalletAccountSummary {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
             account_id: account_id.to_string(),
             chain_namespace: chain_namespace.to_string(),
             address: "0x1111111111111111111111111111111111111111".to_string(),
@@ -278,6 +281,9 @@ mod browser_wallet_bridge_tests {
 
     fn unavailable_account(chain_namespace: &str, account_id: &str) -> SystemWalletAccountSummary {
         SystemWalletAccountSummary {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
             signing_available: false,
             signing_status: Some("managed_key_unavailable".to_string()),
             ..account(chain_namespace, account_id)
@@ -286,6 +292,9 @@ mod browser_wallet_bridge_tests {
 
     fn connector_account(chain_namespace: &str, account_id: &str) -> SystemWalletAccountSummary {
         SystemWalletAccountSummary {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
             account_id: account_id.to_string(),
             chain_namespace: chain_namespace.to_string(),
             address: "0x3333333333333333333333333333333333333333".to_string(),

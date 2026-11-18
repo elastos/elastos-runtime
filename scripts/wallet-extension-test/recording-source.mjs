@@ -1,4 +1,8 @@
 // Test-only, bounded projection of the original capture. No prompt text or profile paths.
+import { createHash } from 'node:crypto';
+
+export const approvedRawSha256 = 'aa1e40bbed06874465979c7ce46ed4de83540456c5afa929d36305a62cafe36d';
+
 export function projectCase(entry) {
   const snapshots = entry.snapshots.map((s) => {
     const out = {};
@@ -34,18 +38,37 @@ export function recordedProvider(name) {
   return providerBindings[name];
 }
 
-export function validateScenarios(fixture, scenarios) {
+export function recordedActionDigest(entry) {
+  return createHash('sha256').update(JSON.stringify(entry.snapshots.map((s) => ({
+    phase: s.phase ?? null, state: s.call?.state ?? null, value: s.call?.value ?? null,
+    unlock: s.unlock_action_at_ms ?? null, approve: s.approve_action_at_ms ?? null,
+    sign: s.sign_action_at_ms ?? null, confirm: s.confirm_action_at_ms ?? null, action: s.action_at_ms ?? null,
+  })))).digest('hex');
+}
+
+export function recordedActionPins(cases, scenarios) {
+  const entries = new Map(cases.map((c) => [c.id, c]));
+  return Object.fromEntries(Object.values(scenarios).flatMap((s) => s.calls)
+    .filter((p) => p.action === 'approves' || p.unlock).map((p) => [p.id, recordedActionDigest(entries.get(p.id))]));
+}
+
+export function validateScenarios(fixture, scenarios, actions) {
   const entries = new Map(fixture.cases.map((c) => [c.id, c]));
   for (const [name, spec] of Object.entries(scenarios)) {
     for (const plan of spec.calls) {
       const entry = entries.get(plan.id), call = finalCall(entry);
+      if ((plan.action === 'approves' || plan.unlock) && (!actions?.[plan.id] || recordedActionDigest(entry) !== actions[plan.id]))
+        throw new Error(`${name}: recorded action evidence differs (outcome, value, phase or action marks)`);
+      if (plan.unlock && !entry.snapshots.some((s) =>
+        (Number.isFinite(s.unlock_action_at_ms) && s.unlock_action_at_ms >= 0) || s.phase === 'unlocked then signed'))
+        throw new Error(`${name}: unlock evidence missing`);
       if (plan.action === 'approves' && call.state !== 'fulfilled') throw new Error(`${name}: approves must fulfill`);
+      if (plan.action === 'approves' && !['eth_requestAccounts', 'requestAccounts', 'personal_sign', 'signMessage', 'eth_sendTransaction'].includes(call.method))
+        throw new Error(`${name}: approval must use a recorded prompting method`);
       if (['declines', 'closes the prompt'].includes(plan.action)
         && !(call.state === 'rejected' && call.error.code === 4001)) throw new Error(`${name}: decline/close must reject with recorded 4001`);
       if (plan.action === 'closes the prompt' && !entry.snapshots.some((s) => /closed with real/i.test(s.phase || '')))
         throw new Error(`${name}: native-close evidence missing`);
-      if (plan.unlock && !entry.snapshots.some((s) => 'unlock_action_at_ms' in s || /unlock/i.test(s.phase || '')))
-        throw new Error(`${name}: unlock evidence missing`);
       if (plan.action === 'removes access') {
         const cleanup = finalCall(entries.get(plan.cleanup));
         if (!(plan.actor === 'page' && cleanup.method === 'wallet_revokePermissions' && cleanup.state === 'fulfilled'

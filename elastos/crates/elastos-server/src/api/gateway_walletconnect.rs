@@ -15,6 +15,28 @@ const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SOCKETS: usize = 2;
 const RESOURCE: &str = "elastos://walletconnect/internet";
 
+#[derive(Debug)]
+pub(super) struct ConsentConflict;
+impl std::fmt::Display for ConsentConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("This request has changed. Refresh Inbox and review the current request.")
+    }
+}
+impl std::error::Error for ConsentConflict {}
+
+pub(super) fn consent_conflict_response(error: &anyhow::Error) -> Option<Response> {
+    error.downcast_ref::<ConsentConflict>()?;
+    Some(
+        (
+            StatusCode::CONFLICT,
+            Json(
+                json!({"schema":"elastos.home.wallet-connector.effect.error/v1","code":"conflict"}),
+            ),
+        )
+            .into_response(),
+    )
+}
+
 pub(crate) struct WalletConnectService {
     unadmitted: Arc<tokio::sync::Semaphore>,
     inner: Mutex<Inner>,
@@ -107,10 +129,9 @@ fn save(data: &FsPath, value: &Consent) -> anyhow::Result<()> {
     )
 }
 fn request(c: &Consent) -> anyhow::Result<serde_json::Value> {
-    anyhow::ensure!(
-        c.status == "granted" || (c.status == "requested" && c.at + 1800 > now_ts()),
-        "Review the current WalletConnect request in Inbox"
-    );
+    if !(c.status == "granted" || (c.status == "requested" && c.at + 1800 > now_ts())) {
+        return Err(ConsentConflict.into());
+    }
     Ok(
         json!({"resource":"elastos://walletconnect/internet", "id":c.id, "issued_at":c.at,
         "text":if c.status == "granted" { "Stop WalletConnect relay access on this computer." } else { CONSENT }}),
@@ -167,10 +188,9 @@ pub(super) async fn step_up_request(
     );
     let _guard = state.walletconnect.inner.lock().await;
     let c = load(&state.data_dir)?.ok_or_else(|| anyhow::anyhow!("Open WalletConnect first"))?;
-    anyhow::ensure!(
-        (op == GRANT && c.status == "requested") || (op == REVOKE && c.status == "granted"),
-        "WalletConnect request has changed"
-    );
+    if !((op == GRANT && c.status == "requested") || (op == REVOKE && c.status == "granted")) {
+        return Err(ConsentConflict.into());
+    }
     request(&c)
 }
 pub(super) async fn answer(
@@ -191,19 +211,22 @@ pub(super) async fn answer(
         .strip_prefix("walletconnect-internet-")
         .and_then(|v| v.split_once(':'))
         .ok_or_else(|| anyhow::anyhow!("Invalid WalletConnect internet action"))?;
-    anyhow::ensure!(id == c.id, "WalletConnect request has changed");
+    if id != c.id {
+        return Err(ConsentConflict.into());
+    }
     match verb {
         "deny" => {
-            anyhow::ensure!(c.status == "requested", "WalletConnect request has changed");
+            if c.status != "requested" {
+                return Err(ConsentConflict.into());
+            }
             c.status = "refused".into();
         }
         "allow" | "turn-off" => {
             let stopping = verb == "turn-off";
             if !(stopping && c.status == "revoked") {
-                anyhow::ensure!(
-                    c.status == if stopping { "granted" } else { "requested" },
-                    "WalletConnect request has changed"
-                );
+                if c.status != if stopping { "granted" } else { "requested" } {
+                    return Err(ConsentConflict.into());
+                }
                 consume_passkey_step_up_token(
                     &state.data_dir,
                     token.unwrap_or_default(),
@@ -211,7 +234,14 @@ pub(super) async fn answer(
                     180,
                     if stopping { REVOKE } else { GRANT },
                     &request(&c)?,
-                )?;
+                )
+                .map_err(|error| {
+                    if gateway_passkey_step_up::step_up_is_stale(&error) {
+                        anyhow::Error::from(ConsentConflict)
+                    } else {
+                        error
+                    }
+                })?;
                 c.status = if stopping { "revoked" } else { "granted" }.into();
                 c.cleanup_pending = stopping;
                 c.principal = Some(launch.context.principal_id.clone());
@@ -280,6 +310,7 @@ pub(super) fn notification(
                     .ok()
                     .is_some_and(|inner| !inner.sockets.is_empty())));
     Some(HomeNotificationEntrySummary {
+        requesting_origin: None,
         id: "walletconnect-internet:permission".into(),
         source_app: WALLET_WALLETCONNECT_CAPSULE_ID.into(),
         kind: if pending {
