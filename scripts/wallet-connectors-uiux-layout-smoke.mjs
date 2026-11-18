@@ -232,6 +232,7 @@ function startServer() {
   const traces = new Map();
   for (const connector of connectors) {
     traces.set(connector.id, {
+      setupCalls: [],
       accountsCalls: 0,
       approvalsCalls: 0,
       tokens: [],
@@ -267,6 +268,27 @@ function startServer() {
           "content-type": "text/html; charset=utf-8",
         });
         response.end(body);
+        return;
+      }
+      const setup = {
+        "/api/apps/wallet-walletconnect/internet": { status: "granted" },
+        "/api/apps/wallet-walletconnect/wallet/config": {
+          walletconnect: { project_id: "fixture-project", storage_revision: '\"0\"' },
+        },
+        "/api/apps/wallet-walletconnect/storage": {},
+      }[url.pathname];
+      if (setup) {
+        const trace = traces.get("wallet-walletconnect");
+        const token = String(request.headers["x-elastos-home-token"] || "");
+        trace.setupCalls.push(url.pathname);
+        trace.tokens.push(token);
+        if (request.method !== "GET" || token !== connectors.find((entry) => entry.id === "wallet-walletconnect").token
+          || url.pathname.endsWith("/storage") && request.headers["if-match"] !== '\"0\"') {
+          trace.unexpectedCalls.push({ path: url.pathname, token });
+          json(response, 401, { error: "invalid setup request" });
+          return;
+        }
+        json(response, 200, setup);
         return;
       }
       const matchedConnector = connectors.find((entry) => (
@@ -428,6 +450,7 @@ async function assertLockedState(page, frame, connector, traces) {
   }, connector.lockedStatus, { timeout: 5_000 });
   const fixtureState = await page.evaluate(() => window.__connectorFixture);
   const trace = traces.get(connector.id);
+  assert(trace.setupCalls.length === 0, `${connector.title} locked launch still called setup`, trace);
   assert(trace.accountsCalls === 0, `${connector.title} locked launch still called accounts`, trace);
   assert(trace.approvalsCalls === 0, `${connector.title} locked launch still called approvals`, trace);
   assert(fixtureState.clipboardRequests.length === 0, `${connector.title} sent clipboard traffic before interaction`, fixtureState);
@@ -441,6 +464,11 @@ async function assertVerifiedState(page, frame, connector, traces, width) {
   ), { timeout: 5_000 });
   const fixtureState = await page.evaluate(() => window.__connectorFixture);
   const trace = traces.get(connector.id);
+  if (connector.id === "wallet-walletconnect") {
+    for (const resource of ["internet", "wallet/config", "storage"]) {
+      assert(trace.setupCalls.includes(`/api/apps/wallet-walletconnect/${resource}`), `WalletConnect did not read ${resource}`, trace);
+    }
+  }
   assert(trace.accountsCalls === 1, `${connector.title} did not make one accounts call`, trace);
   assert(trace.approvalsCalls === 1, `${connector.title} did not make one approvals call`, trace);
   assert(trace.unexpectedCalls.length === 0, `${connector.title} hit an unexpected API path`, trace);

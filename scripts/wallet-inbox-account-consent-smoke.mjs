@@ -91,7 +91,7 @@ function descendants(node) {
 }
 
 const rendered = descendants(requestsNode);
-assert(rendered.some((node) => node.textContent === "Browser account access"));
+assert(rendered.some((node) => node.textContent === "Browser account access request"));
 assert(rendered.some((node) => node.textContent === "Review exact account access"));
 assert(rendered.some((node) => node.textContent === "https://dapp.example"));
 assert(!rendered.some((node) => node.textContent === "https://dapp.example/connect"));
