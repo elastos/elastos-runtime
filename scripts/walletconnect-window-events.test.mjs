@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
+import {observeWindowErrors,staleSessionMessage} from './lib/walletconnect-phone-window-fixture.mjs';
 import {walletConnectFixtureRequire} from './lib/walletconnect-relay-fixture.mjs';
 const {RELAYER_EVENTS}=walletConnectFixtureRequire('@walletconnect/core');
 import {createWalletConnectClient} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
@@ -84,4 +85,26 @@ test('cached permission is marked stale while current wallet facts still refresh
 });
 test('a failed permission read starts no saved-session restore without a live provider',async()=>{
  const r=await fixture('idle');r.provider.session=undefined;r.failInternet();await assert.rejects(r.client.effect({kind:'status'}),/Home is unavailable/);
+});
+
+const fenceError=()=>Object.assign(new Error(staleSessionMessage),{stack:'Error\n at fetchJson (http://127.0.0.1/apps/wallet-walletconnect/wallet-walletconnect.js:1:1)'});
+const oldWrite=()=>({path:'/api/apps/wallet-walletconnect/storage',method:'POST',revision:'"0"',status:409});
+test('the common page-error guard consumes only one actual retired storage POST',()=>{
+ const page=new EventEmitter(),state={calls:[oldWrite()],revision:1},{errors,sdkFences}=observeWindowErrors(page,{state});
+ page.emit('pageerror',fenceError());assert.deepEqual(errors,[]);assert.equal(sdkFences.length,1);assert.equal(state.calls[0].observedRejection,true);
+ page.emit('pageerror',fenceError());assert.deepEqual(errors,[staleSessionMessage],'a second error needs a second actual rejected write');
+});
+for(const [name,change] of [
+ ['no rejected write',state=>{state.calls=[];}],
+ ['a GET',state=>{state.calls[0].method='GET';}],
+ ['the current revision',state=>{state.calls[0].revision='"1"';}],
+ ['a missing revision',state=>{delete state.calls[0].revision;}],
+])test(`the common page-error guard fails ${name}`,()=>{
+ const page=new EventEmitter(),state={calls:[oldWrite()],revision:1};change(state);const {errors,sdkFences}=observeWindowErrors(page,{state});
+ page.emit('pageerror',fenceError());assert.deepEqual(errors,[staleSessionMessage]);assert.equal(sdkFences.length,0);
+});
+test('the common page-error guard fails unexpected window script errors despite a stale write',()=>{
+ const page=new EventEmitter(),state={calls:[oldWrite()],revision:1},{errors,sdkFences}=observeWindowErrors(page,{state});
+ page.emit('pageerror',new Error('Unexpected script error'));const wrongStack=fenceError();wrongStack.stack='at anotherFrame (http://127.0.0.1/apps/home/home.js:1:1)';page.emit('pageerror',wrongStack);
+ assert.deepEqual(errors,['Unexpected script error',staleSessionMessage]);assert.equal(sdkFences.length,0);
 });

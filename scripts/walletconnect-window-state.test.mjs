@@ -105,3 +105,15 @@ test('disconnect failure stays on a non-request recovery screen',()=>assert.equa
 test('a transaction consumed elsewhere retains unknown-result recovery',()=>assert.equal(errorStage(new Error(messages.consumed),{kind:'approve',intent:'transaction_intent'},'starting'),'transaction-wallet-error'));
 for(const phase of ['starting','signature','idle'])test(`Home failure in ${phase} never claims the wallet failed to sign`,()=>assert.equal(errorStage(new Error('Runtime returned an invalid signature request.'),{kind:'approve'},phase),'request-unavailable'));
 test('an unsent expired request is not offered a connection-and-resend recovery',()=>assert.equal(windowPresentation({...initial,connection:{expired:true},requests:[{...request,expires_at:now-1}]},now).input.stage,'request-expired'));
+
+for(const [ending,extra,expected] of [
+ ['deadline',{},'transaction-reopened'],
+ ['wallet removal',{connection:{removed:true}},'transaction-wallet-removed'],
+ ['session expiry',{connection:{expired:true}},'transaction-wallet-error'],
+ ['access loss',{permission:'revoked'},'transaction-wallet-error'],
+])test(`approved transaction reopened after ${ending} keeps unknown-result recovery`,()=>{
+ const row={...request,intent:'transaction_intent',status:'approved',expires_at:now-1};
+ const view=walletConnectView(windowPresentation({...initial,...extra,requests:[row]},now));
+ assert.equal(view.stage,expected);assert.ok(view.actions.every(action=>!['send-request','start-over','connect'].includes(action.id)));
+ assert.match(view.notice.map(part=>part.text).join(''),/Check .*wallet.*before sending again/);
+});

@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
-import {windowFixture,staleSessionMessage} from './lib/walletconnect-phone-window-fixture.mjs';
+import {windowFixture,observeWindowErrors} from './lib/walletconnect-phone-window-fixture.mjs';
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 const output=process.env.WALLETCONNECT_WINDOW_SCREENS;
@@ -13,17 +13,7 @@ async function until(fn,label,ms=20000){const end=Date.now()+ms;while(!await fn(
 async function setup(t,engine,mutation){
  const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
  const engines=await importProductSmokePlaywright(),browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
- const page=await browser.newPage({viewport:{width:480,height:560}}),errors=[],sdkFences=[];
- page.on('pageerror',error=>{
-  const fenced=fixture.state.calls.findLast(row=>row.status===409&&!row.observedRejection&&row.path.endsWith('/storage'));
-  // The unchanged SDK persist listener rejects asynchronously when Home fences
-  // a retired revision. Assert the real rejection, separately from script bugs.
-  if(fenced && [staleSessionMessage,`Error: ${staleSessionMessage}`].includes(error.message) && /fetchJson|persist/.test(error.stack || '') && (error.stack || '').includes('/apps/wallet-walletconnect/')){
-   fenced.observedRejection=true;sdkFences.push({message:staleSessionMessage,method:fenced.method,revision:fenced.revision,status:409});
-   console.error('Expected retired SDK storage fence:',JSON.stringify(sdkFences.at(-1)));
-  }else errors.push(error.message);
-  if(process.env.WALLETCONNECT_ERROR_DIAGNOSTICS)console.error(JSON.stringify({message:error.message,stack:error.stack,storage:fixture.state.calls.filter(row=>row.path.endsWith('/storage')).slice(-6)}));
- });
+ const page=await browser.newPage({viewport:{width:480,height:560}}),{errors}=observeWindowErrors(page,fixture);
  await page.route('**/*',r=>new URL(r.request().url()).origin===fixture.origin?r.continue():r.abort());
  if(mutation)await page.route(`**/${mutation.file}*`,async route=>{
   const source=await readFile(new URL(`../capsules/wallet-walletconnect/browser/${mutation.file}`,import.meta.url),'utf8');
@@ -43,7 +33,7 @@ async function setup(t,engine,mutation){
   };
   window.clearTimeout=id=>{active.delete(id);nativeClear(id);};
  });
- t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();assert.ok(sdkFences.length<=fixture.state.fencedWrites,'each expected SDK error has an actual rejected storage request');});
+ t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();assert.deepEqual(errors,[],'every live walk rejects unexpected page errors');});
  let frame;
  async function reopen(){await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await frame.locator('main[data-state]').waitFor();}
  await reopen();await frame.locator('main[data-state="internet-ready"],main[data-state="link-error"]').waitFor();
@@ -425,4 +415,10 @@ for(const engine of ['chromium','webkit'])test(`initial off picker and unsent co
 });
 for(const engine of ['chromium','webkit'])test(`an invalid Home handoff sends nothing to the phone in ${engine}`,{timeout:60000},async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('invalid-home-handoff');const before=r.peer.trace.filter(row=>row.kind==='request').length;r.fixture.state.invalidSignatureHandoff=true;await r.click('send-request');await r.state('request-unavailable');assert.equal(r.peer.trace.filter(row=>row.kind==='request').length,before,'invalid handoff never opens a signing prompt');assert.equal(r.fixture.state.completed,0);await r.capture('home-handoff-unavailable');await r.peer.deleteConnection();await r.state('request-unavailable');await r.capture('home-handoff-unavailable-after-removal');assert.deepEqual(r.errors,[]);
+});
+
+for(const engine of ['chromium','webkit'])test(`an expired Home-approved transaction reopens as result unknown in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);await r.link();await r.approval('already-sent-expired',{intent:'transaction_intent'});r.peer.choose({request:'silent'});await r.click('send-request');await r.state('transaction-phone');await until(()=>r.peer.trace.filter(row=>row.kind==='request').length>=2,'phone holds the actual transaction');assert.equal(r.fixture.state.approvals[0].status,'approved');
+ await r.page.goto('about:blank');r.fixture.state.approvals[0].expires_at=Math.floor(Date.now()/1000)-1;await r.reopen();await r.state('transaction-reopened');assert.equal(await r.frame.locator('[data-action=send-request],[data-action=start-over]').count(),0);await r.capture('expired-approved-transaction-reopened');
+ await r.peer.deleteConnection();await r.state('transaction-wallet-removed');await r.capture('expired-approved-transaction-wallet-removed');assert.equal(r.fixture.state.completed,0);assert.equal(r.peer.trace.filter(row=>row.kind==='request').length,2,'reopen and deletion send no second transaction');assert.deepEqual(r.errors,[]);
 });

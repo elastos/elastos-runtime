@@ -8,6 +8,20 @@ const root=fileURLToPath(new URL('../..',import.meta.url));
 const {recoverMessageAddress}=require('viem');
 // gateway_walletconnect.rs:409-415, exact existing scoped-storage fence.
 export const staleSessionMessage='WalletConnect session changed. Close this window and open WalletConnect again.';
+// All window walks use one strict page-error oracle. Only the unchanged SDK's
+// rejected POST at a retired storage revision is an expected diagnostic.
+export function observeWindowErrors(page,fixture) {
+ const errors=[],sdkFences=[];
+ page.on('pageerror',error=>{
+  const fenced=fixture.state.calls.findLast(row=>row.status===409&&row.method==='POST'&&!row.observedRejection&&row.path.endsWith('/storage')&&typeof row.revision==='string'&&row.revision!==JSON.stringify(String(fixture.state.revision)));
+  if(fenced&&[staleSessionMessage,`Error: ${staleSessionMessage}`].includes(error.message)&&(error.stack||'').includes('fetchJson')&&(error.stack||'').includes('/apps/wallet-walletconnect/wallet-walletconnect.js')){
+   fenced.observedRejection=true;sdkFences.push({message:staleSessionMessage,method:fenced.method,revision:fenced.revision,status:409});
+   console.error('Expected retired SDK storage fence:',JSON.stringify(sdkFences.at(-1)));
+  }else errors.push(error.message);
+  if(process.env.WALLETCONNECT_ERROR_DIAGNOSTICS)console.error(JSON.stringify({message:error.message,stack:error.stack,storage:fixture.state.calls.filter(row=>row.path.endsWith('/storage')).slice(-6)}));
+ });
+ return {errors,sdkFences};
+}
 export async function windowFixture() {
  const state={permission:'granted',revision:0,keys:{},accounts:[],approvals:[],verified:0,completed:0,calls:[],fencedWrites:0,deleteFails:false,guest:false,expiredLaunch:false};
  const server=http.createServer(async(req,res)=>{

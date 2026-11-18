@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {windowFixture} from './lib/walletconnect-phone-window-fixture.mjs';
+import {windowFixture,observeWindowErrors} from './lib/walletconnect-phone-window-fixture.mjs';
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
@@ -8,8 +8,8 @@ async function until(fn,message,ms=20000){const end=Date.now()+ms;while(!fn()){a
 async function setup(t){
  const fixture=await windowFixture();const peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
  const {chromium}=await importProductSmokePlaywright();const browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
- const page=await browser.newPage();await page.route('**/*',r=>new URL(r.request().url()).origin===fixture.origin?r.continue():r.abort());
- t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();});
+ const page=await browser.newPage();const {errors}=observeWindowErrors(page,fixture);await page.route('**/*',r=>new URL(r.request().url()).origin===fixture.origin?r.continue():r.abort());
+ t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();assert.deepEqual(errors,[],'every phone walk rejects unexpected page errors');});
  let frame;
  const reopen=async({ready=true}={})=>{await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));if(ready)await frame.locator('main[data-state]').waitFor();return frame;};
  await reopen();

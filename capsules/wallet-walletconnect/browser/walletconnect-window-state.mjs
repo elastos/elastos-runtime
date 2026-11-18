@@ -14,7 +14,7 @@ export function windowPresentation(state, nowSeconds) {
   const {connection, accounts = [], requests = [], busy, phase, permission, pending, ownerNeeded, expired, outcome, qrData, selectedId, activeRequest} = state;
   const session = connection?.session;
   const request = activeRequest || requests.find(row => row.request_id === selectedId) || requests.find(row=>sendable(row,nowSeconds)) || requests[0];
-  const sent = Boolean(request && state.dispatchedRequestId === request.request_id);
+  const sent = Boolean(request && (state.dispatchedRequestId === request.request_id || request.status === 'approved' && request.intent === 'transaction_intent'));
   const completed = ['request-done','request-next','transaction-done'].includes(outcome);
   const answered = completed || ['request-declined','transaction-declined'].includes(outcome);
   const linked = sessionLinked(session, accounts);
