@@ -1,6 +1,6 @@
 {
   "sourceCommit": "805ee5dda47993855b394197fb44ccc29e4eb771",
-  "source": "Fifty pinned design/control stages plus six current-plumbing account recovery stages requested by the window owners.",
+  "source": "Fifty pinned design/control stages plus six current-plumbing account recovery cases. WC empty-account recovery remains as an explicit non-approving fresh-QR case (need20).",
   "minimumSiteFontPx": 13,
   "minimumContrast": 4.5,
   "maximumDecisionGapPx": 8,
@@ -468,10 +468,12 @@
       "window": "walletconnect",
       "stage": "account-unavailable-unknown",
       "actions": [
-        "connect"
+        "start-over"
       ],
       "kind": "context",
-      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; new window-local stage, no design picture"
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; new window-local stage, no design picture",
+      "approving": false,
+      "reason": "WC need20: an empty account offers fresh QR recovery, not approval; retain this negative inventory case."
     },
     {
       "window": "metamask",

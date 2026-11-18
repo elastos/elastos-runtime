@@ -107,6 +107,19 @@ test('final needs: network-only notices keep the proof wait without inventing an
   const before=connectionView({window,stage:'link-wait',waitSeconds:30});const v=connectionView({window,stage:'link-wait',waitSeconds:30,connectionNotice});assert.equal(v.account,null);assert.equal(viewText(v.status),viewText(before.status));assert.equal(v.wait,before.wait);assert(v.connectionNotice.length);assert.deepEqual(v.actions,before.actions);
  }
 });
+test('new WC needs: read and cleanup failures keep their existing recovery actions',()=>{
+ const read=connectionView({window:'walletconnect',stage:'home-read-unavailable'});assert.match(viewText(read.status),/Home could not load your wallet requests/);assert.equal(read.focus,'refresh-status');assert(read.actions.some(a=>a.id==='refresh-status'));
+ const cleanup=connectionView({window:'walletconnect',stage:'disconnect-error'});assert.match(viewText(cleanup.status),/Home could not finish disconnecting/);assert.equal(cleanup.focus,'disconnect');assert(cleanup.actions.some(a=>a.id==='disconnect'));
+ const empty=connectionView({window:'walletconnect',stage:'account-unavailable-unknown',localSafety:false});assert.match(viewText(empty.status),/not showing an account/);assert.doesNotMatch(viewText(empty.notice),/Confirm this account/);assert.equal(empty.actions.find(a=>a.primary).id,'start-over');
+ const unknown=connectionView({window:'walletconnect',stage:'account-unavailable-unknown',localSafety:null});assert(!unknown.actions.some(a=>a.id==='start-over'));assert.equal(unknown.focus,'close-window');
+});
+test('new WC needs: approved transaction recovery is separate from pending queue work',async()=>{
+ const selected=projection(),pending=projection({request_id:'pending-other'}),recovery=projection({request_id:'approved-tx',intent:'transaction_intent',status:'approved'});
+ const input={window:'metamask',stage:'request-list',summary:selected,otherRequests:[pending,recovery]},v=connectionView(input);
+ assert.equal(v.queueCount,3);assert.equal(v.queuePendingCount,2);assert.equal(v.queueRecoveryCount,1);assert.equal(v.queueOtherCount,0);assert.equal(v.choices.length,3);assert.equal(v.choices.at(-1).id,'approved-tx');
+ const {withTestView}=await import('./lib/wallet-connection-test-module.mjs');
+ await withTestView({mutateSource:source=>source.replace("queued.filter(r=>r.status==='pending').length","queued.length")},module=>{assert.throws(()=>assert.equal(module.connectionView(input).queuePendingCount,2),assert.AssertionError,'legacy counting of approved records as pending must fail');});
+});
 
 const proof=await temporaryProof('wallet-live-view-',process.env.WALLET_VIEW_PROOF_DIR);const receipts=[];
 test.after(async()=>{try{await writeFile(proof.path+'/live-needs.json',JSON.stringify(receipts,null,2)+'\n');}finally{await proof.cleanup();}});
@@ -127,6 +140,7 @@ for(const engine of ['chromium','webkit'])test('live needs: rendering and QR car
   await f.page.evaluate(async({summary,otherRequests})=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.connectionView({window:'metamask',stage:'request-list',summary,otherRequests,compact:true}));},{summary,otherRequests});
   const last=f.page.locator('[data-focus-key="select-request:extra-19"]');await last.scrollIntoViewIfNeeded();await last.click();assert(await last.isVisible());
   const queueArgs=fixtureArguments(states.find(r=>r.designState==='metamask/transaction-done'));queueArgs[0].showNextRequests=true;queueArgs[1].otherSummaries=[{...seed,request_id:'one-next'}];await mount(queueArgs);assert.equal(await f.page.locator('.connection-queue h2').textContent(),'1 other request waiting');
+  queueArgs[1].otherSummaries.push({...seed,request_id:'approved-tx',intent:'transaction_intent',status:'approved'});await mount(queueArgs);assert.equal(await f.page.locator('.connection-queue h2').textContent(),'1 other request waiting');assert.equal(await f.page.locator('.connection-queue p').textContent(),'1 transaction to review');assert.equal(await f.page.locator('[data-action="view-requests"]').count(),1);await f.page.screenshot({path:proof.path+'/mixed-recovery-queue-'+engine+'.png'});
   const checkArgs=fixtureArguments(states.find(r=>r.designState==='walletconnect/request-phone'),{compact:true});checkArgs[0].stage='checking-response';checkArgs[0].account=undefined;checkArgs[0].connectionNotice='network-unknown';await mount(checkArgs);assert.equal(await f.page.locator('.connection-request-account').count(),0);assert(await f.page.locator('[data-action="stop-waiting"]').isVisible());await f.page.screenshot({path:proof.path+'/checking-network-only-'+engine+'.png'});
   const many={...account,accounts:Array.from({length:20},(_,i)=>({address:'0x'+String(i).padStart(40,'0'),networks:['Base']}))};
   await f.page.evaluate(async account=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.connectionView({window:'metamask',stage:'linked',account,compact:true,supportedActions:['copy-address']}));},many);

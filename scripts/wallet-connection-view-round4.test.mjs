@@ -92,7 +92,13 @@ for(const engine of ['chromium','webkit']){
    for(const row of approvalCatalog.stages)await t.test(`${row.window}/${row.stage}`,async()=>{
     for(const [width,height]of (process.env.WALLET_VIEW_BROWSER_SMOKE==='1'?[[320,182]]:[[320,182],[480,522]])){
      await f.page.setViewportSize({width,height});const args=approvalArguments(row,{compact:width===320});const model=await mount(f.page,args);
-     assert.equal(model.stage,row.stage,'the fixture exercises its named stage');assert(model.actions.some(a=>approvalIds.includes(a)));
+     assert.equal(model.stage,row.stage,'the fixture exercises its named stage');
+     if(row.approving===false){
+      assert(!model.actions.some(a=>approvalIds.includes(a)),'empty-account QR recovery grants no approval');assert(model.actions.includes('start-over'));
+      assert.equal(await f.page.locator('.connection-site').textContent(),reviewOrigin);
+      evidence.push({engine,case:row.window+'/'+row.stage,width,height,kind:'non-approving fresh-QR recovery',result:'PASS'});continue;
+     }
+     assert(model.actions.some(a=>approvalIds.includes(a)));
      const opening=await observeApproval(f.page);assert.equal(opening.scrollTop,0);assertApprovalGeometry(opening);
      await assertEverySiteLinePaint(f.page);await bottom(f.page);const end=await check(f.page);assert(end.visible.length);
      evidence.push({engine,case:row.window+'/'+row.stage,width,height,kind:args[1].summary?.intent||'context',contrast:end.contrast,lines:end.lines.length,result:'PASS'});

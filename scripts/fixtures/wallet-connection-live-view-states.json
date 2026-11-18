@@ -167,6 +167,18 @@
       "stage": "checking-response",
       "origin": "window-local: produced by the window lane",
       "source": "sharedview-needs-walletconnect item 16: existing verify/complete POST pending; no new producer"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "home-read-unavailable",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-walletconnect 19; existing read/cleanup actions only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "disconnect-error",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-walletconnect 19; existing read/cleanup actions only"
     }
   ]
 }
