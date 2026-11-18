@@ -60,10 +60,17 @@ test("Wallet dismisses earlier-session connector sends without another approval"
     assert.equal(calls[1].input.method, "POST");
     assert.equal(calls[1].input.headers["x-elastos-home-token"], "fixture-current-session-wallet-token",
       "dismissal uses the current Wallet launch, including for an earlier-session send");
-    assert.equal(root.children.length, 0, "successful refresh removes the dismissed request");
-    assert.equal(panel.hidden, true);
-    assert(messages.some(message => message.startsWith("Request dismissed.")));
+    assert.equal(root.children.length, 1, "the acknowledgement keeps the request identity after refresh");
+    assert.equal(panel.hidden, false);
+    assert.equal(requests.pendingWalletRequests([request]).length, 0, "the acknowledgement is outside the waiting count");
+    assert.equal(descendants(root).filter(node => node.tagName === "button").length, 0);
+    assert(!descendants(root).some(node => node.className === "wallet-request-time"));
+    assert(descendants(root).some(node => node.textContent.startsWith("Request dismissed.")));
     assert.match(activityTitle(request), /Dismissed transaction request/);
+    assert.equal(requests.requestsWithDecisions([])[0].status, "rejected");
+    assert.equal(requests.requestsWithDecisions([{ ...request, status:"approved" }])[0].status, "rejected", "an old read cannot reopen the known decision");
+    const positive = { ...request, status:"completed", transaction_hash:`0x${"a".repeat(64)}` };
+    assert.deepEqual(requests.requestsWithDecisions([positive]), [positive], "a later recorded result keeps its canonical facts");
   }
 });
 
@@ -103,4 +110,41 @@ for (const dismissed of [false, true]) test(`Wallet uses the current rejection r
   assert.equal(messages.at(-1), dismissed
     ? "Request dismissed. Check your connected wallet before sending again."
     : "Request rejected.");
+});
+
+test("n3_reject_dismiss_acknowledgement: successful decision survives a failed refresh", async t => {
+  const previous = globalThis.document;
+  globalThis.document = { createElement: tag => new Element(tag) };
+  t.after(() => { globalThis.document = previous; });
+  const root = new Element("section");
+  const request = { request_id:"request:refresh-failed", status:"pending", intent:"browser_personal_sign", capsule_id:"notes",
+    reason:"Sign into Notes", address:"0xabc", expires_at:Math.floor(Date.now()/1000)+600 };
+  const view = createWalletRequests({ requestsNode:root, fetchJson:async () => ({}), shellHeaders:headers => headers,
+    notifyHomeSummaryChanged() {}, showStatus() {}, refreshWalletState:async () => { throw new Error("refresh unavailable"); } });
+  view.renderRequests([request]);
+  await view.onRequestClick({ target:descendants(root).find(node => node.dataset.walletRequestReject) });
+  assert(descendants(root).some(node => node.textContent === "Request rejected."));
+  assert(descendants(root).some(node => node.textContent === "Sign into Notes"));
+  assert.equal(descendants(root).filter(node => node.tagName === "button").length, 0);
+  assert(!descendants(root).some(node => node.className === "wallet-request-time"));
+  assert.equal(view.pendingWalletRequests([request]).length, 0, "an older in-flight summary cannot count the acknowledged ID again");
+});
+
+test("n3_reject_dismiss_acknowledgement: consecutive decisions survive a stale read", async t => {
+  const previous = globalThis.document;
+  globalThis.document = { createElement: tag => new Element(tag) };
+  t.after(() => { globalThis.document = previous; });
+  const stale = ["first", "second"].map(request_id => ({ request_id, status:"pending", intent:"browser_personal_sign", connector_id:"wallet-metamask", reason:"Sign a message" }));
+  const root = new Element("section");
+  const requests = createWalletRequests({ requestsNode:root, shellHeaders:headers => headers,
+    fetchJson:async () => ({}), notifyHomeSummaryChanged() {}, showStatus() {},
+    refreshWalletState:async () => { throw new Error("read failed"); } });
+  requests.renderRequests(stale);
+  for (const id of ["first", "second"]) {
+    const button = descendants(root).find(node => node.dataset.walletRequestReject === id);
+    assert(button, `request ${id} can be rejected`);
+    await requests.onRequestClick({ target:button });
+  }
+  assert.deepEqual(requests.requestsWithDecisions(stale).map(r => r.status), ["rejected", "rejected"]);
+  assert.equal(requests.pendingWalletRequests(stale).length, 0, "neither known decision reopens in the count");
 });

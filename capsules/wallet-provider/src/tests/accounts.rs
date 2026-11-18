@@ -19,6 +19,9 @@ fn link_account_persists_and_lists_active_accounts() {
             address: "0xabc".into(),
             proof_type: "siwe".into(),
             label: Some("ESC".into()),
+
+            provider_id: None,
+            wallet_peer_name: None,
         },
     );
     assert!(matches!(response, Response::Ok { .. }));
@@ -323,6 +326,9 @@ fn external_wallet_link_derives_connector_and_rejects_caller_override() {
             address: "0xabc".into(),
             proof_type: "siwe".into(),
             label: None,
+
+            provider_id: None,
+            wallet_peer_name: None,
         },
     );
     let mut request = serde_json::to_value(request).unwrap();
@@ -590,6 +596,9 @@ fn default_account_is_principal_scoped_and_drives_explicit_signature_requests() 
                 address: "0xabc".into(),
                 proof_type: "siwe".into(),
                 label: Some("MetaMask".into()),
+
+                provider_id: None,
+                wallet_peer_name: None,
             },
         ),
         Response::Ok { .. }
@@ -691,6 +700,9 @@ fn evm_default_account_is_latest_wins_across_eip155_chains() {
                 address: esc_address.into(),
                 proof_type: "siwe".into(),
                 label: Some("ESC".into()),
+
+                provider_id: None,
+                wallet_peer_name: None,
             },
         ),
         Response::Ok { .. }
@@ -707,6 +719,9 @@ fn evm_default_account_is_latest_wins_across_eip155_chains() {
                 address: ethereum_address.into(),
                 proof_type: "siwe".into(),
                 label: Some("Ethereum".into()),
+
+                provider_id: None,
+                wallet_peer_name: None,
             },
         ),
         Response::Ok { .. }
@@ -850,6 +865,9 @@ fn default_account_rejects_cross_chain_or_missing_accounts() {
                 address: "0xabc".into(),
                 proof_type: "siwe".into(),
                 label: None,
+
+                provider_id: None,
+                wallet_peer_name: None,
             },
         ),
         Response::Ok { .. }
@@ -955,6 +973,9 @@ fn revoke_account_hides_account_by_default() {
                 address: "0xabc".into(),
                 proof_type: "siwe".into(),
                 label: None,
+
+                provider_id: None,
+                wallet_peer_name: None,
             },
         ),
         Response::Ok { .. }
@@ -1108,6 +1129,9 @@ fn export_managed_recovery_key_is_available_for_active_managed_account_only() {
                 address: "0xabc".into(),
                 proof_type: "siwe".into(),
                 label: None,
+
+                provider_id: None,
+                wallet_peer_name: None,
             },
         ),
         Response::Ok { .. }
@@ -1273,6 +1297,9 @@ fn managed_recovery_set_fixture(
                 address: "0x2222222222222222222222222222222222222222".into(),
                 proof_type: "siwe".into(),
                 label: Some("Connector".into()),
+
+                provider_id: None,
+                wallet_peer_name: None,
             },
         ),
         Response::Ok { .. }
@@ -1482,6 +1509,9 @@ fn walletconnect_revocation_counts_only_the_owners_remaining_connector_accounts(
                     address: "0xabc".into(),
                     proof_type: "siwe".into(),
                     label: None,
+
+                    provider_id: None,
+                    wallet_peer_name: None,
                 }
             ),
             Response::Ok { .. }

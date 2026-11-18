@@ -6,10 +6,14 @@ import {
   readStoredBoolean,
   readStoredValue,
   storeValue,
+  isPasskeyManagedAccount,
+  walletDisplay,
+  accountDisplayName,
 } from "./wallet-format.js?v=wallet-20260720k";
 import {
   actionButton,
   methodMark,
+  walletDisplayMark,
   textNode,
 } from "./wallet-render.js?v=wallet-20260720k";
 
@@ -147,16 +151,26 @@ export function createWalletPreferences({
     row.className = "wallet-method wallet-method-account";
     const monogram = accountMonogram(account);
     const body = document.createElement("div");
-    body.append(
-      textNode("strong", account.name),
-      textNode("span", `${account.network} · ${shortAddress(account.address)}`),
-    );
+    const name = textNode("strong", accountDisplayName(account), "wallet-card-name");
+    name.dir = "auto";
+    body.append(name, textNode("span", `${account.network} · ${shortAddress(account.address)}`));
+    const display = walletDisplay(account);
+    if (!isPasskeyManagedAccount(account) && display.name !== accountDisplayName(account)) {
+      const walletName = textNode("span", display.name, "wallet-display-name");
+      walletName.dir = "auto";
+      body.append(walletName);
+    }
     row.append(
-      methodMark(account.method || "unknown", monogram, true, account.chain_namespace),
+      isPasskeyManagedAccount(account)
+        ? methodMark(account.method || "unknown", monogram, true, account.chain_namespace)
+        : walletDisplayMark(display.mark),
       body,
     );
     const remove = actionButton("Remove", "walletRemoveAccount", account.account_id, true);
     remove.dataset.walletAccountName = account.name;
+    remove.dataset.walletDisplayName = accountDisplayName(account);
+    remove.dataset.walletAccountManaged = String(isPasskeyManagedAccount(account));
+    remove.dataset.walletAccountDescription = `${account.network} · ${shortAddress(account.address)}`;
     row.append(remove);
     return row;
   }
@@ -182,16 +196,26 @@ export function createWalletPreferences({
       return;
     }
     const name = readStoredValueFromDataset(remove.dataset.walletAccountName) || "account";
+    const displayName = readStoredValueFromDataset(remove.dataset.walletDisplayName) || name;
+    // Keep peer identity separate from the trusted confirmation sentence.
+    const heading = textNode("h2", "");
+    const identity = textNode("bdi", displayName);
+    identity.dir = "auto";
+    identity.style.unicodeBidi = "isolate";
+    heading.append("Remove ", identity, "?");
     // In-window confirm sheet (same modal the flows use); the passkey prompt
     // that follows remains the real authority gate.
     openFlowModal(
-      `Remove ${name}?`,
-      "Built-in accounts require their Wallet recovery key to restore later. Passkey confirmation is required.",
-      [],
+      `Remove ${displayName}?`,
+      remove.dataset.walletAccountManaged === "true"
+        ? "Built-in accounts require their Wallet recovery key to restore later. Passkey confirmation is required."
+        : "Remove this account from Home. Your wallet and funds stay unchanged. Passkey confirmation is required.",
+      [textNode("p", remove.dataset.walletAccountDescription || "", "wallet-state")],
       [
         modalButton("Cancel", closeModal, true),
         modalButton("Remove", () => removeAccount(remove, accountId, name), false, true),
       ],
+      { surface: "modal", headingNode: heading },
     );
   }
 

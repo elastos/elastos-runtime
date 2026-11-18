@@ -941,7 +941,7 @@ pub(super) fn wallet_connector_evm_chains() -> serde_json::Value {
     ])
 }
 
-fn app_shell_title(name: &str) -> String {
+pub(super) fn app_shell_title(name: &str) -> String {
     match name {
         HOME_CAPSULE_ID => "Home".to_string(),
         HOME_GUI_SHELL_ID => "Home GUI".to_string(),
@@ -1781,6 +1781,7 @@ pub(super) fn home_notifications_summary(
             .entries
             .into_iter()
             .map(|entry| HomeNotificationEntrySummary {
+                requesting_origin: None,
                 id: entry.id,
                 source_app: entry.source_app,
                 kind: entry.kind,

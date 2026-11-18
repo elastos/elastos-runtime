@@ -74,6 +74,7 @@ async fn test_walletconnect_capsule_handoff_keeps_runtime_binding() {
             "account_id":account, "address":format!("0x{}", "12".repeat(20)), "proof_type":"siwe", "chain_namespace":"eip155:20",
             "connector_id":if case == "other-connector" { WALLET_METAMASK_CAPSULE_ID } else { WALLET_WALLETCONNECT_CAPSULE_ID },
             "principal_id":if case == "other-principal" { "other-principal" } else { &owner.principal_id },
+            "session_id": owner.session_id.clone(),
             "payload_hash":payload_hash, "created_at":now_ts(), "expires_at":if case == "expired" { 0 } else { expiry },
         });
         let provider = MockWalletProvider {
@@ -862,6 +863,7 @@ async fn test_wallet_connector_approvals_are_scoped_to_connector() {
             json!({
                 "request_id": "wallet-approval:metamask",
                 "principal_id": context.principal_id.clone(),
+                "session_id": context.session_id.clone(),
                 "status": "pending",
                 "intent": "transaction_intent",
                 "capsule_id": "documents",
@@ -877,6 +879,7 @@ async fn test_wallet_connector_approvals_are_scoped_to_connector() {
             json!({
                 "request_id": "wallet-approval:bitcoin",
                 "principal_id": context.principal_id,
+                "session_id": context.session_id.clone(),
                 "status": "pending",
                 "intent": "bitcoin_bip322_proof",
                 "capsule_id": "documents",
@@ -1006,6 +1009,7 @@ async fn test_wallet_app_can_approve_wallet_scoped_external_request() {
         approvals: TokioMutex::new(vec![json!({
             "request_id": "wallet-approval:bitcoin",
             "principal_id": principal_id,
+            "session_id": context.session_id.clone(),
             "status": "pending",
             "intent": "bitcoin_bip322_proof",
             "capsule_id": "documents",
@@ -1108,6 +1112,7 @@ async fn test_metamask_connector_approves_external_wallet_request_with_handoff()
             "connector_id": "wallet-metamask",
             "payload_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "principal_id": principal_id,
+            "session_id": authority.session_id.clone(),
             "created_at": 10,
             "expires_at": 20
         })]),
@@ -1213,6 +1218,7 @@ async fn test_metamask_connector_completes_external_wallet_handoff() {
             "connector_id": "wallet-metamask",
             "payload_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "principal_id": principal_id,
+            "session_id": authority.session_id.clone(),
             "created_at": 10,
             "expires_at": 20
         })]),
@@ -1495,6 +1501,7 @@ async fn test_walletconnect_capsule_config_link_and_effect_authority_matrix() {
             "requested_by_actor":"documents", "resource":"elastos://transaction", "reason":"Fixture",
             "account_id":"fixture-account", "address":address, "proof_type":"siwe", "chain_namespace":"eip155:1",
             "connector_id":WALLET_WALLETCONNECT_CAPSULE_ID, "principal_id":owner.principal_id,
+            "session_id": owner.session_id.clone(),
             "payload_hash":payload, "created_at":now_ts(), "expires_at":now_ts()+600,
         })]),
         ..Default::default()
