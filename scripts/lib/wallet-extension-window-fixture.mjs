@@ -140,8 +140,10 @@ export function renderConnection(document,view) {
       assert.equal(execFileSync('git', ['status','--porcelain'], {encoding:'utf8'}).trim(), '', 'pictures require a clean tree');
       const copy = await frame.evaluate(() => ({ state: document.querySelector('main').dataset.state,
         sentences: [...document.querySelectorAll('.connection-status,.connection-note,.connection-more')].map(n => n.textContent.trim()).filter(Boolean),
+        refusalCause: document.querySelector('main').dataset.extensionFeedback === 'consumed' ? (document.querySelector('.connection-status').textContent.includes('different account.')?'account':'network') : null,
         controls: [...document.querySelectorAll('[data-action]')].map(n => ({action:n.dataset.action,label:n.textContent.trim(),disabled:n.disabled})) }));
       assert.equal(copy.state, expected, 'capture state must match the requested live state');
+      const pictureState = expected === 'request-consumed' ? `${expected}-${requests === 'transaction' ? 'transaction' : requests === 'typed' ? 'typed' : 'message'}-${copy.refusalCause}` : expected;
       const captures = [];
       for (const theme of ['dark', 'light']) {
         await frame.evaluate(theme => { document.documentElement.toggleAttribute('data-el-theme', theme === 'light'); if (theme === 'light') document.documentElement.setAttribute('data-el-theme','light'); }, theme);
@@ -154,17 +156,29 @@ export function renderConnection(document,view) {
       assert.equal(execFileSync('git', ['rev-parse','HEAD'], {encoding:'utf8'}).trim(), candidate.head);
       const pngs = [];
       for (const {theme,bytes} of captures) {
-        const path = join(dir, `${expected}-${theme}.png`); await writeFile(path, bytes);
+        const path = join(dir, `${pictureState}-${theme}.png`); await writeFile(path, bytes);
         pngs.push({theme,path,sha256:createHash('sha256').update(bytes).digest('hex')});
       }
       // Raw captures are never acceptance by themselves. A single publisher
       // matches sourceTestFile to the exact-tree passing process receipt.
-      await writeFile(join(dir, 'capture.json'), JSON.stringify({ qualification:'staged-requires-passing-file-result',
+      await writeFile(join(dir, 'capture.json'), JSON.stringify({ qualification:'staged-requires-passing-file-result', pictureState,
         sourceTestFile:resolve(process.argv[1]), capturedAt:Date.now(), candidate, clean:true,
         fixture:{kind,oldHost,oldWindow,readFailure,pictureContext,recording:recording||null,saved,requests,launch,noHomeWallet,extraHomeAccount},
         pngs,engine:browser.browserType().name(),viewport:{width:480,height:560},content:{width:480,height:522},...copy },null,2));
     }
   };
-  return { top, frame, context, errors, reads, peerElapsed, action, state, async assertShared() { assert.equal(await frame.evaluate(() => { const root=document.querySelector('#connection-root main'), walk=document.createTreeWalker(root,NodeFilter.SHOW_ALL); do {const n=walk.currentNode; if(n.nodeType===Node.TEXT_NODE && n.parentElement?.classList.contains('connection-wait') && /^Time left: [0-9]+:[0-9]+$/.test(n.nodeValue)) continue; if(n.nodeType===Node.TEXT_NODE && ['consumed','unknown-error'].includes(root.dataset.extensionFeedback) && (n.parentElement?.matches('.connection-status,.connection-notice'))) continue; if(!__sharedNodes.has(n) || __sharedNodes.get(n)!==n.nodeValue)return false;} while(walk.nextNode());return true;}),true,'all mounted content comes from a shared render'); assert.equal(await frame.evaluate(() => [...document.querySelectorAll('#connection-root *')].every(element => __sharedElements.has(element))), true, 'every mounted element must come from the shared renderer'); assert.equal(await frame.locator('body > :not(#connection-root):not(script)').count(), 0); }, async close() { if (recording) await top.evaluate(() => __walletReplay.assertNoViolations()); await context.close(); assert.deepEqual(errors, []); } };
+  return { top, frame, context, errors, reads, peerElapsed, action, state, async assertShared() { const feedback = await frame.locator('main').getAttribute('data-extension-feedback');
+    if (feedback) {
+      const texts = await frame.locator('.connection-status,.connection-notice').allTextContents();
+      if (feedback === 'unknown-error') assert.deepEqual(texts, ['Home could not finish this request.', 'Check your wallet and Wallet activity before making another request.']);
+      else {
+        assert.equal(feedback,'consumed');
+        const wallet=kind==='metamask'?'MetaMask':'UniSat';
+        const cause=texts[0].includes('different account.')?'account':'network';
+        const needed=cause==='account'?'account '+address:'network '+(kind==='unisat'?'Bitcoin mainnet':requests==='transaction'?'Elastos Smart Chain':'Ethereum');
+        assert.deepEqual(texts,[`${wallet} was using a different ${cause}. This request needed ${needed}.`,`This request can no longer be sent. Select ${needed} in ${wallet}. After switching, return to Requesting app and make a new request.`]);
+      }
+    }
+    assert.equal(await frame.evaluate(() => { const root=document.querySelector('#connection-root main'), walk=document.createTreeWalker(root,NodeFilter.SHOW_ALL); do {const n=walk.currentNode; if(n.nodeType===Node.TEXT_NODE && n.parentElement?.classList.contains('connection-wait') && /^Time left: [0-9]+:[0-9]+$/.test(n.nodeValue)) continue; if(n.nodeType===Node.TEXT_NODE && ['consumed','unknown-error'].includes(root.dataset.extensionFeedback) && (n.parentElement?.matches('.connection-status,.connection-notice'))) continue; if(!__sharedNodes.has(n) || __sharedNodes.get(n)!==n.nodeValue)return false;} while(walk.nextNode());return true;}),true,'all mounted content comes from a shared render'); assert.equal(await frame.evaluate(() => [...document.querySelectorAll('#connection-root *')].every(element => __sharedElements.has(element))), true, 'every mounted element must come from the shared renderer'); assert.equal(await frame.locator('body > :not(#connection-root):not(script)').count(), 0); }, async close() { if (recording) await top.evaluate(() => __walletReplay.assertNoViolations()); await context.close(); assert.deepEqual(errors, []); } };
 }
 

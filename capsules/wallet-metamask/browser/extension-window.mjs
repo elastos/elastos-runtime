@@ -126,7 +126,6 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (!root.querySelector('button:not(:disabled)') && frameHomeToken && homeOrigin && window.top !== window) {
       const close = renderConnection(document, connectionView({ window: kind, stage: 'window-expired', provider, supportedActions: ['close-window'] })).querySelector('[data-action="close-window"]');
       root.querySelector('.connection-actions')?.append(close);
-      if (document.hasFocus()) close?.focus({preventScroll:true});
     }
   }
 

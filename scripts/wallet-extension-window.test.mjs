@@ -283,7 +283,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
         await f.action('send-request').click(); await f.state('request-extension');
         assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
       }],
-      ['stale wait after answer', s => s.replace('window: kind, stage, account:', "window: kind, stage: stage === 'request-done' ? 'request-extension' : stage, account:"), async f => {
+      ['stale wait after answer', s => s.replace("const viewStage = refusal ? 'request-dismissed' : stage;", "const viewStage = refusal ? 'request-dismissed' : stage === 'request-done' ? 'request-extension' : stage;"), async f => {
         await f.action('send-request').click(); await f.state('request-done');
       }],
       ['draw outside shared view', s => s.replace('const root = presentation.root;', "const root = presentation.root; root.append(document.createElement('aside'));"), async f => {

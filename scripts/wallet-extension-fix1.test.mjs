@@ -10,7 +10,7 @@ const breaks = {
   K12:s=>s.replace('mountConnection(mount, view, presentation)', 'mountConnection(mount, view, null)'),
   K14:s=>s.replace("event.source !== window.top || event.origin !== homeOrigin || data?.type !== 'home:wallet-connector-event'","data?.type !== 'home:wallet-connector-event'"),
   B1:s=>s.replace("root.querySelector('.connection-status').textContent = `${wallet} was using a different ${refusal.cause}. This request needed ${needed}.`;","root.querySelector('.connection-status').textContent = 'This request is unavailable.';"),
-  X1:s=>s.replace("root.dataset.extensionFeedback = 'consumed';", "root.dataset.extensionFeedback = 'consumed'; root.querySelector('.connection-actions').append(renderConnection(document, connectionView({window:kind,stage:'request-waiting',summary:selected,account:accountView(),supportedActions:['send-request']})).querySelector('button'));"),
+  X1:s=>s.replace("root.dataset.extensionFeedback = 'consumed';", "root.dataset.extensionFeedback = 'consumed'; root.querySelector('.connection-actions').append(renderConnection(document, connectionView({window:kind,stage:'request-waiting',summary:selected,account:accountView(),waitSeconds:remaining(),supportedActions:['send-request']})).querySelector('button'));"),
   X2:s=>s.replace("if (!next) { draw(); return; }", "if (!next) { refusal = null; stage = 'request-unavailable'; draw(); return; }"),
   X3:s=>s.replace("'Switch to the linked account before approving.', ", ""),
   saved:s=>s.replace('const rows = address ? row ? [row] : [] : candidates;', 'const rows = address ? row ? [row] : [] : [];'),
@@ -248,7 +248,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
         await f.context.route('**/approvals',route=>route.fulfill({json:{approval_requests:[{request_id:'record-'+state,capsule_id:'browser',connector_id:'wallet-'+kind,intent:kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',proof_type:kind==='metamask'?'siwe':'bip322_simple',address:kind==='metamask'?'0x'+'1'.repeat(40):'bc1q'+'a'.repeat(38),chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93',reason:'Recorded result',status,approved_at,expires_at:1}]}}));
         // Open a fresh window on the existing record; completed local outcomes
         // intentionally do not turn into unrelated rejected records.
-        await f.frame.goto(f.frame.url());await f.state(state);
+        const url=new URL(f.frame.url());url.searchParams.set('record',state);await f.frame.goto(url.href);await f.state(state);
         assert.match(await f.frame.locator('body').innerText(),state==='request-rejected'?/This request was rejected\./:/This request was dismissed\./);
         assert.equal(await f.action('send-request').count(),0);await f.assertShared();
         await f.context.unroute('**/approvals');
