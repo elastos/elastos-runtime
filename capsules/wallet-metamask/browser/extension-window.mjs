@@ -118,16 +118,17 @@ export function startExtensionWindow(kind, homeClipboard) {
       if (wait) wait.textContent = view.wait;
       return;
     }
+    const ownsFocus = !lastView || document.hasFocus();
     const old = document.activeElement;
-    const focusKey = mount.contains(old) ? old.dataset.focusKey : null;
+    const focusKey = mount.contains(old) ? old.dataset.focusKey || old.dataset.focus : null;
     const sameFact = lastView?.stage === view.stage && lastView?.request?.id === view.request?.id;
     const scroll = { x: window.scrollX, y: window.scrollY };
     mount.replaceChildren(root);
     lastMarkup = markup;
     lastView = view;
-    let focus = sameFact && focusKey ? [...root.querySelectorAll('[data-focus-key]')].find(n => n.dataset.focusKey === focusKey) : null;
+    let focus = sameFact && focusKey ? [...root.querySelectorAll('[data-focus-key],[data-focus]')].find(n => (n.dataset.focusKey || n.dataset.focus) === focusKey) : null;
     if (!focus && !sameFact) focus = root.querySelector(`[data-action="${view.focus}"]`) || root.querySelector(`[data-focus="${view.focus}"]`) || root.querySelector('button:not(:disabled)');
-    focus?.focus({ preventScroll: sameFact });
+    if (ownsFocus) focus?.focus({ preventScroll: sameFact });
     if (sameFact) window.scrollTo(scroll.x, scroll.y);
   }
 

@@ -70,6 +70,8 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
               });
             });
             const before = await f.top.evaluate(() => ({ calls: testState.calls.length, runtime: testState.runtimeCalls.length, effects: testState.effects.length, receipts: testState.receipts.length }));
+            const focusBefore = await f.frame.evaluate(() => ({ key: document.activeElement?.dataset.focusKey || document.activeElement?.dataset.focus, y: scrollY }));
+            if (phase === 'result') assert.equal(focusBefore.key, 'outcome', 'positive control: the completed result owns focus');
             const value = name === 'accountsChanged' ? [kind === 'metamask' ? B : V]
               : name === 'disconnect' ? { code: 4900 } : kind === 'metamask' ? '0x14' : 'testnet';
             await f.top.evaluate(({ name, value }) => emitWallet(name, value), { name, value });
@@ -82,10 +84,20 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
             await waitState(phase !== 'linked' ? expected : name === 'accountsChanged' ? 'account-unavailable'
               : name === 'disconnect' ? 'account-unavailable' : kind === 'unisat' ? 'network-changed' : 'linked');
             assert.deepEqual(await f.top.evaluate(() => ({ calls: testState.calls.length, runtime: testState.runtimeCalls.length, effects: testState.effects.length, receipts: testState.receipts.length })), before, `${phase}/${name}: notification is passive`);
+            if (phase !== 'linked') assert.deepEqual(await f.frame.evaluate(() => ({ key: document.activeElement?.dataset.focusKey || document.activeElement?.dataset.focus, y: scrollY })), focusBefore, `${phase}/${name}: redraw retains focus and scroll`);
             if (['proof', 'signature'].includes(phase)) assert.equal(await f.action('stop-waiting').count(), 1);
             if (['signature', 'result'].includes(phase) && ['accountsChanged', 'disconnect'].includes(name)) assert.equal(await f.frame.locator('.connection-request-account').count(), 0);
             if (phase === 'result') assert.equal(await f.action('send-request').count(), 0);
             if (name.includes('Changed') && name !== 'accountsChanged' && phase !== 'proof') assert.match(await f.frame.locator('body').innerText(), kind === 'metamask' ? /Elastos Smart Chain/ : /test network.*unsupported|Bitcoin test network/i);
+            if (phase === 'linked' && name === 'accountsChanged' || phase === 'result' && name.includes('Changed') && name !== 'accountsChanged') {
+              await f.top.evaluate(() => { const input = document.createElement('input'); input.id = 'other-control'; document.body.append(input); input.focus(); });
+              assert.equal(await f.frame.evaluate(() => document.hasFocus()), false);
+              await f.top.evaluate(({ phase, kind }) => emitWallet(phase === 'linked' ? 'accountsChanged' : kind === 'metamask' ? 'chainChanged' : 'networkChanged', phase === 'linked' ? [testState.address] : kind === 'metamask' ? '0x1' : 'livenet'), { phase, kind });
+              await f.frame.waitForFunction(() => eventProbe.length === 2);
+              await waitState(phase === 'linked' ? 'linked' : 'request-done');
+              assert.equal(await f.top.evaluate(() => document.activeElement?.id), 'other-control', 'passive redraw keeps the other Home control active');
+              assert.deepEqual(await f.top.evaluate(() => ({ calls: testState.calls.length, runtime: testState.runtimeCalls.length, effects: testState.effects.length, receipts: testState.receipts.length })), before);
+            }
             if (['proof', 'signature'].includes(phase)) {
               await f.top.evaluate(() => {
                 Object.defineProperty(testState, 'mode', { configurable: true, writable: true, value: 'approve' });
@@ -313,12 +325,24 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
       ['overdue event before timer', s => s.replace("if (isRequestExpired()) { fixedOutcome = true; return 'request-expired'; }", ''), async f => {
         await secondRequest(f); assert.equal(await overdueEvent(f, 'accountsChanged', [B]), 'request-expired');
       }],
+      ['outcome focus lost', s => s.replace('old.dataset.focusKey || old.dataset.focus', 'old.dataset.focusKey'), async f => {
+        await f.action('send-request').click(); await f.state('request-done');
+        assert.equal(await f.frame.evaluate(() => document.activeElement?.dataset.focus), 'outcome');
+        await peerEvent(f, 'chainChanged', '0x14');
+        assert.equal(await f.frame.evaluate(() => document.activeElement?.dataset.focus), 'outcome');
+      }],
+      ['background focus stolen', s => s.replace('if (ownsFocus) focus?.focus', 'focus?.focus'), async f => {
+        await f.action('connect').click(); await f.state('linked');
+        await f.top.evaluate(() => { const input = document.createElement('input'); input.id = 'other-control'; document.body.append(input); input.focus(); });
+        await peerEvent(f, 'accountsChanged', [B]);
+        assert.equal(await f.top.evaluate(() => document.activeElement?.id), 'other-control');
+      }],
     ];
     for (const [name, mutate, oracle] of mutations) {
       const source = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
       assert.notEqual(mutate(source), source, name + ' mutation applies');
       const requestPair = ['wrong linked signer', 'expiry hidden by wallet state', 'overdue event before timer'].includes(name);
-      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: requestPair ? 'multiple' : !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived'].includes(name), extraHomeAccount: requestPair, mutate });
+      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: requestPair ? 'multiple' : !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived', 'background focus stolen'].includes(name), extraHomeAccount: requestPair, mutate });
       try { await assert.rejects(oracle(f), undefined, name + ' must fail the live oracle'); }
       finally { await f.context.close(); }
     }
