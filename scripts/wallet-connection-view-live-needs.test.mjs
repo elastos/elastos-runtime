@@ -52,6 +52,7 @@ test('live needs: clipboard feedback is closed local copy and QR keys respect su
  const args=fixtureArguments(states.find(r=>r.stage==='qr-shown'));
  for(const copyFeedback of ['link-copied','address-copied','copy-failed']){args[0].copyFeedback=copyFeedback;assert(reduceConnection(...args).copyFeedback.length);}
  args[0].supportedActions=['copy-link'];const view=reduceConnection(...args);assert.equal(connectionKey(view,{key:'Escape'}),null);assert.equal(connectionKey(view,{key:'Tab',action:'copy-link'}).focus,'copy-link');
+ args[0].supportedActions=['cancel'];const cancelOnly=reduceConnection(...args);assert.equal(cancelOnly.focus,'cancel');assert.equal(connectionKey(cancelOnly,{key:'Tab'}).focus,'cancel');
  assert.throws(()=>connectionView({window:'metamask',stage:'ready',copyFeedback:'wallet wrote this'}),/closed copy feedback/);
 });
 
