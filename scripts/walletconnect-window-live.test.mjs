@@ -53,12 +53,22 @@ async function setup(t,engine,mutation){
    };}
   }
   const relayer=core?.relayer;
+  if(relayer&&!relayer.__windowFixtureEngineObserved){
+   relayer.__windowFixtureEngineObserved=true;
+   // The pinned Core and SignClient register persistent relayer_message handlers.
+   const events=relayer.events,event='relayer_message';
+   for(const listener of events.listeners(event)){events.off(event,listener);events.on(event,function(...args){
+    window.walletFixtureEngineStarts=(window.walletFixtureEngineStarts||0)+1;window.walletFixtureEnginePending=(window.walletFixtureEnginePending||0)+1;
+    try{return Promise.resolve(listener.apply(this,args)).finally(()=>window.walletFixtureEnginePending--);}
+    catch(error){window.walletFixtureEnginePending--;throw error;}
+   });}
+  }
   if(!relayer||relayer.__windowFixtureObserved)return;
   relayer.__windowFixtureObserved=true;const original=relayer.onProviderPayload;
   relayer.onProviderPayload=function(...args){window.walletFixturePayloadCount=(window.walletFixturePayloadCount||0)+1;window.walletFixturePayloads=(window.walletFixturePayloads||0)+1;return original.apply(this,args).finally(()=>window.walletFixturePayloads--);};
  });}
  async function drainRelayWork(){if(frame&&!frame.isDetached()){
-  await until(()=>frame.evaluate(()=>(window.walletFixturePayloads||0)===0),'SDK payload processing settled before a planned frame navigation');
+  await observeRelayWork();await until(()=>frame.evaluate(()=>(window.walletFixturePayloads||0)===0&&(window.walletFixtureEnginePending||0)===0),'SDK payload and message handlers settled before planned navigation');
   if(fixture.state.permission==='granted'&&!fixture.state.expiredLaunch){
    await observeRelayWork();
    await frame.evaluate(()=>{const core=globalThis['_walletConnectCore_wallet-walletconnect'];if(core?.heartbeat?.events?.eventNames().length)core.heartbeat.stop();});
@@ -110,7 +120,7 @@ async function setup(t,engine,mutation){
  }
  async function qr(){for(let i=0;i<2&&!await frame.locator('[data-action=connect]').count();i++)await click('back-to-connection');await click('connect');await state('qr-shown');assert.equal(await frame.locator('dialog').count(),0,'no old dialog');assert.equal(await frame.locator('main img.connection-qr').count(),1);}
  async function pair(){await page.evaluate(()=>window.copied='');await click('copy-link');await until(()=>page.evaluate(()=>window.copied.startsWith('wc:')),'clipboard gets pairing URI');await peer.pair(await page.evaluate(()=>window.copied));}
- async function link(){peer.choose({proposal:'approve',request:'sign'});await qr();await pair();await state('linked');assert.ok(fixture.state.verified>0);assert.ok(await frame.evaluate(()=>window.walletFixturePayloadCount>0),'the barrier observes real pinned SDK payload work');}
+ async function link(){peer.choose({proposal:'approve',request:'sign'});await qr();await pair();await state('linked');assert.ok(fixture.state.verified>0);assert.ok(await frame.evaluate(()=>window.walletFixturePayloadCount>0),'the barrier observes real pinned SDK payload work');assert.ok(await frame.evaluate(()=>window.walletFixtureEngineStarts>0),'the barrier observes the real SDK message handlers');}
  async function approval(id='message',extra={}){fixture.state.approvals=[{request_id:id,connector_id:'wallet-walletconnect',capsule_id:'browser',requesting_origin:'https://example.test',reason:'Review the scripted message',status:'pending',intent:'credential',proof_type:'siwe',address:peer.address,chain_namespace:'eip155:8453',expires_at:Math.floor(Date.now()/1000)+600,...extra}];await refresh();if(extra.status==='approved'||extra.intent==='browser_typed_data_sign'||extra.expires_at<=Math.floor(Date.now()/1000)||extra.intent==='transaction_intent'&&extra.expires_at-Math.floor(Date.now()/1000)<300){await frame.getByRole('button',{name:'View requests',exact:true}).click();await frame.locator(`[data-focus-key="select-request:${id}"]`).click();}}
  return {assertSharedTree,fixture,peer,page,get frame(){return frame;},errors,state,click,refresh,capture,qr,pair,link,approval,reopen,leave};
 }
