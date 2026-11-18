@@ -128,3 +128,13 @@ test("live enables one Enter submission while the base Send guard still applies"
   chat.pressEnter();
   assert.deepEqual(chat.submits, [chat.send]);
 });
+
+// Runtime state controls behavior even when the designer changes its sentence.
+test("designer copy changes preserve the explicit starting and waiting states", () => {
+  for (const state of ["starting", "waiting_for_peers"]) {
+    const chat = loadChat();
+    const detail = "Revised designer wording.";
+    chat.render(state, true, true, detail);
+    checkState(chat, state, detail, false);
+  }
+});

@@ -2950,6 +2950,8 @@ fn write_home_state_probe(
         out,
         "  Network:   {}",
         match snapshot.runtime.peer_count {
+            _ if snapshot.runtime.community.as_ref().is_some_and(|status| status["state"] == "waiting_for_peers") =>
+                "Carrier bootstrap ready; waiting for another Home".to_string(),
             Some(1) => "1 Carrier peer known".to_string(),
             Some(peers) => format!("{} Carrier peers known", peers),
             None => "checking Carrier peers".to_string(),
@@ -3091,7 +3093,7 @@ fn people_carrier_status(peer_count: Option<usize>) -> (String, &'static str) {
     match peer_count {
         Some(peers) => (
             format!("{} known", peers),
-            "open Chat and send a line to confirm delivery",
+            "see Community status above",
         ),
         None => ("checking".to_string(), "checking"),
     }
@@ -3408,7 +3410,7 @@ mod tests {
         assert!(!unknown.contains("0 known"), "{unknown}");
         let none = render(Some(0));
         assert!(none.contains("  Carrier:   0 known\n"), "{none}");
-        assert!(none.contains("  Delivery:  open Chat and send a line to confirm delivery\n"));
+        assert!(none.contains("  Delivery:  see Community status above\n"));
         assert!(render(Some(2)).contains("  Carrier:   2 known\n"));
     }
 
@@ -3427,6 +3429,24 @@ mod tests {
         assert!(text.contains("2 Carrier peers known"));
         assert!(!text.contains("peers reachable"));
         assert!(!text.contains("2 reachable"));
+    }
+
+    #[test]
+    fn community_fix1_cli_bootstrap_line_requires_the_shared_node_state() {
+        let mut snapshot = sample_snapshot_with_components(&[]);
+        snapshot.runtime.peer_count = Some(0);
+        snapshot.runtime.community = Some(serde_json::json!({"state":"waiting_for_peers",
+            "detail":"Community is waiting for another Home."}));
+        let mut output = Vec::new();
+        write_home_state_probe(&mut output, &snapshot).unwrap();
+        assert!(String::from_utf8(output).unwrap().contains("Carrier bootstrap ready; waiting for another Home"));
+        snapshot.runtime.community = Some(serde_json::json!({"state":"reconnecting", "detail":"Reconnecting"}));
+        let mut output = Vec::new();
+        write_home_state_probe(&mut output, &snapshot).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("0 Carrier peers known"));
+        assert!(!text.contains("bootstrap ready"));
+        assert!(!text.contains("send a line"));
     }
 
     #[cfg(unix)]

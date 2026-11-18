@@ -379,6 +379,9 @@ pub struct RoomTransportView {
     pub available: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub community_joined: Option<bool>,
+    /// Runtime state is independent of designer-controlled display text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community_state: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

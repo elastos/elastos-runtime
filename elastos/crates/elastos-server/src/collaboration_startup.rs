@@ -361,7 +361,18 @@ pub async fn start_collaboration_runtime_service(
     .await
     {
         Ok(Ok(joined)) => joined,
-        _ => crate::collaboration_carrier::JoinedCollaborationNetwork::pending(carrier, &profile)?,
+        result => {
+            let reason = match result {
+                Ok(Err(error)) => community_failure_reason(&error, "Community initial join failed"),
+                Err(_) => "Community initial join timed out",
+                Ok(Ok(_)) => unreachable!(),
+            };
+            tracing::warn!(reason, "Community initial join failed; waiting for paced repair");
+            product_port.set_community_recovery(CommunityRecoveryView {
+                reason: Some("Community topic is absent"), ..Default::default()
+            });
+            crate::collaboration_carrier::JoinedCollaborationNetwork::pending(carrier, &profile)?
+        },
     }
     .with_runtime_node_id(runtime_node_id);
     tracing::info!("Community worker is starting; Runtime will check the link");
@@ -547,6 +558,8 @@ async fn run_collaboration_worker(
     shutdown: watch::Receiver<bool>,
 ) {
     let membership = product_port.community_membership();
+    let incoming_log = std::sync::Mutex::new(CommunityFailureLog::default());
+    let outgoing_log = std::sync::Mutex::new(CommunityFailureLog::default());
     // These futures share one Runtime task and one consumer. Outgoing work or
     // receipt broadcasts can wait while accepted rows still reach the product.
     tokio::join!(
@@ -558,9 +571,10 @@ async fn run_collaboration_worker(
                 let now = now_secs();
                 project_collaboration_outgoing(&product_port, &presence_port, &data_root, now)
                     .await;
-                if driver.retry_outgoing_once(now).await.is_err() {
-                    tracing::warn!("collaboration outgoing retry cycle failed");
-                }
+                let reason = driver.retry_outgoing_once(now).await.err()
+                    .map(|error| community_failure_reason(&error, "Community outgoing retry failed"));
+                outgoing_log.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .observe_cycle(reason, tokio::time::Instant::now(), "collaboration outgoing retry cycle failed");
             }
         ),
         run_community_periodic(
@@ -568,9 +582,10 @@ async fn run_collaboration_worker(
             membership.subscribe(),
             COLLABORATION_LIVE_CADENCE,
             || async {
-                if driver.process_incoming_once(now_secs()).await.is_err() {
-                    tracing::warn!("collaboration incoming cycle failed");
-                }
+                let reason = driver.process_incoming_once(now_secs()).await.err()
+                    .map(|error| community_failure_reason(&error, "Community incoming failed"));
+                incoming_log.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .observe_cycle(reason, tokio::time::Instant::now(), "collaboration incoming cycle failed");
             }
         ),
         run_community_periodic(
@@ -840,6 +855,10 @@ struct CommunityFailureLog {
 
 impl CommunityFailureLog {
     fn observe(&mut self, reason: Option<&'static str>, now: tokio::time::Instant) -> bool {
+        self.observe_cycle(reason, now, "Community is reconnecting")
+    }
+
+    fn observe_cycle(&mut self, reason: Option<&'static str>, now: tokio::time::Instant, message: &'static str) -> bool {
         let changed = self.reason != reason;
         let due = changed
             || self
@@ -849,9 +868,9 @@ impl CommunityFailureLog {
         if due {
             self.last_log = Some(now);
             if let Some(reason) = reason {
-                tracing::warn!(reason, "Community is reconnecting");
+                tracing::warn!(reason, "{message}");
             } else if changed {
-                tracing::info!("Community link recovered");
+                tracing::info!("Community failure cleared");
             }
         }
         due

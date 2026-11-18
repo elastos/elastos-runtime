@@ -131,13 +131,13 @@ for (const width of [375, 1280]) {
     const retained = frame.getByText("Retained Community post before the link was lost", {exact:true});
     await retained.waitFor({timeout:5000});
     const states = [
-      ["starting",true,"Home is starting Community. It is checking the link."],
+      ["starting",true,"Preparing Community with the revised designer wording."],
       ["reconnecting",true,"Home is reconnecting to Community. Next check in 60 seconds."],
-      ["waiting_for_peers",true,"Community is waiting for another Home."],
+      ["waiting_for_peers",true,"Waiting for a Home with the revised designer wording."],
       ["left",false,"You left Community."],
     ];
     for (const [name,joined,detail] of states) {
-      Object.assign(transport,{available:false,community_joined:joined,status:detail});
+      Object.assign(transport,{available:false,community_joined:joined,community_state:name,status:detail});
       await tick(2);
       const status=frame.locator("#community-status");
       assert.equal(await status.getAttribute("data-state"),name);
@@ -157,7 +157,7 @@ for (const width of [375, 1280]) {
         }
       }
     }
-    Object.assign(transport,{available:true,community_joined:true,status:"Community is connected."});
+    Object.assign(transport,{available:true,community_joined:true,community_state:"connected",status:"Community is connected."});
     await tick(2);
     assert.equal(await frame.locator("#community-status").getAttribute("data-state"),"live");
     assert.equal(await frame.locator("#message-input").isDisabled(),false);

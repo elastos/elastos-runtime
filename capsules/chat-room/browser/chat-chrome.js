@@ -25,7 +25,7 @@
         };
         if (communityStatus) {
           communityStatus.dataset.state = state;
-          communityStatus.textContent = ((state === "reconnecting" || state === "starting") && detail) || labels[state];
+          communityStatus.textContent = ((state === "reconnecting" || state === "starting" || state === "waiting_for_peers") && detail) || labels[state];
           communityStatus.hidden = state === "live";
         }
         if (sharedSelected) {

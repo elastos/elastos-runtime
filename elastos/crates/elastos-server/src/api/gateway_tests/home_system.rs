@@ -6034,6 +6034,18 @@ async fn system_community_membership_is_home_wide_and_requires_current_owner_aut
     let mut state = test_state(dir.path());
     state.collaboration_chat_product_port = Some(port.clone());
     let app = gateway_router(state);
+    port.set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+        reason: Some("bootstrap join timed out"), ..Default::default()
+    });
+    let response = app.clone().oneshot(test_browser_request("localhost:61180", "null")
+        .uri("/api/apps/system/community")
+        .header("x-elastos-home-token", &authority.system_token)
+        .body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let summary: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(summary["detail"], port.community_status()["detail"]);
+    assert!(summary["detail"].as_str().unwrap().contains("reconnecting"));
     let marker = dir
         .path()
         .join("collaboration-community-membership-v1.json");

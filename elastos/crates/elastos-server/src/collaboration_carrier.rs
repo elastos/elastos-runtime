@@ -439,9 +439,7 @@ impl JoinedCollaborationNetwork {
     /// the retry cadence; a healthy mesh never receives another Join here.
     pub(crate) async fn restore_missing_bootstrap_peers(&self) -> anyhow::Result<()> {
         if self.pending_join.load(std::sync::atomic::Ordering::Relaxed) {
-            self.restore_absent_topic().await?;
-            self.pending_join
-                .store(false, std::sync::atomic::Ordering::Relaxed);
+            anyhow::bail!("not_joined: Community topic is waiting for paced repair");
         }
         if self.bootstrap_node_ids.is_empty() {
             return Ok(());
@@ -467,7 +465,8 @@ impl JoinedCollaborationNetwork {
             .context("Carrier missing bootstrap join failed for collaboration recovery")?;
         require_bounded_response(&response)?;
         if response["code"] == "not_joined" {
-            return self.restore_absent_topic().await;
+            self.pending_join.store(true, std::sync::atomic::Ordering::Relaxed);
+            anyhow::bail!("not_joined: Community topic is waiting for paced repair");
         }
         let joined: JoinExactData = require_ok_response(response, "gossip_join_peers")?;
         if joined.topic != self.topic {
@@ -665,12 +664,22 @@ impl CommunityLink for JoinedCollaborationNetwork {
     }
 
     async fn rejoin(&self) -> anyhow::Result<()> {
+        if self.pending_join.load(std::sync::atomic::Ordering::Relaxed) {
+            self.restore_absent_topic().await?;
+            self.pending_join.store(false, std::sync::atomic::Ordering::Relaxed);
+            return Ok(());
+        }
         let response = self
             .carrier
             .send_raw(&serde_json::json!({ "op": "gossip_rejoin", "topic": self.topic }))
             .await
             .context("Carrier gossip_rejoin failed for collaboration network")?;
         require_bounded_response(&response)?;
+        if response["code"] == "not_joined" {
+            self.restore_absent_topic().await?;
+            self.pending_join.store(false, std::sync::atomic::Ordering::Relaxed);
+            return Ok(());
+        }
         let joined: JoinExactData = require_ok_response(response, "gossip_rejoin")?;
         if joined.topic != self.topic {
             anyhow::bail!("Carrier returned a mismatched collaboration rejoin");
@@ -748,6 +757,17 @@ impl CommunityRecoveryView {
                 .is_ok_and(|elapsed| elapsed <= Duration::from_secs(45))
     }
 
+    pub(crate) fn state(&self) -> &'static str {
+        if self.connected() { "connected" }
+        else if self.reason == Some("starting") { "starting" }
+        else if self.reason == Some("waiting for Community peers") { "waiting_for_peers" }
+        else { "reconnecting" }
+    }
+
+    pub(crate) fn next_check_seconds(&self) -> u64 {
+        self.retry_at.saturating_duration_since(Instant::now()).as_secs().max(1)
+    }
+
     pub(crate) fn detail(&self) -> String {
         if self.connected() {
             "Community is connected.".to_string()
@@ -756,11 +776,9 @@ impl CommunityRecoveryView {
         } else if self.reason == Some("waiting for Community peers") {
             "Community is waiting for another Home.".to_string()
         } else {
-            let wait = self
-                .retry_at
-                .saturating_duration_since(Instant::now())
-                .as_secs();
-            format!("Home is reconnecting to Community. Next check in {wait} seconds.")
+            let wait = self.next_check_seconds();
+            let unit = if wait == 1 { "second" } else { "seconds" };
+            format!("Home is reconnecting to Community. Next check in {wait} {unit}.")
         }
     }
 }

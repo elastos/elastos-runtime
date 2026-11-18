@@ -599,12 +599,16 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
                         .unwrap();
                 }
                 crate::collaboration_carrier::CommunityLinkStep::Rebuild => {
+                    let peers = f.home.gossip_state.lock().await.peers.clone();
+                    peers.lock().await.push("retired-fixture-neighbour".to_string());
                     let r = f
                         .provider
                         .send_raw(&serde_json::json!({"op":"gossip_rebuild"}))
                         .await
                         .unwrap();
                     assert_eq!(r["status"], "ok");
+                    assert!(!peers.lock().await.iter().any(|peer| peer == "retired-fixture-neighbour"),
+                        "a replacement actor cannot retain its predecessor's remembered neighbours");
                     rebuilt += 1;
                 }
             }

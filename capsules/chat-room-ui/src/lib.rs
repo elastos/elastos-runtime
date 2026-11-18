@@ -555,6 +555,8 @@ struct RoomTransportView {
     #[serde(default)]
     community_joined: Option<bool>,
     #[serde(default)]
+    community_state: Option<String>,
+    #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     history: Option<RoomHistoryView>,
@@ -565,12 +567,12 @@ impl RoomTransportView {
         match (self.configured, self.community_joined, self.available) {
             (true, Some(false), _) => CommunityState::Left,
             (true, Some(true), false)
-                if self.status.as_deref() == Some(CommunityState::Starting.label()) =>
+                if self.community_state.as_deref() == Some("starting") =>
             {
                 CommunityState::Starting
             }
             (true, Some(true), false)
-                if self.status.as_deref() == Some(CommunityState::Waiting.label()) =>
+                if self.community_state.as_deref() == Some("waiting_for_peers") =>
             {
                 CommunityState::Waiting
             }
@@ -7909,7 +7911,27 @@ mod tests {
     }
 
     #[test]
-    fn exhausted_runtime_poll_and_summary_show_restart_guidance_in_home() {
+    fn community_fix1_state_is_independent_of_designer_wording() {
+        for (state, expected) in [("starting", CommunityState::Starting),
+            ("waiting_for_peers", CommunityState::Waiting), ("reconnecting", CommunityState::Reconnecting)] {
+            for wording in ["Designer changed this sentence.", "", "Community is connected."] {
+                let view: RoomTransportView = serde_json::from_value(serde_json::json!({
+                    "configured": true, "available": false, "community_joined": true,
+                    "community_state": state, "status": wording
+                })).unwrap();
+                assert_eq!(view.community_state(), expected);
+            }
+        }
+        // A released Runtime omits the state. Unavailable still fails closed.
+        let old: RoomTransportView = serde_json::from_value(serde_json::json!({
+            "configured": true, "available": false, "community_joined": true,
+            "status": "Home is starting Community. It is checking the link."
+        })).unwrap();
+        assert_eq!(old.community_state(), CommunityState::Reconnecting);
+    }
+
+    #[test]
+    fn community_starting_poll_and_summary_preserve_drafts_and_direct() {
         let mut state = two_direct_conversations();
         state.session_active = true;
         state
@@ -7924,7 +7946,7 @@ mod tests {
             "configured": true,
             "available": false,
             "community_joined": true,
-            "status": detail
+            "status": detail, "community_state": "starting"
         }))
         .unwrap();
         let mut transport = poll.transport.clone();

@@ -155,14 +155,11 @@ impl CollaborationChatProductPort {
         let connected = joined && recovery.connected();
         let waiting = recovery.reason == Some("waiting for Community peers");
         serde_json::json!({
-            "state": if !joined { "left" } else if connected { "connected" }
-                else if waiting { "waiting_for_peers" }
-                else if recovery.reason == Some("starting") { "starting" }
-                else { "reconnecting" },
+            "state": if !joined { "left" } else { recovery.state() },
             "connected": connected,
             "detail": if joined { recovery.detail() } else { crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL.to_string() },
             "next_retry_seconds": if connected || !joined || waiting { None }
-                else { Some(recovery.retry_at.saturating_duration_since(tokio::time::Instant::now()).as_secs()) },
+                else { Some(recovery.next_check_seconds()) },
         })
     }
 
@@ -177,6 +174,7 @@ impl CollaborationChatProductPort {
             configured: true,
             available: joined && connected,
             community_joined: Some(joined),
+            community_state: Some(if joined { recovery.state() } else { "left" }.to_string()),
             status: Some(if !joined {
                 crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL.to_string()
             } else {
@@ -1105,6 +1103,29 @@ mod tests {
             left.status.as_deref(),
             Some(crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL)
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn community_fix1_chat_view_carries_state_and_countdown_never_says_zero() {
+        let f = fixture();
+        for (reason, expected) in [(Some("starting"), "starting"),
+            (Some("waiting for Community peers"), "waiting_for_peers"),
+            (Some("bootstrap join timed out"), "reconnecting")] {
+            f.port.set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                reason, ..Default::default()
+            });
+            let view = serde_json::to_value(f.port.conversation_transport_view()).unwrap();
+            assert_eq!(view["community_state"], expected);
+            let status = f.port.community_status();
+            assert_eq!(status["state"], expected);
+            if expected == "reconnecting" {
+                assert_eq!(status["next_retry_seconds"], 1);
+                assert!(status["detail"].as_str().unwrap().contains("1 second."));
+                assert!(!status["detail"].as_str().unwrap().contains("0 seconds"));
+                tokio::time::advance(std::time::Duration::from_secs(10)).await;
+                assert_eq!(f.port.community_status()["next_retry_seconds"], 1);
+            }
+        }
     }
 
     #[tokio::test(start_paused = true)]
