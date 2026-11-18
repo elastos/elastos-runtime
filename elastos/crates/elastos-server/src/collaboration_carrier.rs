@@ -764,8 +764,9 @@ impl CommunityRecoveryView {
         else { "reconnecting" }
     }
 
-    pub(crate) fn next_check_seconds(&self) -> u64 {
-        self.retry_at.saturating_duration_since(Instant::now()).as_secs().max(1)
+    pub(crate) fn next_check_seconds(&self) -> Option<u64> {
+        let remaining = self.retry_at.saturating_duration_since(Instant::now());
+        (!remaining.is_zero()).then(|| remaining.as_secs().saturating_add(u64::from(remaining.subsec_nanos() > 0)))
     }
 
     pub(crate) fn detail(&self) -> String {
@@ -776,9 +777,13 @@ impl CommunityRecoveryView {
         } else if self.reason == Some("waiting for Community peers") {
             "Community is waiting for another Home.".to_string()
         } else {
-            let wait = self.next_check_seconds();
-            let unit = if wait == 1 { "second" } else { "seconds" };
-            format!("Home is reconnecting to Community. Next check in {wait} {unit}.")
+            match self.next_check_seconds() {
+                Some(wait) => {
+                    let unit = if wait == 1 { "second" } else { "seconds" };
+                    format!("Home is reconnecting to Community. Next check in {wait} {unit}.")
+                }
+                None => "Home is reconnecting to Community. It is checking the link.".to_string(),
+            }
         }
     }
 }

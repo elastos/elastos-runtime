@@ -568,6 +568,23 @@ async fn community_core_real_ended_receiver_repairs_and_delivers_exact_text() {
 }
 
 #[tokio::test]
+async fn community_core_real_missing_topic_is_restored_and_delivers_exact_text() {
+    let f = Fixture::start().await;
+    f.exchange("before local topic loss").await.unwrap();
+    let left = f.provider.send_raw(&serde_json::json!({"op":"gossip_leave", "topic":f.topic})).await.unwrap();
+    assert_eq!(left["status"], "ok");
+    let honest = wait_for(|| !f.connected.load(Ordering::SeqCst), 20).await;
+    let repaired = wait_for(|| f.faults.repairs.load(Ordering::SeqCst) > 0, 100).await;
+    let healthy = wait_for(|| f.connected.load(Ordering::SeqCst), 40).await;
+    let posts = f.exchange("missing topic restored by paced repair").await;
+    f.stop().await;
+    assert!(honest);
+    assert!(repaired);
+    assert!(healthy);
+    posts.unwrap();
+}
+
+#[tokio::test]
 async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
     let f = Fixture::start().await;
     f.exchange("initial actor").await.unwrap();
@@ -600,15 +617,24 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
                 }
                 crate::collaboration_carrier::CommunityLinkStep::Rebuild => {
                     let peers = f.home.gossip_state.lock().await.peers.clone();
-                    peers.lock().await.push("retired-fixture-neighbour".to_string());
+                    peers
+                        .lock()
+                        .await
+                        .push("retired-fixture-neighbour".to_string());
                     let r = f
                         .provider
                         .send_raw(&serde_json::json!({"op":"gossip_rebuild"}))
                         .await
                         .unwrap();
                     assert_eq!(r["status"], "ok");
-                    assert!(!peers.lock().await.iter().any(|peer| peer == "retired-fixture-neighbour"),
-                        "a replacement actor cannot retain its predecessor's remembered neighbours");
+                    assert!(
+                        !peers
+                            .lock()
+                            .await
+                            .iter()
+                            .any(|peer| peer == "retired-fixture-neighbour"),
+                        "a replacement actor cannot retain its predecessor's remembered neighbours"
+                    );
                     rebuilt += 1;
                 }
             }

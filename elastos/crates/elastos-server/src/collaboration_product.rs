@@ -159,7 +159,7 @@ impl CollaborationChatProductPort {
             "connected": connected,
             "detail": if joined { recovery.detail() } else { crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL.to_string() },
             "next_retry_seconds": if connected || !joined || waiting { None }
-                else { Some(recovery.next_check_seconds()) },
+                else { recovery.next_check_seconds() },
         })
     }
 
@@ -1119,11 +1119,17 @@ mod tests {
             let status = f.port.community_status();
             assert_eq!(status["state"], expected);
             if expected == "reconnecting" {
-                assert_eq!(status["next_retry_seconds"], 1);
-                assert!(status["detail"].as_str().unwrap().contains("1 second."));
+                assert!(status["next_retry_seconds"].is_null());
+                assert!(status["detail"].as_str().unwrap().contains("It is checking the link."));
                 assert!(!status["detail"].as_str().unwrap().contains("0 seconds"));
-                tokio::time::advance(std::time::Duration::from_secs(10)).await;
+                let now = tokio::time::Instant::now();
+                f.port.set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                    reason, retry_at: now + std::time::Duration::from_millis(500), ..Default::default()
+                });
                 assert_eq!(f.port.community_status()["next_retry_seconds"], 1);
+                assert!(f.port.community_status()["detail"].as_str().unwrap().contains("1 second."));
+                tokio::time::advance(std::time::Duration::from_secs(10)).await;
+                assert!(f.port.community_status()["next_retry_seconds"].is_null());
             }
         }
     }

@@ -2950,7 +2950,11 @@ fn write_home_state_probe(
         out,
         "  Network:   {}",
         match snapshot.runtime.peer_count {
-            _ if snapshot.runtime.community.as_ref().is_some_and(|status| status["state"] == "waiting_for_peers") =>
+            _ if snapshot
+                .runtime
+                .community
+                .as_ref()
+                .is_some_and(|status| status["state"] == "waiting_for_peers") =>
                 "Carrier bootstrap ready; waiting for another Home".to_string(),
             Some(1) => "1 Carrier peer known".to_string(),
             Some(peers) => format!("{} Carrier peers known", peers),
@@ -3091,10 +3095,7 @@ fn write_home_state_probe(
 /// learned yet says so instead of reading as an outage (#391).
 fn people_carrier_status(peer_count: Option<usize>) -> (String, &'static str) {
     match peer_count {
-        Some(peers) => (
-            format!("{} known", peers),
-            "see Community status above",
-        ),
+        Some(peers) => (format!("{} known", peers), "see Community status above"),
         None => ("checking".to_string(), "checking"),
     }
 }
@@ -3439,8 +3440,11 @@ mod tests {
             "detail":"Community is waiting for another Home."}));
         let mut output = Vec::new();
         write_home_state_probe(&mut output, &snapshot).unwrap();
-        assert!(String::from_utf8(output).unwrap().contains("Carrier bootstrap ready; waiting for another Home"));
-        snapshot.runtime.community = Some(serde_json::json!({"state":"reconnecting", "detail":"Reconnecting"}));
+        assert!(String::from_utf8(output)
+            .unwrap()
+            .contains("Carrier bootstrap ready; waiting for another Home"));
+        snapshot.runtime.community =
+            Some(serde_json::json!({"state":"reconnecting", "detail":"Reconnecting"}));
         let mut output = Vec::new();
         write_home_state_probe(&mut output, &snapshot).unwrap();
         let text = String::from_utf8(output).unwrap();

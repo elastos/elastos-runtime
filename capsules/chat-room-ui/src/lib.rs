@@ -9566,6 +9566,7 @@ mod tests {
                 configured: true,
                 available: true,
                 community_joined: None,
+                community_state: None,
                 status: None,
                 history: None,
             },
