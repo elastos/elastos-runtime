@@ -145,8 +145,9 @@ test('retiring an adapter lets an acknowledged late SDK payload finish without n
   };
  });
  t.after(async()=>{if(!r.frame.isDetached())await r.frame.evaluate(()=>window.releaseRetiredPayload?.());});
- await r.peer.changeAccount();
+ await r.peer.emptyAccounts();
  await r.frame.waitForFunction(()=>window.retirementTrace.length===1);
+ console.log('Retirement trace: payload held before disconnect');
  await r.frame.locator('[data-action=disconnect]').click();await r.frame.locator('[data-state=disconnected]').waitFor();
  const count=r.fixture.state.calls.length;
  await r.frame.evaluate(()=>window.releaseRetiredPayload());
