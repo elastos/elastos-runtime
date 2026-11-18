@@ -135,7 +135,10 @@ window.addEventListener('message',event=>{
 function draw() {
   if(connectionPage==='access'&&permissionStatus==='granted'&&!connectionState?.session&&!connectionState?.removed&&!connectionState?.expired&&!homeReadFailed)connectionPage='overview';
   if(mounted){const saved=captureConnectionPresentation(mounted.root);if(saved.action)rememberedFocus={key:renderKey,action:saved.action,focusKey:saved.key,outcome:saved.action};}
-  if(activeRequest && /^(request|transaction)-/.test(outcome || ''))requestOutcomes.set(activeRequest.request_id,{outcome,hash:unrecordedHash,dispatched:dispatchedRequestId===activeRequest.request_id,walletName:activeRequest.walletName});
+  if(activeRequest && /^(request|transaction)-/.test(outcome || '')) {
+    if(dispatchedRequestId===activeRequest.request_id || unrecordedHash)requestOutcomes.set(activeRequest.request_id,{outcome,hash:unrecordedHash,dispatched:dispatchedRequestId===activeRequest.request_id,walletName:activeRequest.walletName});
+    else requestOutcomes.delete(activeRequest.request_id);
+  }
   const now = Math.floor(Date.now()/1000);
   const presentation = windowPresentation({loading:!accountsLoaded,connection:connectionState,accounts:linkedAccounts,requests:connectionPage ? [] : requests,busy:hostEffectInFlight && !outcome,
     phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,

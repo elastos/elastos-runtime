@@ -287,7 +287,7 @@ for(const engine of ['chromium','webkit'])test(`background wallet redraw keeps H
 for(const engine of ['chromium','webkit'])test(`unsupported wallet network is named and cannot be linked in ${engine}`,{timeout:60000},async t=>{
  const r=await setup(t,engine);r.peer.choose({chains:['eip155:8453','eip155:137']});await r.link();await r.peer.changeChain('eip155:137');await r.state('network-unsupported');
  assert.match(await r.frame.locator('main').innerText(),/Unsupported network.*137/);assert.equal(await r.frame.locator('[data-action=finish]').count(),0);assert.equal(r.fixture.state.verified,1);
- await r.capture('network-unsupported');await r.click('back-to-connection');await r.click('back-to-connection');await r.click('connect');await r.state('qr-shown');assert.deepEqual(r.errors,[]);
+ await r.capture('network-unsupported');await r.click('back-to-connection');await r.state('internet-ready');await r.click('connect');await r.state('qr-shown');assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])test(`relay drops and returns during ${phase} in ${engine}`,{timeout:60000},async t=>{
  const r=await setup(t,engine);
@@ -393,7 +393,7 @@ for(const engine of ['chromium','webkit'])for(const ending of ['permission','exp
  assert.equal(r.fixture.state.approvals[0].status,'approved');assert.equal(r.fixture.state.completed,0);assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])test(`a blocked first request leaves the real queue usable in ${engine}`,{timeout:60000},async t=>{
- const r=await setup(t,engine);await r.link();await r.approval('blocked',{intent:'browser_typed_data_sign'});r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'valid',intent:'credential'});await r.refresh();await r.state('request-multiple');assert.equal(await r.frame.locator('.connection-request').first().getAttribute('data-request-id'),'valid');await r.capture('blocked-first-queue');
+ const r=await setup(t,engine);await r.link();await r.approval('blocked',{intent:'browser_typed_data_sign'});r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'valid',intent:'credential'});await r.reopen();await r.state('request-multiple');assert.equal(await r.frame.locator('.connection-request').first().getAttribute('data-request-id'),'valid');await r.capture('blocked-first-queue');
  await r.click('send-request');await r.state('request-next');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='valid').status,'completed');assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])test(`picker cannot replace an expired window in ${engine}`,{timeout:60000},async t=>{
@@ -503,4 +503,12 @@ for(const engine of ['chromium','webkit'])test(`a known hash survives leaving fo
  r.fixture.state.completeFails=false;r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'next-message',intent:'credential',status:'pending'});await r.refresh();
  await r.click('view-requests');await r.frame.locator('[data-focus-key="select-request:next-message"]').click();await r.click('send-request');await r.state('request-next');assert.equal(r.fixture.state.completed,1);
  await r.click('view-requests');await r.frame.locator('[data-focus-key="select-request:hash-before-next"]').click();await r.state('transaction-wallet-error');assert.equal(await r.frame.locator('.connection-hash').innerText(),hash);assert.equal(await r.frame.locator('[data-action=send-request]').count(),0);assert.equal(r.peer.trace.filter(e=>e.kind==='request'&&e.method==='eth_sendTransaction').length,1,'local navigation never sends the old transaction again');await r.capture('known-hash-after-next-request');
+});
+
+for(const engine of ['chromium','webkit'])test(`a pre-send failure can be reviewed again without reconnecting in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);await r.link();await r.approval('retry-unsent');
+ await r.page.route('**/wallet/approvals/retry-unsent/approve',route=>route.fulfill({status:503,body:'Home unavailable'}));
+ await r.click('send-request');await r.state('request-unavailable');assert.equal(r.fixture.state.approvals[0].status,'pending');assert.equal(r.peer.trace.filter(e=>e.kind==='request').length,1,'only the completed account proof reached the phone');
+ await r.page.unroute('**/wallet/approvals/retry-unsent/approve');await r.click('back-to-connection');await r.state('linked');await r.click('view-requests');await r.frame.locator('[data-focus-key="select-request:retry-unsent"]').click();assert.equal(await r.frame.locator('main').getAttribute('data-state'),'request-waiting','a pending unsent request is reviewed from current Home facts');await r.capture('unsent-request-reviewed-again');
+ await r.click('send-request');await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.verified,1,'retry does not reconnect or relink');
 });
