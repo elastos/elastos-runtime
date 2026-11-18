@@ -400,3 +400,24 @@ for(const engine of ['chromium','webkit']) for(const kind of ['metamask','unisat
     }finally{await f.close();}
   }finally{await browser.close();}
 });
+
+for(const engine of ['chromium','webkit']) for(const kind of ['metamask','unisat']) test(`${engine} ${kind}: a send always shows its Runtime-bound signer even when the account list lags`, {timeout:30000,skip:engineSkip(engine)}, async()=>{
+  const browser=await playwright[engine].launch({headless:true});
+  try{
+    const f=await fixture(browser,kind,{requests:true,saved:false});
+    try{
+      await f.state('request-waiting');
+      const signer=kind==='metamask'?'0x1111':'bc1qaaaa';
+      assert.match(await f.frame.locator('.connection-request-account').innerText(),new RegExp(signer));
+      await f.action('send-request').click();await f.state('request-done');
+      assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
+    }finally{await f.close();}
+    const invalid=await fixture(browser,kind,{requests:true});
+    try{
+      await invalid.state('request-waiting');await invalid.top.evaluate(()=>{testState.requests[0].address='';});
+      await invalid.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await invalid.state('request-unavailable');
+      assert.equal(await invalid.action('send-request').count(),0);
+      assert.equal(await invalid.top.evaluate(()=>testState.effects.length),0);
+    }finally{await invalid.close();}
+  }finally{await browser.close();}
+});

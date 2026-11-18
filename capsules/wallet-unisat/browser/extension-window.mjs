@@ -21,11 +21,15 @@ export function startExtensionWindow(kind, homeClipboard) {
   let lastMarkup = '', lastView = null;
   const mount = document.querySelector('#connection-root');
 
+  function validAddress(value) {
+    return typeof value === 'string' && (kind === 'metamask' ? /^0x[0-9a-fA-F]{40}$/ : /^(?:bc1|[13])[A-Za-z0-9]{20,100}$/).test(value);
+  }
+
   function accountView() {
     const candidates = accounts.filter(a => a?.connector_id === CONNECTOR_ID || !a?.connector_id)
       .filter(a => typeof a.address === 'string' && a.address.length <= 128);
     const address = selected?.address || accountEvent?.[0];
-    const row = address ? candidates.find(a => sameAccount(a.address, address))
+    const row = address ? candidates.find(a => sameAccount(a.address, address)) || (selected && validAddress(selected.address) ? { address: selected.address, chain_namespace: requests.find(r => r.request_id === selected.id)?.chain_namespace } : null)
       : linkObserved && candidates.length === 1 ? candidates[0] : null;
     const rows = row ? [row] : [];
     if (!rows.length) return null;
@@ -55,6 +59,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   }
 
   function chooseStage() {
+    if (selected && !validAddress(selected.address)) { fixedOutcome = true; return 'request-unavailable'; }
     if (selected?.status === 'completed') return selected.transaction ? 'transaction-done' : 'request-done';
     if (disconnected) return 'link-error';
     if (accountEvent?.length === 0) return accounts.length ? 'account-unavailable' : 'ready';
