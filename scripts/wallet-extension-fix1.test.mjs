@@ -29,12 +29,10 @@ const engineSkip = engine => engine === 'webkit' && !existsSync(playwright.webki
 const other = kind => kind === 'metamask' ? '0x'+'2'.repeat(40) : 'bc1q'+'b'.repeat(38);
 
 async function assertReadAfter(f,before) {
-  for(let i=0;i<100&&f.completedReads.length<before+2;i++) {
-    await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));
-    await new Promise(resolve=>setTimeout(resolve,10));
-  }
-  assert(f.completedReads.length>=before+2,'both Home reads must finish');
-  await f.frame.evaluate(()=>new Promise(resolve=>queueMicrotask(resolve)));
+  await f.frame.waitForFunction(target=>{
+    if((window.__windowReadsFinished||0)>=target)return true;
+    dispatchEvent(new Event('focus'));return false;
+  },before+2,{timeout:5000});
 }
 
 async function preflight(f, kind, fault, type) {
@@ -60,7 +58,7 @@ async function preflight(f, kind, fault, type) {
   assert.equal(first.requests[0].status,'approved');
   assert.equal(first.calls.filter(c=>['personal_sign','eth_signTypedData_v4','signMessage','eth_sendTransaction'].includes(c.method)).length,0,'Home refused before signing');
   await f.top.evaluate(()=>{testState.walletAddress=testState.address;testState.network='livenet';testState.refuseSwitch=false;});
-  const beforeRead=f.completedReads.length;
+  const beforeRead=await f.frame.evaluate(()=>window.__windowReadsFinished||0);
   await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));
   await assertReadAfter(f,beforeRead);
   await f.state('request-consumed');

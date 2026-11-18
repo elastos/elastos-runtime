@@ -51,7 +51,7 @@ export async function fixture(browser, kind, { saved = false, requests = false, 
     await context.addInitScript(({ source, input }) => { if (window === window.top) (0, eval)(`(${source})`)(input); }, { source: installScriptedExtension.toString(), input: replay });
     await context.addInitScript(({ address }) => { if (window === window.top) window.testState = { address, linked: false, requests: [], receipts: [], effects: [], copies: [], calls: [] }; }, { address });
   } else await context.addInitScript(installProvider, { kind, address });
-  const errors = [], reads = [], completedReads = []; 
+  const errors = [], reads = [];
   const top = await context.newPage(); top.on('pageerror', e => errors.push(e.message));
   await top.clock.install();
   await context.route('**/*', async route => {
@@ -96,12 +96,12 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:522
     if (url.pathname.endsWith('/home-clipboard-client.js')) return route.fulfill({ contentType: 'text/javascript', body: `export const createHomeClipboardClient=()=>({start(){},teardown(){},async writeText(value){window.top.postMessage({type:'fixture:copy',value},'http://extensions.test');}});` });
     if (url.pathname.includes('/api/')) {
       const read={ url: url.pathname, headers: route.request().headers() };reads.push(read);
-      if (readFailure) { await route.fulfill({ status: readFailure, json: { error: 'fixture read failure' } });completedReads.push(read);return; }
+      if (readFailure) { await route.fulfill({ status: readFailure, json: { error: 'fixture read failure' } });return; }
       const data = await top.evaluate(({ url, kind, extraHomeAccount }) => {
         const s = testState;
         return url.endsWith('/accounts') ? { accounts: s.linked ? [{ address: s.address, connector_id: 'wallet-' + kind, chain_namespace: kind === 'metamask' ? 'eip155:1' : 'bip122:000000000019d6689c085ae165831e93' }, ...(extraHomeAccount ? [{address:kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38),connector_id:'wallet-'+kind,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93'}] : [])] : [] } : { approval_requests: s.requests.filter(request=>request.status==='pending') };
       }, { url: url.pathname, kind, extraHomeAccount });
-      await route.fulfill({ json: data });completedReads.push(read);return;
+      await route.fulfill({ json: data });return;
     }
     const relative = url.pathname.replace(/^\/apps\//, 'capsules/').replace(/^(capsules\/[^/]+)\/(.*)$/, '$1/browser/$2');
     let path = join(root, relative);
@@ -121,6 +121,11 @@ export function renderConnection(document,view) {
   return root;
 }`);
     if (mutate && path.endsWith('/extension-window.mjs')) body = Buffer.from(mutate(body.toString()));
+    if (path.endsWith('/extension-window.mjs')) {
+      const source=body.toString(),marker='finally { refreshing = null; }';
+      assert(source.includes(marker),'whole-module read completion probe applies');
+      body=Buffer.from(source.replace(marker,'finally { refreshing = null; window.__windowReadsFinished = (window.__windowReadsFinished || 0) + 1; }'));
+    }
     return route.fulfill({ body, contentType: ({ '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.png': 'image/png', '.woff2': 'font/woff2' })[extname(path)] || 'application/octet-stream' });
   });
   await top.goto('http://extensions.test/');
@@ -167,7 +172,7 @@ export function renderConnection(document,view) {
         pngs,engine:browser.browserType().name(),viewport:{width:480,height:560},content:{width:480,height:522},...copy },null,2));
     }
   };
-  return { top, frame, context, errors, reads, completedReads, peerElapsed, action, state, async assertShared() { const feedback = await frame.locator('main').getAttribute('data-extension-feedback');
+  return { top, frame, context, errors, reads, peerElapsed, action, state, async assertShared() { const feedback = await frame.locator('main').getAttribute('data-extension-feedback');
     if (feedback) {
       const texts = await frame.locator('.connection-status,.connection-notice').allTextContents();
       if (feedback === 'unknown-error') assert.deepEqual(texts, [requests === 'transaction' ? 'Home could not finish this request. The transaction may have been sent.' : 'Home could not finish this request.', 'Check your wallet and Wallet activity before making another request.']);

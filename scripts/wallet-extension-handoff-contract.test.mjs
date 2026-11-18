@@ -89,7 +89,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
         assert.equal(await f.action('send-request').count(),0);
         assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');
         await f.top.evaluate(()=>{testState.walletAddress=testState.address;emitWallet('accountsChanged',[testState.address]);});
-        release();await finished;await f.frame.evaluate(()=>new Promise(resolve=>queueMicrotask(resolve)));await f.state('request-consumed');
+        const beforeRead=await f.frame.evaluate(()=>window.__windowReadsFinished||0);release();await finished;await f.frame.waitForFunction(before=>(window.__windowReadsFinished||0)>before,beforeRead);await f.state('request-consumed');
         assert.equal(await f.frame.locator('body').innerText(),text);
         assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);
       }finally{release?.();await f.close();}
