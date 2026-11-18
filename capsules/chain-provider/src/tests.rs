@@ -2808,6 +2808,83 @@ fn protected_content_rights_evidence_rejects_unbound_conflicts_and_wrong_reverts
 }
 
 #[test]
+fn mint_v2_seal_requires_the_finalized_key_binding_for_the_expected_asset() {
+    let block_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let block = json!({ "blockHash": block_hash, "requireCanonical": true });
+    let gateway = "0x0000000000000000000000000000000000000001";
+    let store = "0x00000000000000000000000000000000000000cc";
+    let ledger = "0x0000000000000000000000000000000000000022";
+    let creator = "0x0000000000000000000000000000000000000033";
+    let kid = "0x0123456789abcdef0123456789abcdef";
+
+    for (bound_ledger, bound_token, refusal) in [
+        (ledger, "3", None),
+        (ledger, "4", Some("item_binding_mismatch")),
+        (EVM_ZERO_ADDRESS, "0", Some("item_binding_not_final")),
+    ] {
+        let request = serde_json::from_value(json!({
+            "op": "resolve_protected_content_policy",
+            "encrypted_content": contract_hex(&encrypted_content(0x31)),
+            "content_access_id": kid,
+            "action": "view",
+            "expected_item": { "channel": ledger, "token_id": "0x3", "creator": creator },
+        }))
+        .expect("the policy request accepts an expected item");
+        let sequence = vec![
+            ("eth_chainId", json!([]), json!("0x14")),
+            (
+                "eth_getBlockByNumber",
+                json!(["finalized", false]),
+                finalized_block_json("0x2c", block_hash),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": gateway, "data": encode_authority_gateway_cstore_call().unwrap() },
+                    block
+                ]),
+                json!(format!("0x{:0>64}", store.trim_start_matches("0x"))),
+            ),
+            (
+                "eth_call",
+                json!([
+                    { "to": store, "data": encode_ip_reference_call(kid).unwrap() },
+                    block
+                ]),
+                json!(format!(
+                    "0x{:0>64}{:0>64}",
+                    bound_ledger.trim_start_matches("0x"),
+                    bound_token
+                )),
+            ),
+        ];
+        let mut provider = provider_with_rights_rpc_and_policies(
+            "http://127.0.0.1:9".to_string(),
+            "0x12345678",
+            protected_content_policy_sources(
+                "view",
+                vec![
+                    spawn_rpc_sequence_asserting_server(sequence.clone()),
+                    spawn_rpc_sequence_asserting_server(sequence),
+                ],
+            ),
+        );
+        let answer = provider.handle(request);
+        if let Some(refusal) = refusal {
+            assert_eq!(error_code(answer), refusal);
+        } else {
+            let policy = resolved_policy_body_from_data(&ok_data(answer));
+            let item = policy
+                .expected_item()
+                .expect("policy names the finalized item");
+            assert_eq!(item.token_id()[31], 3);
+            assert_eq!(item.channel().as_bytes()[19], 0x22);
+            assert_eq!(item.creator().as_bytes()[19], 0x33);
+        }
+    }
+}
+
+#[test]
 fn resolve_protected_content_policy_returns_canonical_policy_and_evidence_accepts_it() {
     let encrypted_content = encrypted_content(0x31);
     let access_id = content_access_id(0x51);
@@ -2827,6 +2904,7 @@ fn resolve_protected_content_policy_returns_canonical_policy_and_evidence_accept
         encrypted_content: contract_hex(&encrypted_content),
         content_access_id: format!("0x{}", encode_hex(access_id.as_bytes())),
         action: ProtectedContentPolicyAction::View,
+        expected_item: None,
     }));
     let rendered = serde_json::to_string(&data).unwrap();
     assert!(!rendered.contains("http://127.0.0.1:9"));
@@ -2895,6 +2973,7 @@ fn resolve_protected_content_policy_rejects_missing_or_competing_sources() {
             encrypted_content: contract_hex(&encrypted_content),
             content_access_id: format!("0x{}", encode_hex(access_id.as_bytes())),
             action: ProtectedContentPolicyAction::View,
+            expected_item: None,
         })),
         "rights_policy_not_configured"
     );
@@ -2957,6 +3036,7 @@ fn resolve_protected_content_policy_rejects_missing_or_competing_sources() {
             encrypted_content: contract_hex(&encrypted_content),
             content_access_id: format!("0x{}", encode_hex(access_id.as_bytes())),
             action: ProtectedContentPolicyAction::View,
+            expected_item: None,
         })),
         "rights_policy_not_configured"
     );

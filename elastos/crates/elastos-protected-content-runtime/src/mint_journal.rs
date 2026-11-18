@@ -5228,7 +5228,7 @@ impl ExclusiveFileLock {
 /// `DirBuilder`'s mode applies to every directory it creates, so each level is
 /// still owner-only, and every caller re-checks with
 /// `validate_owner_only_directory`.
-fn create_owner_only_directory(path: &Path) -> Result<(), RuntimeMintJournalError> {
+pub(crate) fn create_owner_only_directory(path: &Path) -> Result<(), RuntimeMintJournalError> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -5243,7 +5243,7 @@ fn create_owner_only_directory(path: &Path) -> Result<(), RuntimeMintJournalErro
     }
 }
 
-fn validate_owner_only_directory(path: &Path) -> Result<(), RuntimeMintJournalError> {
+pub(crate) fn validate_owner_only_directory(path: &Path) -> Result<(), RuntimeMintJournalError> {
     let metadata = fs::symlink_metadata(path).map_err(|_| RuntimeMintJournalError::Unavailable)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(RuntimeMintJournalError::Unavailable);
@@ -5258,7 +5258,7 @@ fn validate_owner_only_directory(path: &Path) -> Result<(), RuntimeMintJournalEr
     Ok(())
 }
 
-fn open_owner_only_file_for_read(path: &Path) -> Result<File, RuntimeMintJournalError> {
+pub(crate) fn open_owner_only_file_for_read(path: &Path) -> Result<File, RuntimeMintJournalError> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -5271,7 +5271,9 @@ fn open_owner_only_file_for_read(path: &Path) -> Result<File, RuntimeMintJournal
         .map_err(|_| RuntimeMintJournalError::Unavailable)
 }
 
-fn open_owner_only_temp_file_for_write(path: &Path) -> Result<File, RuntimeMintJournalError> {
+pub(crate) fn open_owner_only_temp_file_for_write(
+    path: &Path,
+) -> Result<File, RuntimeMintJournalError> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -5285,7 +5287,7 @@ fn open_owner_only_temp_file_for_write(path: &Path) -> Result<File, RuntimeMintJ
         .map_err(|_| RuntimeMintJournalError::Unavailable)
 }
 
-fn sync_directory(path: &Path) -> Result<(), RuntimeMintJournalError> {
+pub(crate) fn sync_directory(path: &Path) -> Result<(), RuntimeMintJournalError> {
     let dir = File::open(path).map_err(|_| RuntimeMintJournalError::Unavailable)?;
     dir.sync_all()
         .map_err(|_| RuntimeMintJournalError::Unavailable)

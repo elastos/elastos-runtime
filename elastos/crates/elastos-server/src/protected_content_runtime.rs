@@ -1873,6 +1873,7 @@ const RUNTIME_PURCHASE_ROOT: &str = "protected-content/runtime-purchases";
 const RUNTIME_VIEWER_SCHEMA_V1: &str = "elastos.library.runtime-custody-viewer-state/v1";
 const RUNTIME_LISTING_SCHEMA_V1: &str = "elastos.library.runtime-custody-listing/v1";
 const RUNTIME_PORTABLE_LISTING_SCHEMA_V1: &str = "elastos.protected-content.portable-listing/v1";
+const RUNTIME_PORTABLE_LISTING_SCHEMA_V2: &str = "elastos.protected-content.portable-listing/v2";
 pub(crate) const MAX_RUNTIME_PORTABLE_LISTING_BYTES: u64 = 128 * 1024;
 pub(crate) const RUNTIME_PURCHASE_SCHEMA_V1: &str = "elastos.library.runtime-custody-purchase/v1";
 /// Plan B T4.6: the availability a purchase records when the listing proved
@@ -6403,16 +6404,42 @@ pub(crate) async fn resolve_runtime_rights_policy(
     content_access_id: ContentAccessIdV1,
     action: RightsActionV1,
 ) -> anyhow::Result<ResolvedRuntimeRightsPolicy> {
+    resolve_runtime_rights_policy_for_item(
+        registry,
+        encrypted_content,
+        content_access_id,
+        action,
+        None,
+    )
+    .await
+}
+
+async fn resolve_runtime_rights_policy_for_item(
+    registry: &ProviderRegistry,
+    encrypted_content: &EncryptedContentIdentityV1,
+    content_access_id: ContentAccessIdV1,
+    action: RightsActionV1,
+    expected_item: Option<elastos_protected_content_contracts::RightsExpectedItemV1>,
+) -> anyhow::Result<ResolvedRuntimeRightsPolicy> {
+    let mut request = json!({
+        "op": CHAIN_PROTECTED_CONTENT_POLICY_OP,
+        "encrypted_content": runtime_protected_content_identity_hex(encrypted_content)?,
+        "content_access_id": runtime_content_access_id_hex(content_access_id),
+        "action": runtime_rights_action_name(action),
+    });
+    if let Some(item) = expected_item {
+        let token_id = hex::encode(item.token_id());
+        request["expected_item"] = json!({
+            "channel": format!("0x{}", hex::encode(item.channel().as_bytes())),
+            "token_id": format!("0x{}", token_id.trim_start_matches('0')),
+            "creator": format!("0x{}", hex::encode(item.creator().as_bytes())),
+        });
+    }
     let response_value = invoke_json_provider(
         registry,
         CHAIN_PROVIDER_ID,
         CHAIN_PROTECTED_CONTENT_POLICY_OP,
-        json!({
-            "op": CHAIN_PROTECTED_CONTENT_POLICY_OP,
-            "encrypted_content": runtime_protected_content_identity_hex(encrypted_content)?,
-            "content_access_id": runtime_content_access_id_hex(content_access_id),
-            "action": runtime_rights_action_name(action),
-        }),
+        request,
     )
     .await
     .map_err(anyhow::Error::msg)?;
@@ -6427,6 +6454,7 @@ pub(crate) async fn resolve_runtime_rights_policy(
     if body.encrypted_content() != encrypted_content
         || body.content_access_id() != content_access_id
         || body.required_action() != action
+        || body.expected_item() != expected_item
     {
         anyhow::bail!(
             "chain provider returned a protected-content policy that does not match the Runtime request"
@@ -6434,6 +6462,47 @@ pub(crate) async fn resolve_runtime_rights_policy(
     }
     let identity = body.policy_identity()?;
     Ok(ResolvedRuntimeRightsPolicy { body, identity })
+}
+
+pub(crate) async fn ensure_finalized_mint_policy(
+    registry: &ProviderRegistry,
+    data_dir: &Path,
+    mint: &PersistedRuntimeMint,
+    terminal: &RuntimeMintCreatorTerminalEvidence,
+) -> anyhow::Result<elastos_protected_content_runtime::RuntimeSealedRightsPolicyV1> {
+    use elastos_protected_content_runtime::{
+        seal_persisted_mint_rights_policy, RuntimeMintedItemV1, RuntimeSealedPolicyStoreV1,
+    };
+
+    anyhow::ensure!(
+        mint.creator_state()
+            .and_then(RuntimeMintCreatorState::terminal)
+            == Some(terminal),
+        "Runtime custody mint is not settled for the requested item"
+    );
+    let store =
+        RuntimeSealedPolicyStoreV1::new(protected_content_root(data_dir).join("policy-seals"));
+    if let Some(seal) = store.load_for_mint(mint, terminal.seller())? {
+        return Ok(seal);
+    }
+
+    let item = RuntimeMintedItemV1::from_creator_terminal(terminal)?;
+    let draft = mint.draft();
+    let resolved = resolve_runtime_rights_policy_for_item(
+        registry,
+        draft.encrypted_content(),
+        draft.content_access_id(),
+        RightsActionV1::View,
+        Some(item.expected_item()),
+    )
+    .await?;
+    let seal = seal_persisted_mint_rights_policy(
+        mint,
+        terminal.seller(),
+        &resolved.body().unsealed(),
+        resolved.body(),
+    )?;
+    Ok(store.persist(&seal)?)
 }
 
 /// Publishes and verifies the one immutable CENC/DASH object Runtime may later
@@ -10491,6 +10560,8 @@ pub(crate) struct RuntimePortableListingPackage {
     /// the same `mint_id`. Absent keeps every other package's bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) pool_mint_share_b64: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sealed_rights_policy_base64: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -11032,6 +11103,8 @@ struct RuntimePortableMetadata {
     key_envelope_identity_base64: String,
     rights_policy_identity_base64: String,
     content_key_commitment_base64: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rights_policy_seal_required: Option<bool>,
 }
 
 /// The two base64 identity fields a portable listing/metadata document
@@ -11089,6 +11162,41 @@ pub(crate) fn runtime_portable_content_codecs(
 }
 
 impl RuntimePortableListingPackage {
+    fn policy_creator(&self) -> &str {
+        self.publisher_profile_did
+            .strip_prefix(&format!("did:pkh:{}:", self.chain_namespace))
+            .unwrap_or(&self.seller_address)
+    }
+
+    /// The finalized policy retains the draft's original policy and adds the
+    /// exact chain item. The provisional identity still determines the mint ID.
+    fn sealed_policy(&self) -> anyhow::Result<Option<RightsPolicyBodyV1>> {
+        let Some(encoded) = self.sealed_rights_policy_base64.as_deref() else {
+            return Ok(None);
+        };
+        let policy: RightsPolicyBodyV1 =
+            decode_runtime_portable_contract(encoded, MAX_RUNTIME_PORTABLE_LISTING_BYTES as usize)?;
+        let item = elastos_protected_content_runtime::RuntimeMintedItemV1::from_parts(
+            &self.chain_namespace,
+            &self.ledger,
+            &self.token_id,
+            self.policy_creator(),
+        )?;
+        let provisional: RightsPolicyIdentityV1 = decode_runtime_portable_contract(
+            &self.rights_policy_identity_base64,
+            MAX_RUNTIME_PORTABLE_LISTING_BYTES as usize,
+        )?;
+        anyhow::ensure!(
+            policy.unsealed().policy_identity()? == provisional
+                && policy.chain_id() == item.chain_id()
+                && policy.expected_item() == Some(item.expected_item())
+                && runtime_content_access_id_hex(policy.content_access_id())
+                    == self.content_access_id,
+            "the sealed policy does not match the portable listing",
+        );
+        Ok(Some(policy))
+    }
+
     fn decode_and_validate(&self) -> anyhow::Result<DecodedRuntimePortableAsset> {
         // The token URI names the metadata DIRECTORY. It used to name the
         // `metadata.json` inside it, which is what put a doubled path on chain
@@ -11096,7 +11204,12 @@ impl RuntimePortableListingPackage {
         // before that fix carry the older spelling and still verify.
         let directory_uri = format!("ipfs://{}", self.metadata_cid);
         let legacy_file_uri = format!("{directory_uri}/metadata.json");
-        if self.schema != RUNTIME_PORTABLE_LISTING_SCHEMA_V1
+        let expected_schema = if self.sealed_rights_policy_base64.is_some() {
+            RUNTIME_PORTABLE_LISTING_SCHEMA_V2
+        } else {
+            RUNTIME_PORTABLE_LISTING_SCHEMA_V1
+        };
+        if self.schema != expected_schema
             || (self.token_uri != directory_uri && self.token_uri != legacy_file_uri)
             || self.published_at == Some(0)
         {
@@ -11203,6 +11316,12 @@ impl RuntimePortableListingPackage {
             &key_envelope,
             content_access_id,
         )?;
+        if let Some(policy) = self.sealed_policy()? {
+            anyhow::ensure!(
+                policy.encrypted_content() == content_identity.encrypted_content(),
+                "the sealed policy names different encrypted content",
+            );
+        }
         Ok(DecodedRuntimePortableAsset {
             content_identity,
             content_access_id,
@@ -11406,6 +11525,8 @@ async fn verify_runtime_portable_metadata(
                 (manifest, bytes, false)
             }
         };
+    let metadata: RuntimePortableMetadata = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
     // The one interop fact a marketplace rejects outright: the listing
     // document's `kid` is the on-chain `contentId`, and the content market
     // refuses an asset whose metadata disagrees. Checking it here turns a
@@ -11420,9 +11541,21 @@ async fn verify_runtime_portable_metadata(
         if listing.get("kid").and_then(serde_json::Value::as_str) != Some(expected_kid.as_str()) {
             anyhow::bail!("Runtime custody portable listing is invalid");
         }
+        if metadata.rights_policy_seal_required.is_some() {
+            let shared = crate::protected_content_market::shared_read_dataset(&listing)?;
+            anyhow::ensure!(
+                shared.is_some_and(|dataset| dataset.rights_policy_seal_required),
+                "the mint metadata disagrees on whether a seal is required",
+            );
+        }
     }
-    let metadata: RuntimePortableMetadata = serde_json::from_slice(&bytes)
-        .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
+    if metadata.rights_policy_seal_required.is_some() {
+        anyhow::ensure!(
+            metadata.rights_policy_seal_required == Some(true)
+                && package.sealed_rights_policy_base64.is_some(),
+            "the minted listing requires a sealed policy",
+        );
+    }
     if serde_json::to_vec(&metadata)? != bytes
         || manifest.schema != "elastos.content.object.manifest/v1"
         || manifest.kind != "directory"
@@ -12527,8 +12660,30 @@ async fn build_adopted_runtime_listing(
         published_at: None,
         // POOL-MINT (S7I-F2): the item's pool path, from its shared document.
         pool_mint_share_b64: dataset.pool_mint_share_b64.clone(),
+        sealed_rights_policy_base64: None,
     };
     let decoded = package.decode_and_validate()?;
+    if dataset.rights_policy_seal_required {
+        let item = elastos_protected_content_runtime::RuntimeMintedItemV1::from_parts(
+            &package.chain_namespace,
+            &package.ledger,
+            &package.token_id,
+            package.policy_creator(),
+        )?;
+        let policy = resolve_runtime_rights_policy_for_item(
+            registry,
+            decoded.content_identity.encrypted_content(),
+            decoded.content_access_id,
+            RightsActionV1::View,
+            Some(item.expected_item()),
+        )
+        .await?;
+        package.schema = RUNTIME_PORTABLE_LISTING_SCHEMA_V2.to_string();
+        package.sealed_rights_policy_base64 = Some(
+            base64::engine::general_purpose::STANDARD.encode(policy.body().canonical_bytes()?),
+        );
+        package.sealed_policy()?;
+    }
     let (draft, verified_availability) = rebuild_runtime_portable_content(
         data_dir,
         registry,
@@ -14473,6 +14628,11 @@ pub(crate) async fn open_runtime_custody_viewer(
         ));
     }
     let buy = reconstructed_buy_receipt(&draft, &fresh_availability, &purchase, &profile_did)?;
+    let sealed_policy = listing.package.sealed_policy()?;
+    let buy = match &sealed_policy {
+        Some(policy) => buy.with_sealed_policy(policy)?,
+        None => buy,
+    };
     // Inside the finality lag custody would refuse this copy as unbound, and
     // only after the Wallet approved the release. Ask first and answer a wait.
     // A resumed approval is past this point already and is left to finish.
@@ -14577,6 +14737,7 @@ pub(crate) async fn open_runtime_custody_viewer(
                     runtime_session_binding,
                     buy: &buy,
                     draft: &draft,
+                    sealed_policy,
                     resolved,
                     own_node_keys,
                     resumed: resumed_pending_release,
@@ -14765,14 +14926,22 @@ pub(crate) async fn open_runtime_custody_viewer(
                 return Err(error);
             }
         };
-    let policy = match resolve_runtime_rights_policy(
-        registry.as_ref(),
-        draft.encrypted_content(),
-        draft.content_access_id(),
-        RightsActionV1::View,
-    )
-    .await
-    {
+    let resolved_policy = match sealed_policy {
+        Some(body) => body
+            .policy_identity()
+            .map(|identity| ResolvedRuntimeRightsPolicy { body, identity })
+            .map_err(anyhow::Error::from),
+        None => {
+            resolve_runtime_rights_policy(
+                registry.as_ref(),
+                draft.encrypted_content(),
+                draft.content_access_id(),
+                RightsActionV1::View,
+            )
+            .await
+        }
+    };
+    let policy = match resolved_policy {
         Ok(policy) => policy,
         Err(_) => {
             let _ = settle_runtime_custody_viewer_cleanup(
@@ -15256,6 +15425,7 @@ struct RuntimeCustodyPoolOpenInput<'a> {
     runtime_session_binding: RuntimeSessionBindingV1,
     buy: &'a elastos_protected_content_runtime::RuntimeBuyReceipt,
     draft: &'a RuntimeMintDraft,
+    sealed_policy: Option<RightsPolicyBodyV1>,
     resolved: elastos_protected_content_runtime::ResolvedPoolV1,
     own_node_keys: Vec<NodePublicKey>,
     /// A pending pool record whose delivery entry is live.
@@ -15341,6 +15511,7 @@ async fn open_runtime_custody_pool_viewer(
         grant_id: input.grant_id,
         runtime_session_binding: input.runtime_session_binding,
         draft: input.draft,
+        sealed_policy: input.sealed_policy,
         resolved: &input.resolved,
         own_node_keys: &input.own_node_keys,
         kept_card_tickets: crate::custody_pool_setup::kept_card_tickets(input.data_dir),
@@ -15460,6 +15631,7 @@ struct RuntimePoolOpenPorts<'a> {
     grant_id: &'a str,
     runtime_session_binding: RuntimeSessionBindingV1,
     draft: &'a RuntimeMintDraft,
+    sealed_policy: Option<RightsPolicyBodyV1>,
     resolved: &'a elastos_protected_content_runtime::ResolvedPoolV1,
     own_node_keys: &'a [NodePublicKey],
     /// The tickets of the member cards this Home kept (a pool member).
@@ -15600,6 +15772,9 @@ impl crate::protected_content_pool_open::PoolOpenPorts for RuntimePoolOpenPorts<
     }
 
     async fn rights_policy(&self) -> anyhow::Result<(RightsPolicyBodyV1, RightsPolicyIdentityV1)> {
+        if let Some(policy) = &self.sealed_policy {
+            return Ok((policy.clone(), policy.policy_identity()?));
+        }
         let policy = resolve_runtime_rights_policy(
             self.registry.as_ref(),
             self.draft.encrypted_content(),
@@ -16401,6 +16576,7 @@ pub(crate) fn runtime_custody_creator_listing_package(
     facts: &RuntimeCustodyLibraryPublishFacts,
     publisher_principal_id: &str,
     terminal: &RuntimeMintCreatorTerminalEvidence,
+    seal: Option<&elastos_protected_content_runtime::RuntimeSealedRightsPolicyV1>,
 ) -> anyhow::Result<RuntimePortableListingPackage> {
     let mint_id = mint.draft().mint_id();
     let availability = mint
@@ -16417,7 +16593,12 @@ pub(crate) fn runtime_custody_creator_listing_package(
     let pool_mint_share_b64 =
         runtime_pool_mint_record(data_dir, mint_id)?.map(|record| record.mint_share_base64);
     Ok(RuntimePortableListingPackage {
-        schema: RUNTIME_PORTABLE_LISTING_SCHEMA_V1.to_string(),
+        schema: if seal.is_some() {
+            RUNTIME_PORTABLE_LISTING_SCHEMA_V2
+        } else {
+            RUNTIME_PORTABLE_LISTING_SCHEMA_V1
+        }
+        .to_string(),
         mint_id: hex::encode(mint_id.as_bytes()),
         content_id: facts.content_id.clone(),
         content_access_id: format!(
@@ -16450,6 +16631,13 @@ pub(crate) fn runtime_custody_creator_listing_package(
         mint_transaction_hash: Some(terminal.transaction_hash().to_ascii_lowercase()),
         published_at: Some(terminal.published_at()),
         pool_mint_share_b64,
+        sealed_rights_policy_base64: seal
+            .map(|seal| {
+                seal.sealed_policy()
+                    .canonical_bytes()
+                    .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+            })
+            .transpose()?,
     })
 }
 

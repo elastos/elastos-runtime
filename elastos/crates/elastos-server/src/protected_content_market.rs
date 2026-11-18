@@ -844,6 +844,7 @@ pub(crate) struct SharedReadDataset {
     /// Plan B POOL-MINT (S7I-F2): the minting Home's signed share statement,
     /// when the item was minted through a pool its minter uses.
     pub(crate) pool_mint_share_b64: Option<String>,
+    pub(crate) rights_policy_seal_required: bool,
 }
 
 /// Any protection scheme this Runtime speaks, current or not.
@@ -912,6 +913,7 @@ pub(crate) fn shared_read_dataset(
             identity(entry, "content_key_commitment_base64")?,
             identity(entry, "content_identity_base64")?,
             identity(entry, "pool_mint_share_base64"),
+            entry.get("rights_policy_seal_required"),
         ))
     });
     let Some((
@@ -920,6 +922,7 @@ pub(crate) fn shared_read_dataset(
         content_key_commitment,
         content_identity,
         pool_mint_share_b64,
+        seal_requirement,
     )) = adoptable
     else {
         let media_schemes: Vec<String> = match metadata.pointer("/media/protectionType") {
@@ -940,6 +943,11 @@ pub(crate) fn shared_read_dataset(
             anyhow::bail!("the shared document's ElastOS protection cannot be adopted");
         }
         return Ok(None);
+    };
+    let rights_policy_seal_required = match seal_requirement {
+        None => false,
+        Some(serde_json::Value::Bool(true)) => true,
+        Some(_) => anyhow::bail!("shared metadata has an invalid rights policy seal requirement"),
     };
     // R9: every KID the document states is normalized, and all of them must
     // name the same one.
@@ -990,5 +998,6 @@ pub(crate) fn shared_read_dataset(
         content_identity: decode_runtime_shared_content_identity(&content_identity)?,
         publisher_identity: format!("did:pkh:eip155:{chain_id}:{publisher}"),
         pool_mint_share_b64,
+        rights_policy_seal_required,
     }))
 }

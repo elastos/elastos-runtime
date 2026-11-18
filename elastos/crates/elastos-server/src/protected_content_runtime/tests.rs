@@ -1338,6 +1338,7 @@ pub(crate) fn runtime_custody_listing_record_for_test(
         mint_transaction_hash: Some(format!("0x{}", hex::encode([0x68; 32]))),
         published_at: Some(published_at),
         pool_mint_share_b64: None,
+        sealed_rights_policy_base64: None,
     };
     super::RuntimeCustodyListingRecord {
         schema: super::RUNTIME_LISTING_SCHEMA_V1.to_string(),

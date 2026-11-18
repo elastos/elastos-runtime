@@ -523,6 +523,7 @@ struct RuntimeCustodyCreatorMetadata<'a> {
     key_envelope_identity_base64: String,
     rights_policy_identity_base64: String,
     content_key_commitment_base64: String,
+    rights_policy_seal_required: bool,
 }
 
 #[derive(Clone)]
@@ -3882,6 +3883,7 @@ async fn publish_runtime_custody_creator_metadata(
             .encode(draft.policy().canonical_bytes()?),
         content_key_commitment_base64: base64::engine::general_purpose::STANDARD
             .encode(draft.content_key_commitment().as_bytes()),
+        rights_policy_seal_required: true,
     };
     let bytes = serde_json::to_vec(&metadata)?;
     let parent = data_dir.join("protected-content");
@@ -3939,23 +3941,30 @@ async fn publish_runtime_custody_creator_metadata(
         copies: runtime_custody_hex_quantity_to_u64(copies_hex)?,
         price: &runtime_custody_hex_quantity_to_decimal(price_hex)?,
         image: &image,
-        protection: crate::protected_content_elacity_metadata::runtime_custody_protection(
-            u32::from(threshold.required()),
-            u32::from(threshold.total()),
-            // The same four values the listing package carries, from the same
-            // draft, so a buyer who finds this asset in an index can open what
-            // they bought without needing the creator's link.
-            crate::protected_content_elacity_metadata::ProtectedContentIdentities {
-                rights_policy: &base64::engine::general_purpose::STANDARD
-                    .encode(draft.policy().canonical_bytes()?),
-                key_envelope: &base64::engine::general_purpose::STANDARD
-                    .encode(draft.key_envelope().canonical_bytes()?),
-                content_key_commitment: &base64::engine::general_purpose::STANDARD
-                    .encode(draft.content_key_commitment().as_bytes()),
-                content_identity: &published_content_identity,
-                pool_mint_share: pool_mint_share.as_deref(),
-            },
-        ),
+        protection: {
+            let mut protection =
+                crate::protected_content_elacity_metadata::runtime_custody_protection(
+                    u32::from(threshold.required()),
+                    u32::from(threshold.total()),
+                    // The same four values the listing package carries, from the same
+                    // draft, so a buyer who finds this asset in an index can open what
+                    // they bought without needing the creator's link.
+                    crate::protected_content_elacity_metadata::ProtectedContentIdentities {
+                        rights_policy: &base64::engine::general_purpose::STANDARD
+                            .encode(draft.policy().canonical_bytes()?),
+                        key_envelope: &base64::engine::general_purpose::STANDARD
+                            .encode(draft.key_envelope().canonical_bytes()?),
+                        content_key_commitment: &base64::engine::general_purpose::STANDARD
+                            .encode(draft.content_key_commitment().as_bytes()),
+                        content_identity: &published_content_identity,
+                        pool_mint_share: pool_mint_share.as_deref(),
+                    },
+                );
+            // The immutable, pre-mint metadata names the policy's provisional
+            // identity. The buyer can resolve its required seal after finality.
+            protection["rights_policy_seal_required"] = serde_json::Value::Bool(true);
+            protection
+        },
         fallback_name: runtime_custody_metadata_name(object_uri),
         created_at: &crate::protected_content_elacity_metadata::rfc3339_utc(crate::auth::now_ts()),
         // From the mint's RECORDED terms, not the request: the document must
@@ -4087,12 +4096,39 @@ async fn publish_runtime_custody_creator_listing(
     String,
     crate::protected_content_runtime::RuntimePortableListingPackage,
 )> {
+    // A retry of a published v1 mint must keep the published CID. A new
+    // listing (including a retry after chain settlement) requires its seal.
+    let existing = crate::protected_content_runtime::load_runtime_custody_listing(
+        data_dir,
+        mint.draft().mint_id(),
+    )?;
+    let preserve_published_v1 = existing.as_ref().is_some_and(|record| {
+        record.package.sealed_rights_policy_base64.is_none()
+            && matches!(
+                &record.origin,
+                crate::protected_content_runtime::RuntimeCustodyListingOrigin::LocalCreator {
+                    principal_id,
+                    ..
+                } if principal_id == publisher_principal_id
+            )
+    });
+    let seal = if preserve_published_v1 {
+        None
+    } else {
+        Some(
+            crate::protected_content_runtime::ensure_finalized_mint_policy(
+                registry, data_dir, mint, terminal,
+            )
+            .await?,
+        )
+    };
     let package = crate::protected_content_runtime::runtime_custody_creator_listing_package(
         data_dir,
         mint,
         facts,
         publisher_principal_id,
         terminal,
+        seal.as_ref(),
     )?;
     let parent = data_dir.join("protected-content");
     std::fs::create_dir_all(&parent)?;
@@ -7727,6 +7763,7 @@ mod tests {
             mint_transaction_hash: Some(format!("0x{}", "00".repeat(32))),
             published_at: Some(1),
             pool_mint_share_b64: None,
+            sealed_rights_policy_base64: None,
         }
     }
 

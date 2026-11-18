@@ -341,10 +341,12 @@ fn seed_runtime_custody_mint_draft(
         committee_identity,
     )
     .unwrap();
-    let policy = elastos_protected_content_contracts::RightsPolicyIdentityV1::new(
-        elastos_protected_content_contracts::Digest32::new([0x56; 32]),
-        128,
+    let policy = mock_chain_rights_policy(
+        media_identity.encrypted_content().clone(),
+        content_access_id,
+        elastos_protected_content_contracts::RightsActionV1::View,
     )
+    .policy_identity()
     .unwrap();
     let draft = elastos_protected_content_runtime::RuntimeMintDraft::new(
         &protected_init_segment,
@@ -620,6 +622,7 @@ fn seed_runtime_custody_creator_listing_for_buy(
         facts,
         publisher_principal_id,
         &terminal,
+        None,
     )
     .unwrap();
     crate::protected_content_runtime::persist_runtime_custody_creator_listing(
@@ -9853,10 +9856,42 @@ async fn test_runtime_custody_creator_resume_assembles_the_listing_of_a_settled_
     assert!(fx.tail(&input, &facts).await.is_err());
     set_mock_runtime_listing_publish_failure(false);
 
+    let mint = fx.mint(facts.mint_id);
+    let terminal = mint.creator_state().unwrap().terminal().unwrap();
+    let seals = elastos_protected_content_runtime::RuntimeSealedPolicyStoreV1::new(
+        crate::protected_content_runtime::protected_content_root(fx.dir.path())
+            .join("policy-seals"),
+    );
+    let seal = seals
+        .load_for_mint(&mint, terminal.seller())
+        .unwrap()
+        .unwrap();
+    assert!(
+        crate::protected_content_runtime::load_runtime_custody_listing(
+            fx.dir.path(),
+            facts.mint_id
+        )
+        .unwrap()
+        .is_none()
+    );
+
     let mut ignored = input.clone();
     ignored.price = "9".to_string();
     let resumed = fx.resume(&ignored, &facts).await.unwrap();
     assert_eq!(resumed.listing_uri, Some(format!("elastos://{TEST_CIDV1}")));
+    let published = crate::protected_content_runtime::load_runtime_custody_listing(
+        fx.dir.path(),
+        facts.mint_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        published.package.sealed_rights_policy_base64,
+        Some(
+            base64::engine::general_purpose::STANDARD
+                .encode(seal.sealed_policy().canonical_bytes().unwrap())
+        ),
+    );
     assert_eq!(
         resumed.content_security["settled_before_this_request"],
         true
@@ -17181,6 +17216,11 @@ async fn chain_granted_access_downloads_and_opens_without_a_purchase() {
     assert_eq!(listing.package.payment_processor, None);
     assert_eq!(listing.package.quantity, "0x1");
     assert_eq!(listing.package.content_id, package.content_id);
+    assert!(package.sealed_rights_policy_base64.is_some());
+    assert_eq!(
+        listing.package.sealed_rights_policy_base64, package.sealed_rights_policy_base64,
+        "the Home that only saw the shared metadata must use the creator's exact seal",
+    );
 
     // The owned copy says how it was come by, and carries the chain's grant
     // instead of a transaction.
@@ -17233,6 +17273,7 @@ async fn chain_granted_access_downloads_and_opens_without_a_purchase() {
     assert_eq!(index[0].access_state, "purchased");
 
     // The normal open path.
+    reset_mock_chain_raw_requests();
     let player_token = projection_launch_token_for_authority_context(
         buyer.runtime.path(),
         ELACITY_PLAYER_CAPSULE_ID_FOR_TEST,
@@ -17246,6 +17287,11 @@ async fn chain_granted_access_downloads_and_opens_without_a_purchase() {
     )
     .await;
     assert_eq!(opened["status"], "ok", "{opened}");
+    assert_eq!(
+        mock_chain_raw_request_count("resolve_protected_content_policy"),
+        0,
+        "Open must use the stored seal for the Wallet and release rather than resolving a provisional policy",
+    );
     let viewer_handle = opened["data"]["viewer_session_handle"]
         .as_str()
         .unwrap()

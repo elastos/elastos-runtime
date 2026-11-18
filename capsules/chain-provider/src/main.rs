@@ -8,9 +8,9 @@ use elastos_guest::prelude::*;
 use elastos_protected_content_contracts::{
     AuthenticatedRuntimeReleaseOperationAnyV1, CanonicalContract, ContentAccessIdV1, Digest32,
     EncryptedContentIdentityV1, EvmContractAddressV1, EvmFunctionSelectorV1,
-    RightsEvaluationEvidenceV1, RightsObservationFinalityV1, RightsPolicyBodyV1,
-    RightsSubjectSourceV1, RuntimeIssuerPolicyV1, RuntimeOperationIssuerKeyV1,
-    RuntimeReleaseOperationAnyV1, MAX_RIGHTS_EVIDENCE_LIFETIME_SECS,
+    RightsEvaluationEvidenceV1, RightsExpectedItemV1, RightsObservationFinalityV1,
+    RightsPolicyBodyV1, RightsSubjectSourceV1, RuntimeIssuerPolicyV1, RuntimeOperationIssuerKeyV1,
+    RuntimeReleaseOperationAnyV1, WalletAddress, MAX_RIGHTS_EVIDENCE_LIFETIME_SECS,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -353,10 +353,12 @@ impl ChainProvider {
                 encrypted_content,
                 content_access_id,
                 action,
+                expected_item,
             } => self.resolve_protected_content_policy(
                 &encrypted_content,
                 &content_access_id,
                 action,
+                expected_item.as_ref(),
             ),
             Request::DescribeProtectedContentCreatorMintSource => {
                 self.describe_protected_content_creator_mint_source()
@@ -1335,8 +1337,9 @@ impl ChainProvider {
         encrypted_content: &str,
         content_access_id: &str,
         action: ProtectedContentPolicyAction,
+        expected_item: Option<&ProtectedContentExpectedItem>,
     ) -> Response {
-        let (network, method, _policy_source) =
+        let (network, method, policy_source) =
             match self.configured_protected_content_policy_source(action) {
                 Ok(source) => source,
                 Err(response) => return response,
@@ -1382,6 +1385,19 @@ impl ChainProvider {
                 )
             }
         };
+        let policy = match expected_item {
+            Some(item) => match self.seal_protected_content_policy_for_item(
+                network,
+                method,
+                policy_source,
+                &policy,
+                item,
+            ) {
+                Ok(policy) => policy,
+                Err(response) => return response,
+            },
+            None => policy,
+        };
         let policy_bytes = match policy.canonical_bytes() {
             Ok(value) => value,
             Err(_) => {
@@ -1395,6 +1411,58 @@ impl ChainProvider {
             "schema": PROTECTED_CONTENT_POLICY_SCHEMA,
             "policy_body": format!("0x{}", encode_hex(&policy_bytes)),
         }))
+    }
+
+    fn seal_protected_content_policy_for_item(
+        &self,
+        network: &ChainNetwork,
+        method: &RightsMethod,
+        policy_source: &ProtectedContentPolicySource,
+        policy: &RightsPolicyBodyV1,
+        item: &ProtectedContentExpectedItem,
+    ) -> Result<RightsPolicyBodyV1, Response> {
+        let invalid = || {
+            Response::error(
+                "invalid_rights_policy_request",
+                "protected-content expected item is invalid",
+            )
+        };
+        let channel = parse_evm_contract_address(&item.channel).map_err(|_| invalid())?;
+        let token_id = abi_word_hex_quantity(&item.token_id, "token_id")
+            .ok()
+            .and_then(|word| word.try_into().ok())
+            .ok_or_else(invalid)?;
+        let creator = decode_hex(&item.creator, Some(20), "creator")
+            .ok()
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(WalletAddress::new)
+            .ok_or_else(invalid)?;
+        let expected =
+            RightsExpectedItemV1::new(channel, token_id, creator).map_err(|_| invalid())?;
+        let market = ProtectedContentMarketMethod {
+            authority_gateway_contract: method.contract.clone(),
+            evidence_rpc_urls: policy_source.evidence_rpc_urls.clone(),
+        };
+        let kid = format!("0x{}", encode_hex(policy.content_access_id().as_bytes()));
+        let binding = self.observe_protected_content_kid_binding(network, &market, &kid)?;
+        if binding.ledger == EVM_ZERO_ADDRESS && binding.token_id == "0x0" {
+            return Err(Response::error(
+                "item_binding_not_final",
+                "the content access id is not bound at the finalized block",
+            ));
+        }
+        if parse_evm_contract_address(&binding.ledger).ok() != Some(channel)
+            || abi_word_hex_quantity(&binding.token_id, "token_id")
+                .ok()
+                .as_deref()
+                != Some(token_id.as_slice())
+        {
+            return Err(Response::error(
+                "item_binding_mismatch",
+                "the content access id is bound to a different item",
+            ));
+        }
+        policy.sealed_for_item(expected).map_err(|_| invalid())
     }
 
     /// The market contract a creator must authorise as ERC-1155 operator on

@@ -56,7 +56,20 @@ The source path has one operation sequence:
    bounded background task.
 6. Runtime binds creator mint and listing effects to the verified Wallet
    account and operator Chain configuration. It projects a listing only after
-   the exact effect and finalized evidence agree. The creator tail raises
+   the exact effect and finalized evidence agree. For new mints, the Chain
+   provider checks that the content key ID belongs to the finalized asset.
+   Runtime saves the resulting rights policy once, then publishes the listing
+   with that seal. A retry reuses the saved policy and keeps the original mint
+   ID, content key, and custody shares. The public metadata can be published
+   before mint approval. It says that the buyer needs a sealed policy once
+   the asset is final, while the final policy travels in the portable listing.
+
+   Open uses the finalized policy in the Wallet approval and in the custody
+   release request. A Home that finds the asset through its public metadata
+   resolves the seal against the finalized key-to-asset binding. Existing
+   listings keep their recorded format and approval path.
+
+   The creator tail raises
    exactly one wallet effect — the mint transaction itself. That is a
    statement about minting, not about the asset's whole life: an ERC-1155
    operator approval is still how secondary trading is authorized, and an

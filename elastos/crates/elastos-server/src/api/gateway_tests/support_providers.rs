@@ -20,6 +20,34 @@ const MOCK_PROTECTED_CONTENT_LISTING_PRICE: &str = "0x4c53ecdc18a60000";
 const MOCK_PROTECTED_CONTENT_LISTING_AMOUNT: &str = "5.5";
 const MOCK_PROTECTED_CONTENT_CHAIN_ID: u64 = 8453;
 
+fn mock_chain_rights_policy(
+    encrypted_content: elastos_protected_content_contracts::EncryptedContentIdentityV1,
+    content_access_id: elastos_protected_content_contracts::ContentAccessIdV1,
+    action: elastos_protected_content_contracts::RightsActionV1,
+) -> elastos_protected_content_contracts::RightsPolicyBodyV1 {
+    use elastos_protected_content_contracts::{
+        EvmContractAddressV1, EvmFunctionSelectorV1, EvmRightsMethodAbiV1,
+        RightsObservationFinalityV1, RightsPolicyBodyV1, RightsSubjectSourceV1,
+    };
+
+    let gateway = hex::decode(MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY.trim_start_matches("0x"))
+        .unwrap()
+        .try_into()
+        .unwrap();
+    RightsPolicyBodyV1::new(
+        encrypted_content,
+        content_access_id,
+        action,
+        RightsSubjectSourceV1::WalletAddress,
+        MOCK_PROTECTED_CONTENT_CHAIN_ID,
+        EvmContractAddressV1::new(gateway).unwrap(),
+        EvmFunctionSelectorV1::new([0x54, 0xd4, 0x28, 0x21]).unwrap(),
+        EvmRightsMethodAbiV1::HasAccessByContentIdAddressBytes16,
+        RightsObservationFinalityV1::finalized(),
+    )
+    .unwrap()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MockProtectedContentChainMode {
     Success,
@@ -714,29 +742,38 @@ impl Provider for MockChainProvider {
                         }));
                     }
                 };
-                let policy = elastos_protected_content_contracts::RightsPolicyBodyV1::new(
-                    encrypted_content,
-                    content_access_id,
-                    action,
-                    elastos_protected_content_contracts::RightsSubjectSourceV1::WalletAddress,
-                    MOCK_PROTECTED_CONTENT_CHAIN_ID,
-                    elastos_protected_content_contracts::EvmContractAddressV1::new(
-                        hex::decode(
-                            MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY.trim_start_matches("0x"),
+                let policy = mock_chain_rights_policy(encrypted_content, content_access_id, action);
+                let policy = if let Some(item) = request.get("expected_item") {
+                    use elastos_protected_content_contracts::{
+                        EvmContractAddressV1, RightsExpectedItemV1, WalletAddress,
+                    };
+                    let channel = required_test_str(item, "channel")?;
+                    let creator = required_test_str(item, "creator")?;
+                    let token_id = required_test_str(item, "token_id")?;
+                    let expected = RightsExpectedItemV1::new(
+                        EvmContractAddressV1::new(
+                            hex::decode(channel.trim_start_matches("0x"))
+                                .unwrap()
+                                .try_into()
+                                .unwrap(),
                         )
-                        .unwrap()
-                        .try_into()
                         .unwrap(),
+                        hex::decode(format!("{:0>64}", token_id.trim_start_matches("0x")))
+                            .unwrap()
+                            .try_into()
+                            .unwrap(),
+                        WalletAddress::new(
+                            hex::decode(creator.trim_start_matches("0x"))
+                                .unwrap()
+                                .try_into()
+                                .unwrap(),
+                        ),
                     )
-                    .map_err(|error| ProviderError::Provider(error.to_string()))?,
-                    elastos_protected_content_contracts::EvmFunctionSelectorV1::new([
-                        0x54, 0xd4, 0x28, 0x21,
-                    ])
-                    .unwrap(),
-                    elastos_protected_content_contracts::EvmRightsMethodAbiV1::HasAccessByContentIdAddressBytes16,
-                    elastos_protected_content_contracts::RightsObservationFinalityV1::finalized(),
-                )
-                .map_err(|error| ProviderError::Provider(error.to_string()))?;
+                    .unwrap();
+                    policy.sealed_for_item(expected).unwrap()
+                } else {
+                    policy
+                };
                 Ok(json!({
                     "status": "ok",
                     "data": {

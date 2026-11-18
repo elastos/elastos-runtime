@@ -256,6 +256,14 @@ impl ProtectedContentPolicyAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub(super) struct ProtectedContentExpectedItem {
+    pub(super) channel: String,
+    pub(super) token_id: String,
+    pub(super) creator: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ProtectedContentPolicySource {
     pub(super) action: ProtectedContentPolicyAction,
     pub(super) evidence_rpc_urls: Vec<String>,
@@ -359,6 +367,9 @@ pub(super) enum Request {
         encrypted_content: String,
         content_access_id: String,
         action: ProtectedContentPolicyAction,
+        /// Seal the policy to this item once its key binding is finalized.
+        #[serde(default)]
+        expected_item: Option<ProtectedContentExpectedItem>,
     },
     DescribeProtectedContentCreatorMintSource,
     DescribeProtectedContentMarketSource {

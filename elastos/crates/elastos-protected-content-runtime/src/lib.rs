@@ -12,6 +12,7 @@ mod journal;
 mod mint;
 mod mint_journal;
 mod open;
+mod policy_seal;
 mod pool_client;
 #[cfg(test)]
 mod pool_client_tests;
@@ -87,6 +88,10 @@ pub use open::{
     RuntimeProtectedContentPurchaseIntent, RuntimePurchaseEffectAuthority,
     RuntimeVerifiedPurchaseEffect, RuntimeViewerMediaPart, RuntimeViewerObjectChunk,
     RuntimeViewerSession, RuntimeViewerSessionCloseResult,
+};
+pub use policy_seal::{
+    seal_persisted_mint_rights_policy, RuntimeMintedItemV1, RuntimePolicySealError,
+    RuntimeSealedPolicyStoreV1, RuntimeSealedRightsPolicyV1,
 };
 pub use pool_client::{
     content_kind_wire_name, part_json, pool_refusal_from_code, pool_wire_answer,

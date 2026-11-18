@@ -11,9 +11,10 @@ use std::fmt;
 use elastos_protected_content_contracts::{
     ContractError, Digest32, EncryptedContentIdentityV1, KeyEnvelopeIdentityV1, ProfileIdentityV1,
     ProtectedContentBindingV1, RecipientKeyIdentityV1, RecipientPublicKeyBytesV1, RightsActionV1,
-    RightsPolicyIdentityV1, RuntimeOperationIssuerKeyV1, RuntimeReleaseAuditIdV1,
-    RuntimeSessionBindingV1, SignedNodeContributionV1, SignedRuntimeReleaseOperationV1,
-    SignedTerminalReceiptV1, TerminalReceiptIssuerKey, WalletAddress,
+    RightsPolicyBodyV1, RightsPolicyIdentityV1, RuntimeOperationIssuerKeyV1,
+    RuntimeReleaseAuditIdV1, RuntimeSessionBindingV1, SignedNodeContributionV1,
+    SignedRuntimeReleaseOperationV1, SignedTerminalReceiptV1, TerminalReceiptIssuerKey,
+    WalletAddress,
 };
 use elastos_protected_content_provider_contracts::{
     CencDashMediaIdentityV2, CencFmp4MediaIdentityV1, ChunkedPayloadObjectIdentityV1,
@@ -446,6 +447,23 @@ impl fmt::Debug for RuntimeBuyReceipt {
 }
 
 impl RuntimeBuyReceipt {
+    /// Use the finalized policy for this receipt's Open operation. The
+    /// original mint ID and acquisition evidence remain bound to the draft.
+    pub fn with_sealed_policy(
+        mut self,
+        policy: &RightsPolicyBodyV1,
+    ) -> Result<Self, ContractError> {
+        if policy.expected_item().is_none()
+            || policy.encrypted_content() != &self.encrypted_content
+            || policy.required_action() != self.action
+            || policy.unsealed().policy_identity()? != self.rights_policy
+        {
+            return Err(ContractError::InvalidField("sealed_rights_policy"));
+        }
+        self.rights_policy = policy.policy_identity()?;
+        Ok(self)
+    }
+
     pub const fn mint_id(&self) -> Digest32 {
         self.mint_id
     }
