@@ -136,7 +136,8 @@ test('the common page-error guard fails unexpected window script errors despite 
  assert.deepEqual(errors,['Unexpected script error',staleSessionMessage]);assert.equal(sdkFences.length,0);
 });
 
-test('SDK persist rejection needs a real retired storage POST',()=>{
+// Await the final sequential test before --test-force-exit can finish this module.
+await test('SDK persist rejection needs a real retired storage POST',()=>{
  const page=new EventEmitter(),state={calls:[oldWrite()],revision:1},{errors,sdkFences}=observeWindowErrors(page,{state});
  const error=fenceError();error.stack='persist@http://127.0.0.1/apps/wallet-walletconnect/vendor/reown-appkit.js:1:1';page.emit('pageerror',error);
  assert.deepEqual(errors,[]);assert.equal(sdkFences.length,1);

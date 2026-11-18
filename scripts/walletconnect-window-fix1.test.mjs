@@ -72,7 +72,7 @@ for(const engine of ['chromium','webkit']){
 }
 
 for(const engine of ['chromium','webkit'])test(`a new review replaces a saved Connect only after visible Cancel in ${engine}`,{timeout:60000},async t=>{
- const r=await setup(t,engine);await r.link();await r.click('Disconnect');await r.state('disconnected');r.fixture.setPermission('off');await r.refresh();await r.state('nothing-saved');
+ const r=await setup(t,engine);await r.state('internet-ready');r.fixture.setPermission('off');await r.refresh();await r.state('nothing-saved');
  await r.click('Connect wallet');await r.state('internet-pending');r.request('new-review');await r.refresh();await r.state('request-internet-pending');await r.click('Cancel');await r.state('request-internet-off');
  const verified=r.fixture.state.verified;r.fixture.setPermission('granted');await r.refresh();await r.state('request-waiting');assert.equal(r.fixture.state.verified,verified,'Allow cannot resume the cancelled saved Connect');
  await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('qr-shown');await r.click('Copy link');await r.frame.getByText('Link copied.',{exact:true}).waitFor();await r.peer.pair(await r.page.evaluate(()=>window.copied));await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.verified,verified,'the explicit request resumes Send rather than the old account proof');
