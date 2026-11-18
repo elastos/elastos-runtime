@@ -217,3 +217,5 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-current-selection { overflow-wrap:anywhere; }
 
 .connection-hash { unicode-bidi:isolate; overflow-wrap:anywhere; -webkit-user-select:text; user-select:text; font-family:var(--el-font-mono); }
+/* A consumed same-card request keeps its scroll surface and visible outcome. */
+.connection-retained-feedback > .connection-feedback { position:sticky; top:0; bottom:0; background:var(--el-bg); }

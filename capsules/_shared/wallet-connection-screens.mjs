@@ -2289,5 +2289,18 @@ definitions.walletconnect['home-read-unavailable']={status:'Home could not load 
 definitions.walletconnect['disconnect-error']={status:'Home could not finish disconnecting this wallet.',notice:'Try disconnecting again. Closing this window does not finish disconnecting.',primary:{id:'disconnect',label:'Disconnect',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'disconnect'};
 definitions.walletconnect['account-unavailable-unknown']={requiresSafeRetry:true,status:'Your wallet is not showing an account.',notice:'Choose an account in your wallet, then get a new QR code.',primary:{id:'start-over',label:'Get new QR code',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'start-over'};
 
+const requestRecovery='To try again, return to {{app}} and make a new request.';
+for(const window of ['metamask','unisat']){
+  for(const screen of Object.values(definitions[window]))if(['To try again, return to {{app}}.','Start a new request in {{app}} to try again.'].includes(screen.notice))screen.notice=requestRecovery;
+  for(const stage of ['extension-missing','extensions-unavailable',...(window==='metamask'?['other-ethereum-wallet']:[])]){
+    const screen=definitions[window][stage];screen.status='Your browser wallet was not found here.';
+    screen.notice='Open this connection from Wallet in a browser where your wallet is available.';screen.paymentSafeNotice=screen.notice;
+  }
+}
+for(const window of ['walletconnect','metamask','unisat']){
+  definitions[window]['request-rejected']={status:'This request was rejected.',notice:requestRecovery,request:true,account:true,afterAnswer:true,focusOutcome:true,primary:{id:'open-request-app',label:'Open {{app}}',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}]};
+  definitions[window]['request-dismissed']={status:'This request was dismissed.',notice:'An operation may still be waiting in {{wallet}}. Check {{wallet}} and Wallet activity before trying again.',request:true,account:true,afterAnswer:true,focusOutcome:true,primary:{id:'open-wallet-activity',label:'Open Wallet activity',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}]};
+}
+
 const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const screens = freeze(definitions);

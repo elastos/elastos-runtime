@@ -16,7 +16,7 @@ import { screens } from './wallet-connection-screens.mjs';
 const renderedViews = new WeakSet();
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 const requestTitles={auth_challenge:'Wallet sign-in request',capability_grant:'Wallet access request',credential:'Credential signing request',publish_envelope:'Publish approval request',transaction_intent:'Send transaction',browser_account_access:'Browser account access request',browser_personal_sign:'Sign a message',browser_typed_data_sign:'Sign typed data',bitcoin_bip322_proof:'Bitcoin proof request',revocation:'Revocation approval request'};
-const requestTitleValues=[...Object.values(requestTitles),'Approval request'];
+const requestTitleValues=[...Object.values(requestTitles),'Wallet approval request','Approval request'];
 const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','network-unsupported':'This network is not supported here.','network-unknown':'Your wallet’s network could not be identified.','transport-unavailable':'The connection to your wallet was lost.','transport-reconnecting':'WalletConnect is reconnecting.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your browser wallet is unavailable.'};
 const copyFeedbacks={'link-copied':'Link copied.','address-copied':'Address copied.','copy-failed':'Could not copy. Try again.'};
 const brands = { walletconnect: 'WalletConnect', metamask: 'MetaMask', unisat: 'UniSat', panel: 'Wallet' };
@@ -59,11 +59,11 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
   const app = bounded(summary.requesting_app_name, 128) && summary.requesting_app_name ? summary.requesting_app_name : 'Requesting app';
   return {
     id: summary.request_id, app, actor: summary.capsule_id,
-    title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Approval request', transaction,
+    title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Wallet approval request', transaction,
     detail: bounded(summary.reason, 2048) ? summary.reason : '',
     site: summary.capsule_id === 'browser' ? displayOrigin(summary.requesting_origin) : null,
     address: bounded(summary.address, 128) ? summary.address : null,
-    status: ['pending', 'approved', 'rejected', 'dismissed', 'completed','expired'].includes(summary.status) ? summary.status : 'unavailable',
+    status: summary.status==='rejected'&&Number.isSafeInteger(summary.approved_at)&&summary.approved_at>=0?'dismissed':['pending', 'approved', 'rejected', 'dismissed', 'completed','expired'].includes(summary.status) ? summary.status : 'unavailable',
     expiresAt: Number.isSafeInteger(summary.expires_at) ? summary.expires_at : null,
   };
 }
@@ -73,7 +73,7 @@ function summaryProjection(value) {
   requireValue(plain(value)&&Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k)), 'closed reduced request');
   requireValue(bounded(value.id,256)&&bounded(value.app,128)&&bounded(value.actor,128)&&bounded(value.detail,2048)&&typeof value.transaction==='boolean'&&requestTitleValues.includes(value.title), 'reduced request fields');
   requireValue(value.site===null||value.actor==='browser'&&displayOrigin(value.site)===value.site, 'reduced site');
-  return clone(value);
+  const result=clone(value);if(result.title==='Approval request')result.title='Wallet approval request';return result;
 }
 
 /** Derive contract-owned fields; presentation stage/context remains window-owned. */
@@ -115,6 +115,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
     if(disposition==='answered')stage='request-done';
   }
   if(request && message?.outcome==='request_unavailable')stage='request-unavailable';
+  if(request&&['rejected','dismissed'].includes(request.status)&&!disposition&&stage!=='request-unavailable'&&(screens[input.window]?.[stage]?.request||screens[input.window]?.[stage]?.optionalRequest))stage=request.status==='dismissed'?'request-dismissed':'request-rejected';
   if(request?.status==='expired'&&screens[input.window]?.[stage]?.request&&!disposition&&!screens[input.window]?.[stage]?.dispatched&&!screens[input.window]?.[stage]?.afterAnswer&&stage!=='request-unavailable')stage='request-expired';
   const deadlines = [request?.expiresAt, Number.isSafeInteger(message?.deadlineAt) ? Math.floor(message.deadlineAt / 1000) : null].filter(Number.isSafeInteger);
   requireValue(!deadlines.length||Number.isSafeInteger(nowSeconds),'explicit clock for contract deadline');
@@ -172,7 +173,11 @@ export function connectionView(input) {
   const account = accountDisplay(input.account, window, requestScreen?summary:null);
   const safety = window === 'walletconnect' ? input.localSafety ?? null : provider?.paymentPending ?? null;
   requireValue(boolOrNull(safety), 'payment safety');
-  const name = account?.name || providerCopy[provider?.providerId] || brands[window];
+  const providerName=provider?.availability==='found'?providerCopy[provider.providerId]:null;
+  const extension=window==='metamask'||window==='unisat';
+  const name = extension ? providerName||'your browser wallet' : account?.name || brands[window];
+  const title=extension?providerName||'Browser wallet':brands[window];
+  const headingMark=extension?(providerName&&provider.providerId==='io.metamask'?'metamask':providerName&&provider.providerId==='unisat'?'unisat':'wallet'):window;
   const home = displayOrigin(input.homeOrigin);
   requireValue(input.targetNetwork===undefined||bounded(input.targetNetwork,80),'requested network label');
   const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: summary?.app || context?.app || 'Browser', site: summary?.site || context?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
@@ -195,26 +200,29 @@ export function connectionView(input) {
   if (!screen.qr && !screen.requestPicker && !actions.length && !screen.afterAnswer && window !== 'panel') actions.push({id:'close-window',label:parts('Close window'),primary:true,quiet:false});
   if(actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${screen.status||''} ${notice}`))notice=`Close this window. ${notice}`.trim();
   const unknownRecovery=safety===null && !knownNotSent && unknownRecoveryStages.has(stage);
+  let safetyNotice=transactionRisk&&screen.paymentSafeNotice!==undefined?notice:null;
   if(unknownRecovery){
     notice=summary?.transaction&&stage==='request-busy'?'Close this window. The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Wallet activity before trying again.':'Close this window. An operation may still be waiting in {{wallet}}. Home cannot tell whether another window has payment work. Check your wallet and Wallet activity before trying again.';
+    safetyNotice=notice;
     actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over').map(a=>({...a,primary:a.id==='close-window',quiet:a.id==='close-window'?false:a.quiet}));
     const close=actions.find(a=>a.id==='close-window')||{id:'close-window',label:parts('Close window'),primary:true,quiet:false};
     actions=[close,...actions.filter(a=>a.id!=='close-window')];
   }
-  if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Wallet activity before trying again.';actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
+  if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Wallet activity before trying again.';safetyNotice=notice;actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
   const unknownLinkRecovery=safety===null&&stage==='link-error';
-  if(unknownLinkRecovery){notice='Close this window. Check your wallet and Wallet activity before trying again.';actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
+  if(unknownLinkRecovery){notice='Close this window. Check your wallet and Wallet activity before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
   if(stage==='disconnecting')notice='Disconnecting continues after you close this window.';
-  if(knownNotSent&&result.receipt==='recording_failed')notice+=' Home cannot save that answer.';
+  if(knownNotSent&&result.receipt==='recording_failed'){notice+=' Home cannot save that answer.';if(safetyNotice!==null)safetyNotice=notice;}
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
   let outcome = parts(screen.status);
   if(summary?.transaction&&result.disposition==='answered'&&result.receipt!=='recorded'){
     outcome=parts('The wallet returned a transaction result. Home cannot save it.');
     notice='Check {{wallet}} and Wallet activity before sending again.';
+    safetyNotice=notice;
     actions=actions.filter(a=>a.id!=='send-request'&&a.id!=='use-walletconnect');
   }
   const consumedSend = summary && summary.status !== 'pending' && actions.some(a=>a.id==='send-request');
-  if(consumedSend){actions=actions.filter(a=>!['send-request','open-wallet'].includes(a.id));actions.unshift({id:'open-wallet',label:parts('Review in Wallet'),primary:true,quiet:false});outcome=parts('Review this request in Wallet.');}
+  if(consumedSend){actions=actions.filter(a=>!['send-request','open-wallet'].includes(a.id));actions.unshift({id:'open-wallet',label:parts('Review in Wallet'),primary:true,quiet:false});outcome=parts('Review this request in Wallet.');notice=summary.transaction?'Check {{wallet}} and Wallet activity before sending again.':'';}
   if (screen.qr) actions = [{id:'copy-link',label:parts('Copy link'),primary:false,quiet:false},{id:'cancel',label:parts('Cancel'),primary:false,quiet:false}];
   if(screen.requiresSafeRetry&&safety!==false){const close=actions.find(a=>a.id==='close-window');if(close){close.primary=true;close.quiet=false;}}
   if(transactionHash)actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over'&&a.id!=='use-walletconnect');
@@ -228,12 +236,14 @@ export function connectionView(input) {
     }
     if(removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
-    if(!supported.includes('close-window')&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id))))notice+=' Close this window with Home’s window controls.';
     if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window')||actions.find(a=>a.id==='back-to-connection');if(next){next.primary=true;next.quiet=false;}}
   }
+  let effectiveNotice = safetyNotice ?? notice;
+  if(supported&&!supported.includes('close-window')&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id))))effectiveNotice=/Close this window\./.test(effectiveNotice)?effectiveNotice.replace('Close this window.','Close this window with Home’s window controls.'):effectiveNotice+' Close this window with Home’s window controls.';
   const approvalSite = !screen.requestPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
   if(approvalSite&&(!supported||supported.includes('close-window'))&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});
   let focus = approvalSite || unknownRecovery || unknownLinkRecovery || screen.requiresSafeRetry&&safety!==false ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
+  if(consumedSend)focus='outcome';
   if(approvalSite&&supported&&!supported.includes('close-window'))focus='dismissal';
   if(focus&&!['outcome','accounts','dismissal'].includes(focus)&&!actions.some(a=>a.id===focus)&&!( ['select-request','copy-address'].includes(focus)&&(!supported||supported.includes(focus))))focus=actions.find(a=>a.primary)?.id||actions[0]?.id|| (outcome.length?'outcome':null);
   let focusKey=null;
@@ -254,11 +264,13 @@ export function connectionView(input) {
   const queued = screen.queueCount ? [...(input.otherRequests||[]).map(summaryProjection),...(!screen.afterAnswer&&summary?[summary]:[])] : input.showNextRequests&&localNavigationAllowed ? (input.otherRequests||[]).map(summaryProjection) : [];
   const queuePendingCount=queued.filter(r=>r.status==='pending').length;
   const queueRecoveryCount=queued.filter(r=>r.status==='approved'&&r.transaction).length;
+  const queueRejectedCount=queued.filter(r=>r.status==='rejected').length;
+  const queueDismissedCount=queued.filter(r=>r.status==='dismissed').length;
   const view = {
-    window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, transactionHash, localReturn:input.localReturn===true, title: brands[window], account, selectedAccount: !!screen.selectedAccount,
+    window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, transactionHash, localReturn:input.localReturn===true, title, headingMark, account, selectedAccount: !!screen.selectedAccount,
     showAccount: !!screen.account, requiredAccount: !!screen.requiredAccount||!!(summary&&currentSelection&&(summary.address&&summary.address!==currentSelection.address||account?.accounts[0].networks[0]!==currentSelection.network)), disconnect: screen.disconnect !== false && window === 'walletconnect',
     request: requestScreen ? summary : null, transactionDisplay, choices, picker: !!screen.requestPicker,
-    queueCount:queued.length, queuePendingCount, queueRecoveryCount, queueOtherCount:queued.length-queuePendingCount-queueRecoveryCount, queueOthers:!!(input.showNextRequests&&!screen.queueCount), status: outcome, notice: parts(notice.trim()), afterNote: parts(screen.afterActionsNote),
+    queueCount:queued.length, queuePendingCount, queueRecoveryCount, queueRejectedCount, queueDismissedCount, queueOtherCount:queued.length-queuePendingCount-queueRecoveryCount-queueRejectedCount-queueDismissedCount, queueOthers:!!(input.showNextRequests&&!screen.queueCount), status: outcome, notice: parts(effectiveNotice.trim()), afterNote: parts(screen.afterActionsNote),
     wait: wait === null ? null : `Time left: ${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, '0')}`,
     actions, focus, focusKey, answered, walletResult:result, paymentRisk: transactionRisk, compact: input.compact === true,
     qrData: screen.qr ? input.qrData : null, panel: window === 'panel',
@@ -309,7 +321,7 @@ export function renderConnection(document, view) {
   if(approvalSite)root.classList.add('connection-approval-window');if(view.picker)root.classList.add('connection-picker');
   root.dataset.state = view.stage;root.dataset.window=view.window;root.dataset.requestId=view.requestId||'';root.dataset.scrollKey='root';
   const heading = el('header', null, 'connection-heading');
-  if (!view.panel) heading.append(icon(view.window));
+  if (!view.panel) heading.append(icon(view.headingMark));
   heading.append(el('h1', view.title)); root.append(heading);
   const status = el('p', view.status, 'connection-status'); status.dataset.focus = 'outcome'; status.tabIndex = -1; status.setAttribute('role','status');
   if(view.window==='walletconnect'&&!view.request&&!view.showAccount&&view.account&&view.status.some(p=>p.kind==='wallet'))status.prepend(icon('wallet'));
@@ -384,7 +396,7 @@ export function renderConnection(document, view) {
     if(view.currentSelection){const p=el('p',null,'connection-note connection-current-selection');p.append(document.createTextNode('Wallet now shows '),el('bdi',view.currentSelection.address,'connection-isolated connection-address'),document.createTextNode(' · '),el('bdi',view.currentSelection.network,'connection-isolated connection-network'));for(const bdi of p.querySelectorAll('bdi'))bdi.dir='auto';destination.append(p);}
     if(view.transactionHash){const p=el('p',null,'connection-note connection-transaction-hash');const hash=el('bdi',view.transactionHash,'connection-hash');hash.dir='ltr';p.append(document.createTextNode('Transaction hash: '),hash);destination.append(p);}
     if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-note connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');destination.append(p);}
-    if(view.queueCount){const queue=el('div',null,'connection-queue');if(view.queuePendingCount)queue.append(el('h2',`${view.queuePendingCount} ${view.queueOthers?'other ':''}request${view.queuePendingCount===1?'':'s'} waiting`));if(view.queueRecoveryCount)queue.append(el('p',`${view.queueRecoveryCount} transaction${view.queueRecoveryCount===1?'':'s'} to review`));if(view.queueOtherCount)queue.append(el('p',`${view.queueOtherCount} request${view.queueOtherCount===1?'':'s'} to review`));if(!view.picker&&supports('view-requests'))queue.append(button({id:'view-requests',label:isolated('View requests','copy'),quiet:true}));content.prepend(queue);}
+    if(view.queueCount){const queue=el('div',null,'connection-queue');if(view.queuePendingCount)queue.append(el('h2',`${view.queuePendingCount} ${view.queueOthers?'other ':''}request${view.queuePendingCount===1?'':'s'} waiting`));if(view.queueRecoveryCount)queue.append(el('p',`${view.queueRecoveryCount} transaction${view.queueRecoveryCount===1?'':'s'} to review`));if(view.queueRejectedCount)queue.append(el('p',`${view.queueRejectedCount} rejected request${view.queueRejectedCount===1?'':'s'}`));if(view.queueDismissedCount)queue.append(el('p',`${view.queueDismissedCount} dismissed request${view.queueDismissedCount===1?'':'s'}`));if(view.queueOtherCount)queue.append(el('p',`${view.queueOtherCount} request${view.queueOtherCount===1?'':'s'} to review`));if(!view.picker&&supports('view-requests'))queue.append(button({id:'view-requests',label:isolated('View requests','copy'),quiet:true}));content.prepend(queue);}
     if(approvalSite){
       const top=el('div',null,'connection-card-start');top.append(el('p','More below.','connection-more'));const close=view.actions.find(a=>a.id==='close-window');if(close)top.append(button(close));else{const manual=el('p','Close with Home’s window controls.','connection-note');manual.dataset.focus='dismissal';manual.tabIndex=-1;top.append(manual);}root.insertBefore(top,heading);
       if(view.status.length)destination.prepend(status);
@@ -423,7 +435,7 @@ function updateMoreCue(root) {
 function installPresentation(root,view,snapshot) {
   const buttons=[...root.querySelectorAll('button')];
   const target=(action,key)=>key&&buttons.find(b=>b.dataset.focusKey===key)||buttons.find(b=>b.dataset.action===action)||[...root.querySelectorAll('[data-focus]')].find(e=>e.dataset.focus===action);
-  const focus=snapshot?(snapshot.action===null?null:target(snapshot.action,snapshot.key)):target(view.focus,view.focusKey);
+  const focus=snapshot?(snapshot.action===null?null:target(snapshot.action,snapshot.key)||target(view.focus,view.focusKey)):target(view.focus,view.focusKey);
   focus?.focus({preventScroll:true});
   if(snapshot){for(const row of snapshot.scrolls){const e=[root,...root.querySelectorAll('[data-scroll-key]')].find(e=>e.dataset.scrollKey===row.key);if(e){e.scrollTop=row.top;e.scrollLeft=row.left;}}}
   else {root.scrollTop=0;root.scrollLeft=0;}
@@ -448,5 +460,13 @@ export function mountConnection(container,view,previous=null) {
   }
   if(valid)previous.dispose();
   const root=renderConnection(container.ownerDocument,view);container.replaceChildren(root);
+  if(same&&old.classList.contains('connection-approval-window')){
+    root.classList.add('connection-approval-window');
+    if(!root.querySelector('.connection-approval-unit')){
+      root.classList.add('connection-retained-feedback');
+      const missing=Math.max(0,snapshot.scrollTop-(root.scrollHeight-root.clientHeight));
+      if(missing){const spacer=root.ownerDocument.createElement('div');spacer.setAttribute('aria-hidden','true');spacer.style.height=missing+'px';root.append(spacer);}
+    }
+  }
   return {root,view,dispose:installPresentation(root,view,snapshot),reused:false};
 }
