@@ -13,7 +13,7 @@ async function setup(t){
  const mutation={B14:{file:'walletconnect-client.mjs',from:"if (!(action.kind === 'link' && action.fresh) && restoring) await waitFor(restoring,signal);",to:"if (false) await waitFor(restoring,signal);"},B15:{file:'wallet-walletconnect.js',from:"if (launchExpired || !frameHomeToken || !accountsLoaded) return;",to:"if (launchExpired || !frameHomeToken) return;"}}[process.env.WALLETCONNECT_FIX1_BREAK];
  if(mutation)await page.route(`**/${mutation.file}*`,async route=>{const source=await readFile(new URL('../capsules/wallet-walletconnect/browser/'+mutation.file,import.meta.url),'utf8');assert.ok(source.includes(mutation.from),'review break matches current source');await route.fulfill({contentType:'text/javascript',body:source.replace(mutation.from,mutation.to)});});
 
- const settle=await walletWindowLifetime(page,fixture);let frame;
+ const settle=await walletWindowLifetime(page,fixture,{holdRetirement:t.name==='round19 Turn Off cancels a silent ownership wait before the SDK deadline'});let frame;
  t.after(async()=>{try{await settle(frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[],'every phone walk rejects unexpected page errors');});
  const reopen=async({ready=true}={})=>{await settle(frame);await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));if(ready)await frame.locator('main[data-state]').waitFor();return frame;};
  await reopen();
@@ -53,7 +53,12 @@ test('round19 Cancel ends a silent ownership wait and the next Connect works imm
 });
 test('round19 Turn Off cancels a silent ownership wait before the SDK deadline',{timeout:60000},async t=>{
  const r=await setup(t);r.peer.choose({request:'silent'});await r.frame.locator('[data-action=connect],[data-action=start-over]').click();await r.pair();await until(()=>r.peer.trace.some(e=>e.kind==='request'),'phone receives ownership request');
- r.fixture.setPermission('revoked');await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await r.frame.locator('[data-state=internet-off]').waitFor({timeout:5000});r.fixture.setPermission('granted');await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await r.frame.locator('[data-action=connect],[data-action=start-over]').click({timeout:2000});await r.frame.locator('[data-state=qr-shown]').waitFor({timeout:15000});
+ await r.frame.evaluate(()=>window.__walletFixtureLifetime.holdRetirement=true);
+ t.after(()=>r.frame.evaluate(()=>window.__walletFixtureLifetime.releaseRetirement?.()).catch(()=>{}));
+ r.fixture.setPermission('revoked');await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await r.frame.locator('[data-state=internet-off]').waitFor({timeout:5000});
+ await r.frame.waitForFunction(()=>window.__walletFixtureLifetime.retirementHeld);
+ await r.frame.evaluate(()=>{const life=window.__walletFixtureLifetime;life.holdRetirement=false;life.releaseRetirement();});
+ r.fixture.setPermission('granted');await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await r.frame.locator('[data-action=connect],[data-action=start-over]').click({timeout:2000});await r.frame.locator('[data-state=qr-shown]').waitFor({timeout:15000});
 });
 test('round19 disconnect stops the retired SDK heartbeat and its pulse listeners',{timeout:60000},async t=>{
  const r=await setup(t);await r.link();await r.frame.evaluate(()=>{window.retiredCore=globalThis['_walletConnectCore_wallet-walletconnect'];window.retiredIntervalCleared=false;const clear=window.clearInterval;window.clearInterval=id=>{if(id===window.retiredCore.heartbeat.intervalRef)window.retiredIntervalCleared=true;clear(id);};});

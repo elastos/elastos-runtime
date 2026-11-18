@@ -42,6 +42,9 @@ const api = (resource, init={}) => {
 const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory,copyLink:copyConnectionLink,
   pairingView:{show(data, controls){qrData=data;qrControls=controls;draw();},hide(result){qrData=undefined;qrControls=undefined;clipboardFeedback='';if(result?.connected)currentPhase='confirming';draw();}},
   onPhase(phase, detail) {
+    if (phase === 'permission') {
+      permissionStatus=detail.status;connectionState={...connectionState,permission:detail};draw();return;
+    }
     if (phase === 'changed') {
       walletChanged ||= detail?.selectionChanged === true;
       // Wallet notifications carry facts locally. Home authority stays on the base routes.
