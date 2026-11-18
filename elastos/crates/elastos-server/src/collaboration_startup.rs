@@ -4886,7 +4886,7 @@ mod tests {
         let (app, token) = fix1_status_route(product.clone()).await;
         let link = FakeCommunityLink::new(FakeLinkScript {
             peers: true,
-            bootstrap_outages: vec![10..200],
+            bootstrap_outages: std::iter::once(10..200).collect(),
             failed_rebuild: true,
             ..Default::default()
         });
