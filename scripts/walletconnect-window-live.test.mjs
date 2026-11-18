@@ -239,6 +239,10 @@ for(const engine of ['chromium','webkit'])test(`keyboard activation and long-car
  await r.frame.locator('[data-action=send-request]').focus();
  const before=await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action}));assert.ok(before.top>0,'the long request scrolls');
  await r.refresh();const after=await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action}));assert.deepEqual(after,before,'same request redraw preserves focus and scroll');
+ await r.frame.evaluate(()=>{document.querySelector('main').scrollTop=0;});
+ const reading=await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action}));assert.equal(reading.top,0);assert.equal(reading.action,'send-request');
+ await r.refresh();assert.deepEqual(await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action})),reading,'redraw preserves the reading position when its focused control is offscreen');
+ await r.frame.evaluate(top=>{document.querySelector('main').scrollTop=top;},before.top);
  await r.capture('long-request-redraw');r.peer.choose({request:'silent'});await r.frame.locator('[data-action=send-request]').press('Enter');await r.state('request-phone');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'long message published');await r.capture('long-request-phone');await r.peer.answer('sign');await r.state('request-done');assert.equal(r.fixture.state.completed,1,'Enter sent the exact request and returned a verified signature');
  await r.refresh();assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.focus),'outcome','result redraw preserves the non-action outcome focus');assert.deepEqual(r.errors,[]);
 });

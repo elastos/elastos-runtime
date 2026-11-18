@@ -168,7 +168,7 @@ function draw() {
   if (!hadFocus) return;
   if (focusAction) {
     const target = controls.find(node=>node.dataset.action === focusAction && node.dataset.focusKey === focusKey);
-    if(target){const r=target.getBoundingClientRect();target.focus({preventScroll:r.top>=0&&r.bottom<=innerHeight});}
+    if(target)target.focus({preventScroll:true});
   } else if (focusOutcome) {
     [...tree.querySelectorAll('[data-focus]')].find(node=>node.dataset.focus===focusOutcome)?.focus({preventScroll:true});
   } else if (!same) {
