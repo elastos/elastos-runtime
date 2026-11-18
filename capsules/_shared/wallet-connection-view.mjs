@@ -15,10 +15,9 @@ import { screens } from './wallet-connection-screens.mjs';
 
 const renderedViews = new WeakSet();
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
-const appLabels = {browser:'Browser', notes:'Notes'};
 const requestTitles={auth_challenge:'Wallet sign-in request',capability_grant:'Wallet access request',credential:'Credential signing request',publish_envelope:'Publish approval request',transaction_intent:'Send transaction',browser_account_access:'Browser account access request',browser_personal_sign:'Sign a message',browser_typed_data_sign:'Sign typed data',bitcoin_bip322_proof:'Bitcoin proof request',revocation:'Revocation approval request'};
 const requestTitleValues=[...Object.values(requestTitles),'Approval request'];
-const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','transport-unavailable':'The connection to your wallet was lost.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your browser wallet is unavailable.'};
+const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','transport-unavailable':'The connection to your wallet was lost.','transport-reconnecting':'WalletConnect is reconnecting.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your browser wallet is unavailable.'};
 const copyFeedbacks={'link-copied':'Link copied.','address-copied':'Address copied.','copy-failed':'Could not copy. Try again.'};
 const brands = { walletconnect: 'WalletConnect', metamask: 'MetaMask', unisat: 'UniSat', panel: 'Wallet' };
 // H:754 (busy recovery), H:767-779 (unknown cross-window work).
@@ -57,7 +56,7 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
   if (!plain(summary) || !['wallet', 'inbox', connector].includes(audience) || !['wallet-metamask', 'wallet-unisat', 'wallet-walletconnect'].includes(connector) || summary.connector_id !== connector) return null;
   requireValue(bounded(summary.request_id, 256) && bounded(summary.capsule_id, 128), 'request identity');
   const transaction = summary.intent === 'transaction_intent';
-  const app = bounded(summary.requesting_app_name, 128) && summary.requesting_app_name ? summary.requesting_app_name : (Object.hasOwn(appLabels,summary.capsule_id)?appLabels[summary.capsule_id]:'Requesting app');
+  const app = bounded(summary.requesting_app_name, 128) && summary.requesting_app_name ? summary.requesting_app_name : 'Requesting app';
   return {
     id: summary.request_id, app, actor: summary.capsule_id,
     title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Approval request', transaction,
@@ -115,7 +114,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
     if(disposition==='answered')stage='request-done';
   }
   if(request && message?.outcome==='request_unavailable')stage='request-unavailable';
-  if(request?.status==='expired'&&!disposition&&!screens[input.window]?.[stage]?.dispatched&&!screens[input.window]?.[stage]?.afterAnswer&&stage!=='request-unavailable')stage='request-expired';
+  if(request?.status==='expired'&&screens[input.window]?.[stage]?.request&&!disposition&&!screens[input.window]?.[stage]?.dispatched&&!screens[input.window]?.[stage]?.afterAnswer&&stage!=='request-unavailable')stage='request-expired';
   const deadlines = [request?.expiresAt, Number.isSafeInteger(message?.deadlineAt) ? Math.floor(message.deadlineAt / 1000) : null].filter(Number.isSafeInteger);
   requireValue(!deadlines.length||Number.isSafeInteger(nowSeconds),'explicit clock for contract deadline');
   const waitSeconds = deadlines.length && Number.isSafeInteger(nowSeconds) ? Math.max(0, Math.min(...deadlines) - nowSeconds) : input.waitSeconds;
@@ -142,7 +141,7 @@ function accountDisplay(account, window, summary) {
 }
 
 export function connectionView(input) {
-  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn'];
+  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests'];
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
   const { window, stage } = input;
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
@@ -151,6 +150,7 @@ export function connectionView(input) {
   requireValue(supported===null||Array.isArray(supported)&&supported.length<=connectionActionIds.length&&new Set(supported).size===supported.length&&supported.every(a=>connectionActionIds.includes(a)),'closed supported actions');
   requireValue(input.copyFeedback===undefined||Object.hasOwn(copyFeedbacks,input.copyFeedback),'closed copy feedback');
   requireValue(input.connectionNotice===undefined||Object.hasOwn(connectionNotices,input.connectionNotice),'closed connection notice');
+  requireValue(input.showNextRequests===undefined||typeof input.showNextRequests==='boolean','next requests flag');
   requireValue(input.localReturn===undefined||typeof input.localReturn==='boolean','local return flag');
   const currentSelection=input.currentSelection?clone(input.currentSelection):null;
   requireValue(!currentSelection||plain(currentSelection)&&Object.keys(currentSelection).length===2&&bounded(currentSelection.address,128)&&bounded(currentSelection.network,80),'closed current selection');
@@ -161,11 +161,13 @@ export function connectionView(input) {
   const context=input.requestContext?clone(input.requestContext):null;
   requireValue(!context||plain(context)&&Object.keys(context).length===4&&['id','app','actor','site'].every(k=>Object.hasOwn(context,k))&&bounded(context.id,256)&&context.id.length>0&&bounded(context.app,128)&&bounded(context.actor,128)&&(context.site===null||context.actor==='browser'&&displayOrigin(context.site)===context.site),'closed request context');
   requireValue(!context||!summary||context.id===summary.id&&context.app===summary.app&&context.actor===summary.actor&&context.site===summary.site,'one request identity per card');
-  const requestId=summary?.id||context?.id||null;
+  const requestId=(screen.request?summary?.id:null)||context?.id||null;
+  const transactionHash=input.transactionHash??null;
+  requireValue(transactionHash===null||typeof transactionHash==='string'&&summary?.transaction&&['metamask','walletconnect'].includes(window)&&['transaction-wallet-error','transaction-timeout','transaction-cancelled','transaction-reopened','transaction-late-result','transaction-done'].includes(stage)&&/^0x[0-9a-fA-F]{64}$/.test(transactionHash),'closed transaction hash');
   const transactionDisplay = input.transactionDisplay ? clone(input.transactionDisplay) : null;
   if(transactionDisplay)requireValue(summary?.transaction && plain(transactionDisplay) && Object.keys(transactionDisplay).length===4 && bounded(transactionDisplay.destination,128) && bounded(transactionDisplay.network,80) && (transactionDisplay.amount===null&&transactionDisplay.asset===null || bounded(transactionDisplay.amount,80)&&/^[0-9]+(?:\.[0-9]+)?$/.test(transactionDisplay.amount)&&bounded(transactionDisplay.asset,16)), 'closed computed transaction display');
   requireValue(!screen.request || summary && bounded(summary.id,256) && bounded(summary.app,128) && bounded(summary.detail,2048) && requestTitleValues.includes(summary.title) && (summary.site===null || displayOrigin(summary.site)===summary.site), 'reduced selected request summary');
-  const account = accountDisplay(input.account, window, summary);
+  const account = accountDisplay(input.account, window, screen.request?summary:null);
   const safety = window === 'walletconnect' ? input.localSafety ?? null : provider?.paymentPending ?? null;
   requireValue(boolOrNull(safety), 'payment safety');
   const name = account?.name || providerCopy[provider?.providerId] || brands[window];
@@ -181,8 +183,9 @@ export function connectionView(input) {
   const result=input.walletResult?clone(input.walletResult):{disposition:null,receipt:null};
   requireValue(plain(result)&&Object.keys(result).length===2&&[null,'answered','declined','refused','failed'].includes(result.disposition)&&[null,'recorded','recording_failed'].includes(result.receipt),'closed wallet result');
   const knownNotSent=['declined','refused'].includes(result.disposition);
+  requireValue(!(transactionHash&&knownNotSent),'transaction hash conflicts with not-sent outcome');
   requireValue(!knownNotSent||!summary?.transaction||['transaction-declined','transaction-access-error'].includes(stage),'known transaction outcome stage');
-  const transactionRisk = safety !== false || (!knownNotSent && summary?.transaction && (screen.dispatched || /timeout|cancelled|reopened|error|removed/.test(stage)));
+  const transactionRisk = transactionHash!==null || safety !== false || (!knownNotSent && summary?.transaction && (screen.dispatched || /timeout|cancelled|reopened|error|removed/.test(stage)));
   if (transactionRisk) notice = notice.replace(/If .*?Reload control\./g, '').replace(', then reload Home using the browser’s Reload control.', '.');
   if(transactionRisk&&screen.paymentSafeNotice!==undefined)notice=screen.paymentSafeNotice;
   let actions = screen.requestPicker ? [] : [screen.primary, ...(screen.secondary || []), screen.requestAction, screen.reviewAction].filter(Boolean).map(action);
@@ -212,6 +215,7 @@ export function connectionView(input) {
   if(consumedSend){actions=actions.filter(a=>!['send-request','open-wallet'].includes(a.id));actions.unshift({id:'open-wallet',label:parts('Review in Wallet'),primary:true,quiet:false});outcome=parts('Review this request in Wallet.');}
   if (screen.qr) actions = [{id:'copy-link',label:parts('Copy link'),primary:false,quiet:false},{id:'cancel',label:parts('Cancel'),primary:false,quiet:false}];
   if(screen.requiresSafeRetry&&safety!==false){const close=actions.find(a=>a.id==='close-window');if(close){close.primary=true;close.quiet=false;}}
+  if(transactionHash)actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over'&&a.id!=='use-walletconnect');
   if(input.localReturn&&answered)actions.push({id:'back-to-connection',label:parts('Back to connection'),primary:false,quiet:true});
   if(supported){
     const removed=actions.filter(a=>!supported.includes(a.id));actions=actions.filter(a=>supported.includes(a.id));
@@ -245,10 +249,10 @@ export function connectionView(input) {
   const choices = screen.choices ? (screen.requestPicker?(input.otherRequests||[]):(input.otherRequests || []).slice(0, screen.choices === 3 ? 2 : 1)).map(summaryProjection) : [];
   if (screen.requestPicker && summary) choices.unshift(summary);
   const view = {
-    window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, localReturn:input.localReturn===true, title: brands[window], account, selectedAccount: !!screen.selectedAccount,
+    window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, transactionHash, localReturn:input.localReturn===true, title: brands[window], account, selectedAccount: !!screen.selectedAccount,
     showAccount: !!screen.account, requiredAccount: !!screen.requiredAccount||!!(summary&&currentSelection&&(summary.address&&summary.address!==currentSelection.address||account?.accounts[0].networks[0]!==currentSelection.network)), disconnect: screen.disconnect !== false && window === 'walletconnect',
     request: screen.request ? summary : null, transactionDisplay, choices, picker: !!screen.requestPicker,
-    queueCount: screen.queueCount ? (input.otherRequests?.length||0)+(screen.afterAnswer?0:1) : 0, status: outcome, notice: parts(notice.trim()), afterNote: parts(screen.afterActionsNote),
+    queueCount: input.showNextRequests&&stage==='transaction-done'&&result.disposition==='answered'&&result.receipt==='recorded' ? (input.otherRequests?.length||0) : screen.queueCount ? (input.otherRequests?.length||0)+(screen.afterAnswer?0:1) : 0, status: outcome, notice: parts(notice.trim()), afterNote: parts(screen.afterActionsNote),
     wait: wait === null ? null : `Time left: ${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, '0')}`,
     actions, focus, focusKey, answered, walletResult:result, paymentRisk: transactionRisk, compact: input.compact === true,
     qrData: screen.qr ? input.qrData : null, panel: window === 'panel',
@@ -372,6 +376,7 @@ export function renderConnection(document, view) {
     if(view.context&&!view.request){const card=el('article',null,'connection-card connection-request');card.dataset.requestId=view.context.id;const identity=el('div',null,'connection-identity');identity.dataset.scrollKey='context:'+view.context.id;const context=el('div',null,'connection-context');if(!view.context.site||view.context.app!=='Browser'){const app=el('bdi',view.context.app,'connection-isolated connection-app');app.dir='auto';context.append(app);}if(view.context.site&&!approvalSite)context.append(siteIdentity(view.context.site));identity.append(context);card.append(identity);content.append(card);destination=card;}
     if(view.connectionNotice.length)destination.append(el('p',view.connectionNotice,'connection-note connection-change'));
     if(view.currentSelection){const p=el('p',null,'connection-note connection-current-selection');p.append(document.createTextNode('Wallet now shows '),el('bdi',view.currentSelection.address,'connection-isolated connection-address'),document.createTextNode(' · '),el('bdi',view.currentSelection.network,'connection-isolated connection-network'));for(const bdi of p.querySelectorAll('bdi'))bdi.dir='auto';destination.append(p);}
+    if(view.transactionHash){const p=el('p',null,'connection-note connection-transaction-hash');const hash=el('bdi',view.transactionHash,'connection-hash');hash.dir='ltr';p.append(document.createTextNode('Transaction hash: '),hash);destination.append(p);}
     if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-note connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');destination.append(p);}
     if(view.queueCount){const queue=el('div',null,'connection-queue');queue.append(el('h2',`${view.queueCount} requests waiting`));if(!view.picker&&supports('view-requests'))queue.append(button({id:'view-requests',label:isolated('View requests','copy'),quiet:true}));content.prepend(queue);}
     if(approvalSite){

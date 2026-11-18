@@ -59,6 +59,37 @@ test('live needs: clipboard feedback is closed local copy and QR keys respect su
  assert.throws(()=>connectionView({window:'metamask',stage:'ready',copyFeedback:'wallet wrote this'}),/closed copy feedback/);
 });
 
+test('late needs: latent summaries cannot replace a linking account or its card identity',()=>{
+ const actual='0x9999999999999999999999999999999999999999';
+ for(const status of ['pending','approved','expired'])for(const stage of ['saved-unlinked','link-wait']){
+  const input={window:'walletconnect',stage,account:{...account,name:'A real wallet',connection:'WalletConnect',accounts:[{address:actual,networks:['Base']}]},localSafety:false,waitSeconds:300};
+  const v=reduceConnection(input,{summary:{...seed,connector_id:'wallet-walletconnect',status,address:account.accounts[0].address},nowSeconds:1800000001});
+  assert.equal(v.stage,stage);assert.equal(v.account.accounts[0].address,actual);assert.equal(v.requestId,null);
+ }
+});
+test('late needs: reconnecting is secondary fixed copy in idle, wait and result states',()=>{
+ for(const stage of ['linked','link-wait','request-phone','transaction-done']){
+  const args=fixtureArguments(states.find(r=>r.window==='walletconnect'&&r.stage===stage)),before=reduceConnection(...args);args[0].connectionNotice='transport-reconnecting';const v=reduceConnection(...args);
+  assert.equal(viewText(v.connectionNotice),'WalletConnect is reconnecting.');assert.equal(viewText(v.status),viewText(before.status));assert.deepEqual(v.walletResult,before.walletResult);assert.equal(v.wait,before.wait);
+ }
+});
+test('late needs: completion-failure hash is display only, full and closed',()=>{
+ const args=fixtureArguments(states.find(r=>r.designState==='walletconnect/transaction-wallet-error')),before=reduceConnection(...args),hash='0x'+'ab'.repeat(32);args[0].transactionHash=hash;const v=reduceConnection(...args);
+ assert.equal(v.transactionHash,hash);assert.deepEqual(v.walletResult,before.walletResult);assert.equal(viewText(v.status),viewText(before.status));assert(v.paymentRisk);assert(!v.actions.some(a=>['send-request','connect','start-over','use-walletconnect'].includes(a.id)));
+ for(const transactionHash of ['0x12','<img src=x>',{toString:()=>hash}])assert.throws(()=>reduceConnection({...args[0],transactionHash},args[1]),/transaction hash/);
+ assert.throws(()=>connectionView({window:'walletconnect',stage:'transaction-waiting',summary:v.request,transactionHash:hash,localSafety:false,waitSeconds:300}),/transaction hash/);
+});
+test('late needs: only a recorded known transaction result gains its supplied next-request queue',()=>{
+ for(const stage of ['transaction-done','transaction-wallet-error']){
+  const args=fixtureArguments(states.find(r=>r.designState==='metamask/'+stage)),before=reduceConnection(...args);args[0].showNextRequests=true;args[1].otherSummaries=[{...seed,request_id:'next-request'}];const v=reduceConnection(...args);
+  assert.equal(v.queueCount,stage==='transaction-done'?1:0);assert.equal(viewText(v.status),viewText(before.status));assert.deepEqual(v.walletResult,before.walletResult);
+ }
+});
+test('late needs: missing catalog labels use Requesting app for every actor ID',()=>{
+ for(const capsule_id of ['browser','notes','another-app'])assert.equal(projection({capsule_id,requesting_app_name:undefined}).app,'Requesting app');
+ assert.equal(projection({capsule_id:'browser',requesting_app_name:'Browser'}).app,'Browser');
+});
+
 const proof=await temporaryProof('wallet-live-view-',process.env.WALLET_VIEW_PROOF_DIR);const receipts=[];
 test.after(async()=>{try{await writeFile(proof.path+'/live-needs.json',JSON.stringify(receipts,null,2)+'\n');}finally{await proof.cleanup();}});
 for(const engine of ['chromium','webkit'])test('live needs: rendering and QR card containment in '+engine,{skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit runs in content-sandbox CI':false},async()=>{
@@ -77,6 +108,12 @@ for(const engine of ['chromium','webkit'])test('live needs: rendering and QR car
   await f.page.setViewportSize({width:320,height:182});const summary=projection(),otherRequests=Array.from({length:20},(_,i)=>({...summary,id:'extra-'+i}));
   await f.page.evaluate(async({summary,otherRequests})=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.connectionView({window:'metamask',stage:'request-list',summary,otherRequests,compact:true}));},{summary,otherRequests});
   const last=f.page.locator('[data-focus-key="select-request:extra-19"]');await last.scrollIntoViewIfNeeded();await last.click();assert(await last.isVisible());
+  const many={...account,accounts:Array.from({length:20},(_,i)=>({address:'0x'+String(i).padStart(40,'0'),networks:['Base']}))};
+  await f.page.evaluate(async account=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.connectionView({window:'metamask',stage:'linked',account,compact:true,supportedActions:['copy-address']}));},many);
+  for(const index of [8,19]){const b=f.page.locator(`[data-focus-key="copy-address:${many.accounts[index].address}"]`);await b.scrollIntoViewIfNeeded();await b.click();const r=await b.boundingBox();assert(r.y>=0&&r.y+r.height<=182,'ninth and last account controls stay reachable');}
+  const hashArgs=fixtureArguments(states.find(r=>r.designState==='walletconnect/transaction-wallet-error'),{compact:true});hashArgs[0].transactionHash='0x'+'ab'.repeat(32);await mount(hashArgs);
+  const hash=f.page.locator('.connection-hash');assert.equal(await hash.textContent(),hashArgs[0].transactionHash);assert.equal(await hash.evaluate(e=>getComputedStyle(e).userSelect),'text');assert.equal(await f.page.locator('a').count(),0);
+  assert.equal(await hash.evaluate(e=>{const range=document.createRange();range.selectNodeContents(e);const s=getSelection();s.removeAllRanges();s.addRange(range);return s.toString();}),hashArgs[0].transactionHash);await hash.scrollIntoViewIfNeeded();await f.page.screenshot({path:proof.path+'/completion-failure-hash-'+engine+'.png'});
   receipts.push({engine,stages:live.length,supportedActionPaths:states.length+live.length,pickerRows:21,qr:box,result:'PASS'});
  }finally{await f.close();}
 });
