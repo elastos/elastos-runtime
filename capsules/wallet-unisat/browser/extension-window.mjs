@@ -46,7 +46,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       // A stored link names its recorded network, not a fresh provider read.
       return [networkName(chain)];
     };
-    return { name: kind === 'metamask' ? 'MetaMask' : 'UniSat', mark: kind, connection: null,
+    return { name: kind === 'metamask' ? 'Browser wallet' : 'UniSat', mark: kind === 'metamask' ? 'wallet' : kind, connection: null,
       accounts: rows.map(row => ({ address: row.address, networks: networks(row.chain_namespace) })) };
   }
 
@@ -87,13 +87,26 @@ export function startExtensionWindow(kind, homeClipboard) {
     return Number.isSafeInteger(deadline) ? Math.min(86400, Math.max(0, deadline - now())) : 0;
   }
 
+  // Preserve a reused live region, and isolate each dynamic value just as
+  // the shared renderer does. This is the two-copy fallback missing in r5.
+  function feedbackText(node, parts) {
+    const text = parts.map(part => typeof part === 'string' ? part : part.value).join('');
+    if (node.textContent === text) return;
+    node.replaceChildren(...parts.map(part => {
+      if (typeof part === 'string') return document.createTextNode(part);
+      const value = document.createElement('bdi');
+      value.dir = 'auto'; value.className = 'connection-isolated'; value.textContent = part.value;
+      return value;
+    }));
+  }
+
   // Home owns every effect. These are the intents this v1 window can perform.
   const supported = ['connect', 'restore-access', 'send-message', 'send-request',
     'stop-waiting', 'close-window', 'copy-address', 'select-request', 'view-requests', 'refresh-status'];
   function draw() {
     if (disposed) return;
     const changedDuringRequest = selected && (disconnected || accountEvent && !sameAccount(accountEvent[0], selected.address));
-    const provider = { providerId: kind === 'metamask' ? 'io.metamask' : 'unisat', alternatives: [], availability: providerAvailability,
+    const provider = { providerId: kind === 'metamask' ? null : 'unisat', alternatives: [], availability: providerAvailability,
       firstAccount: null, requiredAccountAvailable: null, network: null, networkIssue: null, access: 'unknown', busy: false, paymentPending: null };
     const viewStage = refusal ? 'request-dismissed' : stage;
     const view = connectionView({ window: kind, stage: viewStage, provider,
@@ -112,14 +125,15 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (refusal) {
       root.dataset.state = 'request-consumed';
       root.dataset.extensionFeedback = 'consumed';
-      const wallet = kind === 'metamask' ? 'MetaMask' : 'UniSat';
-      const needed = refusal.cause === 'account' ? `account ${refusal.address}` : `network ${refusal.network}`;
-      root.querySelector('.connection-status').textContent = `${wallet} was using a different ${refusal.cause}. This request needed ${needed}.`;
-      root.querySelector('.connection-notice').textContent = `This request can no longer be sent. Select ${needed} in ${wallet}. After switching, return to ${selected.app} and make a new request.`;
+      const wallet = kind === 'metamask' ? 'your browser wallet' : 'UniSat';
+      const needed = refusal.cause === 'account' ? refusal.address : refusal.network;
+      const app = selected.actor === 'browser' && selected.site ? selected.site : selected.app;
+      feedbackText(root.querySelector('.connection-status'), [wallet[0].toUpperCase()+wallet.slice(1), ` was using a different ${refusal.cause}. This request needed ${refusal.cause} `, {value:needed}, '.']);
+      feedbackText(root.querySelector('.connection-notice'), [`This request can no longer be sent. Select ${refusal.cause} `, {value:needed}, ` in ${wallet}. After switching, return to `, {value:app}, ' and make a new request.']);
     } else if (['request-wallet-error', 'transaction-wallet-error'].includes(stage)) {
       root.dataset.extensionFeedback = 'unknown-error';
-      root.querySelector('.connection-status').textContent = 'Home could not finish this request.';
-      root.querySelector('.connection-notice').textContent = 'Check your wallet and Wallet activity before making another request.';
+      feedbackText(root.querySelector('.connection-status'), [selected.transaction ? 'Home could not finish this request. The transaction may have been sent.' : 'Home could not finish this request.']);
+      feedbackText(root.querySelector('.connection-notice'), ['Check your wallet and Wallet activity before making another request.']);
     }
     // Some R5 outcome tables still offer only navigation that v1 cannot do.
     // Until the shared capability fallback covers them, reuse its Close part.
@@ -224,7 +238,9 @@ export function startExtensionWindow(kind, homeClipboard) {
             address: selected.address, network: kind === 'unisat' ? 'Bitcoin mainnet' : networkName(requestNetworks.get(selected.id)), knownIds: requests.map(request => request.request_id) };
           fixedOutcome = true; stage = 'request-consumed';
           requests = requests.filter(request => request.request_id !== selected.id);
-          draw(); void refresh();
+          draw();
+          if (refreshing) await refreshing;
+          await refresh();
         } else { stage = preflightFailure; draw(); }
         return;
       }

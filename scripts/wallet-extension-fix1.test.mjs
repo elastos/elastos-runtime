@@ -9,7 +9,7 @@ const breaks = {
   K07:s=>s.replace('data.value.length > 8','data.value.length > 800'),
   K12:s=>s.replace('mountConnection(mount, view, presentation)', 'mountConnection(mount, view, null)'),
   K14:s=>s.replace("event.source !== window.top || event.origin !== homeOrigin || data?.type !== 'home:wallet-connector-event'","data?.type !== 'home:wallet-connector-event'"),
-  B1:s=>s.replace("root.querySelector('.connection-status').textContent = `${wallet} was using a different ${refusal.cause}. This request needed ${needed}.`;","root.querySelector('.connection-status').textContent = 'This request is unavailable.';"),
+  B1:s=>s.replace("[wallet[0].toUpperCase()+wallet.slice(1), ` was using a different ${refusal.cause}. This request needed ${refusal.cause} `, {value:needed}, '.']", "['This request is unavailable.']"),
   X1:s=>s.replace("root.dataset.extensionFeedback = 'consumed';", "root.dataset.extensionFeedback = 'consumed'; root.querySelector('.connection-actions').append(renderConnection(document, connectionView({window:kind,stage:'request-waiting',summary:selected,account:accountView(),waitSeconds:remaining(),supportedActions:['send-request']})).querySelector('button'));"),
   X2:s=>s.replace("if (!next) { draw(); return; }", "if (!next) { refusal = null; stage = 'request-unavailable'; draw(); return; }"),
   X3:s=>s.replace("'Switch to the linked account before approving.', ", ""),
@@ -240,8 +240,8 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   try {
     const f=await fixture(browser,kind,{saved:true,requests:true});try{
       await f.state('request-waiting');await f.action('send-request').click();await f.state('request-done');
-      assert.equal(await f.frame.locator('h1').innerText(),kind==='metamask'?'MetaMask':'UniSat');
-      assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'),new RegExp('connection-'+kind));
+      assert.equal(await f.frame.locator('h1').innerText(),kind==='metamask'?'Browser wallet':'UniSat');
+      assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'),new RegExp('connection-'+(kind==='metamask'?'wallet':kind)));
       // Existing response schema permits these statuses. This is a projection
       // check: today's pending-only Runtime endpoint normally omits them.
       for(const [status,approved_at,state] of [['rejected',null,'request-rejected'],['rejected',1,'request-dismissed']]) {

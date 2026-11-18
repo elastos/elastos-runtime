@@ -46,7 +46,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       // A stored link names its recorded network, not a fresh provider read.
       return [networkName(chain)];
     };
-    return { name: kind === 'metamask' ? 'MetaMask' : 'UniSat', mark: kind, connection: null,
+    return { name: kind === 'metamask' ? 'Browser wallet' : 'UniSat', mark: kind === 'metamask' ? 'wallet' : kind, connection: null,
       accounts: rows.map(row => ({ address: row.address, networks: networks(row.chain_namespace) })) };
   }
 
@@ -93,7 +93,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   function draw() {
     if (disposed) return;
     const changedDuringRequest = selected && (disconnected || accountEvent && !sameAccount(accountEvent[0], selected.address));
-    const provider = { providerId: kind === 'metamask' ? 'io.metamask' : 'unisat', alternatives: [], availability: providerAvailability,
+    const provider = { providerId: kind === 'metamask' ? null : 'unisat', alternatives: [], availability: providerAvailability,
       firstAccount: null, requiredAccountAvailable: null, network: null, networkIssue: null, access: 'unknown', busy: false, paymentPending: null };
     const viewStage = refusal ? 'request-dismissed' : stage;
     const view = connectionView({ window: kind, stage: viewStage, provider,
@@ -112,7 +112,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (refusal) {
       root.dataset.state = 'request-consumed';
       root.dataset.extensionFeedback = 'consumed';
-      const wallet = kind === 'metamask' ? 'MetaMask' : 'UniSat';
+      const wallet = kind === 'metamask' ? 'your browser wallet' : 'UniSat';
       const needed = refusal.cause === 'account' ? `account ${refusal.address}` : `network ${refusal.network}`;
       root.querySelector('.connection-status').textContent = `${wallet} was using a different ${refusal.cause}. This request needed ${needed}.`;
       root.querySelector('.connection-notice').textContent = `This request can no longer be sent. Select ${needed} in ${wallet}. After switching, return to ${selected.app} and make a new request.`;
@@ -224,7 +224,9 @@ export function startExtensionWindow(kind, homeClipboard) {
             address: selected.address, network: kind === 'unisat' ? 'Bitcoin mainnet' : networkName(requestNetworks.get(selected.id)), knownIds: requests.map(request => request.request_id) };
           fixedOutcome = true; stage = 'request-consumed';
           requests = requests.filter(request => request.request_id !== selected.id);
-          draw(); void refresh();
+          draw();
+          if (refreshing) await refreshing;
+          await refresh();
         } else { stage = preflightFailure; draw(); }
         return;
       }

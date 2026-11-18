@@ -3,3 +3,4 @@
 /* The local consumed-refusal copy names the full required account. */
 [data-extension-feedback] .connection-status,
 [data-extension-feedback] .connection-notice { overflow-wrap: anywhere; }
+[data-extension-feedback] .connection-isolated { display: inline; white-space: normal; overflow-wrap: anywhere; }
