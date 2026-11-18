@@ -10,6 +10,14 @@ const output=process.env.WALLETCONNECT_WINDOW_SCREENS;
 const sourceIdentity={commit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),dirty:Boolean(execFileSync('git',['status','--porcelain','--untracked-files=no'],{encoding:'utf8'}).trim())};
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn,label,ms=20000){const end=Date.now()+ms;while(!await fn()){assert.ok(Date.now()<end,label);await pause(25);}}
+async function focusWithKeyboard(r,action){
+ await r.page.bringToFront();await r.frame.locator('body').evaluate(body=>{body.tabIndex=-1;body.focus({preventScroll:true});});
+ let focus;for(let i=0;i<12;i++){await r.page.keyboard.press('Tab');focus=await r.frame.evaluate(()=>({focused:document.hasFocus(),action:document.activeElement?.dataset.action}));if(focus.focused&&focus.action===action)break;}
+ assert.deepEqual(focus,{focused:true,action},'native keyboard owns the connector before its redraw');
+}
+async function refreshAndWaitForRedraw(r){
+ const previous=await r.frame.locator('main').elementHandle();await r.refresh();await previous.waitForElementState('hidden',{timeout:20000});await previous.dispose();
+}
 async function setup(t,engine,mutation){
  const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
  const engines=await importProductSmokePlaywright(),browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
@@ -88,7 +96,7 @@ for(const engine of ['chromium','webkit']){
   assert.equal(await r.frame.getByRole('button',{name:'Cancel',exact:true}).count(),0,'sent proof uses Stop waiting');
   await until(()=>r.peer.trace.some(e=>e.kind==='request'),'phone receives proof');await r.peer.answer('sign');await r.state('linked');assert.equal(r.fixture.state.verified,1);assert.doesNotMatch(await r.frame.locator('main').innerText(),/Connection link copied/);assert.equal(r.fixture.state.accounts[0].chain_namespace,'eip155:8453');await r.capture('linked');
   await r.approval();await r.state('request-waiting');await r.capture('request-waiting');
-  await r.frame.locator('[data-action="send-request"]').focus();await r.refresh();assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.action),'send-request','redraw keeps keyboard focus');
+  await focusWithKeyboard(r,'send-request');await refreshAndWaitForRedraw(r);assert.deepEqual(await r.frame.evaluate(()=>({focused:document.hasFocus(),action:document.activeElement?.dataset.action})),{focused:true,action:'send-request'},'foreground redraw keeps native keyboard focus');
   await r.click('send-request');await r.state('request-phone');await r.capture('request-phone');assert.equal(r.fixture.state.approvals[0].status,'approved');
   await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'phone receives message');await r.peer.answer('sign');await r.state('request-done');assert.equal(r.fixture.state.completed,1);await r.capture('request-done');
   await r.reopen();await r.state('linked');await r.click('disconnect');await r.state('disconnected');await r.capture('disconnected');await r.link();
@@ -129,6 +137,7 @@ for(const [name,mutation,probe] of [
  ['Cancel after dispatch',{file:'wallet-walletconnect.js',from:'const tree = renderConnection(document,currentView);',to:"const tree = renderConnection(document,currentView);for(const b of tree.querySelectorAll('[data-action=stop-waiting]'))b.textContent='Cancel';"},'sent'],
  ['stale view after answer',{file:'wallet-walletconnect.js',from:"outcome=result.effect === 'transaction' ? 'transaction-done' : 'request-done'",to:"outcome=result.effect === 'transaction' ? 'transaction-phone' : 'request-phone'"},'answered'],
  ['drawing outside shared view',{file:'wallet-walletconnect.js',from:'root.replaceChildren(tree);renderKey=key;',to:"root.replaceChildren(tree);renderKey=key;document.body.append(Object.assign(document.createElement('p'),{textContent:'outside'}));"},'tree'],
+ ['lost keyboard focus after redraw',{file:'wallet-walletconnect.js',from:'if(target)target.focus({preventScroll:true});',to:'if(target)document.body.focus();'},'focus'],
 ])test(`independent live guard rejects deliberate ${name}`,{timeout:60000},async t=>{
  const r=await setup(t,'chromium',mutation);
  let caught=false;
@@ -141,6 +150,7 @@ for(const [name,mutation,probe] of [
   r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');
   caught=await r.frame.getByRole('button',{name:'Cancel',exact:true}).count()>0;
  }
+ if(probe==='focus'){await r.link();await r.approval();await focusWithKeyboard(r,'send-request');await refreshAndWaitForRedraw(r);caught=await r.frame.evaluate(()=>document.activeElement?.dataset.action!=='send-request');}
  if(probe==='answered'){
   await r.link();await r.approval();await r.click('send-request');await until(()=>r.fixture.state.completed===1,'signature really completed');await pause(200);
   caught=await r.frame.locator('main').getAttribute('data-state')!=='request-done';
