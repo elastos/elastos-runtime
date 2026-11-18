@@ -35,7 +35,7 @@ for (const [name,approved,rejection] of [['Base only',['eip155:8453']],['unsuppo
         await wallet.approve({id:event.id,namespaces:{eip155:{chains:approved,accounts:approved.map(chain=>`${chain}:0x${'12'.repeat(20)}`),methods:['personal_sign','eth_sendTransaction'],events:['accountsChanged','chainChanged']}}});
       });
       wallet.on('session_request',async event=>{requests.push(event.params);await wallet.respond({topic:event.topic,response:{jsonrpc:'2.0',id:event.id,...(rejection ? {error:{code:rejection.code,message:rejection.message||'User rejected.'}} : {result:`0x${'ab'.repeat(65)}`})}});});
-      const {chromium}=await importProductSmokePlaywright();browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
+      const engine=process.env.WALLETCONNECT_TEST_ENGINE || 'chromium',engines=await importProductSmokePlaywright();browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
       page=await browser.newPage();
       await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
       await page.exposeBinding('pairTestWallet',(_source,uri)=>wallet.core.pairing.pair({uri}));

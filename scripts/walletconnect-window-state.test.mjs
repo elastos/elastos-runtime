@@ -181,3 +181,10 @@ for(const requests of [[],[request]])test(`owner-only recovery with ${requests.l
  assert.equal(view.stage,'guest-access');assert.ok(view.actions.some(action=>action.id==='check-status'));
  assert.equal(view.actions.some(action=>action.id==='back-to-connection'),false,'the owner-only gate has no local return transition');
 });
+
+
+test('a network-only change uses the supported shared account-confirmation screen',()=>{
+ const view=walletConnectView(windowPresentation({...initial,connection:{session:{...session,chain:'eip155:1'}},walletChanged:true,walletChange:'network-changed'},now));
+ assert.equal(view.stage,'saved-unlinked');
+ assert.equal(view.connectionNotice.map(part=>part.text).join(''),'Your wallet is using a different network.');
+});

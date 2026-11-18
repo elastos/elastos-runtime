@@ -53,6 +53,7 @@ export function windowPresentation(state, nowSeconds) {
     else if (!isWalletConnectNetwork(session.chain)) stage='network-unsupported';
   }
   if (stage==='transaction-wallet-removed' && /^0x[0-9a-fA-F]{64}$/.test(state.unrecordedHash || '')) stage='transaction-wallet-error';
+  if (stage === 'account-changed' && state.walletChange === 'network-changed') stage='saved-unlinked';
   const requestAccount = request && (screens.walletconnect[stage].request || screens.walletconnect[stage].optionalRequest);
   const confirming = (stage.startsWith('link-') && screens.walletconnect[stage].selectedAccount || stage === 'checking-response' && state.effectPhase === 'ownership') && state.proofAccount;
   const current = requestAccount ? {address:request.address,chain:request.chain_namespace} : confirming || session || null;
@@ -60,7 +61,6 @@ export function windowPresentation(state, nowSeconds) {
   const waitDeadline = ['link-wait','request-phone','transaction-phone'].includes(stage) ? state.deadline : request?.expires_at;
   const waitSeconds = Math.max(0,Math.min(86400,(waitDeadline || nowSeconds + 300)-nowSeconds));
   const walletResult = stage === 'transaction-declined' ? {disposition:'declined',receipt:null} : undefined;
-  if (stage === 'account-changed' && state.walletChange === 'network-changed') stage='network-changed';
   const selectionNotice=state.walletChanged && session?.address ? !isWalletConnectNetwork(session.chain) ? 'network-unsupported' : state.walletChange || 'account-changed' : undefined;
   const notice = connection?.removed ? 'connection-removed' : connection?.expired ? 'connection-expired' : selectionNotice || (!expired && permission === 'granted' && session && connection.relayConnected === false ? 'transport-reconnecting' : undefined);
   const connectionNotice=notice === stage ? undefined : notice;

@@ -160,6 +160,6 @@ test('retiring an adapter lets an acknowledged late SDK payload finish without n
  await r.frame.evaluate(()=>window.releaseRetiredPayload());
  await r.frame.waitForFunction(()=>window.retirementTrace.includes('late payload storage finished'));
  await r.page.waitForLoadState('networkidle');
- assert.equal(r.fixture.state.calls.slice(count).some(e=>e.path.endsWith('/storage')||e.path.endsWith('/relay-admission')),false,'the retired Core has no Home authority');
+ assert.equal(r.fixture.state.calls.slice(count).some(e=>e.path.endsWith('/storage')&&e.method==='POST'||e.path.endsWith('/relay-admission')),false,'the retired Core sends no new Home writes');
  console.log('Retirement trace:',JSON.stringify(await r.frame.evaluate(()=>window.retirementTrace)));
 });

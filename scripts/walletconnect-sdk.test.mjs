@@ -4,7 +4,7 @@ import http from "node:http";
 import { readFileSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const engines = require("playwright");
 const bundle = readFileSync(new URL("../capsules/wallet-walletconnect/vendor/reown-appkit.js", import.meta.url));
 
 const fixture = readFileSync(new URL("./lib/walletconnect-browser-fixture.mjs", import.meta.url));
@@ -20,7 +20,8 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
   const origin = `http://127.0.0.1:${server.address().port}`;
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
+    const engine = process.env.WALLETCONNECT_TEST_ENGINE || "chromium";
+    browser = await engines[engine].launch({ headless: true });
     for (const width of [1280, 390]) {
       const context = await browser.newContext({ viewport: { width, height: 800 } });
       // CSP remains the same Home-only network boundary used by the product.

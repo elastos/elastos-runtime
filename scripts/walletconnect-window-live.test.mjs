@@ -8,9 +8,9 @@ import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 const output=process.env.WALLETCONNECT_WINDOW_SCREENS;
 for(const engine of ['chromium','webkit'])for(const change of ['supported network','unsupported network','empty accounts'])test(`selection notice says only the true sentence for ${change} in ${engine}`,{timeout:60000},async t=>{
- const r=await setup(t,engine);await r.link();
+ const r=await setup(t,engine);r.peer.choose({chains:['eip155:8453',change==='unsupported network'?'eip155:137':'eip155:1']});await r.link();
  if(change==='empty accounts')await r.peer.emptyAccounts();else await r.peer.changeChain(change==='supported network'?'eip155:1':'eip155:137');
- const stage=change==='empty accounts'?'account-unavailable-unknown':change==='supported network'?'network-changed':'network-unsupported';
+ const stage=change==='empty accounts'?'account-unavailable-unknown':change==='supported network'?'saved-unlinked':'network-unsupported';
  await r.state(stage);
  const text=await r.frame.locator('main').innerText();
  const sentence=change==='empty accounts'?'Your wallet is not showing an account.':change==='supported network'?'Your wallet is using a different network.':'This network is not supported here.';
@@ -201,7 +201,7 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
   await r.page.route('**/internet',route=>route.request().method()==='GET'?route.fulfill({status:503,body:'Fixture Home status unavailable'}):route.continue());
   await r.peer.deleteConnection();
  }
- if(event==='account'||event==='session-account'||event==='network'||event==='empty')await r.state(phase==='signature'?'request-busy':phase==='result'?'request-done':event==='empty'?'account-unavailable-unknown':event==='network'?'network-changed':'account-changed');
+ if(event==='account'||event==='session-account'||event==='network'||event==='empty')await r.state(phase==='signature'?'request-busy':phase==='result'?'request-done':event==='empty'?'account-unavailable-unknown':event==='network'?'saved-unlinked':'account-changed');
  else if(event==='removed')await r.state(phase==='signature'?'request-sent-wallet-removed':phase==='result'?'request-done':'wallet-removed');
  else await pause(250);
  if(event==='removed'&&phase==='result')await r.frame.getByText(/Your wallet removed this connection\./).waitFor();

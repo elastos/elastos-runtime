@@ -276,7 +276,12 @@ async function handleApi(req, res, url) {
   for (const [target, token] of Object.entries(connectorTokens)) {
     if (url.pathname === `/api/apps/${target}/internet` && req.method === "GET") {
       if (!requireToken(req, token, res)) return true;
-      json(res, 200, { status: "off" });
+      json(res, 200, { status: "granted" });
+      return true;
+    }
+    if (target === "wallet-walletconnect" && req.method === "GET" && ["wallet/config", "storage"].some(resource => url.pathname === `/api/apps/${target}/${resource}`)) {
+      if (!requireToken(req, token, res)) return true;
+      json(res, 200, url.pathname.endsWith("/wallet/config") ? { walletconnect: { project_id: "fixture-project", storage_revision: '\"0\"' } } : {});
       return true;
     }
     if (
@@ -659,7 +664,7 @@ try {
       await homeGui.locator('.window[data-target="wallet-metamask"] .window-head').click({position:{x:80,y:14}});
     }
     if (target === "wallet-walletconnect") {
-      state.approvalRequests = [{request_id:"wc-return",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"New request on Home return",chain_namespace:"eip155:20"}];
+      state.approvalRequests = [{request_id:"wc-return",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"New request on Home return",address:"0x"+"12".repeat(20),expires_at:Math.floor(Date.now()/1000)+600,chain_namespace:"eip155:20"}];
       await homeGui.locator('.window[data-target="wallet-walletconnect"] [data-action="minimize"]').click();
       await wallet.evaluate(() => document.querySelector('[data-wallet-open-method="wallet-walletconnect"]').click());
       await waitFor(() => state.launches["wallet-walletconnect"] === 2, 5000, "WalletConnect return launch");

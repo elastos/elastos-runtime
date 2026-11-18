@@ -40,11 +40,16 @@ test("the real adapter resumes restored sessions and refreshes authority before 
   await sdkOptions.storage.setItem("session", { topic: "same-pairing" });
   assert.equal(calls.at(-1)[0], "fresh");
   assert.equal(initialized, 1);assert.equal(opened, 2);
+  const retiredStorage = sdkOptions.storage;
   await disconnectWalletConnectEvm({ api });
   assert.equal(disconnected, 1);assert.equal(closed, 1);
   assert.equal(calls.some(call => call[1].includes("account")), false, "disconnect leaves wallet-provider accounts intact");
   assert.equal(await connectWalletConnectEvm({ ...options, contextKey: "principal-two", api }), providers[1]);
   assert.equal(initialized, 2);
+  const callsBeforeRetiredCore = calls.length;
+  await retiredStorage.setItem("late-old-session", "obsolete");
+  assert.deepEqual(await retiredStorage.getKeys(), []);
+  assert.equal(calls.length, callsBeforeRetiredCore, "a new Core cannot restore the retired Core's storage authority");
   assert.equal(paired, 0);
   providers[1].session.expiry = 1;
   let removed = 0;
