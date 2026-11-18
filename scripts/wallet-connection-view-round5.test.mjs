@@ -17,9 +17,10 @@ const reduce=(window,patch={},input={},api=product)=>api.reduceConnection({windo
 const words=v=>product.viewText(v.notice);
 function busyGuard(api=product){for(const window of ['metamask','unisat','walletconnect'])for(const stage of ['extension-busy','link-busy','request-busy']){
  if(!api.stageNames[window].includes(stage))continue;
- for(const supportedActions of [undefined,[],['close-window'],['check-access'],['check-access','close-window']]){
-  const v=reduce(window,{}, {stage,localSafety:null,waitSeconds:300,supportedActions},api);const notice=api.viewText(v.notice);
-  assert.match(notice,/An operation may still be waiting/);assert.match(notice,/Home cannot tell whether another window has payment work/);assert.match(notice,/Wallet activity/);assert.doesNotMatch(notice,/reload/i);
+ for(const transaction of [false,true])for(const supportedActions of [undefined,...Array.from({length:8},(_,mask)=>['close-window','check-access','check-status'].filter((_,i)=>mask&(1<<i)))]){
+  const v=reduce(window,transaction?{intent:'transaction_intent'}:{}, {stage,localSafety:null,waitSeconds:300,supportedActions},api);const notice=api.viewText(v.notice);
+  if(transaction&&stage==='request-busy'){assert.match(notice,/The transaction may still be waiting/);assert.doesNotMatch(notice,/another window/);}else{assert.match(notice,/An operation may still be waiting/);assert.match(notice,/Home cannot tell whether another window has payment work/);}
+  assert.match(notice,/Wallet activity/);assert.doesNotMatch(notice,/reload/i);
  }
 }}
 test('R5 F-B: every unknown busy notice survives every supported-action subset',()=>busyGuard());
@@ -47,11 +48,13 @@ test('R5: canonical titles equal both raw integration sources including the unkn
  assertTitleSourceBlobs();await titleGuard();
  const broken=structuredClone(sourceFixture.files);broken[rustPath].source=broken[rustPath].source.replace('Wallet approval request','Wrong unknown title');await assert.rejects(()=>titleGuard(product,broken),/Wallet and Inbox/);
 });
-test('R5: extension recovery uses one common sentence',()=>{for(const stage of ['request-expired','request-wallet-error']){const models=['metamask','unisat'].map(window=>reduce(window,{requesting_app_name:'Browser'}, {stage}));assert.equal(words(models[0]),words(models[1]));assert.equal(words(models[0]),'To try again, return to Browser and make a new request.');}});
-test('R5: absent or unidentified extensions use neutral copy and verified Brave keeps its name',()=>{
- for(const window of ['metamask','unisat'])for(const stage of ['extension-missing','extensions-unavailable','link-wait']){const v=product.connectionView({window,stage,waitSeconds:300});assert.doesNotMatch([product.viewText(v.status),words(v),v.title].join(' '),/Enable|MetaMask|UniSat/);}
- const provider=shared.messages.find(r=>r.id==='state-com.brave.wallet').message.snapshot;const v=product.connectionView({window:'metamask',stage:'link-wait',provider,waitSeconds:300});assert.equal(v.title,'Brave Wallet');assert.match(product.viewText(v.status)+words(v),/Brave Wallet/);assert.doesNotMatch(product.viewText(v.status)+words(v),/MetaMask/);
-});
+function commonGuard(api=product){for(const stage of ['request-expired','request-wallet-error']){const models=['metamask','unisat'].map(window=>reduce(window,{requesting_app_name:'Browser'}, {stage},api));assert.equal(api.viewText(models[0].notice),api.viewText(models[1].notice));assert.equal(api.viewText(models[0].notice),'To try again, return to Browser and make a new request.');}}
+test('R5: extension recovery uses one common sentence',()=>commonGuard());
+function neutralGuard(api=product){
+ for(const window of ['metamask','unisat'])for(const stage of ['extension-missing','extensions-unavailable','link-wait']){const v=api.connectionView({window,stage,waitSeconds:300});assert.doesNotMatch([api.viewText(v.status),api.viewText(v.notice),v.title].join(' '),/Enable|MetaMask|UniSat/);}
+ const provider=shared.messages.find(r=>r.id==='state-com.brave.wallet').message.snapshot;const v=api.connectionView({window:'metamask',stage:'link-wait',provider,waitSeconds:300});assert.equal(v.title,'Brave Wallet');assert.match(api.viewText(v.status)+api.viewText(v.notice),/Brave Wallet/);assert.doesNotMatch(api.viewText(v.status)+api.viewText(v.notice),/MetaMask/);
+}
+test('R5: absent or unidentified extensions use neutral copy and verified Brave keeps its name',()=>neutralGuard());
 const proof=await temporaryProof('wallet-view-r5-',process.env.WALLET_VIEW_PROOF_DIR),receipts=[];test.after(async()=>{try{await writeFile(proof.path+'/round5.json',JSON.stringify(receipts,null,2)+'\n');}finally{await proof.cleanup();}});
 async function variant(engine,mutate,run){const f=await browserFixture(engine,{width:320,height:182});try{
  if(mutate){const source=readFileSync(new URL('../capsules/_shared/wallet-connection-view.mjs',import.meta.url),'utf8'),changed=mutate(source);assert.notEqual(changed,source,'browser source break applies');await f.context.route('**/wallet-connection-view.mjs',route=>route.fulfill({contentType:'text/javascript',body:changed}));}
@@ -105,4 +108,9 @@ test('R5: capability copy cannot replace a returned transaction recovery or its 
 });
 test('R5: a dismissed record retains a subsequently supplied known transaction result',()=>{
  const v=product.reduceConnection({window:'metamask',stage:'transaction-wallet-error'},{summary:raw('metamask',{intent:'transaction_intent',status:'rejected',approved_at:1800000000}),message:shared.messages.find(r=>r.id==='settled-answered').message,nowSeconds:1800000001});assert.equal(v.stage,'transaction-done');assert.equal(v.request.status,'dismissed');assert.match(product.viewText(v.status),/Transaction sent/);
+});
+
+test('R5: common recovery and neutral-identity guards reject broken screen definitions',async()=>{
+ for(const [editScreens,guard]of [[s=>{s.unisat['request-wallet-error'].notice='Start a different request.';},commonGuard],[s=>{s.unisat['extension-missing'].notice='Enable UniSat in this browser.';},neutralGuard]])await withTestView({editScreens},api=>assert.throws(()=>guard(api),assert.AssertionError));
+ await withTestView({mutateSource:s=>s.replace("'com.brave.wallet': 'Brave Wallet'","'com.brave.wallet': 'MetaMask'")},api=>assert.throws(()=>neutralGuard(api),assert.AssertionError));
 });
