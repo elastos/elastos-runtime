@@ -222,7 +222,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
   });
 }
 
-test('live-window regression oracle rejects five deliberate breaks', { timeout: 50000 }, async () => {
+test('live-window regression oracle rejects deliberate breaks', { timeout: 50000 }, async () => {
   const browser = await playwright.chromium.launch({ headless: true });
   try {
     const mutations = [
@@ -260,11 +260,24 @@ test('live-window regression oracle rejects five deliberate breaks', { timeout: 
         await f.top.waitForFunction(() => testState.receipts.length === 1);
         await f.state('account-unavailable');
       }],
+      ['inactive window revived', s => s.replace("if (stage === 'window-expired') fixedOutcome = true;", ''), async f => {
+        await f.action('connect').click(); await f.state('linked');
+        await f.context.route('**/api/**', route => route.fulfill({ status: 403, json: { error: 'authority ended' } }));
+        await f.frame.evaluate(() => {
+          window.expiryEventSeen = false;
+          addEventListener('message', e => { if (e.data?.type === 'home:wallet-connector-event') expiryEventSeen = true; });
+          dispatchEvent(new Event('focus'));
+        });
+        await f.state('window-expired');
+        await f.top.evaluate(() => emitWallet('chainChanged', '0x14'));
+        await f.frame.waitForFunction(() => expiryEventSeen);
+        await f.state('window-expired');
+      }],
     ];
     for (const [name, mutate, oracle] of mutations) {
       const source = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
       assert.notEqual(mutate(source), source, name + ' mutation applies');
-      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: !['state mapped wrong', 'accepted proof after disconnect'].includes(name), mutate });
+      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived'].includes(name), mutate });
       try { await assert.rejects(oracle(f), undefined, name + ' must fail the live oracle'); }
       finally { await f.context.close(); }
     }
@@ -295,6 +308,37 @@ for (const kind of ['metamask', 'unisat']) test(`${kind}: a failed Home read is 
       const f = await fixture(browser, kind, { readFailure: status });
       try { await f.state(state); assert.equal(await f.top.evaluate(() => testState.effects.length), 0); }
       finally { await f.close(); }
+    }
+  } finally { await browser.close(); }
+});
+
+for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) test(`${engine} ${kind}: passive events cannot revive an inactive window`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
+  const browser = await playwright[engine].launch({ headless: true });
+  try {
+    for (const status of [401, 403]) {
+      const f = await fixture(browser, kind, { saved: true });
+      try {
+        await f.action('connect').click(); await f.state('linked');
+        await f.context.route('**/api/**', route => route.fulfill({ status, json: { error: 'authority ended' } }));
+        await f.frame.evaluate(() => {
+          window.expiryEvents = 0;
+          addEventListener('message', e => { if (e.data?.type === 'home:wallet-connector-event') expiryEvents++; });
+          dispatchEvent(new Event('focus'));
+        });
+        await f.state('window-expired');
+        let count = 0;
+        for (const [name, value] of [['accountsChanged', [kind === 'metamask' ? B : V]], [kind === 'metamask' ? 'chainChanged' : 'networkChanged', kind === 'metamask' ? '0x14' : 'testnet'], ['disconnect', {}]]) {
+          await f.top.evaluate(({ name, value }) => emitWallet(name, value), { name, value });
+          await f.frame.waitForFunction(n => expiryEvents === n, ++count);
+          await f.state('window-expired');
+          assert.equal(await f.action('connect').count(), 0);
+          assert.equal(await f.action('send-request').count(), 0);
+        }
+        assert.equal(await f.top.evaluate(() => testState.effects.length), 1);
+        await f.action('close-window').focus(); await f.top.keyboard.press('Enter');
+        await f.top.waitForFunction(() => testState.closed === true);
+        assert.deepEqual(f.errors, []);
+      } finally { await f.close(); }
     }
   } finally { await browser.close(); }
 });

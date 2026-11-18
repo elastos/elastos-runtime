@@ -131,7 +131,7 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   async function refresh() {
     if (disposed || refreshing) return refreshing;
-    if (!frameHomeToken || !homeOrigin || window.top === window) { stage = 'window-expired'; draw(); return; }
+    if (!frameHomeToken || !homeOrigin || window.top === window) { fixedOutcome = true; stage = 'window-expired'; draw(); return; }
     const observedRevision = revision;
     refreshing = (async () => {
       try {
@@ -149,7 +149,13 @@ export function startExtensionWindow(kind, homeClipboard) {
         }
         if (fixedOutcome && selected?.status === 'completed' && !selected.transaction) stage = requests.length ? 'request-next' : 'request-done';
         draw();
-      } catch (error) { if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) { stage = [401, 403].includes(error.status) ? 'window-expired' : 'link-error'; draw(); } }
+      } catch (error) {
+        if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) {
+          stage = [401, 403].includes(error.status) ? 'window-expired' : 'link-error';
+          if (stage === 'window-expired') fixedOutcome = true;
+          draw();
+        }
+      }
       finally { refreshing = null; }
     })();
     return refreshing;
