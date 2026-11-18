@@ -126,3 +126,32 @@ test('planned phone fixture navigation waits for an actual SDK storage POST',{ti
  finally{release();if(reopening)await reopening;}
  await r.frame.locator('[data-state=linked]').waitFor();assert.equal(r.fixture.state.windowLoads,loads+1);assert.equal(await r.frame.evaluate(()=>window.__walletFixtureLifetime.providers.at(-1).signer.client.core.storage.getItem('fixture-drain-guard')),'guard');assert.equal(r.fixture.state.verified,1,'planned navigation preserves the linked session without a new proof');
 });
+
+
+test('retiring an adapter lets an acknowledged late SDK payload finish without new Home writes',{timeout:60000},async t=>{
+ const r=await setup(t);await r.link();
+ await r.frame.evaluate(()=>{
+  const core=window.__walletFixtureLifetime.providers.at(-1).signer.client.core;
+  const record=core.relayer.recordMessageEvent;
+  const trace=window.retirementTrace=[];
+  let release;const held=new Promise(resolve=>release=resolve);
+  window.releaseRetiredPayload=()=>{trace.push('release after disconnect');release();};
+  core.relayer.recordMessageEvent=async function(...args){
+   core.relayer.recordMessageEvent=record;
+   trace.push('acknowledged payload enters recordMessageEvent');
+   await held;
+   try{return await record.apply(this,args);}
+   finally{trace.push('late payload storage finished');}
+  };
+ });
+ t.after(async()=>{if(!r.frame.isDetached())await r.frame.evaluate(()=>window.releaseRetiredPayload?.());});
+ await r.peer.changeAccount();
+ await r.frame.waitForFunction(()=>window.retirementTrace.length===1);
+ await r.frame.locator('[data-action=disconnect]').click();await r.frame.locator('[data-state=disconnected]').waitFor();
+ const count=r.fixture.state.calls.length;
+ await r.frame.evaluate(()=>window.releaseRetiredPayload());
+ await r.frame.waitForFunction(()=>window.retirementTrace.includes('late payload storage finished'));
+ await r.page.waitForLoadState('networkidle');
+ assert.equal(r.fixture.state.calls.slice(count).some(e=>e.path.endsWith('/storage')||e.path.endsWith('/relay-admission')),false,'the retired Core has no Home authority');
+ console.log('Retirement trace:',JSON.stringify(await r.frame.evaluate(()=>window.retirementTrace)));
+});
