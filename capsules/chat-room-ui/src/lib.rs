@@ -566,9 +566,7 @@ impl RoomTransportView {
     fn community_state(&self) -> CommunityState {
         match (self.configured, self.community_joined, self.available) {
             (true, Some(false), _) => CommunityState::Left,
-            (true, Some(true), false)
-                if self.community_state.as_deref() == Some("starting") =>
-            {
+            (true, Some(true), false) if self.community_state.as_deref() == Some("starting") => {
                 CommunityState::Starting
             }
             (true, Some(true), false)
@@ -7912,13 +7910,21 @@ mod tests {
 
     #[test]
     fn community_fix1_state_is_independent_of_designer_wording() {
-        for (state, expected) in [("starting", CommunityState::Starting),
-            ("waiting_for_peers", CommunityState::Waiting), ("reconnecting", CommunityState::Reconnecting)] {
-            for wording in ["Designer changed this sentence.", "", "Community is connected."] {
+        for (state, expected) in [
+            ("starting", CommunityState::Starting),
+            ("waiting_for_peers", CommunityState::Waiting),
+            ("reconnecting", CommunityState::Reconnecting),
+        ] {
+            for wording in [
+                "Designer changed this sentence.",
+                "",
+                "Community is connected.",
+            ] {
                 let view: RoomTransportView = serde_json::from_value(serde_json::json!({
                     "configured": true, "available": false, "community_joined": true,
                     "community_state": state, "status": wording
-                })).unwrap();
+                }))
+                .unwrap();
                 assert_eq!(view.community_state(), expected);
             }
         }
@@ -7926,7 +7932,8 @@ mod tests {
         let old: RoomTransportView = serde_json::from_value(serde_json::json!({
             "configured": true, "available": false, "community_joined": true,
             "status": "Home is starting Community. It is checking the link."
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(old.community_state(), CommunityState::Reconnecting);
     }
 

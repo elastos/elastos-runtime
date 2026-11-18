@@ -1586,7 +1586,10 @@ mod tests {
         config_material_with_bootstraps(with_grant, Vec::new())
     }
 
-    fn config_material_with_bootstraps(with_grant: bool, bootstrap_peers: Vec<crate::collaboration_network::CollaborationBootstrapPeer>) -> ConfigMaterial {
+    fn config_material_with_bootstraps(
+        with_grant: bool,
+        bootstrap_peers: Vec<crate::collaboration_network::CollaborationBootstrapPeer>,
+    ) -> ConfigMaterial {
         let grant_bytes = with_grant.then(|| {
             canonical_default_conversation_grant_bytes(&DefaultConversationGrant {
                 schema: DEFAULT_CONVERSATION_GRANT_SCHEMA_V1.to_string(),
@@ -4965,7 +4968,9 @@ mod tests {
                 return Ok(serde_json::json!({"status":"ok", "data":{"topic":request["topic"]}}));
             }
             if op == "remember_peer" {
-                return Ok(serde_json::json!({"status":"ok", "data":{"added":[self.bootstrap_node_id]}}));
+                return Ok(
+                    serde_json::json!({"status":"ok", "data":{"added":[self.bootstrap_node_id]}}),
+                );
             }
             if op == "get_ticket" {
                 return Ok(serde_json::json!({"status":"ok", "data":self.local_ticket}));
@@ -4976,7 +4981,9 @@ mod tests {
                 );
             }
             Ok(match op {
-                "list_topic_peers" => serde_json::json!({"status":"ok", "data":{"topic":request["topic"], "peers":[self.bootstrap_node_id]}}),
+                "list_topic_peers" => {
+                    serde_json::json!({"status":"ok", "data":{"topic":request["topic"], "peers":[self.bootstrap_node_id]}})
+                }
                 "gossip_topic_health" => {
                     serde_json::json!({"status":"ok", "data":{"topic":request["topic"], "peer_count":1, "received_frames":0, "receiver_alive":true}})
                 }
@@ -5025,15 +5032,30 @@ mod tests {
         // Empty bootstrap lists describe a node that must not rebuild itself.
         // This is a Home fixture with a different, verified local bootstrap.
         fn ticket(key: &iroh::SecretKey) -> String {
-            let addr = iroh::EndpointAddr::from_parts(key.public(), [iroh::TransportAddr::Ip("127.0.0.1:12345".parse().unwrap())]);
-            data_encoding::BASE32_NOPAD.encode(&serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":[addr]})).unwrap()).to_ascii_lowercase()
+            let addr = iroh::EndpointAddr::from_parts(
+                key.public(),
+                [iroh::TransportAddr::Ip("127.0.0.1:12345".parse().unwrap())],
+            );
+            data_encoding::BASE32_NOPAD
+                .encode(
+                    &serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":[addr]}))
+                        .unwrap(),
+                )
+                .to_ascii_lowercase()
         }
         let bootstrap_key = iroh::SecretKey::from_bytes(&[197; 32]);
         let bootstrap_node_id = bootstrap_key.public().to_string();
-        let material = config_material_with_bootstraps(true, vec![crate::collaboration_network::CollaborationBootstrapPeer {
-            node_id: bootstrap_node_id.clone(), connect_ticket: ticket(&bootstrap_key)
-        }]);
-        write_config(temp.path(), &canonical_startup_config_bytes(&config_file(&material)).unwrap());
+        let material = config_material_with_bootstraps(
+            true,
+            vec![crate::collaboration_network::CollaborationBootstrapPeer {
+                node_id: bootstrap_node_id.clone(),
+                connect_ticket: ticket(&bootstrap_key),
+            }],
+        );
+        write_config(
+            temp.path(),
+            &canonical_startup_config_bytes(&config_file(&material)).unwrap(),
+        );
         let config = load_and_accept_collaboration_startup_configuration(temp.path()).unwrap();
         let (key, _) = generate_keypair();
         let local_key = iroh::SecretKey::from_bytes(&key.to_bytes());
@@ -5097,7 +5119,8 @@ mod tests {
         }
         assert!(
             carrier.joined.load(SeqCst),
-            "paced repair restores the absent topic: {:?}", carrier.requests.lock().unwrap()
+            "paced repair restores the absent topic: {:?}",
+            carrier.requests.lock().unwrap()
         );
         assert!(outage.elapsed() <= Duration::from_secs(80));
         assert_eq!(fix1_read_status(&app, &token).await["state"], "connected");

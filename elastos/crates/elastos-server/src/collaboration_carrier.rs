@@ -465,7 +465,8 @@ impl JoinedCollaborationNetwork {
             .context("Carrier missing bootstrap join failed for collaboration recovery")?;
         require_bounded_response(&response)?;
         if response["code"] == "not_joined" {
-            self.pending_join.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.pending_join
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             anyhow::bail!("not_joined: Community topic is waiting for paced repair");
         }
         let joined: JoinExactData = require_ok_response(response, "gossip_join_peers")?;
@@ -666,7 +667,8 @@ impl CommunityLink for JoinedCollaborationNetwork {
     async fn rejoin(&self) -> anyhow::Result<()> {
         if self.pending_join.load(std::sync::atomic::Ordering::Relaxed) {
             self.restore_absent_topic().await?;
-            self.pending_join.store(false, std::sync::atomic::Ordering::Relaxed);
+            self.pending_join
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
         }
         let response = self
@@ -677,7 +679,8 @@ impl CommunityLink for JoinedCollaborationNetwork {
         require_bounded_response(&response)?;
         if response["code"] == "not_joined" {
             self.restore_absent_topic().await?;
-            self.pending_join.store(false, std::sync::atomic::Ordering::Relaxed);
+            self.pending_join
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
         }
         let joined: JoinExactData = require_ok_response(response, "gossip_rejoin")?;
@@ -758,15 +761,24 @@ impl CommunityRecoveryView {
     }
 
     pub(crate) fn state(&self) -> &'static str {
-        if self.connected() { "connected" }
-        else if self.reason == Some("starting") { "starting" }
-        else if self.reason == Some("waiting for Community peers") { "waiting_for_peers" }
-        else { "reconnecting" }
+        if self.connected() {
+            "connected"
+        } else if self.reason == Some("starting") {
+            "starting"
+        } else if self.reason == Some("waiting for Community peers") {
+            "waiting_for_peers"
+        } else {
+            "reconnecting"
+        }
     }
 
     pub(crate) fn next_check_seconds(&self) -> Option<u64> {
         let remaining = self.retry_at.saturating_duration_since(Instant::now());
-        (!remaining.is_zero()).then(|| remaining.as_secs().saturating_add(u64::from(remaining.subsec_nanos() > 0)))
+        (!remaining.is_zero()).then(|| {
+            remaining
+                .as_secs()
+                .saturating_add(u64::from(remaining.subsec_nanos() > 0))
+        })
     }
 
     pub(crate) fn detail(&self) -> String {

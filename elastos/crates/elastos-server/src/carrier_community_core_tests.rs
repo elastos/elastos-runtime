@@ -571,7 +571,11 @@ async fn community_core_real_ended_receiver_repairs_and_delivers_exact_text() {
 async fn community_core_real_missing_topic_is_restored_and_delivers_exact_text() {
     let f = Fixture::start().await;
     f.exchange("before local topic loss").await.unwrap();
-    let left = f.provider.send_raw(&serde_json::json!({"op":"gossip_leave", "topic":f.topic})).await.unwrap();
+    let left = f
+        .provider
+        .send_raw(&serde_json::json!({"op":"gossip_leave", "topic":f.topic}))
+        .await
+        .unwrap();
     assert_eq!(left["status"], "ok");
     let honest = wait_for(|| !f.connected.load(Ordering::SeqCst), 20).await;
     let healthy = wait_for(|| f.connected.load(Ordering::SeqCst), 100).await;

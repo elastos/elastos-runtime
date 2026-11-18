@@ -1108,26 +1108,40 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn community_fix1_chat_view_carries_state_and_countdown_never_says_zero() {
         let f = fixture();
-        for (reason, expected) in [(Some("starting"), "starting"),
+        for (reason, expected) in [
+            (Some("starting"), "starting"),
             (Some("waiting for Community peers"), "waiting_for_peers"),
-            (Some("bootstrap join timed out"), "reconnecting")] {
-            f.port.set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
-                reason, ..Default::default()
-            });
+            (Some("bootstrap join timed out"), "reconnecting"),
+        ] {
+            f.port
+                .set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                    reason,
+                    ..Default::default()
+                });
             let view = serde_json::to_value(f.port.conversation_transport_view()).unwrap();
             assert_eq!(view["community_state"], expected);
             let status = f.port.community_status();
             assert_eq!(status["state"], expected);
             if expected == "reconnecting" {
                 assert!(status["next_retry_seconds"].is_null());
-                assert!(status["detail"].as_str().unwrap().contains("It is checking the link."));
+                assert!(status["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("It is checking the link."));
                 assert!(!status["detail"].as_str().unwrap().contains("0 seconds"));
                 let now = tokio::time::Instant::now();
-                f.port.set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
-                    reason, retry_at: now + std::time::Duration::from_millis(500), ..Default::default()
-                });
+                f.port.set_community_recovery(
+                    crate::collaboration_carrier::CommunityRecoveryView {
+                        reason,
+                        retry_at: now + std::time::Duration::from_millis(500),
+                        ..Default::default()
+                    },
+                );
                 assert_eq!(f.port.community_status()["next_retry_seconds"], 1);
-                assert!(f.port.community_status()["detail"].as_str().unwrap().contains("1 second."));
+                assert!(f.port.community_status()["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("1 second."));
                 tokio::time::advance(std::time::Duration::from_secs(10)).await;
                 assert!(f.port.community_status()["next_retry_seconds"].is_null());
             }
