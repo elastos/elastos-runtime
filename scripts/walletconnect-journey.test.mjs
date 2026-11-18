@@ -66,6 +66,11 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await page.evaluate(()=>inbox.style.display='none');
       const control=wallet.locator(`[data-action="${action}"]:visible`).first();
       for(let i=0;i<3&&!await control.count();i++){
+        if(action==='send-request'&&await wallet.locator('[data-action=view-requests]:visible').count()){
+          await wallet.getByRole('button',{name:'View requests',exact:true}).click();
+          const id=requestId||approvalRequests.find(row=>row.status==='pending')?.request_id;
+          await wallet.locator(`[data-focus-key="select-request:${id}"]`).click();continue;
+        }
         const back=wallet.locator('[data-action=back-to-connection]:visible').first();
         if(await back.count())await back.click();
         else {const cancel=wallet.locator('[data-action=cancel]:visible');if(await cancel.count())await cancel.click();else break;}
@@ -168,7 +173,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const reload=async()=>{
       await Promise.all([walletFrame.waitForNavigation({waitUntil:'load'}),page.waitForResponse(response=>response.url().endsWith('/wallet/approvals')),page.waitForResponse(response=>response.url().endsWith('/wallet/accounts')),walletFrame.evaluate(()=>location.reload())]);
       await wallet.locator('.connection-content').waitFor();
-      if(approvalRequests.length)await wallet.locator('.connection-request').waitFor();
+      if(approvalRequests.length)await wallet.locator('.connection-request,[data-action=view-requests]').first().waitFor();
       await page.evaluate(()=>inbox.style.display='none');
     };
     const settlePermission = async () => {
@@ -256,7 +261,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       const linking=['proposal','ownership'].includes(scope);
       const key=scope==='proposal'?'proposalFailure':'phoneFailure';
       const phoneError=scope==='proposal'&&ending==='timeout'?{message:'The QR code expired. Select Connect wallet for a new one.'}:error;
-      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Account confirmation declined.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'Your wallet did not approve this message.':ending==='timeout'?'Time to answer ran out.':'This request is unavailable. Return to the app and ask for a new request.' : ending==='decline'?'Your wallet did not approve this transaction.':'Transaction result unknown.';
+      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Account confirmation declined.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'your wallet did not approve this message.':ending==='timeout'?'Time to answer ran out.':'This request is unavailable. Return to the app and ask for a new request.' : ending==='decline'?'your wallet did not approve this transaction.':'Transaction result unknown.';
       approvalRequests=linking?[]:[freshRequest(scope==='transaction'?'transaction_intent':'browser_personal_sign')];
       await reload();
       await walletFrame.evaluate(({key,error,sdkError})=>{window[key]=sdkError?Object.assign(new Error(error.message),error.code===undefined?{}:{code:error.code}):error;},{key,error:phoneError,sdkError});
@@ -271,27 +276,31 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
         assert.equal(approvalRequests[0].status,'approved','handoff consumes the pending request');
         if(scope==='transaction')assert.match(await wallet.locator('main').innerText(),/Wallet|wallet/);
         else assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),0,'consumed signature has no Send control');
-        // Dispatch the stale Review once more through the actual click handler.
-        const posts=permissionPosts;
-        await walletFrame.evaluate(()=>{const button=document.createElement('button');button.dataset.action='send-request';button.dataset.walletRequestSign='approval-fixture';document.querySelector('#wallet-window').append(button);button.click();button.remove();});
+        // Home consumes the record after the visible Send was drawn.
+        // Clicking that real control must still read the canonical record.
+        approvalRequests=[freshRequest(scope==='transaction'?'transaction_intent':'browser_personal_sign')];await reload();
+        const stale=wallet.locator('[data-wallet-request-sign="approval-fixture"]');await stale.waitFor();
+        approvalRequests[0].status='approved';const posts=permissionPosts,beforeCompletions=completions;
+        await stale.click();
         await wallet.locator(scope==='transaction'?'[data-state=transaction-wallet-error]':'[data-state=request-unavailable]').waitFor();
         assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),0);
-        await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
-        assert.equal(permissionPosts,posts+1,'second Review reaches admission once but cannot dispatch to the phone');
+        assert.equal(permissionPosts,posts+1,'the stale visible Send reads admission once');
+        assert.equal(completions,beforeCompletions,'the consumed record creates no completion');
         for(const value of ['dark','light']){await theme(value);await shot(`r16-consumed-${scope}-${ending}-${value}`);}
       }
     }
     for(const [chain,key] of [['eip155:137','unsupported'],['eip155:8453','unapproved']]) {
-      approvalRequests=[freshRequest('browser_personal_sign',chain)];await reload();
       if(key==='unsupported') {
+        approvalRequests=[freshRequest('browser_personal_sign',chain)];await reload();
+        await wallet.getByRole('button',{name:'View requests',exact:true}).click();await wallet.locator('[data-focus-key="select-request:approval-fixture"]').click();
         await wallet.locator('[data-state=request-unsendable]').waitFor();
-        assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),0,'an unoffered network has no dead Review action');
-        // An older rendered control also gets the same safe explanation.
-        await walletFrame.evaluate(()=>{const button=document.createElement('button');button.dataset.action='send-request';button.dataset.walletRequestSign='approval-fixture';document.querySelector('#wallet-window').append(button);button.click();button.remove();});
-      } else await invoke('send-request');
+        assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),0,'an unoffered network has no dead Send control');
+      }
+      // A rendered request can become unsupported before its Send is clicked.
+      approvalRequests=[freshRequest()];await reload();const stale=wallet.locator('[data-wallet-request-sign="approval-fixture"]');await stale.waitFor();
+      approvalRequests[0].chain_namespace=chain;await stale.click();
       await wallet.locator(key==='unsupported'?'[data-state=request-unsendable]':'[data-state=request-new-connection]').waitFor();
-      await wallet.locator('main').filter({hasText:/Connected\.|Confirm this account|Connect on|Account confirmation|Time to|Could not|did not|could not|unknown|unavailable|cannot be sent/ }).waitFor();
-      assert.equal(approvalRequests[0].status,'pending','unsupported network stays available for rejection in Wallet');
+      assert.equal(approvalRequests[0].status,'pending','the network guard leaves the request available for rejection in Wallet');
       for(const value of ['dark','light']){await theme(value);await shot(`r16-${key}-${value}`);}
     }
     // A network check can also fail after a consumed signature, when Reject is gone.
@@ -461,7 +470,7 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       await wallet.locator('[data-focus=outcome]').filter({hasText:'Connection cancelled.'}).waitFor();
       await t.test('own Cancel has neutral tone',async()=>assert.equal(await wallet.locator('[data-focus=outcome]').getAttribute('aria-live'),'polite'));
       status='revoked';revision++;keys={};
-      await frame.evaluate(()=>{const button=document.createElement('button');button.dataset.action='connect';document.querySelector('#wallet-window').append(button);button.click();button.remove();});
+      await wallet.getByRole('button',{name:'Connect wallet',exact:true}).click();
       await wallet.locator('[data-focus=outcome]').filter({hasText:permissionText}).waitFor();
       status='refused';await nextPoll();
       await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access is off for WalletConnect.'));

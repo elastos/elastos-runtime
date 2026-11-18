@@ -151,7 +151,7 @@ function draw() {
   const key=`${currentView.stage}:${currentView.request?.id || ''}`;
   mounted=mountConnection(root,currentView,mounted);renderKey=key;
   for (const button of mounted.root.querySelectorAll('[data-action=send-request]')) {button.dataset.walletRequestSign=currentView.request.id;button.dataset.walletRequestIntent=presentation.request.intent;}
-  if(copying)for(const button of mounted.root.querySelectorAll('[data-action=copy-link],[data-action=copy-address]'))button.disabled=true;
+  for(const button of mounted.root.querySelectorAll('[data-action=copy-link],[data-action=copy-address]'))button.disabled=copying;
 
 }
 
@@ -211,7 +211,7 @@ async function refreshWalletState() {
   if (first) checkConnection().catch(()=>{});
 }
 function copyFeedbackKey() {return `${renderKey}:${currentView?.account?.accounts[0]?.address || ''}`;}
-function resetFeedback() {connectionPage=undefined;showPicker=false;proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;outcome=undefined;clipboardFeedback='';deadline=undefined;}
+function resetFeedback() {homeReadFailed=false;connectionPage=undefined;showPicker=false;proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;outcome=undefined;clipboardFeedback='';deadline=undefined;}
 async function onConnect({fresh=true}={}) {
   if (hostEffectInFlight || launchExpired) return;
   resetFeedback();activeRequest=undefined;connectionNeedsReplacement=false;
@@ -240,7 +240,7 @@ async function disconnect() {
   if (hostEffectInFlight || launchExpired) return;
   resetFeedback();const epoch=++actionEpoch;currentPhase='disconnecting';effectPhase='disconnecting';
   try {await requestCapsuleWalletEffect({kind:'disconnect'});if(epoch===actionEpoch){connectionState=undefined;outcome='disconnected';}}
-  catch(error){showError(error);}
+  catch(error){if(epoch===actionEpoch&&!launchExpired)outcome=errorStage(error,{kind:'disconnect'},'disconnecting');}
   finally{draw();checkConnection().catch(()=>{});}
 }
 async function cancelWalletWait() {

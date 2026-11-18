@@ -158,3 +158,9 @@ test('final window request titles agree with the checked-out Wallet and Runtime 
  const sources=Object.fromEntries(await Promise.all([rustTitlePath,walletTitlePath].map(async path=>[path,{source:await readFile(new URL('../'+path,import.meta.url),'utf8')}])));
  await assertTitleSources(intent=>reduceSummary({...request,intent},{connector:'wallet-walletconnect'}).title,sources);
 });
+
+for(const outcome of ['qr-cancelled','qr-expired','connection-declined','disconnected'])test(`connection recovery queues its last waiting request after ${outcome}`,()=>{
+ const view=walletConnectView(windowPresentation({permission:'granted',connection:{},accounts:[account],requests:[request],outcome},now));
+ assert.equal(view.queueCount,1,'the one waiting request stays reachable on a connection recovery card');
+ assert.equal(view.queuePendingCount,1);assert.ok(view.supportedActions.includes('view-requests'));
+});
