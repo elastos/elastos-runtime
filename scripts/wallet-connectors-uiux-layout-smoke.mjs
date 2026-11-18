@@ -11,8 +11,18 @@ const screenshotRoot=await mkdtemp(join(tmpdir(),'wallet-connectors-uiux-'));
 const {chromium}=await importProductSmokePlaywright();
 const browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
 const screenshots=[];
+// Observe readiness before the inherited extension fixture opens its frame.
+const observedBrowser={browserType:()=>browser.browserType(),async newContext(...args){
+ const context=await browser.newContext(...args);
+ await context.addInitScript(()=>{if(window===window.top){window.layoutAppReady=0;addEventListener('message',event=>{if(event.data?.type==='home:app-ready'&&event.source===document.querySelector('iframe')?.contentWindow)window.layoutAppReady++;});}});
+ return context;
+}};
+async function assertExtensionAuthority(f){
+ assert.equal(await f.top.evaluate(()=>window.layoutAppReady),1,'one app-ready per live frame');
+ assert(f.reads.length>0);for(const read of f.reads)assert.equal(read.headers['x-elastos-home-token'],'fixture-token');
+}
 async function capture(page,frame,id,control){
- for(const [width,theme] of [[1280,'dark'],[390,'light']]){
+ for(const [width,theme] of [[1280,'dark'],[640,'light'],[390,'light']]){
   await page.setViewportSize({width,height:900});
   await frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);
   await frame.locator(`button[data-action="${control}"]:visible:enabled`).waitFor();
@@ -30,20 +40,21 @@ async function capture(page,frame,id,control){
 }
 try{
  for(const kind of ['metamask','unisat']){
-  const locked=await extensionFixture(browser,kind,{launch:false});
+  const locked=await extensionFixture(observedBrowser,kind,{launch:false});
   try{await locked.state('window-expired');assert.equal(await locked.frame.locator('button').count(),0);assert.equal(locked.reads.length,0);}finally{await locked.close();}
-  const f=await extensionFixture(browser,kind);
+  const f=await extensionFixture(observedBrowser,kind);
   try{
    await f.state('ready');await capture(f.top,f.frame,kind,'connect');
    await f.action('connect').click();await f.state('linked');
-   assert.equal(await f.frame.locator('.connection-account').count(),1);await capture(f.top,f.frame,kind,'copy-address');
+   await assertExtensionAuthority(f);assert.equal(await f.frame.locator('.connection-account').count(),1);await capture(f.top,f.frame,kind,'copy-address');
   }finally{await f.close();}
-  const review=await extensionFixture(browser,kind,{saved:true,requests:true});
-  try{await review.state('request-waiting');assert.equal(await review.frame.locator('.connection-request-account').count(),1);await capture(review.top,review.frame,kind,'send-request');}finally{await review.close();}
+  const review=await extensionFixture(observedBrowser,kind,{saved:true,requests:true});
+  try{await review.state('request-waiting');await assertExtensionAuthority(review);assert.equal(await review.frame.locator('.connection-request-account').count(),1);await capture(review.top,review.frame,kind,'send-request');}finally{await review.close();}
  }
  const f=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:f.origin.replace('http','ws')});
  const page=await browser.newPage({viewport:{width:480,height:560}}),{errors}=observeWindowErrors(page,f);
  await page.route('**/*',route=>new URL(route.request().url()).origin===f.origin?route.continue():route.abort());
+ const tokens=[];page.on('request',request=>{if(new URL(request.url()).pathname.startsWith('/api/'))tokens.push(request.headers()['x-elastos-home-token']);});
  const settle=await walletWindowLifetime(page,f);let frame;
  const state=name=>frame.locator(`main[data-state="${name}"]`).waitFor({timeout:20000});
  try{
@@ -51,6 +62,7 @@ try{
   await page.goto(f.origin);frame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));await state('window-expired');assert.equal(await frame.locator('button').count(),0);assert.equal(f.state.calls.length,0);
   await page.unroute(f.origin+'/');await settle(frame);await page.goto(f.origin);frame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));await state('internet-ready');
   await capture(page,frame,'walletconnect','connect');await frame.locator('[data-action=connect]').click();await state('qr-shown');await frame.locator('[data-action=copy-link]').click();await frame.getByText('Link copied.',{exact:true}).waitFor();await peer.pair(await page.evaluate(()=>window.copied));await state('linked');
+  assert.equal(await page.evaluate(()=>window.events.filter(event=>event.type==='home:app-ready').length),1,'one app-ready per live frame');assert(tokens.length>0);assert(tokens.every(token=>token==='fixture-wallet'),'all reads use this frame launch token');
   await capture(page,frame,'walletconnect','copy-address');
   f.state.approvals=[{request_id:'layout-signature',connector_id:'wallet-walletconnect',capsule_id:'browser',requesting_origin:'https://example.test',reason:'Review this message.',status:'pending',intent:'browser_personal_sign',proof_type:'siwe',address:peer.address,chain_namespace:'eip155:8453',expires_at:Math.floor(Date.now()/1000)+600}];
   await frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await state('request-waiting');await capture(page,frame,'walletconnect','send-request');

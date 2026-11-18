@@ -213,7 +213,7 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
  if(event==='empty')assert.equal(await r.frame.locator('code.connection-address').count(),0,'empty notification clears the displayed account');
  assert.deepEqual({verified:r.fixture.state.verified,completed:r.fixture.state.completed},before,'event grants no link or signing action');
  if(phase==='idle'&&['account','session-account','network'].includes(event)){
-  await r.click('send-message');await r.state('linked');assert.equal(r.fixture.state.verified,before.verified+1,'only explicit Finish links the reported account and network');assert.equal(r.fixture.state.accounts[0].address.toLowerCase(),r.peer.address.toLowerCase());assert.equal(r.fixture.state.accounts[0].chain_namespace,event==='network'?'eip155:1':'eip155:8453');await r.capture(`relinked-after-${event}`);
+  await r.click(event==='network'?'finish':'send-message');await r.state('linked');assert.equal(r.fixture.state.verified,before.verified+1,'only explicit Finish links the reported account and network');assert.equal(r.fixture.state.accounts[0].address.toLowerCase(),r.peer.address.toLowerCase());assert.equal(r.fixture.state.accounts[0].chain_namespace,event==='network'?'eip155:1':'eip155:8453');await r.capture(`relinked-after-${event}`);
  }
  if(phase==='ownership'||phase==='signature'){
   if(event!=='removed')await r.peer.answer('sign').catch(()=>{});
