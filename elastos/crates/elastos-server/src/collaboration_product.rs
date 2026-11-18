@@ -1152,9 +1152,12 @@ mod tests {
         let f = fixture();
         for millis in [0, 1, 499, 500, 501, 1000] {
             let now = tokio::time::Instant::now();
-            f.port.set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
-                reason: Some("bootstrap join timed out"), retry_at: now + std::time::Duration::from_millis(millis), ..Default::default()
-            });
+            f.port
+                .set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                    reason: Some("bootstrap join timed out"),
+                    retry_at: now + std::time::Duration::from_millis(millis),
+                    ..Default::default()
+                });
             let status = f.port.community_status();
             assert_eq!(status["state"], "reconnecting");
             assert_eq!(status["connected"], false);

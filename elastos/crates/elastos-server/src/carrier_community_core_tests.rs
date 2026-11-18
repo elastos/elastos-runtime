@@ -374,15 +374,25 @@ impl Provider for FaultProvider {
         if matches!(op, "gossip_rejoin" | "gossip_rebuild") {
             self.faults.repairs.fetch_add(1, Ordering::SeqCst);
         }
-        if op == "gossip_rejoin" && self.faults.fail_rejoin_after_sender_removal.swap(false, Ordering::SeqCst) {
+        if op == "gossip_rejoin"
+            && self
+                .faults
+                .fail_rejoin_after_sender_removal
+                .swap(false, Ordering::SeqCst)
+        {
             // Model leave_and_rejoin_topic after it releases the old sender,
             // before subscribe succeeds. Its recorded join remains intact.
             let mut state = self.real.state.lock().await;
             let topic = request["topic"].as_str().unwrap();
             state.senders.remove(topic);
-            if let Some(task) = state.receiver_tasks.remove(topic) { task.abort(); let _ = task.await; }
+            if let Some(task) = state.receiver_tasks.remove(topic) {
+                task.abort();
+                let _ = task.await;
+            }
             state.topic_peers.lock().await.remove(topic);
-            return Ok(serde_json::json!({"status":"error", "code":"recovery_failed", "message":"fixture subscribe failed after sender removal"}));
+            return Ok(
+                serde_json::json!({"status":"error", "code":"recovery_failed", "message":"fixture subscribe failed after sender removal"}),
+            );
         }
         let mut response = self.real.send_raw(request).await?;
         if op == "list_topic_peers" && self.faults.join_fails.load(Ordering::SeqCst) {
@@ -601,16 +611,23 @@ async fn community_core_real_missing_topic_is_restored_and_delivers_exact_text()
 async fn community_core_real_failed_rejoin_after_sender_removal_rebuilds_and_delivers() {
     let f = Fixture::start().await;
     f.exchange("before partial rejoin failure").await.unwrap();
-    f.faults.fail_rejoin_after_sender_removal.store(true, Ordering::SeqCst);
+    f.faults
+        .fail_rejoin_after_sender_removal
+        .store(true, Ordering::SeqCst);
     f.home.gossip_state.lock().await.receiver_tasks[&f.topic].abort();
     let honest = wait_for(|| !f.connected.load(Ordering::SeqCst), 20).await;
     let rebuilt = wait_for(|| f.faults.repairs.load(Ordering::SeqCst) >= 2, 170).await;
     let healthy = wait_for(|| f.connected.load(Ordering::SeqCst), 40).await;
-    let posts = f.exchange("partial rejoin failure recovered after actor rebuild").await;
+    let posts = f
+        .exchange("partial rejoin failure recovered after actor rebuild")
+        .await;
     f.stop().await;
     assert!(honest);
     assert!(rebuilt);
-    assert!(healthy, "a rebuilt topic clears pending and becomes connected");
+    assert!(
+        healthy,
+        "a rebuilt topic clears pending and becomes connected"
+    );
     posts.unwrap();
 }
 

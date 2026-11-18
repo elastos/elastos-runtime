@@ -602,7 +602,9 @@ pub(crate) trait CommunityLink {
     /// A Home may replace its own actor. A node keeps its actor and restores
     /// only a missing local topic, so existing Homes retain their links.
     async fn recovers_its_link(&self) -> anyhow::Result<bool>;
-    fn topic_is_pending(&self) -> bool { false }
+    fn topic_is_pending(&self) -> bool {
+        false
+    }
     async fn link_health(&self) -> anyhow::Result<CommunityLinkHealth>;
     fn host_addresses(&self) -> Option<CommunityHostAddresses>;
     /// Leaves the Community topic and joins it again with its bootstrap peers.
@@ -662,7 +664,8 @@ impl CommunityLink for JoinedCollaborationNetwork {
             anyhow::bail!("Carrier returned a mismatched collaboration topic health");
         }
         // Only a valid health reply proves that the local topic exists again.
-        self.pending_join.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.pending_join
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         anyhow::ensure!(health.receiver_alive, "Community receiver ended");
         Ok(CommunityLinkHealth {
             peer_count: health.peer_count,
@@ -765,8 +768,11 @@ pub(crate) struct CommunityRecoverySnapshot {
 
 impl CommunityRecoveryView {
     fn connected_at(&self, now: Instant, wall: std::time::SystemTime) -> bool {
-        self.connected && now.saturating_duration_since(self.checked_at) <= Duration::from_secs(45)
-            && wall.duration_since(self.checked_wall_at).is_ok_and(|elapsed| elapsed <= Duration::from_secs(45))
+        self.connected
+            && now.saturating_duration_since(self.checked_at) <= Duration::from_secs(45)
+            && wall
+                .duration_since(self.checked_wall_at)
+                .is_ok_and(|elapsed| elapsed <= Duration::from_secs(45))
     }
 
     #[cfg(test)]
@@ -777,13 +783,26 @@ impl CommunityRecoveryView {
     pub(crate) fn snapshot(&self) -> CommunityRecoverySnapshot {
         let now = Instant::now();
         let connected = self.connected_at(now, self.wall_clock.now());
-        let state = if connected { "connected" }
-            else if self.reason == Some("starting") { "starting" }
-            else if self.reason == Some("waiting for Community peers") { "waiting_for_peers" }
-            else { "reconnecting" };
+        let state = if connected {
+            "connected"
+        } else if self.reason == Some("starting") {
+            "starting"
+        } else if self.reason == Some("waiting for Community peers") {
+            "waiting_for_peers"
+        } else {
+            "reconnecting"
+        };
         let remaining = self.retry_at.saturating_duration_since(now);
-        let next_retry_seconds = if connected || state == "waiting_for_peers" || remaining.is_zero() { None }
-            else { Some(remaining.as_secs().saturating_add(u64::from(remaining.subsec_nanos() > 0))) };
+        let next_retry_seconds = if connected || state == "waiting_for_peers" || remaining.is_zero()
+        {
+            None
+        } else {
+            Some(
+                remaining
+                    .as_secs()
+                    .saturating_add(u64::from(remaining.subsec_nanos() > 0)),
+            )
+        };
         let detail = match state {
             "connected" => "Community is connected.".to_string(),
             "starting" => "Home is starting Community. It is checking the link.".to_string(),
@@ -796,7 +815,12 @@ impl CommunityRecoveryView {
                 None => "Home is reconnecting to Community. It is checking the link.".to_string(),
             },
         };
-        CommunityRecoverySnapshot { connected, state, detail, next_retry_seconds }
+        CommunityRecoverySnapshot {
+            connected,
+            state,
+            detail,
+            next_retry_seconds,
+        }
     }
 }
 

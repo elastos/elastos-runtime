@@ -3015,7 +3015,10 @@ fn write_home_state_probe(
         "  Nick:      {}",
         snapshot.nickname.as_deref().unwrap_or("(not set)")
     )?;
-    let (carrier, delivery) = people_carrier_status(snapshot.runtime.peer_count, snapshot.runtime.community.is_some());
+    let (carrier, delivery) = people_carrier_status(
+        snapshot.runtime.peer_count,
+        snapshot.runtime.community.is_some(),
+    );
     writeln!(out, "  Carrier:   {}", carrier)?;
     writeln!(out, "  Delivery:  {}", delivery)?;
     writeln!(out, "  Roots:     localhost://Users, localhost://UsersAI")?;
@@ -3093,9 +3096,15 @@ fn write_home_state_probe(
 
 /// The People section's Carrier and Delivery lines. A count Home has not
 /// learned yet says so instead of reading as an outage (#391).
-fn people_carrier_status(peer_count: Option<usize>, has_community_status: bool) -> (String, &'static str) {
+fn people_carrier_status(
+    peer_count: Option<usize>,
+    has_community_status: bool,
+) -> (String, &'static str) {
     match peer_count {
-        Some(peers) => (format!("{} known", peers), "see Community status above"),
+        Some(peers) => (
+            format!("{} known", peers),
+            if has_community_status { "see Community status above" } else { "checking" },
+        ),
         None => ("checking".to_string(), "checking"),
     }
 }
