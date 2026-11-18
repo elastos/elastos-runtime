@@ -1777,9 +1777,20 @@ mod tests {
             }})),
         ]);
         let joined = JoinedCollaborationNetwork::pending(carrier.clone(), &profile).unwrap();
-        assert!(joined.rebuild_gossip().await.unwrap_err().to_string().contains("recovery_busy"));
-        assert_eq!(carrier.requests().iter().map(|request| request["op"].as_str().unwrap()).collect::<Vec<_>>(),
-            ["gossip_rebuild", "remember_peer", "gossip_join_exact"]);
+        assert!(joined
+            .rebuild_gossip()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("recovery_busy"));
+        assert_eq!(
+            carrier
+                .requests()
+                .iter()
+                .map(|request| request["op"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["gossip_rebuild", "remember_peer", "gossip_join_exact"]
+        );
         assert_eq!(joined.link_health().await.unwrap().peer_count, 1);
         assert!(!joined.topic_is_pending());
     }
@@ -1789,7 +1800,13 @@ mod tests {
         let (signer, _) = generate_keypair();
         let own = ticket_for(24);
         let bootstrap = ticket_for(25);
-        let profile = verified_profile(&signer, "sender-is-not-topic", 1, None, vec![own.clone(), bootstrap.clone()]);
+        let profile = verified_profile(
+            &signer,
+            "sender-is-not-topic",
+            1,
+            None,
+            vec![own.clone(), bootstrap.clone()],
+        );
         let topic = collaboration_topic(&profile);
         let carrier = FakeCarrier::new([
             remember_ok(&own.node_id),
@@ -1797,14 +1814,31 @@ mod tests {
             join_ok(&topic),
             local_ticket(&own),
             topic_peers(&topic, &[]),
-            FakeReply::Value(serde_json::json!({"status":"error", "code":"not_joined", "message":"sender is missing"})),
+            FakeReply::Value(
+                serde_json::json!({"status":"error", "code":"not_joined", "message":"sender is missing"}),
+            ),
         ]);
-        let joined = join_collaboration_network(carrier.clone(), &profile).await.unwrap()
+        let joined = join_collaboration_network(carrier.clone(), &profile)
+            .await
+            .unwrap()
             .with_runtime_node_id(own.node_id.parse().unwrap());
-        assert!(!joined.recovers_its_link().await.unwrap(), "this fixture is a node");
+        assert!(
+            !joined.recovers_its_link().await.unwrap(),
+            "this fixture is a node"
+        );
         assert!(joined.restore_missing_bootstrap_peers().await.is_err());
-        assert!(!joined.topic_is_pending(), "only topic health can establish absence");
-        assert_eq!(carrier.requests().iter().filter(|request| request["op"] == "gossip_join_exact").count(), 1);
+        assert!(
+            !joined.topic_is_pending(),
+            "only topic health can establish absence"
+        );
+        assert_eq!(
+            carrier
+                .requests()
+                .iter()
+                .filter(|request| request["op"] == "gossip_join_exact")
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]
