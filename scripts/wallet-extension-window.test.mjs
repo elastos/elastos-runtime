@@ -11,6 +11,57 @@ const U = 'bc1q' + 'a'.repeat(38), V = 'bc1q' + 'b'.repeat(38);
 import { fixture } from './lib/wallet-extension-window-fixture.mjs';
 
 for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) {
+  test(`${engine} ${kind}: each passive event during linked, account-proof, signature and result states`, { timeout: 120000, skip: engineSkip(engine) }, async () => {
+    const browser = await playwright[engine].launch({ headless: true });
+    try {
+      for (const phase of ['linked', 'proof', 'signature', 'result']) {
+        for (const name of ['accountsChanged', kind === 'metamask' ? 'chainChanged' : 'networkChanged', 'disconnect']) {
+          const f = await fixture(browser, kind, { saved: true, requests: ['signature', 'result'].includes(phase) });
+          try {
+            const waitState = state => f.frame.locator(`main[data-state="${state}"]`).waitFor({ timeout: 3000 });
+            const signingMethod = kind === 'metamask' ? 'personal_sign' : 'signMessage';
+            if (['proof', 'signature'].includes(phase)) {
+              // Pause the real signing RPC, after account discovery and Home's
+              // challenge/handoff. An account chooser is a different wait.
+              await f.top.evaluate(method => Object.defineProperty(testState, 'mode', {
+                configurable: true,
+                get() { return testState.calls.at(-1)?.method === method ? 'pending' : 'approve'; },
+              }), signingMethod);
+            }
+            await waitState(['signature', 'result'].includes(phase) ? 'request-waiting' : 'ready');
+            await f.action(['signature', 'result'].includes(phase) ? 'send-request' : 'connect').click();
+            const expected = ({ linked: 'linked', proof: 'extension-wait', signature: 'request-extension', result: 'request-done' })[phase];
+            await waitState(expected);
+            if (['proof', 'signature'].includes(phase)) await f.top.waitForFunction(method => testState.pending.some(p => p.method === method), signingMethod);
+            await f.frame.evaluate(() => {
+              window.eventProbe = [];
+              addEventListener('message', event => {
+                if (event.data?.type === 'home:wallet-connector-event') eventProbe.push(event.data);
+              });
+            });
+            const before = await f.top.evaluate(() => ({ calls: testState.calls.length, effects: testState.effects.length, receipts: testState.receipts.length }));
+            const value = name === 'accountsChanged' ? [kind === 'metamask' ? B : V]
+              : name === 'disconnect' ? { code: 4900 } : kind === 'metamask' ? '0x14' : 'testnet';
+            await f.top.evaluate(({ name, value }) => emitWallet(name, value), { name, value });
+            // Observe the real Home forwarder, rather than injecting a window
+            // packet or merely waiting for an already-visible state.
+            await f.frame.waitForFunction(() => eventProbe.length === 1);
+            await waitState(phase !== 'linked' ? expected : name === 'accountsChanged' ? 'account-unavailable'
+              : name === 'disconnect' ? 'link-error' : kind === 'unisat' ? 'network-changed' : 'linked');
+            assert.deepEqual(await f.top.evaluate(() => ({ calls: testState.calls.length, effects: testState.effects.length, receipts: testState.receipts.length })), before, `${phase}/${name}: notification is passive`);
+            if (['proof', 'signature'].includes(phase)) assert.equal(await f.action('stop-waiting').count(), 1);
+            if (['signature', 'result'].includes(phase) && ['accountsChanged', 'disconnect'].includes(name)) assert.equal(await f.frame.locator('.connection-request-account').count(), 0);
+            if (phase === 'result') assert.equal(await f.action('send-request').count(), 0);
+            if (name.includes('Changed') && name !== 'accountsChanged' && phase !== 'proof') assert.match(await f.frame.locator('body').innerText(), kind === 'metamask' ? /Elastos Smart Chain/ : /test network.*unsupported|Bitcoin test network/i);
+            assert.deepEqual(f.errors, []);
+          } finally { await f.close(); }
+        }
+      }
+    } finally { await browser.close(); }
+  });
+}
+
+for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) {
   test(`${engine} ${kind}: live shared window links, signs, redraws and returns actual receipts`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
     const browser = await playwright[engine].launch({ headless: true });
     try {
