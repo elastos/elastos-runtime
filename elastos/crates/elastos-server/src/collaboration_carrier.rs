@@ -2055,3 +2055,6 @@ mod tests {
         assert!(joined.ack(&batch).await.is_err());
     }
 }
+
+#[cfg(test)]
+pub(crate) fn community_core_topic_for_test(profile: &crate::collaboration_network::VerifiedCollaborationNetworkProfile) -> String { collaboration_topic(profile) }

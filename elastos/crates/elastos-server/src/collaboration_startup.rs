@@ -4271,3 +4271,23 @@ mod tests {
             .expect("shutdown completes the left worker");
     }
 }
+
+#[cfg(test)]
+pub(crate) async fn run_community_core_fixture(
+    shutdown: watch::Receiver<bool>, link: &crate::collaboration_carrier::JoinedCollaborationNetwork,
+    status: impl Fn(bool) + Send,
+) {
+    let (_membership,joined)=watch::channel(true);
+    let status=std::sync::Mutex::new(status);
+    tokio::join!(
+        run_community_link_watchdog(shutdown.clone(),joined.clone(),link,|_|{}),
+        run_community_periodic(shutdown.clone(),joined.clone(),COLLABORATION_BOOTSTRAP_CADENCE,||async {
+            if link.restore_missing_bootstrap_peers().await.is_err(){tracing::warn!("collaboration bootstrap recovery cycle failed");}
+        }),
+        async {
+            run_community_periodic(shutdown,joined,COLLABORATION_LIVE_CADENCE,||async {
+                (status.lock().unwrap())(link.has_remote_peers().await.unwrap_or(false));
+            }).await;
+        }
+    );
+}

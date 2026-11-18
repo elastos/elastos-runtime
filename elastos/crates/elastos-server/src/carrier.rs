@@ -20454,3 +20454,7 @@ pub(crate) mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "carrier_community_core_tests.rs"]
+mod community_core_tests;
