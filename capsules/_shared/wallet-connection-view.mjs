@@ -57,10 +57,10 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
   if (!plain(summary) || !['wallet', 'inbox', connector].includes(audience) || !['wallet-metamask', 'wallet-unisat', 'wallet-walletconnect'].includes(connector) || summary.connector_id !== connector) return null;
   requireValue(bounded(summary.request_id, 256) && bounded(summary.capsule_id, 128), 'request identity');
   const transaction = summary.intent === 'transaction_intent';
-  const app = bounded(summary.requesting_app_name, 128) && summary.requesting_app_name ? summary.requesting_app_name : appLabels[summary.capsule_id] || 'Requesting app';
+  const app = bounded(summary.requesting_app_name, 128) && summary.requesting_app_name ? summary.requesting_app_name : (Object.hasOwn(appLabels,summary.capsule_id)?appLabels[summary.capsule_id]:'Requesting app');
   return {
     id: summary.request_id, app, actor: summary.capsule_id,
-    title: requestTitles[summary.intent]||'Approval request', transaction,
+    title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Approval request', transaction,
     detail: bounded(summary.reason, 2048) ? summary.reason : '',
     site: summary.capsule_id === 'browser' ? displayOrigin(summary.requesting_origin) : null,
     address: bounded(summary.address, 128) ? summary.address : null,
