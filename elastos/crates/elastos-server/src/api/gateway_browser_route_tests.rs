@@ -4261,10 +4261,12 @@ async fn test_browser_provider_crash_blocks_until_terminal_proof_then_allows_new
 async fn test_browser_personal_sign_queues_wallet_inbox_approval() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let browser_token =
+        projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
     let browser_wallet_authority =
         runtime_wallet_authority_for_app_token(dir.path(), BROWSER_CAPSULE_ID, &browser_token);
-    let inbox_token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let inbox_token =
+        projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:1:{address}");
     let provider = MockWalletProvider {
@@ -4356,7 +4358,7 @@ async fn test_browser_personal_sign_queues_wallet_inbox_approval() {
     assert_eq!(inbox_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Browser signature request"
+        "Sign a message"
     );
 }
 
@@ -4364,8 +4366,10 @@ async fn test_browser_personal_sign_queues_wallet_inbox_approval() {
 async fn test_browser_typed_data_sign_queues_wallet_inbox_approval() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
-    let inbox_token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let browser_token =
+        projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let inbox_token =
+        projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:20:{address}");
     let provider = MockWalletProvider {
@@ -4457,7 +4461,7 @@ async fn test_browser_typed_data_sign_queues_wallet_inbox_approval() {
     assert_eq!(inbox_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Browser typed data signature request"
+        "Sign typed data"
     );
 }
 
@@ -5045,10 +5049,12 @@ async fn test_browser_chain_reads_route_through_chain_provider_without_inbox_app
 async fn test_browser_eth_send_transaction_queues_wallet_inbox_approval() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let browser_token =
+        projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
     let browser_wallet_authority =
         runtime_wallet_authority_for_app_token(dir.path(), BROWSER_CAPSULE_ID, &browser_token);
-    let inbox_token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let inbox_token =
+        projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:20:{address}");
     let provider = MockWalletProvider {
@@ -5148,7 +5154,7 @@ async fn test_browser_eth_send_transaction_queues_wallet_inbox_approval() {
     assert_eq!(inbox_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Transaction approval request"
+        "Send transaction"
     );
 }
 
@@ -8710,9 +8716,12 @@ async fn test_raw_browser_engine_and_exit_provider_proxy_routes_are_unavailable(
 async fn test_browser_account_access_creates_review_only_inbox_handoff_without_disclosure() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
-    let wallet_token = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &authority);
-    let inbox_token = app_token_for_authority(dir.path(), INBOX_CAPSULE_ID, &authority);
+    let browser_token =
+        projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let wallet_token =
+        projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
+    let inbox_token =
+        projection_launch_token_for_authority_context(dir.path(), INBOX_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:20:{address}");
     let provider = MockWalletProvider {
@@ -8919,8 +8928,10 @@ async fn test_browser_account_access_uses_selected_connector_when_managed_accoun
 {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
-    let wallet_token = app_token_for_authority(dir.path(), WALLET_CAPSULE_ID, &authority);
+    let browser_token =
+        projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let wallet_token =
+        projection_launch_token_for_authority_context(dir.path(), WALLET_CAPSULE_ID, &authority);
     let managed_address = "0x1111111111111111111111111111111111111111";
     let connector_address = "0x3333333333333333333333333333333333333333";
     let managed_account_id = format!("wallet:eip155:20:{managed_address}");

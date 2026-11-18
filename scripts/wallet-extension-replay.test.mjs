@@ -14,6 +14,12 @@ function pageSurface() {
 }
 const errorShapes = (cases) => [...new Set(cases.flatMap((c) => c.snapshots
   .filter((s) => s.call?.state === 'rejected').map((s) => JSON.stringify(s.call.error))))].sort();
+test('independent source pin requires review of recording-pin.json against a raw run', async () => {
+  const bytes = await readFile(new URL('./wallet-extension-test/recording-pin.json', import.meta.url));
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),
+    'eea71688e59a974795d3af5049b09d72edbcb195d3b637ba334139df0c8153a7',
+    'Independent recording pin integrity failure: review the pin change against a passing private raw run');
+});
 test('every recorded-provider silent read has a scenario and an original reply', async () => {
   const { fixture } = await replayInput('metamask-silent-check');
   const methods = new Set(Object.values(scenarios).flatMap((s) => s.calls.map((plan) => {

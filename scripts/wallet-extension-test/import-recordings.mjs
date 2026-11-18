@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { scenarios, caseIds } from './scenarios.mjs';
-import { projectCase, providerBindings, recordedProvider, validateScenarios } from './recording-source.mjs';
+import { approvedRawSha256, projectCase, providerBindings, recordedProvider, recordedActionPins, validateScenarios } from './recording-source.mjs';
 
 export function importRecordings(bytes) {
   const raw = JSON.parse(bytes);
@@ -37,7 +37,7 @@ export function importRecordings(bytes) {
       return [provider, { caseId: id, keys: observation.keys, methods: observation.methods ?? null }];
     })), cases,
   };
-  validateScenarios(fixture, scenarios);
+  validateScenarios(fixture, scenarios, recordedActionPins(raw.cases, scenarios));
   return fixture;
 }
 
@@ -46,9 +46,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   const fixture = importRecordings(await readFile(process.argv[2]));
   const bytes = `${JSON.stringify(fixture, null, 2)}\n`;
   const pinUrl = new URL('./recording-pin.json', import.meta.url);
-  const existing = await readFile(pinUrl, 'utf8').then(JSON.parse, () => null);
-  const approvedRaw = existing?.rawSha256 || 'aa1e40bbed06874465979c7ce46ed4de83540456c5afa929d36305a62cafe36d';
-  if (fixture.source.sha256 !== approvedRaw) throw new Error('Raw recording differs from the approved capture; review before updating the raw pin');
+  if (fixture.source.sha256 !== approvedRawSha256) throw new Error('Raw recording differs from the approved capture; review before updating the raw pin');
   await writeFile(new URL('../fixtures/wallet-extension-replay.json', import.meta.url), bytes);
   await writeFile(pinUrl, `${JSON.stringify({ rawSha256: fixture.source.sha256,
     fixtureSha256: createHash('sha256').update(bytes).digest('hex'),
@@ -56,6 +54,6 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     rejections: Object.fromEntries(fixture.cases.flatMap((entry) => {
       const call = entry.snapshots.filter((s) => s.call).at(-1)?.call;
       return call?.state === 'rejected' ? [[entry.id, createHash('sha256').update(JSON.stringify(call.error)).digest('hex')]] : [];
-    })) }, null, 2)}\n`);
+    })), actions: recordedActionPins(fixture.cases, scenarios) }, null, 2)}\n`);
   console.log(`Imported ${fixture.cases.length} raw cases; source SHA-256 ${fixture.source.sha256}`);
 }

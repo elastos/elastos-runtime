@@ -8,6 +8,7 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
     ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, ordered(x[k])])) : x;
   const listeners = new Map();
   const providers = new Map();
+  const surfaces = new Map();
   const requests = [];
   const transcript = [];
   const violations = [];
@@ -90,22 +91,55 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
       const events = new Map();
       listeners.set(id, events);
       const eventMethods = {
-        on(name, fn) { if (!events.has(name)) events.set(name, new Set()); events.get(name).add(fn); return provider; },
-        removeListener(name, fn) { events.get(name)?.delete(fn); return provider; },
+        on(name, fn) {
+          if (typeof fn !== 'function') return violate('Invalid wallet event listener', { provider: id, member: 'on' });
+          if (!events.has(name)) events.set(name, new Set()); events.get(name).add(fn); return provider;
+        },
       };
       const inventory = id === 'unisat' ? fixture.surfaces.unisat : id === 'legacy' && observation.ethereum?.isRabby ? fixture.surfaces.legacy : null;
-      const provider = Object.create(eventMethods);
-      for (const key of inventory?.keys || []) provider[key] = undefined;
-      Object.assign(provider, flags);
+      const target = Object.create(eventMethods);
+      const provider = new Proxy(target, {
+        get(target, member, receiver) {
+          // EventTarget/Promise assimilation probes then on listener return values.
+          if (typeof member === 'string' && member !== 'then' && !Reflect.has(target, member))
+            return violate('Unrecorded wallet member', { provider: id, member });
+          return Reflect.get(target, member, receiver);
+        },
+        has(target, member) {
+          if (typeof member === 'string' && member !== 'then' && !Reflect.has(target, member))
+            return violate('Unrecorded wallet member test', { provider: id, member });
+          return Reflect.has(target, member);
+        },
+        set(target, member, value, receiver) {
+          if (typeof member === 'string' && (!Reflect.has(target, member) || Object.getOwnPropertyDescriptor(target, member)?.get))
+            return violate('Unrecorded wallet member assignment', { provider: id, member });
+          return Reflect.set(target, member, value, receiver);
+        },
+      });
+      const set = (key, value) => Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
+      for (const key of inventory?.keys || []) Object.defineProperty(target, key, {
+        get: () => violate('Wallet member has no recorded behavior', { provider: id, member: key }),
+        enumerable: true, configurable: true,
+      });
+      for (const [key, value] of Object.entries(flags)) set(key, value);
       if (id === 'unisat') {
-        for (const method of inventory.methods) provider[method] = (...params) => invoke(id, () => request(id, method, params));
+        const recorded = new Set(fixture.cases.flatMap((c) => c.snapshots).filter((s) => s.call
+          && providerId(s.call.target || s.call.kind) === id).map((s) => s.call.method));
+        for (const method of inventory.methods) if (recorded.has(method))
+          set(method, (...params) => invoke(id, () => request(id, method, params)));
       } else {
-        provider.request = (args) => invoke(id, () => {
+        set('request', (args) => invoke(id, () => {
           const { method, params = [] } = args;
           return request(id, method, params);
+        }));
+        if (inventory?.keys.includes('on')) set('on', eventMethods.on);
+        const recorded = inventory && entries.get(inventory.caseId).snapshots.find((s) => s.observation).observation;
+        if (recorded && typeof recorded.isConnected === 'boolean') set('isConnected', (...args) => {
+          if (args.length) return violate('Unrecorded isConnected arguments', { provider: id, member: 'isConnected' });
+          return recorded.isConnected;
         });
-        if (inventory?.keys.includes('on')) provider.on = eventMethods.on;
       }
+      if (inventory) surfaces.set(id, Object.getOwnPropertyDescriptors(target));
       providers.set(id, provider);
     }
     return providers.get(id);
@@ -145,9 +179,13 @@ export function installScriptedExtension({ fixture, spec }, page = globalThis) {
       for (const [id, provider] of providers) {
         const inventory = id === 'unisat' ? fixture.surfaces.unisat : id === 'legacy' && observation.ethereum?.isRabby ? fixture.surfaces.legacy : null;
         if (!inventory) continue;
-        if (JSON.stringify(Object.keys(provider).sort()) !== JSON.stringify([...inventory.keys].sort())) violate('Provider own keys differ from recording', { provider: id });
-        if (inventory.methods && JSON.stringify(Object.keys(provider).filter((key) => typeof provider[key] === 'function').sort()) !== JSON.stringify([...inventory.methods].sort()))
-          violate('Provider own methods differ from recording', { provider: id });
+        if (JSON.stringify(Object.getOwnPropertyNames(provider).sort()) !== JSON.stringify([...inventory.keys].sort())) violate('Provider own keys differ from recording', { provider: id });
+        const actual = Object.getOwnPropertyDescriptors(provider);
+        for (const [key, expected] of Object.entries(surfaces.get(id))) {
+          const member = actual[key];
+          if (!member || member.get !== expected.get || member.set !== expected.set || typeof member.value !== typeof expected.value)
+            violate('Provider member descriptors differ from recording', { provider: id, member: key });
+        }
       }
       if (violations.length) throw new Error(`Wallet replay violations: ${JSON.stringify(violations)}`);
     },

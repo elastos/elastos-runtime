@@ -32,6 +32,9 @@ pub(crate) fn sign_eip155_legacy_transaction(
     validate_eip155_transaction_intent_payload(
         &request.payload,
         &LinkedAccount {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
             account_id: request.account_id.clone(),
             principal_id: request.principal_id.clone(),
             proof_binding_id: request.proof_binding_id.clone(),

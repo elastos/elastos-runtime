@@ -201,3 +201,21 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-host-end-text { display:block; }
 
 .connection-computed-value { unicode-bidi:isolate; overflow-wrap:anywhere; }
+
+/* Each dot stays with the preceding label; only an oversized label can wrap inside. */
+.connection-host-label-last { display:inline-block; white-space:nowrap; }
+/* Reserve this short line so toggling the cue cannot change the scroll range. */
+.connection-more { visibility:hidden; }
+
+/* A long picker/account list keeps its last row reachable in this window. */
+.connection-picker > .connection-content { overflow:auto; overscroll-behavior:contain; }
+.connection-account { overflow:auto; }
+.connection-dialog { max-height:none; padding:16px; }
+.connection-dialog h2 { margin-bottom:8px; }
+.connection-dialog p { margin:8px 0; }
+.connection-qr { width:min(100%, calc(100svh - 370px)); }
+.connection-current-selection { overflow-wrap:anywhere; }
+
+.connection-hash { unicode-bidi:isolate; overflow-wrap:anywhere; -webkit-user-select:text; user-select:text; font-family:var(--el-font-mono); }
+/* A consumed same-card request keeps its scroll surface and visible outcome. */
+.connection-retained-feedback > .connection-feedback { position:sticky; top:0; bottom:0; background:var(--el-bg); }

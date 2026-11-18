@@ -1,7 +1,8 @@
 // Test oracle for the pinned written contract, not a product authority validator.
 const exact = (x, keys) => x !== null && typeof x === 'object' && !Array.isArray(x)
   && Object.keys(x).sort().join(',') === [...keys].sort().join(',');
-const uuid = (v) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+// The contract names crypto-random UUIDs without choosing a version. This checks syntax, not entropy.
+const uuid = (v) => typeof v === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(v);
 const opaque = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{16,128}$/.test(v);
 const selector = (v) => typeof v === 'string' && /^[A-Za-z0-9:._-]{1,256}$/.test(v);
 const connectors = ['wallet-metamask', 'wallet-unisat', 'wallet-walletconnect'];
@@ -30,6 +31,17 @@ export const wireTypes = {
 };
 export const nestedKeys = {
   snapshot: ['providerId', 'alternatives', 'availability', 'firstAccount', 'requiredAccountAvailable', 'network', 'networkIssue', 'access', 'busy', 'paymentPending'],
+  settled: ['effectRequestId', 'result', 'receipt'],
+};
+export const runtimeKeys = {
+  handoff: ['schema', 'action', 'connector_id', 'request_id', 'handoff', 'evm_chains'],
+  handoffCommon: ['schema', 'request_id', 'intent', 'payload_hash', 'signer', 'status'],
+  handoffTransaction: ['transaction'],
+  handoffSignature: ['message', 'signature_type'],
+  transaction: ['from', 'to', 'value', 'data', 'gas', 'gasPrice', 'nonce', 'chainId'],
+  settlementBody: ['schema', 'connector_id', 'connector_token', 'payload_hash', 'signer', 'outcome'],
+  settlementResult: ['schema', 'action', 'connector_id', 'request_id', 'status', 'outcome'],
+  settlementOperation: ['request_id', 'payload_hash', 'signer', 'outcome'],
 };
 function snapshot(s, connector) {
   if (!exact(s, nestedKeys.snapshot)) return false;
@@ -78,7 +90,7 @@ export function messageDecision(m) {
   if ('snapshot' in m && !snapshot(m.snapshot, m.connectorId)) return refusal;
   if (kind === 'state' && m.settled !== null) {
     const s = m.settled;
-    if (!exact(s, ['effectRequestId', 'result', 'receipt']) || !opaque(s.effectRequestId) || !oneOf(s.result, ['answered', 'declined', 'refused', 'failed'])
+    if (!exact(s, nestedKeys.settled) || !opaque(s.effectRequestId) || !oneOf(s.result, ['answered', 'declined', 'refused', 'failed'])
       || !nullable(s.receipt, (v) => ['recorded', 'recording_failed'].includes(v))) return refusal;
   }
   if (kind === 'navigation' && (!uuid(m.requestId) || !bool(m.ok) || !(m.ok ? m.reason === 'accepted'
@@ -115,17 +127,17 @@ export function closeValid(m) {
 
 // Draft structural examples; authority and provider execution belong to the joined product tests.
 export function handoffValid(m) {
-  if (!exact(m, ['schema', 'action', 'connector_id', 'request_id', 'handoff', 'evm_chains'])
+  if (!exact(m, runtimeKeys.handoff)
     || m.schema !== 'elastos.home.wallet-connector.effect.result/v1' || m.action !== 'approval_handoff'
     || !['wallet-metamask', 'wallet-unisat'].includes(m.connector_id) || !selector(m.request_id) || !Array.isArray(m.evm_chains)) return false;
   const h = m.handoff, tx = h?.intent === 'transaction_intent';
-  if (!exact(h, ['schema', 'request_id', 'intent', 'payload_hash', 'signer', 'status', ...(tx ? ['transaction'] : ['message', 'signature_type'])])
+  if (!exact(h, [...runtimeKeys.handoffCommon, ...(tx ? runtimeKeys.handoffTransaction : runtimeKeys.handoffSignature)])
     || h.schema !== 'elastos.wallet.webconnect_handoff/v1' || h.request_id !== m.request_id
     || typeof h.intent !== 'string' || h.intent.length < 1 || h.intent.length > 128
     || typeof h.signer !== 'string' || h.signer.length > 256
     || typeof h.payload_hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(h.payload_hash)) return false;
   if (tx) return m.connector_id === 'wallet-metamask' && h.status === 'awaiting_wallet_transaction'
-    && exact(h.transaction, ['from', 'to', 'value', 'data', 'gas', 'gasPrice', 'nonce', 'chainId'])
+    && exact(h.transaction, runtimeKeys.transaction)
     && h.transaction.from === h.signer && /^0x[0-9a-fA-F]{40}$/.test(h.signer)
     && /^0x[0-9a-fA-F]{40}$/.test(h.transaction.to)
     && Object.entries(h.transaction).every(([key, value]) => typeof value === 'string'
@@ -140,17 +152,17 @@ export function settlementValid(row) {
   const b = row.body, r = row.response, op = row.runtimeOperation;
   return row.method === 'POST' && selector(row.requestId)
     && row.route === `/api/apps/home/wallet-connector/approvals/${row.requestId}/call-settlement`
-    && exact(b, ['schema', 'connector_id', 'connector_token', 'payload_hash', 'signer', 'outcome'])
+    && exact(b, runtimeKeys.settlementBody)
     && b.schema === 'elastos.home.wallet-connector.call-settlement.request/v1' && b.connector_id === 'wallet-metamask'
     && typeof b.connector_token === 'string' && b.connector_token.length > 0
     && typeof b.payload_hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(b.payload_hash)
     && typeof b.signer === 'string' && /^0x[0-9a-fA-F]{40}$/.test(b.signer)
     && ['not_approved', 'not_authorized', 'unresolved'].includes(b.outcome)
-    && exact(r, ['schema', 'action', 'connector_id', 'request_id', 'status', 'outcome'])
+    && exact(r, runtimeKeys.settlementResult)
     && r.schema === 'elastos.home.wallet-connector.effect.result/v1' && r.action === 'approval_call_settlement'
     && r.connector_id === b.connector_id && r.request_id === row.requestId && r.outcome === b.outcome
     && r.status === (b.outcome === 'unresolved' ? 'approved' : 'rejected')
-    && op?.name === 'RecordExternalCallOutcome' && exact(op.data, ['request_id', 'payload_hash', 'signer', 'outcome'])
+    && op?.name === 'RecordExternalCallOutcome' && exact(op.data, runtimeKeys.settlementOperation)
     && op.data.request_id === row.requestId && ['payload_hash', 'signer', 'outcome'].every((key) => op.data[key] === b[key]);
 }
 

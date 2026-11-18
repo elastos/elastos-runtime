@@ -158,6 +158,7 @@ pub(super) fn append_hosted_route_notifications(
         notifications.unread_count += 1;
         notifications.attention_count += 1;
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: None,
             id: format!("external-http-request:{}", route.id),
             source_app: INBOX_CAPSULE_ID.to_string(),
             kind: "hosted_route_decision".to_string(),
@@ -188,12 +189,12 @@ pub(super) fn append_wallet_approval_notifications(
     for request in approval_requests {
         notifications.unread_count += 1;
         notifications.attention_count += 1;
-        let capsule = if request.capsule_id.trim().is_empty() {
-            "A capsule".to_string()
-        } else {
-            request.capsule_id.clone()
-        };
+        let capsule = request
+            .requesting_app_name
+            .as_deref()
+            .unwrap_or("Requesting app");
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: request.requesting_origin.clone(),
             id: format!("wallet-approval-request:{}", request.request_id),
             source_app: request.capsule_id.clone(),
             kind: "wallet_approval_request".to_string(),
@@ -206,7 +207,10 @@ pub(super) fn append_wallet_approval_notifications(
                 app: WALLET_CAPSULE_ID.to_string(),
                 action_id: format!(
                     "{}:{}",
-                    if request.intent == "browser_account_access" {
+                    if request.intent == "browser_account_access"
+                        || !is_managed_wallet_proof_type(&request.proof_type)
+                        || request.connector_id.is_some()
+                    {
                         "wallet-review-request"
                     } else {
                         "wallet-approve-request"
@@ -250,6 +254,7 @@ pub(super) fn append_runtime_capability_notifications(
         notifications.unread_count += 1;
         notifications.attention_count += 1;
         notifications.entries.push(HomeNotificationEntrySummary {
+            requesting_origin: None,
             id: format!("capability-request:{}", request.request_id),
             source_app: SYSTEM_CAPSULE_ID.to_string(),
             kind: "capability_request".to_string(),
@@ -287,10 +292,10 @@ fn wallet_approval_title(intent: &str) -> String {
         "capability_grant" => "Wallet access request".to_string(),
         "credential" => "Credential signing request".to_string(),
         "publish_envelope" => "Publish approval request".to_string(),
-        "transaction_intent" => "Transaction approval request".to_string(),
+        "transaction_intent" => "Send transaction".to_string(),
         "browser_account_access" => "Browser account access request".to_string(),
-        "browser_personal_sign" => "Browser signature request".to_string(),
-        "browser_typed_data_sign" => "Browser typed data signature request".to_string(),
+        "browser_personal_sign" => "Sign a message".to_string(),
+        "browser_typed_data_sign" => "Sign typed data".to_string(),
         "bitcoin_bip322_proof" => "Bitcoin proof request".to_string(),
         "revocation" => "Revocation approval request".to_string(),
         _ => "Wallet approval request".to_string(),

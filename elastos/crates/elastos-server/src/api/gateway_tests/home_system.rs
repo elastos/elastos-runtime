@@ -5359,7 +5359,8 @@ async fn test_home_events_stream_requires_home_authority_and_serves_sse() {
 async fn test_home_summary_and_events_include_browser_wallet_approvals() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let browser_token =
+        projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:20:{address}");
     let provider = MockWalletProvider {
@@ -5443,7 +5444,12 @@ async fn test_home_summary_and_events_include_browser_wallet_approvals() {
     assert_eq!(summary_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Transaction approval request"
+        "Send transaction"
+    );
+    assert!(
+        home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0]
+            .get("requesting_origin")
+            .is_none()
     );
 
     let events = app
