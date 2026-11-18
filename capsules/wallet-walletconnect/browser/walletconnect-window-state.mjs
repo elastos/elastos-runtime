@@ -67,7 +67,7 @@ export function windowPresentation(state, nowSeconds) {
   const supportedActions=[...baseActions].filter(action=> !['finish','send-message'].includes(action) || session?.address && isWalletConnectNetwork(session.chain));
   return {input:{walletResult,window:'walletconnect',stage,account,waitSeconds,qrData:qrData || undefined,homeOrigin:state.homeOrigin,
     localSafety,compact:false,targetNetwork:networkLabel(request?.chain_namespace),supportedActions,
-    connectionNotice,currentSelection,transactionHash,localReturn:!expired&&!state.loading&&stage!=='home-read-unavailable'&&(state.connectionPage==='access'||!['nothing-saved','internet-ready'].includes(stage)||Boolean(session||connection?.removed||connection?.expired)),showNextRequests:true},request,otherRequests:requests.filter(row => row.request_id !== request?.request_id)};
+    connectionNotice,currentSelection,transactionHash,localReturn:!expired&&!state.loading&&!['home-read-unavailable','guest-access'].includes(stage)&&(state.connectionPage==='access'||!['nothing-saved','internet-ready'].includes(stage)||Boolean(session||connection?.removed||connection?.expired)),showNextRequests:true},request,otherRequests:requests.filter(row => row.request_id !== request?.request_id)};
 }
 
 export function errorStage(error, action, phase) {

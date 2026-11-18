@@ -175,3 +175,9 @@ test('a remembered request result names the wallet that answered it',()=>{
  const view=walletConnectView(windowPresentation({...initial,connection:{session:{...session,name:'A later phone'}},activeRequest:request,outcome:'request-done',resultWalletName:'The answering phone'},now));
  assert.equal(view.account.name,'The answering phone');assert.equal(view.request.id,request.request_id);
 });
+
+for(const requests of [[],[request]])test(`owner-only recovery with ${requests.length} request has no empty return action`,()=>{
+ const view=walletConnectView(windowPresentation({permission:'off',ownerNeeded:true,requests},now));
+ assert.equal(view.stage,'guest-access');assert.ok(view.actions.some(action=>action.id==='check-status'));
+ assert.equal(view.actions.some(action=>action.id==='back-to-connection'),false,'the owner-only gate has no local return transition');
+});

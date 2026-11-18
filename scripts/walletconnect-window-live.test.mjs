@@ -253,7 +253,7 @@ for(const engine of ['chromium','webkit'])test(`remaining live states and transa
 for(const engine of ['chromium','webkit'])test(`guest off and expired window in ${engine}`,{timeout:60000},async t=>{
  const r=await setup(t,engine);r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-off');await r.capture('internet-off');
  r.fixture.state.guest=true;await r.frame.locator('[data-action=inbox]').click();r.fixture.setPermission('granted');await r.refresh();await r.state('internet-ready');
- r.fixture.setPermission('off');await r.click('connect');await r.state('guest-access');await r.capture('guest-access');
+ r.fixture.setPermission('off');await r.click('connect');await r.state('guest-access');assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0,'owner-only recovery offers its real status check');await r.capture('guest-access');
  r.fixture.state.expiredLaunch=true;await r.reopen();await r.state('window-expired');await r.capture('window-expired');assert.equal(await r.frame.locator('button').count(),0,'unavailable N1 Close stays with the shell');
  assert.deepEqual(r.errors,[]);
 });
@@ -406,7 +406,7 @@ for(const engine of ['chromium','webkit'])test(`a blocked first request leaves t
  await r.click('send-request');await r.state('request-next');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='valid').status,'completed');assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])test(`picker cannot replace an expired window in ${engine}`,{timeout:60000},async t=>{
- const r=await setup(t,engine);await r.link();await r.approval('one');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'two'});await r.refresh();await r.click('view-requests');await r.state('request-list');r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.equal(await r.frame.locator('[data-action=select-request]').count(),0);await r.capture('expired-window-from-picker');assert.deepEqual(r.errors,[]);
+ const r=await setup(t,engine);await r.link();await r.approval('one');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'two'});await r.refresh();await r.click('view-requests');await r.state('request-list');r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.equal(await r.frame.locator('button').count(),0,'expired queue offers no inoperative local picker');await r.capture('expired-window-from-picker');assert.deepEqual(r.errors,[]);
 });
 
 for(const engine of ['chromium','webkit'])test(`proof timeout survives relay and session-extension updates in ${engine}`,{timeout:60000},async t=>{
@@ -520,4 +520,11 @@ for(const engine of ['chromium','webkit'])test(`a pre-send failure can be review
  await r.click('send-request');await r.state('request-unavailable');assert.equal(r.fixture.state.approvals[0].status,'pending');assert.equal(r.peer.trace.filter(e=>e.kind==='request').length,1,'only the completed account proof reached the phone');
  await r.page.unroute('**/wallet/approvals/retry-unsent/approve');await r.click('back-to-connection');await r.state('linked');await r.click('view-requests');await r.frame.locator('[data-focus-key="select-request:retry-unsent"]').click();assert.equal(await r.frame.locator('main').getAttribute('data-state'),'request-waiting','a pending unsent request is reviewed from current Home facts');await r.capture('unsent-request-reviewed-again');
  await r.click('send-request');await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.verified,1,'retry does not reconnect or relink');
+});
+
+for(const engine of ['chromium','webkit'])test(`request picker capability follows refused access and window expiry in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);await r.link();await r.approval('queue-first');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'queue-second'});await r.refresh();await r.state('request-multiple');
+ r.fixture.setPermission('refused');await r.refresh();await r.state('internet-refused');assert.equal(await r.frame.locator('[data-action=view-requests]').count(),0,'a refused gate cannot open the local picker');await r.capture('refused-queue-no-picker');
+ r.fixture.setPermission('granted');await r.refresh();await r.state('request-multiple');await r.click('view-requests');await r.state('request-list');
+ r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.equal(await r.frame.locator('button').count(),0,'an expired gate cannot open or select a cached request');await r.capture('expired-queue-no-controls');
 });
