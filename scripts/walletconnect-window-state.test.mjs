@@ -151,3 +151,10 @@ test('safe account retry uses explicit false safety and the supported-actions in
  const p=windowPresentation({...initial,outcome:'link-error'},now);assert.equal(p.input.localSafety,false);
  assert.ok(walletConnectView(p).actions.some(a=>a.id==='connect'));
 });
+
+test('final window request titles agree with the checked-out Wallet and Runtime sources',async()=>{
+ const {assertTitleSources,rustTitlePath,walletTitlePath}=await import('./lib/wallet-connection-title-oracle.mjs');
+ const {reduceSummary}=await import('../capsules/wallet-walletconnect/browser/wallet-connection-view.mjs');
+ const sources=Object.fromEntries(await Promise.all([rustTitlePath,walletTitlePath].map(async path=>[path,{source:await readFile(new URL('../'+path,import.meta.url),'utf8')}])));
+ await assertTitleSources(intent=>reduceSummary({...request,intent},{connector:'wallet-walletconnect'}).title,sources);
+});
