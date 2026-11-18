@@ -2284,5 +2284,7 @@ for(const window of ['walletconnect','metamask','unisat']){
   });
 }
 
+definitions.walletconnect['checking-response']={status:'Your wallet has answered. Home is checking the response.',notice:'Stopping here ends this wait. Home may still record the response.',optionalRequest:true,account:true,dispatched:true,primary:{id:'stop-waiting',label:'Stop waiting',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'stop-waiting'};
+
 const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const screens = freeze(definitions);

@@ -48,7 +48,9 @@ test('live needs: connection notices preserve a recorded transaction and its req
 test('live needs: full picker and account display keep a fourth and ninth row reachable',()=>{
  const summary=projection(),otherRequests=Array.from({length:20},(_,i)=>({...summary,id:'request-'+i}));
  const view=connectionView({window:'metamask',stage:'request-list',summary,otherRequests});assert.equal(view.choices.length,21);assert.equal(view.choices.at(-1).id,'request-19');
- const many={...account,accounts:Array.from({length:20},(_,i)=>({address:'0x'+String(i).padStart(40,'0'),networks:['Base']}))};assert.equal(connectionView({window:'metamask',stage:'linked',account:many}).account.accounts.length,20);
+ const queueArgs=fixtureArguments(states.find(r=>r.designState==='metamask/transaction-done'));queueArgs[0].showNextRequests=true;queueArgs[1].otherSummaries=[{...seed,request_id:'one-next'}];await mount(queueArgs);assert.equal(await f.page.locator('.connection-queue h2').textContent(),'1 other request waiting');
+  const checkArgs=fixtureArguments(states.find(r=>r.designState==='walletconnect/request-phone'),{compact:true});checkArgs[0].stage='checking-response';checkArgs[0].account=undefined;checkArgs[0].connectionNotice='network-unknown';await mount(checkArgs);assert.equal(await f.page.locator('.connection-request-account').count(),0);assert(await f.page.locator('[data-action="stop-waiting"]').isVisible());await f.page.screenshot({path:proof.path+'/checking-network-only-'+engine+'.png'});
+  const many={...account,accounts:Array.from({length:20},(_,i)=>({address:'0x'+String(i).padStart(40,'0'),networks:['Base']}))};assert.equal(connectionView({window:'metamask',stage:'linked',account:many}).account.accounts.length,20);
  assert.throws(()=>connectionView({window:'metamask',stage:'linked',account:{...many,accounts:Array(101).fill(many.accounts[0])}}),/account rows/);
 });
 test('live needs: clipboard feedback is closed local copy and QR keys respect supplied capabilities',()=>{
@@ -66,7 +68,7 @@ test('late needs: latent summaries cannot replace a linking account or its card 
   const v=reduceConnection(input,{summary:{...seed,connector_id:'wallet-walletconnect',status,address:account.accounts[0].address},nowSeconds:1800000001});
   assert.equal(v.stage,stage);assert.equal(v.account.accounts[0].address,actual);assert.equal(v.requestId,null);
  }
- const {withTestView}=await import('./lib/wallet-connection-test-module.mjs');await withTestView({mutateSource:source=>source.replace('accountDisplay(input.account, window, screen.request?summary:null)','accountDisplay(input.account, window, summary)')},module=>{const v=module.connectionView({window:'walletconnect',stage:'saved-unlinked',summary:projection(),account:{...account,accounts:[{address:actual,networks:['Base']}]},localSafety:false});assert.throws(()=>assert.equal(v.account.accounts[0].address,actual),assert.AssertionError,'latent-address substitution must fail');});
+ const {withTestView}=await import('./lib/wallet-connection-test-module.mjs');await withTestView({mutateSource:source=>source.replace('accountDisplay(input.account, window, requestScreen?summary:null)','accountDisplay(input.account, window, summary)')},module=>{const v=module.connectionView({window:'walletconnect',stage:'saved-unlinked',summary:projection(),account:{...account,accounts:[{address:actual,networks:['Base']}]},localSafety:false});assert.throws(()=>assert.equal(v.account.accounts[0].address,actual),assert.AssertionError,'latent-address substitution must fail');});
 });
 test('late needs: reconnecting is secondary fixed copy in idle, wait and result states',()=>{
  for(const stage of ['linked','link-wait','request-phone','transaction-done']){
@@ -80,15 +82,32 @@ test('late needs: completion-failure hash is display only, full and closed',()=>
  for(const transactionHash of ['0x12','<img src=x>',{toString:()=>hash}])assert.throws(()=>reduceConnection({...args[0],transactionHash},args[1]),/transaction hash/);
  assert.throws(()=>connectionView({window:'walletconnect',stage:'transaction-waiting',summary:v.request,transactionHash:hash,localSafety:false,waitSeconds:300}),/transaction hash/);
 });
-test('late needs: only a recorded known transaction result gains its supplied next-request queue',()=>{
+test('late needs: the local next-request queue is opt-in and preserves its outcome',()=>{
  for(const stage of ['transaction-done','transaction-wallet-error']){
   const args=fixtureArguments(states.find(r=>r.designState==='metamask/'+stage)),before=reduceConnection(...args);args[0].showNextRequests=true;args[1].otherSummaries=[{...seed,request_id:'next-request'}];const v=reduceConnection(...args);
-  assert.equal(v.queueCount,stage==='transaction-done'?1:0);assert.equal(viewText(v.status),viewText(before.status));assert.deepEqual(v.walletResult,before.walletResult);
+  assert.equal(before.queueCount,0);assert.equal(v.queueCount,1);assert.equal(viewText(v.status),viewText(before.status));assert.deepEqual(v.walletResult,before.walletResult);
  }
 });
 test('late needs: missing catalog labels use Requesting app for every actor ID',()=>{
  for(const capsule_id of ['browser','notes','another-app'])assert.equal(projection({capsule_id,requesting_app_name:undefined}).app,'Requesting app');
  assert.equal(projection({capsule_id:'browser',requesting_app_name:'Browser'}).app,'Browser');
+});
+
+test('final needs: Home response checking keeps its local stop and never claims a recorded result',()=>{
+ const plain=connectionView({window:'walletconnect',stage:'checking-response'});assert.equal(plain.request,null);assert.equal(plain.focus,'stop-waiting');assert.match(viewText(plain.status),/Home is checking the response/);assert.equal(plain.walletResult.disposition,null);
+ const args=fixtureArguments(states.find(r=>r.designState==='walletconnect/request-phone'));args[0].stage='checking-response';args[0].localReturn=true;args[0].showNextRequests=true;const v=reduceConnection(...args);assert(v.request);assert(!v.actions.some(a=>a.id==='back-to-connection'));assert.equal(v.queueCount,0);assert.match(viewText(v.notice),/Home may still record/);
+ const doneArgs=fixtureArguments(states.find(r=>r.designState==='walletconnect/request-done'));doneArgs[0].stage='checking-response';const done=reduceConnection(...doneArgs);assert.equal(done.stage,'request-done');
+});
+test('final needs: blocked and terminal cards retain their outcome with a local picker exit',()=>{
+ for(const window of ['walletconnect','metamask','unisat'])for(const stage of ['request-expired','request-unsendable','request-declined','request-wallet-error','request-unavailable']){
+  const row=states.find(r=>r.window===window&&r.stage===stage);if(!row)continue;const args=fixtureArguments(row),before=reduceConnection(...args);args[0].localReturn=true;args[0].showNextRequests=true;args[1].otherSummaries=[{...seed,connector_id:'wallet-'+window,request_id:'another-request'}];const v=reduceConnection(...args);
+  assert.equal(viewText(v.status),viewText(before.status));assert(v.actions.some(a=>a.id==='back-to-connection'),window+'/'+stage);assert.equal(v.queueCount,1);
+ }
+});
+test('final needs: network-only notices keep the proof wait without inventing an account',()=>{
+ for(const window of ['walletconnect','metamask','unisat'])for(const connectionNotice of ['network-unknown','network-unsupported']){
+  const before=connectionView({window,stage:'link-wait',waitSeconds:30});const v=connectionView({window,stage:'link-wait',waitSeconds:30,connectionNotice});assert.equal(v.account,null);assert.equal(viewText(v.status),viewText(before.status));assert.equal(v.wait,before.wait);assert(v.connectionNotice.length);assert.deepEqual(v.actions,before.actions);
+ }
 });
 
 const proof=await temporaryProof('wallet-live-view-',process.env.WALLET_VIEW_PROOF_DIR);const receipts=[];

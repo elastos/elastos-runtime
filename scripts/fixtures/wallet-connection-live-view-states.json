@@ -161,6 +161,12 @@
       "stage": "preparing-connection",
       "origin": "window-local: produced by the window lane",
       "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "checking-response",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-walletconnect item 16: existing verify/complete POST pending; no new producer"
     }
   ]
 }
