@@ -152,14 +152,13 @@ impl CollaborationChatProductPort {
             .community_recovery
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let connected = joined && recovery.connected();
-        let waiting = recovery.reason == Some("waiting for Community peers");
+        let view = recovery.snapshot();
+        let connected = joined && view.connected;
         serde_json::json!({
-            "state": if !joined { "left" } else { recovery.state() },
+            "state": if !joined { "left" } else { view.state },
             "connected": connected,
-            "detail": if joined { recovery.detail() } else { crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL.to_string() },
-            "next_retry_seconds": if connected || !joined || waiting { None }
-                else { recovery.next_check_seconds() },
+            "detail": if joined { view.detail } else { crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL.to_string() },
+            "next_retry_seconds": if !joined { None } else { view.next_retry_seconds },
         })
     }
 
@@ -169,16 +168,16 @@ impl CollaborationChatProductPort {
             .community_recovery
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let connected = recovery.connected();
+        let view = recovery.snapshot();
         crate::room_service::RoomTransportView {
             configured: true,
-            available: joined && connected,
+            available: joined && view.connected,
             community_joined: Some(joined),
-            community_state: Some(if joined { recovery.state() } else { "left" }.to_string()),
+            community_state: Some(if joined { view.state } else { "left" }.to_string()),
             status: Some(if !joined {
                 crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL.to_string()
             } else {
-                recovery.detail()
+                view.detail
             }),
             history: self.history_status.lock().ok().map(|status| status.clone()),
         }
@@ -1145,6 +1144,32 @@ mod tests {
                 tokio::time::advance(std::time::Duration::from_secs(10)).await;
                 assert!(f.port.community_status()["next_retry_seconds"].is_null());
             }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn community_fix1_snapshot_keeps_state_detail_and_deadline_consistent() {
+        let f = fixture();
+        for millis in [0, 1, 499, 500, 501, 1000] {
+            let now = tokio::time::Instant::now();
+            f.port.set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                reason: Some("bootstrap join timed out"), retry_at: now + std::time::Duration::from_millis(millis), ..Default::default()
+            });
+            let status = f.port.community_status();
+            assert_eq!(status["state"], "reconnecting");
+            assert_eq!(status["connected"], false);
+            let detail = status["detail"].as_str().unwrap();
+            if millis == 0 {
+                assert!(status["next_retry_seconds"].is_null());
+                assert!(detail.contains("It is checking the link."));
+            } else {
+                assert_eq!(status["next_retry_seconds"], 1);
+                assert!(detail.contains("1 second."));
+            }
+            let view = serde_json::to_value(f.port.conversation_transport_view()).unwrap();
+            assert_eq!(view["community_state"], status["state"]);
+            assert_eq!(view["status"], status["detail"]);
+            assert_eq!(view["available"], status["connected"]);
         }
     }
 

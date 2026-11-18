@@ -723,35 +723,13 @@ pub(crate) async fn run_community_link_watchdog_with_timing<L: CommunityLink>(
             .await;
         let health = tokio::time::timeout(COMMUNITY_LINK_HEALTH_TIMEOUT, link.link_health()).await;
         let bootstrap_failure = link.bootstrap_failure();
-        if role == Ok(&false) {
-            let now = tokio::time::Instant::now();
-            let failure = bootstrap_failure.or_else(|| match &health {
-                Err(_) => Some("topic health timed out"),
-                Ok(Err(error)) => Some(community_failure_reason(error, "topic health failed")),
-                Ok(Ok(_)) => None,
-            });
-            failure_log
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .observe(failure, now);
-            let connected = matches!(&health, Ok(Ok(health)) if health.peer_count > 0)
-                && bootstrap_failure.is_none();
-            recovery_status(CommunityRecoveryView {
-                connected,
-                checked_at: now,
-                checked_wall_at: timing.wall_clock.now(),
-                wall_clock: timing.wall_clock,
-                retry_at: now + timing.cadence,
-                reason: failure.or((!connected).then_some("waiting for Community peers")),
-            });
-            return;
-        }
+        let is_node = role == Ok(&false);
         let reason = match &role {
             Err(reason) => Some(*reason),
             Ok(_) => bootstrap_failure.or_else(|| match &health {
                 Err(_) => Some("topic health timed out"),
                 Ok(Err(error)) => Some(community_failure_reason(error, "topic health failed")),
-                Ok(Ok(health)) if health.peer_count == 0 => Some("no Community peer"),
+                Ok(Ok(health)) if !is_node && health.peer_count == 0 => Some("no Community peer"),
                 Ok(Ok(_)) => None,
             }),
         };
@@ -760,6 +738,8 @@ pub(crate) async fn run_community_link_watchdog_with_timing<L: CommunityLink>(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .observe(reason, now);
+        let connected = reason.is_none() && matches!(&health, Ok(Ok(health)) if health.peer_count > 0);
+        let status_reason = reason.or((is_node && !connected).then_some("waiting for Community peers"));
         let health = if reason.is_none() {
             health.ok().and_then(Result::ok)
         } else {
@@ -769,19 +749,24 @@ pub(crate) async fn run_community_link_watchdog_with_timing<L: CommunityLink>(
             let mut watchdog = watchdog
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let step = watchdog.observe(health, link.host_addresses(), now);
+            let step = if is_node && !link.topic_is_pending() {
+                if reason.is_none() { watchdog.clear_outage(); }
+                None
+            } else {
+                watchdog.observe(health, if is_node { None } else { link.host_addresses() }, now)
+            };
             recovery_status(CommunityRecoveryView {
-                connected: reason.is_none(),
+                connected,
                 checked_at: now,
                 checked_wall_at: timing.wall_clock.now(),
                 wall_clock: timing.wall_clock,
                 retry_at: now + watchdog.next_retry(now).min(timing.cadence),
-                reason,
+                reason: status_reason,
             });
             step
         };
         if let Some(step) = step {
-            let step = if role.is_err() {
+            let step = if role.is_err() || is_node {
                 CommunityLinkStep::Rejoin
             } else {
                 step

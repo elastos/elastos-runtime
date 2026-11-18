@@ -465,8 +465,7 @@ impl JoinedCollaborationNetwork {
             .context("Carrier missing bootstrap join failed for collaboration recovery")?;
         require_bounded_response(&response)?;
         if response["code"] == "not_joined" {
-            self.pending_join
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            // A missing sender does not prove that the topic record is absent.
             anyhow::bail!("not_joined: Community topic is waiting for paced repair");
         }
         let joined: JoinExactData = require_ok_response(response, "gossip_join_peers")?;
@@ -600,10 +599,10 @@ pub(crate) trait CommunityLink {
     async fn restore_bootstrap(&self) -> anyhow::Result<()> {
         Ok(())
     }
-    /// Only a Home repairs its own link. A bootstrap node (the seed's
-    /// Community node) has nobody to rejoin, and its rebuild would cut every
-    /// Home at once.
+    /// A Home may replace its own actor. A node keeps its actor and restores
+    /// only a missing local topic, so existing Homes retain their links.
     async fn recovers_its_link(&self) -> anyhow::Result<bool>;
+    fn topic_is_pending(&self) -> bool { false }
     async fn link_health(&self) -> anyhow::Result<CommunityLinkHealth>;
     fn host_addresses(&self) -> Option<CommunityHostAddresses>;
     /// Leaves the Community topic and joins it again with its bootstrap peers.
@@ -624,6 +623,9 @@ impl CommunityLink for JoinedCollaborationNetwork {
             .bootstrap_failure
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    fn topic_is_pending(&self) -> bool {
+        self.pending_join.load(std::sync::atomic::Ordering::Relaxed)
     }
     async fn restore_bootstrap(&self) -> anyhow::Result<()> {
         self.restore_missing_bootstrap_peers().await
@@ -659,6 +661,8 @@ impl CommunityLink for JoinedCollaborationNetwork {
         if health.topic != self.topic {
             anyhow::bail!("Carrier returned a mismatched collaboration topic health");
         }
+        // Only a valid health reply proves that the local topic exists again.
+        self.pending_join.store(false, std::sync::atomic::Ordering::Relaxed);
         anyhow::ensure!(health.receiver_alive, "Community receiver ended");
         Ok(CommunityLinkHealth {
             peer_count: health.peer_count,
@@ -673,8 +677,6 @@ impl CommunityLink for JoinedCollaborationNetwork {
     async fn rejoin(&self) -> anyhow::Result<()> {
         if self.pending_join.load(std::sync::atomic::Ordering::Relaxed) {
             self.restore_absent_topic().await?;
-            self.pending_join
-                .store(false, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
         }
         let response = self
@@ -683,12 +685,6 @@ impl CommunityLink for JoinedCollaborationNetwork {
             .await
             .context("Carrier gossip_rejoin failed for collaboration network")?;
         require_bounded_response(&response)?;
-        if response["code"] == "not_joined" {
-            self.restore_absent_topic().await?;
-            self.pending_join
-                .store(false, std::sync::atomic::Ordering::Relaxed);
-            return Ok(());
-        }
         let joined: JoinExactData = require_ok_response(response, "gossip_rejoin")?;
         if joined.topic != self.topic {
             anyhow::bail!("Carrier returned a mismatched collaboration rejoin");
@@ -704,6 +700,11 @@ impl CommunityLink for JoinedCollaborationNetwork {
             .context("Carrier gossip_rebuild failed for collaboration network")?;
         require_bounded_response(&response)?;
         let rebuilt: RebuildData = require_ok_response(response, "gossip_rebuild")?;
+        if self.topic_is_pending() {
+            // A rebuild restores recorded topics; a missing subscription needs
+            // its verified exact join as part of the same paced attempt.
+            self.restore_absent_topic().await?;
+        }
         Ok(rebuilt.topics)
     }
 }
@@ -755,54 +756,47 @@ impl Default for CommunityRecoveryView {
     }
 }
 
+pub(crate) struct CommunityRecoverySnapshot {
+    pub(crate) connected: bool,
+    pub(crate) state: &'static str,
+    pub(crate) detail: String,
+    pub(crate) next_retry_seconds: Option<u64>,
+}
+
 impl CommunityRecoveryView {
+    fn connected_at(&self, now: Instant, wall: std::time::SystemTime) -> bool {
+        self.connected && now.saturating_duration_since(self.checked_at) <= Duration::from_secs(45)
+            && wall.duration_since(self.checked_wall_at).is_ok_and(|elapsed| elapsed <= Duration::from_secs(45))
+    }
+
+    #[cfg(test)]
     pub(crate) fn connected(&self) -> bool {
-        self.connected
-            && self.checked_at.elapsed() <= Duration::from_secs(45)
-            && self
-                .wall_clock
-                .now()
-                .duration_since(self.checked_wall_at)
-                .is_ok_and(|elapsed| elapsed <= Duration::from_secs(45))
+        self.connected_at(Instant::now(), self.wall_clock.now())
     }
 
-    pub(crate) fn state(&self) -> &'static str {
-        if self.connected() {
-            "connected"
-        } else if self.reason == Some("starting") {
-            "starting"
-        } else if self.reason == Some("waiting for Community peers") {
-            "waiting_for_peers"
-        } else {
-            "reconnecting"
-        }
-    }
-
-    pub(crate) fn next_check_seconds(&self) -> Option<u64> {
-        let remaining = self.retry_at.saturating_duration_since(Instant::now());
-        (!remaining.is_zero()).then(|| {
-            remaining
-                .as_secs()
-                .saturating_add(u64::from(remaining.subsec_nanos() > 0))
-        })
-    }
-
-    pub(crate) fn detail(&self) -> String {
-        if self.connected() {
-            "Community is connected.".to_string()
-        } else if self.reason == Some("starting") {
-            "Home is starting Community. It is checking the link.".to_string()
-        } else if self.reason == Some("waiting for Community peers") {
-            "Community is waiting for another Home.".to_string()
-        } else {
-            match self.next_check_seconds() {
+    pub(crate) fn snapshot(&self) -> CommunityRecoverySnapshot {
+        let now = Instant::now();
+        let connected = self.connected_at(now, self.wall_clock.now());
+        let state = if connected { "connected" }
+            else if self.reason == Some("starting") { "starting" }
+            else if self.reason == Some("waiting for Community peers") { "waiting_for_peers" }
+            else { "reconnecting" };
+        let remaining = self.retry_at.saturating_duration_since(now);
+        let next_retry_seconds = if connected || state == "waiting_for_peers" || remaining.is_zero() { None }
+            else { Some(remaining.as_secs().saturating_add(u64::from(remaining.subsec_nanos() > 0))) };
+        let detail = match state {
+            "connected" => "Community is connected.".to_string(),
+            "starting" => "Home is starting Community. It is checking the link.".to_string(),
+            "waiting_for_peers" => "Community is waiting for another Home.".to_string(),
+            _ => match next_retry_seconds {
                 Some(wait) => {
                     let unit = if wait == 1 { "second" } else { "seconds" };
                     format!("Home is reconnecting to Community. Next check in {wait} {unit}.")
                 }
                 None => "Home is reconnecting to Community. It is checking the link.".to_string(),
-            }
-        }
+            },
+        };
+        CommunityRecoverySnapshot { connected, state, detail, next_retry_seconds }
     }
 }
 
@@ -841,6 +835,12 @@ impl CommunityLinkWatchdog {
         }
     }
 
+    pub(crate) fn clear_outage(&mut self) {
+        self.steps = 0;
+        self.outage_rebuilds = 0;
+        self.no_peers_since = None;
+    }
+
     pub(crate) fn next_retry(&self, now: Instant) -> Duration {
         let wait = if self.outage_rebuilds >= COMMUNITY_OUTAGE_FAST_REBUILDS {
             COMMUNITY_LONG_OUTAGE_RETRY
@@ -872,9 +872,7 @@ impl CommunityLinkWatchdog {
         let healthy = health.is_some_and(|health| health.peer_count > 0);
         let address_changed = self.observe_addresses(addresses, healthy, now);
         if healthy {
-            self.steps = 0;
-            self.outage_rebuilds = 0;
-            self.no_peers_since = None;
+            self.clear_outage();
             return None;
         }
         self.no_peers_since.get_or_insert(now);
