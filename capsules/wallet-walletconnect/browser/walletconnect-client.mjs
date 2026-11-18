@@ -196,7 +196,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       current.on('disconnect',()=>{
         if (provider !== current) return;
         generation++; removed = sessionExpiry > Date.now()/1000;
-        operation?.abort(muted(removed ? removedMessage : 'This phone connection expired. Select Connect wallet for a new QR code.'));
+        operation?.abort(Object.assign(muted(removed ? removedMessage : 'This phone connection expired. Select Connect wallet for a new QR code.'),{walletRemoved:removed}));
         onPhase('changed');
       });
     }

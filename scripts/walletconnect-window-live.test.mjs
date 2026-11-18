@@ -303,6 +303,11 @@ for(const engine of ['chromium','webkit'])test(`proof checking stays bound while
  assert.equal(await r.frame.locator('[data-action=finish]').count(),1);await r.capture('account-changed-after-proof-response');assert.deepEqual(r.errors,[]);
 });
 
+for(const engine of ['chromium','webkit'])test(`an account change after proof awaits explicit Finish during a delayed Home refresh in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);let release,entered;const held=new Promise(resolve=>{release=resolve;}),refreshing=new Promise(resolve=>{entered=resolve;});t.after(()=>release());await r.page.route('**/wallet/accounts',async route=>{if(r.fixture.state.verified===1){entered();await held;}await route.continue();});
+ await r.qr();await r.pair();await refreshing;await r.state('linked');assert.equal(r.fixture.state.verified,1);await r.peer.changeAccount();await r.state('saved-unlinked');assert.match(await r.frame.locator('main').innerText(),new RegExp(r.peer.address.slice(0,6),'i'));assert.equal(r.fixture.state.verified,1,'the changed account has no automatic proof');await r.capture('account-changed-during-linked-refresh');release();await r.page.unroute('**/wallet/accounts');await r.click('finish');await r.state('linked');assert.equal(r.fixture.state.verified,2);assert.equal(r.fixture.state.accounts[0].address.toLowerCase(),r.peer.address.toLowerCase());assert.deepEqual(r.errors,[]);
+});
+
 for(const engine of ['chromium','webkit'])test(`the selected second request finishes before the first can be sent in ${engine}`,{timeout:60000},async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('first');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'second',reason:'Second request'});await r.refresh();await r.state('request-multiple');
  await r.click('view-requests');await r.state('request-list');await r.frame.locator('[data-focus-key="select-request:second"]').click();assert.equal(await r.frame.locator('.connection-request').getAttribute('data-request-id'),'second');

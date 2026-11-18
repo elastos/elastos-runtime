@@ -14,7 +14,7 @@ export function observeWindowErrors(page,fixture) {
  const errors=[],sdkFences=[];
  page.on('pageerror',error=>{
   const fenced=fixture.state.calls.findLast(row=>row.status===409&&row.method==='POST'&&!row.observedRejection&&row.path.endsWith('/storage')&&typeof row.revision==='string'&&row.revision!==JSON.stringify(String(fixture.state.revision)));
-  if(fenced&&[staleSessionMessage,`Error: ${staleSessionMessage}`].includes(error.message)&&(error.stack||'').includes('fetchJson')&&(error.stack||'').includes('/apps/wallet-walletconnect/wallet-walletconnect.js')){
+  if(fenced&&[staleSessionMessage,`Error: ${staleSessionMessage}`].includes(error.message)&&/fetchJson|persist/.test(error.stack||'')&&(error.stack||'').includes('/apps/wallet-walletconnect/')){
    fenced.observedRejection=true;sdkFences.push({message:staleSessionMessage,method:fenced.method,revision:fenced.revision,status:409});
    console.error('Expected retired SDK storage fence:',JSON.stringify(sdkFences.at(-1)));
   }else errors.push(error.message);

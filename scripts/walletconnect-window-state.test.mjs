@@ -117,3 +117,14 @@ for(const [ending,extra,expected] of [
  assert.equal(view.stage,expected);assert.ok(view.actions.every(action=>!['send-request','start-over','connect'].includes(action.id)));
  assert.match(view.notice.map(part=>part.text).join(''),/Check .*wallet.*before sending again/);
 });
+
+test('wallet removal after dispatch keeps the sent-message removal state',()=>{
+ const error=Object.assign(new Error('Wallet connection ended.'),{walletRemoved:true});
+ assert.equal(errorStage(error,{kind:'approve'},'signature'),'request-sent-wallet-removed');
+});
+
+test('a linked outcome cannot label a newly reported account as linked',()=>{
+ const next={...session,address:'0x'+'34'.repeat(20)};
+ const view=walletConnectView(windowPresentation({...initial,connection:{session:next},outcome:'linked',walletChanged:true},now));
+ assert.equal(view.stage,'saved-unlinked');assert.equal(view.account.accounts[0].address,next.address);assert.ok(view.actions.some(action=>action.id==='finish'));
+});

@@ -31,7 +31,7 @@ export function windowPresentation(state, nowSeconds) {
   else if (qrData) stage = 'qr-shown';
   else if (busy) {const waitPhase=state.checking ? state.effectPhase : phase;stage = waitPhase === 'ownership' ? 'link-wait' : waitPhase === 'signature' ? 'request-phone' : waitPhase === 'transaction' ? 'transaction-phone' : waitPhase === 'disconnecting' ? 'disconnecting' : 'preparing-qr';}
   else if (!sent && request?.expires_at <= nowSeconds) stage='request-expired';
-  else if (state.walletChanged && session && !linked && ['link-error','request-wallet-error','request-unsendable','request-unavailable'].includes(outcome)) stage = 'saved-unlinked';
+  else if (state.walletChanged && session && !linked && ['linked','link-error','request-wallet-error','request-unsendable','request-unavailable'].includes(outcome)) stage = 'saved-unlinked';
   else if (connection?.removed && outcome !== 'disconnected') stage = request ? sent ? request.intent === 'transaction_intent' ? 'transaction-wallet-removed' : 'request-sent-wallet-removed' : 'request-wallet-removed' : 'wallet-removed';
   else if (connection?.expired && outcome !== 'disconnected') stage = request ? sent ? request.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'request-unavailable' : 'request-connection-expired' : 'connection-expired';
   else if (outcome) stage = outcome;
@@ -74,6 +74,7 @@ export function errorStage(error, action, phase) {
     return 'link-error';
   }
   const transaction = action?.intent === 'transaction_intent';
+  if (error?.walletRemoved === true && phase === 'signature') return 'request-sent-wallet-removed';
   if (message === messages.unapprovedNetwork('Ethereum') || error?.freshConnection) return 'request-new-connection';
   if (message.startsWith('WalletConnect in this Home does not offer network ')) return phase === 'starting' ? 'request-unsendable' : 'request-unavailable';
   if (message === messages.signatureDeclined) return 'request-declined';
