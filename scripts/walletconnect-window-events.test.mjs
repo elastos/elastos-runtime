@@ -1,11 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
+import {spawnSync} from 'node:child_process';
 import {observeWindowErrors,staleSessionMessage} from './lib/walletconnect-phone-window-fixture.mjs';
 import {walletConnectFixtureRequire} from './lib/walletconnect-relay-fixture.mjs';
 const {RELAYER_EVENTS}=walletConnectFixtureRequire('@walletconnect/core');
 import {createWalletConnectClient} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const address='0x'+'12'.repeat(20),other='0x'+'34'.repeat(20);
+test('a stopped Home read owns the promise it already started',()=>{
+ const result=spawnSync(process.execPath,['--input-type=module','-e',`
+  import assert from 'node:assert/strict';
+  import {createWalletConnectClient} from './capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
+  const unhandled=[];process.on('unhandledRejection',error=>unhandled.push(error.message));
+  let client;
+  client=createWalletConnectClient({origin:'http://localhost',api:resource=>{
+   if(resource==='wallet/config'){
+    client.effect({kind:'cancel'}).catch(error=>unhandled.push(error.message));
+    return Promise.reject(new Error('Stopped Home read'));
+   }
+   if(resource==='storage')return {};
+   throw new Error('Unexpected Home read');
+  }});
+  await assert.rejects(client.effect({kind:'link'}),/Home stopped waiting/);
+  await new Promise(resolve=>setTimeout(resolve,25));
+  assert.deepEqual(unhandled,[],'Stop owns the rejected read without changing its stop result');
+ `],{cwd:new URL('..',import.meta.url),encoding:'utf8',timeout:5000});
+ assert.equal(result.status,0,result.stderr||result.error?.message);
+});
 async function fixture(state){
  const relayer=Object.assign(new EventEmitter(),{connected:true});
  const provider=Object.assign(new EventEmitter(),{chainId:8453,accounts:[address],connected:true,

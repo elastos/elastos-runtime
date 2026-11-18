@@ -33,7 +33,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
   const muted = message => Object.assign(new Error(message), {tone:'muted'});
   const waitFor = async (promise, signal) => {
     if (!signal) return promise;
-    signal.throwIfAborted();
+    if (signal.aborted) { Promise.resolve(promise).catch(() => {}); throw signal.reason; }
     let abort;
     try { return await Promise.race([promise,new Promise((_,reject)=>{abort=()=>reject(signal.reason);signal.addEventListener('abort',abort,{once:true});})]); }
     finally { signal.removeEventListener('abort',abort); }
