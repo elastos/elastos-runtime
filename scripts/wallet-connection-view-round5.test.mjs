@@ -107,10 +107,10 @@ test('R5: capability copy cannot replace a returned transaction recovery or its 
  }
 });
 test('R5: a dismissed record retains a subsequently supplied known transaction result',()=>{
- const v=product.reduceConnection({window:'metamask',stage:'transaction-wallet-error'},{summary:raw('metamask',{intent:'transaction_intent',status:'rejected',approved_at:1800000000}),message:shared.messages.find(r=>r.id==='settled-answered').message,nowSeconds:1800000001});assert.equal(v.stage,'transaction-done');assert.equal(v.request.status,'dismissed');assert.match(product.viewText(v.status),/Transaction sent/);
+ const v=product.reduceConnection({window:'metamask',stage:'transaction-wallet-error'},{summary:raw('metamask',{intent:'transaction_intent',status:'rejected',approved_at:1800000000}),message:shared.messages.find(r=>r.id==='transaction-recorded').message,nowSeconds:1800000001});assert.equal(v.stage,'transaction-done');assert.equal(v.request.status,'dismissed');assert.match(product.viewText(v.status),/Transaction sent/);
 });
 
 test('R5: common recovery and neutral-identity guards reject broken screen definitions',async()=>{
- for(const [editScreens,guard]of [[s=>{s.unisat['request-wallet-error'].notice='Start a different request.';},commonGuard],[s=>{s.unisat['extension-missing'].notice='Enable UniSat in this browser.';},neutralGuard]])await withTestView({editScreens},api=>assert.throws(()=>guard(api),assert.AssertionError));
+ for(const [editScreens,guard]of [[s=>{s.unisat['request-wallet-error'].notice='Start a different request.';},commonGuard],[s=>{s.unisat['extension-missing'].paymentSafeNotice='Enable UniSat in this browser.';},neutralGuard]])await withTestView({editScreens},api=>assert.throws(()=>guard(api),assert.AssertionError));
  await withTestView({mutateSource:s=>s.replace("'com.brave.wallet': 'Brave Wallet'","'com.brave.wallet': 'MetaMask'")},api=>assert.throws(()=>neutralGuard(api),assert.AssertionError));
 });

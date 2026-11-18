@@ -17,7 +17,7 @@ export function contractCopy(expected, row, view) {
     .replace('Available: 0x2aB5…a4C2. ','').replace('Connect on Ethereum to',`Connect on ${network} to`).replace('supports Base and',`supports ${network} and`);
   const result=Object.fromEntries(Object.entries(expected.copy).map(([key,value])=>[key,replace(value)]));
   if(row.summaryInput?.intent==='transaction_intent'&&facts.notSent&&row.provider?.includes('refused')){
-    result.status=`${name} did not allow this transaction.`;
+    result.status=`${name==='your browser wallet'?'Your browser wallet':name} did not allow this transaction.`;
     result.notice='Review Wallet activity before starting a new request.';
   }
   if(facts.payment){
@@ -26,7 +26,7 @@ export function contractCopy(expected, row, view) {
   }
   // R5: absence does not prove that an extension can be enabled, W926-944.
   if(['metamask','unisat'].includes(row.window)&&['extension-missing','extensions-unavailable','other-ethereum-wallet'].includes(row.stage)){result.status='Your browser wallet was not found here.';result.notice='Open this connection from Wallet in a browser where your wallet is available.';}
-  if(['metamask','unisat'].includes(row.window)&&['request-expired','request-wallet-error'].includes(row.stage))result.notice=`To try again, return to ${app} and make a new request.`;
+  if(['metamask','unisat'].includes(row.window)&&[`To try again, return to ${app}.`,`Start a new request in ${app} to try again.`].includes(result.notice))result.notice=`To try again, return to ${app} and make a new request.`;
   if(facts.payment&&row.window==='metamask'&&row.stage==='ready-multiple')result.notice='Connect will use '+name+'.';
   if(view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${result.status} ${result.notice}`))result.notice=`Close this window. ${result.notice}`.trim();
   if(row.stage==='disconnecting')result.notice='Disconnecting continues after you close this window.';
