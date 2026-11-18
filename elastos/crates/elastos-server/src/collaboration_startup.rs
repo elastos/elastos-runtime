@@ -38,6 +38,7 @@ pub const COLLABORATION_STARTUP_CONFIG_SCHEMA: &str =
 pub(crate) const MAX_STARTUP_CONFIG_BYTES: usize = 3 * 1024 * 1024;
 const COLLABORATION_WORKER_CADENCE: Duration = Duration::from_secs(5);
 const COLLABORATION_LIVE_CADENCE: Duration = Duration::from_millis(500);
+const COLLABORATION_BOOTSTRAP_CADENCE: Duration = Duration::from_secs(1);
 #[cfg(test)]
 const COLLABORATION_BOOTSTRAP_CADENCE: Duration = Duration::from_secs(1);
 const COMMUNITY_LINK_WATCHDOG_CADENCE: Duration = Duration::from_secs(5);
@@ -276,7 +277,10 @@ pub async fn start_collaboration_runtime_service(
     capability_manager: Option<Arc<elastos_runtime::capability::CapabilityManager>>,
 ) -> anyhow::Result<Option<CollaborationRuntimeService>> {
     tracing::info!("collaboration startup: checking network configuration");
-    if matches!(&configuration.configuration, CollaborationNetworkConfiguration::Isolated) {
+    if matches!(
+        &configuration.configuration,
+        CollaborationNetworkConfiguration::Isolated
+    ) {
         tracing::info!("collaboration startup: Home is isolated; Community workers stay stopped");
     }
     if matches!(
@@ -592,7 +596,9 @@ async fn run_collaboration_worker(
             }
         ),
         run_community_bootstrap_worker(
-            shutdown.clone(), membership.subscribe(), driver.community_link(),
+            shutdown.clone(),
+            membership.subscribe(),
+            driver.community_link(),
         ),
         run_community_link_watchdog(
             shutdown,
@@ -646,14 +652,25 @@ pub(crate) async fn run_community_bootstrap_worker<L: CommunityLink>(
     joined: watch::Receiver<bool>,
     link: &L,
 ) {
-    run_community_periodic(shutdown, joined, COLLABORATION_BOOTSTRAP_CADENCE, || async {
-        let reason = match tokio::time::timeout(COMMUNITY_LINK_HEALTH_TIMEOUT, link.restore_bootstrap()).await {
-            Ok(Ok(())) => None,
-            Ok(Err(error)) => Some(community_failure_reason(&error, "bootstrap join failed")),
-            Err(_) => Some("bootstrap join timed out"),
-        };
-        link.record_bootstrap_failure(reason);
-    }).await;
+    run_community_periodic(
+        shutdown,
+        joined,
+        COLLABORATION_BOOTSTRAP_CADENCE,
+        || async {
+            let reason =
+                match tokio::time::timeout(COMMUNITY_LINK_HEALTH_TIMEOUT, link.restore_bootstrap())
+                    .await
+                {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => {
+                        Some(community_failure_reason(&error, "bootstrap join failed"))
+                    }
+                    Err(_) => Some("bootstrap join timed out"),
+                };
+            link.record_bootstrap_failure(reason);
+        },
+    )
+    .await;
 }
 
 pub(crate) async fn run_community_link_watchdog_with_timing<L: CommunityLink>(
@@ -667,11 +684,16 @@ pub(crate) async fn run_community_link_watchdog_with_timing<L: CommunityLink>(
     let recovers = tokio::sync::OnceCell::<bool>::new();
     let failure_log = std::sync::Mutex::new(CommunityFailureLog::default());
     run_community_periodic(shutdown, joined, timing.cadence, || async {
-        let role = recovers.get_or_try_init(|| async {
-            tokio::time::timeout(COMMUNITY_LINK_HEALTH_TIMEOUT, link.recovers_its_link())
-                .await.map_err(|_| "Carrier endpoint lookup timed out")?
-                .map_err(|error| community_failure_reason(&error, "Carrier endpoint lookup failed"))
-        }).await;
+        let role = recovers
+            .get_or_try_init(|| async {
+                tokio::time::timeout(COMMUNITY_LINK_HEALTH_TIMEOUT, link.recovers_its_link())
+                    .await
+                    .map_err(|_| "Carrier endpoint lookup timed out")?
+                    .map_err(|error| {
+                        community_failure_reason(&error, "Carrier endpoint lookup failed")
+                    })
+            })
+            .await;
         let health = tokio::time::timeout(COMMUNITY_LINK_HEALTH_TIMEOUT, link.link_health()).await;
         let bootstrap_failure = link.bootstrap_failure();
         if role == Ok(&false) {
@@ -679,9 +701,16 @@ pub(crate) async fn run_community_link_watchdog_with_timing<L: CommunityLink>(
             let connected = matches!(&health, Ok(Ok(health)) if health.peer_count > 0)
                 && bootstrap_failure.is_none();
             recovery_status(CommunityRecoveryView {
-                connected, checked_at: now, checked_wall_at: timing.wall_clock.now(),
-                wall_clock: timing.wall_clock, retry_at: now,
-                reason: if connected { None } else { Some("waiting for Community peers") },
+                connected,
+                checked_at: now,
+                checked_wall_at: timing.wall_clock.now(),
+                wall_clock: timing.wall_clock,
+                retry_at: now,
+                reason: if connected {
+                    None
+                } else {
+                    Some("waiting for Community peers")
+                },
             });
             return;
         }
@@ -695,46 +724,79 @@ pub(crate) async fn run_community_link_watchdog_with_timing<L: CommunityLink>(
             }),
         };
         let now = tokio::time::Instant::now();
-        failure_log.lock().unwrap_or_else(std::sync::PoisonError::into_inner).observe(reason, now);
-        let health = if reason.is_none() { health.ok().and_then(Result::ok) } else { None };
+        failure_log
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .observe(reason, now);
+        let health = if reason.is_none() {
+            health.ok().and_then(Result::ok)
+        } else {
+            None
+        };
         let step = {
-            let mut watchdog = watchdog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut watchdog = watchdog
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let step = watchdog.observe(health, link.host_addresses(), now);
             recovery_status(CommunityRecoveryView {
-                connected: reason.is_none(), checked_at: now,
-                checked_wall_at: timing.wall_clock.now(), wall_clock: timing.wall_clock,
-                retry_at: now + watchdog.next_retry(now).min(timing.cadence), reason,
+                connected: reason.is_none(),
+                checked_at: now,
+                checked_wall_at: timing.wall_clock.now(),
+                wall_clock: timing.wall_clock,
+                retry_at: now + watchdog.next_retry(now).min(timing.cadence),
+                reason,
             });
             step
         };
         if let Some(step) = step {
-            let step = if role.is_err() { CommunityLinkStep::Rejoin } else { step };
+            let step = if role.is_err() {
+                CommunityLinkStep::Rejoin
+            } else {
+                step
+            };
             let result = tokio::time::timeout(COMMUNITY_LINK_STEP_TIMEOUT, async {
                 match step {
                     CommunityLinkStep::Rejoin => link.rejoin().await,
                     CommunityLinkStep::Rebuild => link.rebuild_gossip().await.map(|_| ()),
                 }
-            }).await;
+            })
+            .await;
             let finished = tokio::time::Instant::now();
             let reason = match &result {
                 Err(_) => Some("Community repair timed out"),
-                Ok(Err(error)) => Some(community_failure_reason(error, match step {
-                    CommunityLinkStep::Rejoin => "Community rejoin failed",
-                    CommunityLinkStep::Rebuild => "Community rebuild failed",
-                })),
+                Ok(Err(error)) => Some(community_failure_reason(
+                    error,
+                    match step {
+                        CommunityLinkStep::Rejoin => "Community rejoin failed",
+                        CommunityLinkStep::Rebuild => "Community rebuild failed",
+                    },
+                )),
                 Ok(Ok(())) => reason,
             };
-            failure_log.lock().unwrap_or_else(std::sync::PoisonError::into_inner).observe(reason, finished);
-            let mut watchdog = watchdog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            failure_log
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .observe(reason, finished);
+            let mut watchdog = watchdog
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             watchdog.step_finished(finished);
             recovery_status(CommunityRecoveryView {
-                connected: false, checked_at: finished,
-                checked_wall_at: timing.wall_clock.now(), wall_clock: timing.wall_clock,
-                retry_at: finished + watchdog.next_retry(finished).min(timing.cadence), reason,
+                connected: false,
+                checked_at: finished,
+                checked_wall_at: timing.wall_clock.now(),
+                wall_clock: timing.wall_clock,
+                retry_at: finished + watchdog.next_retry(finished).min(timing.cadence),
+                reason,
             });
-            tracing::debug!(?step, success = matches!(result, Ok(Ok(()))), "Community repair finished");
+            tracing::debug!(
+                ?step,
+                success = matches!(result, Ok(Ok(()))),
+                "Community repair finished"
+            );
         }
-    }).await;
+    })
+    .await;
 }
 
 /// Keep fixed, bounded failure classes; provider text may carry private values.
@@ -3753,7 +3815,6 @@ mod tests {
         assert!(!request_ops(&carrier).iter().any(|op| op == "gossip_recv"));
     }
 
-
     #[test]
     fn community_recovery_logs_state_changes_and_at_most_once_a_minute() {
         #[derive(Clone)]
@@ -3902,8 +3963,12 @@ mod tests {
     }
 
     impl CommunityLink for FakeCommunityLink {
-        fn record_bootstrap_failure(&self, reason: Option<&'static str>) { self.state.lock().unwrap().bootstrap_failure = reason; }
-        fn bootstrap_failure(&self) -> Option<&'static str> { self.state.lock().unwrap().bootstrap_failure }
+        fn record_bootstrap_failure(&self, reason: Option<&'static str>) {
+            self.state.lock().unwrap().bootstrap_failure = reason;
+        }
+        fn bootstrap_failure(&self) -> Option<&'static str> {
+            self.state.lock().unwrap().bootstrap_failure
+        }
 
         async fn restore_bootstrap(&self) -> anyhow::Result<()> {
             anyhow::ensure!(
@@ -3919,7 +3984,6 @@ mod tests {
             );
             Ok(())
         }
-
 
         async fn recovers_its_link(&self) -> anyhow::Result<bool> {
             anyhow::ensure!(
@@ -4024,18 +4088,18 @@ mod tests {
         tokio::join!(
             run_community_bootstrap_worker(shutdown.clone(), joined.clone(), link),
             run_community_link_watchdog_with_timing(
-            shutdown,
-            joined,
-            link,
-            recovery_status,
-            CommunityLinkTiming {
-                wall_clock: CommunityWallClock::Tokio {
-                    at: tokio::time::Instant::now(),
-                    wall_at: std::time::UNIX_EPOCH + Duration::from_secs(1000),
+                shutdown,
+                joined,
+                link,
+                recovery_status,
+                CommunityLinkTiming {
+                    wall_clock: CommunityWallClock::Tokio {
+                        at: tokio::time::Instant::now(),
+                        wall_at: std::time::UNIX_EPOCH + Duration::from_secs(1000),
+                    },
+                    ..Default::default()
                 },
-                ..Default::default()
-            },
-        )
+            )
         );
     }
 
@@ -4051,8 +4115,6 @@ mod tests {
             _ = tokio::time::sleep(Duration::from_secs(run)) => {}
         }
     }
-
-
 
     #[tokio::test(start_paused = true)]
     async fn community_recovery_local_failures_override_remembered_neighbours() {
@@ -4309,7 +4371,10 @@ mod tests {
         });
         run_link_watchdog_for(&link, 1802).await;
         assert_eq!(link.frames(), 1, "scripted delivery stops after 15 s");
-        assert!(link.steps().is_empty(), "no local failure: the core cut adds no probe");
+        assert!(
+            link.steps().is_empty(),
+            "no local failure: the core cut adds no probe"
+        );
         assert_eq!(link.state.lock().unwrap().last_had_peer, Some(true));
     }
 
@@ -4570,13 +4635,16 @@ mod tests {
 
 #[cfg(test)]
 pub(crate) async fn run_community_core_fixture(
-    shutdown: watch::Receiver<bool>, link: &crate::collaboration_carrier::JoinedCollaborationNetwork,
+    shutdown: watch::Receiver<bool>,
+    link: &crate::collaboration_carrier::JoinedCollaborationNetwork,
     status: impl Fn(bool) + Send,
 ) {
-    let (_membership,joined)=watch::channel(true);
-    let status=std::sync::Mutex::new(status);
+    let (_membership, joined) = watch::channel(true);
+    let status = std::sync::Mutex::new(status);
     tokio::join!(
-        run_community_bootstrap_worker(shutdown.clone(),joined.clone(),link),
-        run_community_link_watchdog(shutdown,joined,link,|view| (status.lock().unwrap())(view.connected()))
+        run_community_bootstrap_worker(shutdown.clone(), joined.clone(), link),
+        run_community_link_watchdog(shutdown, joined, link, |view| (status.lock().unwrap())(
+            view.connected()
+        ))
     );
 }

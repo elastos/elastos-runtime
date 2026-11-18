@@ -598,7 +598,9 @@ impl JoinedCollaborationNetwork {
 /// What the Community link watchdog needs from Carrier.
 pub(crate) trait CommunityLink {
     fn record_bootstrap_failure(&self, _reason: Option<&'static str>) {}
-    fn bootstrap_failure(&self) -> Option<&'static str> { None }
+    fn bootstrap_failure(&self) -> Option<&'static str> {
+        None
+    }
     async fn restore_bootstrap(&self) -> anyhow::Result<()> {
         Ok(())
     }
@@ -616,10 +618,16 @@ pub(crate) trait CommunityLink {
 
 impl CommunityLink for JoinedCollaborationNetwork {
     fn record_bootstrap_failure(&self, reason: Option<&'static str>) {
-        *self.bootstrap_failure.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = reason;
+        *self
+            .bootstrap_failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = reason;
     }
     fn bootstrap_failure(&self) -> Option<&'static str> {
-        *self.bootstrap_failure.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        *self
+            .bootstrap_failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
     async fn restore_bootstrap(&self) -> anyhow::Result<()> {
         self.restore_missing_bootstrap_peers().await
@@ -2229,4 +2237,8 @@ mod tests {
 }
 
 #[cfg(test)]
-pub(crate) fn community_core_topic_for_test(profile: &crate::collaboration_network::VerifiedCollaborationNetworkProfile) -> String { collaboration_topic(profile) }
+pub(crate) fn community_core_topic_for_test(
+    profile: &crate::collaboration_network::VerifiedCollaborationNetworkProfile,
+) -> String {
+    collaboration_topic(profile)
+}
