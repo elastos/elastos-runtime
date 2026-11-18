@@ -18,7 +18,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   let uncertain = false, fixedOutcome = false;
   let operation = null, revision = 0, refreshing = null, disposed = false;
   let accountEvent = null, networkEvent = null, disconnected = false;
-  let readFailed = false, preflightFailure = null, checkingPreflight = false;
+  let readFailed = false, preflightFailure = null, checkingPreflight = false, pendingVerificationRequired = false;
   const requestNetworks = new Map();
   let lastMarkup = '', lastView = null;
   const mount = document.querySelector('#connection-root');
@@ -110,7 +110,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     }
     for (const control of root.querySelectorAll('[data-action]')) {
       if (!supported.has(control.dataset.action) || control.dataset.action === 'close-window' && (!frameHomeToken || !homeOrigin || window.top === window)) control.remove();
-      else if ((operation || uncertain || checkingPreflight) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action)) control.disabled = true;
+      else if ((operation || uncertain || checkingPreflight) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action) || pendingVerificationRequired && control.dataset.action === 'send-request') control.disabled = true;
     }
     // These shared recovery paragraphs point to Check access, which the base
     // cannot perform. Absence also cannot prove this window can enable extensions.
@@ -161,6 +161,7 @@ export function startExtensionWindow(kind, homeClipboard) {
         readFailed = false;
         for (const request of Array.isArray(r?.approval_requests) ? r.approval_requests : []) requestNetworks.set(request.request_id, request.chain_namespace);
         requests = (Array.isArray(r?.approval_requests) ? r.approval_requests : []).filter(signable).filter(r => !fixedOutcome || r.request_id !== selected?.id);
+        pendingVerificationRequired = false;
         if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) {
           if (selected && !requests.some(request => request.request_id === selected.id)) {
             if (selected.status === 'pending') { stage = 'request-unavailable'; fixedOutcome = true; }
@@ -187,9 +188,9 @@ export function startExtensionWindow(kind, homeClipboard) {
   }
 
   async function perform(action) {
-    if (operation || uncertain || checkingPreflight || fixedOutcome && action.kind === 'approve') return;
+    if (operation || uncertain || checkingPreflight || (fixedOutcome || pendingVerificationRequired) && action.kind === 'approve') return;
     revision += 1;
-    preflightFailure = null; readFailed = false;
+    preflightFailure = null; readFailed = false; pendingVerificationRequired = false;
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
     if (action.kind === 'link') { accountEvent = null; networkEvent = null; disconnected = false; fixedOutcome = false; selected = null; picked = false; }
@@ -219,8 +220,8 @@ export function startExtensionWindow(kind, homeClipboard) {
       if (disposed) return;
       revision += 1; operation = null;
       const message = error.message;
-      // These exact messages are Home's existing pre-sign checks. No wallet
-      // signing call ran, so the Runtime approval remains pending and retryable.
+      // These are Home's existing pre-sign checks. No wallet signing call ran,
+      // but the one-use Runtime handoff may already have consumed the request.
       if (['Switch to the linked account before approving.', 'Switch to the linked Bitcoin account before signing.', 'Wallet account changed before signing.', 'UniSat account changed before signing.'].includes(message)) {
         preflightFailure = selected ? 'request-unsendable' : 'account-unavailable';
       } else if (message === 'Switch UniSat to Bitcoin mainnet.') {
@@ -246,7 +247,7 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   async function checkPendingAfterRefusal() {
     const id = selected.id;
-    checkingPreflight = true; draw();
+    checkingPreflight = true; pendingVerificationRequired = true; draw();
     try {
       // Runtime's handoff is one-use. A Home refusal alone does not prove the
       // request is still pending; only the existing Runtime list can do that.
@@ -254,6 +255,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       if (disposed || selected?.id !== id || fixedOutcome) return;
       requests = (Array.isArray(response?.approval_requests) ? response.approval_requests : []).filter(signable);
       const pending = requests.find(request => request.request_id === id && request.status === 'pending');
+      pendingVerificationRequired = false;
       if (!pending) { fixedOutcome = true; stage = 'request-unavailable'; }
       else { selected = reduceSummary(pending, { connector: CONNECTOR_ID }); stage = chooseStage(); }
     } catch (error) {
@@ -305,7 +307,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     else return;
     if (['network-changed', 'request-network-testnet', 'request-network-declined'].includes(preflightFailure) && (data.event === 'networkChanged' && data.value === 'livenet' || data.event === 'chainChanged' && selected && `eip155:${BigInt(data.value)}` === requestNetworks.get(selected.id))) preflightFailure = null;
     revision += 1;
-    if (!operation && !uncertain && !fixedOutcome) { stage = chooseStage(); readFailed = false; }
+    if (!operation && !uncertain && !fixedOutcome && !pendingVerificationRequired) { stage = chooseStage(); readFailed = false; }
     draw();
   }
 
