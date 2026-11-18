@@ -4286,7 +4286,8 @@ pub(crate) async fn run_community_core_fixture(
         }),
         async {
             run_community_periodic(shutdown,joined,COLLABORATION_LIVE_CADENCE,||async {
-                (status.lock().unwrap())(link.has_remote_peers().await.unwrap_or(false));
+                let connected=link.has_remote_peers().await.unwrap_or(false);
+                (status.lock().unwrap())(connected);
             }).await;
         }
     );

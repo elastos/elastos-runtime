@@ -13,6 +13,7 @@ use iroh_gossip::proto::{
 };
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::{mpsc, oneshot, watch};
+use tracing::instrument::WithSubscriber;
 
 enum HubInput {
     Connected(
@@ -322,6 +323,12 @@ impl Provider for FaultProvider {
         Ok(response)
     }
 }
+#[derive(Clone)]
+struct LogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for LogWriter {
+    fn write(&mut self, bytes:&[u8])->std::io::Result<usize>{self.0.lock().unwrap().extend_from_slice(bytes);Ok(bytes.len())}
+    fn flush(&mut self)->std::io::Result<()>{Ok(())}
+}
 struct Fixture {
     _root: tempfile::TempDir,
     home: CarrierNode,
@@ -332,6 +339,7 @@ struct Fixture {
     connected: Arc<AtomicBool>,
     disconnected: Arc<AtomicUsize>,
     shutdown: watch::Sender<bool>,
+    logs: Arc<std::sync::Mutex<Vec<u8>>>,
     worker: tokio::task::JoinHandle<()>,
 }
 async fn wait_for(test: impl Fn()->bool, seconds:u64)->bool {
@@ -356,15 +364,18 @@ impl Fixture {
         let link=crate::collaboration_carrier::join_collaboration_network(wrapped,&profile(hub.bootstrap())).await.unwrap();
         let connected=Arc::new(AtomicBool::new(false));let disconnected=Arc::new(AtomicUsize::new(0));
         let (shutdown,rx)=watch::channel(false);
+        let logs=Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer=logs.clone();
+        let subscriber=tracing_subscriber::fmt().with_ansi(false).without_time().with_max_level(tracing::Level::WARN).with_writer(move||LogWriter(writer.clone())).finish();
         let worker=tokio::spawn({let connected=connected.clone();let disconnected=disconnected.clone();async move {
             let connected_once=AtomicBool::new(false);
             run_community_core_fixture(rx,&link,|state|{
                 if state {connected_once.store(true,Ordering::SeqCst);} else if connected_once.load(Ordering::SeqCst) {disconnected.fetch_add(1,Ordering::SeqCst);}
                 connected.store(state,Ordering::SeqCst);
-            }).await;
+            }).with_subscriber(subscriber).await;
         }});
         assert!(wait_for(||connected.load(Ordering::SeqCst),50).await,"initial local join");
-        Self{_root:root,home,hub,provider,faults,topic,connected,disconnected,shutdown,worker}
+        Self{_root:root,home,hub,provider,faults,topic,connected,disconnected,shutdown,logs,worker}
     }
     async fn exchange(&self,event:&str)->Result<()> {
         let outward=format!("fresh Home to node after {event}");
@@ -450,12 +461,31 @@ async fn community_core_real_quiet_wire_counts_and_status() {
             assert_eq!(f.hub.accepted.load(Ordering::SeqCst),connections);
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-        f.exchange("1001-second quiet interval").await
+        Ok::<(),anyhow::Error>(())
     }.await;
     let mut traffic=f.hub.traffic.lock().unwrap().clone();
     for (key,count) in before { *traffic.entry(key).or_default()-=count; }
-    let report=serde_json::json!({"connections_before":connections,"connections_after":f.hub.accepted.load(Ordering::SeqCst),"traffic_including_final_exact_posts":traffic,"repairs":f.faults.repairs.load(Ordering::SeqCst),"disconnected_views":f.disconnected.load(Ordering::SeqCst)-disconnected});
+    let report=serde_json::json!({"connections_before":connections,"connections_after":f.hub.accepted.load(Ordering::SeqCst),"quiet_traffic":traffic,"repairs":f.faults.repairs.load(Ordering::SeqCst),"disconnected_views":f.disconnected.load(Ordering::SeqCst)-disconnected});
     if let Ok(path)=std::env::var("COMMUNITY_CORE_QUIET_RECEIPT"){std::fs::write(path,serde_json::to_vec_pretty(&report).unwrap()).unwrap();}
     println!("COMMUNITY_CORE_QUIET_METRICS={report}");
-    f.stop().await;outcome.unwrap();
+    let posts=f.exchange("1001-second quiet interval").await;
+    f.stop().await;outcome.unwrap();posts.unwrap();
+}
+
+#[tokio::test]
+async fn community_core_real_log_rate_keeps_the_reason_without_private_text() {
+    let f=Fixture::start().await;f.exchange("log-rate initial join").await.unwrap();
+    f.logs.lock().unwrap().clear();
+    f.faults.cached_peer.store(true,Ordering::SeqCst);f.faults.join_fails.store(true,Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let logs=String::from_utf8(f.logs.lock().unwrap().clone()).unwrap();
+    f.faults.join_fails.store(false,Ordering::SeqCst);f.faults.cached_peer.store(false,Ordering::SeqCst);
+    let healthy=wait_for(||f.connected.load(Ordering::SeqCst),15).await;
+    let posts=f.exchange("paced failure reason").await;
+    f.stop().await;assert!(healthy);posts.unwrap();
+    let warnings=logs.lines().filter(|l|l.contains("WARN")).count();
+    assert!(warnings<=1,"unchanged failure logs once in ten seconds, got{warnings}:{logs}");
+    assert!(logs.contains("bootstrap join timed out"),"bounded reason retained:{logs}");
+    assert!(!logs.contains("private-fixture-sentinel"));
+    assert!(logs.lines().all(|line|line.len()<256));
 }
