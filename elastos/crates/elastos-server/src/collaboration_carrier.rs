@@ -649,6 +649,12 @@ impl CommunityLink for JoinedCollaborationNetwork {
             .await
             .context("Carrier topic health failed for collaboration network")?;
         require_bounded_response(&response)?;
+        if response["code"] == "not_joined" {
+            // Topic health is authoritative even while a neighbour is remembered.
+            // The next paced repair must create the absent subscription.
+            self.pending_join
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let health: TopicHealthData = require_ok_response(response, "gossip_topic_health")?;
         if health.topic != self.topic {
             anyhow::bail!("Carrier returned a mismatched collaboration topic health");

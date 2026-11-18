@@ -4989,9 +4989,6 @@ mod tests {
                 );
             }
             Ok(match op {
-                "list_topic_peers" => {
-                    serde_json::json!({"status":"ok", "data":{"topic":request["topic"], "peers":[self.bootstrap_node_id]}})
-                }
                 "gossip_topic_health" => {
                     serde_json::json!({"status":"ok", "data":{"topic":request["topic"], "peer_count":1, "received_frames":0, "receiver_alive":true}})
                 }
