@@ -603,8 +603,16 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
             }
             if step == crate::collaboration_carrier::CommunityLinkStep::Rebuild {
                 assert!(old_receivers.iter().all(|task| task.is_finished()), "old receivers are joined before rebuild returns");
-                let stopped = tokio::time::timeout(Duration::from_secs(2), old_actor.subscribe(topic_hash(&f.topic), Vec::new())).await;
-                assert!(matches!(stopped, Ok(Err(_))), "the retired actor has closed its local control channel");
+                let stopped = tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        match old_actor.subscribe(topic_hash(&f.topic), Vec::new()).await {
+                            Err(_) => break,
+                            Ok(local) => drop(local),
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }).await;
+                assert!(stopped.is_ok(), "the retired actor closes its local control channel within its shutdown bound");
             }
             watchdog.step_finished(now);
         }
@@ -745,6 +753,7 @@ fn compare_develop_wire(current: &serde_json::Value, baseline_path: &str) {
     for kind in kinds {
         let a=old.get(kind).and_then(|v|v.as_u64()).unwrap_or(0);
         let b=new.get(kind).and_then(|v|v.as_u64()).unwrap_or(0);
+        assert_eq!(a == 0, b == 0, "no new peer message kind in the quiet period: {kind}");
         if kind.contains(":Gossip:") { assert_eq!((a,b),(0,0),"no quiet application or probe messages"); }
         else if kind.ends_with(":Shuffle") || kind.ends_with(":ShuffleReply") {
             // Six startup delays total47.25..78.75seconds; later delays

@@ -126,6 +126,35 @@ step (`Community link looks dead`,
 `rebuilding Carrier gossip`, `rebuilds are capped`, `Community link
 recovered`). A bootstrap Runtime never runs these steps.
 
+### Community reconnects after a local link failure
+
+Runtime keeps one local health observation for repair, Chat and System,
+Community. Failed bootstrap joins, an ended receive task and failed health
+queries put Home in **Reconnecting to Community**, even when Carrier remembers
+a neighbour. Home retains its messages and draft, and resumes sending when
+local health succeeds again.
+
+The existing bootstrap check runs once a second. A sustained local failure
+starts a topic rejoin after a minute. Continued failure starts gossip actor
+replacement, with increasing rest between attempts. The rest reaches fifteen
+minutes and repair continues for the life of the Home. Runtime releases the
+old receive tasks, gossip actor and its owned address lookup at replacement.
+Failure logs keep a bounded reason when it changes and once a minute while
+that reason continues.
+
+A peer count is local evidence. A neighbour can remain remembered while a
+node silently stops carrying messages and every local operation succeeds.
+This condition remains outside automatic detection by these local checks.
+
+Startup logs name each setup stage. A configured network and conversation
+grant start collaboration independently of browser sign-in. The **no Profile
+is ready yet** line names a separate condition: Home needs a stored active
+passkey principal and protected Profile authority before it can register that
+person's delivery context. Creating or restoring a Profile supplies that
+state; Community join continues while the Profile count is zero. A network
+without its conversation grant logs that it waits for its network authority.
+An isolated Home starts no Community worker.
+
 ### `discovery relay outbox delivery failed … discovery advertisement is not active`
 
 This debug line means a queued contact request or decision names a Discovery
