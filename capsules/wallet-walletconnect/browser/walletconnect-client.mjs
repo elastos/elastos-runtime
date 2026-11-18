@@ -338,7 +338,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       if (transaction) requireNetwork(`eip155:${Number.parseInt(transaction.chainId,16)}`);
       if (!transaction || !same(transaction.from,signer) || `eip155:${Number.parseInt(transaction.chainId,16)}` !== namespace) throw new Error('Runtime returned an invalid transaction.');
       operationDispatched = true;
-      onPhase('transaction',{expiresAt:Math.floor(Date.now()/1000)+expiry});
+      onPhase('transaction',{expiresAt:Math.floor(Date.now()/1000)+expiry,name:String(provider.session?.peer?.metadata?.name || 'your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80)});
       const hash = await request({method:'eth_sendTransaction',params:[transaction]},expiry,'transaction',signal);
       if (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Wallet returned an invalid transaction hash. The wallet may have sent it. Check your wallet before sending again.');
       // A returned hash is retained even if the account, network or expiry changed while sending.
@@ -349,7 +349,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     }
     if (handoff.signature_type !== 'personal_sign' || typeof handoff.message !== 'string') throw new Error('Runtime returned an invalid signature request.');
     operationDispatched = true;
-    onPhase('signature',{expiresAt:Math.floor(Date.now()/1000)+expiry});
+    onPhase('signature',{expiresAt:Math.floor(Date.now()/1000)+expiry,name:String(provider.session?.peer?.metadata?.name || 'your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80)});
     const method = 'personal_sign';
     const signature = await request({method,params:[signData(handoff.message),signer]},expiry,'signature',signal);
     await check();

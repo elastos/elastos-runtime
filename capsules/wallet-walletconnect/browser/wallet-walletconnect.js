@@ -57,7 +57,7 @@ const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemor
     currentPhase = phase;effectPhase=phase;
     if(phase==='ownership')proofAccount={address:detail.address,chain:detail.chain,name:detail.name};
     if (['ownership','signature','transaction'].includes(phase)) {
-      if (phase !== 'ownership' && activeRequest) {dispatchedRequestId=activeRequest.request_id;activeRequest.status='approved';}
+      if (phase !== 'ownership' && activeRequest) {dispatchedRequestId=activeRequest.request_id;activeRequest.status='approved';activeRequest.walletName=detail?.name;}
       deadline = detail?.expiresAt || activeRequest?.expires_at || Math.floor(Date.now()/1000)+300;
       checkConnection().catch(()=>{});
     }
@@ -76,7 +76,8 @@ root.addEventListener('click', async event => {
   if (action === 'disconnect') return disconnect();
   if (action === 'inbox') return showInternetRequest();
   if (action === 'back-to-connection') {
-    connectionPage=connectionPage === 'overview' ? 'access' : 'overview';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
+    const connectionScreen=['linked','saved-unlinked','account-changed','account-unavailable-unknown','network-unsupported','wallet-removed','connection-expired','internet-off','internet-refused','nothing-saved','internet-ready'].includes(currentView.stage);
+    connectionPage=connectionPage==='access'||currentView.request||showPicker||!connectionScreen?'overview':'access';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
   }
   if (action === 'check-access' || action === 'check-status' || action === 'refresh-status') {
     outcome = undefined;activeRequest = undefined;
@@ -90,7 +91,7 @@ root.addEventListener('click', async event => {
   }
   if (action === 'select-request') {
     selectedId = button.dataset.focusKey.slice('select-request:'.length);showPicker=false;
-    connectionPage=undefined;outcome = requestOutcomes.get(selectedId);activeRequest = requests.find(row=>row.request_id===selectedId);draw();return;
+    connectionPage=undefined;const saved=requestOutcomes.get(selectedId);outcome=saved?.outcome;unrecordedHash=saved?.hash;dispatchedRequestId=saved?.dispatched?selectedId:undefined;activeRequest=requests.find(row=>row.request_id===selectedId);if(activeRequest&&saved?.walletName)activeRequest={...activeRequest,walletName:saved.walletName};draw();return;
   }
   if (action === 'view-requests') {connectionPage=undefined;outcome=undefined;activeRequest=undefined;selectedId=undefined;showPicker=true;draw();return;}
   if (action === 'copy-link' || action === 'copy-address') {
@@ -132,13 +133,15 @@ window.addEventListener('message',event=>{
 });
 
 function draw() {
+  if(connectionPage==='access'&&permissionStatus==='granted'&&!connectionState?.session&&!connectionState?.removed&&!connectionState?.expired&&!homeReadFailed)connectionPage='overview';
   if(mounted){const saved=captureConnectionPresentation(mounted.root);if(saved.action)rememberedFocus={key:renderKey,action:saved.action,focusKey:saved.key,outcome:saved.action};}
+  if(activeRequest && /^(request|transaction)-/.test(outcome || ''))requestOutcomes.set(activeRequest.request_id,{outcome,hash:unrecordedHash,dispatched:dispatchedRequestId===activeRequest.request_id,walletName:activeRequest.walletName});
   const now = Math.floor(Date.now()/1000);
   const presentation = windowPresentation({loading:!accountsLoaded,connection:connectionState,accounts:linkedAccounts,requests:connectionPage ? [] : requests,busy:hostEffectInFlight && !outcome,
     phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
-    outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,dispatchedRequestId,connectionPage,
-    paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)))},now);
-  if (connectionPage === 'access' && !hostEffectInFlight && !launchExpired) presentation.input.stage=permissionStatus === 'granted' ? 'internet-ready' : 'internet-off';
+    outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
+    paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)?.outcome))},now);
+  if (connectionPage === 'access' && !hostEffectInFlight && !launchExpired) presentation.input.stage=permissionStatus === 'granted' ? 'internet-ready' : 'nothing-saved';
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
   if (showPicker && requests.length && !hostEffectInFlight && !launchExpired && permissionStatus === 'granted' && !homeReadFailed) {
@@ -207,6 +210,7 @@ async function refreshWalletState() {
   if (selectedId && !requests.some(row=>row.request_id===selectedId)) selectedId=undefined;
   if(activeRequest&&!hostEffectInFlight&&!outcome&&activeRequest.request_id!==dispatchedRequestId&&!requests.some(row=>row.request_id===activeRequest.request_id))activeRequest=undefined;
   if (outcome==='request-done' && activeRequest && requests.some(row=>row.request_id !== activeRequest.request_id)) outcome='request-next';
+  for(const id of requestOutcomes.keys())if(id!==activeRequest?.request_id&&!requests.some(row=>row.request_id===id))requestOutcomes.delete(id);
   homeReadFailed=false;const first=!accountsLoaded;accountsLoaded=true;draw();
   if (first) checkConnection().catch(()=>{});
 }
@@ -263,6 +267,7 @@ async function requestCapsuleWalletEffect(action) {
   try {
     if (['link','approve'].includes(action.kind)) {
       const consent=await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
+      if(epoch!==actionEpoch)throw new Error('Wallet connection cancelled.');
       permissionStatus=consent.status;
       if (consent.status === 'granted') ownerConsentNeeded=false;
       if (consent.status !== 'granted') {
@@ -283,7 +288,6 @@ async function requestCapsuleWalletEffect(action) {
     if (epoch === actionEpoch && !awaitingAccess()) {connectionNeedsReplacement=Boolean(error.freshConnection);outcome=errorStage(error,action,effectPhase);draw();}
     throw error;
   } finally {
-    if (action.kind === 'approve' && activeRequest && outcome) requestOutcomes.set(activeRequest.request_id,outcome);
     if (epoch === actionEpoch) {
       hostEffectInFlight=false;currentPhase='idle';effectPhase='idle';
       deadline=undefined;draw();watchConnection();

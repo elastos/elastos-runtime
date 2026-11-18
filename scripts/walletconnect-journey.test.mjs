@@ -63,19 +63,24 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const initialWalletFrame=page.frames().find(frame=>frame.url().includes('/apps/wallet-walletconnect/'));
     const walletFrame=initialWalletFrame;
     const invoke=async(action,requestId)=>{
-      await page.evaluate(()=>inbox.style.display='none');
-      const control=wallet.locator(`[data-action="${action}"]:visible`).first();
-      for(let i=0;i<3&&!await control.count();i++){
-        if(action==='send-request'&&await wallet.locator('[data-action=view-requests]:visible').count()){
-          await wallet.getByRole('button',{name:'View requests',exact:true}).click();
-          const id=requestId||approvalRequests.find(row=>row.status==='pending')?.request_id;
-          await wallet.locator(`[data-focus-key="select-request:${id}"]`).click();continue;
-        }
-        const back=wallet.locator('[data-action=back-to-connection]:visible').first();
-        if(await back.count())await back.click();
-        else {const cancel=wallet.locator('[data-action=cancel]:visible');if(await cancel.count())await cancel.click();else break;}
+      const end=Date.now()+15000;
+      while(Date.now()<end){
+        await page.evaluate(()=>inbox.style.display='none');
+        const control=wallet.locator(`[data-action="${action}"]:visible`).first();
+        try{
+          if(await control.count()){await control.click({timeout:750});return;}
+          if(action==='send-request'&&await wallet.locator('[data-action=view-requests]:visible').count()){
+            await wallet.getByRole('button',{name:'View requests',exact:true}).click({timeout:750});
+            const id=requestId||approvalRequests.find(row=>row.status==='pending')?.request_id;
+            await wallet.locator(`[data-focus-key="select-request:${id}"]`).click({timeout:750});continue;
+          }
+          const back=wallet.locator('[data-action=back-to-connection]:visible').first();
+          if(await back.count())await back.click({timeout:750});
+          else {const cancel=wallet.locator('[data-action=cancel]:visible');if(await cancel.count())await cancel.click({timeout:750});}
+        }catch(error){if(error.name!=='TimeoutError')throw error;}
+        await page.waitForTimeout(25);
       }
-      await control.click();
+      assert.fail(`Visible ${action} recovery was unavailable: ${await wallet.locator('main').innerText()}`);
     };
 
     if(!guardCase) {
@@ -151,7 +156,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await allowed;
     assert.equal(status,'granted');
     failSummary=true;await Promise.all([walletFrame.waitForNavigation({waitUntil:'load'}),walletFrame.evaluate(()=>location.reload())]);
-    try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Could not connect.'}).waitFor({timeout:5000}); } catch(error) {console.log({status:await wallet.locator('main').innerText(),hasLaunch:await walletFrame.evaluate(()=>!!location.hash),errors});throw error;}
+    try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Home could not load your wallet requests.'}).waitFor({timeout:5000}); } catch(error) {console.log({status:await wallet.locator('main').innerText(),hasLaunch:await walletFrame.evaluate(()=>!!location.hash),errors});throw error;}
     for(const value of ['dark','light']){await theme(value);await shot(`r16-error-${value}`);}
     assert.deepEqual(errors,[]);
     assert.equal(actions.filter(action=>action.action_id.includes('-turn-off:')).length,1);
@@ -346,7 +351,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await t.test('a result offers its local return to the waiting request list',{},async()=>{
       await wallet.getByRole('button',{name:'View requests',exact:true}).click();
       await wallet.getByRole('button',{name:'View request',exact:true}).first().click();
-      await wallet.getByRole('button',{name:/^Send to /}).waitFor();
+      await wallet.getByRole('button',{name:/^Send to /}).waitFor();await walletFrame.evaluate(()=>{window.phoneFailure=undefined;window.phoneWait=false;});const before=completions;await wallet.getByRole('button',{name:/^Send to /}).click();await wallet.locator('[data-state=request-done],[data-state=request-next]').waitFor();assert.equal(completions,before+1,'the next visible request completes through its existing route');
     });
     assert.deepEqual(errors,[]);
   } finally {await browser?.close();for(const socket of relay.clients)socket.terminate();await new Promise(resolve=>relay.close(resolve));server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
@@ -463,6 +468,19 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
     const shell=page.frames().find(f=>f.url().endsWith('/shell'));
     const wallet=page.frameLocator('#home').frameLocator('#wallet'),frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
     const text=()=>wallet.locator('[data-focus=outcome]').innerText();
+    const connectVisible=async()=>{
+      const end=Date.now()+15000;
+      while(Date.now()<end){
+        try{
+          const connect=wallet.getByRole('button',{name:'Connect wallet',exact:true});
+          if(await connect.count()){await connect.click({timeout:750});return;}
+          const back=wallet.getByRole('button',{name:'Back to connection',exact:true});if(await back.count())await back.click({timeout:750});
+        }catch(error){if(error.name!=='TimeoutError')throw error;}
+        await page.waitForTimeout(25);
+      }
+      assert.fail('Connect is unreachable after revocation: '+await text());
+    };
+
     const nextPoll=async()=>{const before=polls;await page.waitForFunction(()=>true);for(let i=0;polls===before&&i<70;i++)await page.waitForTimeout(100);assert.ok(polls>before);await frame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,50)));};
     await wallet.locator('[data-action=connect],[data-action=start-over]').click();await wallet.locator('.connection-qr').waitFor({timeout:20000});
     if(journey==='A') {
@@ -470,7 +488,7 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       await wallet.locator('[data-focus=outcome]').filter({hasText:'Connection cancelled.'}).waitFor();
       await t.test('own Cancel has neutral tone',async()=>assert.equal(await wallet.locator('[data-focus=outcome]').getAttribute('aria-live'),'polite'));
       status='revoked';revision++;keys={};
-      await wallet.getByRole('button',{name:'Connect wallet',exact:true}).click();
+      await connectVisible();
       await wallet.locator('[data-focus=outcome]').filter({hasText:permissionText}).waitFor();
       status='refused';await nextPoll();
       await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access is off for WalletConnect.'));

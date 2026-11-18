@@ -56,28 +56,18 @@ export function windowPresentation(state, nowSeconds) {
   const requestAccount = request && (screens.walletconnect[stage].request || screens.walletconnect[stage].optionalRequest);
   const confirming = (stage.startsWith('link-') && screens.walletconnect[stage].selectedAccount || stage === 'checking-response' && state.effectPhase === 'ownership') && state.proofAccount;
   const current = requestAccount ? {address:request.address,chain:request.chain_namespace} : confirming || session || null;
-  const account = current?.address ? {name:String(current?.name || session?.name || 'your wallet').replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,'').trim().slice(0,40) || 'your wallet',mark:'wallet',connection:'WalletConnect',accounts:[{address:current.address,networks:[networkLabel(current.chain)]}]} : null;
+  const account = current?.address ? {name:String(requestAccount && state.resultWalletName || current?.name || session?.name || 'your wallet').replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,'').trim().slice(0,40) || 'your wallet',mark:'wallet',connection:'WalletConnect',accounts:[{address:current.address,networks:[networkLabel(current.chain)]}]} : null;
   const waitDeadline = ['link-wait','request-phone','transaction-phone'].includes(stage) ? state.deadline : request?.expires_at;
   const waitSeconds = Math.max(0,Math.min(86400,(waitDeadline || nowSeconds + 300)-nowSeconds));
   const walletResult = stage === 'transaction-declined' ? {disposition:'declined',receipt:null} : undefined;
-  if (account && ['linked','linked-multiple'].includes(stage)) {
-    for (const row of accounts) {
-      if (account.accounts.length === 100) break;
-      if (row.connector_id && row.connector_id !== connectorId || !/^0x[0-9a-fA-F]{40}$/.test(row.address || '')) continue;
-      const known=account.accounts.find(a=>sameAccount(a.address,row.address));
-      if (known) {const label=networkLabel(row.chain_namespace);if(!known.networks.includes(label)&&known.networks.length<8)known.networks.push(label);}
-      else account.accounts.push({address:row.address,networks:[networkLabel(row.chain_namespace)]});
-    }
-    if (account.accounts.length > 1) stage='linked-multiple';
-  }
   const connectionNotice = connection?.removed ? 'connection-removed' : connection?.expired ? 'connection-expired' : state.walletChanged ? 'account-changed' : !expired && permission === 'granted' && session && connection.relayConnected === false ? 'transport-reconnecting' : undefined;
-  const currentSelection=session?.address && (state.walletChanged || requestAccount || state.connectionPage === 'access') ? {address:session.address,network:networkLabel(session.chain)} : undefined;
+  const currentSelection=session?.address && (state.walletChanged || requestAccount && (!sameAccount(session.address,request.address) || session.chain !== request.chain_namespace) || state.connectionPage === 'access') ? {address:session.address,network:networkLabel(session.chain)} : undefined;
   const transactionHash = ['transaction-wallet-error','transaction-cancelled','transaction-timeout','transaction-reopened','transaction-done','checking-response'].includes(stage) && /^0x[0-9a-fA-F]{64}$/.test(state.unrecordedHash || '') ? state.unrecordedHash : undefined;
   const localSafety=Boolean(state.paymentPending || request?.intent === 'transaction_intent' && sent && !answered);
   const supportedActions=[...baseActions].filter(action=> !['finish','send-message'].includes(action) || session?.address && isWalletConnectNetwork(session.chain));
   return {input:{walletResult,window:'walletconnect',stage,account,waitSeconds,qrData:qrData || undefined,homeOrigin:state.homeOrigin,
     localSafety,compact:false,targetNetwork:networkLabel(request?.chain_namespace),supportedActions,
-    connectionNotice,currentSelection,transactionHash,localReturn:!expired&&!state.loading,showNextRequests:true},request,otherRequests:requests.filter(row => row.request_id !== request?.request_id)};
+    connectionNotice,currentSelection,transactionHash,localReturn:!expired&&!state.loading&&stage!=='home-read-unavailable'&&(state.connectionPage==='access'||!['nothing-saved','internet-ready'].includes(stage)||Boolean(session||connection?.removed||connection?.expired)),showNextRequests:true},request,otherRequests:requests.filter(row => row.request_id !== request?.request_id)};
 }
 
 export function errorStage(error, action, phase) {
@@ -110,8 +100,10 @@ export const baseActions = new Set(['connect','start-over','finish','cancel','st
 // A latent request stays with the controller. Only a request screen receives its
 // identity, so account confirmation can never inherit an earlier request address.
 export function walletConnectView({input,request,otherRequests=[]}) {
+  const shown=(screens.walletconnect[input.stage].request || screens.walletconnect[input.stage].optionalRequest) && request;
+  const queued=shown || !request ? otherRequests : [request,...otherRequests];
   return connectionView({...input,
-    summary:(screens.walletconnect[input.stage].request || screens.walletconnect[input.stage].optionalRequest) && request ? reduceSummary(request,{connector:connectorId}) : null,
-    otherRequests:otherRequests.map(row=>reduceSummary(row,{connector:connectorId})).filter(Boolean),
+    summary:shown ? reduceSummary(request,{connector:connectorId}) : null,
+    otherRequests:queued.map(row=>reduceSummary(row,{connector:connectorId})).filter(Boolean),
   });
 }

@@ -164,3 +164,14 @@ for(const outcome of ['qr-cancelled','qr-expired','connection-declined','disconn
  assert.equal(view.queueCount,1,'the one waiting request stays reachable on a connection recovery card');
  assert.equal(view.queuePendingCount,1);assert.ok(view.supportedActions.includes('view-requests'));
 });
+
+for(const extra of [{address:'0x'+'56'.repeat(20),chain_namespace:'eip155:1'},{address,chain_namespace:'eip155:1'}])test(`the current connection keeps its own wallet/account/network beside another Home record ${extra.address}`,()=>{
+ const home=[account,extra];const view=walletConnectView(windowPresentation({...initial,accounts:home},now));
+ assert.equal(view.stage,'linked');assert.equal(view.account.name,'Scripted phone wallet');
+ assert.deepEqual(view.account.accounts,[{address,networks:['Base']}]);assert.equal(home.length,2,'Home owns the complete account list');
+});
+
+test('a remembered request result names the wallet that answered it',()=>{
+ const view=walletConnectView(windowPresentation({...initial,connection:{session:{...session,name:'A later phone'}},activeRequest:request,outcome:'request-done',resultWalletName:'The answering phone'},now));
+ assert.equal(view.account.name,'The answering phone');assert.equal(view.request.id,request.request_id);
+});

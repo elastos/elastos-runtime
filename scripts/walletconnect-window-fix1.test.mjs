@@ -7,6 +7,7 @@ import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function setup(t,engine,mutation){
  if(process.env.WALLETCONNECT_FIX1_BREAK==='B6')mutation={file:'walletconnect-client.mjs',from:"const {connectWithView} = await import('./walletconnect-pairing.mjs');\n        signal?.throwIfAborted();",to:"const {connectWithView} = await import('./walletconnect-pairing.mjs');"};
+ if(process.env.WALLETCONNECT_FIX1_BREAK==='C1')mutation={file:'wallet-walletconnect.js',from:"if(epoch!==actionEpoch)throw new Error('Wallet connection cancelled.');",to:'void epoch;'};
  const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
  const engines=await importProductSmokePlaywright(),browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
  const page=await browser.newPage({viewport:{width:480,height:560}}),{errors}=observeWindowErrors(page,fixture);
@@ -45,7 +46,7 @@ for(const engine of ['chromium','webkit']){
  });
  test(`linked account and saved unfinished connection name the real wallet in ${engine}`,{timeout:60000},async t=>{
   const r=await setup(t,engine);await r.link();assert.match(await r.frame.locator('.connection-account').innerText(),/Scripted phone wallet/);
-  const extra='0x'+'56'.repeat(20);r.fixture.state.accounts.push({address:extra,chain_namespace:'eip155:1',connector_id:'wallet-walletconnect',proof_type:'siwe'});await r.refresh();await r.state('linked-multiple');assert.equal(await r.frame.locator('.connection-account code').count(),2);
+  const extra='0x'+'56'.repeat(20);r.fixture.state.accounts.push({address:extra,chain_namespace:'eip155:1',connector_id:'wallet-walletconnect',proof_type:'siwe'});await r.refresh();await r.state('linked');assert.equal(await r.frame.locator('.connection-account code').count(),1,'the connection names only its own account');assert.doesNotMatch(await r.frame.locator('.connection-account').innerText(),/Ethereum/);assert.equal(r.fixture.state.accounts.length,2,'Home retains its other linked account');
   r.fixture.state.accounts=[];await r.reopen();await r.state('saved-unlinked');assert.match(await r.frame.locator('main').innerText(),/Scripted phone wallet/);assert.equal(await r.frame.locator('.connection-qr').count(),0);
  });
  test(`account change during a signature keeps the consumed request and outside-prompt notice in ${engine}`,{timeout:60000},async t=>{
@@ -75,4 +76,12 @@ for(const engine of ['chromium','webkit'])test(`a new review replaces a saved Co
  await r.click('Connect wallet');await r.state('internet-pending');r.request('new-review');await r.refresh();await r.state('request-internet-pending');await r.click('Cancel');await r.state('request-internet-off');
  const verified=r.fixture.state.verified;r.fixture.setPermission('granted');await r.refresh();await r.state('request-waiting');assert.equal(r.fixture.state.verified,verified,'Allow cannot resume the cancelled saved Connect');
  await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('qr-shown');await r.click('Copy link');await r.frame.getByText('Link copied.',{exact:true}).waitFor();await r.peer.pair(await r.page.evaluate(()=>window.copied));await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.verified,verified,'the explicit request resumes Send rather than the old account proof');
+});
+
+for(const engine of ['chromium','webkit'])test(`Cancel before Home internet reply prevents a late wallet prompt in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);let release,entered;const held=new Promise(resolve=>release=resolve),posting=new Promise(resolve=>entered=resolve);t.after(()=>release());
+ await r.page.route('**/internet',async route=>{if(route.request().method()!=='POST')return route.continue();const response=await route.fetch();entered();await held;await route.fulfill({response});});
+ await r.state('internet-ready');await r.click('Connect wallet');await posting;await r.click('Cancel');await r.state('qr-cancelled');release();
+ for(let i=0;i<30;i++){await pause(100);assert.equal(r.fixture.methods.filter(method=>method==='wc_proposeSession').length,0,'late Home permission never starts the cancelled wallet proposal');assert.equal(await r.frame.locator('.connection-qr').count(),0);}
+ assert.equal(r.fixture.state.verified,0);
 });
