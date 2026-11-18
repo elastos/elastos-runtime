@@ -2267,5 +2267,40 @@ const definitions = {
   }
 };
 
+// Current-plumbing presentation states. Effects remain with the mounting window.
+for(const window of ['walletconnect','metamask','unisat']){
+  const close={id:'close-window',label:'Close window',quiet:false};
+  const refresh={id:'refresh-status',label:'Check again',quiet:false};
+  Object.assign(definitions[window],{
+    'wallet-loading':{status:'Loading your wallet connections.',primary:close},
+    'wallet-unavailable':{status:'Home could not load your wallet connections.',primary:refresh,secondary:[close],focus:'refresh-status'},
+    'home-wallet-required':{status:'Create or import an account in Wallet to continue.',primary:{id:'open-wallet',label:'Open Wallet',quiet:false},secondary:[close]},
+    'provider-unavailable':{status:'The connection to your browser wallet is unavailable.',notice:'Open {{wallet}} to check its connection.',primary:refresh,secondary:[close]},
+    'account-changed':{requiresSafeRetry:true,status:'Your wallet is using a different account.',notice:'Link this account before using it in Home.',primary:{id:window==='walletconnect'?'send-message':'connect',label:window==='walletconnect'?'Send message':'Connect',quiet:false},secondary:window==='walletconnect'?[{id:'start-over',label:'Get new QR code',quiet:false},close]:[close],account:true},
+    'account-unavailable-unknown':{requiresSafeRetry:true,status:'Your wallet is not showing an account.',notice:'Open {{wallet}} and choose an account, then connect again.',primary:{id:'connect',label:'Connect',quiet:false},secondary:[close]},
+    'network-unsupported':{status:'This network is not supported here.',notice:'Choose a supported network in {{wallet}}.',primary:close},
+    'preparing-request':{status:'Preparing request.',primary:{id:'cancel',label:'Cancel',quiet:false}},
+    'preparing-connection':{status:'Preparing connection.',primary:{id:'cancel',label:'Cancel',quiet:false}}
+  });
+}
+
+definitions.walletconnect['checking-response']={status:'Your wallet has answered. Home is checking the response.',notice:'Stopping here ends this wait. Home may still record the response.',optionalRequest:true,account:true,dispatched:true,primary:{id:'stop-waiting',label:'Stop waiting',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'stop-waiting'};
+definitions.walletconnect['home-read-unavailable']={status:'Home could not load your wallet requests.',notice:'Check again to load them.',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'refresh-status'};
+definitions.walletconnect['disconnect-error']={status:'Home could not finish disconnecting this wallet.',notice:'Try disconnecting again. Closing this window does not finish disconnecting.',primary:{id:'disconnect',label:'Disconnect',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'disconnect'};
+definitions.walletconnect['account-unavailable-unknown']={requiresSafeRetry:true,status:'Your wallet is not showing an account.',notice:'Choose an account in your wallet, then get a new QR code.',primary:{id:'start-over',label:'Get new QR code',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'start-over'};
+
+const requestRecovery='To try again, return to {{app}} and make a new request.';
+for(const window of ['metamask','unisat']){
+  for(const screen of Object.values(definitions[window]))if(['To try again, return to {{app}}.','Start a new request in {{app}} to try again.'].includes(screen.notice))screen.notice=requestRecovery;
+  for(const stage of ['extension-missing','extensions-unavailable',...(window==='metamask'?['other-ethereum-wallet']:[])]){
+    const screen=definitions[window][stage];screen.status='Your browser wallet was not found here.';
+    screen.notice='Open this connection from Wallet in a browser where your wallet is available.';screen.paymentSafeNotice=screen.notice;
+  }
+}
+for(const window of ['walletconnect','metamask','unisat']){
+  definitions[window]['request-rejected']={status:'This request was rejected.',notice:requestRecovery,request:true,account:true,afterAnswer:true,focusOutcome:true,primary:{id:'open-request-app',label:'Open {{app}}',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}]};
+  definitions[window]['request-dismissed']={status:'This request was dismissed.',notice:'An operation may still be waiting in {{wallet}}. Check {{wallet}} and Wallet activity before trying again.',request:true,account:true,afterAnswer:true,focusOutcome:true,primary:{id:'open-wallet-activity',label:'Open Wallet activity',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}]};
+}
+
 const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const screens = freeze(definitions);
