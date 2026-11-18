@@ -12,7 +12,7 @@ const skip=engine=>engine==='webkit'&&!existsSync(playwright.webkit.executablePa
 for(const engine of ['chromium','webkit']) {
   test(`${engine} MetaMask: recorded plain-object switch rejection stays honestly unclassified by v1`,{skip:skip(engine)},async()=>{
     const browser=await playwright[engine].launch({headless:true});try{const f=await fixture(browser,'metamask',{saved:true,requests:'transaction'});try{
-      await f.state('transaction-waiting');await f.top.evaluate(rejection=>{testState.refuseSwitch='reject';testState.switchRejection=rejection;},{code:recordedReject.code,message:recordedReject.message});
+      await f.state('transaction-waiting');await f.top.evaluate(rejection=>{testState.added=true;testState.refuseSwitch='reject';testState.switchRejection=rejection;},{code:recordedReject.code,message:recordedReject.message});
       await f.action('send-request').click();await f.state('transaction-wallet-error');
       assert.match(await f.frame.locator('body').innerText(),/transaction may have been sent/);
       assert.equal(await f.top.evaluate(()=>testState.calls.filter(c=>c.method==='eth_sendTransaction').length),0);

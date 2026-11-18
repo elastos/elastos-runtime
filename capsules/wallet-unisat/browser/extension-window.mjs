@@ -137,6 +137,13 @@ export function startExtensionWindow(kind, homeClipboard) {
       feedbackText(root.querySelector('.connection-status'), [selected.transaction ? 'Home could not finish this request. The transaction may have been sent.' : 'Home could not finish this request.']);
       feedbackText(root.querySelector('.connection-notice'), ['Check your wallet and Wallet activity before making another request.']);
     }
+    // v1 keeps the admitted Home operation alive after local Stop/timeout.
+    // R5's filtered Check action assumes a terminal wait, which v1 cannot claim.
+    const notice = root.querySelector('.connection-notice');
+    if (notice?.textContent.includes('Home will ignore a later answer.')) {
+      root.dataset.extensionFeedback = 'local-wait';
+      feedbackText(notice, ['An operation may still be waiting in your wallet. Closing this window does not cancel it. Check your wallet and Wallet activity.']);
+    }
     // Some R5 outcome tables still offer only navigation that v1 cannot do.
     // Until the shared capability fallback covers them, reuse its Close part.
     if (!root.querySelector('button:not(:disabled)') && frameHomeToken && homeOrigin && window.top !== window) {

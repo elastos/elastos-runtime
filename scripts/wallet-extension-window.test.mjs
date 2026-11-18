@@ -164,6 +164,8 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         await f.action('send-request').click(); await f.state('request-extension');
         assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
         await f.action('stop-waiting').focus(); await f.top.keyboard.press('Enter'); await f.state('request-cancelled');
+        assert.doesNotMatch(await f.frame.locator('body').innerText(), /ignore a later answer/);
+        assert.match(await f.frame.locator('body').innerText(), /Check your wallet and Wallet activity/);
         await f.top.waitForFunction(() => testState.pending.length > 0);
         await f.top.evaluate(() => { const p = testState.pending.shift(); p.resolve(p.result); });
         await f.state('request-done');
@@ -178,6 +180,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         await g.top.evaluate(() => { testState.mode = 'pending'; });
         await g.action('connect').click(); await g.state('extension-wait');
         await g.top.clock.runFor(61000); await g.state('extension-timeout');
+        assert.doesNotMatch(await g.frame.locator('body').innerText(), /ignore a later answer/);
         assert.equal(await g.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
         assert.equal(await g.top.evaluate(() => testState.effects.length), 1);
       } finally { await g.close(); }
@@ -326,7 +329,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
       ['overdue event before timer', s => s.replace("if (isRequestExpired()) { fixedOutcome = true; return 'request-expired'; }", ''), async f => {
         await secondRequest(f); assert.equal(await overdueEvent(f, 'accountsChanged', [B]), 'request-expired');
       }],
-      ['outcome focus lost', s => s.replace('const root = presentation.root;', "const root = presentation.root; root.querySelector('button')?.focus();"), async f => {
+      ['outcome focus lost', s => s.replace("root.querySelector('.connection-actions')?.append(close);", "root.querySelector('.connection-actions')?.append(close); close.focus();"), async f => {
         await f.action('send-request').click(); await f.state('request-done');
         assert.equal(await f.frame.evaluate(() => document.activeElement?.dataset.focus), 'outcome');
         await peerEvent(f, 'accountsChanged', [B]);
