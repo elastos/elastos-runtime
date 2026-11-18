@@ -17,12 +17,12 @@ export function windowPresentation(state, nowSeconds) {
   const sent = Boolean(request && (state.dispatchedRequestId === request.request_id || request.status === 'approved' && request.intent === 'transaction_intent'));
   const completed = ['request-done','request-next','transaction-done'].includes(outcome);
   const answered = completed || ['request-declined','transaction-declined'].includes(outcome);
-  const linked = sessionLinked(session, accounts);
+  const linked = sessionLinked(session, accounts) || Boolean(outcome === 'linked' && session && state.proofAccount && sameAccount(session.address,state.proofAccount.address) && session.chain === state.proofAccount.chain);
   let stage;
   if (expired) stage = 'window-expired';
   else if (completed && session && !linked && request && (!sameAccount(session.address,request.address) || session.chain !== request.chain_namespace)) stage='saved-unlinked';
   else if (answered) stage=outcome;
-  else if (outcome === 'request-unavailable' && (connection?.removed || connection?.expired || permission && permission !== 'granted')) stage=outcome;
+  else if (outcome === 'request-unavailable' && !sent && (connection?.removed || connection?.expired || permission && permission !== 'granted')) stage=outcome;
   else if (sent && permission && permission !== 'granted') stage=request.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'request-unavailable';
   else if (ownerNeeded && permission !== 'granted') stage = 'guest-access';
   else if (permission === 'requested') stage = pending ? request ? 'request-internet-pending' : 'internet-pending' : request ? 'request-internet-off' : 'internet-off';

@@ -128,3 +128,13 @@ test('a linked outcome cannot label a newly reported account as linked',()=>{
  const view=walletConnectView(windowPresentation({...initial,connection:{session:next},outcome:'linked',walletChanged:true},now));
  assert.equal(view.stage,'saved-unlinked');assert.equal(view.account.accounts[0].address,next.address);assert.ok(view.actions.some(action=>action.id==='finish'));
 });
+
+test('a recorded dispatch and wallet removal outrank a generic unavailable error',()=>{
+ const view=walletConnectView(windowPresentation({...initial,connection:{removed:true},activeRequest:{...request,status:'approved'},dispatchedRequestId:request.request_id,outcome:'request-unavailable'},now));
+ assert.equal(view.stage,'request-sent-wallet-removed');
+});
+test('a linked outcome keeps its proven account while the list read waits',()=>{
+ const facts={...initial,accounts:[],outcome:'linked',walletChanged:true,proofAccount:{address,chain:session.chain}};
+ assert.equal(windowPresentation(facts,now).input.stage,'linked');
+ assert.equal(windowPresentation({...facts,outcome:undefined,proofAccount:undefined},now).input.stage,'saved-unlinked','a restored session cannot use an earlier in-memory proof');
+});
