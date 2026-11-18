@@ -36,6 +36,7 @@ product_ui() {
   node scripts/home-clipboard-source-gate.mjs
   node --test scripts/home-clipboard-source-gate.test.mjs
   node scripts/public-copy-entropy-check.mjs
+  node --test scripts/lib/community-recovery-copy.test.mjs
   node scripts/library-product-behavior-smoke.mjs
 }
 

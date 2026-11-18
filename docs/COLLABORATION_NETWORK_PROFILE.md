@@ -105,9 +105,11 @@ The release availability contract while this node is unreachable is:
   24 hours, then shows **Expired**.
 - Homes keep all messages they already received.
 
-Chat states **Community unreachable** when its Community connection is
-unavailable, or **Community can't connect. Restart Home to reconnect.** after
-Home has used up its repairs (#451).
+Chat shows **Reconnecting to Community** while Runtime repairs a locally
+failed link. Runtime continues paced repairs for the life of Home. See
+[Community recovery](TROUBLESHOOTING.md#community-reconnects-after-a-local-link-failure)
+for the local failure checks, startup states and the silent-neighbour case
+that those checks cannot detect.
 
 An address change requires the next signed network revision in a release.
 More bootstrap peers and participant Homes acting as bootstrap are tracked in

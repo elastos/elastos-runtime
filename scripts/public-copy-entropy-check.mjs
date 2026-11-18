@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from "node:fs";
+import { assertCommunityRecoveryCopy } from "./lib/community-recovery-copy.mjs";
 
 const root = new URL("../", import.meta.url);
 const surfaces = [
@@ -51,6 +52,10 @@ function collectPublicDescriptions(value, path = "manifest", output = []) {
     collectPublicDescriptions(entry, `${path}.${key}`, output);
   }
   return output;
+}
+
+for (const path of ["docs/COLLABORATION_NETWORK_PROFILE.md", "docs/TROUBLESHOOTING.md"]) {
+  assertCommunityRecoveryCopy(path, read(path));
 }
 
 for (const surface of surfaces) {
