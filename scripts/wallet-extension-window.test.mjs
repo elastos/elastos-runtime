@@ -258,8 +258,8 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
   }finally{await browser.close();}
 });
 
-for (const kind of ['metamask','unisat']) test(`${kind}: local picker, stopped link, missing launch and no Home wallet`, {timeout:40000}, async()=>{
-  const browser=await playwright.chromium.launch({headless:true});
+for (const engine of ['chromium','webkit']) for (const kind of ['metamask','unisat']) test(`${engine} ${kind}: local picker, stopped link, missing launch and no Home wallet`, {timeout:40000,skip:engineSkip(engine)}, async()=>{
+  const browser=await playwright[engine].launch({headless:true});
   try{
     const list=await fixture(browser,kind,{saved:true,requests:'multiple'});
     try{
@@ -300,8 +300,8 @@ for (const kind of ['metamask','unisat']) test(`${kind}: local picker, stopped l
   }finally{await browser.close();}
 });
 
-test('MetaMask: typed data and transaction wait, stop, failure, timeout and changed-account result', {timeout:50000}, async()=>{
-  const browser=await playwright.chromium.launch({headless:true});
+for (const engine of ['chromium','webkit']) test(`${engine} MetaMask: typed data and transaction wait, stop, failure, timeout and changed-account result`, {timeout:50000,skip:engineSkip(engine)}, async()=>{
+  const browser=await playwright[engine].launch({headless:true});
   try{
     const typed=await fixture(browser,'metamask',{saved:true,requests:'typed'});
     try{
@@ -332,8 +332,8 @@ test('MetaMask: typed data and transaction wait, stop, failure, timeout and chan
   }finally{await browser.close();}
 });
 
-for (const kind of ['metamask','unisat']) test(`${kind}: a Home list with several saved accounts is not a current wallet selection`, async()=>{
-  const browser=await playwright.chromium.launch({headless:true});
+for (const engine of ['chromium','webkit']) for (const kind of ['metamask','unisat']) test(`${engine} ${kind}: a Home list with several saved accounts is not a current wallet selection`, {skip:engineSkip(engine)}, async()=>{
+  const browser=await playwright[engine].launch({headless:true});
   try{
     const f=await fixture(browser,kind,{saved:true,extraHomeAccount:true});
     try{
@@ -361,6 +361,27 @@ for (const engine of ['chromium','webkit']) for (const kind of ['metamask','unis
       assert.equal(await f.top.evaluate(()=>testState.receipts.length),2);
       assert.deepEqual(await f.top.evaluate(()=>testState.effects.map(e=>e.action.approvalRequestId)),['approval-1','approval-2']);
       assert.equal(await f.top.evaluate(()=>testState.requests.length),0);
+    }finally{await f.close();}
+  }finally{await browser.close();}
+});
+
+for (const engine of ['chromium','webkit']) test(`${engine} UniSat: recorded lock and unlock keep one existing account prompt`, {timeout:30000,skip:engineSkip(engine)}, async()=>{
+  const browser=await playwright[engine].launch({headless:true});
+  try{
+    const f=await fixture(browser,'unisat',{recording:'unisat-locked-connect'});
+    try{
+      // Reproduce the recording's initial page probe; this is harness setup,
+      // not an added product RPC or a claim that an empty list identifies lock.
+      await f.top.evaluate(()=>{window.lockProbe=unisat.getAccounts();});
+      await f.top.evaluate(()=>__walletReplay.advance(100));
+      assert.deepEqual(await f.top.evaluate(()=>window.lockProbe),[]);
+      await f.action('connect').click();await f.state('extension-wait');
+      await f.top.waitForFunction(()=>__walletReplay.requests.length===2);
+      await f.top.evaluate(()=>{__walletReplay.person('unlocks');return __walletReplay.advance(1000);});
+      await f.state('extension-wait');
+      assert.equal(await f.top.evaluate(()=>__walletReplay.requests.filter(r=>r.method==='requestAccounts').length),1);
+      await f.action('stop-waiting').click();await f.state('extension-cancelled');
+      assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);
     }finally{await f.close();}
   }finally{await browser.close();}
 });
