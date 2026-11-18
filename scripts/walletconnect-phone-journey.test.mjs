@@ -9,7 +9,7 @@ async function until(fn,message,ms=20000){const end=Date.now()+ms;while(!fn()){a
 async function setup(t){
  const fixture=await windowFixture();const peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
  const engine=process.env.WALLETCONNECT_TEST_ENGINE || 'chromium';const engines=await importProductSmokePlaywright();const browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
- const page=await browser.newPage();const {errors}=observeWindowErrors(page,fixture);await page.route('**/*',r=>new URL(r.request().url()).origin===fixture.origin?r.continue():r.abort());
+ const page=await browser.newPage({viewport:{width:480,height:560}});const {errors}=observeWindowErrors(page,fixture);await page.route('**/*',r=>new URL(r.request().url()).origin===fixture.origin?r.continue():r.abort());
  const mutation={B14:{file:'walletconnect-client.mjs',from:"if (!(action.kind === 'link' && action.fresh) && restoring) await waitFor(restoring,signal);",to:"if (false) await waitFor(restoring,signal);"},B15:{file:'wallet-walletconnect.js',from:"if (launchExpired || !frameHomeToken || !accountsLoaded) return;",to:"if (launchExpired || !frameHomeToken) return;"}}[process.env.WALLETCONNECT_FIX1_BREAK];
  if(mutation)await page.route(`**/${mutation.file}*`,async route=>{const source=await readFile(new URL('../capsules/wallet-walletconnect/browser/'+mutation.file,import.meta.url),'utf8');assert.ok(source.includes(mutation.from),'review break matches current source');await route.fulfill({contentType:'text/javascript',body:source.replace(mutation.from,mutation.to)});});
 

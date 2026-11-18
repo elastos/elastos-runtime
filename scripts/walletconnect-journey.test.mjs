@@ -52,8 +52,8 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     const engine=process.env.WALLETCONNECT_TEST_ENGINE || 'chromium';const engines=await importProductSmokePlaywright();browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
     const page=await browser.newPage({viewport:{width:1000,height:850}});
     await page.route('**/*',route=>new URL(route.request().url()).origin===`http://127.0.0.1:${server.address().port}`?route.continue():route.abort());
-    const errors=[];page.on('pageerror',error=>errors.push(error.message));
-    await page.addInitScript(()=>{window.fixtureIntervals=[];const native=setInterval;window.setInterval=(fn,ms,...args)=>{window.fixtureIntervals.push(ms);if(ms===1000||ms===5000)window.fixtureStatusPoll=fn;return native(fn,ms,...args);};});
+    const errors=[];page.on('pageerror',error=>{errors.push(error.message);if(process.env.WALLETCONNECT_ERROR_DIAGNOSTICS)console.error(JSON.stringify({message:error.message,stack:error.stack}));});
+    await page.addInitScript(()=>{window.fixtureIntervals=[];window.fixtureIntervalIDs=[];const native=setInterval;window.setInterval=(fn,ms,...args)=>{window.fixtureIntervals.push(ms);if(ms===1000||ms===5000)window.fixtureStatusPoll=fn;const id=native(fn,ms,...args);window.fixtureIntervalIDs.push(id);return id;};});
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     const wallet=page.frameLocator('#wallet'),inbox=page.frameLocator('#inbox');
     const screenshotNames=new Set((process.env.WALLETCONNECT_SCREENSHOT_NAMES||'').split(',').filter(Boolean));
@@ -176,6 +176,10 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     `}));
     failSummary=false;
     const reload=async()=>{
+      if(!process.env.WALLETCONNECT_SKIP_RELOAD_DRAIN){
+        await walletFrame.evaluate(()=>{for(const id of window.fixtureIntervalIDs)clearInterval(id);});
+        await page.waitForLoadState('networkidle');
+      }
       await Promise.all([walletFrame.waitForNavigation({waitUntil:'load'}),page.waitForResponse(response=>response.url().endsWith('/wallet/approvals')),page.waitForResponse(response=>response.url().endsWith('/wallet/accounts')),walletFrame.evaluate(()=>location.reload())]);
       await wallet.locator('.connection-content').waitFor();
       if(approvalRequests.length)await wallet.locator('.connection-request,[data-action=view-requests]').first().waitFor();
@@ -187,6 +191,15 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       // Count admission posts as well as completions: a wrongly resumed effect starts here.
       await walletFrame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,100)));
     };
+    if(!guardCase || guardCase==='reload-drain')await t.test('planned reload waits for an old Internet read',async()=>{
+      const previous=status;status='granted';await reload();await settlePermission();
+      let entered;const reading=new Promise(resolve=>entered=resolve);connectionStatusHeld=entered;holdConnectionStatus=true;
+      await walletFrame.evaluate(()=>{window.fixtureStatusPoll();});await reading;
+      let navigated=false;const navigation=frame=>{if(frame===walletFrame)navigated=true;};page.on('framenavigated',navigation);
+      const next=reload();
+      try{await page.waitForTimeout(250);assert.equal(navigated,false,'planned reload waits for the old real Home read');}
+      finally{releaseConnectionStatus();await next;page.off('framenavigated',navigation);status=previous;}
+    });
     if(!guardCase || guardCase==='double-run') {
     // The visible Cancel consumes the saved Connect before a fresh Connect after Allow.
     status='off';await reload();await invoke('connect');
