@@ -254,22 +254,24 @@ for(const engine of ['chromium','webkit'])test(`keyboard activation and long-car
  const r=await setup(t,engine);await r.frame.locator('[data-action=connect]').press('Enter');await r.state('qr-shown');
  await r.frame.locator('[data-action=copy-link]').press('Space');await until(()=>r.page.evaluate(()=>window.copied.startsWith('wc:')),'keyboard Copy link writes through Home');await r.peer.pair(await r.page.evaluate(()=>window.copied));await r.state('linked');
  await r.approval('long-keyboard',{reason:'Review this message from the requesting app. '.repeat(40),requesting_origin:'https://'+('a'.repeat(60)+'.').repeat(3)+'example.test'});await r.state('request-waiting');
- await r.frame.locator('[data-action=send-request]').focus();
+ await focusWithKeyboard(r,'send-request');
+ await r.frame.waitForFunction(()=>document.querySelector('main').scrollTop>0);
  const before=await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action}));assert.ok(before.top>0,'the long request scrolls');
- await r.refresh();const after=await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action}));assert.deepEqual(after,before,'same request redraw preserves focus and scroll');
+ await refreshAndWaitForRedraw(r);const after=await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action}));assert.deepEqual(after,before,'same request redraw preserves focus and scroll');
  await r.frame.evaluate(()=>{document.querySelector('main').scrollTop=0;});
  const reading=await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action}));assert.equal(reading.top,0);assert.equal(reading.action,'send-request');
- await r.refresh();assert.deepEqual(await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action})),reading,'redraw preserves the reading position when its focused control is offscreen');
+ await refreshAndWaitForRedraw(r);assert.deepEqual(await r.frame.evaluate(()=>({top:document.querySelector('main').scrollTop,action:document.activeElement.dataset.action})),reading,'redraw preserves the reading position when its focused control is offscreen');
  await r.frame.evaluate(top=>{document.querySelector('main').scrollTop=top;},before.top);
  await r.capture('long-request-redraw');r.peer.choose({request:'silent'});await r.frame.locator('[data-action=send-request]').press('Enter');await r.state('request-phone');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'long message published');await r.capture('long-request-phone');await r.peer.answer('sign');await r.state('request-done');assert.equal(r.fixture.state.completed,1,'Enter sent the exact request and returned a verified signature');
- await r.refresh();assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.focus),'outcome','result redraw preserves the non-action outcome focus');assert.deepEqual(r.errors,[]);
+ await refreshAndWaitForRedraw(r);assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.focus),'outcome','result redraw preserves the non-action outcome focus');assert.deepEqual(r.errors,[]);
 });
 
 for(const engine of ['chromium','webkit'])test(`background wallet redraw keeps Home keyboard focus in ${engine}`,{timeout:60000},async t=>{
- const r=await setup(t,engine);await r.link();await r.frame.locator('[data-action=copy-address]').focus();
+ const r=await setup(t,engine);await r.link();await focusWithKeyboard(r,'copy-address');
  await r.page.evaluate(()=>{const input=document.createElement('input');input.id='home-note';input.style.position='fixed';input.style.top='0';document.body.append(input);input.focus();});
+ await r.page.keyboard.press('x');assert.deepEqual(await r.page.evaluate(()=>({focused:document.hasFocus(),value:document.querySelector('#home-note').value})),{focused:true,value:'x'},'Home owns the native keystroke before the wallet redraw');
  await r.peer.updateSession();await pause(250);assert.equal(await r.page.evaluate(()=>document.activeElement.id),'home-note','a wallet update keeps the Home input focused');
- await r.frame.evaluate(()=>window.focus());await r.refresh();assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.action),'copy-address','returning restores the same account action');assert.deepEqual(r.errors,[]);
+ await r.frame.evaluate(()=>window.focus());await refreshAndWaitForRedraw(r);assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.action),'copy-address','returning restores the same account action');assert.deepEqual(r.errors,[]);
 });
 
 for(const engine of ['chromium','webkit'])test(`unsupported wallet network is named and cannot be linked in ${engine}`,{timeout:60000},async t=>{
