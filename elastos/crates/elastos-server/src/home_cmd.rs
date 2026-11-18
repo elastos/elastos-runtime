@@ -3103,7 +3103,11 @@ fn people_carrier_status(
     match peer_count {
         Some(peers) => (
             format!("{} known", peers),
-            if has_community_status { "see Community status above" } else { "checking" },
+            if has_community_status {
+                "see Community status above"
+            } else {
+                "checking"
+            },
         ),
         None => ("checking".to_string(), "checking"),
     }

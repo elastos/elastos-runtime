@@ -4993,6 +4993,11 @@ mod tests {
                     serde_json::json!({"status":"error", "code":"recovery_failed", "message":"gossip topic is not joined"}),
                 );
             }
+            // Rebuilding the actor is a global operation, even when this topic
+            // is absent. It does not create an unrecorded subscription.
+            if op == "gossip_rebuild" {
+                return Ok(serde_json::json!({"status":"ok", "data":{"topics":0}}));
+            }
             if !self.joined.load(SeqCst) {
                 return Ok(
                     serde_json::json!({"status":"error", "code":"not_joined", "message":"private-fixture-sentinel"}),
@@ -5011,7 +5016,6 @@ mod tests {
                 "gossip_rejoin" => {
                     serde_json::json!({"status":"ok", "data":{"topic":request["topic"]}})
                 }
-                "gossip_rebuild" => serde_json::json!({"status":"ok", "data":{"topics":1}}),
                 _ => {
                     return Err(ProviderError::Provider(
                         "unexpected fixture operation".into(),
