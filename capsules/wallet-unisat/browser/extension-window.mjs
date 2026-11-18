@@ -1,4 +1,4 @@
-import { connectionView, renderConnection, reduceSummary } from './wallet-connection-view.mjs';
+import { connectionView, renderConnection, mountConnection, reduceSummary } from './wallet-connection-view.mjs';
 
 // Delivered byte-for-byte to both capsules, like the shared view. Home owns
 // discovery, challenges, signing, completion and provider-account checks.
@@ -18,9 +18,10 @@ export function startExtensionWindow(kind, homeClipboard) {
   let uncertain = false, fixedOutcome = false;
   let operation = null, revision = 0, refreshing = null, disposed = false;
   let accountEvent = null, networkEvent = null, disconnected = false;
-  let readFailed = false, preflightFailure = null, checkingPreflight = false, pendingVerificationRequired = false;
+  let preflightFailure = null, refusal = null;
+  let providerAvailability = 'unknown';
   const requestNetworks = new Map();
-  let lastMarkup = '', lastView = null;
+  let presentation = null;
   const mount = document.querySelector('#connection-root');
 
   function validAddress(value) {
@@ -63,6 +64,8 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   function chooseStage() {
     if (selected && !validAddress(selected.address)) { fixedOutcome = true; return 'request-unavailable'; }
+    if (selected?.status === 'rejected') return 'request-rejected';
+    if (selected?.status === 'dismissed') return 'request-dismissed';
     if (selected?.status === 'completed') return selected.transaction ? 'transaction-done' : 'request-done';
     if (isRequestExpired()) { fixedOutcome = true; return 'request-expired'; }
     if (preflightFailure) return preflightFailure;
@@ -84,69 +87,47 @@ export function startExtensionWindow(kind, homeClipboard) {
     return Number.isSafeInteger(deadline) ? Math.min(86400, Math.max(0, deadline - now())) : 0;
   }
 
-  // Capabilities come from this branch's base. Home denies connector navigation.
-  // Omit those shared-view intents instead of presenting controls with no effect.
-  const supported = new Set(['connect', 'restore-access', 'send-message', 'send-request',
-    'stop-waiting', 'close-window', 'copy-address', 'select-request', 'view-requests']);
+  // Home owns every effect. These are the intents this v1 window can perform.
+  const supported = ['connect', 'restore-access', 'send-message', 'send-request',
+    'stop-waiting', 'close-window', 'copy-address', 'select-request', 'view-requests', 'refresh-status'];
   function draw() {
     if (disposed) return;
     const changedDuringRequest = selected && (disconnected || accountEvent && !sameAccount(accountEvent[0], selected.address));
-    const view = connectionView({ window: kind, stage, account: changedDuringRequest && (operation || uncertain || fixedOutcome || selected.status === 'completed') ? null : accountView(), summary: selected,
+    const provider = { providerId: kind === 'metamask' ? 'io.metamask' : 'unisat', alternatives: [], availability: providerAvailability,
+      firstAccount: null, requiredAccountAvailable: null, network: null, networkIssue: null, access: 'unknown', busy: false, paymentPending: null };
+    const viewStage = refusal ? 'request-dismissed' : stage;
+    const view = connectionView({ window: kind, stage: viewStage, provider,
+      previousFocus: !document.hasFocus() ? {window:kind,stage:viewStage,requestId:selected?.id || null,action:null,key:null} : undefined,
+      account: changedDuringRequest && !refusal && (operation || uncertain || fixedOutcome || selected.status === 'completed') ? null : accountView(), summary: selected,
       otherRequests: requests.map(r => reduceSummary(r, { connector: CONNECTOR_ID })).filter(r => r && r.id !== selected?.id),
-      waitSeconds: remaining(), homeOrigin, alternativeAllowed: false });
-    const root = renderConnection(document, view);
-    if (stage === 'request-unsendable' && kind === 'unisat') root.querySelector('.connection-notice')?.remove();
-    if (stage === preflightFailure && ['request-network-declined', 'network-changed', 'request-network-testnet'].includes(stage)) root.querySelector('.connection-status')?.replaceChildren();
-    if (selected && stage === preflightFailure && stage !== 'request-network-declined') {
-      // v1 can retry the same pending approval, but cannot silently probe access.
-      // Use the shared Send control instead of a Check or a new ownership proof.
-      const retry = renderConnection(document, connectionView({ window: kind, stage: 'request-waiting', account: accountView(), summary: selected, waitSeconds: remaining() })).querySelector('[data-action="send-request"]');
-      const primary = root.querySelector('[data-action="connect"]') || root.querySelector('[data-action="check-access"],[data-action="send-request"]');
-      primary?.replaceWith(retry);
-      if (kind === 'unisat' && stage === 'request-network-testnet') {
-        const notice = renderConnection(document, connectionView({ window: kind, stage: 'network-changed' })).querySelector('.connection-notice');
-        root.querySelector('.connection-notice')?.replaceWith(notice);
-      }
-    }
+      waitSeconds: remaining(), homeOrigin, alternativeAllowed: false,
+      supportedActions: frameHomeToken && homeOrigin && window.top !== window ? supported : supported.filter(a => a !== 'close-window') });
+    presentation = mountConnection(mount, view, presentation);
+    const root = presentation.root;
     for (const control of root.querySelectorAll('[data-action]')) {
-      if (!supported.has(control.dataset.action) || control.dataset.action === 'close-window' && (!frameHomeToken || !homeOrigin || window.top === window)) control.remove();
-      else if ((operation || uncertain || checkingPreflight) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action) || pendingVerificationRequired && control.dataset.action === 'send-request') control.disabled = true;
+      if ((operation || uncertain) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action)) control.disabled = true;
     }
-    // These shared recovery paragraphs point to Check access, which the base
-    // cannot perform. Absence also cannot prove this window can enable extensions.
-    // Keep the true outcome and working Close control.
-    if (['extension-timeout', 'extension-cancelled', 'request-timeout', 'request-cancelled', 'extension-missing'].includes(stage)) root.querySelector('.connection-notice')?.remove();
-    // v1 gives no settlement phase for an unclassified failure. Keep the real
-    // request and Close, without asserting a wallet failure or an app retry.
-    if (['request-wallet-error', 'transaction-wallet-error'].includes(stage)) {
-      root.querySelector('.connection-status')?.replaceChildren();
-      if (stage === 'request-wallet-error') root.querySelector('.connection-notice')?.remove();
+    // R5 has no consumed-but-unsent state. Reuse its outcome/card/Close parts
+    // once, with a closed local copy override. No control retries this request.
+    if (refusal) {
+      root.dataset.state = 'request-consumed';
+      root.dataset.extensionFeedback = 'consumed';
+      const wallet = kind === 'metamask' ? 'MetaMask' : 'UniSat';
+      const needed = refusal.cause === 'account' ? `account ${refusal.address}` : `network ${refusal.network}`;
+      root.querySelector('.connection-status').textContent = `${wallet} was using a different ${refusal.cause}. This request needed ${needed}.`;
+      root.querySelector('.connection-notice').textContent = `This request can no longer be sent. Select ${needed} in ${wallet}. After switching, return to ${selected.app} and make a new request.`;
+    } else if (['request-wallet-error', 'transaction-wallet-error'].includes(stage)) {
+      root.dataset.extensionFeedback = 'unknown-error';
+      root.querySelector('.connection-status').textContent = 'Home could not finish this request.';
+      root.querySelector('.connection-notice').textContent = 'Check your wallet and Wallet activity before making another request.';
     }
-    if (stage === 'account-unavailable' && (disconnected || kind === 'metamask' && accountEvent?.length === 0)) root.querySelector('.connection-notice')?.remove();
+    // Some R5 outcome tables still offer only navigation that v1 cannot do.
+    // Until the shared capability fallback covers them, reuse its Close part.
     if (!root.querySelector('button:not(:disabled)') && frameHomeToken && homeOrigin && window.top !== window) {
-      // Reuse the shared Close control when this base lacks the screen's
-      // navigation capability. No inactive-window status is mounted.
-      const close = renderConnection(document, connectionView({ window: kind, stage: 'window-expired' })).querySelector('[data-action="close-window"]');
+      const close = renderConnection(document, connectionView({ window: kind, stage: 'window-expired', provider, supportedActions: ['close-window'] })).querySelector('[data-action="close-window"]');
       root.querySelector('.connection-actions')?.append(close);
+      if (document.hasFocus()) close?.focus({preventScroll:true});
     }
-    const markup = root.outerHTML.replace(/Time left: [0-9]+:[0-9]+/g, 'Time left:');
-    if (markup === lastMarkup) {
-      const wait = mount.querySelector('.connection-wait');
-      if (wait) wait.textContent = view.wait;
-      return;
-    }
-    const ownsFocus = !lastView || document.hasFocus();
-    const old = document.activeElement;
-    const focusKey = mount.contains(old) ? old.dataset.focusKey || old.dataset.focus : null;
-    const sameFact = lastView?.stage === view.stage && lastView?.request?.id === view.request?.id;
-    const scroll = { x: window.scrollX, y: window.scrollY };
-    mount.replaceChildren(root);
-    lastMarkup = markup;
-    lastView = view;
-    let focus = sameFact && focusKey ? [...root.querySelectorAll('[data-focus-key],[data-focus]')].find(n => (n.dataset.focusKey || n.dataset.focus) === focusKey) : null;
-    if (!focus && !sameFact) focus = root.querySelector(`[data-action="${view.focus}"]`) || root.querySelector(`[data-focus="${view.focus}"]`) || root.querySelector('button:not(:disabled)');
-    if (ownsFocus) focus?.focus({ preventScroll: sameFact });
-    if (sameFact) window.scrollTo(scroll.x, scroll.y);
   }
 
   async function refresh() {
@@ -160,10 +141,15 @@ export function startExtensionWindow(kind, homeClipboard) {
         if (a?.available === false || !Array.isArray(a?.accounts)) throw new Error('Home accounts are unavailable.');
         const approvals = approvalList(r);
         accounts = a.accounts;
-        readFailed = false;
         for (const request of approvals) requestNetworks.set(request.request_id, request.chain_namespace);
         requests = approvals.filter(signable).filter(r => !fixedOutcome || r.request_id !== selected?.id);
-        pendingVerificationRequired = false;
+
+        if (refusal) {
+          const next = requests.find(request => !refusal.knownIds.includes(request.request_id) && request.status === 'pending');
+          if (!next) { draw(); return; }
+          refusal = null; preflightFailure = null; fixedOutcome = false; picked = false;
+          selected = reduceSummary(next, {connector: CONNECTOR_ID});
+        }
         if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) {
           if (selected && !requests.some(request => request.request_id === selected.id)) {
             if (selected.status === 'pending') { stage = 'request-unavailable'; fixedOutcome = true; }
@@ -177,9 +163,9 @@ export function startExtensionWindow(kind, homeClipboard) {
         if (fixedOutcome && selected?.status === 'completed' && !selected.transaction) stage = requests.length ? 'request-next' : 'request-done';
         draw();
       } catch (error) {
+        if (refusal) { draw(); return; }
         if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) {
-          readFailed = ![401, 403].includes(error.status);
-          stage = [401, 403].includes(error.status) ? 'window-expired' : 'link-error';
+          stage = [401, 403].includes(error.status) ? 'window-expired' : 'wallet-unavailable';
           if (stage === 'window-expired') fixedOutcome = true;
           draw();
         }
@@ -190,9 +176,9 @@ export function startExtensionWindow(kind, homeClipboard) {
   }
 
   async function perform(action) {
-    if (operation || uncertain || checkingPreflight || (fixedOutcome || pendingVerificationRequired) && action.kind === 'approve') return;
+    if (operation || uncertain || fixedOutcome && action.kind === 'approve') return;
     revision += 1;
-    preflightFailure = null; readFailed = false; pendingVerificationRequired = false;
+    preflightFailure = null;
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
     if (action.kind === 'link') { accountEvent = null; networkEvent = null; disconnected = false; fixedOutcome = false; selected = null; picked = false; }
@@ -203,6 +189,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       // The existing host may finish after Stop waiting. Its real answer wins;
       // stopping the local wait grants neither cancellation nor another send.
       if (disposed) return;
+      providerAvailability = 'found';
       revision += 1;
       operation = null;
       notifyHomeSummaryChanged();
@@ -232,15 +219,20 @@ export function startExtensionWindow(kind, homeClipboard) {
         preflightFailure = 'request-network-declined';
       }
       if (preflightFailure) {
-        stage = preflightFailure;
-        if (action.kind === 'approve') await checkPendingAfterRefusal();
-        else draw();
+        providerAvailability = 'found';
+        if (action.kind === 'approve') {
+          refusal = { id: selected.id, cause: preflightFailure === 'request-unsendable' ? 'account' : 'network',
+            address: selected.address, network: networkName(requestNetworks.get(selected.id)), knownIds: requests.map(request => request.request_id) };
+          fixedOutcome = true; stage = 'request-consumed';
+          requests = requests.filter(request => request.request_id !== selected.id);
+          draw(); void refresh();
+        } else { stage = preflightFailure; draw(); }
         return;
       }
       if (action.kind === 'approve') fixedOutcome = true;
       const prefix = action.kind === 'link' ? 'extension' : selected?.transaction ? 'transaction' : 'request';
       if (message === 'Wallet request timed out.') { uncertain = true; stage = `${prefix}-timeout`; }
-      else if (/was not found in this browser profile/.test(message)) stage = 'extension-missing';
+      else if (/was not found in this browser profile/.test(message)) { providerAvailability = 'absent'; stage = 'extension-missing'; }
       else if (action.kind === 'link') stage = 'link-error';
       else stage = `${prefix}-wallet-error`;
       draw();
@@ -252,26 +244,6 @@ export function startExtensionWindow(kind, homeClipboard) {
     return response.approval_requests;
   }
 
-  async function checkPendingAfterRefusal() {
-    const id = selected.id;
-    checkingPreflight = true; pendingVerificationRequired = true; draw();
-    try {
-      // Runtime's handoff is one-use. A Home refusal alone does not prove the
-      // request is still pending; only the existing Runtime list can do that.
-      const response = await fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/approvals`, { headers: { 'x-elastos-home-token': frameHomeToken } });
-      if (disposed || selected?.id !== id || fixedOutcome) return;
-      requests = approvalList(response).filter(signable);
-      const pending = requests.find(request => request.request_id === id && request.status === 'pending');
-      pendingVerificationRequired = false;
-      if (!pending) { fixedOutcome = true; stage = 'request-unavailable'; }
-      else { selected = reduceSummary(pending, { connector: CONNECTOR_ID }); stage = chooseStage(); }
-    } catch (error) {
-      if (disposed || fixedOutcome) return;
-      readFailed = ![401, 403].includes(error.status);
-      stage = readFailed ? 'link-error' : 'window-expired';
-      if (!readFailed) fixedOutcome = true;
-    } finally { checkingPreflight = false; draw(); }
-  }
 
   function onClick(event) {
     const button = event.target.closest('[data-action]');
@@ -282,7 +254,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       stage = operation.action.kind === 'link' ? 'extension-cancelled' : selected?.transaction ? 'transaction-cancelled' : 'request-cancelled';
       draw();
     } else if (operation && action !== 'copy-address') return;
-    else if (action === 'connect' && readFailed) void refresh();
+    else if (action === 'refresh-status') void refresh();
     else if (['connect', 'restore-access', 'send-message'].includes(action)) void perform({ kind: 'link' });
     else if (action === 'send-request' && selected) void perform({ kind: 'approve', approvalRequestId: selected.id });
     else if (action === 'copy-address') {
@@ -313,8 +285,9 @@ export function startExtensionWindow(kind, homeClipboard) {
     else if (kind === 'unisat' && data.event === 'networkChanged' && ['livenet', 'testnet', 'unknown'].includes(data.value)) networkEvent = data.value;
     else return;
     if (['network-changed', 'request-network-testnet', 'request-network-declined'].includes(preflightFailure) && (data.event === 'networkChanged' && data.value === 'livenet' || data.event === 'chainChanged' && selected && `eip155:${BigInt(data.value)}` === requestNetworks.get(selected.id))) preflightFailure = null;
+    providerAvailability = 'found';
     revision += 1;
-    if (!operation && !uncertain && !fixedOutcome && (!pendingVerificationRequired || checkingPreflight && !readFailed)) { stage = chooseStage(); readFailed = false; }
+    if (!operation && !uncertain && !fixedOutcome) { stage = chooseStage(); }
     draw();
   }
 
@@ -326,7 +299,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (operation || selected) draw();
   }, 1000);
   window.addEventListener('pagehide', () => {
-    disposed = true; window.clearInterval(tick); homeClipboard.teardown();
+    disposed = true; presentation?.dispose(); window.clearInterval(tick); homeClipboard.teardown();
     window.removeEventListener('message', onWalletEvent); window.removeEventListener('focus', refresh);
   }, { once: true });
   draw(); void refresh();

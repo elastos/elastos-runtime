@@ -229,7 +229,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
 test('both extension packages carry one presenter and existing v1 actions only', async () => {
   const mm = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
   assert.equal(mm, await readFile('capsules/wallet-unisat/browser/extension-window.mjs', 'utf8'));
-  assert.match(mm, /renderConnection\(document, view\)/);
+  assert.match(mm, /mountConnection\(mount, view, presentation\)/);
   assert.doesNotMatch(mm, /localStorage|sessionStorage|eth_requestAccounts|eth_sendTransaction|wallet-connector\/.*\/v2|home:open-target/);
 });
 
@@ -278,7 +278,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
         await f.top.waitForFunction(() => testState.effects.length > 0);
         assert.equal(await f.top.evaluate(() => testState.effects[0].action.kind), 'approve');
       }],
-      ['Cancel after dispatch', s => s.replace('const markup = root.outerHTML', "for (const b of root.querySelectorAll('[data-action=stop-waiting]')) b.textContent = 'Cancel';\n    const markup = root.outerHTML"), async f => {
+      ['Cancel after dispatch', s => s.replace('const root = presentation.root;', "const root = presentation.root; for (const b of root.querySelectorAll('[data-action=stop-waiting]')) b.textContent = 'Cancel';"), async f => {
         await f.top.evaluate(() => { testState.mode = 'pending'; });
         await f.action('send-request').click(); await f.state('request-extension');
         assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
@@ -286,7 +286,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
       ['stale wait after answer', s => s.replace('window: kind, stage, account:', "window: kind, stage: stage === 'request-done' ? 'request-extension' : stage, account:"), async f => {
         await f.action('send-request').click(); await f.state('request-done');
       }],
-      ['draw outside shared view', s => s.replace('const root = renderConnection(document, view);', "const root = renderConnection(document, view); root.append(document.createElement('aside'));"), async f => {
+      ['draw outside shared view', s => s.replace('const root = presentation.root;', "const root = presentation.root; root.append(document.createElement('aside'));"), async f => {
         await f.assertShared();
       }],
       ['accepted proof after disconnect', s => s.replace("if (disconnected) return linkObserved ? 'account-unavailable' : 'link-error';", "if (disconnected) return 'link-error';"), async f => {
@@ -326,13 +326,13 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
       ['overdue event before timer', s => s.replace("if (isRequestExpired()) { fixedOutcome = true; return 'request-expired'; }", ''), async f => {
         await secondRequest(f); assert.equal(await overdueEvent(f, 'accountsChanged', [B]), 'request-expired');
       }],
-      ['outcome focus lost', s => s.replace('old.dataset.focusKey || old.dataset.focus', 'old.dataset.focusKey'), async f => {
+      ['outcome focus lost', s => s.replace('const root = presentation.root;', "const root = presentation.root; root.querySelector('button')?.focus();"), async f => {
         await f.action('send-request').click(); await f.state('request-done');
         assert.equal(await f.frame.evaluate(() => document.activeElement?.dataset.focus), 'outcome');
         await peerEvent(f, 'accountsChanged', [B]);
         assert.equal(await f.frame.evaluate(() => document.activeElement?.dataset.focus), 'outcome');
       }],
-      ['background focus stolen', s => s.replace('if (ownsFocus) focus?.focus', 'focus?.focus'), async f => {
+      ['background focus stolen', s => s.replace('presentation = mountConnection(mount, view, presentation);',"presentation = mountConnection(mount, view, presentation); mount.querySelector('button')?.focus();"), async f => {
         await f.action('connect').click(); await f.state('linked');
         await f.top.evaluate(() => { const input = document.createElement('input'); input.id = 'other-control'; document.body.append(input); input.focus(); });
         await peerEvent(f, 'accountsChanged', [B]);
@@ -370,7 +370,7 @@ for (const kind of ['metamask', 'unisat']) test(`${kind}: actual old Home with n
 for (const kind of ['metamask', 'unisat']) test(`${kind}: a failed Home read is distinct from expired authority`, async () => {
   const browser = await playwright.chromium.launch({ headless: true });
   try {
-    for (const [status, state] of [[503, 'link-error'], [403, 'window-expired']]) {
+    for (const [status, state] of [[503, 'wallet-unavailable'], [403, 'window-expired']]) {
       const f = await fixture(browser, kind, { readFailure: status });
       try { await f.state(state); assert.equal(await f.top.evaluate(() => testState.effects.length), 0); }
       finally { await f.close(); }
@@ -604,7 +604,7 @@ for(const engine of ['chromium','webkit']) for(const kind of ['metamask','unisat
       await f.action('send-request').click();await f.state('request-wallet-error');
       assert.equal(await f.top.evaluate(()=>testState.calls.some(c=>['personal_sign','signMessage'].includes(c.method))),true);
       assert.doesNotMatch(await f.frame.locator('body').innerText(),/could not sign/i);
-      assert.doesNotMatch(await f.frame.locator('body').innerText(),/return to|new request|result unknown/i);
+      assert.doesNotMatch(await f.frame.locator('body').innerText(),/return to|result unknown/i);
       assert.equal(await f.action('send-request').count(),0);
     }finally{await f.close();}
   }finally{await browser.close();}

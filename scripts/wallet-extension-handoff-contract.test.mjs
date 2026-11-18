@@ -14,7 +14,7 @@ async function refuse(f,kind) {
   await f.frame.waitForFunction(()=>document.querySelector('main').dataset.state!=='request-extension',null,{timeout:3000});
 }
 async function consumed(f,kind) {
-  await f.state('request-unavailable');
+  await f.state('request-consumed');
   assert.equal(await f.action('send-request').count(),0,'a consumed request cannot offer a dead retry');
   assert.equal(await f.top.evaluate(()=>testState.requests[0]?.status),'approved');
   assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);
@@ -37,10 +37,9 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
       const good=await fixture(browser,kind,{saved:true,requests:true,oldHost});try{await refuse(good,kind);await consumed(good,kind);}finally{await good.close();}
       const bad=await fixture(browser,kind,{saved:true,requests:true,oldHost,pictures:false});try{
         await bad.top.evaluate(()=>{const send=runtimeFetch;window.runtimeFetch=async(url,init)=>{const result=await send(url,init);if(url.endsWith('/handoff'))testState.requests[0].status='pending';return result;};});
-        await refuse(bad,kind);await bad.state('request-unsendable');
-        await bad.frame.waitForFunction(()=>!document.querySelector('[data-action="send-request"]').disabled,null,{timeout:3000});
-        await assert.rejects(consumed(bad,kind),error=>/locator.waitFor: Timeout/.test(error.message)&&/request-unavailable/.test(error.message),'the former reusable-handoff model must fail the same UI oracle');
-        t.diagnostic(`${oldHost?'pinned':'current'} Home: consumed request hidden; broken pending model shows an enabled retry and fails the UI oracle`);
+        await refuse(bad,kind);
+        await assert.rejects(consumed(bad,kind),error=>error.code==='ERR_ASSERTION'&&/approved/.test(error.message),'the former reusable-handoff model must fail the primary status oracle');
+        t.diagnostic(`${oldHost?'pinned':'current'} Home: consumed cause retained; broken pending model fails the primary status oracle`);
       }finally{await bad.close();}
     }
   }finally{await browser.close();}
@@ -50,32 +49,29 @@ async function failedRead(f,kind,failure=503) {
   await f.state('request-waiting');
   const fail=route=>route.fulfill(failure===503?{status:503,json:{error:'fixture read error'}}:{json:{available:false,approval_requests:[]}});
   await f.context.route('**/approvals',fail);
-  await refuse(f,kind);await f.state('link-error');
-  const consumedAtRuntime=await f.top.evaluate(()=>testState.requests[0].status==='approved');
-  await f.frame.evaluate(()=>{window.returnSeen=false;addEventListener('message',function watch(e){if(e.data?.type==='home:wallet-connector-event'){returnSeen=true;removeEventListener('message',watch);}});});
+  await refuse(f,kind);await f.state('request-consumed');
+  const text=await f.frame.locator('body').innerText();
   await f.top.evaluate(()=>{testState.walletAddress=testState.address;emitWallet('accountsChanged',[testState.address]);});
-  await f.frame.waitForFunction(()=>returnSeen);
-  await f.state('link-error');assert.equal(await f.action('send-request').count(),0);
-  await f.context.unroute('**/approvals',fail);await f.action('connect').click();
-  await f.state(consumedAtRuntime?'request-unavailable':'request-waiting');
-  assert.equal(await f.top.evaluate(()=>testState.effects.length),1,'retry only repeats Home reads');
+  await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));
+  await f.state('request-consumed');assert.equal(await f.action('send-request').count(),0);
+  assert.equal(await f.frame.locator('body').innerText(),text);
+  await f.context.unroute('**/approvals',fail);await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));
+  await f.state('request-consumed');
+  assert.equal(await f.top.evaluate(()=>testState.effects.length),1,'reads never repeat the consumed effect');
 }
-for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: wallet events cannot revive Send after a failed pending-list verification`,{timeout:30000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async()=>{
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: failed reads and wallet events retain the consumed cause`,{timeout:30000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async()=>{
   const browser=await playwright[engine].launch({headless:true});try{
     for(const failure of [503,200]) {
       const good=await fixture(browser,kind,{saved:true,requests:true});try{await failedRead(good,kind,failure);}finally{await good.close();}
-      const bad=await fixture(browser,kind,{saved:true,requests:true,mutate:source=>{const broken=source.replace('pendingVerificationRequired = true;','pendingVerificationRequired = false;');assert.notEqual(broken,source);return broken;}});try{
-        await assert.rejects(failedRead(bad,kind,failure),error=>error.code==='ERR_ASSERTION'||/locator.waitFor: Timeout/.test(error.message),'missing verification hold must fail');
-      }finally{await bad.close();}
     }
   }finally{await browser.close();}
 });
 
-for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: verifying a refusal keeps Send disabled and follows wallet corrections`,{timeout:30000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async()=>{
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: refusal is final before the pending-list answer and keeps its instructions`,{timeout:30000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async()=>{
   const browser=await playwright[engine].launch({headless:true});try{
     for(const fault of ['account','network']) {
       const transaction=kind==='metamask';
-      const f=await fixture(browser,kind,{saved:true,requests:transaction?'transaction':true,pictureContext:'pending-list response held; Runtime has already consumed the handoff'});
+      const f=await fixture(browser,kind,{saved:true,requests:transaction?'transaction':true});
       let release;
       try {
         await f.state(transaction?'transaction-waiting':'request-waiting');
@@ -86,19 +82,14 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
           else if(kind==='metamask')testState.refuseSwitch=true;
           else testState.network='testnet';
         },{kind,fault});
-        await f.action('send-request').click();
-        await f.state(fault==='account'?'request-unsendable':kind==='metamask'?'request-network-declined':'request-network-testnet');
-        assert.equal(await f.action('send-request').isDisabled(),true);
+        await f.action('send-request').click();await f.state('request-consumed');
+        const text=await f.frame.locator('body').innerText();
+        assert.match(text,/This request can no longer be sent/);assert.match(text,/After switching/);assert.doesNotMatch(text,/try again|unknown/i);
+        assert.equal(await f.action('send-request').count(),0);
         assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');
-        if(fault==='account') {
-          await f.frame.evaluate(()=>{window.corrected=false;addEventListener('message',function watch(e){if(e.data?.type==='home:wallet-connector-event'){corrected=true;removeEventListener('message',watch);}});});
-          await f.top.evaluate(()=>{testState.walletAddress=testState.address;emitWallet('accountsChanged',[testState.address]);});
-          await f.frame.waitForFunction(()=>corrected);await f.state(transaction?'transaction-waiting':'request-waiting');
-          assert.equal(await f.action('send-request').isDisabled(),true,'the wallet correction alone cannot prove pending status');
-          assert.doesNotMatch(await f.frame.locator('body').innerText(),/not providing.*account/i);
-        }
-        assert.equal(await f.top.evaluate(()=>testState.effects.length),1);
-        release();await f.state('request-unavailable');assert.equal(await f.action('send-request').count(),0);
+        await f.top.evaluate(()=>{testState.walletAddress=testState.address;emitWallet('accountsChanged',[testState.address]);});
+        release();await f.state('request-consumed');
+        assert.equal(await f.frame.locator('body').innerText(),text);
         assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);
       }finally{release?.();await f.close();}
     }
