@@ -86,11 +86,11 @@ export async function assertApprovalPaint(page,o,{captureFailure=true,line=null}
 /** Visit every origin line, including lines above a currently reachable action. */
 export async function assertEverySiteLinePaint(page,{captureFailure=true}={}){
  const opening=await observeApproval(page),scroll=opening.scrollTop;let painted=0;
- try{for(const line of opening.lines){
+ try{for(const [index,line] of opening.lines.entries()){
    await page.evaluate(y=>{document.querySelector('main').scrollTop=y;},Math.max(0,scroll+line.top-2));
    const o=await observeApproval(page);assertApprovalGeometry(o);
-   const visible=o.lines.find(l=>l.text===line.text&&l.top>=1&&l.bottom<=o.height-1);
-   assert(visible,'each site line can be brought fully into view');
+   const visible=o.lines[index];
+   assert(visible&&visible.text===line.text&&visible.top>=1&&visible.bottom<=o.height-1,'each indexed site line can be brought fully into view');
    await assertApprovalPaint(page,o,{captureFailure,line:visible});painted++;
  }}finally{await page.evaluate(y=>{document.querySelector('main').scrollTop=y;},scroll);}
  return painted;
