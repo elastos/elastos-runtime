@@ -26,12 +26,17 @@ export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:84
     if(choice==='silent')return;
     let result;
     if(choice!=='reject') {
-      if(request.method==='personal_sign')result=await account.signMessage({message:{raw:request.params[0]}});
+      // A queued request still belongs to its requested signer after selection changes.
+      // This makes stale-answer guards prove rejection of an otherwise valid signature.
+      const requested=request.method==='personal_sign'?request.params[1]:request.params[0]?.from;
+      const signer=accounts.find(value=>value.address.toLowerCase()===String(requested).toLowerCase());
+      if(!signer)throw new Error('Unknown test wallet signer');
+      if(request.method==='personal_sign')result=await signer.signMessage({message:{raw:request.params[0]}});
       else if(request.method==='eth_sendTransaction') {
         const input=request.params[0];
         const tx={to:input.to,value:BigInt(input.value||0),data:input.data||'0x',chainId:Number(input.chainId||event.params.chainId.split(':')[1]),gas:BigInt(input.gas||21000),gasPrice:BigInt(input.gasPrice||1),nonce:Number(input.nonce||0),type:'legacy'};
         // Sign a throwaway transaction. No network broadcast: return its exact hash.
-        result=keccak256(await account.signTransaction(tx));lastTransactionHash=result;
+        result=keccak256(await signer.signTransaction(tx));lastTransactionHash=result;
       } else throw new Error('Unsupported test wallet request');
     }
     await client.respond({topic:event.topic,response:{jsonrpc:'2.0',id:event.id,...(choice==='reject'?{error:{code:4001,message:'User rejected.'}}:{result})}});
@@ -52,6 +57,7 @@ export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:84
     async emptyAccounts(){for(const session of client.session.getAll())await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'accountsChanged',data:[]}});},
     async changeChain(chain){for(const session of client.session.getAll())await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'chainChanged',data:Number(chain.split(':')[1])}});},
     async updateSession(){for(const session of client.session.getAll()){const {acknowledged}=await client.update({topic:session.topic,namespaces:session.namespaces});await acknowledged();}},
+    async extendSession(){for(const session of client.session.getAll()){const {acknowledged}=await client.extend({topic:session.topic});await acknowledged();}},
     choose({proposal,request,chains}={}){if(proposal)connection=proposal;if(request)response=request;if(chains)approvedChains=chains;},
     async pair(uri){if(typeof uri!=='string'||!uri.startsWith('wc:'))throw new Error('Expected copied connection link');await client.pair({uri});},
     async answer(choice){const event=pending.at(-1);if(!event)throw new Error('No waiting request');await answer(event,choice);},

@@ -58,7 +58,7 @@ test('round19 disconnect stops the retired SDK heartbeat and its pulse listeners
  assert.equal(r.fixture.state.calls.slice(count).some(e=>e.path.endsWith('/relay-admission')||e.path.endsWith('/storage')&&e.method==='POST'),false,'retired SDK sends no admission or storage write');
 });
 
-test('round19 an expired window offers its working Close recovery instead of wallet actions',{timeout:30000},async t=>{
+test('round19 an expired window leaves Close to the Home shell and offers no wallet actions',{timeout:30000},async t=>{
  const r=await setup(t);r.fixture.state.expiredLaunch=true;await r.reopen({ready:false});
  await r.frame.locator('[data-state=window-expired]').waitFor({timeout:10000});
  assert.equal(await r.frame.locator('button:visible').count(),0);

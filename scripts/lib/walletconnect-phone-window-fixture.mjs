@@ -6,17 +6,19 @@ import {walletConnectRelayFixture} from './walletconnect-relay-fixture.mjs';
 import {walletConnectFixtureRequire as require} from './walletconnect-relay-fixture.mjs';
 const root=fileURLToPath(new URL('../..',import.meta.url));
 const {recoverMessageAddress}=require('viem');
+// gateway_walletconnect.rs:409-415, exact existing scoped-storage fence.
+export const staleSessionMessage='WalletConnect session changed. Close this window and open WalletConnect again.';
 export async function windowFixture() {
- const state={permission:'granted',revision:0,keys:{},accounts:[],approvals:[],verified:0,completed:0,calls:[],deleteFails:false,guest:false,expiredLaunch:false};
+ const state={permission:'granted',revision:0,keys:{},accounts:[],approvals:[],verified:0,completed:0,calls:[],fencedWrites:0,deleteFails:false,guest:false,expiredLaunch:false};
  const server=http.createServer(async(req,res)=>{
   const path=new URL(req.url,'http://localhost').pathname;res.setHeader('access-control-allow-origin','*');res.setHeader('access-control-allow-headers','content-type,x-elastos-home-token,if-match');res.setHeader('access-control-allow-methods','GET,POST,DELETE,OPTIONS');if(req.method==='OPTIONS'){res.writeHead(204).end();return;}
   const json=(body,code=200)=>{res.writeHead(code,{'content-type':'application/json'}).end(JSON.stringify(body));};
   try{
-   if(path==='/') {res.setHeader('content-type','text/html');res.end(`<!doctype html><style>body{margin:0}iframe{border:0;width:100%;height:100vh}</style><iframe id="wallet" sandbox="allow-scripts allow-forms" src="/apps/wallet-walletconnect/?home_origin=http://127.0.0.1:${server.address().port}#home_token=fixture-wallet"></iframe><script>
+   if(path==='/') {res.setHeader('content-type','text/html');res.end(`<!doctype html><style>body{margin:0;padding-top:38px;box-sizing:border-box;height:100vh}iframe{border:0;width:100%;height:calc(100vh - 38px)}</style><iframe id="wallet" sandbox="allow-scripts allow-forms" src="/apps/wallet-walletconnect/?home_origin=http://127.0.0.1:${server.address().port}#home_token=fixture-wallet"></iframe><script>
    window.copied='';addEventListener('message',async e=>{const d=e.data;if(d.type==='home:app-ready')e.source.postMessage({type:'home:clipboard-ready',schema:'elastos.home.clipboard.ready/v1',targetId:'wallet-walletconnect',homeToken:'fixture-wallet',parentOrigin:location.origin,generation:'fixture-generation'},'*');
    if(d.type==='home:clipboard-request'){window.copied=d.text;e.source.postMessage({type:'home:clipboard-result',schema:'elastos.home.clipboard.result/v1',targetId:'wallet-walletconnect',homeToken:d.homeToken,parentOrigin:location.origin,generation:d.generation,requestId:d.requestId,operation:d.operation,purpose:d.purpose,ok:true},'*');}});</script>`);return;}
    if(path.startsWith('/api/')) {
-    state.calls.push({path,method:req.method,revision:req.headers['if-match']});
+    const call={path,method:req.method,revision:req.headers['if-match']};state.calls.push(call);
     if(state.expiredLaunch){res.writeHead(403).end('Launch expired');return;}
     if(state.guest&&path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted'){res.writeHead(403).end("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.");return;}
     let input='';for await(const chunk of req)input+=chunk;const body=input?JSON.parse(input):{};
@@ -26,7 +28,7 @@ export async function windowFixture() {
     if(path.endsWith('/relay-admission'))return json({token:'fixture-admission'});
     if(path.endsWith('/storage')){
      if(req.method==='DELETE'){if(state.deleteFails)return json({},503);state.keys={};state.revision++;}
-     else {if(req.headers['if-match']!==JSON.stringify(String(state.revision)))return json({},409);if(req.method==='POST'){if(body.value===null)delete state.keys[body.key];else state.keys[body.key]=body.value;}}
+     else {if(req.headers['if-match']!==JSON.stringify(String(state.revision))){call.status=409;state.fencedWrites++;return res.writeHead(409,{'content-type':'text/plain'}).end(staleSessionMessage);}if(req.method==='POST'){if(body.value===null)delete state.keys[body.key];else state.keys[body.key]=body.value;}}
      return json(state.keys);
     }
     if(path.endsWith('/wallet/accounts'))return json({accounts:state.accounts});
@@ -35,7 +37,7 @@ export async function windowFixture() {
     if(path.endsWith('/verify')){if(body.message!==state.challenge.message)return json({},400);const address=await recoverMessageAddress({message:body.message,signature:body.signature});if(address.toLowerCase()!==state.challenge.address.toLowerCase())return json({},400);state.verified++;state.accounts=[{address,chain_namespace:`eip155:${state.challenge.chain}`,connector_id:'wallet-walletconnect',proof_type:'siwe'}];return json({status:'linked'});}
     const approval=state.approvals.find(r=>path.includes(encodeURIComponent(r.request_id)));
     if(path.endsWith('/approve')&&approval?.status==='pending'){approval.status='approved';return json({handoff:{request_id:approval.request_id,payload_hash:'0x'+'34'.repeat(32),signer:approval.address,intent:approval.intent,signature_type:'personal_sign',message:'Fixture approval message',...(approval.intent==='transaction_intent'?{transaction:{from:approval.address,chainId:'0x2105',to:'0x'+'78'.repeat(20),value:'0x1',gas:'0x5208',gasPrice:'0x1',nonce:'0x0'}}:{})},binding:{payload_hash:'0x'+'34'.repeat(32),chain_namespace:approval.chain_namespace,expires_at:approval.expires_at}});}
-    if(path.endsWith('/complete')&&approval?.status==='approved'){if(approval.intent==='transaction_intent'){if(!/^0x[0-9a-fA-F]{64}$/.test(body.transaction_hash||''))return json({},400);state.transactionHash=body.transaction_hash;approval.status='completed';state.completed++;return json({receipt_status:'completed'});}const address=await recoverMessageAddress({message:'Fixture approval message',signature:body.signature});if(address.toLowerCase()!==approval.address.toLowerCase())return json({},400);approval.status='completed';state.completed++;return json({receipt_status:'completed'});}
+    if(path.endsWith('/complete')&&approval?.status==='approved'){if(state.completeFails){state.returnedHash=body.transaction_hash;return json({},500);}if(approval.intent==='transaction_intent'){if(!/^0x[0-9a-fA-F]{64}$/.test(body.transaction_hash||''))return json({},400);state.transactionHash=body.transaction_hash;approval.status='completed';state.completed++;return json({receipt_status:'completed'});}const address=await recoverMessageAddress({message:'Fixture approval message',signature:body.signature});if(address.toLowerCase()!==approval.address.toLowerCase())return json({},400);approval.status='completed';state.completed++;return json({receipt_status:'completed'});}
     return json({},404);
    }
    const match=path.match(/^\/apps\/(wallet-walletconnect|home)\/(.*)$/);
@@ -43,6 +45,13 @@ export async function windowFixture() {
    json({},404);
   }catch(error){json({error:error.name},500);}
  });
- let relayAvailable=true;const {relay,methods}=walletConnectRelayFixture(server);relay.on('connection',(socket,request)=>{socket.windowPeer=request.url.startsWith('/api/apps/');if(socket.windowPeer&&!relayAvailable)socket.close();});await new Promise(r=>server.listen(0,'127.0.0.1',r));
- return {state,methods,setRelayAvailable(value){relayAvailable=value;if(!value)for(const socket of relay.clients)if(socket.windowPeer)socket.terminate();},setPermission(value){state.permission=value;state.keys={};state.revision++;},origin:`http://127.0.0.1:${server.address().port}`,async stop(){for(const socket of relay.clients)socket.terminate();await new Promise(r=>relay.close(r));server.closeAllConnections();await new Promise(r=>server.close(r));}};
+ let relayAvailable=true;const {relay,methods}=walletConnectRelayFixture(server);
+ // A relay outage interrupts the old socket and holds a new Runtime handshake,
+ // as a network black hole does. It does not turn a valid admission into an error.
+ relay.on('connection',(socket,request)=>{
+  socket.windowPeer=request.url.startsWith('/api/apps/');socket.held=[];socket.pendingAcks=new Set();const send=socket.send;
+  socket.on('message',raw=>{const reply=JSON.parse(String(raw));if(!reply.method)socket.pendingAcks.delete(reply.id);});
+  socket.send=function(...args){if(socket.windowPeer&&!relayAvailable){socket.held.push(args);return;}const message=JSON.parse(String(args[0]));if(socket.windowPeer&&message.method==='irn_subscription')socket.pendingAcks.add(message.id);return send.apply(socket,args);};
+ });await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ return {state,methods,pendingDeliveryAcks(){return [...relay.clients].filter(socket=>socket.windowPeer).reduce((count,socket)=>count+socket.pendingAcks.size,0);},setRelayAvailable(value){relayAvailable=value;let dropped=0;for(const socket of relay.clients)if(socket.windowPeer){if(!value){dropped++;socket.terminate();}else for(const args of socket.held.splice(0))socket.send(...args);}return dropped;},setPermission(value){state.permission=value;state.keys={};state.revision++;},origin:`http://127.0.0.1:${server.address().port}`,async stop(){for(const socket of relay.clients)socket.terminate();await new Promise(r=>relay.close(r));server.closeAllConnections();await new Promise(r=>server.close(r));}};
 }

@@ -165,20 +165,32 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     if (current !== provider) {
       provider = current;
       observedAccounts=Array.isArray(current.accounts) ? [...current.accounts.slice(0,8)] : undefined;
+      const facts=()=>`${current.chainId}:${String(observedAccounts?.[0] || '').toLowerCase()}`;
+      let selection=facts();
+      const permitsProof=()=>{const ns=current.session?.namespaces?.eip155;return Boolean(ns?.accounts?.some(value=>same(value,`eip155:${current.chainId}:${observedAccounts?.[0]}`))) && (!Array.isArray(ns.methods) || ns.methods.includes('personal_sign'));};
+      let proofAllowed=permitsProof();
       for (const name of ['accountsChanged','chainChanged','session_update']) current.on(name,()=>{
         if (provider !== current) return;
         if (name === 'accountsChanged') observedAccounts=Array.isArray(current.accounts) ? [...current.accounts.slice(0,8)] : [];
         else {
           const approved=(current.session?.namespaces?.eip155?.accounts || []).filter(value=>typeof value === 'string' && value.startsWith(`eip155:${current.chainId}:`)).slice(0,8).map(value=>value.split(':')[2]);
-          if (name === 'session_update' || approved.length && !approved.some(value=>same(value,observedAccounts?.[0]))) observedAccounts=approved;
+          if ((name === 'session_update' || approved.length) && !approved.some(value=>same(value,observedAccounts?.[0]))) observedAccounts=approved;
         }
-        generation++;
-        if (operationDispatched && operationContext !== 'transaction_intent') operation?.abort(muted(operationContext === 'link'
+        const selectionChanged=selection !== facts();selection=facts();
+        const authorityChanged=proofAllowed !== permitsProof();proofAllowed=permitsProof();
+        if (selectionChanged || authorityChanged) generation++;
+        if ((selectionChanged || authorityChanged) && operationDispatched && operationContext !== 'transaction_intent') operation?.abort(muted(operationContext === 'link'
           ? 'Wallet changed or the challenge expired. Select Connect wallet to try again.' : walletConnectMessages.consumed));
-        onPhase('changed', {event:name});
+        onPhase('changed', {event:name,selectionChanged});
       });
       const relayer = current.signer?.client?.core?.relayer;
-      for (const name of ['connect','disconnect']) relayer?.on?.(name,()=>{
+      // The SignClient session store owns expiry. UniversalProvider keeps a
+      // separate session snapshot and does not refresh it on session_extend.
+      current.signer?.client?.on?.('session_extend',event=>{
+        if (provider === current && event.topic === current.session?.topic) onPhase('changed', {event:'session_extend'});
+      });
+      // @walletconnect/core 2.23.9 RELAYER_EVENTS, not its provider's event names.
+      for (const name of ['connect','disconnect']) relayer?.on?.(`relayer_${name}`,()=>{
         if (provider === current) onPhase('changed', {event:`relay_${name}`});
       });
       current.on('disconnect',()=>{
@@ -210,7 +222,9 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
   };
   const status = async () => {
     const observedGeneration = generation;
-    const read = await api('internet');
+    let read,permissionFresh=true;
+    try { read=await api('internet'); }
+    catch(error) {if (latestPermission?.status !== 'granted' || !provider?.session) throw error;read=latestPermission;permissionFresh=false;}
     const permission = observedGeneration !== generation && latestPermission ? latestPermission : read;
     latestPermission = permission;
     if (permission.status !== 'granted' && (provider || pairing || operation || adapter)) {
@@ -239,16 +253,22 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       try { await restoring; } catch (error) { if (!attempt.signal.aborted) throw error; }
       finally { if (restoreAttempt === attempt) { restoring = undefined; restoreAttempt = undefined; } }
     }
-    if (provider?.session) sessionExpiry = provider.session.expiry;
-    const session = provider?.connected && provider.session?.expiry > Date.now()/1000 ? provider.session : undefined;
+    let currentSession=provider?.session;
+    if (currentSession?.topic && provider.signer?.client?.session?.get) {
+      try { currentSession=provider.signer.client.session.get(currentSession.topic); } catch {}
+    }
+    if (currentSession) sessionExpiry = currentSession.expiry;
+    // EthereumProvider.connected is relay connectivity, not session existence.
+    // A valid wallet session remains the display identity during reconnect.
+    const session = currentSession && sessionExpiry > Date.now()/1000 ? currentSession : undefined;
     const namespace = session?.namespaces?.eip155;
     const accounts = namespace?.accounts || [];
     const selected = accounts.find(value=>value.startsWith(`eip155:${provider.chainId}:`)) || accounts[0];
     const activeAddress = Array.isArray(observedAccounts) ? observedAccounts[0] : Array.isArray(provider?.accounts) ? provider.accounts[0] : selected?.split(':')[2];
     const activeChain = provider?.chainId ? `eip155:${provider.chainId}` : selected?.split(':').slice(0,2).join(':');
-    return {status:session ? 'connected':'disconnected',revision:generation,permission,removed,
+    return {status:session ? 'connected':'disconnected',revision:generation,permission,permissionFresh,removed,
       expired:hadSession && sessionExpiry <= Date.now()/1000,cleanupRequired,relayConnected:provider?.signer?.client?.core?.relayer?.connected ?? null,
-      session:session ? {name:String(session.peer?.metadata?.name || 'Your phone wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80),
+      session:session ? {name:String(session.peer?.metadata?.name || 'Your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80),
         chain:activeChain,address:typeof activeAddress === 'string' && /^0x[0-9a-fA-F]{40}$/.test(activeAddress) ? activeAddress : undefined} : undefined};
   };
   return { async effect(action) {
@@ -281,7 +301,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       };
       await check();
       operationDispatched = true;
-      onPhase('ownership',{expiresAt:challenge.expires_at});
+      onPhase('ownership',{expiresAt:challenge.expires_at,address:signer,chain:namespace,name:String(provider.session?.peer?.metadata?.name || 'Your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80)});
       const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]}, 300, 'ownership',signal);
       await check();
       await api('/api/auth/evm/verify',{method:'POST',body:JSON.stringify({message:challenge.message,signature})});
@@ -313,7 +333,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     };
     const expiry = await check();
     operationDispatched = true;
-    onPhase(handoff.intent === 'transaction_intent' ? 'transaction' : 'signature');
+    onPhase(handoff.intent === 'transaction_intent' ? 'transaction' : 'signature',{expiresAt:Math.floor(Date.now()/1000)+expiry});
     if (handoff.intent === 'transaction_intent') {
       const transaction = handoff.transaction;
       if (transaction) requireNetwork(`eip155:${Number.parseInt(transaction.chainId,16)}`);
@@ -323,7 +343,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       // A returned hash is retained even if the account, network or expiry changed while sending.
       let receipt;
       try { receipt = await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,transaction_hash:hash})}); }
-      catch { throw new Error(`Wallet returned transaction hash ${hash}. Runtime could not confirm it. Keep this hash and check it before sending again.`); }
+      catch { throw Object.assign(new Error(`Wallet returned transaction hash ${hash}. Runtime could not confirm it. Keep this hash and check it before sending again.`),{transactionHash:hash}); }
       return {status:receipt.receipt_status || 'completed',effect:'transaction',message:receipt.receipt_status === 'sent_after_dismissal' ? 'Request dismissed. Transaction sent from wallet.' : 'Transaction sent.'};
     }
     if (handoff.signature_type !== 'personal_sign' || typeof handoff.message !== 'string') throw new Error('Runtime returned an invalid signature request.');
