@@ -59,9 +59,13 @@ for(const engine of ['chromium','webkit']){
  });
  test(`B6 Stop during pairing import discards the old adapter before fresh Connect in ${engine}`,{timeout:60000},async t=>{
   const r=await setup(t,engine);let entered,release;const held=new Promise(resolve=>release=resolve),loading=new Promise(resolve=>entered=resolve);let imports=0;
-  await r.page.route('**/vendor/reown-appkit.js?*',async route=>{imports++;await route.continue();});
+  await r.page.route('**/vendor/reown-appkit.js?*',async route=>{
+   imports++;const response=await route.fetch();const source=await response.text();const exported=source.match(/([\w$]+) as restoreWalletConnectEvm/);assert.ok(exported,'observe the real pinned SDK export');
+   const body=source.replace(exported[0],exported[1]+' as originalRestoreWalletConnectEvm')+`\nexport function restoreWalletConnectEvm(...args){window.adapterRestoreCalls=(window.adapterRestoreCalls||0)+1;return ${exported[1]}(...args);}`;
+   await route.fulfill({response,body});
+  });
   await r.page.route('**/walletconnect-pairing.mjs',async route=>{entered();await held;await route.continue();});t.after(()=>release());
-  await r.state('internet-ready');await r.click('Connect wallet');await loading;await r.click('Cancel');await r.state('qr-cancelled');release();await r.page.waitForLoadState('networkidle');await pause(100);
+  await r.state('internet-ready');await r.click('Connect wallet');await loading;await r.click('Cancel');await r.state('qr-cancelled');release();await r.page.waitForLoadState('networkidle');await pause(100);assert.equal(await r.frame.evaluate(()=>window.adapterRestoreCalls||0),0,'a stopped import cannot enter real adapter restore');
   await r.click('Connect wallet');await r.state('qr-shown');assert.equal(imports,2,'fresh Connect imports a fresh adapter after the stopped import');await r.click('Cancel');
  });
 }
