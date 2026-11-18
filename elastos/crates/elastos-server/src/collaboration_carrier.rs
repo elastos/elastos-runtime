@@ -333,10 +333,6 @@ impl JoinedCollaborationNetwork {
         self.runtime_node_id = Some(node_id);
         self
     }
-    #[cfg(test)]
-    pub(crate) fn topic(&self) -> &str {
-        &self.topic
-    }
 
     /// A desired, verified subscription can outlive a failed local initial join.
     pub(crate) fn pending(
