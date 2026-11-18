@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {windowFixture,observeWindowErrors} from './lib/walletconnect-phone-window-fixture.mjs';
+import {windowFixture,observeWindowErrors,walletWindowLifetime} from './lib/walletconnect-phone-window-fixture.mjs';
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -14,9 +14,10 @@ async function setup(t,engine,mutation){
  const page=await browser.newPage({viewport:{width:480,height:560}}),{errors}=observeWindowErrors(page,fixture);
  await page.route('**/*',route=>new URL(route.request().url()).origin===fixture.origin?route.continue():route.abort());
  if(mutation)await page.route(`**/${mutation.file}*`,async route=>{const source=await readFile(new URL('../capsules/wallet-walletconnect/browser/'+mutation.file,import.meta.url),'utf8');assert.ok(source.includes(mutation.from));await route.fulfill({contentType:'text/javascript',body:source.replace(mutation.from,mutation.to)});});
- t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();assert.deepEqual(errors,[]);});
+ const settle=await walletWindowLifetime(page,fixture);
+ t.after(async()=>{try{await settle(r.frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[]);});
  const r={fixture,peer,page,frame:null};
- r.reopen=async()=>{await page.goto(fixture.origin);r.frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await r.frame.locator('main').waitFor();};
+ r.reopen=async()=>{await settle(r.frame);await page.goto(fixture.origin);r.frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await r.frame.locator('main').waitFor();};
  r.state=name=>r.frame.locator(`main[data-state="${name}"]`).waitFor({timeout:20000});
  r.click=name=>r.frame.getByRole('button',{name,exact:true}).click();
  r.refresh=()=>r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));
@@ -67,13 +68,9 @@ for(const engine of ['chromium','webkit']){
  });
  test(`B6 Stop during pairing import discards the old adapter before fresh Connect in ${engine}`,{timeout:60000},async t=>{
   const r=await setup(t,engine);let entered,release;const held=new Promise(resolve=>release=resolve),loading=new Promise(resolve=>entered=resolve);let imports=0;
-  await r.page.route('**/vendor/reown-appkit.js?*',async route=>{
-   imports++;const response=await route.fetch();const source=await response.text();const exported=source.match(/([\w$]+) as restoreWalletConnectEvm/);assert.ok(exported,'observe the real pinned SDK export');
-   const body=source.replace(exported[0],exported[1]+' as originalRestoreWalletConnectEvm')+`\nexport function restoreWalletConnectEvm(...args){window.adapterRestoreCalls=(window.adapterRestoreCalls||0)+1;return ${exported[1]}(...args);}`;
-   await route.fulfill({response,body});
-  });
+  r.page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/vendor/reown-appkit.js'))imports++;});
   await r.page.route('**/walletconnect-pairing.mjs',async route=>{entered();await held;await route.continue();});t.after(()=>release());
-  await r.state('internet-ready');await r.click('Connect wallet');await loading;await r.click('Cancel');await r.state('qr-cancelled');release();await r.page.waitForLoadState('networkidle');await pause(100);assert.equal(await r.frame.evaluate(()=>window.adapterRestoreCalls||0),0,'a stopped import cannot enter real adapter restore');
+  await r.state('internet-ready');await r.click('Connect wallet');await loading;await r.click('Cancel');await r.state('qr-cancelled');release();await r.page.waitForLoadState('networkidle');await pause(100);assert.equal(await r.frame.evaluate(()=>window.__walletFixtureLifetime.restoreCalls),0,'a stopped import cannot enter real adapter restore');
   await r.click('Connect wallet');await r.state('qr-shown');assert.equal(imports,2,'fresh Connect imports a fresh adapter after the stopped import');await r.click('Cancel');
  });
 }

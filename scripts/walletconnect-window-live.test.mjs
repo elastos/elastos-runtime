@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
-import {windowFixture,observeWindowErrors} from './lib/walletconnect-phone-window-fixture.mjs';
+import {windowFixture,observeWindowErrors,walletWindowLifetime} from './lib/walletconnect-phone-window-fixture.mjs';
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 const output=process.env.WALLETCONNECT_WINDOW_SCREENS;
@@ -41,53 +41,17 @@ async function setup(t,engine,mutation){
   };
   window.clearTimeout=id=>{active.delete(id);nativeClear(id);};
  });
- t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();assert.deepEqual(errors,[],'every live walk rejects unexpected page errors');});
- let frame;
- async function observeRelayWork(){await frame.evaluate(()=>{
-  const core=globalThis['_walletConnectCore_wallet-walletconnect'];
-  if(core?.storage&&!core.storage.__windowFixtureObserved){
-   core.storage.__windowFixtureObserved=true;
-   for(const key of ['setItem','removeItem']){const original=core.storage[key];core.storage[key]=function(...args){
-    window.walletFixtureStorageStarts=(window.walletFixtureStorageStarts||0)+1;window.walletFixtureStoragePending=(window.walletFixtureStoragePending||0)+1;
-    return Promise.resolve(original.apply(this,args)).finally(()=>window.walletFixtureStoragePending--);
-   };}
-  }
-  const relayer=core?.relayer;
-  if(relayer&&!relayer.__windowFixtureEngineObserved){
-   relayer.__windowFixtureEngineObserved=true;
-   // The pinned Core and SignClient register persistent relayer_message handlers.
-   const events=relayer.events,event='relayer_message';
-   for(const listener of events.listeners(event)){events.off(event,listener);events.on(event,function(...args){
-    window.walletFixtureEngineStarts=(window.walletFixtureEngineStarts||0)+1;window.walletFixtureEnginePending=(window.walletFixtureEnginePending||0)+1;
-    try{return Promise.resolve(listener.apply(this,args)).finally(()=>window.walletFixtureEnginePending--);}
-    catch(error){window.walletFixtureEnginePending--;throw error;}
-   });}
-  }
-  if(!relayer||relayer.__windowFixtureObserved)return;
-  relayer.__windowFixtureObserved=true;const original=relayer.onProviderPayload;
-  relayer.onProviderPayload=function(...args){window.walletFixturePayloadCount=(window.walletFixturePayloadCount||0)+1;window.walletFixturePayloads=(window.walletFixturePayloads||0)+1;return original.apply(this,args).finally(()=>window.walletFixturePayloads--);};
- });}
- async function drainRelayWork(){if(frame&&!frame.isDetached()){
-  await observeRelayWork();await until(()=>frame.evaluate(()=>(window.walletFixturePayloads||0)===0&&(window.walletFixtureEnginePending||0)===0),'SDK payload and message handlers settled before planned navigation');
-  if(fixture.state.permission==='granted'&&!fixture.state.expiredLaunch){
-   await observeRelayWork();
-   await frame.evaluate(()=>{const core=globalThis['_walletConnectCore_wallet-walletconnect'];if(core?.heartbeat?.events?.eventNames().length)core.heartbeat.stop();});
-   await until(()=>frame.evaluate(async()=>{
-    const core=globalThis['_walletConnectCore_wallet-walletconnect'];if(!core?.heartbeat?.events?.eventNames().length)return true;
-    const before=window.walletFixtureStorageStarts||0;await core.storage.getKeys();
-    return (window.walletFixtureStoragePending||0)===0&&before===(window.walletFixtureStorageStarts||0);
-   }),'real SDK writes settled before planned navigation',5000);
-  }
- }}
- async function leave(){await drainRelayWork();await page.goto('about:blank');}
+ const settle=await walletWindowLifetime(page,fixture);let frame;
+ t.after(async()=>{try{await settle(frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[],'every live walk rejects unexpected page errors');});
+ async function leave(){await settle(frame);await page.goto('about:blank');}
  async function reopen(){
-  await drainRelayWork();
+  await settle(frame);
   await until(()=>fixture.pendingDeliveryAcks()===0,'prior relay delivery acknowledged before a planned reopen');
   await page.waitForLoadState('networkidle');
   await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await frame.locator('main[data-state]').waitFor();
  }
  await reopen();await frame.locator('main[data-state="internet-ready"],main[data-state="link-error"]').waitFor();
- const state=async name=>{try{await frame.locator(`[data-state="${name}"]`).waitFor({timeout:20000});await observeRelayWork();}catch(error){throw new Error('Expected '+name+'; current screen: '+await frame.locator('main').innerText()+'; peer: '+JSON.stringify(peer.trace.slice(-6))+'; verified: '+fixture.state.verified,{cause:error});}};
+ const state=async name=>{try{await frame.locator(`[data-state="${name}"]`).waitFor({timeout:20000});}catch(error){throw new Error('Expected '+name+'; current screen: '+await frame.locator('main').innerText()+'; peer: '+JSON.stringify(peer.trace.slice(-6))+'; verified: '+fixture.state.verified,{cause:error});}};
  async function assertSharedTree(){assert.equal(await frame.locator('body > :not(#wallet-window):not(script)').count(),0,'visible DOM belongs to the shared view');assert.equal(await frame.locator('#wallet-window > :not(main.connection-window)').count(),0);}
  const click=async action=>frame.locator(`[data-action="${action}"]`).click();
  const refresh=async()=>{await frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await pause(150);};
@@ -120,7 +84,7 @@ async function setup(t,engine,mutation){
  }
  async function qr(){for(let i=0;i<2&&!await frame.locator('[data-action=connect]').count();i++)await click('back-to-connection');await click('connect');await state('qr-shown');assert.equal(await frame.locator('dialog').count(),0,'no old dialog');assert.equal(await frame.locator('main img.connection-qr').count(),1);}
  async function pair(){await page.evaluate(()=>window.copied='');await click('copy-link');await until(()=>page.evaluate(()=>window.copied.startsWith('wc:')),'clipboard gets pairing URI');await peer.pair(await page.evaluate(()=>window.copied));}
- async function link(){peer.choose({proposal:'approve',request:'sign'});await qr();await pair();await state('linked');assert.ok(fixture.state.verified>0);assert.ok(await frame.evaluate(()=>window.walletFixturePayloadCount>0),'the barrier observes real pinned SDK payload work');assert.ok(await frame.evaluate(()=>window.walletFixtureEngineStarts>0),'the barrier observes the real SDK message handlers');}
+ async function link(){peer.choose({proposal:'approve',request:'sign'});await qr();await pair();await state('linked');assert.ok(fixture.state.verified>0);assert.ok(await frame.evaluate(()=>window.__walletFixtureLifetime.payloadStarts>0),'the barrier observes real pinned SDK payload work');assert.ok(await frame.evaluate(()=>window.__walletFixtureLifetime.engineStarts>0),'the barrier observes the real SDK message handlers');}
  async function approval(id='message',extra={}){fixture.state.approvals=[{request_id:id,connector_id:'wallet-walletconnect',capsule_id:'browser',requesting_origin:'https://example.test',reason:'Review the scripted message',status:'pending',intent:'credential',proof_type:'siwe',address:peer.address,chain_namespace:'eip155:8453',expires_at:Math.floor(Date.now()/1000)+600,...extra}];await refresh();if(extra.status==='approved'||extra.intent==='browser_typed_data_sign'||extra.expires_at<=Math.floor(Date.now()/1000)||extra.intent==='transaction_intent'&&extra.expires_at-Math.floor(Date.now()/1000)<300){await frame.getByRole('button',{name:'View requests',exact:true}).click();await frame.locator(`[data-focus-key="select-request:${id}"]`).click();}}
  return {assertSharedTree,fixture,peer,page,get frame(){return frame;},errors,state,click,refresh,capture,qr,pair,link,approval,reopen,leave};
 }

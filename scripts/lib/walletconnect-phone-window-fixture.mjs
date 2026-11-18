@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import http from 'node:http';
 import {readFileSync} from 'node:fs';
 import {resolve,relative,extname} from 'node:path';
@@ -23,12 +24,12 @@ export function observeWindowErrors(page,fixture) {
  return {errors,sdkFences};
 }
 export async function windowFixture() {
- const state={permission:'granted',revision:0,keys:{},accounts:[],approvals:[],verified:0,completed:0,calls:[],fencedWrites:0,deleteFails:false,guest:false,expiredLaunch:false};
+ const state={windowLoads:0,permission:'granted',revision:0,keys:{},accounts:[],approvals:[],verified:0,completed:0,calls:[],fencedWrites:0,deleteFails:false,guest:false,expiredLaunch:false};
  const server=http.createServer(async(req,res)=>{
   const path=new URL(req.url,'http://localhost').pathname;res.setHeader('access-control-allow-origin','*');res.setHeader('access-control-allow-headers','content-type,x-elastos-home-token,if-match');res.setHeader('access-control-allow-methods','GET,POST,DELETE,OPTIONS');if(req.method==='OPTIONS'){res.writeHead(204).end();return;}
   const json=(body,code=200)=>{res.writeHead(code,{'content-type':'application/json'}).end(JSON.stringify(body));};
   try{
-   if(path==='/') {res.setHeader('content-type','text/html');res.end(`<!doctype html><style>body{margin:0;padding-top:38px;box-sizing:border-box;height:100vh}iframe{border:0;width:100%;height:calc(100vh - 38px)}</style><iframe id="wallet" sandbox="allow-scripts allow-forms" src="/apps/wallet-walletconnect/?home_origin=http://127.0.0.1:${server.address().port}#home_token=fixture-wallet"></iframe><script>
+   if(path==='/') {state.windowLoads++;res.setHeader('content-type','text/html');res.end(`<!doctype html><style>body{margin:0;padding-top:38px;box-sizing:border-box;height:100vh}iframe{border:0;width:100%;height:calc(100vh - 38px)}</style><iframe id="wallet" sandbox="allow-scripts allow-forms" src="/apps/wallet-walletconnect/?home_origin=http://127.0.0.1:${server.address().port}#home_token=fixture-wallet"></iframe><script>
    window.events=[];window.copied='';window.clipboardAllowed=true;window.holdClipboard=false;window.clipboardReplies=[];addEventListener('message',async e=>{const d=e.data;window.events.push({type:d.type,target:d.target});if(d.type==='home:app-ready')e.source.postMessage({type:'home:clipboard-ready',schema:'elastos.home.clipboard.ready/v1',targetId:'wallet-walletconnect',homeToken:'fixture-wallet',parentOrigin:location.origin,generation:'fixture-generation'},'*');
    if(d.type==='home:clipboard-request'){const ok=window.clipboardAllowed;if(ok)window.copied=d.text;const result={type:'home:clipboard-result',schema:'elastos.home.clipboard.result/v1',targetId:'wallet-walletconnect',homeToken:d.homeToken,parentOrigin:location.origin,generation:d.generation,requestId:d.requestId,operation:d.operation,purpose:d.purpose,ok,...(ok?{}:{error:'denied'})};const reply=()=>e.source.postMessage(result,'*');if(window.holdClipboard)window.clipboardReplies.push(reply);else reply();}});</script>`);return;}
    if(path.startsWith('/api/')) {
@@ -68,4 +69,47 @@ export async function windowFixture() {
   socket.send=function(...args){if(socket.windowPeer&&!relayAvailable){socket.held.push(args);return;}const message=JSON.parse(String(args[0]));if(socket.windowPeer&&message.method==='irn_subscription')socket.pendingAcks.add(message.id);return send.apply(socket,args);};
  });await new Promise(r=>server.listen(0,'127.0.0.1',r));
  return {state,methods,pendingDeliveryAcks(){return [...relay.clients].filter(socket=>socket.windowPeer).reduce((count,socket)=>count+socket.pendingAcks.size,0);},setRelayAvailable(value){relayAvailable=value;let dropped=0;for(const socket of relay.clients)if(socket.windowPeer){if(!value){dropped++;socket.terminate();}else for(const args of socket.held.splice(0))socket.send(...args);}return dropped;},setPermission(value){state.permission=value;state.keys={};state.revision++;},origin:`http://127.0.0.1:${server.address().port}`,async stop(){for(const socket of relay.clients)socket.terminate();await new Promise(r=>relay.close(r));server.closeAllConnections();await new Promise(r=>server.close(r));}};
+}
+
+// A fixture navigation ends a frame, not its wallet connection. Observe real SDK
+// work and let its existing storage queue settle before destroying that frame.
+export async function walletWindowLifetime(page,fixture) {
+ await page.addInitScript(()=>{
+  const life=window.__walletFixtureLifetime={providers:[],restoreCalls:0,pending:0,payloadStarts:0,engineStarts:0,storageStarts:0,fetches:0,bodies:0,intervals:new Set(),timeouts:new Set(),listeners:[]};
+  const fetch=window.fetch.bind(window),setInterval=window.setInterval.bind(window),clearInterval=window.clearInterval.bind(window),setTimeout=window.setTimeout.bind(window),clearTimeout=window.clearTimeout.bind(window),add=window.addEventListener.bind(window);
+  window.fetch=async(...args)=>{life.fetches++;try{const response=await fetch(...args);for(const key of ['json','text','arrayBuffer']){const original=response[key];response[key]=function(...args){life.bodies++;try{return Promise.resolve(original.apply(this,args)).finally(()=>life.bodies--);}catch(error){life.bodies--;throw error;}};}return response;}finally{life.fetches--;}};
+  window.setInterval=(...args)=>{const id=setInterval(...args);life.intervals.add(id);return id;};window.clearInterval=id=>{life.intervals.delete(id);clearInterval(id);};
+  window.setTimeout=(fn,ms,...args)=>{let id;id=setTimeout(typeof fn==='function'?function(...values){life.timeouts.delete(id);return fn.apply(window,values);}:fn,ms,...args);life.timeouts.add(id);return id;};window.clearTimeout=id=>{life.timeouts.delete(id);clearTimeout(id);};
+  window.addEventListener=(name,listener,options)=>{if(['focus','message','online','offline'].includes(name))life.listeners.push({name,listener,options});return add(name,listener,options);};
+  life.stopInputs=()=>{for(const id of life.intervals)clearInterval(id);life.intervals.clear();for(const {name,listener,options} of life.listeners)window.removeEventListener(name,listener,options);life.listeners=[];};
+  life.stopTimers=()=>{for(const id of life.timeouts)clearTimeout(id);life.timeouts.clear();};
+  life.observe=provider=>{
+  const life=window.__walletFixtureLifetime;if(life.providers.includes(provider))return;life.providers.push(provider);
+  const wrap=(object,key,counter)=>{if(typeof object?.[key]!=='function')return;const original=object[key];object[key]=function(...args){life.pending++;if(counter)life[counter]++;try{return Promise.resolve(original.apply(this,args)).finally(()=>life.pending--);}catch(error){life.pending--;throw error;}};};
+  const client=provider.signer.client;wrap(client.engine,'onRelayMessage','engineStarts');wrap(client.core.relayer,'onProviderPayload','payloadStarts');wrap(client.core.storage,'setItem','storageStarts');wrap(client.core.storage,'removeItem','storageStarts');
+ };
+ });
+
+ await page.route('**/vendor/reown-appkit.js?*',async route=>{
+  assert.equal(new URL(route.request().url()).origin,fixture.origin);const response=await route.fetch(),source=await response.text(),exported=source.match(/([\w$]+) as restoreWalletConnectEvm/);assert.ok(exported,'observe the real pinned provider export');
+  const body=source.replace(exported[0],exported[1]+' as originalRestoreWalletConnectEvm')+`\nexport async function restoreWalletConnectEvm(...args){window.__walletFixtureLifetime.restoreCalls++;const provider=await ${exported[1]}(...args);window.__walletFixtureLifetime.observe(provider);return provider;}`;
+  await route.fulfill({response,body});
+ });
+ return async frame=>{
+  if(!frame||frame.isDetached()||process.env.WALLETCONNECT_SKIP_PHONE_DRAIN==='1')return;
+  await frame.evaluate(()=>window.__walletFixtureLifetime?.stopInputs());
+  const end=Date.now()+20000;
+  while(true){
+   const ready=fixture.pendingDeliveryAcks()===0&&await frame.evaluate(async mayRead=>{
+    const life=window.__walletFixtureLifetime;if(!life)return true;
+    const idle=()=>!life.pending&&!life.fetches&&!life.bodies&&life.providers.every(provider=>!(provider.signer.client.engine.relayMessageCache?.length)&&!(provider.signer.client.engine.requestQueue?.queue?.length));
+    if(!idle())return false;const starts=life.storageStarts;
+    const cores=mayRead?[...new Set(life.providers.map(provider=>provider.signer.client.core))].filter(core=>core.heartbeat.events.eventNames().length):[];
+    await Promise.all(cores.map(core=>core.storage.getKeys()));
+    if(!idle()||starts!==life.storageStarts)return false;
+    life.stopTimers();return true;
+   },fixture.state.permission==='granted'&&!fixture.state.expiredLaunch);
+   if(ready)return;assert.ok(Date.now()<end,'real SDK handlers, network bodies and storage settled before fixture navigation');await new Promise(resolve=>setTimeout(resolve,25));
+  }
+ };
 }

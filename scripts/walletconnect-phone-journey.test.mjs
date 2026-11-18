@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {windowFixture,observeWindowErrors} from './lib/walletconnect-phone-window-fixture.mjs';
+import {windowFixture,observeWindowErrors,walletWindowLifetime} from './lib/walletconnect-phone-window-fixture.mjs';
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
@@ -13,9 +13,9 @@ async function setup(t){
  const mutation={B14:{file:'walletconnect-client.mjs',from:"if (!(action.kind === 'link' && action.fresh) && restoring) await waitFor(restoring,signal);",to:"if (false) await waitFor(restoring,signal);"},B15:{file:'wallet-walletconnect.js',from:"if (launchExpired || !frameHomeToken || !accountsLoaded) return;",to:"if (launchExpired || !frameHomeToken) return;"}}[process.env.WALLETCONNECT_FIX1_BREAK];
  if(mutation)await page.route(`**/${mutation.file}*`,async route=>{const source=await readFile(new URL('../capsules/wallet-walletconnect/browser/'+mutation.file,import.meta.url),'utf8');assert.ok(source.includes(mutation.from),'review break matches current source');await route.fulfill({contentType:'text/javascript',body:source.replace(mutation.from,mutation.to)});});
 
- t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();assert.deepEqual(errors,[],'every phone walk rejects unexpected page errors');});
- let frame;
- const reopen=async({ready=true}={})=>{await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));if(ready)await frame.locator('main[data-state]').waitFor();return frame;};
+ const settle=await walletWindowLifetime(page,fixture);let frame;
+ t.after(async()=>{try{await settle(frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[],'every phone walk rejects unexpected page errors');});
+ const reopen=async({ready=true}={})=>{await settle(frame);await page.goto(fixture.origin);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));if(ready)await frame.locator('main[data-state]').waitFor();return frame;};
  await reopen();
  const pair=async()=>{
   await frame.locator('.connection-qr').waitFor({timeout:20000});let uri;
@@ -28,7 +28,8 @@ async function setup(t){
  };
  const unlinked=async()=>{peer.choose({request:'reject'});await frame.locator('[data-action=connect],[data-action=start-over]').click();await pair();await frame.locator('[data-state=link-declined]').waitFor({timeout:20000});assert.equal(fixture.state.verified,0);};
  const link=async()=>{peer.choose({request:'sign'});await frame.locator('[data-action=connect],[data-action=start-over]').click();await pair();await frame.locator('[data-state=linked]').waitFor({timeout:20000});};
- return {fixture,peer,page,reopen,pair,unlinked,link,get frame(){return frame;}};
+ const leave=async()=>{await settle(frame);await page.goto('about:blank');};
+ return {fixture,peer,page,reopen,leave,pair,unlinked,link,get frame(){return frame;}};
 }
 
 test('round19 copies the pairing link from the real QR dialog and links Base without a Home wallet',{timeout:60000},async t=>{
@@ -44,7 +45,7 @@ test('round19 Connect wallet replaces a saved unlinked connection with a new QR'
  const r=await setup(t);await r.unlinked();await r.reopen();await r.frame.locator('[data-action=connect],[data-action=start-over]').click();await r.frame.locator('[data-state=qr-shown]').waitFor({timeout:15000});assert.equal(r.fixture.state.verified,0);
 });
 test('round19 wallet-side deletion while closed is observed and one Connect gives a QR',{timeout:60000},async t=>{
- const r=await setup(t);await r.unlinked();await r.page.goto('about:blank');await r.peer.deleteConnection();await r.reopen();await r.frame.locator('[data-state=wallet-removed]').waitFor({timeout:15000});await r.frame.locator('[data-action=connect],[data-action=start-over]').click();await r.frame.locator('[data-state=qr-shown]').waitFor({timeout:15000});
+ const r=await setup(t);await r.unlinked();await r.leave();await r.peer.deleteConnection();await r.reopen();await r.frame.locator('[data-state=wallet-removed]').waitFor({timeout:15000});await r.frame.locator('[data-action=connect],[data-action=start-over]').click();await r.frame.locator('[data-state=qr-shown]').waitFor({timeout:15000});
 });
 test('round19 Cancel ends a silent ownership wait and the next Connect works immediately',{timeout:60000},async t=>{
  const r=await setup(t);r.peer.choose({request:'silent'});await r.frame.locator('[data-action=connect],[data-action=start-over]').click();await r.pair();await until(()=>r.peer.trace.some(e=>e.kind==='request'),'phone receives ownership request');
@@ -87,28 +88,41 @@ test('round19 an approval on another network offers a working new-connection act
 });
 
 test('round19 Review during saved-session restore waits for the same live adapter',{timeout:60000},async t=>{
- const r=await setup(t);await r.link();await r.page.goto('about:blank');
+ const r=await setup(t);await r.link();await r.leave();
  r.fixture.state.approvals=[{request_id:'restore-review',status:'pending',address:r.peer.address,chain_namespace:'eip155:8453',intent:'credential',proof_type:'siwe',connector_id:'wallet-walletconnect',expires_at:Math.floor(Date.now()/1000)+600}];
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),restoring=new Promise(resolve=>{entered=resolve;});let first=true;
  await r.page.route('**/relay-admission',async route=>{if(first){first=false;entered();await held;}await route.continue();});
  t.after(()=>release());await r.reopen({ready:false});await restoring;
+ try{
  await r.frame.locator('[data-state=request-waiting]').waitFor();const configReads=r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length;await r.frame.getByRole('button',{name:/^Send to / }).click();
  await r.frame.locator('[data-state=preparing-request]').waitFor();await delay(300);assert.equal(r.fixture.state.completed,0);assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length,configReads,'Review waits before preparing a second adapter');assert.equal(r.peer.trace.filter(e=>e.kind==='proposal').length,1,'Send waits for the restoring adapter');
- release();
+ }finally{release();}
  await r.frame.locator('[data-state=request-done]').waitFor({timeout:15000});
  assert.equal(await r.frame.locator('iframe').count(),0,'optional website attestation has no direct frame route');
  assert.equal(r.fixture.state.completed,1);assert.equal(r.peer.trace.some(event=>event.kind==='deleted'),false,'restoring for Review keeps the phone session');
 });
 
 test('round19 a delayed account list cannot describe an already linked session as unfinished',{timeout:60000},async t=>{
- const r=await setup(t);await r.link();const previousConfigReads=r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length;await r.page.goto('about:blank');let release,entered;
+ const r=await setup(t);await r.link();const previousConfigReads=r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length;await r.leave();let release,entered;
  const held=new Promise(resolve=>{release=resolve;}),reading=new Promise(resolve=>{entered=resolve;});
  await r.page.route('**/wallet/accounts',async route=>{entered();await held;await route.continue();});t.after(()=>release());
  await r.page.addInitScript(()=>{window.visibleStates=[];new MutationObserver(()=>{const state=document.querySelector('main')?.dataset.state;if(state&&window.visibleStates.at(-1)!==state)window.visibleStates.push(state);}).observe(document,{subtree:true,childList:true,attributes:true});});
- await r.reopen({ready:false});await reading;await delay(8000);
- const before=await r.frame.locator('main').innerText();assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length,previousConfigReads,'the delayed new account list starts no additional config read');release();
+ let before;try{await r.reopen({ready:false});await reading;await delay(8000);
+ before=await r.frame.locator('main').innerText();assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length,previousConfigReads,'the delayed new account list starts no additional config read');}finally{release();}
  await r.frame.locator('[data-state=linked]').waitFor({timeout:15000});
  assert.equal(await r.frame.evaluate(()=>window.visibleStates.includes('saved-unlinked')||window.visibleStates.includes('account-changed')),false,'an account-list delay never displays unfinished linking');
  assert.match(before,/Loading your wallet connections/);assert.match(await r.frame.locator('main').innerText(),/Scripted phone wallet/);
  assert.equal(r.fixture.state.verified,1,'status restore opens no new account proof');
+});
+
+
+test('planned phone fixture navigation waits for an actual SDK storage POST',{timeout:60000},async t=>{
+ const r=await setup(t);await r.link();let release,entered;const held=new Promise(resolve=>release=resolve),writing=new Promise(resolve=>entered=resolve);
+ await r.page.route('**/storage',async route=>{if(route.request().method()==='POST'&&route.request().postDataJSON()?.key==='fixture-drain-guard'){entered();await held;}await route.continue();});
+ const counts=await r.frame.evaluate(()=>{const life=window.__walletFixtureLifetime;life.guardWrite=life.providers.at(-1).signer.client.core.storage.setItem('fixture-drain-guard','guard');return {engines:life.engineStarts,writes:life.storageStarts};});
+ assert.ok(counts.engines>0&&counts.writes>0,'the observer watches the actual SDK engine and storage methods');await writing;
+ const loads=r.fixture.state.windowLoads;let reopening;
+ try{reopening=r.reopen();await delay(250);assert.equal(r.fixture.state.windowLoads,loads,'the new Home page cannot load while the old SDK POST is pending');}
+ finally{release();if(reopening)await reopening;}
+ await r.frame.locator('[data-state=linked]').waitFor();assert.equal(r.fixture.state.windowLoads,loads+1);assert.equal(await r.frame.evaluate(()=>window.__walletFixtureLifetime.providers.at(-1).signer.client.core.storage.getItem('fixture-drain-guard')),'guard');assert.equal(r.fixture.state.verified,1,'planned navigation preserves the linked session without a new proof');
 });
