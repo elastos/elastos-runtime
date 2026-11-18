@@ -8,6 +8,8 @@ for (const file of Object.values(baseFixture.files)) assert.equal(createHash('sh
 import { installScriptedExtension, replayInput } from '../wallet-extension-test/index.mjs';
 const root = resolve('.');
 const A = '0x' + '1'.repeat(40), U = 'bc1q' + 'a'.repeat(38);
+// Runtime handoff is one-use: wallet-provider/src/approval.rs:486-490 marks
+// Approved, and :362 omits it from the pending list. Home checks the signer later.
 // This provider exercises the live Home controller with isolated test results.
 // Recorded peers below are kept separate and retain their exact parameters.
 function installProvider({ kind, address }) {
@@ -75,6 +77,11 @@ window.runtimeFetch=async(url,init)=>{
  if (${noHomeWallet} && url.includes('/link/challenge')) throw Error('Create a Home wallet first.');
  const requestId=decodeURIComponent(url.split('/approvals/')[1]?.split('/')[0]||'');
  const body=JSON.parse(init.body), schema='elastos.home.wallet-connector.effect.result/v1';
+ if(url.endsWith('/handoff')){
+   const pending=state.requests.find(request=>request.request_id===requestId && request.status==='pending');
+   if(!pending)throw Error('wallet approval request not found');
+   pending.status='approved';
+ }
  const action=url.includes('/link/challenge')?(kind==='metamask'?'evm_link_challenge':'bitcoin_link_challenge'):url.includes('/link/verify')?(kind==='metamask'?'evm_link_complete':'bitcoin_link_complete'):url.endsWith('/handoff')?'approval_handoff':'approval_complete';
  if(url.includes('/link/challenge') && state.accountDuringChallenge) state.walletAddress=state.accountDuringChallenge;
  if(url.includes('/link/challenge'))return {schema,action,connector_id:id,challenge:{schema:kind==='metamask'?'elastos.auth.challenge/v1':'elastos.wallet.bitcoin_challenge/v1',challenge_id:'fixture-challenge',message:'Isolated account proof',expires_at:Math.floor(Date.now()/1000)+300,resources:[],...(kind==='unisat'?{network:'bitcoin',address:state.address,proof_type:'bip322_simple'}:{})}};
@@ -92,7 +99,7 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:522
       if (readFailure) return route.fulfill({ status: readFailure, json: { error: 'fixture read failure' } });
       const data = await top.evaluate(({ url, kind, extraHomeAccount }) => {
         const s = testState;
-        return url.endsWith('/accounts') ? { accounts: s.linked ? [{ address: s.address, connector_id: 'wallet-' + kind, chain_namespace: kind === 'metamask' ? 'eip155:1' : 'bip122:000000000019d6689c085ae165831e93' }, ...(extraHomeAccount ? [{address:kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38),connector_id:'wallet-'+kind,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93'}] : [])] : [] } : { approval_requests: s.requests };
+        return url.endsWith('/accounts') ? { accounts: s.linked ? [{ address: s.address, connector_id: 'wallet-' + kind, chain_namespace: kind === 'metamask' ? 'eip155:1' : 'bip122:000000000019d6689c085ae165831e93' }, ...(extraHomeAccount ? [{address:kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38),connector_id:'wallet-'+kind,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93'}] : [])] : [] } : { approval_requests: s.requests.filter(request=>request.status==='pending') };
       }, { url: url.pathname, kind, extraHomeAccount });
       return route.fulfill({ json: data });
     }

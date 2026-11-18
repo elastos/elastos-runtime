@@ -18,7 +18,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   let uncertain = false, fixedOutcome = false;
   let operation = null, revision = 0, refreshing = null, disposed = false;
   let accountEvent = null, networkEvent = null, disconnected = false;
-  let readFailed = false, preflightFailure = null;
+  let readFailed = false, preflightFailure = null, checkingPreflight = false;
   const requestNetworks = new Map();
   let lastMarkup = '', lastView = null;
   const mount = document.querySelector('#connection-root');
@@ -110,7 +110,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     }
     for (const control of root.querySelectorAll('[data-action]')) {
       if (!supported.has(control.dataset.action) || control.dataset.action === 'close-window' && (!frameHomeToken || !homeOrigin || window.top === window)) control.remove();
-      else if ((operation || uncertain) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action)) control.disabled = true;
+      else if ((operation || uncertain || checkingPreflight) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action)) control.disabled = true;
     }
     // These shared recovery paragraphs point to Check access, which the base
     // cannot perform. Absence also cannot prove this window can enable extensions.
@@ -187,7 +187,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   }
 
   async function perform(action) {
-    if (operation || uncertain || fixedOutcome && action.kind === 'approve') return;
+    if (operation || uncertain || checkingPreflight || fixedOutcome && action.kind === 'approve') return;
     revision += 1;
     preflightFailure = null; readFailed = false;
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
@@ -228,7 +228,12 @@ export function startExtensionWindow(kind, homeClipboard) {
       } else if (message === 'Wallet did not switch to the Runtime-selected chain.') {
         preflightFailure = 'request-network-declined';
       }
-      if (preflightFailure) { stage = preflightFailure; draw(); return; }
+      if (preflightFailure) {
+        stage = preflightFailure;
+        if (action.kind === 'approve') await checkPendingAfterRefusal();
+        else draw();
+        return;
+      }
       if (action.kind === 'approve') fixedOutcome = true;
       const prefix = action.kind === 'link' ? 'extension' : selected?.transaction ? 'transaction' : 'request';
       if (message === 'Wallet request timed out.') { uncertain = true; stage = `${prefix}-timeout`; }
@@ -237,6 +242,26 @@ export function startExtensionWindow(kind, homeClipboard) {
       else stage = `${prefix}-wallet-error`;
       draw();
     }
+  }
+
+  async function checkPendingAfterRefusal() {
+    const id = selected.id;
+    checkingPreflight = true; draw();
+    try {
+      // Runtime's handoff is one-use. A Home refusal alone does not prove the
+      // request is still pending; only the existing Runtime list can do that.
+      const response = await fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/approvals`, { headers: { 'x-elastos-home-token': frameHomeToken } });
+      if (disposed || selected?.id !== id || fixedOutcome) return;
+      requests = (Array.isArray(response?.approval_requests) ? response.approval_requests : []).filter(signable);
+      const pending = requests.find(request => request.request_id === id && request.status === 'pending');
+      if (!pending) { fixedOutcome = true; stage = 'request-unavailable'; }
+      else { selected = reduceSummary(pending, { connector: CONNECTOR_ID }); stage = chooseStage(); }
+    } catch (error) {
+      if (disposed || fixedOutcome) return;
+      readFailed = ![401, 403].includes(error.status);
+      stage = readFailed ? 'link-error' : 'window-expired';
+      if (!readFailed) fixedOutcome = true;
+    } finally { checkingPreflight = false; draw(); }
   }
 
   function onClick(event) {
