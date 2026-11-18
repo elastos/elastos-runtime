@@ -18,6 +18,8 @@ export function startExtensionWindow(kind, homeClipboard) {
   let uncertain = false, fixedOutcome = false;
   let operation = null, revision = 0, refreshing = null, disposed = false;
   let accountEvent = null, networkEvent = null, disconnected = false;
+  let readFailed = false, preflightFailure = null;
+  const requestNetworks = new Map();
   let lastMarkup = '', lastView = null;
   const mount = document.querySelector('#connection-root');
 
@@ -30,10 +32,11 @@ export function startExtensionWindow(kind, homeClipboard) {
       .filter(a => typeof a.address === 'string' && a.address.length <= 128);
     const address = selected?.address || accountEvent?.[0];
     const row = address ? candidates.find(a => sameAccount(a.address, address)) || (selected && validAddress(selected.address) ? { address: selected.address, chain_namespace: requests.find(r => r.request_id === selected.id)?.chain_namespace } : null)
-      : linkObserved && candidates.length === 1 ? candidates[0] : null;
-    const rows = row ? [row] : [];
+      : candidates[0] || null;
+    const rows = address ? row ? [row] : [] : candidates;
     if (!rows.length) return null;
     const networks = chain => {
+      if (selected && requestNetworks.has(selected.id)) return [networkName(requestNetworks.get(selected.id))];
       if (networkEvent !== null) {
         if (kind === 'unisat') return [networkEvent === 'livenet' ? 'Bitcoin' : networkEvent === 'testnet' ? 'Bitcoin test network (unsupported)' : 'Unknown network'];
         const number = BigInt(networkEvent).toString();
@@ -62,6 +65,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (selected && !validAddress(selected.address)) { fixedOutcome = true; return 'request-unavailable'; }
     if (selected?.status === 'completed') return selected.transaction ? 'transaction-done' : 'request-done';
     if (isRequestExpired()) { fixedOutcome = true; return 'request-expired'; }
+    if (preflightFailure) return preflightFailure;
     if (disconnected) return linkObserved ? 'account-unavailable' : 'link-error';
     if (accountEvent && selected && !sameAccount(accountEvent[0], selected.address)) return 'account-unavailable';
     if (accountEvent?.length === 0) return accounts.length ? 'account-unavailable' : 'ready';
@@ -69,7 +73,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (kind === 'unisat' && networkEvent !== null && networkEvent !== 'livenet') return networkEvent === 'testnet' ? 'network-changed' : 'network-unknown';
     if (requests.length > 1 && !picked) return 'request-list';
     if (selected) return requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
-    return accountView() && (linkObserved || accountEvent?.length) ? 'linked' : 'ready';
+    return accountView() ? 'linked' : 'ready';
   }
 
   function now() { return Math.floor(Date.now() / 1000); }
@@ -91,6 +95,19 @@ export function startExtensionWindow(kind, homeClipboard) {
       otherRequests: requests.map(r => reduceSummary(r, { connector: CONNECTOR_ID })).filter(r => r && r.id !== selected?.id),
       waitSeconds: remaining(), homeOrigin, alternativeAllowed: false });
     const root = renderConnection(document, view);
+    if (stage === 'request-unsendable' && kind === 'unisat') root.querySelector('.connection-notice')?.remove();
+    if (stage === preflightFailure && ['request-network-declined', 'network-changed', 'request-network-testnet'].includes(stage)) root.querySelector('.connection-status')?.replaceChildren();
+    if (selected && stage === preflightFailure && stage !== 'request-network-declined') {
+      // v1 can retry the same pending approval, but cannot silently probe access.
+      // Use the shared Send control instead of a Check or a new ownership proof.
+      const retry = renderConnection(document, connectionView({ window: kind, stage: 'request-waiting', account: accountView(), summary: selected, waitSeconds: remaining() })).querySelector('[data-action="send-request"]');
+      const primary = root.querySelector('[data-action="connect"]') || root.querySelector('[data-action="check-access"],[data-action="send-request"]');
+      primary?.replaceWith(retry);
+      if (kind === 'unisat' && stage === 'request-network-testnet') {
+        const notice = renderConnection(document, connectionView({ window: kind, stage: 'network-changed' })).querySelector('.connection-notice');
+        root.querySelector('.connection-notice')?.replaceWith(notice);
+      }
+    }
     for (const control of root.querySelectorAll('[data-action]')) {
       if (!supported.has(control.dataset.action) || control.dataset.action === 'close-window' && (!frameHomeToken || !homeOrigin || window.top === window)) control.remove();
       else if ((operation || uncertain) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action)) control.disabled = true;
@@ -99,11 +116,11 @@ export function startExtensionWindow(kind, homeClipboard) {
     // cannot perform. Absence also cannot prove this window can enable extensions.
     // Keep the true outcome and working Close control.
     if (['extension-timeout', 'extension-cancelled', 'request-timeout', 'request-cancelled', 'extension-missing'].includes(stage)) root.querySelector('.connection-notice')?.remove();
-    // v1 Home errors do not identify whether the wallet or result recording
-    // failed. Use the shared recovery text without assigning fault to a wallet.
+    // v1 gives no settlement phase for an unclassified failure. Keep the real
+    // request and Close, without asserting a wallet failure or an app retry.
     if (stage === 'request-wallet-error') {
-      const status = root.querySelector('.connection-status'), notice = root.querySelector('.connection-notice');
-      if (status && notice) { status.replaceChildren(...notice.childNodes); notice.remove(); }
+      root.querySelector('.connection-status')?.replaceChildren();
+      root.querySelector('.connection-notice')?.remove();
     }
     if (stage === 'account-unavailable' && (disconnected || kind === 'metamask' && accountEvent?.length === 0)) root.querySelector('.connection-notice')?.remove();
     if (!root.querySelector('button:not(:disabled)') && frameHomeToken && homeOrigin && window.top !== window) {
@@ -141,10 +158,12 @@ export function startExtensionWindow(kind, homeClipboard) {
         const [a, r] = await Promise.all(['accounts', 'approvals'].map(suffix => fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/${suffix}`, { headers: { 'x-elastos-home-token': frameHomeToken } })));
         if (disposed || observedRevision !== revision) return;
         accounts = Array.isArray(a?.accounts) ? a.accounts : [];
+        readFailed = false;
+        for (const request of Array.isArray(r?.approval_requests) ? r.approval_requests : []) requestNetworks.set(request.request_id, request.chain_namespace);
         requests = (Array.isArray(r?.approval_requests) ? r.approval_requests : []).filter(signable).filter(r => !fixedOutcome || r.request_id !== selected?.id);
         if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) {
           if (selected && !requests.some(request => request.request_id === selected.id)) {
-            if (['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage)) { stage = 'request-unavailable'; fixedOutcome = true; }
+            if (selected.status === 'pending') { stage = 'request-unavailable'; fixedOutcome = true; }
           } else {
             selected = reduceSummary(requests.find(r => r.request_id === selected?.id) || requests[0], { connector: CONNECTOR_ID });
             stage = chooseStage();
@@ -154,6 +173,7 @@ export function startExtensionWindow(kind, homeClipboard) {
         draw();
       } catch (error) {
         if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) {
+          readFailed = ![401, 403].includes(error.status);
           stage = [401, 403].includes(error.status) ? 'window-expired' : 'link-error';
           if (stage === 'window-expired') fixedOutcome = true;
           draw();
@@ -167,6 +187,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   async function perform(action) {
     if (operation || uncertain || fixedOutcome && action.kind === 'approve') return;
     revision += 1;
+    preflightFailure = null; readFailed = false;
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
     if (action.kind === 'link') { accountEvent = null; networkEvent = null; disconnected = false; fixedOutcome = false; selected = null; picked = false; }
@@ -195,8 +216,18 @@ export function startExtensionWindow(kind, homeClipboard) {
     } catch (error) {
       if (disposed) return;
       revision += 1; operation = null;
-      if (action.kind === 'approve') fixedOutcome = true;
       const message = error.message;
+      // These exact messages are Home's existing pre-sign checks. No wallet
+      // signing call ran, so the Runtime approval remains pending and retryable.
+      if (['Switch to the linked account before approving.', 'Switch to the linked Bitcoin account before signing.', 'Wallet account changed before signing.', 'UniSat account changed before signing.'].includes(message)) {
+        preflightFailure = selected ? 'request-unsendable' : 'account-unavailable';
+      } else if (message === 'Switch UniSat to Bitcoin mainnet.') {
+        preflightFailure = selected ? 'request-network-testnet' : 'network-changed';
+      } else if (message === 'Wallet did not switch to the Runtime-selected chain.') {
+        preflightFailure = 'request-network-declined';
+      }
+      if (preflightFailure) { stage = preflightFailure; draw(); return; }
+      if (action.kind === 'approve') fixedOutcome = true;
       const prefix = action.kind === 'link' ? 'extension' : selected?.transaction ? 'transaction' : 'request';
       if (message === 'Wallet request timed out.') { uncertain = true; stage = `${prefix}-timeout`; }
       else if (/was not found in this browser profile/.test(message)) stage = 'extension-missing';
@@ -215,6 +246,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       stage = operation.action.kind === 'link' ? 'extension-cancelled' : selected?.transaction ? 'transaction-cancelled' : 'request-cancelled';
       draw();
     } else if (operation && action !== 'copy-address') return;
+    else if (action === 'connect' && readFailed) void refresh();
     else if (['connect', 'restore-access', 'send-message'].includes(action)) void perform({ kind: 'link' });
     else if (action === 'send-request' && selected) void perform({ kind: 'approve', approvalRequestId: selected.id });
     else if (action === 'copy-address') {
@@ -238,12 +270,15 @@ export function startExtensionWindow(kind, homeClipboard) {
       const pattern = kind === 'metamask' ? /^0x[0-9a-fA-F]{40}$/ : /^(?:bc1|[13])[A-Za-z0-9]{20,100}$/;
       if (!Array.isArray(data.value) || data.value.length > 8 || data.value.some(a => typeof a !== 'string' || !pattern.test(a))) return;
       accountEvent = data.value;
+      if (data.value.length) disconnected = false;
+      if (preflightFailure === 'request-unsendable' && sameAccount(data.value[0], selected?.address) || preflightFailure === 'account-unavailable' && data.value.length) preflightFailure = null;
     } else if (data.event === 'disconnect' && data.value === null) { disconnected = true; }
     else if (kind === 'metamask' && data.event === 'chainChanged' && typeof data.value === 'string' && /^0x[0-9a-fA-F]{1,16}$/.test(data.value)) networkEvent = data.value;
     else if (kind === 'unisat' && data.event === 'networkChanged' && ['livenet', 'testnet', 'unknown'].includes(data.value)) networkEvent = data.value;
     else return;
+    if (['network-changed', 'request-network-testnet', 'request-network-declined'].includes(preflightFailure) && (data.event === 'networkChanged' && data.value === 'livenet' || data.event === 'chainChanged' && selected && `eip155:${BigInt(data.value)}` === requestNetworks.get(selected.id))) preflightFailure = null;
     revision += 1;
-    if (!operation && !uncertain && !fixedOutcome) stage = chooseStage();
+    if (!operation && !uncertain && !fixedOutcome) { stage = chooseStage(); readFailed = false; }
     draw();
   }
 

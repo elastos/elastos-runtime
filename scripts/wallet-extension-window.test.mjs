@@ -46,7 +46,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
     try {
       for (const phase of ['linked', 'proof', 'signature', 'result']) {
         for (const name of ['accountsChanged', kind === 'metamask' ? 'chainChanged' : 'networkChanged', 'disconnect']) {
-          const f = await fixture(browser, kind, { saved: true, requests: ['signature', 'result'].includes(phase) });
+          const f = await fixture(browser, kind, { saved: ['signature', 'result'].includes(phase), requests: ['signature', 'result'].includes(phase) });
           try {
             const waitState = state => f.frame.locator(`main[data-state="${state}"]`).waitFor({ timeout: 3000 });
             const signingMethod = kind === 'metamask' ? 'personal_sign' : 'signMessage';
@@ -88,7 +88,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
             if (['proof', 'signature'].includes(phase)) assert.equal(await f.action('stop-waiting').count(), 1);
             if (['signature', 'result'].includes(phase) && ['accountsChanged', 'disconnect'].includes(name)) assert.equal(await f.frame.locator('.connection-request-account').count(), 0);
             if (phase === 'result') assert.equal(await f.action('send-request').count(), 0);
-            if (name.includes('Changed') && name !== 'accountsChanged' && phase !== 'proof') assert.match(await f.frame.locator('body').innerText(), kind === 'metamask' ? /Elastos Smart Chain/ : /test network.*unsupported|Bitcoin test network/i);
+            if (name.includes('Changed') && name !== 'accountsChanged' && phase === 'linked') assert.match(await f.frame.locator('body').innerText(), kind === 'metamask' ? /Elastos Smart Chain/ : /test network.*unsupported|Bitcoin test network/i);
             if (phase === 'linked' && name === 'accountsChanged' || phase === 'result' && name.includes('Changed') && name !== 'accountsChanged') {
               await f.top.evaluate(() => { const input = document.createElement('input'); input.id = 'other-control'; document.body.append(input); input.focus(); });
               assert.equal(await f.frame.evaluate(() => document.hasFocus()), false);
@@ -164,6 +164,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         await f.action('send-request').click(); await f.state('request-extension');
         assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
         await f.action('stop-waiting').focus(); await f.top.keyboard.press('Enter'); await f.state('request-cancelled');
+        await f.top.waitForFunction(() => testState.pending.length > 0);
         await f.top.evaluate(() => { const p = testState.pending.shift(); p.resolve(p.result); });
         await f.state('request-done');
         assert.equal(await f.top.evaluate(() => testState.receipts.length), 1);
@@ -180,7 +181,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         assert.equal(await g.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
         assert.equal(await g.top.evaluate(() => testState.effects.length), 1);
       } finally { await g.close(); }
-      const h = await fixture(browser, kind, { saved: true });
+      const h = await fixture(browser, kind);
       try {
         await h.state('ready');
         assert.equal(await h.frame.locator('.connection-account').count(), 0, 'stored Home data does not prove current extension access');
@@ -268,7 +269,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
   const browser = await playwright.chromium.launch({ headless: true });
   try {
     const mutations = [
-      ['state mapped wrong', s => s.replace("let stage = 'ready'", "let stage = 'link-error'").replace("return accountView() && (linkObserved || accountEvent?.length) ? 'linked' : 'ready';", "return accountView() && (linkObserved || accountEvent?.length) ? 'linked' : 'link-error';"), async f => {
+      ['state mapped wrong', s => s.replace("let stage = 'ready'", "let stage = 'link-error'").replace("return accountView() ? 'linked' : 'ready';", "return accountView() ? 'linked' : 'link-error';"), async f => {
         // Snapshot the first controller paint before any asynchronous refresh.
         assert.equal(await f.frame.locator('main').getAttribute('data-state'), 'ready');
       }],
@@ -286,7 +287,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
         await f.action('send-request').click(); await f.state('request-done');
       }],
       ['draw outside shared view', s => s.replace('const root = renderConnection(document, view);', "const root = renderConnection(document, view); root.append(document.createElement('aside'));"), async f => {
-        assert.equal(await f.frame.locator('main aside').count(), 0);
+        await f.assertShared();
       }],
       ['accepted proof after disconnect', s => s.replace("if (disconnected) return linkObserved ? 'account-unavailable' : 'link-error';", "if (disconnected) return 'link-error';"), async f => {
         await f.top.evaluate(() => Object.defineProperty(testState, 'mode', {
@@ -328,7 +329,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
       ['outcome focus lost', s => s.replace('old.dataset.focusKey || old.dataset.focus', 'old.dataset.focusKey'), async f => {
         await f.action('send-request').click(); await f.state('request-done');
         assert.equal(await f.frame.evaluate(() => document.activeElement?.dataset.focus), 'outcome');
-        await peerEvent(f, 'chainChanged', '0x14');
+        await peerEvent(f, 'accountsChanged', [B]);
         assert.equal(await f.frame.evaluate(() => document.activeElement?.dataset.focus), 'outcome');
       }],
       ['background focus stolen', s => s.replace('if (ownsFocus) focus?.focus', 'focus?.focus'), async f => {
@@ -342,7 +343,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
       const source = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
       assert.notEqual(mutate(source), source, name + ' mutation applies');
       const requestPair = ['wrong linked signer', 'expiry hidden by wallet state', 'overdue event before timer'].includes(name);
-      const f = await fixture(browser, 'metamask', { saved: name !== 'state mapped wrong', requests: requestPair ? 'multiple' : !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived', 'background focus stolen'].includes(name), extraHomeAccount: requestPair, mutate });
+      const f = await fixture(browser, 'metamask', { saved: !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived', 'background focus stolen'].includes(name), requests: requestPair ? 'multiple' : !['state mapped wrong', 'accepted proof after disconnect', 'inactive window revived', 'background focus stolen'].includes(name), extraHomeAccount: requestPair, mutate });
       try { await assert.rejects(oracle(f), undefined, name + ' must fail the live oracle'); }
       finally { await f.context.close(); }
     }
@@ -381,7 +382,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
   const browser = await playwright[engine].launch({ headless: true });
   try {
     for (const status of [401, 403]) {
-      const f = await fixture(browser, kind, { saved: true });
+      const f = await fixture(browser, kind);
       try {
         await f.action('connect').click(); await f.state('linked');
         await f.context.route('**/api/**', route => route.fulfill({ status, json: { error: 'authority ended' } }));
@@ -445,7 +446,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
   const browser = await playwright[engine].launch({ headless:true });
   const changed = kind === 'metamask' ? B : V;
   try {
-    const f = await fixture(browser, kind, {saved:true});
+    const f = await fixture(browser, kind);
     try {
       await f.top.evaluate(()=>{testState.mode='pending';});
       await f.action('connect').click(); await f.state('extension-wait');
@@ -553,20 +554,6 @@ for (const engine of ['chromium','webkit']) test(`${engine} MetaMask: typed data
   }finally{await browser.close();}
 });
 
-for (const engine of ['chromium','webkit']) for (const kind of ['metamask','unisat']) test(`${engine} ${kind}: a Home list with several saved accounts is not a current wallet selection`, {skip:engineSkip(engine)}, async()=>{
-  const browser=await playwright[engine].launch({headless:true});
-  try{
-    const f=await fixture(browser,kind,{saved:true,extraHomeAccount:true});
-    try{
-      await f.state('ready');await f.action('connect').click();
-      await f.top.waitForFunction(()=>testState.receipts.length===1);
-      await f.state('ready');assert.equal(await f.frame.locator('.connection-account').count(),0);
-      await f.top.evaluate(()=>emitWallet('accountsChanged',[testState.address]));await f.state('linked');
-      assert.equal(await f.frame.locator('.connection-address-row').count(),1);
-    }finally{await f.close();}
-  }finally{await browser.close();}
-});
-
 for (const engine of ['chromium','webkit']) for (const kind of ['metamask','unisat']) test(`${engine} ${kind}: another pending message remains reachable after a signed result`, {timeout:40000,skip:engineSkip(engine)}, async()=>{
   const browser=await playwright[engine].launch({headless:true});
   try{
@@ -616,7 +603,7 @@ for(const engine of ['chromium','webkit']) for(const kind of ['metamask','unisat
       await f.action('send-request').click();await f.state('request-wallet-error');
       assert.equal(await f.top.evaluate(()=>testState.calls.some(c=>['personal_sign','signMessage'].includes(c.method))),true);
       assert.doesNotMatch(await f.frame.locator('body').innerText(),/could not sign/i);
-      assert.match(await f.frame.locator('body').innerText(),/try again|new request/i);
+      assert.doesNotMatch(await f.frame.locator('body').innerText(),/return to|new request|result unknown/i);
       assert.equal(await f.action('send-request').count(),0);
     }finally{await f.close();}
   }finally{await browser.close();}

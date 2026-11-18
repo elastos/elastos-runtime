@@ -16,17 +16,17 @@ function installProvider({ kind, address }) {
   const listeners = new Map();
   const provider = { on(name, callback) { listeners.set(name, callback); },
     async request({ method, params }) {
-      const s = testState; s.calls.push({ method, params });
-      if (method === 'eth_accounts') return [s.address];
+      const s = testState; s.calls.push({ method, params, chain: s.chain, signer: s.walletAddress ?? s.address });
+      if (method === 'eth_accounts') return [s.walletAddress ?? s.address];
       if (method === 'eth_chainId') return s.chain;
-      if (method === 'wallet_switchEthereumChain') { if (!s.added) throw {code:4902}; s.chain=params[0].chainId; return null; }
+      if (method === 'wallet_switchEthereumChain') { if(s.refuseSwitch) return null; if (!s.added) throw {code:4902}; s.chain=params[0].chainId; return null; }
       if (method === 'wallet_addEthereumChain') { s.added=true; s.chain=params[0].chainId; return null; }
       if (method === 'eth_sendTransaction') return ask(method,'0x'+'aa'.repeat(32));
-      return ask(method, method === 'eth_requestAccounts' ? [s.address] : '0x' + 'ab'.repeat(65));
+      return ask(method, method === 'eth_requestAccounts' ? [s.walletAddress ?? s.address] : '0x' + 'ab'.repeat(65));
     },
-    async requestAccounts() { testState.calls.push({ method: 'requestAccounts' }); return ask('requestAccounts', [testState.address]); },
-    async getAccounts() { testState.calls.push({ method: 'getAccounts' }); return [testState.address]; },
-    async getNetwork() { testState.calls.push({ method: 'getNetwork' }); return 'livenet'; },
+    async requestAccounts() { testState.calls.push({ method: 'requestAccounts' }); return ask('requestAccounts', [testState.walletAddress ?? testState.address]); },
+    async getAccounts() { testState.calls.push({ method: 'getAccounts' }); return [testState.walletAddress ?? testState.address]; },
+    async getNetwork() { testState.calls.push({ method: 'getNetwork' }); return testState.network ?? 'livenet'; },
     async signMessage() { testState.calls.push({ method: 'signMessage' }); return ask('signMessage', 'fixture-signature'); },
   };
   function ask(method, result) {
@@ -60,7 +60,7 @@ import { handleHomeWalletConnectorEffect } from '/apps/home/home-wallet-connecto
 const kind=${JSON.stringify(kind)}, id='wallet-'+kind;
 const state=window.testState;
 state.linked=${saved};
-if(${JSON.stringify(requests)}) state.requests=[{request_id:'approval-1',status:'pending',intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',proof_type:kind==='metamask'?'siwe':'bip322_simple',capsule_id:'browser',reason:'Test signing',requesting_origin:'https://shop.example.com',connector_id:id,address:state.address,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93',expires_at:Math.floor(Date.now()/1000)+300}];
+if(${JSON.stringify(requests)}) state.requests=[{request_id:'approval-1',status:'pending',intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',proof_type:kind==='metamask'?'siwe':'bip322_simple',capsule_id:'browser',reason:'Test signing',requesting_origin:'https://shop.example.com',connector_id:id,address:state.address,chain_namespace:kind==='metamask'?(${JSON.stringify(requests)}==='transaction'?'eip155:20':'eip155:1'):'bip122:000000000019d6689c085ae165831e93',expires_at:Math.floor(Date.now()/1000)+300}];
 if(${JSON.stringify(requests)}==='multiple') state.requests.push({...state.requests[0],request_id:'approval-2',reason:'Second test signing'});
 const lifetime={retired:false,generation:'document-1'}, walletEffectState={inFlight:false,requestIds:new Set()};
 addEventListener('message',event=>{
@@ -76,6 +76,7 @@ window.runtimeFetch=async(url,init)=>{
  const requestId=decodeURIComponent(url.split('/approvals/')[1]?.split('/')[0]||'');
  const body=JSON.parse(init.body), schema='elastos.home.wallet-connector.effect.result/v1';
  const action=url.includes('/link/challenge')?(kind==='metamask'?'evm_link_challenge':'bitcoin_link_challenge'):url.includes('/link/verify')?(kind==='metamask'?'evm_link_complete':'bitcoin_link_complete'):url.endsWith('/handoff')?'approval_handoff':'approval_complete';
+ if(url.includes('/link/challenge') && state.accountDuringChallenge) state.walletAddress=state.accountDuringChallenge;
  if(url.includes('/link/challenge'))return {schema,action,connector_id:id,challenge:{schema:kind==='metamask'?'elastos.auth.challenge/v1':'elastos.wallet.bitcoin_challenge/v1',challenge_id:'fixture-challenge',message:'Isolated account proof',expires_at:Math.floor(Date.now()/1000)+300,resources:[],...(kind==='unisat'?{network:'bitcoin',address:state.address,proof_type:'bip322_simple'}:{})}};
  if(url.includes('/link/verify')){state.linked=true;state.receipts.push(body);return {schema,action,connector_id:id,status:'linked'};}
  if(url.endsWith('/handoff')&&${JSON.stringify(requests)}==='transaction') return {schema,action,connector_id:id,request_id:requestId,evm_chains:[{chainId:'0x14',chainName:'Elastos Smart Chain',nativeCurrency:{name:'ELA',symbol:'ELA',decimals:18},rpcUrls:['https://api.elastos.io/esc']}],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:'transaction_intent',payload_hash:'0x'+'ab'.repeat(32),signer:state.address,status:'awaiting_wallet_transaction',transaction:{from:state.address,to:'0x'+'2'.repeat(40),value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x0',chainId:'0x14'}}};
@@ -99,6 +100,19 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:522
     let path = join(root, relative);
     if (url.pathname.endsWith('/')) path = join(path, 'index.html');
     let body = (oldHost && path.endsWith('/home-wallet-connector-host.js') || oldWindow && (path.endsWith('/index.html') || path.endsWith(`/wallet-${kind}.js`))) ? Buffer.from(baseFixture.files[path.slice(root.length+1)].source) : await readFile(path);
+    if (path.endsWith('/wallet-connection-view.mjs')) body = Buffer.from(body.toString().replace('export function renderConnection(document, view)', 'function renderConnectionBase(document, view)') + `
+export function renderConnection(document,view) {
+  window.__sharedElements ||= new WeakSet();
+  const proxy = new Proxy(document,{get(target,key) {
+    if(key==='createElement')return (...args)=>{const element=target.createElement(...args);window.__sharedElements.add(element);return element;};
+    const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
+  }});
+  const root=renderConnectionBase(proxy,view);
+  window.__sharedNodes ||= new WeakMap();
+  const walk=document.createTreeWalker(root,NodeFilter.SHOW_ALL);
+  do {window.__sharedNodes.set(walk.currentNode,walk.currentNode.nodeValue);} while(walk.nextNode());
+  return root;
+}`);
     if (mutate && path.endsWith('/extension-window.mjs')) body = Buffer.from(mutate(body.toString()));
     return route.fulfill({ body, contentType: ({ '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.png': 'image/png', '.woff2': 'font/woff2' })[extname(path)] || 'application/octet-stream' });
   });
@@ -119,7 +133,7 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:522
       const copy = await frame.evaluate(() => ({ state: document.querySelector('main').dataset.state,
         sentences: [...document.querySelectorAll('.connection-status,.connection-note,.connection-more')].map(n => n.textContent.trim()).filter(Boolean),
         controls: [...document.querySelectorAll('[data-action]')].map(n => ({action:n.dataset.action,label:n.textContent.trim(),disabled:n.disabled})) }));
-      await writeFile(join(receipts, `window-extensions-copy-${kind}-${expected}.json`), JSON.stringify({ candidate, ...copy }, null, 2));
+      await writeFile(join(receipts, `window-extensions-copy-${kind}-${expected}.json`), JSON.stringify({ candidate, engine: browser.browserType().name(), viewport: {width:480,height:560}, content: {width:480,height:522}, ...copy }, null, 2));
       for (const theme of ['dark', 'light']) {
         await frame.evaluate(theme => { document.documentElement.toggleAttribute('data-el-theme', theme === 'light'); if (theme === 'light') document.documentElement.setAttribute('data-el-theme','light'); }, theme);
         await top.locator('iframe').screenshot({ path: join(dir, `${expected}-${theme}.png`) });
@@ -127,6 +141,6 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:522
       await frame.evaluate(() => document.documentElement.removeAttribute('data-el-theme'));
     }
   };
-  return { top, frame, context, errors, reads, peerElapsed, action, state, async close() { if (recording) await top.evaluate(() => __walletReplay.assertNoViolations()); await context.close(); assert.deepEqual(errors, []); } };
+  return { top, frame, context, errors, reads, peerElapsed, action, state, async assertShared() { assert.equal(await frame.evaluate(() => { const root=document.querySelector('#connection-root main'), walk=document.createTreeWalker(root,NodeFilter.SHOW_ALL); do {const n=walk.currentNode; if(n.nodeType===Node.TEXT_NODE && n.parentElement?.classList.contains('connection-wait') && /^Time left: [0-9]+:[0-9]+$/.test(n.nodeValue)) continue; if(!__sharedNodes.has(n) || __sharedNodes.get(n)!==n.nodeValue)return false;} while(walk.nextNode());return true;}),true,'all mounted content comes from a shared render'); assert.equal(await frame.evaluate(() => [...document.querySelectorAll('#connection-root *')].every(element => __sharedElements.has(element))), true, 'every mounted element must come from the shared renderer'); assert.equal(await frame.locator('body > :not(#connection-root):not(script)').count(), 0); }, async close() { if (recording) await top.evaluate(() => __walletReplay.assertNoViolations()); await context.close(); assert.deepEqual(errors, []); } };
 }
 

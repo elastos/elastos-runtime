@@ -16,6 +16,10 @@ try {
     const observed = await f.top.evaluate(() => ({calls:testState.calls,receipts:testState.receipts,effects:testState.effects,runtimeCalls:testState.runtimeCalls}));
     const methods=observed.calls.map(c=>c.method);
     for(const method of ['wallet_switchEthereumChain','wallet_addEthereumChain','eth_accounts','eth_sendTransaction']) assert(methods.includes(method),method);
+    assert.deepEqual(observed.calls.find(c=>c.method==='wallet_addEthereumChain').params,[{chainId:'0x14',chainName:'Elastos Smart Chain',nativeCurrency:{name:'ELA',symbol:'ELA',decimals:18},rpcUrls:['https://api.elastos.io/esc']}]);
+    const send=observed.calls.find(c=>c.method==='eth_sendTransaction');
+    assert.equal(send.chain,'0x14');assert.equal(send.signer,'0x'+'1'.repeat(40));
+    assert.equal(send.params[0].from,send.signer);assert.equal(send.params[0].chainId,'0x14');
     assert.equal(observed.effects.length,1);
     assert.deepEqual(observed.effects[0].action,{kind:'approve',approvalRequestId:'approval-1'});
     assert.equal(observed.effects[0].connectorToken,'fixture-token');
