@@ -1261,6 +1261,22 @@ fn now_secs() -> u64 {
 }
 
 #[cfg(test)]
+pub(crate) async fn run_community_core_fixture(
+    shutdown: watch::Receiver<bool>,
+    link: &crate::collaboration_carrier::JoinedCollaborationNetwork,
+    status: impl Fn(bool) + Send,
+) {
+    let (_membership, joined) = watch::channel(true);
+    let status = std::sync::Mutex::new(status);
+    tokio::join!(
+        run_community_bootstrap_worker(shutdown.clone(), joined.clone(), link),
+        run_community_link_watchdog(shutdown, joined, link, |view| (status.lock().unwrap())(
+            view.connected()
+        ))
+    );
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -4747,20 +4763,4 @@ mod tests {
             "zero Profiles still joins without a browser"
         );
     }
-}
-
-#[cfg(test)]
-pub(crate) async fn run_community_core_fixture(
-    shutdown: watch::Receiver<bool>,
-    link: &crate::collaboration_carrier::JoinedCollaborationNetwork,
-    status: impl Fn(bool) + Send,
-) {
-    let (_membership, joined) = watch::channel(true);
-    let status = std::sync::Mutex::new(status);
-    tokio::join!(
-        run_community_bootstrap_worker(shutdown.clone(), joined.clone(), link),
-        run_community_link_watchdog(shutdown, joined, link, |view| (status.lock().unwrap())(
-            view.connected()
-        ))
-    );
 }
