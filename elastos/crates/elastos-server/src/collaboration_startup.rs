@@ -3908,6 +3908,7 @@ mod tests {
         reconnecting: bool,
         completed_rebuilds: usize,
         bootstrap_failure: Option<&'static str>,
+        bootstrap_attempts: usize,
     }
 
     // Owns only the scripted provider future. Endpoint lookup tasks are outside
@@ -3967,6 +3968,7 @@ mod tests {
         }
 
         async fn restore_bootstrap(&self) -> anyhow::Result<()> {
+            self.state.lock().unwrap().bootstrap_attempts += 1;
             anyhow::ensure!(
                 self.script
                     .bootstrap_failure_until
@@ -4627,6 +4629,46 @@ mod tests {
             .await
             .expect("shutdown completes the left worker");
     }
+    #[tokio::test(start_paused = true)]
+    async fn community_core_preserves_develop_local_cadences() {
+        let link = FakeCommunityLink::new(FakeLinkScript { peers: true, ..Default::default() });
+        run_link_watchdog_for(&link, 10).await;
+        let state = link.state.lock().unwrap();
+        assert!((10..=11).contains(&state.bootstrap_attempts), "bootstrap remains one second");
+        assert!((2..=3).contains(&state.health_reads), "watchdog remains five seconds");
+        assert!(state.steps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn community_core_startup_names_stages_and_zero_profiles_without_waiting_for_signin() {
+        use tracing::instrument::WithSubscriber;
+        #[derive(Clone)]
+        struct Writer(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> { self.0.lock().unwrap().extend_from_slice(bytes); Ok(bytes.len()) }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let writer = bytes.clone();
+        let subscriber = tracing_subscriber::fmt().with_ansi(false).without_time().with_max_level(tracing::Level::INFO).with_writer(move || Writer(writer.clone())).finish();
+        let (root, _) = configured_root(true);
+        let configuration = load_and_accept_collaboration_startup_configuration(root.path()).unwrap();
+        let carrier = FakeCarrier::new([FakeReply::JoinEcho, peek(0, 0, Vec::new()), ack(0, 0, false)]);
+        let (key, _) = generate_keypair();
+        let mut service = start_collaboration_runtime_service(root.path(), key, configuration, Some(carrier.clone()), Arc::new(ProviderRegistry::new()), None).with_subscriber(subscriber).await.unwrap().unwrap();
+        wait_for_requests(&carrier, 3).await;
+        service.shutdown().await.unwrap();
+        let logs = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+        assert_eq!(logs.matches("no Profile is ready yet").count(), 1);
+        assert!(logs.contains("active passkey and protected Profile authority"));
+        let mut previous = 0;
+        for stage in ["checking network configuration", "loading the configured conversation", "registering discovery and delivery routes", "registering Community status and presence", "registering history delivery", "loading stored Profile authority", "joining the configured Community topic", "registering Home delivery", "background workers started"] {
+            assert_eq!(logs.matches(stage).count(), 1, "one log per stage: {stage}");
+            let at = logs.find(stage).unwrap(); assert!(at >= previous); previous = at;
+        }
+        assert!(carrier.requests().iter().any(|r| r["op"] == "gossip_join_exact"), "zero Profiles still joins without a browser");
+    }
+
 }
 
 #[cfg(test)]
