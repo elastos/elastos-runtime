@@ -273,7 +273,7 @@ async function cancelWalletWait() {
   try {currentPhase='disconnecting';draw();await connector.effect({kind:'cancel'});connectionState=undefined;
     if (unsent) {activeRequest=undefined;outcome=undefined;}
     else outcome=phase === 'ownership' ? 'link-cancelled' : phase === 'signature' ? 'request-cancelled' : phase === 'transaction' ? 'transaction-cancelled' : 'qr-cancelled';
-  } catch {outcome=activeRequest?.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'link-error';draw();}
+  } catch {outcome=!unsent && activeRequest?.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'link-error';draw();}
   finally {hostEffectInFlight=false;currentPhase='idle';draw();watchConnection();refreshWalletState().catch(()=>{});}
 }
 async function requestCapsuleWalletEffect(action) {
