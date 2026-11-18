@@ -118,9 +118,9 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (['extension-timeout', 'extension-cancelled', 'request-timeout', 'request-cancelled', 'extension-missing'].includes(stage)) root.querySelector('.connection-notice')?.remove();
     // v1 gives no settlement phase for an unclassified failure. Keep the real
     // request and Close, without asserting a wallet failure or an app retry.
-    if (stage === 'request-wallet-error') {
+    if (['request-wallet-error', 'transaction-wallet-error'].includes(stage)) {
       root.querySelector('.connection-status')?.replaceChildren();
-      root.querySelector('.connection-notice')?.remove();
+      if (stage === 'request-wallet-error') root.querySelector('.connection-notice')?.remove();
     }
     if (stage === 'account-unavailable' && (disconnected || kind === 'metamask' && accountEvent?.length === 0)) root.querySelector('.connection-notice')?.remove();
     if (!root.querySelector('button:not(:disabled)') && frameHomeToken && homeOrigin && window.top !== window) {
