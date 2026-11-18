@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
 import { fixture as baseFixture } from './lib/wallet-extension-window-fixture.mjs';
 const breaks = {
+  Y11:s=>s.replace("let providerAvailability = 'unknown';", "let providerAvailability = 'found';"),
   K17:s=>s.replace('const root = presentation.root;',"const root = presentation.root; root.append(document.createElement('button'));"),
   K02:s=>s.replace('approvalRequestId: selected.id })','approvalRequestId: requests[0].request_id })'),
   K07:s=>s.replace('data.value.length > 8','data.value.length > 800'),
@@ -28,6 +29,35 @@ const fixture = (browser,kind,options={}) => baseFixture(browser,kind,{...option
 const playwright = requireProductSmokePlaywright();
 const engineSkip = engine => engine === 'webkit' && !existsSync(playwright.webkit.executablePath()) ? 'WebKit input is required for the explicit Mac acceptance run.' : false;
 const other = kind => kind === 'metamask' ? '0x'+'2'.repeat(40) : 'bc1q'+'b'.repeat(38);
+
+async function unisatIdentity(f, saved) {
+  await f.state(saved ? 'linked' : 'ready');
+  assert.equal(await f.frame.locator('h1').innerText(), 'Browser wallet');
+  assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'), /connection-wallet/);
+  assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
+  if (saved) return;
+  await f.action('connect').click();
+  await f.state('linked');
+  assert.equal(await f.frame.locator('h1').innerText(), 'UniSat');
+  assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'), /connection-unisat/);
+}
+
+for (const engine of ['chromium', 'webkit']) test(`${engine} UniSat: identity waits for fresh Home discovery (Y11)`, { timeout: 20000, skip: engineSkip(engine) }, async t => {
+  const browser = await playwright[engine].launch({ headless: true });
+  try {
+    for (const saved of [false, true]) {
+      const options = { saved };
+      const good = await fixture(browser, 'unisat', options);
+      try { await unisatIdentity(good, saved); } finally { await good.close(); }
+      const bad = await baseFixture(browser, 'unisat', { ...options, mutate: source => {
+        const broken = breaks.Y11(source); assert.notEqual(broken, source, 'Y11 applies'); return broken;
+      } });
+      try { await assert.rejects(unisatIdentity(bad, saved), { code: 'ERR_ASSERTION' }); }
+      finally { await bad.close(); }
+      t.diagnostic(`Y11 ${saved ? 'saved link' : 'Ready'}: clean oracle passed; deliberate break failed`);
+    }
+  } finally { await browser.close(); }
+});
 
 async function assertReadAfter(f,before) {
   await f.frame.waitForFunction(target=>{
