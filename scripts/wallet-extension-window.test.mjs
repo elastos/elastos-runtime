@@ -39,16 +39,19 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
                 if (event.data?.type === 'home:wallet-connector-event') eventProbe.push(event.data);
               });
             });
-            const before = await f.top.evaluate(() => ({ calls: testState.calls.length, effects: testState.effects.length, receipts: testState.receipts.length }));
+            const before = await f.top.evaluate(() => ({ calls: testState.calls.length, runtime: testState.runtimeCalls.length, effects: testState.effects.length, receipts: testState.receipts.length }));
             const value = name === 'accountsChanged' ? [kind === 'metamask' ? B : V]
               : name === 'disconnect' ? { code: 4900 } : kind === 'metamask' ? '0x14' : 'testnet';
             await f.top.evaluate(({ name, value }) => emitWallet(name, value), { name, value });
             // Observe the real Home forwarder, rather than injecting a window
             // packet or merely waiting for an already-visible state.
             await f.frame.waitForFunction(() => eventProbe.length === 1);
+            assert.deepEqual(await f.frame.evaluate(() => eventProbe[0]), {
+              type: 'home:wallet-connector-event', connectorId: `wallet-${kind}`, event: name, value: name === 'disconnect' ? null : value,
+            });
             await waitState(phase !== 'linked' ? expected : name === 'accountsChanged' ? 'account-unavailable'
               : name === 'disconnect' ? 'account-unavailable' : kind === 'unisat' ? 'network-changed' : 'linked');
-            assert.deepEqual(await f.top.evaluate(() => ({ calls: testState.calls.length, effects: testState.effects.length, receipts: testState.receipts.length })), before, `${phase}/${name}: notification is passive`);
+            assert.deepEqual(await f.top.evaluate(() => ({ calls: testState.calls.length, runtime: testState.runtimeCalls.length, effects: testState.effects.length, receipts: testState.receipts.length })), before, `${phase}/${name}: notification is passive`);
             if (['proof', 'signature'].includes(phase)) assert.equal(await f.action('stop-waiting').count(), 1);
             if (['signature', 'result'].includes(phase) && ['accountsChanged', 'disconnect'].includes(name)) assert.equal(await f.frame.locator('.connection-request-account').count(), 0);
             if (phase === 'result') assert.equal(await f.action('send-request').count(), 0);

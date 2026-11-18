@@ -25,7 +25,8 @@ function installProvider({ kind, address }) {
       return ask(method, method === 'eth_requestAccounts' ? [s.address] : '0x' + 'ab'.repeat(65));
     },
     async requestAccounts() { testState.calls.push({ method: 'requestAccounts' }); return ask('requestAccounts', [testState.address]); },
-    async getAccounts() { return [testState.address]; }, async getNetwork() { return 'livenet'; },
+    async getAccounts() { testState.calls.push({ method: 'getAccounts' }); return [testState.address]; },
+    async getNetwork() { testState.calls.push({ method: 'getNetwork' }); return 'livenet'; },
     async signMessage() { testState.calls.push({ method: 'signMessage' }); return ask('signMessage', 'fixture-signature'); },
   };
   function ask(method, result) {
