@@ -41,7 +41,7 @@ function installProvider({ kind, address }) {
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   const replay = recording ? await replayInput(recording) : null;
@@ -131,7 +131,7 @@ export function renderConnection(document,view) {
   if (recording) await top.evaluate(() => __walletReplay.advance(1000));
   const action = id => frame.locator(`[data-action="${id}"]`);
   const state = async expected => { try { await frame.locator(`main[data-state="${expected}"]`).waitFor({ timeout: 3000 }); } catch (e) { throw Error(e.message + JSON.stringify(await frame.locator('body').innerText()) + JSON.stringify(await top.evaluate(() => ({effects:testState.effects,calls:testState.calls,receipts:testState.receipts})))) }
-    if (process.env.EXTENSION_WINDOW_PICTURES && !mutate) {
+    if (process.env.EXTENSION_WINDOW_PICTURES && pictures && !mutate) {
       const dir = join(process.env.EXTENSION_WINDOW_PICTURES, 'windows-' + kind);
       const receipts = process.env.EXTENSION_WINDOW_RECEIPTS || process.env.EXTENSION_WINDOW_PICTURES;
       await mkdir(receipts, {recursive:true});
@@ -140,12 +140,17 @@ export function renderConnection(document,view) {
       const copy = await frame.evaluate(() => ({ state: document.querySelector('main').dataset.state,
         sentences: [...document.querySelectorAll('.connection-status,.connection-note,.connection-more')].map(n => n.textContent.trim()).filter(Boolean),
         controls: [...document.querySelectorAll('[data-action]')].map(n => ({action:n.dataset.action,label:n.textContent.trim(),disabled:n.disabled})) }));
-      await writeFile(join(receipts, `window-extensions-copy-${kind}-${expected}.json`), JSON.stringify({ candidate, engine: browser.browserType().name(), viewport: {width:480,height:560}, content: {width:480,height:522}, ...copy }, null, 2));
+      assert.equal(copy.state, expected, 'capture state must match the requested live state');
+      const captures = [];
       for (const theme of ['dark', 'light']) {
         await frame.evaluate(theme => { document.documentElement.toggleAttribute('data-el-theme', theme === 'light'); if (theme === 'light') document.documentElement.setAttribute('data-el-theme','light'); }, theme);
-        await (await frame.frameElement()).screenshot({ path: join(dir, `${expected}-${theme}.png`) });
+        const bytes = await (await frame.frameElement()).screenshot();
+        assert.equal(await frame.locator('main').getAttribute('data-state'), expected, 'state changed during capture');
+        captures.push({theme,bytes});
       }
       await frame.evaluate(() => document.documentElement.removeAttribute('data-el-theme'));
+      for (const {theme,bytes} of captures) await writeFile(join(dir, `${expected}-${theme}.png`), bytes);
+      await writeFile(join(receipts, `window-extensions-copy-${kind}-${expected}.json`), JSON.stringify({ candidate, engine: browser.browserType().name(), viewport: {width:480,height:560}, content: {width:480,height:522}, ...copy }, null, 2));
     }
   };
   return { top, frame, context, errors, reads, peerElapsed, action, state, async assertShared() { assert.equal(await frame.evaluate(() => { const root=document.querySelector('#connection-root main'), walk=document.createTreeWalker(root,NodeFilter.SHOW_ALL); do {const n=walk.currentNode; if(n.nodeType===Node.TEXT_NODE && n.parentElement?.classList.contains('connection-wait') && /^Time left: [0-9]+:[0-9]+$/.test(n.nodeValue)) continue; if(!__sharedNodes.has(n) || __sharedNodes.get(n)!==n.nodeValue)return false;} while(walk.nextNode());return true;}),true,'all mounted content comes from a shared render'); assert.equal(await frame.evaluate(() => [...document.querySelectorAll('#connection-root *')].every(element => __sharedElements.has(element))), true, 'every mounted element must come from the shared renderer'); assert.equal(await frame.locator('body > :not(#connection-root):not(script)').count(), 0); }, async close() { if (recording) await top.evaluate(() => __walletReplay.assertNoViolations()); await context.close(); assert.deepEqual(errors, []); } };

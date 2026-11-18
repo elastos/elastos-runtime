@@ -35,7 +35,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   try{
     for(const oldHost of [true,false]) {
       const good=await fixture(browser,kind,{saved:true,requests:true,oldHost});try{await refuse(good,kind);await consumed(good,kind);}finally{await good.close();}
-      const bad=await fixture(browser,kind,{saved:true,requests:true,oldHost});try{
+      const bad=await fixture(browser,kind,{saved:true,requests:true,oldHost,pictures:false});try{
         await bad.top.evaluate(()=>{const send=runtimeFetch;window.runtimeFetch=async(url,init)=>{const result=await send(url,init);if(url.endsWith('/handoff'))testState.requests[0].status='pending';return result;};});
         await refuse(bad,kind);await bad.state('request-unsendable');
         await bad.frame.waitForFunction(()=>!document.querySelector('[data-action="send-request"]').disabled,null,{timeout:3000});
