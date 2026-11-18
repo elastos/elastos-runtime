@@ -89,42 +89,44 @@ bootstrap Runtime without people, as the release does:
    accepted-head marker under `collaboration/config` then shows the new
    revision; a Home never returns to an earlier one.
 
-### Community stays unreachable after the Community node comes back
+### Community reconnects after a local link failure
 
-A Home that kept running while the bootstrap Runtime was down, with no other
-Home connected, can show **Community unreachable** after the bootstrap is
-back, until its next repair. Home usually recovers by itself; when Chat says
-**Community can't connect. Restart Home to reconnect.**, restart Home.
+Runtime uses one local health observation for repair and the Community status
+in Chat, System and the command line. Failed bootstrap joins, an ended receive task and failed health
+queries put Home in **Reconnecting to Community**, even when Carrier remembers
+a neighbour. Home retains its messages and draft, and resumes sending when
+local health succeeds again.
 
-This is a known iroh-gossip 0.101.0 issue. Upstream
-[n0-computer/iroh-gossip#161](https://github.com/n0-computer/iroh-gossip/pull/161)
-(merged after 0.101.0, not yet released) reworks this peer lifecycle; check
-this case again when Runtime moves to a release that includes it.
-After a failed dial, iroh-gossip can keep the peer pending with queued
-messages, and it dials again only when that queue is empty. Runtime's
-bootstrap recovery asks to rejoin every second, so the queue never empties
-and the peer is never dialed again. With `iroh_gossip=debug`, the log shows
-one `dial failed: timed out peer=<bootstrap>` and then a `Join` sent to that
-peer every second with no further `start to dial`.
+The existing bootstrap check runs once a second. A sustained local failure
+starts a topic rejoin after a minute. Continued failure starts gossip actor
+replacement, with increasing rest between attempts. The rest reaches fifteen
+minutes and repair continues for the life of the Home. Runtime releases the
+old receive tasks, gossip actor and its owned address lookup at replacement.
+Failure logs keep a bounded reason when it changes and once a minute while
+that reason continues. A failed first join keeps Home running in Reconnecting.
+If the local topic is absent, the paced repair restores it. Incoming and
+outgoing failure logs use the same change and minute rule. While a check runs,
+status says **It is checking the link**. A future-check countdown rounds up to
+a whole second.
 
-Runtime's Community link watchdog clears it. A joined Home with no Community
-peer for 60 seconds leaves and rejoins the Community topic; a minute later it
-replaces its Carrier gossip actor, and it keeps repairing while no peer
-returns, waiting twice as long each time up to five minutes, then fifteen
-minutes after six replacements in one outage. While Home has no peer, a
-change in its host address set that holds for ten seconds brings the next
-replacement forward. Loopback, unspecified and link-local addresses do not
-count; repairs stay at least a minute apart. Each process requests at most
-120 replacements. Runtime counts each request before it sends it and keeps
-the count if a request fails or times out, a peer returns, or the user leaves
-Community. Each replacement leaves an iroh address lookup and its task behind.
-After the cap, Home only rejoins; a new outage's rejoin wait grows to five
-minutes. Chat then says **Community can't connect. Restart Home to reconnect.**
-while Community is unreachable. Restarting Home allows replacements again.
-A quiet Community with a peer listed is left alone. The Home's log names each
-step (`Community link looks dead`,
-`rebuilding Carrier gossip`, `rebuilds are capped`, `Community link
-recovered`). A bootstrap Runtime never runs these steps.
+A later repair can restore a missing topic after an earlier attempt failed.
+Topic health clears the pending state when the subscription exists again.
+A bootstrap Runtime restores its own missing topic with paced joins and keeps
+its actor, so existing Home links stay active.
+
+The command line's known-peer count covers all Carrier topics. Community
+status uses its own topic. A peer count is local evidence. A neighbour can remain remembered while a
+node silently stops carrying messages and every local operation succeeds.
+This condition remains outside automatic detection by these local checks.
+
+Startup logs name each setup stage. A configured network and conversation
+grant start collaboration independently of browser sign-in. The **no Profile
+is ready yet** line names a separate condition: Home needs a stored active
+passkey principal and protected Profile authority before it can register that
+person's delivery context. Creating or restoring a Profile supplies that
+state; Community join continues while the Profile count is zero. A network
+without its conversation grant logs that it waits for its network authority.
+An isolated Home starts no Community worker.
 
 ### `discovery relay outbox delivery failed … discovery advertisement is not active`
 

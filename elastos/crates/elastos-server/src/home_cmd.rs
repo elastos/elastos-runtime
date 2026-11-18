@@ -438,6 +438,8 @@ struct RuntimeStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     peer_count: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    community: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     ticket: Option<String>,
     #[serde(default)]
     running_capsules: Vec<String>,
@@ -2438,6 +2440,7 @@ async fn gather_runtime_status(data_dir: &Path) -> RuntimeStatus {
             api_url: None,
             pid: None,
             peer_count: None,
+            community: None,
             ticket: None,
             running_capsules: Vec::new(),
             note: Some("No active local ElastOS service".to_string()),
@@ -2457,6 +2460,7 @@ async fn gather_runtime_status(data_dir: &Path) -> RuntimeStatus {
                 api_url: Some(coords.api_url.clone()),
                 pid: Some(coords.pid),
                 peer_count: None,
+                community: None,
                 ticket: None,
                 running_capsules: Vec::new(),
                 note: Some(format!("runtime client unavailable: {}", err)),
@@ -2464,7 +2468,12 @@ async fn gather_runtime_status(data_dir: &Path) -> RuntimeStatus {
         }
     };
 
-    let version = fetch_runtime_version(&client, &coords.api_url).await;
+    let health = fetch_runtime_health(&client, &coords.api_url).await;
+    let version = health
+        .as_ref()
+        .and_then(|health| health["version"].as_str())
+        .map(str::to_string);
+
     let mut status = RuntimeStatus {
         running: true,
         kind: Some(coords.runtime_kind.clone()),
@@ -2472,23 +2481,26 @@ async fn gather_runtime_status(data_dir: &Path) -> RuntimeStatus {
         api_url: Some(coords.api_url.clone()),
         pid: Some(coords.pid),
         peer_count: None,
+        community: None,
         ticket: None,
         running_capsules: Vec::new(),
         note: None,
     };
-    // The gateway serves Home; it runs no capsules and has no peer capability.
-    if coords.is_gateway_runtime() {
-        status.note = Some(format!("Home is open at {}", coords.home_url));
-        return status;
-    }
-
-    let client_token = match attach_client(&client, &coords).await {
+    let client_token = match attach_status_shell(&client, &coords).await {
         Ok(token) => token,
         Err(err) => {
             status.note = Some(format!("attach failed: {}", err));
             return status;
         }
     };
+
+    status.community = fetch_community_status(&client, &coords.api_url, &client_token).await;
+    // Both roles read the same link fact; gateway has no capsule peer capability.
+    if coords.is_gateway_runtime() {
+        status.note = Some(format!("Home is open at {}", coords.home_url));
+        detach_status_shell(&client, &coords.api_url, &client_token).await;
+        return status;
+    }
 
     if let Ok(capsules) = list_runtime_capsules(&client, &coords.api_url, &client_token).await {
         status.running_capsules = capsules;
@@ -2511,6 +2523,7 @@ async fn gather_runtime_status(data_dir: &Path) -> RuntimeStatus {
             .ok();
     }
 
+    detach_status_shell(&client, &coords.api_url, &client_token).await;
     status
 }
 
@@ -2644,7 +2657,10 @@ async fn gather_capsule_interface_snapshot(
     response.json().await.map_err(Into::into)
 }
 
-async fn fetch_runtime_version(client: &reqwest::Client, api_url: &str) -> Option<String> {
+async fn fetch_runtime_health(
+    client: &reqwest::Client,
+    api_url: &str,
+) -> Option<serde_json::Value> {
     let resp = client
         .get(format!("{}/api/health", api_url))
         .send()
@@ -2654,12 +2670,27 @@ async fn fetch_runtime_version(client: &reqwest::Client, api_url: &str) -> Optio
         return None;
     }
     let body: serde_json::Value = resp.json().await.ok()?;
-    body.get("version")
-        .and_then(|v| v.as_str())
-        .map(|v| v.to_string())
+    Some(body)
 }
 
-async fn attach_client(
+async fn fetch_community_status(
+    client: &reqwest::Client,
+    api_url: &str,
+    token: &str,
+) -> Option<serde_json::Value> {
+    let response = client
+        .get(format!("{api_url}/api/community/status"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    response.json().await.ok()
+}
+
+async fn attach_status_shell(
     client: &reqwest::Client,
     coords: &runtime_control::RuntimeCoords,
 ) -> anyhow::Result<String> {
@@ -2667,7 +2698,7 @@ async fn attach_client(
         .post(format!("{}/api/auth/attach", coords.api_url))
         .json(&serde_json::json!({
             "secret": coords.attach_secret,
-            "scope": "client",
+            "scope": "shell",
         }))
         .send()
         .await?;
@@ -2686,6 +2717,14 @@ async fn attach_client(
         .and_then(|v| v.as_str())
         .map(|v| v.to_string())
         .ok_or_else(|| anyhow::anyhow!("attach response missing token"))
+}
+
+async fn detach_status_shell(client: &reqwest::Client, api_url: &str, token: &str) {
+    let _ = client
+        .post(format!("{api_url}/api/auth/detach"))
+        .bearer_auth(token)
+        .send()
+        .await;
 }
 
 async fn list_runtime_capsules(
@@ -2911,14 +2950,25 @@ fn write_home_state_probe(
         out,
         "  Network:   {}",
         match snapshot.runtime.peer_count {
-            Some(0) if snapshot.runtime.ticket.is_some() =>
+            _ if snapshot
+                .runtime
+                .community
+                .as_ref()
+                .is_some_and(|status| status["state"] == "waiting_for_peers") =>
                 "Carrier bootstrap ready; waiting for another Home".to_string(),
-            Some(0) => "starting up".to_string(),
-            Some(1) => "1 Carrier peer reachable".to_string(),
-            Some(peers) => format!("{} Carrier peers reachable", peers),
-            None => "runtime not connected yet".to_string(),
+            Some(1) => "1 Carrier peer known".to_string(),
+            Some(peers) => format!("{} Carrier peers known", peers),
+            None => "checking Carrier peers".to_string(),
         }
     )?;
+    if let Some(detail) = snapshot
+        .runtime
+        .community
+        .as_ref()
+        .and_then(|status| status["detail"].as_str())
+    {
+        writeln!(out, "  Community: {detail}")?;
+    }
     if snapshot.room.pending_count > 0 {
         let latest = match (
             snapshot.room.latest_request_name.as_deref(),
@@ -2965,7 +3015,16 @@ fn write_home_state_probe(
         "  Nick:      {}",
         snapshot.nickname.as_deref().unwrap_or("(not set)")
     )?;
-    let (carrier, delivery) = people_carrier_status(snapshot.runtime.peer_count);
+    let (carrier, delivery) = people_carrier_status(
+        snapshot.runtime.peer_count,
+        snapshot
+            .runtime
+            .community
+            .as_ref()
+            .and_then(|view| view.get("detail"))
+            .and_then(serde_json::Value::as_str)
+            .is_some(),
+    );
     writeln!(out, "  Carrier:   {}", carrier)?;
     writeln!(out, "  Delivery:  {}", delivery)?;
     writeln!(out, "  Roots:     localhost://Users, localhost://UsersAI")?;
@@ -3043,15 +3102,18 @@ fn write_home_state_probe(
 
 /// The People section's Carrier and Delivery lines. A count Home has not
 /// learned yet says so instead of reading as an outage (#391).
-fn people_carrier_status(peer_count: Option<usize>) -> (String, &'static str) {
+fn people_carrier_status(
+    peer_count: Option<usize>,
+    has_community_status: bool,
+) -> (String, &'static str) {
     match peer_count {
-        Some(0) => (
-            "0 reachable".to_string(),
-            "local only until another Home joins Chat",
-        ),
         Some(peers) => (
-            format!("{} reachable", peers),
-            "open Chat and send a line to confirm delivery",
+            format!("{} known", peers),
+            if has_community_status {
+                "see Community status above"
+            } else {
+                "checking"
+            },
         ),
         None => ("checking".to_string(), "checking"),
     }
@@ -3365,11 +3427,67 @@ mod tests {
         let unknown = render(None);
         assert!(unknown.contains("  Carrier:   checking\n"), "{unknown}");
         assert!(unknown.contains("  Delivery:  checking\n"), "{unknown}");
-        assert!(!unknown.contains("0 reachable"), "{unknown}");
+        assert!(!unknown.contains("0 known"), "{unknown}");
         let none = render(Some(0));
-        assert!(none.contains("  Carrier:   0 reachable\n"), "{none}");
-        assert!(none.contains("  Delivery:  local only until another Home joins Chat\n"));
-        assert!(render(Some(2)).contains("  Carrier:   2 reachable\n"));
+        assert!(none.contains("  Carrier:   0 known\n"), "{none}");
+        assert!(none.contains("  Delivery:  checking\n"));
+        assert!(render(Some(2)).contains("  Carrier:   2 known\n"));
+    }
+
+    #[test]
+    fn community_recovery_cli_keeps_remembered_peers_separate_from_link_health() {
+        let mut snapshot = sample_snapshot_with_components(&[]);
+        snapshot.runtime.peer_count = Some(2);
+        let detail = "Home is reconnecting to Community. Next check in 5 seconds.";
+        snapshot.runtime.community = Some(
+            serde_json::json!({"state":"reconnecting", "connected":false, "detail":detail, "next_retry_seconds":5}),
+        );
+        let mut output = Vec::new();
+        write_home_state_probe(&mut output, &snapshot).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains(detail));
+        assert!(text.contains("2 Carrier peers known"));
+        assert!(!text.contains("peers reachable"));
+        assert!(!text.contains("2 reachable"));
+    }
+
+    #[test]
+    fn community_fix1_cli_missing_status_has_no_dangling_delivery_pointer() {
+        let mut snapshot = sample_snapshot_with_components(&[]);
+        snapshot.runtime.peer_count = Some(0);
+        for community in [
+            None,
+            Some(serde_json::json!({})),
+            Some(serde_json::json!({"detail":null})),
+        ] {
+            snapshot.runtime.community = community;
+            let mut output = Vec::new();
+            write_home_state_probe(&mut output, &snapshot).unwrap();
+            let text = String::from_utf8(output).unwrap();
+            assert!(text.contains("  Delivery:  checking\n"));
+            assert!(!text.contains("see Community status above"));
+        }
+    }
+
+    #[test]
+    fn community_fix1_cli_bootstrap_line_requires_the_shared_node_state() {
+        let mut snapshot = sample_snapshot_with_components(&[]);
+        snapshot.runtime.peer_count = Some(0);
+        snapshot.runtime.community = Some(serde_json::json!({"state":"waiting_for_peers",
+            "detail":"Community is waiting for another Home."}));
+        let mut output = Vec::new();
+        write_home_state_probe(&mut output, &snapshot).unwrap();
+        assert!(String::from_utf8(output)
+            .unwrap()
+            .contains("Carrier bootstrap ready; waiting for another Home"));
+        snapshot.runtime.community =
+            Some(serde_json::json!({"state":"reconnecting", "detail":"Reconnecting"}));
+        let mut output = Vec::new();
+        write_home_state_probe(&mut output, &snapshot).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("0 Carrier peers known"));
+        assert!(!text.contains("bootstrap ready"));
+        assert!(!text.contains("send a line"));
     }
 
     #[cfg(unix)]
@@ -3842,6 +3960,7 @@ mod tests {
                 api_url: None,
                 pid: None,
                 peer_count: None,
+                community: None,
                 ticket: None,
                 running_capsules: Vec::new(),
                 note: None,
@@ -4277,6 +4396,66 @@ mod tests {
             home_terminal_host_intent_for_action("people-message:contact-alice", &snapshot)
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn community_recovery_cli_status_uses_its_local_shell_authority() {
+        use axum::{
+            http::HeaderMap,
+            routing::{get, post},
+            Json, Router,
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let detached = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let detached_by_server = detached.clone();
+        let app = Router::new()
+            .route("/api/auth/attach", post(|Json(body): Json<serde_json::Value>| async move {
+                assert_eq!(body["scope"], "shell");
+                Json(serde_json::json!({"token":"fixture-status-token"}))
+            }))
+            .route("/api/community/status", get(|headers: HeaderMap| async move {
+                assert_eq!(headers["authorization"], "Bearer fixture-status-token");
+                Json(serde_json::json!({"state":"reconnecting", "connected":false,
+                    "detail":"Home is reconnecting to Community. Next check in 5 seconds.", "next_retry_seconds":5}))
+            }))
+            .route("/api/auth/detach",post(move |headers: HeaderMap| {
+                let detached = detached_by_server.clone();
+                async move {
+                    assert_eq!(headers["authorization"],"Bearer fixture-status-token");
+                    detached.store(true,std::sync::atomic::Ordering::SeqCst);
+                    axum::http::StatusCode::NO_CONTENT
+                }
+            }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let coords = runtime_control::RuntimeCoords {
+            api_url: format!("http://{address}"),
+            attach_secret: "fixture-status-secret".into(),
+            pid: 0,
+            runtime_kind: "gateway".into(),
+            binary_sha256: String::new(),
+            policy_sha256: String::new(),
+            dependency_sha256: String::new(),
+            generation: String::new(),
+            home_url: String::new(),
+        };
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let token = attach_status_shell(&client, &coords).await.unwrap();
+        let status = fetch_community_status(&client, &coords.api_url, &token)
+            .await
+            .unwrap();
+        assert_eq!(status["state"], "reconnecting");
+        assert_eq!(status["connected"], false);
+        assert_eq!(status["next_retry_seconds"], 5);
+        detach_status_shell(&client, &coords.api_url, &token).await;
+        assert!(detached.load(std::sync::atomic::Ordering::SeqCst));
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
     }
 
     #[tokio::test]

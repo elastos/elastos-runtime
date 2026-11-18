@@ -8115,11 +8115,11 @@ fn system_community_membership_summary(state: &GatewayState) -> serde_json::Valu
         "configured": membership.is_some(),
         "joined": joined,
         "detail": if membership.is_none() {
-            "Community is not configured on this Home."
+            "Community is not configured on this Home.".to_string()
         } else if joined {
-            "This Home joins Community. Its owner can leave while keeping contacts, Direct messages and history."
+            state.collaboration_chat_product_port.as_ref().and_then(|port| port.conversation_transport_view().status).unwrap_or_default()
         } else {
-            crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL
+            crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL.to_string()
         },
     })
 }

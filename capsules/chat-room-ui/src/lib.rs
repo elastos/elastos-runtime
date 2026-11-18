@@ -75,8 +75,9 @@ enum CommunityState {
     #[default]
     NotJoined,
     Left,
-    JoinedUnreachable,
-    RecoveryExhausted,
+    Reconnecting,
+    Starting,
+    Waiting,
     Live,
 }
 
@@ -85,8 +86,9 @@ impl CommunityState {
         match self {
             Self::NotJoined => "not_joined",
             Self::Left => "left",
-            Self::JoinedUnreachable => "joined_unreachable",
-            Self::RecoveryExhausted => "recovery_exhausted",
+            Self::Reconnecting => "reconnecting",
+            Self::Starting => "starting",
+            Self::Waiting => "waiting_for_peers",
             Self::Live => "live",
         }
     }
@@ -95,8 +97,9 @@ impl CommunityState {
         match self {
             Self::NotJoined => "Not joined",
             Self::Left => "Left Community",
-            Self::JoinedUnreachable => "Community unreachable",
-            Self::RecoveryExhausted => "Community can't connect. Restart Home to reconnect.",
+            Self::Reconnecting => "Reconnecting to Community",
+            Self::Starting => "Home is starting Community. It is checking the link.",
+            Self::Waiting => "Community is waiting for another Home.",
             Self::Live => "Live",
         }
     }
@@ -129,6 +132,7 @@ struct AppState {
     display_name: String,
     status_badge: String,
     status_detail: String,
+    community_detail: String,
     history: Option<RoomHistoryView>,
     error_text: Option<String>,
     error_transient: bool,
@@ -551,6 +555,8 @@ struct RoomTransportView {
     #[serde(default)]
     community_joined: Option<bool>,
     #[serde(default)]
+    community_state: Option<String>,
+    #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     history: Option<RoomHistoryView>,
@@ -560,12 +566,15 @@ impl RoomTransportView {
     fn community_state(&self) -> CommunityState {
         match (self.configured, self.community_joined, self.available) {
             (true, Some(false), _) => CommunityState::Left,
-            (true, Some(true), false)
-                if self.status.as_deref() == Some(CommunityState::RecoveryExhausted.label()) =>
-            {
-                CommunityState::RecoveryExhausted
+            (true, Some(true), false) if self.community_state.as_deref() == Some("starting") => {
+                CommunityState::Starting
             }
-            (true, Some(true), false) => CommunityState::JoinedUnreachable,
+            (true, Some(true), false)
+                if self.community_state.as_deref() == Some("waiting_for_peers") =>
+            {
+                CommunityState::Waiting
+            }
+            (true, Some(true), false) => CommunityState::Reconnecting,
             (true, Some(true), true) => CommunityState::Live,
             _ => CommunityState::NotJoined,
         }
@@ -4876,11 +4885,12 @@ impl App {
                 &JsValue::from_str("elastosChatRenderCommunity"),
             )?
             .dyn_into::<Function>()?;
-            render_community.call3(
+            render_community.call4(
                 &JsValue::UNDEFINED,
                 &JsValue::from_str(state.community_state.as_str()),
                 &JsValue::from_bool(!direct_mode),
                 &JsValue::from_bool(state.community_send_enabled()),
+                &JsValue::from_str(&state.community_detail),
             )?;
         } else {
             set_hidden(&self.community_status, true)?;
@@ -6489,6 +6499,7 @@ fn apply_active_poll_state(state: &mut AppState, mut poll: RoomPollView) -> bool
     state.community_presence = poll.community_presence;
     state.collaboration_configured = poll.transport.configured;
     state.community_state = poll.transport.community_state();
+    state.community_detail = live_status_detail(&poll.transport);
     if !was_session_active
         && (state.reconnect_needed
             || state.error_text.as_deref() == Some(SHELL_SESSION_LOST_DETAIL))
@@ -6776,6 +6787,7 @@ fn apply_summary_state(
     state.room_mode_known = true;
     state.collaboration_configured = summary.transport.configured;
     state.community_state = summary.transport.community_state();
+    state.community_detail = live_status_detail(&summary.transport);
     if state.collaboration_configured {
         state.browser_access_allowed = summary.browser_access_allowed;
         state.browser_access_block_reason = summary.browser_access_block_reason.clone();
@@ -6874,6 +6886,7 @@ fn load_state(session_storage: Option<&Storage>, config: &AppConfig) -> AppState
         display_name: String::new(),
         status_badge: default_status_badge_for_mode(config.access_mode),
         status_detail: default_status_detail_for_mode(config.access_mode),
+        community_detail: String::new(),
         history: None,
         error_transient: false,
         browser_access_allowed: false,
@@ -7554,7 +7567,7 @@ mod tests {
         assert_eq!(state.objects[0].delivery_state, Some(Accepted));
         for (guard, snapshot) in older {
             apply_active_poll_if_current(&mut state, &guard, snapshot).unwrap();
-            assert_eq!(state.community_state, CommunityState::JoinedUnreachable);
+            assert_eq!(state.community_state, CommunityState::Reconnecting);
             assert_eq!(state.latest_seq, 1);
             assert_eq!(state.objects.len(), 1);
             assert_eq!(state.objects[0].delivery_state, Some(Accepted));
@@ -7862,7 +7875,7 @@ mod tests {
         let drafts = state.drafts.clone();
         let objects = state.objects.clone();
         for (configured, available, joined, expected) in [
-            (true, false, Some(true), CommunityState::JoinedUnreachable),
+            (true, false, Some(true), CommunityState::Reconnecting),
             (true, true, Some(true), CommunityState::Live),
             (true, true, Some(false), CommunityState::Left),
             (false, false, None, CommunityState::NotJoined),
@@ -7896,7 +7909,36 @@ mod tests {
     }
 
     #[test]
-    fn exhausted_runtime_poll_and_summary_show_restart_guidance_in_home() {
+    fn community_fix1_state_is_independent_of_designer_wording() {
+        for (state, expected) in [
+            ("starting", CommunityState::Starting),
+            ("waiting_for_peers", CommunityState::Waiting),
+            ("reconnecting", CommunityState::Reconnecting),
+        ] {
+            for wording in [
+                "Designer changed this sentence.",
+                "",
+                "Community is connected.",
+            ] {
+                let view: RoomTransportView = serde_json::from_value(serde_json::json!({
+                    "configured": true, "available": false, "community_joined": true,
+                    "community_state": state, "status": wording
+                }))
+                .unwrap();
+                assert_eq!(view.community_state(), expected);
+            }
+        }
+        // A released Runtime omits the state. Unavailable still fails closed.
+        let old: RoomTransportView = serde_json::from_value(serde_json::json!({
+            "configured": true, "available": false, "community_joined": true,
+            "status": "Home is starting Community. It is checking the link."
+        }))
+        .unwrap();
+        assert_eq!(old.community_state(), CommunityState::Reconnecting);
+    }
+
+    #[test]
+    fn community_starting_poll_and_summary_preserve_drafts_and_direct() {
         let mut state = two_direct_conversations();
         state.session_active = true;
         state
@@ -7905,19 +7947,19 @@ mod tests {
         state.direct.selected_conversation_id = Some("direct:sha256:a".into());
         let direct = state.direct.clone();
         let drafts = state.drafts.clone();
-        let detail = "Community can't connect. Restart Home to reconnect.";
+        let detail = "Home is starting Community. It is checking the link.";
         let mut poll = shared_poll(0);
         poll.transport = serde_json::from_value(serde_json::json!({
             "configured": true,
             "available": false,
             "community_joined": true,
-            "status": detail
+            "status": detail, "community_state": "starting"
         }))
         .unwrap();
         let mut transport = poll.transport.clone();
         apply_active_poll_state(&mut state, poll);
-        assert_eq!(state.community_state, CommunityState::RecoveryExhausted);
-        assert_eq!(state.community_state.as_str(), "recovery_exhausted");
+        assert_eq!(state.community_state, CommunityState::Starting);
+        assert_eq!(state.community_state.as_str(), "starting");
         assert_eq!(state.community_state.label(), detail);
         assert_eq!(state.status_badge, detail);
         assert_eq!(state.status_detail, detail);
@@ -7931,7 +7973,7 @@ mod tests {
             (true, true, Some(true), CommunityState::Live),
             (true, false, Some(false), CommunityState::Left),
             (false, false, None, CommunityState::NotJoined),
-            (true, false, Some(true), CommunityState::RecoveryExhausted),
+            (true, false, Some(true), CommunityState::Starting),
         ] {
             transport.configured = configured;
             transport.available = available;
@@ -9531,6 +9573,7 @@ mod tests {
                 configured: true,
                 available: true,
                 community_joined: None,
+                community_state: None,
                 status: None,
                 history: None,
             },

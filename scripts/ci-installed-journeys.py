@@ -2062,7 +2062,7 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
     def stop(name):
         child = children[name]
         with message_timeout(35):
-            row = cleanup_runtime(child, fixtures[name].data)
+            row = cleanup_runtime(child, fixtures[name].data, allow_group=False)
         cleanup.append(dict(row, home=name))
         assert row["status"] == "passed", "two-Home process cleanup failed"
         del children[name]

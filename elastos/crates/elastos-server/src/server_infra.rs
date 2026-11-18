@@ -1557,6 +1557,7 @@ async fn setup_server_infrastructure_impl(
     let (carrier_signing_key, carrier_did) = elastos_identity::derive_did(&device_key);
     let mut collaboration_carrier_provider: Option<Arc<dyn provider::Provider>> = None;
     {
+        tracing::info!("collaboration startup: starting Carrier");
         match start_carrier_plane(
             &provider_registry,
             &carrier_signing_key,
@@ -1587,6 +1588,7 @@ async fn setup_server_infrastructure_impl(
                             data_dir.clone(),
                             carrier_peer_attestation_exchange_config_from_env(),
                         ));
+                    tracing::info!("collaboration startup: restoring local holder announcements");
                     availability_provider
                         .restore_persisted_local_holder_announcements()
                         .await;
@@ -1597,6 +1599,7 @@ async fn setup_server_infrastructure_impl(
                         tracing::warn!("Failed to register Carrier availability provider: {}", e);
                     }
                     if let Some(content) = content_plane.as_ref() {
+                        tracing::info!("collaboration startup: restoring complete local objects");
                         content.restore_complete_local_objects().await;
                     }
                 }
@@ -1614,6 +1617,7 @@ async fn setup_server_infrastructure_impl(
         }
     }
 
+    tracing::info!("collaboration startup: entering configured collaboration setup");
     let collaboration_service =
         elastos_server::collaboration_startup::start_collaboration_runtime_service(
             &data_dir,

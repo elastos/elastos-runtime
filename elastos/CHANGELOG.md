@@ -11,6 +11,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Home and apps can enter full screen in Safari and the desktop app.
 - WalletConnect separates unfinished phone connections from linked wallets, can copy a connection link, and lets you cancel a phone wait and start again.
 - WalletConnect keeps its SDK in the connector capsule, uses capsule-scoped Runtime storage and relay access, and shows recovery instructions for interrupted transactions.
+- Home repairs sustained local Community failures automatically, keeps retrying for its lifetime, and shows the same reconnecting state in Chat and System. Startup logs identify each setup stage and explain when a Profile is not ready. Failed first joins keep Home running, missing local topics return through paced repair, and Chat reads explicit state independently of wording (#451).
 - Apps no longer open blank in Safari and other WebKit browsers.
 
 ### Developer detail

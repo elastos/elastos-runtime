@@ -138,6 +138,8 @@ fn gateway_local_control_router(
             session_registry: session_registry.clone(),
             secret: attach_secret,
         });
+    let community_status =
+        routes::community_status_router(Some(registry.clone()), session_registry.clone());
     let peer = Router::new()
         .route("/api/provider/peer/get_ticket", post(peer_get_ticket))
         .layer(axum_middleware::from_fn(middleware::shell_only_middleware))
@@ -148,6 +150,7 @@ fn gateway_local_control_router(
         .with_state(GatewayPeerControlState { registry });
     Router::new()
         .route("/api/health", get(routes::health))
+        .merge(community_status)
         .merge(attach)
         .merge(peer)
 }

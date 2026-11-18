@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve, extname } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,13 +17,15 @@ assert.equal(metadata.version, "1.59.1");
 const { chromium } = await import(pathToFileURL(resolve(sdkPath, "index.mjs")).href);
 const serverSecret = "provider-secret-sk-session-start-fixture";
 const boundedStartFailure = "Chat session bootstrap failed. Reopen Chat from Home.";
-async function fixture(t, direct = false, { startFault = null } = {}) {
+async function fixture(t, direct = false, { startFault = null, communityHistory = false } = {}) {
   checkArtifacts(); // Execute the committed WASM only when its source stamp matches.
   const state = { now: 0, tokenExpiry: 60, roomExpiry: 60, fault: null, startFault,
     polls: [], faults: 0, accepted: 0, starts: 0, renewals: 0, errors: [] };
   const transport = { configured: true, available: true, community_joined: true };
   const poll = () => ({ room_slug: "chat-room", display_name: "Owner", latest_seq: 41,
-    participants: [], objects: [], transport });
+    participants: [], objects: communityHistory ? [{seq:41, message_id:"message:retained-community",
+      conversation_id:"community", sender:"Fixture friend", sender_profile_verified:true, from_current_session:false,
+      kind:"text", body:"Retained Community post before the link was lost", created_at:1}] : [], transport });
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://fixture");
     const json = (status, value) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
@@ -114,7 +116,56 @@ async function fixture(t, direct = false, { startFault = null } = {}) {
   assert.ok(state.polls.length > 0, "the actual WASM is polling before the fault");
   if (!direct) assert.equal(state.polls.at(-1).since, 41);
   assert.deepEqual(state.errors, []);
-  return { state, page, frame, tick };
+  return { state, page, frame, tick, transport };
+}
+
+for (const width of [375, 1280]) {
+  test(`Community recovery states retain history and draft in committed WASM at ${width}px`, { timeout:30000 }, async t => {
+    const { state, page, frame, tick, transport } = await fixture(t, false, { communityHistory:true });
+    await page.setViewportSize({width,height:900});
+    await page.evaluate(() => {
+      document.body.style.margin="0";
+      const frame=document.querySelector("iframe");
+      Object.assign(frame.style,{width:"100%",height:"100vh",border:"0"});
+    });
+    const retained = frame.getByText("Retained Community post before the link was lost", {exact:true});
+    await retained.waitFor({timeout:5000});
+    const states = [
+      ["starting",true,"Preparing Community with the revised designer wording."],
+      ["reconnecting",true,"Home is reconnecting to Community. Next check in 60 seconds."],
+      ["waiting_for_peers",true,"Waiting for a Home with the revised designer wording."],
+      ["left",false,"You left Community."],
+    ];
+    for (const [name,joined,detail] of states) {
+      Object.assign(transport,{available:false,community_joined:joined,community_state:name,status:detail});
+      await tick(2);
+      const status=frame.locator("#community-status");
+      assert.equal(await status.getAttribute("data-state"),name);
+      if (name!=="left") assert.equal(await status.innerText(),detail);
+      assert.equal(await frame.locator("#message-input").isDisabled(),true);
+      assert.equal(await frame.locator("#send-button").isDisabled(),true);
+      assert.equal(await frame.locator("#message-input").inputValue(),"Keep this draft");
+      assert.equal(await retained.count(),1);
+      assert.ok(!(await frame.locator("body").innerText()).includes("Restart Home"));
+      if (name==="reconnecting") {
+        const bounds=await status.evaluate(element=>({width:element.clientWidth,scroll:element.scrollWidth,
+          right:element.getBoundingClientRect().right,viewport:innerWidth}));
+        assert.ok(bounds.scroll<=bounds.width+1 && bounds.right<=bounds.viewport+1,JSON.stringify(bounds));
+        if (process.env.COMMUNITY_RECOVERY_SCREENSHOTS) {
+          mkdirSync(process.env.COMMUNITY_RECOVERY_SCREENSHOTS,{recursive:true});
+          await page.screenshot({path:resolve(process.env.COMMUNITY_RECOVERY_SCREENSHOTS,`community-recovery-${width}.png`)});
+        }
+      }
+    }
+    Object.assign(transport,{available:true,community_joined:true,community_state:"connected",status:"Community is connected."});
+    await tick(2);
+    assert.equal(await frame.locator("#community-status").getAttribute("data-state"),"live");
+    assert.equal(await frame.locator("#message-input").isDisabled(),false);
+    assert.equal(await frame.locator("#send-button").isDisabled(),false);
+    assert.equal(await frame.locator("#message-input").inputValue(),"Keep this draft");
+    assert.equal(await retained.count(),1);
+    assert.deepEqual(state.errors,[]);
+  });
 }
 
 for (const path of ["initial bootstrap", "room renewal", "Home recovery"]) {
