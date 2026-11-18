@@ -383,6 +383,8 @@ impl std::error::Error for RuntimeCustodyCreatorAttemptArchived {}
 /// A creator's listing counts only once the Library recorded its publication
 /// too (STAB-13): a crash between the two leaves a listing nobody is served,
 /// and Resume -- offered for `ListingNotAssembled` -- writes that record.
+/// For a sealed mint, Resume also finishes filing a creator copy that was
+/// skipped after the listing was published.
 pub(crate) fn runtime_custody_mint_is_finished(
     data_dir: &Path,
     mint: &PersistedRuntimeMint,
@@ -394,14 +396,35 @@ pub(crate) fn runtime_custody_mint_is_finished(
         return Ok(false);
     }
     match super::load_runtime_custody_listing(data_dir, mint.draft().mint_id()) {
-        Ok(listing) => Ok(listing.is_some_and(|listing| match &listing.origin {
+        Ok(Some(listing)) => match &listing.origin {
             super::RuntimeCustodyListingOrigin::LocalCreator {
                 principal_id,
                 listing_uri,
                 ..
-            } => crate::library::listing_publication_recorded(data_dir, principal_id, listing_uri),
-            _ => true,
-        })),
+            } => {
+                if !crate::library::listing_publication_recorded(
+                    data_dir,
+                    principal_id,
+                    listing_uri,
+                ) {
+                    return Ok(false);
+                }
+                if listing.package.sealed_rights_policy_base64.is_some() {
+                    return Ok(super::load_runtime_custody_purchase(
+                        data_dir,
+                        principal_id,
+                        mint.draft().mint_id(),
+                    )?
+                    .is_some_and(|owned| {
+                        owned.acquisition != super::RuntimeCustodyAcquisitionV1::Minted
+                            || owned.capsule_uri.is_some()
+                    }));
+                }
+                Ok(true)
+            }
+            _ => Ok(true),
+        },
+        Ok(None) => Ok(false),
         Err(error) => {
             tracing::warn!(
                 error = %error,

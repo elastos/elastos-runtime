@@ -1575,9 +1575,6 @@ impl ProviderBridge {
             let mut io = io.lock().await;
             let queue_wait_ms = started.elapsed().as_millis() as u64;
             queue_wait.store(queue_wait_ms, std::sync::atomic::Ordering::Release);
-            if action_traced {
-                tracing::info!(op = %op, bridge_role = "provider", queue_wait_ms, "provider request dispatched");
-            }
             // Give frequent polling operations their own filter without hiding
             // mint diagnostics or the long-wait warnings above.
             let polling = matches!(op.as_str(), "events" | "wallet_contract");
@@ -1604,6 +1601,9 @@ impl ProviderBridge {
                     Some(fence) => Some(fence.enter().await.map_err(BridgeError::DispatchRefused)?),
                     None => None,
                 };
+                if action_traced {
+                    tracing::info!(op = %op, bridge_role = "provider", queue_wait_ms, "provider request dispatched");
+                }
                 io.writer
                     .write_all(json.as_bytes())
                     .await

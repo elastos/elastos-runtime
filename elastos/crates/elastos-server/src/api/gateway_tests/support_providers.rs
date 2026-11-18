@@ -51,6 +51,7 @@ fn mock_chain_rights_policy(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MockProtectedContentChainMode {
     Success,
+    MintSealNotFinal,
     ReceiptError,
     /// The mint transaction reverted as a second mint of the same content id
     /// (`IPAlreadyBound` or `InvalidTokenId`). `kid_bound` is whether the
@@ -744,6 +745,15 @@ impl Provider for MockChainProvider {
                 };
                 let policy = mock_chain_rights_policy(encrypted_content, content_access_id, action);
                 let policy = if let Some(item) = request.get("expected_item") {
+                    if *mock_protected_content_chain_mode().lock().unwrap()
+                        == MockProtectedContentChainMode::MintSealNotFinal
+                    {
+                        return Ok(json!({
+                            "status": "error",
+                            "code": "item_binding_not_final",
+                            "message": "the content access id is not bound at the finalized block",
+                        }));
+                    }
                     use elastos_protected_content_contracts::{
                         EvmContractAddressV1, RightsExpectedItemV1, WalletAddress,
                     };

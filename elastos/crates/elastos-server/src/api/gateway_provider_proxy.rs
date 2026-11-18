@@ -4119,7 +4119,18 @@ async fn publish_runtime_custody_creator_listing(
             crate::protected_content_runtime::ensure_finalized_mint_policy(
                 registry, data_dir, mint, terminal,
             )
-            .await?,
+            .await
+            .map_err(|error| {
+                if error.is::<crate::protected_content_runtime::RuntimeMintSealAwaitingFinality>() {
+                    return runtime_custody_creator_effect_pending(
+                        crate::protected_content_runtime::creator_listing_awaiting_seal_finality(
+                            mint,
+                        ),
+                        line!(),
+                    );
+                }
+                error
+            })?,
         )
     };
     let package = crate::protected_content_runtime::runtime_custody_creator_listing_package(
@@ -5970,6 +5981,17 @@ async fn runtime_custody_publish_creator_tail_from_facts(
                 .await?
                 .0,
             );
+            drop(attempt_guard);
+            repair_runtime_custody_minted_owned_copy(state, &input.principal_id, facts.mint_id)
+                .await;
+            facts.capsule_uri = crate::protected_content_runtime::load_runtime_custody_purchase(
+                &state.data_dir,
+                &input.principal_id,
+                facts.mint_id,
+            )
+            .ok()
+            .flatten()
+            .and_then(|owned| owned.capsule_uri);
             // This request settled nothing: the mint was already terminal, so
             // no effect was raised and no transaction was sent. Without saying
             // so the answer is indistinguishable from a fresh mint, and the
@@ -6455,15 +6477,17 @@ async fn repair_runtime_custody_minted_owned_copy(
     principal_id: &str,
     mint_id: elastos_protected_content_contracts::Digest32,
 ) {
-    if crate::protected_content_runtime::load_runtime_custody_purchase(
+    let Ok(owned) = crate::protected_content_runtime::load_runtime_custody_purchase(
         &state.data_dir,
         principal_id,
         mint_id,
-    )
-    .ok()
-    .flatten()
-    .is_some()
-    {
+    ) else {
+        return;
+    };
+    if owned.as_ref().is_some_and(|record| {
+        record.acquisition != crate::protected_content_runtime::RuntimeCustodyAcquisitionV1::Minted
+            || record.capsule_uri.is_some()
+    }) {
         return;
     }
     let Ok(Some(listing)) =
@@ -6492,7 +6516,7 @@ async fn repair_runtime_custody_minted_owned_copy(
     };
     // No terminal means the mint never completed, so there is no copy to give
     // back.
-    let (Some(_terminal), Some(effect)) = (creator_state.terminal(), creator_state.effect()) else {
+    let (Some(terminal), Some(effect)) = (creator_state.terminal(), creator_state.effect()) else {
         return;
     };
     let Some(settled) = crate::api::gateway::settled_transaction_effect(
@@ -6505,6 +6529,10 @@ async fn repair_runtime_custody_minted_owned_copy(
     // The effect the journal points at must be the effect that was settled.
     if settled.request_sha256 != effect.request_sha256()
         || settled.effect_id != effect.effect_id()
+        || !settled
+            .outcome
+            .transaction_hash
+            .eq_ignore_ascii_case(terminal.transaction_hash())
         || settled.chain_namespace != listing.package.chain_namespace
         || settled.network != listing.package.network
     {
@@ -6516,6 +6544,30 @@ async fn repair_runtime_custody_minted_owned_copy(
         external_signer: false,
         connector_id: None,
     };
+    let acquisition_stage = crate::protected_content_runtime::RuntimeCustodyPurchaseStageRecord {
+        stage: "mint".to_string(),
+        effect_id: settled.effect_id.clone(),
+        approval_request_id: settled.approval_request_id.clone(),
+        request_sha256: settled.request_sha256.clone(),
+        chain_namespace: settled.chain_namespace.clone(),
+        network: settled.network.clone(),
+        to: settled.to.clone(),
+        value: settled.value.clone(),
+        data: settled.data.clone(),
+    };
+    if owned.as_ref().is_some_and(|record| {
+        record.listing_sha256 != listing.portable_package_digest()
+            || record.account_id != creator_account.account_id
+            || !record.address.eq_ignore_ascii_case(&creator_account.address)
+            || record.acquisition_stage != acquisition_stage
+            || !matches!(
+                &record.progress,
+                crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Complete { terminal }
+                    if terminal.chain_transaction.eq_ignore_ascii_case(&settled.outcome.transaction_hash)
+            )
+    }) {
+        return;
+    }
     let content_access_id_hex = format!(
         "0x{}",
         hex::encode(mint.draft().content_access_id().as_bytes())
@@ -6554,6 +6606,16 @@ async fn repair_runtime_custody_minted_owned_copy(
         }
         None => None,
     };
+    if let Some(owned) = owned {
+        if let Some(capsule_uri) = capsule_uri {
+            let _ = crate::protected_content_runtime::attach_runtime_custody_minted_capsule(
+                &state.data_dir,
+                &owned,
+                capsule_uri,
+            );
+        }
+        return;
+    }
     let now = crate::auth::now_ts();
     let owned = crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
         schema: crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
@@ -6578,17 +6640,7 @@ async fn repair_runtime_custody_minted_owned_copy(
         approval_stage: None,
         acquisition: crate::protected_content_runtime::RuntimeCustodyAcquisitionV1::Minted,
         capsule_uri,
-        acquisition_stage: crate::protected_content_runtime::RuntimeCustodyPurchaseStageRecord {
-            stage: "mint".to_string(),
-            effect_id: settled.effect_id.clone(),
-            approval_request_id: settled.approval_request_id.clone(),
-            request_sha256: settled.request_sha256.clone(),
-            chain_namespace: settled.chain_namespace.clone(),
-            network: settled.network.clone(),
-            to: settled.to.clone(),
-            value: settled.value.clone(),
-            data: settled.data.clone(),
-        },
+        acquisition_stage,
         progress: crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Complete {
             terminal: crate::protected_content_runtime::RuntimeCustodyTerminalPurchaseRecord {
                 chain_transaction: settled.outcome.transaction_hash.clone(),
@@ -6602,9 +6654,10 @@ async fn repair_runtime_custody_minted_owned_copy(
         created_at: now,
         updated_at: now,
     };
-    if crate::protected_content_runtime::persist_runtime_custody_purchase(&state.data_dir, &owned)
-        .is_ok()
-    {
+    if let Ok(true) = crate::protected_content_runtime::create_runtime_custody_purchase_if_absent(
+        &state.data_dir,
+        &owned,
+    ) {
         tracing::debug!("runtime custody: restored the owned copy of a minted asset");
     }
 }

@@ -1329,7 +1329,7 @@ pub(crate) const RUNTIME_CUSTODY_CREATOR_PROGRESS_SCHEMA_V1: &str =
 pub(crate) fn runtime_custody_creator_progress(
     mint: &elastos_protected_content_runtime::PersistedRuntimeMint,
 ) -> Value {
-    creator_progress(mint, None)
+    creator_progress(mint, None, false)
 }
 
 /// What the creator tail knows about the `public_metadata` stage that the
@@ -1349,12 +1349,23 @@ pub(crate) fn runtime_custody_creator_progress_with_public_metadata(
     mint: &elastos_protected_content_runtime::PersistedRuntimeMint,
     stage: RuntimeCustodyPublicMetadataStage,
 ) -> Value {
-    creator_progress(mint, Some(stage))
+    creator_progress(mint, Some(stage), false)
+}
+
+pub(crate) fn creator_listing_awaiting_seal_finality(
+    mint: &PersistedRuntimeMint,
+) -> RuntimeCustodyEffectPending {
+    RuntimeCustodyEffectPending::awaiting_chain_settlement().with_progress(creator_progress(
+        mint,
+        Some(RuntimeCustodyPublicMetadataStage::Done),
+        true,
+    ))
 }
 
 fn creator_progress(
     mint: &elastos_protected_content_runtime::PersistedRuntimeMint,
     public_metadata: Option<RuntimeCustodyPublicMetadataStage>,
+    listing_awaiting_seal: bool,
 ) -> Value {
     use elastos_protected_content_runtime::RuntimeCustodyTerminalKind;
 
@@ -1380,7 +1391,11 @@ fn creator_progress(
         .map(elastos_protected_content_runtime::RuntimeMintCreatorState::stage)
     {
         None => "pending",
-        Some(elastos_protected_content_runtime::RuntimeMintCreatorStage::Settled) => "done",
+        Some(elastos_protected_content_runtime::RuntimeMintCreatorStage::Settled)
+            if !listing_awaiting_seal =>
+        {
+            "done"
+        }
         Some(_) => "active",
     };
     let public_metadata = match public_metadata {
@@ -6435,14 +6450,24 @@ async fn resolve_runtime_rights_policy_for_item(
             "creator": format!("0x{}", hex::encode(item.creator().as_bytes())),
         });
     }
-    let response_value = invoke_json_provider(
+    let response_value = invoke_json_provider_classified(
         registry,
         CHAIN_PROVIDER_ID,
         CHAIN_PROTECTED_CONTENT_POLICY_OP,
         request,
+        ProviderInvocationTransport::Local,
     )
     .await
-    .map_err(anyhow::Error::msg)?;
+    .map_err(|failure| match failure {
+        ProviderInvocationFailure::Refused { ref code, .. }
+            if expected_item.is_some() && code == "item_binding_not_final" =>
+        {
+            anyhow::Error::new(RuntimeMintSealAwaitingFinality)
+        }
+        failure => anyhow::Error::msg(
+            failure.into_message(CHAIN_PROVIDER_ID, CHAIN_PROTECTED_CONTENT_POLICY_OP),
+        ),
+    })?;
     let response = serde_json::from_value::<ChainProtectedContentPolicyResponse>(response_value)?;
     if response.schema != CHAIN_PROTECTED_CONTENT_POLICY_SCHEMA_V1 {
         anyhow::bail!("chain provider returned an unsupported protected-content policy schema");
@@ -6463,6 +6488,17 @@ async fn resolve_runtime_rights_policy_for_item(
     let identity = body.policy_identity()?;
     Ok(ResolvedRuntimeRightsPolicy { body, identity })
 }
+
+#[derive(Debug)]
+pub(crate) struct RuntimeMintSealAwaitingFinality;
+
+impl std::fmt::Display for RuntimeMintSealAwaitingFinality {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the mint's key binding is waiting for chain finality")
+    }
+}
+
+impl std::error::Error for RuntimeMintSealAwaitingFinality {}
 
 pub(crate) async fn ensure_finalized_mint_policy(
     registry: &ProviderRegistry,
@@ -17102,6 +17138,37 @@ pub(crate) fn create_runtime_custody_purchase_if_absent(
     write_owner_only_bytes(
         &runtime_purchase_path(data_dir, &purchase.principal_id, mint_id),
         &serde_json::to_vec(purchase)?,
+    )?;
+    Ok(true)
+}
+
+/// Attach a Library file to the same minted record verified before filing it.
+pub(crate) fn attach_runtime_custody_minted_capsule(
+    data_dir: &Path,
+    expected: &RuntimeCustodyPurchaseRecord,
+    capsule_uri: String,
+) -> anyhow::Result<bool> {
+    if expected.acquisition != RuntimeCustodyAcquisitionV1::Minted || expected.capsule_uri.is_some()
+    {
+        return Ok(false);
+    }
+    let mint_id = parse_mint_id_hex(&expected.mint_id)?;
+    let lock_path = runtime_purchase_lock_path(data_dir, &expected.principal_id);
+    let _lock = ExclusiveFileLock::acquire(&lock_path)?;
+    #[cfg(test)]
+    let _lock_test_probe = RuntimePurchaseLockTestProbe::enter(lock_path.clone());
+    let Some(mut current) =
+        load_runtime_custody_purchase(data_dir, &expected.principal_id, mint_id)?
+    else {
+        return Ok(false);
+    };
+    if current != *expected {
+        return Ok(false);
+    }
+    current.capsule_uri = Some(capsule_uri);
+    write_owner_only_bytes(
+        &runtime_purchase_path(data_dir, &expected.principal_id, mint_id),
+        &serde_json::to_vec(&current)?,
     )?;
     Ok(true)
 }

@@ -37,6 +37,7 @@
 use super::*;
 use crate::protected_content_market::{normalize_runtime_market_kid, RuntimeMarketItem};
 use elastos_protected_content_provider_contracts::PROTECTION;
+use elastos_runtime::provider::dispatch::DispatchFence;
 use tracing::Instrument;
 
 pub(crate) const MARKET_LISTING_SCHEMA_V1: &str = "elastos.marketplace.listing/v1";
@@ -939,7 +940,13 @@ async fn marketplace_listing_inner(
         }
     };
     let started = tokio::time::Instant::now();
-    let answer = tokio::time::timeout(MARKET_LISTING_DEADLINE, answer).await;
+    let deadline = started + MARKET_LISTING_DEADLINE;
+    // The bridge owns response draining once a read is written. Prevent
+    // queued reads from writing after this request has already timed out.
+    let fence = DispatchFence::current()
+        .unwrap_or_else(|| DispatchFence::new(|| Ok(())))
+        .with_deadline(deadline);
+    let answer = tokio::time::timeout_at(deadline, fence.scope(answer)).await;
     let timed_out = answer.is_err();
     let mut response = answer.unwrap_or_else(|_| market_listing_unavailable("listing_deadline"));
     log_market_listing_phase("listing", started);

@@ -1311,8 +1311,8 @@ async fn listing_answers_unavailable_at_overall_deadline() {
         .any(|request| request["op"] == "resolve_protected_content_item_offers"));
 }
 
-/// The deadline changes nothing for a read that answers: the same object,
-/// right away.
+/// An expired card check yields the provider to a live card without
+/// abandoning the response of a request already on the wire.
 #[tokio::test(start_paused = true)]
 async fn expired_listing_chain_read_never_dispatches_before_a_live_listing() {
     use elastos_runtime::provider::{bridge::ProviderBridge, CapsuleProvider};
@@ -1325,9 +1325,21 @@ async fn expired_listing_chain_read_never_dispatches_before_a_live_listing() {
     // changes neither its dispatch fence nor any provider response.
     struct QueueEvents(tokio::sync::mpsc::UnboundedSender<String>);
     impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for QueueEvents {
-        fn on_event(&self, event: &tracing::Event<'_>, _context: tracing_subscriber::layer::Context<'_, S>) {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            // A warning about a request still in the queue is not a new
+            // arrival. Advancing the deadline also wakes the warning timer.
+            if *event.metadata().level() != tracing::Level::INFO {
+                return;
+            }
             #[derive(Default)]
-            struct Fields { op: String, phase: String }
+            struct Fields {
+                op: String,
+                phase: String,
+            }
             impl tracing::field::Visit for Fields {
                 fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
                     match field.name() {
@@ -1336,56 +1348,107 @@ async fn expired_listing_chain_read_never_dispatches_before_a_live_listing() {
                         _ => {}
                     }
                 }
-                fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-                    if field.name() == "op" { self.op = format!("{value:?}"); }
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "op" {
+                        self.op = format!("{value:?}");
+                    }
                 }
             }
             let mut fields = Fields::default();
             event.record(&mut fields);
-            if fields.phase == "queued" { let _ = self.0.send(fields.op); }
+            if fields.phase == "queued" {
+                let _ = self.0.send(fields.op);
+            }
         }
     }
 
-    let env = Arc::new(ListingEnv::new(
-        chain_with_item(LISTING_FOLDER, LISTING_KID),
-        content_with(LISTING_FOLDER, "metadata.json", &elastos_v1_metadata(LISTING_KID)),
-    ).await);
+    let env = Arc::new(
+        ListingEnv::new(
+            chain_with_item(LISTING_FOLDER, LISTING_KID),
+            content_with(
+                LISTING_FOLDER,
+                "metadata.json",
+                &elastos_v1_metadata(LISTING_KID),
+            ),
+        )
+        .await,
+    );
+    env.chain.lock().unwrap().has_access = true;
     let (client, server) = tokio::io::duplex(64 * 1024);
     let (client_read, client_write) = tokio::io::split(client);
     let (server_read, mut server_write) = tokio::io::split(server);
     let mut server_read = tokio::io::BufReader::new(server_read);
-    let bridge = Arc::new(ProviderBridge::from_io(tokio::io::BufReader::new(client_read), client_write));
+    let bridge = Arc::new(ProviderBridge::from_io(
+        tokio::io::BufReader::new(client_read),
+        client_write,
+    ));
     let registry = env.state.provider_registry.as_ref().unwrap().clone();
     registry.unregister_sub_provider("chain").await.unwrap();
-    registry.register_sub_provider("chain", Arc::new(CapsuleProvider::with_scheme(bridge, "chain"))).await.unwrap();
+    registry
+        .register_sub_provider(
+            "chain",
+            Arc::new(CapsuleProvider::with_scheme(bridge, "chain")),
+        )
+        .await
+        .unwrap();
     let (queued_tx, mut queued_rx) = tokio::sync::mpsc::unbounded_channel();
-    let _subscriber = tracing::subscriber::set_default(tracing_subscriber::registry().with(QueueEvents(queued_tx)));
+    let _subscriber = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(QueueEvents(queued_tx)),
+    );
     tracing::callsite::rebuild_interest_cache();
 
     let expired_env = env.clone();
     let started = tokio::time::Instant::now();
-    let expired = tokio::spawn(async move { expired_env.post(item_start()).await }.with_current_subscriber());
-    assert_eq!(queued_rx.recv().await.as_deref(), Some("describe_protected_content_creator_mint_source"));
+    let expired =
+        tokio::spawn(async move { expired_env.post(item_start()).await }.with_current_subscriber());
+    assert_eq!(
+        queued_rx.recv().await.as_deref(),
+        Some("describe_protected_content_creator_mint_source")
+    );
     let mut line = String::new();
     server_read.read_line(&mut line).await.unwrap();
     let source_request: Value = serde_json::from_str(line.trim()).unwrap();
-    assert_eq!(source_request["op"], "describe_protected_content_creator_mint_source");
+    assert_eq!(
+        source_request["op"],
+        "describe_protected_content_creator_mint_source"
+    );
 
     // Queue a real bridge transaction behind the source description before
     // replying to it. The card's next MarketChain read then waits behind this
     // blocker, whose already-written response remains owned by the bridge.
     let blocker_registry = registry.clone();
-    let blocker = tokio::spawn(async move {
-        blocker_registry.send_raw("chain", &json!({"op": "fixture_blocker"})).await
-    }.instrument(tracing::info_span!("action_trace")).with_current_subscriber());
+    let blocker = tokio::spawn(
+        async move {
+            blocker_registry
+                .send_raw("chain", &json!({"op": "fixture_blocker"}))
+                .await
+        }
+        .instrument(tracing::info_span!("action_trace"))
+        .with_current_subscriber(),
+    );
     assert_eq!(queued_rx.recv().await.as_deref(), Some("fixture_blocker"));
-    let source_answer = ListingChainStub(env.chain.clone()).answer(&source_request).unwrap();
-    server_write.write_all(format!("{source_answer}\n").as_bytes()).await.unwrap();
+    let source_answer = ListingChainStub(env.chain.clone())
+        .answer(&source_request)
+        .unwrap();
+    server_write
+        .write_all(format!("{source_answer}\n").as_bytes())
+        .await
+        .unwrap();
     server_write.flush().await.unwrap();
     line.clear();
     server_read.read_line(&mut line).await.unwrap();
-    assert_eq!(serde_json::from_str::<Value>(line.trim()).unwrap()["op"], "fixture_blocker");
-    assert_eq!(queued_rx.recv().await.as_deref(), Some("resolve_protected_content_item"));
+    assert_eq!(
+        serde_json::from_str::<Value>(line.trim()).unwrap()["op"],
+        "fixture_blocker"
+    );
+    assert_eq!(
+        queued_rx.recv().await.as_deref(),
+        Some("resolve_protected_content_item")
+    );
 
     tokio::time::advance(std::time::Duration::from_secs(30)).await;
     let (status, answer) = expired.await.unwrap();
@@ -1394,9 +1457,16 @@ async fn expired_listing_chain_read_never_dispatches_before_a_live_listing() {
     assert_eq!(started.elapsed(), std::time::Duration::from_secs(30));
 
     let live_env = env.clone();
-    let mut live = tokio::spawn(async move { live_env.post(item_start()).await }.with_current_subscriber());
-    assert_eq!(queued_rx.recv().await.as_deref(), Some("describe_protected_content_creator_mint_source"));
-    server_write.write_all(b"{\"status\":\"ok\",\"data\":{\"marker\":\"blocker\"}}\n").await.unwrap();
+    let mut live =
+        tokio::spawn(async move { live_env.post(item_start()).await }.with_current_subscriber());
+    assert_eq!(
+        queued_rx.recv().await.as_deref(),
+        Some("describe_protected_content_creator_mint_source")
+    );
+    server_write
+        .write_all(b"{\"status\":\"ok\",\"data\":{\"marker\":\"blocker\"}}\n")
+        .await
+        .unwrap();
     server_write.flush().await.unwrap();
     assert_eq!(blocker.await.unwrap().unwrap()["data"]["marker"], "blocker");
 
@@ -1421,8 +1491,20 @@ async fn expired_listing_chain_read_never_dispatches_before_a_live_listing() {
     }).await.expect("live listing must settle once the blocker is released");
     assert_eq!(status, StatusCode::OK, "{object}");
     assert_eq!(object["item"]["token_id"], LISTING_TOKEN_ID);
-    assert_eq!(wire_ops.first().map(String::as_str), Some("describe_protected_content_creator_mint_source"), "expired MarketChain read wrote after its HTTP deadline: {wire_ops:?}");
-    assert_eq!(wire_ops.iter().filter(|op| op.as_str() == "resolve_protected_content_item").count(), 1, "only the live listing may read the item: {wire_ops:?}");
+    assert_eq!(object["access_state"], "purchased");
+    assert_eq!(
+        wire_ops.first().map(String::as_str),
+        Some("describe_protected_content_creator_mint_source"),
+        "expired MarketChain read wrote after its HTTP deadline: {wire_ops:?}"
+    );
+    assert_eq!(
+        wire_ops
+            .iter()
+            .filter(|op| op.as_str() == "resolve_protected_content_item")
+            .count(),
+        1,
+        "only the live listing may read the item: {wire_ops:?}"
+    );
 }
 
 #[tokio::test]
@@ -1457,6 +1539,132 @@ async fn listing_fast_path_unchanged() {
         object["source"]["read_at_block"],
         format!("0x{LISTING_FINALIZED_BLOCK:x}")
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn listing_deadline_prevents_dispatch_after_a_parent_async_check() {
+    use elastos_runtime::provider::{
+        bridge::ProviderBridge, dispatch::DispatchFence, CapsuleProvider,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+    use tracing::instrument::WithSubscriber as _;
+    use tracing_subscriber::prelude::*;
+
+    struct DispatchEvents(Arc<AtomicUsize>);
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for DispatchEvents {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let metadata = event.metadata();
+            let fields = metadata.fields();
+            if *metadata.level() == tracing::Level::INFO
+                && metadata.target() == "elastos_runtime::provider::bridge"
+                && fields.field("queue_wait_ms").is_some()
+                && fields.field("execution_ms").is_none()
+            {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    let env = Arc::new(
+        ListingEnv::new(
+            chain_with_item(LISTING_FOLDER, LISTING_KID),
+            content_with(
+                LISTING_FOLDER,
+                "metadata.json",
+                &elastos_v1_metadata(LISTING_KID),
+            ),
+        )
+        .await,
+    );
+    env.chain.lock().unwrap().has_access = true;
+    let (client, server) = tokio::io::duplex(64 * 1024);
+    let (client_read, client_write) = tokio::io::split(client);
+    let (server_read, mut server_write) = tokio::io::split(server);
+    let mut server_read = tokio::io::BufReader::new(server_read);
+    let bridge = Arc::new(ProviderBridge::from_io(
+        tokio::io::BufReader::new(client_read),
+        client_write,
+    ));
+    let registry = env.state.provider_registry.as_ref().unwrap().clone();
+    registry.unregister_sub_provider("chain").await.unwrap();
+    registry
+        .register_sub_provider(
+            "chain",
+            Arc::new(CapsuleProvider::with_scheme(bridge, "chain")),
+        )
+        .await
+        .unwrap();
+
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let parent = DispatchFence::new(|| Ok(())).with_async_check({
+        let entered = entered.clone();
+        let release = release.clone();
+        move || {
+            let entered = entered.clone();
+            let release = release.clone();
+            Box::pin(async move {
+                entered.notify_one();
+                release.notified().await;
+                Ok(())
+            })
+        }
+    });
+    let dispatches = Arc::new(AtomicUsize::new(0));
+    let subscriber = tracing_subscriber::registry().with(DispatchEvents(dispatches.clone()));
+    let expired_env = env.clone();
+    let expired = tokio::spawn(
+        async move { parent.scope(expired_env.post(item_start())).await }
+            .with_subscriber(subscriber),
+    );
+    entered.notified().await;
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    assert_eq!(
+        expired.await.unwrap(),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"code": "unavailable"})
+        )
+    );
+
+    release.notify_one();
+    let mut line = String::new();
+    let expired_write = tokio::time::timeout(
+        std::time::Duration::from_millis(1),
+        server_read.read_line(&mut line),
+    )
+    .await;
+    assert!(
+        expired_write.is_err() && dispatches.load(Ordering::Relaxed) == 0,
+        "expired request after async admission: {expired_write:?}, dispatched INFO events: {}",
+        dispatches.load(Ordering::Relaxed),
+    );
+
+    let live_env = env.clone();
+    let mut live = tokio::spawn(async move { live_env.post(item_start()).await });
+    let (status, listing) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            line.clear();
+            tokio::select! {
+                result = &mut live => break result.unwrap(),
+                count = server_read.read_line(&mut line) => {
+                    assert_ne!(count.unwrap(), 0);
+                    let request: Value = serde_json::from_str(line.trim()).unwrap();
+                    let response = ListingChainStub(env.chain.clone()).send_raw(&request).await.unwrap();
+                    server_write.write_all(format!("{response}\n").as_bytes()).await.unwrap();
+                    server_write.flush().await.unwrap();
+                }
+            }
+        }
+    }).await.expect("live listing can use the bridge after the refused request");
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    assert_eq!(listing["item"]["token_id"], LISTING_TOKEN_ID);
+    assert_eq!(listing["access_state"], "purchased");
 }
 
 #[tokio::test]

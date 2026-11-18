@@ -3602,6 +3602,14 @@ impl ContentProvider {
                 match fallback {
                     Ok(Some(result)) => result,
                     Ok(None) => return Err(local_err),
+                    // A missing path in an already resolved immutable CID is
+                    // conclusive for a listing lookup, even when peers refuse.
+                    Err(_)
+                        if transfer.known_holders_only
+                            && matches!(local_err, ProviderError::NotFound(_)) =>
+                    {
+                        return Err(local_err);
+                    }
                     Err(availability_err) => {
                         return Err(ProviderError::Provider(format!(
                             "{local_err}; availability fetch failed: {availability_err}"
@@ -13324,6 +13332,33 @@ mod tests {
                 "{forwarded}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn known_holder_fetch_preserves_local_missing_path_when_peers_refuse() {
+        let (_data_dir, registry, ipfs, content) = registry_with_content_and_ipfs().await;
+        ipfs.missing_paths.lock().await.push("metadata.json".into());
+        let availability = Arc::new(MockAvailabilityProvider {
+            requests: Mutex::new(Vec::new()),
+            response: Mutex::new(provider_error(
+                crate::carrier::CARRIER_FETCH_FAILED_CODE,
+                "unauthorized_provider_peer",
+            )),
+        });
+        registry.register(availability.clone()).await;
+
+        let error = content
+            .send_raw(&json!({
+                "op": "fetch",
+                "cid": TEST_CID,
+                "path": "metadata.json",
+                "known_holders_only": true,
+            }))
+            .await
+            .expect_err("neither source has the requested file");
+
+        assert!(matches!(error, ProviderError::NotFound(_)), "{error}");
+        assert_eq!(availability.requests.lock().await.len(), 1);
     }
 
     #[test]

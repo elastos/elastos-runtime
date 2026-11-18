@@ -9845,13 +9845,28 @@ async fn test_runtime_custody_creator_resume_raises_an_expired_approval_again() 
 async fn test_runtime_custody_creator_resume_assembles_the_listing_of_a_settled_mint() {
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
     let fx = CreatorRecoveryFixture::new().await;
-    let input = fx.input("resume-listing.mp4", 0x96);
+    let input = fx.input("resume-listing.pdf", 0x96);
     let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
     assert!(fx.tail(&input, &facts).await.is_err());
     fx.wallet_provider
         .provider
         .complete_latest_transaction_approval()
         .await;
+    *mock_protected_content_chain_mode().lock().unwrap() =
+        MockProtectedContentChainMode::MintSealNotFinal;
+    let waiting = fx.tail(&input, &facts).await.unwrap_err();
+    reset_mock_protected_content_chain_mode();
+    let pending = waiting
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyEffectPending>()
+        .expect("a mint whose seal is waiting on finality must remain pending");
+    assert_eq!(pending.reason_label(), "chain_settlement");
+    assert!(!pending.awaits_person());
+    assert!(fx
+        .mint(facts.mint_id)
+        .creator_state()
+        .unwrap()
+        .terminal()
+        .is_some());
     set_mock_runtime_listing_publish_failure(true);
     assert!(fx.tail(&input, &facts).await.is_err());
     set_mock_runtime_listing_publish_failure(false);
@@ -9877,8 +9892,33 @@ async fn test_runtime_custody_creator_resume_assembles_the_listing_of_a_settled_
 
     let mut ignored = input.clone();
     ignored.price = "9".to_string();
-    let resumed = fx.resume(&ignored, &facts).await.unwrap();
-    assert_eq!(resumed.listing_uri, Some(format!("elastos://{TEST_CIDV1}")));
+    let unfiled = fx.resume(&ignored, &facts).await.unwrap();
+    assert_eq!(unfiled.listing_uri, Some(format!("elastos://{TEST_CIDV1}")));
+    assert_eq!(
+        unfiled.capsule_uri, None,
+        "metadata is unavailable on the first Resume"
+    );
+    let load_owned = || {
+        crate::protected_content_runtime::load_runtime_custody_purchase(
+            fx.dir.path(),
+            &input.principal_id,
+            facts.mint_id,
+        )
+        .unwrap()
+        .expect("the settled mint retains its ownership record")
+    };
+    let unfiled_owned = load_owned();
+    assert_eq!(
+        unfiled_owned.acquisition,
+        crate::protected_content_runtime::RuntimeCustodyAcquisitionV1::Minted
+    );
+    assert_eq!(unfiled_owned.capsule_uri, None);
+    let original_approval = fx
+        .wallet_provider
+        .provider
+        .latest_transaction_approval_request_id()
+        .await
+        .unwrap();
     let published = crate::protected_content_runtime::load_runtime_custody_listing(
         fx.dir.path(),
         facts.mint_id,
@@ -9893,9 +9933,83 @@ async fn test_runtime_custody_creator_resume_assembles_the_listing_of_a_settled_
         ),
     );
     assert_eq!(
-        resumed.content_security["settled_before_this_request"],
+        unfiled.content_security["settled_before_this_request"],
         true
     );
+    crate::library::record_runtime_custody_publication_for_test(
+        fx.dir.path(),
+        &input.principal_id,
+        &input.object_uri,
+        &unfiled,
+    )
+    .unwrap();
+    let is_finished = || {
+        crate::protected_content_runtime::runtime_custody_mint_is_finished(
+            fx.dir.path(),
+            &fx.mint(facts.mint_id),
+        )
+        .unwrap()
+    };
+    assert!(
+        !is_finished(),
+        "a published mint without a Library file can still Resume"
+    );
+
+    mock_published_protected_content()
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .files
+        .insert(
+            "metadata.json".to_string(),
+            serde_json::to_vec(&json!({
+                "name": "resume-listing.pdf",
+                "media": { "mimeType": "application/pdf" },
+                "properties": { "authority": MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY },
+            }))
+            .unwrap(),
+        );
+    let resumed = fx.resume(&ignored, &facts).await.unwrap();
+    assert_eq!(resumed.listing_uri, unfiled.listing_uri);
+    let capsule_uri = resumed.capsule_uri.as_deref().expect("Library copy URI");
+    assert!(
+        capsule_uri.ends_with("/Documents/protected-tail.ddrm"),
+        "PDF must be filed under Documents: {capsule_uri}"
+    );
+    let mut expected_owned = unfiled_owned;
+    expected_owned.capsule_uri = resumed.capsule_uri.clone();
+    assert_eq!(
+        load_owned(),
+        expected_owned,
+        "only the Library file URI changes"
+    );
+    assert_eq!(
+        fx.wallet_provider
+            .provider
+            .latest_transaction_approval_request_id()
+            .await
+            .as_deref(),
+        Some(original_approval.as_str())
+    );
+    assert!(fx.mint(facts.mint_id).creator_state() == mint.creator_state());
+    assert!(is_finished());
+    // Reproduce a Home that already published its listing but never wrote an
+    // owned-copy record. Recovery offers Resume and reuses the Library file.
+    use sha2::Digest as _;
+    let owner = hex::encode(sha2::Sha256::digest(input.principal_id.as_bytes()));
+    std::fs::remove_file(
+        fx.dir
+            .path()
+            .join("protected-content/runtime-purchases")
+            .join(owner)
+            .join(format!("{}.json", hex::encode(facts.mint_id.as_bytes()))),
+    )
+    .unwrap();
+    assert!(!is_finished());
+    let repaired = fx.resume(&ignored, &facts).await.unwrap();
+    assert_eq!(repaired.capsule_uri, resumed.capsule_uri);
+    assert!(is_finished());
 }
 
 /// Resume has nothing to run from before terms were recorded, and says so
