@@ -148,7 +148,7 @@ function draw() {
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
   const canChooseRequests=Boolean(accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);
-  presentation.input.supportedActions=presentation.input.supportedActions.filter(action=>action!=='view-requests'||canChooseRequests);
+  presentation.input.supportedActions=presentation.input.supportedActions.filter(action=>!['view-requests','select-request'].includes(action)||canChooseRequests);
   presentation.input.showNextRequests=canChooseRequests;
   if (showPicker && canChooseRequests) {
     presentation.input.stage='request-list';presentation.input.transactionHash=undefined;presentation.input.walletResult=undefined;presentation.request=requests.find(row=>row.request_id===selectedId)||requests[0];

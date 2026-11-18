@@ -559,3 +559,9 @@ for(const engine of ['chromium','webkit'])test(`outcome focus returns after a re
  await r.frame.evaluate(()=>window.focus());await refreshAndWaitForRedraw(r);assert.deepEqual(await r.frame.evaluate(()=>({focused:document.hasFocus(),focus:document.activeElement?.dataset.focus})),{focused:true,focus:'outcome'},'return restores the actual status focus, not an action with that name');await r.capture('outcome-focus-return');
  r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/WalletConnect is reconnecting/).count(),'the relay returned');assert.equal(r.fixture.state.verified,1);
 });
+
+for(const engine of ['chromium','webkit'])test(`answered request choices follow the same access gate in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);await r.link();await r.approval('answer-first');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'answer-second'});await r.refresh();await r.state('request-multiple');await r.click('send-request');await r.state('request-next');await r.frame.locator('[data-action=select-request]').waitFor();
+ r.fixture.setPermission('refused');await r.refresh();await r.frame.locator('[data-action=select-request]').waitFor({state:'detached'});await r.state('request-next');assert.equal(await r.frame.locator('[data-action=view-requests]').count(),0);assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='answer-second').status,'pending');await r.capture('answered-queue-refused-no-picker');
+ r.fixture.setPermission('granted');await r.refresh();await r.frame.locator('[data-action=select-request]').waitFor();await r.click('select-request');await r.state('request-waiting');assert.equal(r.fixture.state.completed,1,'reselection itself never sends a request');
+});
