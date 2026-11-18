@@ -101,12 +101,12 @@ test('round19 Review during saved-session restore waits for the same live adapte
 });
 
 test('round19 a delayed account list cannot describe an already linked session as unfinished',{timeout:60000},async t=>{
- const r=await setup(t);await r.link();await r.page.goto('about:blank');let release,entered;
+ const r=await setup(t);await r.link();const previousConfigReads=r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length;await r.page.goto('about:blank');let release,entered;
  const held=new Promise(resolve=>{release=resolve;}),reading=new Promise(resolve=>{entered=resolve;});
  await r.page.route('**/wallet/accounts',async route=>{entered();await held;await route.continue();});t.after(()=>release());
  await r.page.addInitScript(()=>{window.visibleStates=[];new MutationObserver(()=>{const state=document.querySelector('main')?.dataset.state;if(state&&window.visibleStates.at(-1)!==state)window.visibleStates.push(state);}).observe(document,{subtree:true,childList:true,attributes:true});});
  await r.reopen({ready:false});await reading;await delay(8000);
- const before=await r.frame.locator('main').innerText();assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length,1,'the previous link is the only config read while the new account list waits');release();
+ const before=await r.frame.locator('main').innerText();assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length,previousConfigReads,'the delayed new account list starts no additional config read');release();
  await r.frame.locator('[data-state=linked]').waitFor({timeout:15000});
  assert.equal(await r.frame.evaluate(()=>window.visibleStates.includes('saved-unlinked')||window.visibleStates.includes('account-changed')),false,'an account-list delay never displays unfinished linking');
  assert.match(before,/Loading your wallet connections/);assert.match(await r.frame.locator('main').innerText(),/Scripted phone wallet/);

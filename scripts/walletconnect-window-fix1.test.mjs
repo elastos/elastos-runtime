@@ -20,7 +20,7 @@ async function setup(t,engine,mutation){
  r.refresh=()=>r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));
  r.link=async()=>{await r.state('internet-ready');await r.click('Connect wallet');await r.state('qr-shown');await r.click('Copy link');await r.frame.getByText('Link copied.',{exact:true}).waitFor();await peer.pair(await page.evaluate(()=>window.copied));await r.state('linked');};
  r.request=(id,extra={})=>fixture.state.approvals.push({request_id:id,status:'pending',address:peer.address,chain_namespace:'eip155:8453',intent:'browser_personal_sign',proof_type:'siwe',connector_id:'wallet-walletconnect',capsule_id:'browser',requesting_origin:'https://example.test',reason:'Fix 1 '+id,expires_at:Math.floor(Date.now()/1000)+900,...extra});
- r.choose=async id=>{await r.click('View requests');await r.frame.locator(`[data-focus-key="select-request:${id}"]`).click();};
+ r.choose=async id=>{const read=page.waitForResponse(response=>response.url().endsWith('/wallet/approvals'));await r.refresh();await (await read).finished();await r.click('View requests');await r.frame.locator(`[data-focus-key="select-request:${id}"]`).click();};
  await r.reopen();return r;
 }
 for(const engine of ['chromium','webkit']){
@@ -28,7 +28,7 @@ for(const engine of ['chromium','webkit']){
   const r=await setup(t,engine);await r.link();
   r.request('typed',{intent:'browser_typed_data_sign'});await r.refresh();await r.state('linked');await r.choose('typed');await r.state('request-unsendable');
   await r.click('Back to connection');await r.state('linked');await r.click('Back to connection');await r.state('internet-ready');
-  await r.click('Manage in Inbox');assert.equal(await r.frame.getByRole('button',{name:'Connect wallet',exact:true}).isVisible(),true);
+  await r.click('Manage in Inbox');assert.equal(await r.page.evaluate(()=>window.events.some(event=>event.type==='home:open-target'&&event.target==='inbox')),true,'Manage uses the existing Inbox message');assert.equal(await r.frame.getByRole('button',{name:'Connect wallet',exact:true}).isVisible(),true);
   await r.click('Back to connection');await r.state('linked');assert.equal(await r.frame.getByRole('button',{name:'Disconnect',exact:true}).isVisible(),true);
   r.request('transaction',{intent:'transaction_intent'});await r.choose('transaction');await r.state('transaction-waiting');r.peer.choose({request:'reject'});await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('transaction-declined');
   assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='transaction').status,'approved');
