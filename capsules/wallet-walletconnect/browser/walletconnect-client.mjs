@@ -156,6 +156,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       signal?.throwIfAborted();
       if (pairingView) {
         const {connectWithView} = await import('./walletconnect-pairing.mjs');
+        signal?.throwIfAborted();
         adapter = {...loaded, connectWalletConnectEvm:options => connectWithView(loaded, options, pairingView)};
       } else adapter = loaded;
     }
