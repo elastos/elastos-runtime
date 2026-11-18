@@ -221,7 +221,12 @@ pub async fn start_server_with_sessions(config: ServerConfig) -> anyhow::Result<
     };
 
     // Public routes (no auth required)
-    let public_routes = Router::new().route("/api/health", get(routes::health));
+    let public_routes = Router::new()
+        .route("/api/health", get(routes::health))
+        .merge(routes::community_status_router(
+            provider_registry.clone(),
+            session_registry.clone(),
+        ));
 
     // Attach endpoint — exchanges local secret for a session token.
     let attach_routes = if let Some(secret) = attach_secret {

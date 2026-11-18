@@ -428,14 +428,6 @@ impl CollaborationTransportDriver {
         Ok(self)
     }
 
-    pub(crate) async fn has_remote_peers(&self) -> anyhow::Result<bool> {
-        self.network.has_remote_peers().await
-    }
-
-    pub(crate) async fn restore_missing_bootstrap_peers(&self) -> anyhow::Result<()> {
-        self.network.restore_missing_bootstrap_peers().await
-    }
-
     pub(crate) fn community_link(
         &self,
     ) -> &crate::collaboration_carrier::JoinedCollaborationNetwork {

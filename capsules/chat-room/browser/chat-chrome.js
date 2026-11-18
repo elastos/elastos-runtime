@@ -14,17 +14,18 @@
       let lastMenuManifest = "";
 
       // Runtime supplies the state; this bridge only renders its controls.
-      globalThis.elastosChatRenderCommunity = (state, sharedSelected, baseSendEnabled) => {
+      globalThis.elastosChatRenderCommunity = (state, sharedSelected, baseSendEnabled, detail) => {
         const labels = {
           not_joined: "Community not joined",
           left: "Left Community",
-          joined_unreachable: "Community unreachable",
-          recovery_exhausted: "Community can't connect. Restart Home to reconnect.",
+          reconnecting: "Reconnecting to Community",
+          starting: "Home is starting Community. It is checking the link.",
+          waiting_for_peers: "Community is waiting for another Home.",
           live: "Community live",
         };
         if (communityStatus) {
           communityStatus.dataset.state = state;
-          communityStatus.textContent = labels[state];
+          communityStatus.textContent = ((state === "reconnecting" || state === "starting") && detail) || labels[state];
           communityStatus.hidden = state === "live";
         }
         if (sharedSelected) {

@@ -78,21 +78,21 @@ test("Leave keeps Community history and draft, and leaves Direct controls alone"
 
 test("joined but unreachable shows the failure and blocks Community Send", () => {
   const chat = loadChat();
-  chat.render("joined_unreachable", true, true);
-  checkState(chat, "joined_unreachable", "Community unreachable", false);
+  chat.render("reconnecting", true, true);
+  checkState(chat, "reconnecting", "Reconnecting to Community", false);
   chat.pressEnter();
   assert.deepEqual(chat.submits, []);
 });
 
-test("exhausted recovery shows Home restart guidance and keeps Direct controls", () => {
+test("startup shows what Home waits for and keeps Direct controls", () => {
   const chat = loadChat();
-  chat.render("recovery_exhausted", true, true);
-  checkState(chat, "recovery_exhausted", "Community can't connect. Restart Home to reconnect.", false);
+  chat.render("starting", true, true);
+  checkState(chat, "starting", "Home is starting Community. It is checking the link.", false);
   chat.pressEnter();
   assert.deepEqual(chat.submits, []);
   chat.input.disabled = false;
   chat.send.disabled = false;
-  chat.render("recovery_exhausted", false, true);
+  chat.render("starting", false, true);
   assert.equal(chat.input.disabled, false);
   assert.equal(chat.send.disabled, false);
   assert.equal(chat.status.hidden, false);
@@ -100,15 +100,21 @@ test("exhausted recovery shows Home restart guidance and keeps Direct controls",
   checkState(chat, "live", "Community live", true);
 });
 
-test("Runtime's exhausted status is the exact copy Chat detects and shows", () => {
-  // Chat detects exhaustion by string equality with Runtime's status, so a copy
-  // edit on one side alone would silently bring back "Community unreachable" (#451).
+test("reconnecting shows Runtime's retry time and preserves the draft", () => {
   const chat = loadChat();
-  chat.render("recovery_exhausted", true, true);
-  const copy = chat.status.textContent;
-  const read = path => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-  assert.ok(read("elastos/crates/elastos-server/src/collaboration_product.rs").includes(`"${copy}".to_string()`));
-  assert.ok(read("capsules/chat-room-ui/src/lib.rs").includes(`Self::RecoveryExhausted => "${copy}"`));
+  const detail = "Home is reconnecting to Community. Next check in 60 seconds.";
+  chat.render("reconnecting", true, true, detail);
+  checkState(chat, "reconnecting", detail, false);
+  chat.pressEnter();
+  assert.deepEqual(chat.submits, []);
+});
+
+test("a Community node waiting for a Home keeps history and Direct controls", () => {
+  const chat = loadChat();
+  chat.render("waiting_for_peers", true, true);
+  checkState(chat, "waiting_for_peers", "Community is waiting for another Home.", false);
+  chat.pressEnter();
+  assert.deepEqual(chat.submits, []);
 });
 
 test("live enables one Enter submission while the base Send guard still applies", () => {

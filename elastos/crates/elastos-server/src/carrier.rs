@@ -124,6 +124,9 @@ const GOSSIP_ACTOR_TIMEOUT: Duration = Duration::from_secs(2);
 /// A gossip recovery that cannot take the state within this gives up rather
 /// than running later, right after another one.
 const GOSSIP_RECOVERY_START_TIMEOUT: Duration = Duration::from_secs(2);
+/// Includes the actor shutdown and every bounded topic subscription. It also
+/// releases a local lock if an unexpected lock holder stops making progress.
+const GOSSIP_RECOVERY_JOB_TIMEOUT: Duration = Duration::from_secs(600);
 /// A consumer that joins a CID topic after the holder announced still needs a
 /// window for bootstrap peers to form a gossip neighbor and for the signed fetch
 /// ticket to arrive. One absolute deadline covers late holders. Operator peer
@@ -739,6 +742,7 @@ pub struct GossipState {
     topic_joins: HashMap<String, TopicJoin>,
     closed: bool,
     memory_lookup: MemoryLookup,
+    mdns_lookup: Option<MdnsAddressLookup>,
     signing_key: Option<ed25519_dalek::SigningKey>,
     joined_topics: std::collections::HashSet<String>,
     bootstrap_peers: Vec<iroh::EndpointId>,
@@ -777,6 +781,7 @@ impl GossipState {
             topic_joins: HashMap::new(),
             closed: false,
             memory_lookup,
+            mdns_lookup: None,
             signing_key,
             joined_topics: std::collections::HashSet::new(),
             bootstrap_peers: Vec::new(),
@@ -1282,13 +1287,28 @@ async fn leave_and_rejoin_topic(state: &mut GossipState, topic_name: &str) -> Re
 /// Returns how many topics joined again.
 async fn rebuild_carrier_gossip(state: &mut GossipState) -> Result<usize> {
     anyhow::ensure!(!state.closed, "Carrier gossip is shut down");
-    // Leave first, so the old actor's Disconnects precede the new Joins.
+    let lookups = state.endpoint.address_lookup()?;
+    let owned_lookup_count = if state.mdns_lookup.is_some() { 3 } else { 2 };
+    anyhow::ensure!(
+        lookups.len() == owned_lookup_count,
+        "Carrier rebuild requires Runtime-owned address lookups"
+    );
+    // Runtime owns this endpoint's Memory and mDNS lookups. Release every
+    // receiver and sender before the old actor, then remove its retained lookup
+    // and eviction task. The next actor adds exactly one new gossip lookup.
+    state.senders.clear();
+    for (_, task) in state.receiver_tasks.drain() {
+        task.abort();
+        let _ = task.await;
+    }
+    state.topic_peers.lock().await.clear();
+    state.peers.lock().await.clear();
     let previous = state.gossip.clone();
-    if tokio::time::timeout(GOSSIP_ACTOR_TIMEOUT, previous.shutdown())
-        .await
-        .is_err()
-    {
-        warn!("carrier: gossip actor did not shut down for the rebuild; dropping it");
+    let _ = tokio::time::timeout(GOSSIP_ACTOR_TIMEOUT, previous.shutdown()).await;
+    lookups.clear();
+    lookups.add(state.memory_lookup.clone());
+    if let Some(mdns) = &state.mdns_lookup {
+        lookups.add(mdns.clone());
     }
     let replacement = spawn_carrier_gossip_for(&state.endpoint, state.community_hub);
     state.gossip = replacement.clone();
@@ -1961,17 +1981,15 @@ async fn start_carrier_node_with_network(
     )
     .await?;
 
-    // LAN discovery exchanges IP addresses for direct connections.
-    // The endpoint's IP-only policy also filters the published addresses.
-    if carrier_mdns_enabled() {
-        if let Ok(mdns) = MdnsAddressLookup::builder().build(endpoint.id()) {
-            endpoint
-                .address_lookup()
-                .context("Carrier endpoint closed before mDNS setup")?
-                .add(mdns);
-        }
+    // Runtime retains these services across gossip actor replacement.
+    let mdns_lookup = if carrier_mdns_enabled() {
+        MdnsAddressLookup::builder().build(endpoint.id()).ok()
     } else {
         info!("carrier: mDNS discovery disabled by ELASTOS_CARRIER_MDNS");
+        None
+    };
+    if let Some(mdns) = &mdns_lookup {
+        endpoint.address_lookup()?.add(mdns.clone());
     }
 
     // Add MemoryLookup for explicit peer addresses (--connect tickets)
@@ -2006,6 +2024,7 @@ async fn start_carrier_node_with_network(
     )));
     let gossip_handler = {
         let mut state = gossip_state.lock().await;
+        state.mdns_lookup = mdns_lookup;
         state.bootstrap_peers = bootstrap_peers;
         state.direct_only = network == CarrierNodeNetwork::Isolated;
         state.community_hub = community_hub;
@@ -6836,26 +6855,52 @@ impl CarrierGossipProvider {
     /// cannot leave a topic half joined, and starts within
     /// `GOSSIP_RECOVERY_START_TIMEOUT` or not at all.
     async fn recover_gossip(&self, rebuild: bool, topic: String) -> serde_json::Value {
+        self.recover_gossip_with_deadline(rebuild, topic, GOSSIP_RECOVERY_JOB_TIMEOUT)
+            .await
+    }
+
+    async fn recover_gossip_with_deadline(
+        &self,
+        rebuild: bool,
+        topic: String,
+        deadline: Duration,
+    ) -> serde_json::Value {
         let state = self.state.clone();
         let recovery = tokio::spawn(async move {
-            let mut state = tokio::time::timeout(GOSSIP_RECOVERY_START_TIMEOUT, state.lock())
+            let mut state = match tokio::time::timeout(GOSSIP_RECOVERY_START_TIMEOUT, state.lock())
                 .await
-                .context("Carrier gossip is busy")?;
-            if rebuild {
-                rebuild_carrier_gossip(&mut state)
-                    .await
-                    .map(|topics| serde_json::json!({"status":"ok","data":{"topics": topics}}))
-            } else {
-                leave_and_rejoin_topic(&mut state, &topic)
-                    .await
-                    .map(|()| serde_json::json!({"status":"ok","data":{"topic": topic}}))
-            }
+            {
+                Ok(state) => state,
+                Err(_) => {
+                    return Ok(serde_json::json!({
+                        "status":"error", "code":"recovery_busy", "message":"Carrier gossip is busy"
+                    }));
+                }
+            };
+            tokio::time::timeout(deadline, async {
+                if rebuild {
+                    rebuild_carrier_gossip(&mut state)
+                        .await
+                        .map(|topics| serde_json::json!({"status":"ok","data":{"topics": topics}}))
+                } else {
+                    leave_and_rejoin_topic(&mut state, &topic)
+                        .await
+                        .map(|()| serde_json::json!({"status":"ok","data":{"topic": topic}}))
+                }
+            })
+            .await
+            .context("gossip recovery deadline exceeded")?
         });
         match recovery.await {
             Ok(Ok(response)) => response,
-            Ok(Err(err)) => serde_json::json!({
-                "status":"error","code":"recovery_failed","message": format!("{err:#}")
-            }),
+            Ok(Err(err)) => {
+                let code = if err.is::<tokio::time::error::Elapsed>() {
+                    "recovery_timeout"
+                } else {
+                    "recovery_failed"
+                };
+                serde_json::json!({"status":"error","code":code,"message": format!("{err:#}")})
+            }
             Err(_) => serde_json::json!({
                 "status":"error","code":"recovery_failed","message":"gossip recovery stopped"
             }),
@@ -7521,6 +7566,7 @@ impl Provider for CarrierGossipProvider {
                     "topic": topic_name,
                     "peer_count": peer_count,
                     "received_frames": received_frames,
+                    "receiver_alive": state.receiver_tasks.get(topic_name).is_some_and(|task| !task.is_finished()),
                 }}))
             }
 
@@ -18975,7 +19021,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         drop(held);
-        assert_eq!(busy["code"], "recovery_failed", "{busy}");
+        assert_eq!(busy["code"], "recovery_busy", "{busy}");
         let before = remote_frames(&provider2, topic).await;
         assert!(
             frames_flow(&provider1, &provider2, topic, before).await,
