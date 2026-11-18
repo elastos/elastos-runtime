@@ -167,7 +167,8 @@ export function createWalletPreferences({
       body,
     );
     const remove = actionButton("Remove", "walletRemoveAccount", account.account_id, true);
-    remove.dataset.walletAccountName = accountDisplayName(account);
+    remove.dataset.walletAccountName = account.name;
+    remove.dataset.walletDisplayName = accountDisplayName(account);
     remove.dataset.walletAccountManaged = String(isPasskeyManagedAccount(account));
     remove.dataset.walletAccountDescription = `${account.network} · ${shortAddress(account.address)}`;
     row.append(remove);
@@ -195,16 +196,17 @@ export function createWalletPreferences({
       return;
     }
     const name = readStoredValueFromDataset(remove.dataset.walletAccountName) || "account";
+    const displayName = readStoredValueFromDataset(remove.dataset.walletDisplayName) || name;
     // Keep peer identity separate from the trusted confirmation sentence.
     const heading = textNode("h2", "");
-    const identity = textNode("bdi", name);
+    const identity = textNode("bdi", displayName);
     identity.dir = "auto";
     identity.style.unicodeBidi = "isolate";
     heading.append("Remove ", identity, "?");
     // In-window confirm sheet (same modal the flows use); the passkey prompt
     // that follows remains the real authority gate.
     openFlowModal(
-      `Remove ${name}?`,
+      `Remove ${displayName}?`,
       remove.dataset.walletAccountManaged === "true"
         ? "Built-in accounts require their Wallet recovery key to restore later. Passkey confirmation is required."
         : "Remove this account from Home. Your wallet and funds stay unchanged. Passkey confirmation is required.",
