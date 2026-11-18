@@ -49,7 +49,14 @@ async function setup(t,engine,mutation){
   relayer.__windowFixtureObserved=true;const original=relayer.onProviderPayload;
   relayer.onProviderPayload=function(...args){window.walletFixturePayloadCount=(window.walletFixturePayloadCount||0)+1;window.walletFixturePayloads=(window.walletFixturePayloads||0)+1;return original.apply(this,args).finally(()=>window.walletFixturePayloads--);};
  });}
- async function drainRelayWork(){if(frame&&!frame.isDetached())await until(()=>frame.evaluate(()=>(window.walletFixturePayloads||0)===0),'SDK payload processing settled before a planned frame navigation');}
+ async function drainRelayWork(){if(frame&&!frame.isDetached()){
+  await until(()=>frame.evaluate(()=>(window.walletFixturePayloads||0)===0),'SDK payload processing settled before a planned frame navigation');
+  if(fixture.state.permission==='granted'&&!fixture.state.expiredLaunch)await frame.evaluate(async()=>{
+   const core=globalThis['_walletConnectCore_wallet-walletconnect'];
+   // runtimeStorage.getKeys waits for its real write queue. A retired Core has no heartbeat listeners.
+   if(core?.heartbeat?.events?.eventNames().length)await core.storage.getKeys();
+  });
+ }}
  async function leave(){await drainRelayWork();await page.goto('about:blank');}
  async function reopen(){
   await drainRelayWork();
@@ -196,6 +203,8 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
  else if(event==='removed')await r.state(phase==='signature'?'request-sent-wallet-removed':phase==='result'?'request-done':'wallet-removed');
  else await pause(250);
  if(event==='removed'&&phase==='result')await r.frame.getByText(/Your wallet removed this connection\./).waitFor();
+ if(event==='network')await until(async()=>/Ethereum/.test(await r.frame.locator('main').innerText()),'the wallet network event reached the visible card');
+ if(event==='account'||event==='session-account')await until(async()=>(await r.frame.locator('main').innerText()).toLowerCase().includes(r.peer.address.slice(0,6).toLowerCase()),'the wallet account event reached the visible card');
  await r.capture(`event-${event}-${phase}`);
  if(event==='account'||event==='session-account')assert.match(await r.frame.locator('main').innerText(),new RegExp(r.peer.address.slice(0,6),'i'));
  if(event==='network')assert.match(await r.frame.locator('main').innerText(),/Ethereum/);
