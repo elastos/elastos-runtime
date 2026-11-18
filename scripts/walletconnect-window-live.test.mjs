@@ -44,18 +44,30 @@ async function setup(t,engine,mutation){
  t.after(async()=>{await peer.stop();await browser.close();await fixture.stop();assert.deepEqual(errors,[],'every live walk rejects unexpected page errors');});
  let frame;
  async function observeRelayWork(){await frame.evaluate(()=>{
-  const relayer=globalThis['_walletConnectCore_wallet-walletconnect']?.relayer;
+  const core=globalThis['_walletConnectCore_wallet-walletconnect'];
+  if(core?.storage&&!core.storage.__windowFixtureObserved){
+   core.storage.__windowFixtureObserved=true;
+   for(const key of ['setItem','removeItem']){const original=core.storage[key];core.storage[key]=function(...args){
+    window.walletFixtureStorageStarts=(window.walletFixtureStorageStarts||0)+1;window.walletFixtureStoragePending=(window.walletFixtureStoragePending||0)+1;
+    return Promise.resolve(original.apply(this,args)).finally(()=>window.walletFixtureStoragePending--);
+   };}
+  }
+  const relayer=core?.relayer;
   if(!relayer||relayer.__windowFixtureObserved)return;
   relayer.__windowFixtureObserved=true;const original=relayer.onProviderPayload;
   relayer.onProviderPayload=function(...args){window.walletFixturePayloadCount=(window.walletFixturePayloadCount||0)+1;window.walletFixturePayloads=(window.walletFixturePayloads||0)+1;return original.apply(this,args).finally(()=>window.walletFixturePayloads--);};
  });}
  async function drainRelayWork(){if(frame&&!frame.isDetached()){
   await until(()=>frame.evaluate(()=>(window.walletFixturePayloads||0)===0),'SDK payload processing settled before a planned frame navigation');
-  if(fixture.state.permission==='granted'&&!fixture.state.expiredLaunch)await frame.evaluate(async()=>{
-   const core=globalThis['_walletConnectCore_wallet-walletconnect'];
-   // runtimeStorage.getKeys waits for its real write queue. A retired Core has no heartbeat listeners.
-   if(core?.heartbeat?.events?.eventNames().length)await core.storage.getKeys();
-  });
+  if(fixture.state.permission==='granted'&&!fixture.state.expiredLaunch){
+   await observeRelayWork();
+   await frame.evaluate(()=>{const core=globalThis['_walletConnectCore_wallet-walletconnect'];if(core?.heartbeat?.events?.eventNames().length)core.heartbeat.stop();});
+   await until(()=>frame.evaluate(async()=>{
+    const core=globalThis['_walletConnectCore_wallet-walletconnect'];if(!core?.heartbeat?.events?.eventNames().length)return true;
+    const before=window.walletFixtureStorageStarts||0;await core.storage.getKeys();
+    return (window.walletFixtureStoragePending||0)===0&&before===(window.walletFixtureStorageStarts||0);
+   }),'real SDK writes settled before planned navigation',5000);
+  }
  }}
  async function leave(){await drainRelayWork();await page.goto('about:blank');}
  async function reopen(){
