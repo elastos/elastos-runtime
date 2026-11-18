@@ -879,9 +879,12 @@ async function run() {
     assert((await approvedCard.textContent()).includes("does not cancel"), "dismissal explains ownership of the wallet transaction");
     assert(await approvedCard.getByRole("button").count() === 1, "approved send offers Dismiss without another approval");
     await approvedCard.getByRole("button", { name: "Dismiss", exact: true }).click();
-    await approvedCard.waitFor({ state: "detached" });
+    const acknowledgement = approvedCard.getByRole("status");
+    await acknowledgement.filter({ hasText: "Request dismissed." }).waitFor({ state: "visible" });
+    assert(await approvedCard.getByRole("button").count() === 0, "acknowledgement offers no second decision");
     assert(server.state.rejectBodies.length === 1, "one dismissal reaches Runtime");
-    assert((await dismissFrame.locator("#wallet-status").textContent()).startsWith("Request dismissed."), "person sees dismissal confirmation");
+    await dismissFrame.locator("#wallet-activity-drawer [data-wallet-close-drawer]").click();
+    await approvedCard.waitFor({ state: "detached" });
     server.state.approvals[0].transaction_hash = `0x${"a".repeat(64)}`;
     server.state.approvals[0].completed_at = Math.floor(Date.now() / 1000);
     await railPage.reload({ waitUntil: "networkidle" });
