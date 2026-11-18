@@ -61,7 +61,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   function chooseStage() {
     if (selected && !validAddress(selected.address)) { fixedOutcome = true; return 'request-unavailable'; }
     if (selected?.status === 'completed') return selected.transaction ? 'transaction-done' : 'request-done';
-    if (disconnected) return 'link-error';
+    if (disconnected) return linkObserved ? 'account-unavailable' : 'link-error';
     if (accountEvent?.length === 0) return accounts.length ? 'account-unavailable' : 'ready';
     if (accountEvent && accounts.length && !accounts.some(a => sameAccount(a.address, accountEvent[0]))) return 'account-unavailable';
     if (kind === 'unisat' && networkEvent !== null && networkEvent !== 'livenet') return networkEvent === 'testnet' ? 'network-changed' : 'network-unknown';
@@ -103,7 +103,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       const status = root.querySelector('.connection-status'), notice = root.querySelector('.connection-notice');
       if (status && notice) { status.replaceChildren(...notice.childNodes); notice.remove(); }
     }
-    if (kind === 'metamask' && stage === 'account-unavailable' && accountEvent?.length === 0) root.querySelector('.connection-notice')?.remove();
+    if (stage === 'account-unavailable' && (disconnected || kind === 'metamask' && accountEvent?.length === 0)) root.querySelector('.connection-notice')?.remove();
     if (!root.querySelector('button:not(:disabled)') && frameHomeToken && homeOrigin && window.top !== window) {
       // Reuse the shared Close control when this base lacks the screen's
       // navigation capability. No inactive-window status is mounted.

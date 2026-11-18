@@ -47,12 +47,23 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
             // packet or merely waiting for an already-visible state.
             await f.frame.waitForFunction(() => eventProbe.length === 1);
             await waitState(phase !== 'linked' ? expected : name === 'accountsChanged' ? 'account-unavailable'
-              : name === 'disconnect' ? 'link-error' : kind === 'unisat' ? 'network-changed' : 'linked');
+              : name === 'disconnect' ? 'account-unavailable' : kind === 'unisat' ? 'network-changed' : 'linked');
             assert.deepEqual(await f.top.evaluate(() => ({ calls: testState.calls.length, effects: testState.effects.length, receipts: testState.receipts.length })), before, `${phase}/${name}: notification is passive`);
             if (['proof', 'signature'].includes(phase)) assert.equal(await f.action('stop-waiting').count(), 1);
             if (['signature', 'result'].includes(phase) && ['accountsChanged', 'disconnect'].includes(name)) assert.equal(await f.frame.locator('.connection-request-account').count(), 0);
             if (phase === 'result') assert.equal(await f.action('send-request').count(), 0);
             if (name.includes('Changed') && name !== 'accountsChanged' && phase !== 'proof') assert.match(await f.frame.locator('body').innerText(), kind === 'metamask' ? /Elastos Smart Chain/ : /test network.*unsupported|Bitcoin test network/i);
+            if (['proof', 'signature'].includes(phase)) {
+              await f.top.evaluate(() => {
+                Object.defineProperty(testState, 'mode', { configurable: true, writable: true, value: 'approve' });
+                const pending = testState.pending.shift(); pending.resolve(pending.result);
+              });
+              await waitState(phase === 'signature' ? 'request-done' : ['accountsChanged', 'disconnect'].includes(name) ? 'account-unavailable'
+                : kind === 'unisat' ? 'network-changed' : 'linked');
+              assert.equal(await f.top.evaluate(() => testState.receipts.length), 1, 'a real accepted proof/result is retained after the event');
+              if (phase === 'proof' && name === 'disconnect') assert.doesNotMatch(await f.frame.locator('body').innerText(), /Could not connect|Permissions|Choose the required account/);
+              if (phase === 'signature') assert.equal(await f.action('send-request').count(), 0);
+            }
             assert.deepEqual(f.errors, []);
           } finally { await f.close(); }
         }
@@ -287,7 +298,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
       await f.state('linked');
       assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
       await f.top.evaluate(()=>emitWallet('disconnect',{code:4900}));
-      await f.state('link-error');
+      await f.state('account-unavailable');
       assert.doesNotMatch(await f.frame.locator('body').innerText(),/not sharing/i);
     }finally{await f.close();}
     const g = await fixture(browser,kind,{saved:true,requests:true});
