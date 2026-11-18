@@ -582,7 +582,14 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
         if let Some(step) = watchdog.observe(None, None, now) {
             let (old_actor, old_receivers) = {
                 let state = f.home.gossip_state.lock().await;
-                (state.gossip.clone(), state.receiver_tasks.values().map(|task| task.abort_handle()).collect::<Vec<_>>())
+                (
+                    state.gossip.clone(),
+                    state
+                        .receiver_tasks
+                        .values()
+                        .map(|task| task.abort_handle())
+                        .collect::<Vec<_>>(),
+                )
             };
             match step {
                 crate::collaboration_carrier::CommunityLinkStep::Rejoin => {
@@ -602,7 +609,10 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
                 }
             }
             if step == crate::collaboration_carrier::CommunityLinkStep::Rebuild {
-                assert!(old_receivers.iter().all(|task| task.is_finished()), "old receivers are joined before rebuild returns");
+                assert!(
+                    old_receivers.iter().all(|task| task.is_finished()),
+                    "old receivers are joined before rebuild returns"
+                );
                 let stopped = tokio::time::timeout(Duration::from_secs(2), async {
                     loop {
                         match old_actor.subscribe(topic_hash(&f.topic), Vec::new()).await {
@@ -611,8 +621,12 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
                         }
                         tokio::time::sleep(Duration::from_millis(10)).await;
                     }
-                }).await;
-                assert!(stopped.is_ok(), "the retired actor closes its local control channel within its shutdown bound");
+                })
+                .await;
+                assert!(
+                    stopped.is_ok(),
+                    "the retired actor closes its local control channel within its shutdown bound"
+                );
             }
             watchdog.step_finished(now);
         }
@@ -626,12 +640,30 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
         )
     };
     let posts = f.exchange("more than120 actual actor replacements").await;
-    let connections_closed = wait_for(|| f.hub.accepted.load(Ordering::SeqCst).saturating_sub(f.hub.closed.load(Ordering::SeqCst)) == 1, 20).await;
+    let connections_closed = wait_for(
+        || {
+            f.hub
+                .accepted
+                .load(Ordering::SeqCst)
+                .saturating_sub(f.hub.closed.load(Ordering::SeqCst))
+                == 1
+        },
+        20,
+    )
+    .await;
     let after_sockets = open_socket_count(std::env::consts::OS);
     f.stop().await;
     posts.unwrap();
-    assert!(connections_closed, "only the current gossip connection remains");
-    if let (Some(before), Some(after)) = (before_sockets, after_sockets) { assert!(after <= before, "socket descriptors stay bounded: {before} -> {after}"); }
+    assert!(
+        connections_closed,
+        "only the current gossip connection remains"
+    );
+    if let (Some(before), Some(after)) = (before_sockets, after_sockets) {
+        assert!(
+            after <= before,
+            "socket descriptors stay bounded: {before} -> {after}"
+        );
+    }
     assert!(rebuilt > 120, "rebuilds continue:{rebuilt}");
     assert_eq!(
         (lookups, receivers, senders),
@@ -664,16 +696,37 @@ async fn community_core_real_quiet_wire_counts_and_status() {
     for (key, count) in before {
         *traffic.entry(key).or_default() -= count;
     }
-    let shuffle_times = f.hub.home_shuffle_times.lock().unwrap().iter().copied().collect::<Vec<_>>();
+    let shuffle_times = f
+        .hub
+        .home_shuffle_times
+        .lock()
+        .unwrap()
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
     // The pinned HyParView backs off through1,2,4,8,16,32seconds, then
     // schedules60seconds with25% jitter. After the first six sends, every
     // interval is45..75seconds. One second covers local scheduling variance;
     // any added Shuffle between normal sends would violate the lower bound.
-    let shuffle_gaps_ms = shuffle_times.windows(2).skip(6).map(|p| p[1].duration_since(p[0]).as_millis()).collect::<Vec<_>>();
-    assert!(!shuffle_gaps_ms.is_empty(), "the production shuffle timer ran");
-    assert!(shuffle_gaps_ms.iter().all(|gap| (44_000..=76_000).contains(gap)), "healthy peer-message cadence stays at the pinned protocol interval");
+    let shuffle_gaps_ms = shuffle_times
+        .windows(2)
+        .skip(6)
+        .map(|p| p[1].duration_since(p[0]).as_millis())
+        .collect::<Vec<_>>();
+    assert!(
+        !shuffle_gaps_ms.is_empty(),
+        "the production shuffle timer ran"
+    );
+    assert!(
+        shuffle_gaps_ms
+            .iter()
+            .all(|gap| (44_000..=76_000).contains(gap)),
+        "healthy peer-message cadence stays at the pinned protocol interval"
+    );
     let report = serde_json::json!({"connections_before":connections,"connections_after":f.hub.accepted.load(Ordering::SeqCst),"quiet_traffic":traffic,"home_shuffle_gaps_ms":shuffle_gaps_ms,"repairs":f.faults.repairs.load(Ordering::SeqCst),"disconnected_views":f.disconnected.load(Ordering::SeqCst)-disconnected});
-    if let Ok(path) = std::env::var("COMMUNITY_CORE_QUIET_BASELINE") { compare_develop_wire(&report, &path); }
+    if let Ok(path) = std::env::var("COMMUNITY_CORE_QUIET_BASELINE") {
+        compare_develop_wire(&report, &path);
+    }
     if let Ok(path) = std::env::var("COMMUNITY_CORE_QUIET_RECEIPT") {
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     }
@@ -714,33 +767,58 @@ async fn community_core_real_log_rate_keeps_the_reason_without_private_text() {
 }
 
 fn open_socket_count(platform: &str) -> Option<usize> {
-    if platform != "linux" { return None; }
-    Some(std::fs::read_dir("/proc/self/fd").ok()?.filter_map(|entry| {
-        std::fs::read_link(entry.ok()?.path()).ok()
-    }).filter(|target| target.to_string_lossy().starts_with("socket:")).count())
+    if platform != "linux" {
+        return None;
+    }
+    Some(
+        std::fs::read_dir("/proc/self/fd")
+            .ok()?
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .filter(|target| target.to_string_lossy().starts_with("socket:"))
+            .count(),
+    )
 }
 
 #[tokio::test]
 async fn community_core_real_health_query_failures_repair_despite_a_remembered_peer() {
-    let f=Fixture::start().await;f.exchange("initial health query").await.unwrap();
-    f.faults.cached_peer.store(true,Ordering::SeqCst);
-    f.faults.health_fails.store(true,Ordering::SeqCst);
-    let repaired=wait_for(||f.faults.repairs.load(Ordering::SeqCst)>0,100).await;
-    let honest=!f.connected.load(Ordering::SeqCst);
-    f.faults.health_fails.store(false,Ordering::SeqCst);f.faults.cached_peer.store(false,Ordering::SeqCst);
-    let healthy=wait_for(||f.connected.load(Ordering::SeqCst),40).await;
-    let posts=f.exchange("health-query failure recovery").await;
-    f.stop().await;assert!(repaired);assert!(honest);assert!(healthy);posts.unwrap();
+    let f = Fixture::start().await;
+    f.exchange("initial health query").await.unwrap();
+    f.faults.cached_peer.store(true, Ordering::SeqCst);
+    f.faults.health_fails.store(true, Ordering::SeqCst);
+    let repaired = wait_for(|| f.faults.repairs.load(Ordering::SeqCst) > 0, 100).await;
+    let honest = !f.connected.load(Ordering::SeqCst);
+    f.faults.health_fails.store(false, Ordering::SeqCst);
+    f.faults.cached_peer.store(false, Ordering::SeqCst);
+    let healthy = wait_for(|| f.connected.load(Ordering::SeqCst), 40).await;
+    let posts = f.exchange("health-query failure recovery").await;
+    f.stop().await;
+    assert!(repaired);
+    assert!(honest);
+    assert!(healthy);
+    posts.unwrap();
 }
 
 fn compare_develop_wire(current: &serde_json::Value, baseline_path: &str) {
     use sha2::Digest;
     let path = std::path::Path::new(baseline_path);
-    assert!(path.metadata().unwrap().len() <= 64 * 1024, "baseline receipt is bounded");
-    let baseline: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    assert!(baseline["head"].as_str().unwrap().starts_with("8f33f07a9"), "committed develop control required");
-    let lock = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock")).unwrap();
-    assert_eq!(baseline["lock_sha256"], hex::encode(sha2::Sha256::digest(lock)), "same pinned library and dependencies");
+    assert!(
+        path.metadata().unwrap().len() <= 64 * 1024,
+        "baseline receipt is bounded"
+    );
+    let baseline: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert!(
+        baseline["head"].as_str().unwrap().starts_with("8f33f07a9"),
+        "committed develop control required"
+    );
+    let lock =
+        std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock"))
+            .unwrap();
+    assert_eq!(
+        baseline["lock_sha256"],
+        hex::encode(sha2::Sha256::digest(lock)),
+        "same pinned library and dependencies"
+    );
     for value in [current, &baseline] {
         assert_eq!(value["connections_before"], 1);
         assert_eq!(value["connections_after"], 1);
@@ -749,18 +827,34 @@ fn compare_develop_wire(current: &serde_json::Value, baseline_path: &str) {
     }
     let old = baseline["quiet_traffic"].as_object().unwrap();
     let new = current["quiet_traffic"].as_object().unwrap();
-    let kinds = old.keys().chain(new.keys()).collect::<std::collections::BTreeSet<_>>();
+    let kinds = old
+        .keys()
+        .chain(new.keys())
+        .collect::<std::collections::BTreeSet<_>>();
     for kind in kinds {
-        let a=old.get(kind).and_then(|v|v.as_u64()).unwrap_or(0);
-        let b=new.get(kind).and_then(|v|v.as_u64()).unwrap_or(0);
-        assert_eq!(a == 0, b == 0, "no new peer message kind in the quiet period: {kind}");
-        if kind.contains(":Gossip:") { assert_eq!((a,b),(0,0),"no quiet application or probe messages"); }
-        else if kind.ends_with(":Shuffle") || kind.ends_with(":ShuffleReply") {
+        let a = old.get(kind).and_then(|v| v.as_u64()).unwrap_or(0);
+        let b = new.get(kind).and_then(|v| v.as_u64()).unwrap_or(0);
+        assert_eq!(
+            a == 0,
+            b == 0,
+            "no new peer message kind in the quiet period: {kind}"
+        );
+        if kind.contains(":Gossip:") {
+            assert_eq!((a, b), (0, 0), "no quiet application or probe messages");
+        } else if kind.ends_with(":Shuffle") || kind.ends_with(":ShuffleReply") {
             // Six startup delays total47.25..78.75seconds; later delays
             // are45..75seconds. This1001-second window begins within the
             // first seven seconds, so14..29messages includes every normal
             // phase and the one reply that may cross either boundary.
-            assert!((14..=29).contains(&a) && (14..=29).contains(&b), "both trees keep the pinned jittered shuffle budget: {kind} {a}/{b}");
-        } else { assert!(a.abs_diff(b)<=1,"same control traffic outside the jittered shuffle: {kind} {a}/{b}"); }
+            assert!(
+                (14..=29).contains(&a) && (14..=29).contains(&b),
+                "both trees keep the pinned jittered shuffle budget: {kind} {a}/{b}"
+            );
+        } else {
+            assert!(
+                a.abs_diff(b) <= 1,
+                "same control traffic outside the jittered shuffle: {kind} {a}/{b}"
+            );
+        }
     }
 }
