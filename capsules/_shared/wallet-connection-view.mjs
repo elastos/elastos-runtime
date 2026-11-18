@@ -99,7 +99,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
   if (message?.outcome === 'no_wallet') stage = input.window === 'metamask' && stage === 'other-ethereum-wallet' ? stage : 'extension-missing';
   const settled=message?.settled;
   // Refusing a network change before handoff is not a transaction-send result.
-  const transactionStage=stage.startsWith('transaction-')||stage==='checking-response';
+  const transactionStage=stage.startsWith('transaction-');
   const disposition=request?.transaction&&!transactionStage?null:settled?.result || ({declined:'declined',request_not_authorized:'refused'}[message?.outcome]) || null;
   const walletResult={disposition,receipt:settled?.receipt??null};
   if(request?.transaction&&transactionStage){
@@ -108,7 +108,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
     if(disposition==='failed')stage='transaction-wallet-error';
     if(disposition==='answered'&&settled.receipt==='recorded'&&stage!=='transaction-late-result')stage='transaction-done';
   }
-  if(request && !request.transaction && (stage.startsWith('request-')||stage==='checking-response')) {
+  if(request && !request.transaction && stage.startsWith('request-')) {
     if(disposition==='declined')stage='request-declined';
     if(disposition==='refused')stage=Object.hasOwn(screens[input.window],'request-access-error')?'request-access-error':'request-wallet-error';
     if(disposition==='failed')stage='request-wallet-error';
