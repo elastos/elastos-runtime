@@ -157,10 +157,12 @@ export function startExtensionWindow(kind, homeClipboard) {
       try {
         const [a, r] = await Promise.all(['accounts', 'approvals'].map(suffix => fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/${suffix}`, { headers: { 'x-elastos-home-token': frameHomeToken } })));
         if (disposed || observedRevision !== revision) return;
-        accounts = Array.isArray(a?.accounts) ? a.accounts : [];
+        if (a?.available === false || !Array.isArray(a?.accounts)) throw new Error('Home accounts are unavailable.');
+        const approvals = approvalList(r);
+        accounts = a.accounts;
         readFailed = false;
-        for (const request of Array.isArray(r?.approval_requests) ? r.approval_requests : []) requestNetworks.set(request.request_id, request.chain_namespace);
-        requests = (Array.isArray(r?.approval_requests) ? r.approval_requests : []).filter(signable).filter(r => !fixedOutcome || r.request_id !== selected?.id);
+        for (const request of approvals) requestNetworks.set(request.request_id, request.chain_namespace);
+        requests = approvals.filter(signable).filter(r => !fixedOutcome || r.request_id !== selected?.id);
         pendingVerificationRequired = false;
         if (!operation && !uncertain && !fixedOutcome && observedRevision === revision) {
           if (selected && !requests.some(request => request.request_id === selected.id)) {
@@ -245,6 +247,11 @@ export function startExtensionWindow(kind, homeClipboard) {
     }
   }
 
+  function approvalList(response) {
+    if (response?.available === false || !Array.isArray(response?.approval_requests)) throw new Error('Home requests are unavailable.');
+    return response.approval_requests;
+  }
+
   async function checkPendingAfterRefusal() {
     const id = selected.id;
     checkingPreflight = true; pendingVerificationRequired = true; draw();
@@ -253,7 +260,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       // request is still pending; only the existing Runtime list can do that.
       const response = await fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/approvals`, { headers: { 'x-elastos-home-token': frameHomeToken } });
       if (disposed || selected?.id !== id || fixedOutcome) return;
-      requests = (Array.isArray(response?.approval_requests) ? response.approval_requests : []).filter(signable);
+      requests = approvalList(response).filter(signable);
       const pending = requests.find(request => request.request_id === id && request.status === 'pending');
       pendingVerificationRequired = false;
       if (!pending) { fixedOutcome = true; stage = 'request-unavailable'; }

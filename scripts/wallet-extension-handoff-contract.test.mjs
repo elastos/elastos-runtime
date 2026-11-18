@@ -46,9 +46,9 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   }finally{await browser.close();}
 });
 
-async function failedRead(f,kind) {
+async function failedRead(f,kind,failure=503) {
   await f.state('request-waiting');
-  const fail=route=>route.fulfill({status:503,json:{error:'fixture read error'}});
+  const fail=route=>route.fulfill(failure===503?{status:503,json:{error:'fixture read error'}}:{json:{available:false,approval_requests:[]}});
   await f.context.route('**/approvals',fail);
   await refuse(f,kind);await f.state('link-error');
   const consumedAtRuntime=await f.top.evaluate(()=>testState.requests[0].status==='approved');
@@ -60,12 +60,14 @@ async function failedRead(f,kind) {
   await f.state(consumedAtRuntime?'request-unavailable':'request-waiting');
   assert.equal(await f.top.evaluate(()=>testState.effects.length),1,'retry only repeats Home reads');
 }
-for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: wallet events cannot revive Send after a failed pending-list verification`,{timeout:15000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async()=>{
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: wallet events cannot revive Send after a failed pending-list verification`,{timeout:30000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async()=>{
   const browser=await playwright[engine].launch({headless:true});try{
-    const good=await fixture(browser,kind,{saved:true,requests:true});try{await failedRead(good,kind);}finally{await good.close();}
-    const bad=await fixture(browser,kind,{saved:true,requests:true,mutate:source=>{const broken=source.replace('pendingVerificationRequired = true;','pendingVerificationRequired = false;');assert.notEqual(broken,source);return broken;}});try{
-      await assert.rejects(failedRead(bad,kind),error=>error.code==='ERR_ASSERTION'||/locator.waitFor: Timeout/.test(error.message),'missing verification hold must fail');
-    }finally{await bad.close();}
+    for(const failure of [503,200]) {
+      const good=await fixture(browser,kind,{saved:true,requests:true});try{await failedRead(good,kind,failure);}finally{await good.close();}
+      const bad=await fixture(browser,kind,{saved:true,requests:true,mutate:source=>{const broken=source.replace('pendingVerificationRequired = true;','pendingVerificationRequired = false;');assert.notEqual(broken,source);return broken;}});try{
+        await assert.rejects(failedRead(bad,kind,failure),error=>error.code==='ERR_ASSERTION'||/locator.waitFor: Timeout/.test(error.message),'missing verification hold must fail');
+      }finally{await bad.close();}
+    }
   }finally{await browser.close();}
 });
 
