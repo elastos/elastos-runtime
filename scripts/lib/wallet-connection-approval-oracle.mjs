@@ -25,7 +25,7 @@ export async function observeApproval(page){
   const unit=site.closest('.connection-approval-unit');
   const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d'),style=getComputedStyle(site);ctx.font=style.fontWeight+' '+style.fontSize+' '+style.fontFamily;
   const origin=site.textContent,authority=origin.slice(origin.indexOf('://')+3),tail=authority.split('.').slice(-3).join('.');
-  let offset=origin.indexOf('://')+3,labelsIntact=true;for(const label of authority.split('.')){const boxes=chars.slice(offset,offset+label.length);if(ctx.measureText(label).width<=site.parentElement.clientWidth-1&&boxes.some(c=>Math.abs(c.top-boxes[0].top)>1))labelsIntact=false;offset+=label.length+1;}
+  let offset=origin.indexOf('://')+3,labelsIntact=true;const hostLabels=authority.split('.');for(const [index,label]of hostLabels.entries()){const boxes=chars.slice(offset,offset+label.length);if(ctx.measureText(label+(index<hostLabels.length-1?'.':'')).width<=site.parentElement.clientWidth-1&&boxes.some(c=>Math.abs(c.top-boxes[0].top)>1))labelsIntact=false;offset+=label.length+1;}
   return {lines,minFontSize:Math.min(...chars.map(c=>c.fontSize)),minGlyphHeight:Math.min(...chars.map(c=>c.height)),contrast:Math.min(...contrasts),labelsIntact,tailFits:ctx.measureText(tail).width<=site.parentElement.clientWidth-1,tail,origin:site.textContent,lastText:last.map(c=>c.text).join(''),end,controls,visible:controls.filter(intersects),width:innerWidth,height:innerHeight,scrollTop:root.scrollTop,maxScroll:root.scrollHeight-root.clientHeight,structure:!!unit&&unit.firstElementChild?.contains(site)&&unit.lastElementChild?.classList.contains('connection-approve-actions')&&unit.children.length===2&&unit.firstElementChild===site.parentElement&&site.parentElement.lastElementChild===site&&[...site.parentElement.children].every(e=>e===site||e.tagName==='SPAN'&&e.textContent==='Site reported by Browser')&&unit.closest('article')?.lastElementChild===unit,rootOverflow:getComputedStyle(root).overflowY,completeCharacters:chars.length===site.textContent.length,horizontal:chars.some(c=>c.left<-.5||c.right>innerWidth+.5),siteStyle:{clipPath:getComputedStyle(site).clipPath,opacity:getComputedStyle(site).opacity,overflow:getComputedStyle(site).overflow,whiteSpace:getComputedStyle(site).whiteSpace,textOverflow:getComputedStyle(site).textOverflow},topExit:!!root.querySelector('.connection-card-start [data-action="close-window"]'),cue:root.querySelector('.connection-more')?.textContent,siteRect:rect(site)};
  },approvalIds);
 }
@@ -45,6 +45,8 @@ export function assertApprovalGeometry(o){
  }
 }
 
+// A label and its trailing dot form one non-leading-dot unit. The fit oracle
+// measures that complete unit, including the dot at the 200% fallback-font edge.
 // Compare the actual final-line pixels with a standalone reference, at exactly
 // the same subpixel position. The reference excludes clipping, opacity and overlays.
 export async function assertApprovalPaint(page,o,{captureFailure=true,line=null}={}){
@@ -59,11 +61,13 @@ export async function assertApprovalPaint(page,o,{captureFailure=true,line=null}
   let parent=site,background='';while(parent){const color=getComputedStyle(parent).backgroundColor;if(color!=='rgba(0, 0, 0, 0)'&&color!=='transparent'){background=color;break;}parent=parent.parentElement;}
   const reference=document.createElement('div');reference.id='approval-paint-reference';
   window.__approvalUnitPosition=unit.style.position;unit.style.position='relative';
-  reference.style.cssText=`position:absolute;left:${box.left-unitBox.left}px;top:${clip.y+dy-unitBox.top}px;width:${box.width}px;height:${clip.height}px;background:${background};overflow:hidden;z-index:2147483647;pointer-events:none;`;
+  // Capture the whole glyph rectangle, including font overhang outside the row.
+  // The inner clone keeps the original row width and wrapping.
+  reference.style.cssText=`position:absolute;left:${clip.x-unitBox.left}px;top:${clip.y+dy-unitBox.top}px;width:${clip.width}px;height:${clip.height}px;background:${background};overflow:hidden;z-index:2147483647;pointer-events:none;`;
   const clone=row.cloneNode(true),original=[row,...row.querySelectorAll('*')],copies=[clone,...clone.querySelectorAll('*')];
   const properties=['fontFamily','fontSize','fontWeight','fontStyle','lineHeight','letterSpacing','whiteSpace','wordBreak','overflowWrap','verticalAlign','unicodeBidi','direction','boxSizing','display','alignItems'];
   original.forEach((node,i)=>{const computed=getComputedStyle(node);copies[i].removeAttribute('class');copies[i].removeAttribute('style');for(const key of properties)copies[i].style[key]=computed[key];copies[i].style.color=computed.color;copies[i].style.opacity='1';copies[i].style.visibility='visible';copies[i].style.clipPath='none';copies[i].style.overflow='visible';if(['inline-grid','inline-block'].includes(computed.display)){copies[i].style.gridTemplateColumns='minmax(0,1fr)';copies[i].style.width='max-content';copies[i].style.maxWidth='100%';}});
-  clone.style.cssText+=`;position:relative;left:0;top:${box.top-clip.y}px;width:${box.width}px;height:auto;margin:0;background:${background};`;
+  clone.style.cssText+=`;position:relative;left:${box.left-clip.x}px;top:${box.top-clip.y}px;width:${box.width}px;height:auto;margin:0;background:${background};`;
   reference.append(clone);unit.append(reference);
  },{clip,dy});
  let paired;
