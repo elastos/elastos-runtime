@@ -94,8 +94,9 @@ export function startExtensionWindow(kind, homeClipboard) {
       else if ((operation || uncertain) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action)) control.disabled = true;
     }
     // These shared recovery paragraphs point to Check access, which the base
-    // cannot perform. Keep the true outcome and working Close control.
-    if (['extension-timeout', 'extension-cancelled', 'request-timeout', 'request-cancelled'].includes(stage)) root.querySelector('.connection-notice')?.remove();
+    // cannot perform. Absence also cannot prove this window can enable extensions.
+    // Keep the true outcome and working Close control.
+    if (['extension-timeout', 'extension-cancelled', 'request-timeout', 'request-cancelled', 'extension-missing'].includes(stage)) root.querySelector('.connection-notice')?.remove();
     // v1 Home errors do not identify whether the wallet or result recording
     // failed. Use the shared recovery text without assigning fault to a wallet.
     if (stage === 'request-wallet-error') {

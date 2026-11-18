@@ -107,7 +107,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         } finally { await f.close(); }
       }
       const missing = await fixture(browser, kind, { recording: 'private-no-extension' });
-      try { await missing.action('connect').click(); await missing.state('extension-missing'); } finally { await missing.close(); }
+      try { await missing.action('connect').click(); await missing.state('extension-missing'); assert.doesNotMatch(await missing.frame.locator('body').innerText(), /enable|reload/i, 'absence cannot prove extensions can run in this window'); } finally { await missing.close(); }
       const silent = await fixture(browser, kind, { recording: kind === 'metamask' ? 'metamask-disabled-stale' : 'unisat-connect-pending' });
       try {
         await silent.action('connect').click(); await silent.state('extension-wait');
