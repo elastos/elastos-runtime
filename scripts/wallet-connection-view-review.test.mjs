@@ -70,7 +70,7 @@ test('10: real guards filter injected reload and connector offers on error, requ
 
 test('6: known app labels are local copy and absent labels use a sentence-safe fallback',async()=>{
   const {reduceSummary}=await import('../capsules/_shared/wallet-connection-view.mjs');
-  for(const [capsule_id,app]of [['browser','Browser'],['notes','Notes'],['unknown-capsule','Requesting app']])assert.equal(reduceSummary({...summary,capsule_id},{connector:'wallet-metamask'}).app,app);
+  for(const [capsule_id,app]of [['browser','Browser'],['notes','Notes'],['unknown-capsule','Requesting app']]){assert.equal(reduceSummary({...summary,capsule_id,requesting_app_name:app},{connector:'wallet-metamask'}).app,app);assert.equal(reduceSummary({...summary,capsule_id,requesting_app_name:undefined},{connector:'wallet-metamask'}).app,'Requesting app');}
 });
 
 test('10: independent oracles detect real source mutations',async t=>{

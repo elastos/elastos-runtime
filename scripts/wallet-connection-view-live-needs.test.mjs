@@ -59,13 +59,14 @@ test('live needs: clipboard feedback is closed local copy and QR keys respect su
  assert.throws(()=>connectionView({window:'metamask',stage:'ready',copyFeedback:'wallet wrote this'}),/closed copy feedback/);
 });
 
-test('late needs: latent summaries cannot replace a linking account or its card identity',()=>{
+test('late needs: latent summaries cannot replace a linking account or its card identity',async()=>{
  const actual='0x9999999999999999999999999999999999999999';
  for(const status of ['pending','approved','expired'])for(const stage of ['saved-unlinked','link-wait']){
   const input={window:'walletconnect',stage,account:{...account,name:'A real wallet',connection:'WalletConnect',accounts:[{address:actual,networks:['Base']}]},localSafety:false,waitSeconds:300};
   const v=reduceConnection(input,{summary:{...seed,connector_id:'wallet-walletconnect',status,address:account.accounts[0].address},nowSeconds:1800000001});
   assert.equal(v.stage,stage);assert.equal(v.account.accounts[0].address,actual);assert.equal(v.requestId,null);
  }
+ const {withTestView}=await import('./lib/wallet-connection-test-module.mjs');await withTestView({mutateSource:source=>source.replace('accountDisplay(input.account, window, screen.request?summary:null)','accountDisplay(input.account, window, summary)')},module=>{const v=module.connectionView({window:'walletconnect',stage:'saved-unlinked',summary:projection(),account:{...account,accounts:[{address:actual,networks:['Base']}]},localSafety:false});assert.throws(()=>assert.equal(v.account.accounts[0].address,actual),assert.AssertionError,'latent-address substitution must fail');});
 });
 test('late needs: reconnecting is secondary fixed copy in idle, wait and result states',()=>{
  for(const stage of ['linked','link-wait','request-phone','transaction-done']){
@@ -112,7 +113,7 @@ for(const engine of ['chromium','webkit'])test('live needs: rendering and QR car
   await f.page.evaluate(async account=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.connectionView({window:'metamask',stage:'linked',account,compact:true,supportedActions:['copy-address']}));},many);
   for(const index of [8,19]){const b=f.page.locator(`[data-focus-key="copy-address:${many.accounts[index].address}"]`);await b.scrollIntoViewIfNeeded();await b.click();const r=await b.boundingBox();assert(r.y>=0&&r.y+r.height<=182,'ninth and last account controls stay reachable');}
   const hashArgs=fixtureArguments(states.find(r=>r.designState==='walletconnect/transaction-wallet-error'),{compact:true});hashArgs[0].transactionHash='0x'+'ab'.repeat(32);await mount(hashArgs);
-  const hash=f.page.locator('.connection-hash');assert.equal(await hash.textContent(),hashArgs[0].transactionHash);assert.equal(await hash.evaluate(e=>getComputedStyle(e).userSelect),'text');assert.equal(await f.page.locator('a').count(),0);
+  const hash=f.page.locator('.connection-hash');assert.equal(await hash.textContent(),hashArgs[0].transactionHash);assert.equal(await hash.evaluate(e=>(getComputedStyle(e).userSelect||getComputedStyle(e).webkitUserSelect)),'text');assert.equal(await f.page.locator('a').count(),0);
   assert.equal(await hash.evaluate(e=>{const range=document.createRange();range.selectNodeContents(e);const s=getSelection();s.removeAllRanges();s.addRange(range);return s.toString();}),hashArgs[0].transactionHash);await hash.scrollIntoViewIfNeeded();await f.page.screenshot({path:proof.path+'/completion-failure-hash-'+engine+'.png'});
   receipts.push({engine,stages:live.length,supportedActionPaths:states.length+live.length,pickerRows:21,qr:box,result:'PASS'});
  }finally{await f.close();}

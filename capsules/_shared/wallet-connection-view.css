@@ -216,4 +216,4 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-qr { width:min(100%, calc(100svh - 370px)); }
 .connection-current-selection { overflow-wrap:anywhere; }
 
-.connection-hash { unicode-bidi:isolate; overflow-wrap:anywhere; user-select:text; font-family:var(--el-font-mono); }
+.connection-hash { unicode-bidi:isolate; overflow-wrap:anywhere; -webkit-user-select:text; user-select:text; font-family:var(--el-font-mono); }

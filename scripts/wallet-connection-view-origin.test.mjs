@@ -80,7 +80,7 @@ for(const engine of ['chromium','webkit']){
    // At 200% effective browser zoom, a physical window contains half as many CSS pixels.
    const f=await browserFixture(engine,{width:320/scale,height:182/scale,scale,delayFont:true});
    try{
-    for(const window of ['metamask','walletconnect','unisat'])for(const [width,height]of sizes)for(const i of (ciSmoke?[7,9]:origins.map((_,i)=>i))){
+    for(const window of ['metamask','walletconnect','unisat'])for(const [width,height]of (ciSmoke?[[320,182],[480,522]]:sizes))for(const i of (ciSmoke?[7,9]:origins.map((_,i)=>i))){
      if(t.signal.aborted)throw new Error('approval matrix cancelled');
      try {
      await f.page.setViewportSize({width:Math.floor(width/scale),height:Math.floor(height/scale)});
@@ -99,7 +99,7 @@ for(const engine of ['chromium','webkit']){
   };
   for(const scale of [1,2])await runScale(scale);
   const f=await browserFixture(engine);try{await mount(f.page,{unnamed:true,long:false,compact:false});assert.equal(await f.page.locator('.connection-app').textContent(),'Requesting app');if(requested)await f.page.screenshot({path:`${proof.path}/unnamed-app-${engine}.png`});}finally{await f.close();}
-  assert.equal(receipts.length,ciSmoke?48:240);
+  assert.equal(receipts.length,ciSmoke?24:240);
   await writeFile(`${proof.path}/approval-${engine}.json`,JSON.stringify(receipts,null,2)+'\n');
  });
  test(`F1: six independent layout and paint breaks fail in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false},async t=>{
