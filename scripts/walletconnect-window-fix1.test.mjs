@@ -30,7 +30,7 @@ for(const engine of ['chromium','webkit']){
   await r.click('Back to connection');await r.state('linked');await r.click('Back to connection');await r.state('internet-ready');
   await r.click('Manage in Inbox');assert.equal(await r.page.evaluate(()=>window.events.some(event=>event.type==='home:open-target'&&event.target==='inbox')),true,'Manage uses the existing Inbox message');assert.equal(await r.frame.getByRole('button',{name:'Connect wallet',exact:true}).isVisible(),true);
   await r.click('Back to connection');await r.state('linked');assert.equal(await r.frame.getByRole('button',{name:'Disconnect',exact:true}).isVisible(),true);
-  r.request('transaction',{intent:'transaction_intent'});await r.choose('transaction');await r.state('transaction-waiting');r.peer.choose({request:'reject'});await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('transaction-declined');
+  r.request('transaction',{intent:'transaction_intent'});await r.choose('transaction');await r.state('request-multiple');assert.equal(await r.frame.locator('main').getAttribute('data-request-id'),'transaction');assert.match(await r.frame.locator('main').innerText(),/Send transaction/);r.peer.choose({request:'reject'});await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('transaction-declined');
   assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='transaction').status,'approved');
   await r.click('Back to connection');await r.state('linked');await r.choose('transaction');await r.state('transaction-declined');
   await r.reopen();await r.state('linked');assert.doesNotMatch(await r.frame.locator('main').innerText(),/Transaction result unknown/,'approved recovery never owns the default screen');
@@ -49,8 +49,8 @@ for(const engine of ['chromium','webkit']){
   r.fixture.state.accounts=[];await r.reopen();await r.state('saved-unlinked');assert.match(await r.frame.locator('main').innerText(),/Scripted phone wallet/);assert.equal(await r.frame.locator('.connection-qr').count(),0);
  });
  test(`account change during a signature keeps the consumed request and outside-prompt notice in ${engine}`,{timeout:60000},async t=>{
-  const r=await setup(t,engine);await r.link();r.request('change');await r.refresh();await r.state('request-waiting');r.peer.choose({request:'silent'});await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('request-phone');
-  await r.peer.changeAccount(1,true);await r.state('request-busy');assert.match(await r.frame.locator('main').innerText(),/request may still be waiting.*Reject or close it there/s);assert.match(await r.frame.locator('.connection-current-selection').innerText(),new RegExp(r.peer.address.slice(0,6),'i'));assert.equal(r.fixture.state.completed,0);assert.equal(await r.frame.locator('[data-action=send-request]').count(),0);
+  const r=await setup(t,engine);await r.link();const requestedAccount=r.peer.address;r.request('change');await r.refresh();await r.state('request-waiting');r.peer.choose({request:'silent'});await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('request-phone');
+  await r.peer.changeAccount(1,true);await r.state('request-busy');assert.notEqual(r.peer.address.toLowerCase(),requestedAccount.toLowerCase());assert.match(await r.frame.locator('.connection-request-account').innerText(),new RegExp(requestedAccount.slice(0,6),'i'),'the consumed request still names its original signer');assert.match(await r.frame.locator('main').innerText(),/request may still be waiting.*Reject or close it there/s);assert.match(await r.frame.locator('.connection-current-selection').innerText(),new RegExp(r.peer.address.slice(0,6),'i'));assert.equal(r.fixture.state.completed,0);assert.equal(await r.frame.locator('[data-action=send-request]').count(),0);
  });
  test(`P9 selected unconfirmed hash survives status polls in ${engine}`,{timeout:60000},async t=>{
   const r=await setup(t,engine);await r.link();r.request('hash',{intent:'transaction_intent'});await r.refresh();await r.state('transaction-waiting');r.fixture.state.completeFails=true;await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('transaction-wallet-error');
@@ -65,3 +65,10 @@ for(const engine of ['chromium','webkit']){
   await r.click('Connect wallet');await r.state('qr-shown');assert.equal(imports,2,'fresh Connect imports a fresh adapter after the stopped import');await r.click('Cancel');
  });
 }
+
+for(const engine of ['chromium','webkit'])test(`a new review replaces a saved Connect only after visible Cancel in ${engine}`,{timeout:60000},async t=>{
+ const r=await setup(t,engine);await r.link();await r.click('Disconnect');await r.state('disconnected');r.fixture.setPermission('off');await r.refresh();await r.state('nothing-saved');
+ await r.click('Connect wallet');await r.state('internet-pending');r.request('new-review');await r.refresh();await r.state('request-internet-pending');await r.click('Cancel');await r.state('request-internet-off');
+ const verified=r.fixture.state.verified;r.fixture.setPermission('granted');await r.refresh();await r.state('request-waiting');assert.equal(r.fixture.state.verified,verified,'Allow cannot resume the cancelled saved Connect');
+ await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('qr-shown');await r.click('Copy link');await r.frame.getByText('Link copied.',{exact:true}).waitFor();await r.peer.pair(await r.page.evaluate(()=>window.copied));await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.verified,verified,'the explicit request resumes Send rather than the old account proof');
+});

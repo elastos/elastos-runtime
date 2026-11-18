@@ -146,7 +146,7 @@ function draw() {
     presentation.otherRequests=requests.filter(row=>row.request_id!==presentation.request.request_id);
   }
   if (clipboardFeedback && clipboardFeedbackKey === `${presentation.input.stage}:${(presentation.input.stage.startsWith('request-') || presentation.input.stage.startsWith('transaction-') || presentation.input.stage==='checking-response' ? presentation.request?.request_id : '') || ''}:${presentation.input.account?.accounts[0]?.address || ''}`) presentation.input.copyFeedback=clipboardFeedback;
-  if (hostEffectInFlight) presentation.input.supportedActions=presentation.input.supportedActions.filter(id=>['cancel','stop-waiting','copy-link'].includes(id));
+  if (hostEffectInFlight && !outcome) presentation.input.supportedActions=presentation.input.supportedActions.filter(id=>['cancel','stop-waiting','copy-link'].includes(id));
   currentView=walletConnectView(presentation);
   const key=`${currentView.stage}:${currentView.request?.id || ''}`;
   mounted=mountConnection(root,currentView,mounted);renderKey=key;
@@ -286,7 +286,7 @@ async function requestCapsuleWalletEffect(action) {
     if (action.kind === 'approve' && activeRequest && outcome) requestOutcomes.set(activeRequest.request_id,outcome);
     if (epoch === actionEpoch) {
       hostEffectInFlight=false;currentPhase='idle';effectPhase='idle';
-      deadline=undefined;
+      deadline=undefined;draw();watchConnection();
       try {connectionState=await connector.effect({kind:'status'});if(connectionState.permissionFresh !== false)permissionStatus=connectionState.permission.status;if(permissionStatus==='granted')ownerConsentNeeded=false;}catch{}
       draw();watchConnection();
     }
