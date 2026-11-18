@@ -1,1 +1,5 @@
 @import url("./wallet-connection-view.css");
+
+/* The local consumed-refusal copy names the full required account. */
+[data-extension-feedback] .connection-status,
+[data-extension-feedback] .connection-notice { overflow-wrap: anywhere; }

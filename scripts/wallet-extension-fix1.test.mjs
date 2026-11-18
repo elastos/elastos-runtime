@@ -256,3 +256,13 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
     }finally{await f.close();}
   }finally{await browser.close();}
 });
+
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: an already queued request cannot erase the consumed cause`,{timeout:15000,skip:engineSkip(engine)},async()=>{
+  const browser=await playwright[engine].launch({headless:true});try{const f=await fixture(browser,kind,{saved:true,requests:'multiple'});try{
+    await f.state('request-list');await f.frame.locator('[data-focus-key="select-request:approval-1"]').click();await f.state('request-multiple');
+    await f.top.evaluate(value=>testState.walletAddress=value,other(kind));await f.action('send-request').click();await f.state('request-consumed');
+    const text=await f.frame.locator('body').innerText();
+    await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));await f.state('request-consumed');assert.equal(await f.frame.locator('body').innerText(),text);
+    assert.equal(await f.top.evaluate(()=>testState.requests.filter(r=>r.status==='pending').length),1);
+  }finally{await f.close();}}finally{await browser.close();}
+});

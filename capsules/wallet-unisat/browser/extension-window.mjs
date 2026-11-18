@@ -222,7 +222,7 @@ export function startExtensionWindow(kind, homeClipboard) {
         providerAvailability = 'found';
         if (action.kind === 'approve') {
           refusal = { id: selected.id, cause: preflightFailure === 'request-unsendable' ? 'account' : 'network',
-            address: selected.address, network: networkName(requestNetworks.get(selected.id)), knownIds: requests.map(request => request.request_id) };
+            address: selected.address, network: kind === 'unisat' ? 'Bitcoin mainnet' : networkName(requestNetworks.get(selected.id)), knownIds: requests.map(request => request.request_id) };
           fixedOutcome = true; stage = 'request-consumed';
           requests = requests.filter(request => request.request_id !== selected.id);
           draw(); void refresh();
