@@ -704,9 +704,9 @@ async fn community_core_real_quiet_wire_counts_and_status() {
         .iter()
         .copied()
         .collect::<Vec<_>>();
-    // The pinned HyParView backs off through1,2,4,8,16,32seconds, then
-    // schedules60seconds with25% jitter. After the first six sends, every
-    // interval is45..75seconds. One second covers local scheduling variance;
+    // The pinned HyParView backs off through 1, 2, 4, 8, 16, 32 seconds, then
+    // schedules 60 seconds with 25% jitter. After the first six sends, every
+    // interval is 45..75 seconds. One second covers local scheduling variance;
     // any added Shuffle between normal sends would violate the lower bound.
     let shuffle_gaps_ms = shuffle_times
         .windows(2)
@@ -842,9 +842,9 @@ fn compare_develop_wire(current: &serde_json::Value, baseline_path: &str) {
         if kind.contains(":Gossip:") {
             assert_eq!((a, b), (0, 0), "no quiet application or probe messages");
         } else if kind.ends_with(":Shuffle") || kind.ends_with(":ShuffleReply") {
-            // Six startup delays total47.25..78.75seconds; later delays
-            // are45..75seconds. This1001-second window begins within the
-            // first seven seconds, so14..29messages includes every normal
+            // Six startup delays total 47.25..78.75 seconds; later delays
+            // are 45..75 seconds. This 1001-second window begins within the
+            // first seven seconds, so 14..29 messages includes every normal
             // phase and the one reply that may cross either boundary.
             assert!(
                 (14..=29).contains(&a) && (14..=29).contains(&b),

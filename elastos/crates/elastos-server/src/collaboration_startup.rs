@@ -4515,7 +4515,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn community_link_watchdog_paces_a_home_without_peers_and_caps_rebuilds() {
+    async fn community_link_watchdog_paces_a_home_without_peers_for_its_lifetime() {
         let link = FakeCommunityLink::new(FakeLinkScript::default());
         run_link_watchdog_for(&link, 3602).await;
         use CommunityLinkStep::{Rebuild, Rejoin};
@@ -4548,13 +4548,13 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn community_link_rebuild_cap_holds_across_recoveries_and_leaves() {
+    async fn community_link_repairs_continue_across_recoveries_and_leaves() {
         let mut watchdog = CommunityLinkWatchdog::new(COMMUNITY_LINK_SILENCE);
         let start = tokio::time::Instant::now();
         let mut rebuilds = 0;
         let mut rejoins = 0;
         // A peer shows up every ten minutes, so each outage alone would use
-        // three rebuilds; the process cap still holds across all of them.
+        // three rebuilds; later outages still receive paced repairs.
         for second in (0..60_000).step_by(5) {
             let now = start + Duration::from_secs(second);
             if (20_000..20_600).contains(&second) {
