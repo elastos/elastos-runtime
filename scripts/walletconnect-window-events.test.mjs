@@ -104,8 +104,14 @@ for(const state of ['ownership','signature'])test(`removing personal_sign permis
 test('cached permission is marked stale while current wallet facts still refresh',async()=>{
  const r=await fixture('idle');r.failInternet();r.provider.accounts=[other];r.provider.emit('accountsChanged',[other]);const status=await r.client.effect({kind:'status'});assert.equal(status.permissionFresh,false);assert.equal(status.permission.status,'granted');assert.equal(status.session.address,other);
 });
-test('a failed permission read starts no saved-session restore without a live provider',async()=>{
- const r=await fixture('idle');r.provider.session=undefined;r.failInternet();await assert.rejects(r.client.effect({kind:'status'}),/Home is unavailable/);
+test('a failed permission read starts no saved-session restore without a provider',async()=>{
+ const r=await fixture('idle');await r.client.effect({kind:'disconnect'});r.failInternet();await assert.rejects(r.client.effect({kind:'status'}),/Home is unavailable/);
+});
+for(const ending of ['removed','expired'])test(`known wallet ${ending} facts survive a failed Home permission read`,async()=>{
+ const r=await fixture('idle');
+ if(ending==='expired'){r.provider.session.expiry=Math.floor(Date.now()/1000)-1;await r.client.effect({kind:'status'});}
+ r.provider.session=undefined;r.provider.emit('disconnect',{});r.failInternet();
+ const status=await r.client.effect({kind:'status'});assert.equal(status.permissionFresh,false);assert.equal(status.session,undefined);assert.equal(status[ending],true);
 });
 
 const fenceError=()=>Object.assign(new Error(staleSessionMessage),{stack:'Error\n at fetchJson (http://127.0.0.1/apps/wallet-walletconnect/wallet-walletconnect.js:1:1)'});

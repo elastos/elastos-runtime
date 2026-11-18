@@ -225,7 +225,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     const observedGeneration = generation;
     let read,permissionFresh=true;
     try { read=await api('internet'); }
-    catch(error) {if (latestPermission?.status !== 'granted' || !provider?.session) throw error;read=latestPermission;permissionFresh=false;}
+    catch(error) {if (latestPermission?.status !== 'granted' || !provider) throw error;read=latestPermission;permissionFresh=false;}
     const permission = observedGeneration !== generation && latestPermission ? latestPermission : read;
     latestPermission = permission;
     if (permission.status !== 'granted' && (provider || pairing || operation || adapter)) {

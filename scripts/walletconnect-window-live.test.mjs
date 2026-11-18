@@ -179,10 +179,14 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
  if(event==='network')await r.peer.changeChain('eip155:1');
  if(event==='empty')await r.peer.emptyAccounts();
  if(event==='update')await r.peer.updateSession();
- if(event==='removed')await r.peer.deleteConnection();
+ if(event==='removed'){
+  await r.page.route('**/internet',route=>route.request().method()==='GET'?route.fulfill({status:503,body:'Fixture Home status unavailable'}):route.continue());
+  await r.peer.deleteConnection();
+ }
  if(event==='account'||event==='session-account'||event==='network'||event==='empty')await r.state('saved-unlinked');
  else if(event==='removed')await r.state(phase==='signature'?'request-sent-wallet-removed':phase==='result'?'request-done':'wallet-removed');
  else await pause(250);
+ if(event==='removed'&&phase==='result')await r.frame.getByText(/Your wallet removed this connection\./).waitFor();
  await r.capture(`event-${event}-${phase}`);
  if(event==='account'||event==='session-account')assert.match(await r.frame.locator('main').innerText(),new RegExp(r.peer.address.slice(0,6),'i'));
  if(event==='network')assert.match(await r.frame.locator('main').innerText(),/Ethereum/);
