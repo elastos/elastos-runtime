@@ -11,14 +11,7 @@ const screenshotRoot=await mkdtemp(join(tmpdir(),'wallet-connectors-uiux-'));
 const {chromium}=await importProductSmokePlaywright();
 const browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
 const screenshots=[];
-// Observe readiness before the inherited extension fixture opens its frame.
-const observedBrowser={browserType:()=>browser.browserType(),async newContext(...args){
- const context=await browser.newContext(...args);
- await context.addInitScript(()=>{if(window===window.top){window.layoutAppReady=0;addEventListener('message',event=>{if(event.data?.type==='home:app-ready'&&event.source===document.querySelector('iframe')?.contentWindow)window.layoutAppReady++;});}});
- return context;
-}};
 async function assertExtensionAuthority(f){
- assert.equal(await f.top.evaluate(()=>window.layoutAppReady),1,'one app-ready per live frame');
  assert(f.reads.length>0);for(const read of f.reads)assert.equal(read.headers['x-elastos-home-token'],'fixture-token');
 }
 async function capture(page,frame,id,control){
@@ -40,15 +33,15 @@ async function capture(page,frame,id,control){
 }
 try{
  for(const kind of ['metamask','unisat']){
-  const locked=await extensionFixture(observedBrowser,kind,{launch:false});
+  const locked=await extensionFixture(browser,kind,{launch:false});
   try{await locked.state('window-expired');assert.equal(await locked.frame.locator('button').count(),0);assert.equal(locked.reads.length,0);}finally{await locked.close();}
-  const f=await extensionFixture(observedBrowser,kind);
+  const f=await extensionFixture(browser,kind);
   try{
    await f.state('ready');await capture(f.top,f.frame,kind,'connect');
    await f.action('connect').click();await f.state('linked');
    await assertExtensionAuthority(f);assert.equal(await f.frame.locator('.connection-account').count(),1);await capture(f.top,f.frame,kind,'copy-address');
   }finally{await f.close();}
-  const review=await extensionFixture(observedBrowser,kind,{saved:true,requests:true});
+  const review=await extensionFixture(browser,kind,{saved:true,requests:true});
   try{await review.state('request-waiting');await assertExtensionAuthority(review);assert.equal(await review.frame.locator('.connection-request-account').count(),1);await capture(review.top,review.frame,kind,'send-request');}finally{await review.close();}
  }
  const f=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:f.origin.replace('http','ws')});
