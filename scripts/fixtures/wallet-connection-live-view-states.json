@@ -1,0 +1,184 @@
+{
+  "states": [
+    {
+      "window": "walletconnect",
+      "stage": "wallet-loading",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "wallet-unavailable",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "home-wallet-required",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "provider-unavailable",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "account-changed",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "account-unavailable-unknown",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "network-unsupported",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "preparing-request",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "preparing-connection",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "metamask",
+      "stage": "wallet-loading",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "metamask",
+      "stage": "wallet-unavailable",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "metamask",
+      "stage": "home-wallet-required",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "metamask",
+      "stage": "provider-unavailable",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "metamask",
+      "stage": "account-changed",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "metamask",
+      "stage": "account-unavailable-unknown",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "metamask",
+      "stage": "network-unsupported",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "metamask",
+      "stage": "preparing-request",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "metamask",
+      "stage": "preparing-connection",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "unisat",
+      "stage": "wallet-loading",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "unisat",
+      "stage": "wallet-unavailable",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "unisat",
+      "stage": "home-wallet-required",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "unisat",
+      "stage": "provider-unavailable",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "unisat",
+      "stage": "account-changed",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "unisat",
+      "stage": "account-unavailable-unknown",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "unisat",
+      "stage": "network-unsupported",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "unisat",
+      "stage": "preparing-request",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "unisat",
+      "stage": "preparing-connection",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-extensions / sharedview-needs-walletconnect; existing effects only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "checking-response",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-walletconnect item 16: existing verify/complete POST pending; no new producer"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "home-read-unavailable",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-walletconnect 19; existing read/cleanup actions only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "disconnect-error",
+      "origin": "window-local: produced by the window lane",
+      "source": "sharedview-needs-walletconnect 19; existing read/cleanup actions only"
+    }
+  ]
+}

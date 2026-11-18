@@ -5,7 +5,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkProductData, parsePublishData, validatePublishData, validateCapsule, validateComponents, validateContracts } from "./check-product-data.mjs";
+import { checkProductData, parsePublishData, validatePublishData, validateCapsule, validateComponents, validateContracts, walletViewAssets, validateWalletViewAssets } from "./check-product-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const json = (path) => JSON.parse(readFileSync(resolve(root, path), "utf8"));
@@ -247,6 +247,13 @@ function dataFixture() {
       mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
       copyFileSync(resolve(root, path), resolve(fixture, path));
     }
+    for (const name of ['_shared', 'wallet-metamask/browser', 'wallet-unisat/browser', 'wallet-walletconnect/browser']) {
+      for (const asset of walletViewAssets) {
+        const path = `capsules/${name}/${asset}`;
+        mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
+        copyFileSync(resolve(root, path), resolve(fixture, path));
+      }
+    }
     return fixture;
   } catch (error) {
     rmSync(fixture, { recursive: true, force: true });
@@ -307,6 +314,19 @@ test("product data accepts a symlink alias for its repository root", () => {
     rmSync(alias, { force: true });
     rmSync(fixture, { recursive: true, force: true });
   }
+});
+
+for (const kind of ['missing', 'drift', 'escaping symlink']) test(`product data refuses shared wallet view ${kind}`, () => {
+  const fixture = dataFixture();
+  const path = resolve(fixture, 'capsules/wallet-unisat/browser/wallet-connection-view.mjs');
+  try {
+    if (kind === 'drift') writeFileSync(path, '// changed copy');
+    else {
+      rmSync(path);
+      if (kind === 'escaping symlink') symlinkSync(resolve(root, 'capsules/_shared/wallet-connection-view.mjs'), path);
+    }
+    assert.throws(() => validateWalletViewAssets(fixture), /shared wallet view asset (missing|drift|stays in its capsule)/);
+  } finally { rmSync(fixture, {recursive:true, force:true}); }
 });
 
 for (const [name, path, type, message] of [
