@@ -141,7 +141,7 @@ function draw() {
   if (connectionPage === 'access' && !hostEffectInFlight && !launchExpired) presentation.input.stage=permissionStatus === 'granted' ? 'internet-ready' : 'internet-off';
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
-  if (showPicker && requests.length && !hostEffectInFlight) {
+  if (showPicker && requests.length && !hostEffectInFlight && !launchExpired && permissionStatus === 'granted' && !homeReadFailed) {
     presentation.input.stage='request-list';presentation.input.transactionHash=undefined;presentation.input.walletResult=undefined;presentation.request=requests.find(row=>row.request_id===selectedId)||requests[0];
     presentation.otherRequests=requests.filter(row=>row.request_id!==presentation.request.request_id);
   }
