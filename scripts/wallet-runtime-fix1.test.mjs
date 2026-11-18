@@ -110,6 +110,10 @@ test("fix1 removal dialog names its row and uses the shared removal sentence",as
   await r.frame.getByRole("button",{name:"Remove",exact:true}).click();
   await r.frame.locator(".wallet-modal-header").waitFor();
   assert.equal(await r.frame.locator(".wallet-modal-header h2").textContent(),"Remove Trust Wallet?");
+  const identity=r.frame.locator(".wallet-modal-header h2 bdi");
+  assert.equal(await identity.textContent(),"Trust Wallet");
+  assert.equal(await identity.evaluate(el=>el.dir),"auto");
+  assert.equal(await identity.evaluate(el=>getComputedStyle(el).unicodeBidi),"isolate");
   assert.equal(await r.frame.getByText("Remove this account from Home. Your wallet and funds stay unchanged. Passkey confirmation is required.",{exact:true}).count(),1);
 });
 

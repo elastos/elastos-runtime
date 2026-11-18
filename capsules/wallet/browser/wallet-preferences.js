@@ -195,6 +195,12 @@ export function createWalletPreferences({
       return;
     }
     const name = readStoredValueFromDataset(remove.dataset.walletAccountName) || "account";
+    // Keep peer identity separate from the trusted confirmation sentence.
+    const heading = textNode("h2", "");
+    const identity = textNode("bdi", name);
+    identity.dir = "auto";
+    identity.style.unicodeBidi = "isolate";
+    heading.append("Remove ", identity, "?");
     // In-window confirm sheet (same modal the flows use); the passkey prompt
     // that follows remains the real authority gate.
     openFlowModal(
@@ -207,6 +213,7 @@ export function createWalletPreferences({
         modalButton("Cancel", closeModal, true),
         modalButton("Remove", () => removeAccount(remove, accountId, name), false, true),
       ],
+      { surface: "modal", headingNode: heading },
     );
   }
 

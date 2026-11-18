@@ -191,6 +191,9 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   assert.match(await r.frame.locator(".wallet-modal-header").textContent(), /Your wallet and funds stay unchanged/);
   assert.doesNotMatch(await r.frame.locator(".wallet-modal-header").textContent(), /recovery key/);
   assert.equal(await confirmation.textContent(), `Remove ${name}?`, "the confirmation names the same isolated display identity as its row");
+  assert.equal(await confirmation.locator("bdi").textContent(), name);
+  assert.equal(await confirmation.locator("bdi").evaluate(el=>el.dir), "auto");
+  assert.equal(await confirmation.locator("bdi").evaluate(el=>getComputedStyle(el).unicodeBidi), "isolate");
   assert.equal(await r.frame.locator(".wallet-modal-header svg[onload]").count(), 0);
   await r.capture("wallet-account-remove-confirm-light-window.png");
   await r.frame.locator("#wallet-modal").getByRole("button", { name:"Cancel", exact:true }).click();
