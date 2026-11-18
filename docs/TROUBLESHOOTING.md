@@ -91,8 +91,8 @@ bootstrap Runtime without people, as the release does:
 
 ### Community reconnects after a local link failure
 
-Runtime keeps one local health observation for repair, Chat and System,
-Community. Failed bootstrap joins, an ended receive task and failed health
+Runtime uses one local health observation for repair and the Community status
+in Chat, System and the command line. Failed bootstrap joins, an ended receive task and failed health
 queries put Home in **Reconnecting to Community**, even when Carrier remembers
 a neighbour. Home retains its messages and draft, and resumes sending when
 local health succeeds again.
@@ -103,7 +103,11 @@ replacement, with increasing rest between attempts. The rest reaches fifteen
 minutes and repair continues for the life of the Home. Runtime releases the
 old receive tasks, gossip actor and its owned address lookup at replacement.
 Failure logs keep a bounded reason when it changes and once a minute while
-that reason continues.
+that reason continues. A failed first join keeps Home running in Reconnecting.
+If the local topic is absent, the paced repair restores it. Incoming and
+outgoing failure logs use the same change and minute rule. While a check runs,
+status says **It is checking the link**. A future-check countdown rounds up to
+a whole second.
 
 A peer count is local evidence. A neighbour can remain remembered while a
 node silently stops carrying messages and every local operation succeeds.

@@ -111,6 +111,10 @@ failed link. Runtime continues paced repairs for the life of Home. See
 for the local failure checks, startup states and the silent-neighbour case
 that those checks cannot detect.
 
+Runtime's local Chat view carries a separate Community state and display text.
+Chat uses the state for controls, so wording changes keep the same behavior.
+This local view adds no Community peer message or network-profile field.
+
 An address change requires the next signed network revision in a release.
 More bootstrap peers and participant Homes acting as bootstrap are tracked in
 [#324](https://github.com/elastos/elastos-runtime/issues/324).

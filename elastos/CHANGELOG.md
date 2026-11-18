@@ -8,7 +8,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Fixed
 
-- Home repairs sustained local Community failures automatically, keeps retrying for its lifetime, and shows the same reconnecting state in Chat and System. Startup logs identify each setup stage and explain when a Profile is not ready.
+- Home repairs sustained local Community failures automatically, keeps retrying for its lifetime, and shows the same reconnecting state in Chat and System. Startup logs identify each setup stage and explain when a Profile is not ready. Failed first joins keep Home running, missing local topics return through paced repair, and Chat reads explicit state independently of wording (#451).
 - Apps no longer open blank in Safari and other WebKit browsers.
 
 ## [2.0.1] - 2026-11-09
