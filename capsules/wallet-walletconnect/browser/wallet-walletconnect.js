@@ -46,11 +46,12 @@ const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemor
       walletChanged ||= detail?.selectionChanged === true;
       // Wallet notifications carry facts locally. Home authority stays on the base routes.
       clipboardFeedback='';
+      if (detail?.connection) connectionState={...connectionState,...detail.connection};
       const identityEvent=detail?.selectionChanged === true;
       const retained=knownOutcome() || activeRequest?.intent === 'transaction_intent' && Boolean(outcome);
       if (identityEvent && !retained && !dispatchedRequestId) outcome=undefined;
       if (!hostEffectInFlight && identityEvent && !retained && !dispatchedRequestId) activeRequest=undefined;
-      refreshReturnedWindow();
+      draw();refreshReturnedWindow();
       return;
     }
     if (phase !== 'pairing') clipboardFeedback='';

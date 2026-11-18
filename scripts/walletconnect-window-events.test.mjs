@@ -53,7 +53,7 @@ async function fixture(state){
   throw Error('Unexpected API');
  };
  const phases=[];
- const client=createWalletConnectClient({api,origin:'http://localhost',onPhase:(phase,detail)=>phases.push({phase,event:detail?.event}),loadAdapter:async()=>({connectWalletConnectEvm:async()=>provider,disconnectWalletConnectEvm:async()=>{}})});
+ const client=createWalletConnectClient({api,origin:'http://localhost',onPhase:(phase,detail)=>phases.push({phase,...detail}),loadAdapter:async()=>({connectWalletConnectEvm:async()=>provider,disconnectWalletConnectEvm:async()=>{}})});
  await client.effect({kind:'link'});
  let pending;
  if(state==='ownership'||state==='signature'){
@@ -70,7 +70,13 @@ for(const state of ['idle','ownership','signature','result'])for(const event of 
  if(event==='disconnect'){r.provider.session=undefined;r.provider.emit('disconnect',{});}
  if(event==='expiry'){r.provider.session.expiry=Math.floor(Date.now()/1000)-1;await r.client.effect({kind:'status'});r.provider.emit('disconnect',{});}
  if(event==='relay_drop_return'){r.relayer.connected=false;r.relayer.emit(RELAYER_EVENTS.disconnect);const dropped=await r.client.effect({kind:'status'});assert.equal(dropped.relayConnected,false);assert.equal(dropped.session.address,address,'relay loss retains the actual wallet session');r.relayer.connected=true;r.relayer.emit(RELAYER_EVENTS.connect);}
+ const reported=r.phases.findLast(phase=>phase.phase==='changed')?.connection;
+ assert.ok(reported,'the wallet event supplies its current facts before a Home read');
+ if(event==='accountsChanged')assert.equal(reported.session.address,other);
+ if(event==='emptyAccounts')assert.equal(reported.session.address,undefined);
+ if(event==='chainChanged'||event==='unsupportedChain')assert.equal(reported.session.chain,`eip155:${r.provider.chainId}`);
  const status=await r.client.effect({kind:'status'});
+ for(const key of ['session','removed','expired','relayConnected'])assert.deepEqual(reported[key],status[key],`reported ${key} agrees with the later status read`);
  if(event==='accountsChanged')assert.equal(status.session.address,other);
  if(event==='emptyAccounts')assert.equal(status.session.address,undefined,'old namespace account is withheld');
  if(event==='chainChanged'||event==='unsupportedChain')assert.equal(status.session.chain,`eip155:${r.provider.chainId}`);

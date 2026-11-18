@@ -162,6 +162,27 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     }
     return adapter;
   };
+  // SDK events carry current display facts before an unrelated Home read returns.
+  const connectionFacts = () => {
+    let currentSession=provider?.session;
+    if (currentSession?.topic && provider.signer?.client?.session?.get) {
+      try { currentSession=provider.signer.client.session.get(currentSession.topic); } catch {}
+    }
+    if (currentSession) sessionExpiry = currentSession.expiry;
+    // EthereumProvider.connected is relay connectivity, not session existence.
+    // A valid wallet session remains the display identity during reconnect.
+    const session = currentSession && sessionExpiry > Date.now()/1000 ? currentSession : undefined;
+    const namespace = session?.namespaces?.eip155;
+    const accounts = namespace?.accounts || [];
+    const selected = accounts.find(value=>value.startsWith(`eip155:${provider.chainId}:`)) || accounts[0];
+    const activeAddress = Array.isArray(observedAccounts) ? observedAccounts[0] : Array.isArray(provider?.accounts) ? provider.accounts[0] : selected?.split(':')[2];
+    const activeChain = provider?.chainId ? `eip155:${provider.chainId}` : selected?.split(':').slice(0,2).join(':');
+    return {status:session ? 'connected':'disconnected',revision:generation,removed,
+      expired:hadSession && sessionExpiry <= Date.now()/1000,cleanupRequired,relayConnected:provider?.signer?.client?.core?.relayer?.connected ?? null,
+      session:session ? {name:String(session.peer?.metadata?.name || 'your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80),
+        chain:activeChain,address:typeof activeAddress === 'string' && /^0x[0-9a-fA-F]{40}$/.test(activeAddress) ? activeAddress : undefined} : undefined};
+  };
+  const changed = detail => onPhase('changed',{...detail,connection:connectionFacts()});
   const adopt = current => {
     if (current !== provider) {
       provider = current;
@@ -182,23 +203,23 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
         if (selectionChanged || authorityChanged) generation++;
         if ((selectionChanged || authorityChanged) && operationDispatched && operationContext !== 'transaction_intent') operation?.abort(muted(operationContext === 'link'
           ? 'Wallet changed or the challenge expired. Select Connect wallet to try again.' : walletConnectMessages.consumed));
-        onPhase('changed', {event:name,selectionChanged});
+        changed({event:name,selectionChanged});
       });
       const relayer = current.signer?.client?.core?.relayer;
       // The SignClient session store owns expiry. UniversalProvider keeps a
       // separate session snapshot and does not refresh it on session_extend.
       current.signer?.client?.on?.('session_extend',event=>{
-        if (provider === current && event.topic === current.session?.topic) onPhase('changed', {event:'session_extend'});
+        if (provider === current && event.topic === current.session?.topic) changed({event:'session_extend'});
       });
       // @walletconnect/core 2.23.9 RELAYER_EVENTS, not its provider's event names.
       for (const name of ['connect','disconnect']) relayer?.on?.(`relayer_${name}`,()=>{
-        if (provider === current) onPhase('changed', {event:`relay_${name}`});
+        if (provider === current) changed({event:`relay_${name}`});
       });
       current.on('disconnect',()=>{
         if (provider !== current) return;
         generation++; removed = sessionExpiry > Date.now()/1000;
         operation?.abort(Object.assign(muted(removed ? removedMessage : 'This phone connection expired. Select Connect wallet for a new QR code.'),{walletRemoved:removed}));
-        onPhase('changed');
+        changed();
       });
     }
     if (current.session) { hadSession = true; sessionExpiry = current.session.expiry; }
@@ -254,23 +275,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       try { await restoring; } catch (error) { if (!attempt.signal.aborted) throw error; }
       finally { if (restoreAttempt === attempt) { restoring = undefined; restoreAttempt = undefined; } }
     }
-    let currentSession=provider?.session;
-    if (currentSession?.topic && provider.signer?.client?.session?.get) {
-      try { currentSession=provider.signer.client.session.get(currentSession.topic); } catch {}
-    }
-    if (currentSession) sessionExpiry = currentSession.expiry;
-    // EthereumProvider.connected is relay connectivity, not session existence.
-    // A valid wallet session remains the display identity during reconnect.
-    const session = currentSession && sessionExpiry > Date.now()/1000 ? currentSession : undefined;
-    const namespace = session?.namespaces?.eip155;
-    const accounts = namespace?.accounts || [];
-    const selected = accounts.find(value=>value.startsWith(`eip155:${provider.chainId}:`)) || accounts[0];
-    const activeAddress = Array.isArray(observedAccounts) ? observedAccounts[0] : Array.isArray(provider?.accounts) ? provider.accounts[0] : selected?.split(':')[2];
-    const activeChain = provider?.chainId ? `eip155:${provider.chainId}` : selected?.split(':').slice(0,2).join(':');
-    return {status:session ? 'connected':'disconnected',revision:generation,permission,permissionFresh,removed,
-      expired:hadSession && sessionExpiry <= Date.now()/1000,cleanupRequired,relayConnected:provider?.signer?.client?.core?.relayer?.connected ?? null,
-      session:session ? {name:String(session.peer?.metadata?.name || 'your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80),
-        chain:activeChain,address:typeof activeAddress === 'string' && /^0x[0-9a-fA-F]{40}$/.test(activeAddress) ? activeAddress : undefined} : undefined};
+    return {...connectionFacts(),permission,permissionFresh};
   };
   return { async effect(action) {
     if (action.kind === 'disconnect' || action.kind === 'cancel') return reset();

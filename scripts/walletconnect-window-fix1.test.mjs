@@ -7,6 +7,7 @@ import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function setup(t,engine,mutation){
  if(process.env.WALLETCONNECT_FIX1_BREAK==='B6')mutation={file:'walletconnect-client.mjs',from:"const {connectWithView} = await import('./walletconnect-pairing.mjs');\n        signal?.throwIfAborted();",to:"const {connectWithView} = await import('./walletconnect-pairing.mjs');"};
+ if(process.env.WALLETCONNECT_FIX1_BREAK==='P7')mutation={file:'wallet-walletconnect.js',from:"if (detail?.connection) connectionState={...connectionState,...detail.connection};",to:'void detail;'};
  if(process.env.WALLETCONNECT_FIX1_BREAK==='C1')mutation={file:'wallet-walletconnect.js',from:"if(epoch!==actionEpoch)throw new Error('Wallet connection cancelled.');",to:'void epoch;'};
  const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
  const engines=await importProductSmokePlaywright(),browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
@@ -51,7 +52,13 @@ for(const engine of ['chromium','webkit']){
  });
  test(`account change during a signature keeps the consumed request and outside-prompt notice in ${engine}`,{timeout:60000},async t=>{
   const r=await setup(t,engine);await r.link();const requestedAccount=r.peer.address;r.request('change');await r.refresh();await r.state('request-waiting');r.peer.choose({request:'silent'});await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('request-phone');
-  await r.peer.changeAccount(1,true);await r.state('request-busy');assert.notEqual(r.peer.address.toLowerCase(),requestedAccount.toLowerCase());assert.match(await r.frame.locator('.connection-request-account').innerText(),new RegExp(requestedAccount.slice(0,6),'i'),'the consumed request still names its original signer');assert.match(await r.frame.locator('main').innerText(),/request may still be waiting.*Reject or close it there/s);assert.match(await r.frame.locator('.connection-current-selection').innerText(),new RegExp(r.peer.address.slice(0,6),'i'));assert.equal(r.fixture.state.completed,0);assert.equal(await r.frame.locator('[data-action=send-request]').count(),0);
+  await r.page.waitForLoadState('networkidle');let release,entered;const held=new Promise(resolve=>release=resolve),reading=new Promise(resolve=>entered=resolve);
+  await r.page.route('**/internet',async route=>{if(route.request().method()==='GET'){entered();await held;}await route.continue();});
+  const response=r.page.waitForResponse(response=>response.url().endsWith('/internet')&&response.request().method()==='GET');
+  try{await r.refresh();await reading;
+  await r.peer.changeAccount(1,true);await r.state('request-busy');assert.notEqual(r.peer.address.toLowerCase(),requestedAccount.toLowerCase());assert.match(await r.frame.locator('.connection-request-account').innerText(),new RegExp(requestedAccount.slice(0,6),'i'),'the consumed request still names its original signer');assert.match(await r.frame.locator('main').innerText(),/request may still be waiting.*Reject or close it there/s);assert.match(await r.frame.locator('.connection-current-selection').innerText(),new RegExp(r.peer.address,'i'));assert.equal(r.fixture.state.completed,0);assert.equal(await r.frame.locator('[data-action=send-request]').count(),0);
+  }finally{release();await (await response).finished();}
+  await r.page.waitForLoadState('networkidle');
  });
  test(`P9 selected unconfirmed hash survives status polls in ${engine}`,{timeout:60000},async t=>{
   const r=await setup(t,engine);await r.link();r.request('hash',{intent:'transaction_intent'});await r.refresh();await r.state('transaction-waiting');r.fixture.state.completeFails=true;await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('transaction-wallet-error');
