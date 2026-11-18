@@ -528,3 +528,12 @@ for(const engine of ['chromium','webkit'])test(`request picker capability follow
  r.fixture.setPermission('granted');await r.refresh();await r.state('request-multiple');await r.click('view-requests');await r.state('request-list');
  r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.equal(await r.frame.locator('button').count(),0,'an expired gate cannot open or select a cached request');await r.capture('expired-queue-no-controls');
 });
+
+for(const engine of ['chromium','webkit'])test(`outcome focus returns after a real background redraw in ${engine}`,{timeout:60000},async t=>{
+ const mutation=process.env.WALLETCONNECT_FIX1_BREAK==='F2'?{file:'wallet-walletconnect.js',from:'action:document.activeElement?.dataset.action,focusKey:saved.key',to:'action:saved.action,focusKey:saved.key'}:undefined;
+ const r=await setup(t,engine,mutation);await r.link();await r.frame.locator('[data-focus=outcome]').focus();await refreshAndWaitForRedraw(r);
+ await r.page.evaluate(()=>{const input=document.createElement('input');input.id='home-outcome-note';input.style.position='fixed';input.style.top='0';document.body.append(input);input.focus();});await r.page.keyboard.press('x');assert.equal(await r.page.locator('#home-outcome-note').inputValue(),'x');
+ const prior=await r.frame.locator('main').elementHandle();assert.ok(r.fixture.setRelayAvailable(false)>0);await r.frame.getByText(/WalletConnect is reconnecting/).waitFor();await prior.waitForElementState('hidden');await prior.dispose();assert.equal(await r.page.evaluate(()=>document.activeElement.id),'home-outcome-note');
+ await r.frame.evaluate(()=>window.focus());await refreshAndWaitForRedraw(r);assert.deepEqual(await r.frame.evaluate(()=>({focused:document.hasFocus(),focus:document.activeElement?.dataset.focus})),{focused:true,focus:'outcome'},'return restores the actual status focus, not an action with that name');await r.capture('outcome-focus-return');
+ r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/WalletConnect is reconnecting/).count(),'the relay returned');assert.equal(r.fixture.state.verified,1);
+});
