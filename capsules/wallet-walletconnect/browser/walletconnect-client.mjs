@@ -332,12 +332,12 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       return Math.min(600,Math.max(binding.expires_at-Math.ceil(Date.now()/1000),300));
     };
     const expiry = await check();
-    operationDispatched = true;
-    onPhase(handoff.intent === 'transaction_intent' ? 'transaction' : 'signature',{expiresAt:Math.floor(Date.now()/1000)+expiry});
     if (handoff.intent === 'transaction_intent') {
       const transaction = handoff.transaction;
       if (transaction) requireNetwork(`eip155:${Number.parseInt(transaction.chainId,16)}`);
       if (!transaction || !same(transaction.from,signer) || `eip155:${Number.parseInt(transaction.chainId,16)}` !== namespace) throw new Error('Runtime returned an invalid transaction.');
+      operationDispatched = true;
+      onPhase('transaction',{expiresAt:Math.floor(Date.now()/1000)+expiry});
       const hash = await request({method:'eth_sendTransaction',params:[transaction]},expiry,'transaction',signal);
       if (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Wallet returned an invalid transaction hash. The wallet may have sent it. Check your wallet before sending again.');
       // A returned hash is retained even if the account, network or expiry changed while sending.
@@ -347,6 +347,8 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       return {status:receipt.receipt_status || 'completed',effect:'transaction',message:receipt.receipt_status === 'sent_after_dismissal' ? 'Request dismissed. Transaction sent from wallet.' : 'Transaction sent.'};
     }
     if (handoff.signature_type !== 'personal_sign' || typeof handoff.message !== 'string') throw new Error('Runtime returned an invalid signature request.');
+    operationDispatched = true;
+    onPhase('signature',{expiresAt:Math.floor(Date.now()/1000)+expiry});
     const method = 'personal_sign';
     const signature = await request({method,params:[signData(handoff.message),signer]},expiry,'signature',signal);
     await check();

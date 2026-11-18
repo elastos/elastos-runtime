@@ -22,6 +22,7 @@ export function windowPresentation(state, nowSeconds) {
   if (expired) stage = 'window-expired';
   else if (completed && session && !linked && request && (!sameAccount(session.address,request.address) || session.chain !== request.chain_namespace)) stage='saved-unlinked';
   else if (answered) stage=outcome;
+  else if (outcome === 'request-unavailable' && (connection?.removed || connection?.expired || permission && permission !== 'granted')) stage=outcome;
   else if (sent && permission && permission !== 'granted') stage=request.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'request-unavailable';
   else if (ownerNeeded && permission !== 'granted') stage = 'guest-access';
   else if (permission === 'requested') stage = pending ? request ? 'request-internet-pending' : 'internet-pending' : request ? 'request-internet-off' : 'internet-off';
@@ -29,6 +30,7 @@ export function windowPresentation(state, nowSeconds) {
   else if (permission === 'revoked' && connection) stage = request ? 'request-internet-off' : 'internet-off';
   else if (qrData) stage = 'qr-shown';
   else if (busy) {const waitPhase=state.checking ? state.effectPhase : phase;stage = waitPhase === 'ownership' ? 'link-wait' : waitPhase === 'signature' ? 'request-phone' : waitPhase === 'transaction' ? 'transaction-phone' : waitPhase === 'disconnecting' ? 'disconnecting' : 'preparing-qr';}
+  else if (!sent && request?.expires_at <= nowSeconds) stage='request-expired';
   else if (state.walletChanged && session && !linked && ['link-error','request-wallet-error','request-unsendable','request-unavailable'].includes(outcome)) stage = 'saved-unlinked';
   else if (connection?.removed && outcome !== 'disconnected') stage = request ? sent ? request.intent === 'transaction_intent' ? 'transaction-wallet-removed' : 'request-sent-wallet-removed' : 'request-wallet-removed' : 'wallet-removed';
   else if (connection?.expired && outcome !== 'disconnected') stage = request ? sent ? request.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'request-unavailable' : 'request-connection-expired' : 'connection-expired';
@@ -52,7 +54,7 @@ export function windowPresentation(state, nowSeconds) {
   const waitSeconds = Math.max(0,Math.min(86400,(waitDeadline || nowSeconds + 300)-nowSeconds));
   const walletResult = stage === 'transaction-declined' ? {disposition:'declined',receipt:null} : undefined;
   const preparingMessage = stage === 'preparing-qr' && (phase === 'confirming' || state.action?.kind === 'approve' || state.action?.kind === 'link' && state.action.fresh === false) ? state.action?.kind === 'approve' ? 'Preparing request.' : 'Preparing connection.' : null;
-  const endedNotice = ['request-done','request-next','transaction-done','request-declined','transaction-declined'].includes(stage) ? connection?.removed ? 'Your wallet removed this connection.' : connection?.expired ? 'This wallet connection expired.' : null : null;
+  const endedNotice = ['request-done','request-next','transaction-done','request-declined','transaction-declined','request-unavailable'].includes(stage) ? connection?.removed ? 'Your wallet removed this connection.' : connection?.expired ? 'This wallet connection expired.' : null : null;
   const priorResult = stage === 'saved-unlinked' && ['request-done','request-next','transaction-done'].includes(outcome) && request ? `${outcome === 'transaction-done' ? 'Transaction sent' : 'Message signed'} for ${request.address} on ${networkLabel(request.chain_namespace)}.` : null;
   const connectionNotice = priorResult || endedNotice || (!expired && permission === 'granted' && connection?.session && connection.relayConnected === false ? 'WalletConnect is reconnecting.' : null);
   const hashNotice = ['transaction-wallet-error','transaction-cancelled','transaction-wallet-removed','transaction-timeout','transaction-reopened'].includes(stage) && /^0x[0-9a-fA-F]{64}$/.test(state.unrecordedHash || '') ? `Transaction hash from your wallet:\n${state.unrecordedHash}\nHome could not confirm the result.` : null;
@@ -80,7 +82,7 @@ export function errorStage(error, action, phase) {
   if (message === messages.signatureError) return 'request-unavailable';
   if (message === messages.transactionDeclined) return 'transaction-declined';
   if (message === messages.transactionTimeout) return 'transaction-timeout';
-  return transaction ? 'transaction-wallet-error' : phase === 'starting' ? 'request-unavailable' : 'request-wallet-error';
+  return transaction ? 'transaction-wallet-error' : 'request-unavailable';
 }
 
 // Only intents supported by the base controller are exposed. N1 is a separate gate.

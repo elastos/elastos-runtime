@@ -34,7 +34,7 @@ const cases=[
  ['request-connection-expired',{connection:{expired:true},requests:[request]}],
  ['disconnecting',{...initial,busy:true,phase:'disconnecting'}],
  ...['disconnected','link-declined','link-timeout','link-cancelled','link-error','qr-cancelled','qr-expired','connection-declined'].map(outcome=>[outcome,{...initial,outcome}]),
- ...['request-declined','request-timeout','request-done','request-cancelled','request-wallet-error','transaction-declined','transaction-timeout','transaction-cancelled','transaction-wallet-error','transaction-done'].map(outcome=>[outcome,{...initial,activeRequest:request,outcome}]),
+ ...['request-declined','request-timeout','request-done','request-cancelled','transaction-declined','transaction-timeout','transaction-cancelled','transaction-wallet-error','transaction-done'].map(outcome=>[outcome,{...initial,activeRequest:request,outcome}]),
 ];
 for (const [expected,state] of cases) test(`live controller facts map to ${expected}`,()=>{
  const p=windowPresentation(state,now);assert.equal(p.input.stage,expected);
@@ -103,3 +103,5 @@ for(const outcome of ['request-declined','transaction-declined'])for(const ended
 });
 test('disconnect failure stays on a non-request recovery screen',()=>assert.equal(errorStage(new Error('Could not clear connection'),{kind:'disconnect'},'disconnecting'),'link-error'));
 test('a transaction consumed elsewhere retains unknown-result recovery',()=>assert.equal(errorStage(new Error(messages.consumed),{kind:'approve',intent:'transaction_intent'},'starting'),'transaction-wallet-error'));
+for(const phase of ['starting','signature','idle'])test(`Home failure in ${phase} never claims the wallet failed to sign`,()=>assert.equal(errorStage(new Error('Runtime returned an invalid signature request.'),{kind:'approve'},phase),'request-unavailable'));
+test('an unsent expired request is not offered a connection-and-resend recovery',()=>assert.equal(windowPresentation({...initial,connection:{expired:true},requests:[{...request,expires_at:now-1}]},now).input.stage,'request-expired'));
