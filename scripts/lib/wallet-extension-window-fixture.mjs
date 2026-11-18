@@ -136,7 +136,7 @@ export function renderConnection(document,view) {
       await writeFile(join(receipts, `window-extensions-copy-${kind}-${expected}.json`), JSON.stringify({ candidate, engine: browser.browserType().name(), viewport: {width:480,height:560}, content: {width:480,height:522}, ...copy }, null, 2));
       for (const theme of ['dark', 'light']) {
         await frame.evaluate(theme => { document.documentElement.toggleAttribute('data-el-theme', theme === 'light'); if (theme === 'light') document.documentElement.setAttribute('data-el-theme','light'); }, theme);
-        await top.locator('iframe').screenshot({ path: join(dir, `${expected}-${theme}.png`) });
+        await (await frame.frameElement()).screenshot({ path: join(dir, `${expected}-${theme}.png`) });
       }
       await frame.evaluate(() => document.documentElement.removeAttribute('data-el-theme'));
     }
