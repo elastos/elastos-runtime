@@ -5,7 +5,7 @@ import {requireProductSmokePlaywright,productSmokeLaunchOptions} from '../produc
 
 const engines=requireProductSmokePlaywright();
 export function windowTestOptions(engine,timeout){
- return {timeout,skip:engine==='webkit'&&!existsSync(engines.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in content-sandbox CI':false};
+ return {timeout,skip:engine==='webkit'&&!existsSync(engines.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit is not installed on this machine':false};
 }
 export async function windowResources(t,engine,launch=()=>engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})})){
  const cleanup=[];
