@@ -648,7 +648,6 @@ const definitions = {
     },
     "disconnected": {
       "status": "Disconnected. Your accounts remain in Wallet.",
-      "notice": "To remove this account from Home, open Wallet, choose Manage, then Remove account. Your wallet and funds stay unchanged.",
       "primary": {
         "id": "connect",
         "label": "Connect wallet",
