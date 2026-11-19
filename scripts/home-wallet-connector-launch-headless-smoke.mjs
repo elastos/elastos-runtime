@@ -713,6 +713,7 @@ try {
         for (let i=0;i<window.parent.length;i++) window.parent.frames[i].postMessage({
           type:"elastos:runtime-events",events:[{kind:"wallet.accounts.changed",scope:"wallet"}],
         },"*");
+        window.parent.postMessage({type:"elastos:runtime-events",events:[{kind:"wallet.accounts.changed",scope:"wallet"}]},"*");
       });
       await page.waitForTimeout(150);
       assert(state.walletSummaryReads === readsBeforeSibling, "a sibling connector cannot forward Home GUI events");
