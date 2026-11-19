@@ -581,6 +581,7 @@ try {
     }, { connectorTarget: target });
     await waitFor(() => frameFor(page, target), 15_000, `${target} connector UI`);
     const connector = frameFor(page, target);
+    const connectorHomeToken = await connector.evaluate(() => new URLSearchParams(location.hash.slice(1)).get("home_token"));
     const connectSelector = '[data-action="connect"]';
     await connector.waitForSelector(connectSelector, { timeout: 15_000 });
     assert(
@@ -715,10 +716,9 @@ try {
           window.fixtureAccountHints = window.fixtureAccountHints.slice(-8);
         });
       });
-      const notify = () => connector.evaluate(() => window.top.postMessage({
-        type: "home:refresh-summary",
-        homeToken: new URLSearchParams(location.hash.slice(1)).get("home_token"),
-      }, new URLSearchParams(location.search).get("home_origin")));
+      const notify = () => connector.evaluate(homeToken => window.top.postMessage({
+        type: "home:refresh-summary", homeToken,
+      }, new URLSearchParams(location.search).get("home_origin")), connectorHomeToken);
       state.walletAccounts = [{account_id:"fixture-linked-account",address:"0x1212121212121212121212121212121212121212",chain_namespace:"eip155:1",connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"WalletConnect",wallet_mark:"wallet",linked_at:1}];
       const readsBeforeSibling = state.walletSummaryReads;
       await connector.evaluate(() => {
