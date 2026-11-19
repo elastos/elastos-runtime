@@ -34,10 +34,7 @@ for(const engine of ['chromium','webkit']) {
   // Opening Wallet again currently supplies the refresh that the link omitted.
   await r.wallet.locator('body').evaluate(()=>window.dispatchEvent(new MessageEvent('message',{origin:'null',source:window.parent,data:{type:'elastos:wallet-refresh'}})));
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
-  await r.settle();await r.wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').click();
-  // The host opens the connector's existing saved session, as the real Home does.
-  const connector=r.page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
-  await connector.locator('[data-state=linked]').waitFor();
+  await r.openFromWallet();const connector=r.frame;
   if(await connector.locator('[data-action=add-account]').count())await connector.locator('[data-action=add-account]').click();
   assert.match(await connector.locator('main').innerText(),/select another account in Trust Wallet/i,'the add path names the phone step before ending anything');
   await r.peer.changeAccount();await connector.locator('[data-state=account-changed]').waitFor();
@@ -50,7 +47,7 @@ for(const engine of ['chromium','webkit']) {
   const r=await linkedWindow(t,engine);await r.link();
   await r.wallet.locator('body').evaluate(()=>window.dispatchEvent(new MessageEvent('message',{origin:'null',source:window.parent,data:{type:'elastos:wallet-refresh'}})));
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
-  await r.settle();await r.wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').click();await r.state('linked');
+  await r.openFromWallet();
   await r.click('add-account');await r.state('add-account');await r.capture('add-account');
   assert.match(await r.frame.locator('main').innerText(),/disconnect this connection first/i);
   assert.match(await r.frame.locator('main').innerText(),/linked accounts stay in Wallet/i);
