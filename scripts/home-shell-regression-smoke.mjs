@@ -196,6 +196,10 @@ class FakeElement {
     return Object.hasOwn(this, name) ? this[name] : null;
   }
 
+  hasAttribute(name) {
+    return Object.hasOwn(this, name);
+  }
+
   removeAttribute(name) {
     delete this[name];
   }
