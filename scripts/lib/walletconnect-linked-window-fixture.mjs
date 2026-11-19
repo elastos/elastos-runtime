@@ -14,6 +14,7 @@ export async function linkedWindow(t,engine) {
  const page=await browser.newPage({viewport:{width:1040,height:620}});page.setDefaultTimeout(6000);
  const {errors}=observeWindowErrors(page,fixture);let frame;
  const settle=await walletWindowLifetime(page,fixture);
+ page.on('framenavigated',next=>{if(next.parentFrame()===page.mainFrame()&&next.url().includes('/apps/wallet-walletconnect/'))frame=next;});
  t.after(async()=>{try{await settle(frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[]);});
  await page.route('**/*',route=>new URL(route.request().url()).origin===fixture.origin?route.continue():route.abort());
  const cors={'access-control-allow-origin':'*','access-control-allow-headers':'content-type,x-elastos-home-token','access-control-allow-methods':'GET,POST,OPTIONS'};
@@ -64,7 +65,7 @@ export async function linkedWindow(t,engine) {
    await frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);
    await wallet.locator('html').evaluate((node,theme)=>node.dataset.elTheme=theme,theme);
    await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`});
-   records.push({name,theme,...await frame.locator('main').evaluate(main=>({stage:main.dataset.state,text:main.innerText,actions:[...main.querySelectorAll('button')].map(b=>({action:b.dataset.action,label:b.innerText,primary:b.classList.contains('connection-primary')}))}))});
+   records.push({name,theme,...await frame.locator('main').evaluate(main=>({stage:main.dataset.state,text:main.innerText,actions:[...main.querySelectorAll('button')].map(b=>({action:b.dataset.action,label:b.innerText,primary:b.classList.contains('el-button-primary')}))}))});
   }
   await writeFile(`${output}/${engine}/states.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),records},null,2));
  }

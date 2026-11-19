@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {linkedWindow} from './lib/walletconnect-linked-window-fixture.mjs';
 for(const engine of ['chromium','webkit']) {
  test(`linked window has true copy and useful controls in ${engine}`,{timeout:60000},async t=>{
@@ -43,5 +44,24 @@ for(const engine of ['chromium','webkit']) {
   await connector.locator('[data-action=send-message]').click();await connector.locator('[data-state=linked]').waitFor();
   await r.wallet.locator('#wallet-account-state').filter({hasText:'2 accounts'}).waitFor({timeout:4000});
   assert.equal(new Set(r.fixture.state.accounts.map(a=>a.address.toLowerCase())).size,2);
+  await r.capture('two-phone-accounts');
  });
+ test(`Wallet adds a second wallet after an explicit disconnect in ${engine}`,{timeout:60000},async t=>{
+  const r=await linkedWindow(t,engine);await r.link();
+  await r.wallet.locator('body').evaluate(()=>window.dispatchEvent(new MessageEvent('message',{origin:'null',source:window.parent,data:{type:'elastos:wallet-refresh'}})));
+  await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
+  await r.settle();await r.wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').click();await r.state('linked');
+  await r.click('add-account');await r.state('add-account');await r.capture('add-account');
+  assert.match(await r.frame.locator('main').innerText(),/disconnect this connection first/i);
+  assert.match(await r.frame.locator('main').innerText(),/linked accounts stay in Wallet/i);
+  assert.equal(r.fixture.state.verified,1,'opening the add instructions preserves the first account and session');
+  await r.click('back-to-connection');await r.state('linked');await r.click('add-account');await r.state('add-account');
+  await r.click('disconnect');await r.state('disconnected');await r.capture('disconnected');
+  const second=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:r.fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Second phone wallet',emitApprovalEvents:true});t.after(()=>second.stop());
+  await r.click('connect');await r.state('qr-shown');await r.capture('second-wallet-qr');await r.click('copy-link');
+  await second.pair(await r.page.evaluate(()=>window.copied));await r.state('linked');
+  await r.wallet.locator('#wallet-account-state').filter({hasText:'2 accounts'}).waitFor({timeout:4000});await r.capture('two-wallets');
+  assert.equal(new Set(r.fixture.state.accounts.map(a=>a.address.toLowerCase())).size,2);
+ });
+
 }
