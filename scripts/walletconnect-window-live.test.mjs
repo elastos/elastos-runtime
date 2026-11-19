@@ -31,7 +31,7 @@ async function refreshAndWaitForRedraw(r){
  const read=r.page.waitForResponse(response=>response.url().endsWith('/internet'));await r.refresh();await read;await r.frame.locator('main').waitFor();
 }
 async function setup(t,engine,mutation){
- const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws'),chains:['eip155:8453','eip155:1'],emitApprovalEvents:true});
+ const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
  const engines=await importProductSmokePlaywright(),browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
  const page=await browser.newPage({viewport:{width:480,height:560}}),{errors}=observeWindowErrors(page,fixture);
  await page.route('**/*',r=>new URL(r.request().url()).origin===fixture.origin?r.continue():r.abort());
@@ -299,7 +299,7 @@ for(const engine of ['chromium','webkit'])test(`background wallet redraw keeps H
 for(const engine of ['chromium','webkit'])test(`unsupported wallet network is named and cannot be linked in ${engine}`,{timeout:60000},async t=>{
  const r=await setup(t,engine);r.peer.choose({chains:['eip155:8453','eip155:137']});await r.link();await r.peer.changeChain('eip155:137');await r.state('network-unsupported');
  assert.match(await r.frame.locator('main').innerText(),/Unsupported network.*137/);assert.equal(await r.frame.locator('[data-action=finish]').count(),0);assert.equal(r.fixture.state.verified,1);
- await r.capture('network-unsupported');assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0);await r.click('start-over');await r.state('qr-shown');assert.deepEqual(r.errors,[]);
+ await r.capture('network-unsupported');assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0);await r.peer.changeChain('eip155:8453');await r.state('linked');assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])test(`relay drops and returns during ${phase} in ${engine}`,{timeout:60000},async t=>{
  const r=await setup(t,engine);
