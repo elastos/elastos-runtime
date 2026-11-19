@@ -9,15 +9,19 @@ const MAX_STATE_BYTES: usize = 64 * 1024;
 const FIRST_WAIT: u64 = 3 * 60;
 const CHECK_INTERVAL: u64 = 6 * 60 * 60;
 const MAX_SPREAD: u64 = 60 * 60;
-const SWITCH_LABEL: &str = "Check for updates in the background";
-const ON_TEXT: &str = "Home tries a few checks each day; the source can see the internet address and check time, while your name and installed version stay private.";
-const OFF_TEXT: &str = "Background checks are off; System checks for updates while it is open.";
-const SAVE_ERROR: &str = "Home could not save background checks. On the device that runs Home, check free disk space, write access and private ownership of Local/Shared/System/Updates and its .notice.lock file inside this Home's data folder. Move notice.json aside if it is a folder, then try again.";
+const SWITCH_LABEL: &str = "Check for updates automatically";
+const ON_TEXT: &str = "Home checks every 6 to 7 hours while it runs. The update server sees your internet address, not your name or version.";
+const OFF_TEXT: &str = "Home checks only when you open System.";
+const SAVE_ERROR: &str = "Home could not save this setting. Free some disk space on the computer that runs Home, then try again.";
+const SAVE_REPAIR: &str = "Home could not save background checks. On the device that runs Home, check free disk space, write access and private ownership of Local/Shared/System/Updates and its .notice.lock file inside this Home's data folder. Move notice.json aside if it is a folder, then try again.";
 const NOTICE_TITLE: &str = "Update available";
 const NOTICE_BODY: &str = "ElastOS {version} is ready to install.";
-const FOLDER_TEXT: &str = "Background checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
-const INVALID_VERSION_TEXT: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
-const UNREADABLE_TEXT: &str = "Background checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
+const FOLDER_TEXT: &str = "Update checks are off because Home cannot save its settings. Free some disk space on the computer that runs Home, then turn this on.";
+const FOLDER_REPAIR: &str = "Background checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
+pub(super) const INVALID_VERSION_TEXT: &str = "Home cannot check for updates. Ask an admin to repair ElastOS on the computer that runs Home. Home's log has the repair steps.";
+const INVALID_VERSION_REPAIR: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
+const UNREADABLE_TEXT: &str = "Update checks are off because Home could not read this setting. Turn it on to try again.";
+const UNREADABLE_REPAIR: &str = "Background checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -115,10 +119,13 @@ pub(super) fn preference(data_dir: &Path) -> serde_json::Value {
             crate::update::installed_release_version(&source.installed_version).is_err()
         });
     let message = if !folder_usable {
+        tracing::warn!("{FOLDER_REPAIR}");
         FOLDER_TEXT
     } else if state.is_err() {
+        tracing::warn!("{UNREADABLE_REPAIR}");
         UNREADABLE_TEXT
     } else if invalid_version {
+        tracing::warn!("{INVALID_VERSION_REPAIR}");
         INVALID_VERSION_TEXT
     } else if enabled {
         ON_TEXT
@@ -154,7 +161,7 @@ pub(super) async fn set_background(
     if require_admin_principal(&state.data_dir, &launch.context).is_err() {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error":"Ask the Home owner to change background checks."})),
+            Json(serde_json::json!({"error":"Sign in as an admin to change this."})),
         )
             .into_response();
     }
@@ -170,11 +177,14 @@ pub(super) async fn set_background(
     })();
     match result {
         Ok(()) => Json(preference(&state.data_dir)).into_response(),
-        Err(_) => (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({"error": SAVE_ERROR})),
-        )
-            .into_response(),
+        Err(_) => {
+            tracing::warn!("{SAVE_REPAIR}");
+            (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": SAVE_ERROR})),
+            )
+                .into_response()
+        }
     }
 }
 

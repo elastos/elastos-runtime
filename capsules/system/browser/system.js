@@ -3856,10 +3856,10 @@ async function onBackgroundChange() {
     backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
     backgroundSaveState = stateAtSave;
     backgroundSaveError = error.status === 401 || error.status === 403
-      ? "Sign in as the Home owner to change background checks."
+      ? "Sign in as an admin to change this."
       : error.status === 409
         ? runtimeUpdate.background_checks.save_error
-        : "Home could not confirm the setting change. Try again.";
+        : "Home could not save this setting. Try again.";
     renderUpdateNotice();
   } finally {
     backgroundBusy = false;
@@ -3995,7 +3995,7 @@ function renderRuntimeUpdate(update) {
     : inProgress ? readText(controller?.new_version) || readText(choice?.new_version)
       : readText(choice?.new_version);
   setTextFields("update-heading", newVersion && (inProgress || runtimeUpdatePending || runtimeUpdate?.available === true)
-    ? `${inProgress ? "Updating" : "Update"} to ${newVersion}` : "Home update");
+    ? `${inProgress ? "Updating" : "Update available:"} ElastOS ${newVersion}` : "ElastOS update");
   const publisher = readText(runtimeUpdatePending?.publisher || runtimeUpdate?.publisher);
   setTextFields("update-publisher", publisher);
   setHiddenFields("update-publisher-row", !publisher);
@@ -4206,7 +4206,7 @@ async function onRuntimeUpdateApply() {
         : error.status === 410
           ? "This approval is no longer valid. Check for the update again and approve it once more."
         : error.status === 401 || error.status === 403
-          ? "Sign in as the Home owner to start the update."
+          ? "Sign in as an admin to start the update."
           : "The update could not start: the release was refused or verification failed. Select Update again.";
       runtimeUpdateFeedback = feedback;
     } else {

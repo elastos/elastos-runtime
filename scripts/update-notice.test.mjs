@@ -12,7 +12,7 @@ const preference = (enabled, readable = true) => ({ enabled, readable, label:cop
 const release = "bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const notice = () => ({ id:`home-update:${release}`, kind:"home_update_available", source_app:"system", severity:"info", read:false,
   title:copy("NOTICE_TITLE"), body:copy("NOTICE_BODY").replace("{version}","0.7.1"), created_at:1794826800, action_ref:null });
-const notes = ["# Home improvements", "Home tells you when a newer version was found.", "Review the release in System before installation.", "Read release notes before you approve.", "Keep your saved files through the update.", "Control background checks in System."];
+const notes = ["# Home improvements", "Home tells you when a newer version was found.", "Review the release in System before installation.", "Read release notes before you approve.", "Keep your saved files through the update.", "Control update checks in System."];
 
 async function fixture() {
   const state = { settings:preference(true), entry:notice(), actions:[], writes:[], approvals:[], holdReads:true, releases:[], guest:false, failWrite:false };
@@ -69,7 +69,7 @@ async function fixture() {
       if(summary.runtime_update && state.settings.message===copy("INVALID_VERSION_TEXT")) {
         summary.source.installed_version="broken";
         summary.runtime_update={configured:true,available:false,can_apply:false,checking:false,current_version:"broken",
-          message:"Installed release version is invalid. Run `elastos update --force` locally to install a verified signed release and repair it.",background_checks:state.settings};
+          message:copy("INVALID_VERSION_TEXT"),background_checks:state.settings};
       }
       jsonResponse(response,summary);return true;
     }
@@ -256,14 +256,14 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     for(const status of [401,403]) {
       f.state.failStatus=status;
       await system.locator("label.system-switch:has(#update-background-choice)").click();
-      await system.getByText("Sign in as the Home owner to change background checks.",{exact:true}).waitFor();
+      await system.getByText("Sign in as an admin to change this.",{exact:true}).waitFor();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
     }
     for(const status of [500,'drop']) {
       f.state.failStatus=status;
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
-      await system.getByText('Home could not confirm the setting change. Try again.',{exact:true}).waitFor();
+      await system.getByText('Home could not save this setting. Try again.',{exact:true}).waitFor();
       assert.equal(await system.getByText(copy('SAVE_ERROR'),{exact:true}).count(),0,'storage guidance belongs only to 409');
       await screen(page,'phone-no-answer',true);
     }

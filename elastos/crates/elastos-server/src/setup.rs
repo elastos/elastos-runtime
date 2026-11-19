@@ -4189,7 +4189,7 @@ pub(crate) async fn stage_planned_update_support(
     }) {
         owner.progress(
             "verifying",
-            "Checking the model catalogue. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when it is done.",
         )?;
     }
     if let Some((relative, source)) =
@@ -4257,7 +4257,7 @@ async fn fetch_admitted_row(
     let bytes = fetch(key).await?;
     owner.progress(
         "verifying",
-        "Verifying the update. Home restarts when the update is ready.",
+        "Checking the update. Home restarts when it is done.",
     )?;
     verify_release_bytes(name, &bytes, asset)?;
     Ok(bytes)

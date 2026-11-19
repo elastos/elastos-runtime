@@ -850,7 +850,7 @@ pub(crate) fn installer_required<T>(
 }
 
 pub(crate) const DOWNLOAD_MESSAGE: &str =
-    "Downloading the update. Home restarts when the update is ready.";
+    "Downloading the update. Home restarts when it is done.";
 
 pub(crate) trait RestartOwner: Send {
     fn progress(&self, phase: &str, message: &str) -> anyhow::Result<()>;
@@ -1236,7 +1236,7 @@ async fn fetch_verified_update_binary(
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "verifying",
-            "Verifying the update. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when it is done.",
         )?;
     }
     println!("  Downloaded binary: {}", format_bytes(binary_data.len()));
@@ -1472,14 +1472,14 @@ async fn run_upgrade_with_restart(
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "downloading",
-            "Checking the update files. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when it is done.",
         )?;
     }
     let comp_data = fetch_fn(comp_cid.to_string()).await?;
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "verifying",
-            "Verifying the update. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when it is done.",
         )?;
     }
     println!(
@@ -1632,7 +1632,7 @@ async fn run_upgrade_with_restart(
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "verifying",
-            "Checking update metadata. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when it is done.",
         )?;
     }
 
