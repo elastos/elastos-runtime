@@ -102,8 +102,13 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   await writeFile(`${output}/${engine}/states.json`,JSON.stringify(receipt,null,2));
   await writeFile(`${output}/${engine}/${name}.json`,JSON.stringify({...receipt,records:records.filter(row=>row.name===name)},null,2));
  }
+ async function idle(){await frame.waitForFunction(()=>{
+  const life=window.__walletFixtureLifetime;
+  if(life.pending||life.fetches||life.bodies||life.providers.some(p=>p.signer.client.engine.relayMessageCache?.length||p.signer.client.engine.requestQueue?.queue?.length)){window.__linkedIdleSince=undefined;return false;}
+  window.__linkedIdleSince??=performance.now();return performance.now()-window.__linkedIdleSince>=500;
+ });}
  async function reopenWallet(){const navigated=page.waitForEvent('framenavigated',f=>f.url().includes('/apps/wallet/'));await page.getByRole('button',{name:'Reload Wallet',exact:true}).click();await navigated;await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').waitFor();}
  if(sourceRef?.startsWith('0db7'))await page.evaluate(()=>{const button=document.createElement('button');button.textContent='Reload Wallet';button.style='position:absolute;top:0;right:0';button.onclick=()=>{const wallet=document.querySelector('#accounts');wallet.src=wallet.src;};document.body.append(button);});
  await state('internet-ready');
- return {fixture,peer,page,wallet,holdApi,waitWalletRead,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,reopenWallet,openFromWallet,capture,settle:()=>settle(frame)};
+ return {fixture,peer,page,wallet,holdApi,waitWalletRead,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,reopenWallet,openFromWallet,capture,idle,settle:()=>settle(frame)};
 }

@@ -41,7 +41,7 @@ for(const engine of ['chromium','webkit']){
  });
  test(`turned-off access can be requested again without a navigation loop in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});
-  await r.link();r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('linked-access-turned-off');
+  await r.link();await r.idle();r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('linked-access-turned-off');
   assert.equal(await r.frame.locator('[data-action=inbox],[data-action=back-to-connection]').count(),0,'a decided request cannot be answered again in Inbox');
   assert.equal(await r.wallet.locator('#wallet-account-state').innerText(),'1 account','turning off access keeps the linked Wallet account');
   await r.click('connect');await r.state('internet-pending');await r.capture('linked-access-requested-again');
@@ -59,11 +59,7 @@ for(const engine of ['chromium','webkit']){
  });
  test(`expired linked window gives one clear close instruction in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine,{sourceRef});await r.link();
-  await r.frame.waitForFunction(()=>{
-   const life=window.__walletFixtureLifetime;
-   if(life.pending||life.fetches||life.bodies||life.providers.some(p=>p.signer.client.engine.relayMessageCache?.length||p.signer.client.engine.requestQueue?.queue?.length)){window.__linkedIdleSince=undefined;return false;}
-   window.__linkedIdleSince??=performance.now();return performance.now()-window.__linkedIdleSince>=500;
-  });
+  await r.idle();
   r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');await r.capture('linked-window-expired');
   const text=(await r.frame.locator('main').innerText()).replace(/\s+/g,' ');
   assert.equal(text.match(/Close this window/g)?.length,1,'Home close advice replaces the old instruction');
