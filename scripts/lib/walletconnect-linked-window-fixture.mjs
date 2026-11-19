@@ -17,6 +17,8 @@ export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
  const browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
  const page=await browser.newPage({viewport:{width:1040,height:620}});page.setDefaultTimeout(6000);
  const {errors}=observeWindowErrors(page,fixture);let frame;
+ const walletReads=[],walletFailures=[];
+ page.on('requestfailed',request=>{if(new URL(request.url()).pathname.startsWith('/api/apps/wallet/')||request.frame().url().includes('/apps/wallet/'))walletFailures.push({path:new URL(request.url()).pathname,error:request.failure()?.errorText});});
  const settle=await walletWindowLifetime(page,fixture);
  page.on('framenavigated',next=>{if(next.parentFrame()===page.mainFrame()&&next.url().includes('/apps/wallet-walletconnect/'))frame=next;});
  t.after(async()=>{try{await settle(frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[]);});
@@ -27,6 +29,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
   const json=value=>route.fulfill({headers:cors,contentType:'application/json',body:JSON.stringify(value)});
   if(route.request().method()==='OPTIONS')return json({});
   if(path==='/api/apps/wallet/wallet/summary'){
+   walletReads.push(fixture.state.accounts.length);
    const snapshot=structuredClone({wallet_accounts:{available:true,accounts:fixture.state.accounts,default_accounts:[]},wallet_approvals:{available:true,approval_requests:[],pending_count:0},approval_methods:{walletconnect:{available:true}}});
    if(firstWalletRead&&holdWalletRead){firstWalletRead=false;enterWalletRead();await walletReadGate;}
    return json(snapshot);
@@ -58,6 +61,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
  await page.goto(fixture.origin);
  frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
  const wallet=page.frameLocator('#accounts');await wallet.locator('.wallet-shell').waitFor();
+ if(!holdWalletRead)try{await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').waitFor();}catch(error){throw new Error('Wallet boot: '+await wallet.locator('main').innerText()+'; reads='+JSON.stringify(walletReads)+'; failed='+JSON.stringify(walletFailures),{cause:error});}
  async function state(name){try{await frame.locator(`[data-state="${name}"]`).waitFor();}catch(error){throw new Error(`Expected ${name}: ${await frame.locator('main').innerText()}`,{cause:error});}}
  const click=action=>frame.locator(`[data-action="${action}"]`).click();
  async function link(){await state('internet-ready');await click('connect');await state('qr-shown');await pair();await state('linked');}
