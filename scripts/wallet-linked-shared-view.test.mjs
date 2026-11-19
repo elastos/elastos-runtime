@@ -9,7 +9,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   document.querySelector('#mount').replaceChildren(renderConnection(document,view));
   return {text:document.querySelector('main').innerText,actions:view.actions};
  },kind);
- assert.doesNotMatch(shown.text,/review this request|Back to connection|Manage in Inbox/i);
+ assert.doesNotMatch(shown.text,/review this request|Back to connection|Manage in Inbox|Close this window/i);
  assert.ok(shown.actions.every(a=>!['connect','start-over','inbox','back-to-connection'].includes(a.id)));
  assert.ok(shown.actions.every(a=>!a.primary||a.id==='close-window'));
 });
