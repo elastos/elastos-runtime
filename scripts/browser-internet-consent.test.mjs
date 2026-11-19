@@ -117,7 +117,7 @@ async function fixture(service = "browser") {
     if (url.pathname === "/api/apps/inbox/summary") {
       const expired=state.consent === "requested" && state.expired;
       const pending=state.consent === "requested" && !expired;
-      const body=expired?"This expired request was made.":pending?consentText:state.consent === "granted"?"Browser can open websites. Allowed with your passkey.":state.consent === "refused"?"Browser cannot open websites. Not allowed.":"Browser cannot open websites. Turned off.";
+      const body=expired?"This request expired. It was made.":pending?consentText:state.consent === "granted"?"Browser can open websites. Allowed with your passkey.":state.consent === "refused"?"Browser cannot open websites. Not allowed.":"Browser cannot open websites. Turned off.";
       json({notifications:{unread_count:pending?1:0,attention_count:pending?1:0,entries:[{
         id:`${prefix}:permission`,source_app:walletconnect?"wallet-walletconnect":"browser",kind:`${kind}_${pending?"request":"decision"}`,
         title:pending?"Allow Browser to use the internet?":"Browser internet access",body,severity:pending?"attention":"info",read:!pending,created_at:1794312000,
@@ -269,7 +269,7 @@ test("Inbox decision dates and keyboard focus are readable in light and dark the
   f.state.consent="granted";
   for(const theme of ["light","dark"]) {
    const page=await browser.newPage({viewport:{width:1280,height:844}});await page.goto(f.url+"?app=inbox");const frame=page.frameLocator("iframe");
-   const off=frame.getByRole("button",{name:"Turn Off",exact:true});await off.waitFor();
+   const off=frame.getByRole("button",{name:"Turn off",exact:true});await off.waitFor();
    await off.evaluate((e,theme)=>window.elastosTheme.set(theme),theme);
    const expected=await off.evaluate(()=>new Date(1794312000*1000).toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"}));
    assert.match(await frame.locator("#entry-detail .entry-body").innerText(),new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
@@ -434,7 +434,7 @@ test("Inbox manages active and off grants with confirmation, passkey and retaine
     f.state.consent="granted";
     const page=await browser.newPage({viewport:{width:1280,height:844},colorScheme:"light"});
     await page.goto(f.url+"?app=inbox");const frame=page.frameLocator("iframe");
-    const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn Off",exact:true});
+    const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn off",exact:true});
     await off.waitFor({timeout:3000});await screen(page,"inbox-decided-allowed");
     await off.click();await frame.locator("dialog[open]").waitFor();
     assert.equal(await frame.locator('#browser-internet-confirm [value="cancel"]').evaluate(e=>e===document.activeElement),true);
@@ -453,7 +453,7 @@ test("Inbox manages active and off grants with confirmation, passkey and retaine
     assert.equal(f.state.requests,1);assert.equal(await frame.locator("#pending-count").innerText(),"0");
     await page.waitForFunction(()=>messages.some(m=>m.type==="home:focus-browser"));
     f.state.consent="requested";await page.reload();await screen(page,"inbox-request");
-    await frame.getByRole("button",{name:"Don't Allow",exact:true}).click();
+    await frame.getByRole("button",{name:"Don't allow",exact:true}).click();
     await frame.locator("#entry-detail .entry-body").filter({hasText:/Browser cannot open websites. Not allowed on/}).waitFor();
     assert.equal(await frame.locator("#pending-count").innerText(),"0");
     await frame.getByRole("button",{name:"Allow",exact:true}).click();
@@ -507,17 +507,17 @@ test("WalletConnect Inbox keeps requests pending, uses passkey consent and separ
       assert.equal(await frame.locator("#pending-count").innerText(),"1");
       assert.equal(f.state.actions.length,0,"dynamic requests stay unread until answered");
       await frame.getByRole("button",{name:"Allow",exact:true}).click();
-      await frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
+      await frame.getByRole("button",{name:"Turn off",exact:true}).waitFor();
       assert.equal(await frame.locator("#pending-count").innerText(),"0");
       assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant"]);
       await page.waitForFunction(()=>messages.some(m=>m.type==='home:open-target' && m.target==='wallet-walletconnect' && Object.keys(m.query).length===0));
-      const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn Off",exact:true});
+      const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn off",exact:true});
       await off.click();
       const confirm=frame.locator("#walletconnect-internet-confirm");
       assert.equal(await confirm.locator('[value="cancel"]').evaluate(e=>e===document.activeElement),true);
       await confirm.getByRole("button",{name:"Cancel",exact:true}).click();
       assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant"]);
-      await off.click();await confirm.getByRole("button",{name:"Turn Off",exact:true}).click();
+      await off.click();await confirm.getByRole("button",{name:"Turn off",exact:true}).click();
       await off.waitFor({state:"hidden"});
       assert.deepEqual(await page.evaluate(()=>approvals),["walletconnect.internet.grant","walletconnect.internet.revoke"]);
       assert.equal(f.state.consent,"revoked");
@@ -529,13 +529,13 @@ test("WalletConnect Inbox keeps requests pending, uses passkey consent and separ
     f.state.consent="requested";f.state.actions=[];
     const page=await browser.newPage();await page.goto(f.url+"?app=inbox");
     const frame=page.frameLocator("iframe");
-    await frame.getByRole("button",{name:"Don't Allow",exact:true}).click();
+    await frame.getByRole("button",{name:"Don't allow",exact:true}).click();
     const allow=frame.getByRole("button",{name:"Allow",exact:true});
     await allow.waitFor();
     assert.equal(f.state.consent,"refused");
     assert.deepEqual(await page.evaluate(()=>approvals),[]);
     await allow.click();
-    await frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
+    await frame.getByRole("button",{name:"Turn off",exact:true}).waitFor();
     assert.equal(f.state.consent,"granted");
     await page.close();
   } finally {await browser.close();await f.close();}
@@ -549,9 +549,9 @@ test("Browser and WalletConnect confirmations keep Cancel as default after a pre
       const page=await browser.newPage({viewport:{width:1280,height:844}});
       await page.goto(f.url+"?app=inbox");
       const frame=page.frameLocator("iframe");
-      const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn Off",exact:true});
+      const off=frame.locator("#entry-detail").getByRole("button",{name:service === "browser" ? "Turn off" : "Turn Off",exact:true});
       const dialog=frame.locator(`#${service}-internet-confirm`);
-      await off.click();await dialog.getByRole("button",{name:"Turn Off",exact:true}).click();
+      await off.click();await dialog.getByRole("button",{name:service === "browser" ? "Turn off" : "Turn Off",exact:true}).click();
       await frame.locator("#entry-detail").getByRole("button",{name:"Allow",exact:true}).click();
       await off.click();
       assert.equal(await dialog.locator(":focus").innerText(),"Cancel");
@@ -744,14 +744,14 @@ test("566r2 expired Inbox entry dates the expiry and renews through a fresh pass
     const inbox=page.frameLocator("iframe");
     await inbox.getByRole("button",{name:"Allow",exact:true}).waitFor();
     const body=await inbox.locator("#entry-detail .entry-body").innerText();
-    assert.match(body,/This expired request was made on .+\./);
+    assert.match(body,/This request expired\. It was made on .+\./);
     assert.equal(await inbox.locator("#pending-count").innerText(),"0");
     await page.evaluate(()=>holdPasskey=true);
     await inbox.getByRole("button",{name:"Allow",exact:true}).click();
     await page.waitForFunction(()=>approvals.length===1);
     assert.equal(f.state.requests,1);assert.equal(f.state.actions.length,0);
     await page.evaluate(()=>completeFixturePasskey());
-    await inbox.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
+    await inbox.getByRole("button",{name:"Turn off",exact:true}).waitFor();
     assert.equal(f.state.actions.length,1);assert.equal(f.state.opens.length,0);
     await page.close();
   } finally {await browser.close();await f.close();}

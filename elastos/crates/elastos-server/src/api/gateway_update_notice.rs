@@ -13,8 +13,8 @@ const SWITCH_LABEL: &str = "Check for updates in the background";
 const ON_TEXT: &str = "Home tries a few checks each day; the source can see the internet address and check time, while your name and installed version stay private.";
 const OFF_TEXT: &str = "Background checks are off; System checks for updates while it is open.";
 const SAVE_ERROR: &str = "Home could not save background checks. On the device that runs Home, check free disk space, write access and private ownership of Local/Shared/System/Updates and its .notice.lock file inside this Home's data folder. Move notice.json aside if it is a folder, then try again.";
-const NOTICE_TITLE: &str = "Home update found";
-const NOTICE_BODY: &str = "Home {version} was found. Review the update in System.";
+const NOTICE_TITLE: &str = "Update available";
+const NOTICE_BODY: &str = "ElastOS {version} is ready to install.";
 const FOLDER_TEXT: &str = "Background checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
 const INVALID_VERSION_TEXT: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
 const UNREADABLE_TEXT: &str = "Background checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
@@ -242,18 +242,18 @@ pub(super) async fn acknowledge(
         } else if let Some(release) = action.strip_prefix("notification-dismiss:home-update:") {
             (release, true)
         } else {
-            anyhow::bail!("unsupported update notice action");
+            anyhow::bail!("Home could not dismiss this notice. Refresh Inbox and try again.");
         };
     anyhow::ensure!(
         cid::Cid::try_from(release).is_ok(),
-        "invalid update notice identity"
+        "Home could not dismiss this notice. Refresh Inbox and try again."
     );
     let (path, _lock) = locked_path(data_dir)?;
     let mut state = read_state(&path)?;
     if state.release_cid.as_deref() == Some(release) {
         anyhow::ensure!(
             state.accounts.contains_key(&context.principal_id) || state.accounts.len() < 256,
-            "too many update acknowledgements"
+            "Home could not dismiss this notice."
         );
         let account = state
             .accounts
@@ -263,7 +263,7 @@ pub(super) async fn acknowledge(
         account.dismissed |= dismiss;
         write_state(&path, &state)?;
     }
-    Ok("Saved update notice choice.".into())
+    Ok("Saved.".into())
 }
 
 pub(super) fn now_secs() -> u64 {

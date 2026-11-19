@@ -630,7 +630,7 @@
       }
       if (entry.kind === "browser_internet_decision") {
         if (actionId?.startsWith("browser-internet-turn-off:")) {
-          actions.appendChild(createButton("Turn Off", async () => {
+          actions.appendChild(createButton("Turn off", async () => {
             if (!await confirmInternetOff()) return;
             setButtonsDisabled(true);
             try {
@@ -656,7 +656,7 @@
       }
 
       if (typeof actionId === "string" && actionId.startsWith("browser-internet-allow:")) {
-        actions.appendChild(createActionButton("Don't Allow", actionId.replace("browser-internet-allow:", "browser-internet-deny:")));
+        actions.appendChild(createActionButton("Don't allow", actionId.replace("browser-internet-allow:", "browser-internet-deny:")));
         actions.appendChild(createButton("Allow", () => allowInternet(actionId), "primary"));
       } else if (typeof actionId === "string" && actionId.startsWith("room-approve-request:")) {
         actions.appendChild(createActionButton("Approve", actionId, "primary"));
