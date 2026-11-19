@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -31,6 +32,7 @@ const state = {
   },
   connectorEffects: 0,
   approvalRequests: [],
+  walletAccounts: [],
   homeStateWrites: [],
   serverErrors: [],
 };
@@ -260,7 +262,7 @@ async function handleApi(req, res, url) {
       return true;
     }
     json(res, 200, {
-      wallet_accounts: { accounts: [], default_accounts: [] },
+      wallet_accounts: { accounts: state.walletAccounts, default_accounts: [] },
       wallet_approvals: { approval_requests: state.approvalRequests },
       approval_methods: { walletconnect: { available: true } },
     });
@@ -324,7 +326,9 @@ const server = createServer(async (req, res) => {
       json(res, 404, { error: "fixture route not found", path: url.pathname });
       return;
     }
-    const body = readFileSync(path);
+    const body = process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
+      ? execFileSync("git", ["show", "0db7eb247c8d89f367d5458acb03339605cc216e:capsules/home/browser/home-shell-host.js"])
+      : readFileSync(path);
     res.writeHead(200, {
       "access-control-allow-origin": "*",
       "cache-control": "no-store",
@@ -481,10 +485,13 @@ function rectangleIntersectionRatio(subject, overlay) {
 const origin = await listen();
 let browser = null;
 try {
-  const { chromium } = await importProductSmokePlaywright();
+  const engines = await importProductSmokePlaywright();
+  const engine = process.env.HOME_WALLET_CONNECTOR_ENGINE || "chromium";
+  assert(["chromium", "webkit"].includes(engine), "named browser engine required");
   const executablePath = configuredBrowserExecutable();
-  browser = await chromium.launch({
+  browser = await engines[engine].launch({
     headless: true,
+    ...(engine === "chromium" ? {
     ...productSmokeLaunchOptions(),
     ...(executablePath ? { executablePath } : {}),
     args: [
@@ -498,6 +505,7 @@ try {
       "--no-first-run",
       "--no-proxy-server",
     ],
+    } : {}),
   });
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -690,6 +698,19 @@ try {
           await page.screenshot({path:join(process.env.WALLETCONNECT_SCREENSHOTS, `r15-home-return-${theme}.png`)});
         }
       }
+    }
+
+    if (target === "wallet-walletconnect") {
+      const notify = () => connector.evaluate(() => window.top.postMessage({
+        type: "home:refresh-summary",
+        homeToken: new URLSearchParams(location.hash.slice(1)).get("home_token"),
+      }, new URLSearchParams(location.search).get("home_origin")));
+      state.walletAccounts = [{account_id:"fixture-linked-account",address:"0x1212121212121212121212121212121212121212",chain_namespace:"eip155:1",connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"WalletConnect",wallet_mark:"wallet",linked_at:1}];
+      await notify();
+      await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "1 account", null, {timeout:4000});
+      state.walletAccounts = [];
+      await notify();
+      await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "0 accounts", null, {timeout:4000});
     }
 
     const connectorClose = homeGui.locator(
