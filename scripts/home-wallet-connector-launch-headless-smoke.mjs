@@ -33,6 +33,7 @@ const state = {
   connectorEffects: 0,
   approvalRequests: [],
   walletAccounts: [],
+  walletSummaryReads: 0,
   homeStateWrites: [],
   serverErrors: [],
 };
@@ -261,6 +262,7 @@ async function handleApi(req, res, url) {
     if (!requireToken(req, walletToken, res)) {
       return true;
     }
+    state.walletSummaryReads++;
     json(res, 200, {
       wallet_accounts: { accounts: state.walletAccounts, default_accounts: [] },
       wallet_approvals: { approval_requests: state.approvalRequests },
@@ -706,6 +708,14 @@ try {
         homeToken: new URLSearchParams(location.hash.slice(1)).get("home_token"),
       }, new URLSearchParams(location.search).get("home_origin")));
       state.walletAccounts = [{account_id:"fixture-linked-account",address:"0x1212121212121212121212121212121212121212",chain_namespace:"eip155:1",connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"WalletConnect",wallet_mark:"wallet",linked_at:1}];
+      const readsBeforeSibling = state.walletSummaryReads;
+      await connector.evaluate(() => {
+        for (let i=0;i<window.parent.length;i++) window.parent.frames[i].postMessage({
+          type:"elastos:runtime-events",events:[{kind:"wallet.accounts.changed",scope:"wallet"}],
+        },"*");
+      });
+      await page.waitForTimeout(150);
+      assert(state.walletSummaryReads === readsBeforeSibling, "a sibling connector cannot forward Home GUI events");
       await notify();
       await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "1 account", null, {timeout:4000});
       state.walletAccounts = [];

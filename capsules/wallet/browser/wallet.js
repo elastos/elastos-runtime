@@ -454,7 +454,9 @@ function onWalletRefreshMessage(event) {
 }
 
 function onRuntimeEvents(event) {
-  if (event.origin !== homeParentOrigin || event.source !== window.top) {
+  const fromHome = event.origin === homeParentOrigin && event.source === window.top;
+  const fromHomeGui = window.parent !== window.top && event.origin === "null" && event.source === window.parent;
+  if (!fromHome && !fromHomeGui) {
     return;
   }
   const message = event.data || {};
