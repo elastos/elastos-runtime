@@ -528,14 +528,18 @@ curl -fsSL https://elastos.elacitylabs.com/install.sh | bash -s -- --uninstall -
 ```
 
 This deletes your identity, wallets and recovery material on this computer.
-Keep your Recovery Kit first: it is the only way to restore that identity.
+Keep your full recovery bundle first for built-in Wallet keys and People
+identity/contacts. A Recovery Kit alone restores the data key.
 
 ## Data, keys and backups
 
 Runtime stores keys next to the data they protect in its data home. A full
 backup of that home contains all keys, including wallet keys. Protect the backup
 with the same care as the running Home. A Recovery Kit is sensitive recovery
-material; keep it under your own control.
+material; keep it under your own control. A Kit restores a data key; the full
+bundle adds built-in Wallet keys and People identity/contacts. Both leave ordinary
+files and histories for a separate backup. See the dated
+[storage table](../SECURITY.md#stored-keys-and-recovery) for exact coverage.
 
 Use hosted accounts only for public demos. Keep wallets, private data and
 recovery material on your own device until
