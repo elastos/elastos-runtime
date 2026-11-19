@@ -98,6 +98,7 @@ let currentRequests = [];
 let selectedAccountId = "";
 let reviewWalletRequestId = readQueryParam("wallet_request");
 let refreshWalletStateInFlight = null;
+let walletRefreshQueued = false;
 const { fetchJson, notifyHomeSummaryChanged, requestPasskeyStepUp, shellHeaders } = createWalletApi({
   getHomeToken: () => activeHomeToken,
 });
@@ -491,12 +492,19 @@ function onWalletActionClick(event) {
 
 async function refreshWalletState() {
   if (refreshWalletStateInFlight) {
+    walletRefreshQueued = true;
     return refreshWalletStateInFlight;
   }
-  refreshWalletStateInFlight = loadWalletState()
-    .finally(() => {
+  refreshWalletStateInFlight = (async () => {
+    try {
+      do {
+        walletRefreshQueued = false;
+        await loadWalletState();
+      } while (walletRefreshQueued);
+    } finally {
       refreshWalletStateInFlight = null;
-    });
+    }
+  })();
   return refreshWalletStateInFlight;
 }
 

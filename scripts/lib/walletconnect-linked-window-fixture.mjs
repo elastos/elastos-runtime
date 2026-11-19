@@ -21,6 +21,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
  const page=await browser.newPage({viewport:{width:1040,height:620}});page.setDefaultTimeout(6000);
  const {errors}=observeWindowErrors(page,fixture);let frame;
  const walletReads=[],walletFailures=[];
+ page.on('console',message=>{if(message.type()==='error')walletFailures.push({console:message.text().replaceAll('fixture-project','[test project]').slice(0,500)});});
  page.on('requestfailed',request=>{if(new URL(request.url()).pathname.startsWith('/api/apps/wallet/')||request.frame().url().includes('/apps/wallet/'))walletFailures.push({path:new URL(request.url()).pathname,error:request.failure()?.errorText});});
  const settle=await walletWindowLifetime(page,fixture);
  page.on('framenavigated',next=>{if(next.parentFrame()===page.mainFrame()&&next.url().includes('/apps/wallet-walletconnect/'))frame=next;});
