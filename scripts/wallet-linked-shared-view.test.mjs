@@ -6,8 +6,8 @@ import {fixture} from './lib/wallet-extension-window-fixture.mjs';
 import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';
 const playwright=requireProductSmokePlaywright();
 for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`linked ${kind} has useful copy and controls in ${engine}`,async t=>{
- const browser=await playwright[engine].launch({headless:true});t.after(()=>browser.close());
- const f=await fixture(browser,kind);t.after(()=>f.close());
+ const browser=await playwright[engine].launch({headless:true});let f;t.after(async()=>{try{await f?.close();}finally{await browser.close();}});
+ f=await fixture(browser,kind);
  await f.state('ready');await f.action('connect').click();await f.state('linked');
  const shown=await f.frame.locator('main').evaluate(main=>({text:main.innerText,actions:[...main.querySelectorAll('[data-action]')].map(b=>({id:b.dataset.action,primary:b.classList.contains('el-button-primary')}))}));
  assert.doesNotMatch(shown.text,/review this request|Back to connection|Manage in Inbox|Close this window/i);
