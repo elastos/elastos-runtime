@@ -53,7 +53,7 @@ for(const engine of ['chromium','webkit']) {
   await r.openFromWallet();const connector=r.frame;
   if(await connector.locator('[data-action=add-account]').count())await connector.locator('[data-action=add-account]').click();
   await r.capture('same-phone-add-instructions');
-  assert.match(await connector.locator('main').innerText(),/select another account in Trust Wallet/i,'the add path names the phone step before ending anything');
+  assert.match((await connector.locator('main').innerText()).replace(/\s+/g,' '),/select another account in Trust Wallet/i,'the add path names the phone step before ending anything');
   await r.peer.changeAccount();await connector.locator('[data-state=account-changed]').waitFor();await r.capture('account-changed');
   assert.equal(await connector.locator('.connection-current-selection').count(),0,'the account card already shows the selected account');
   assert.equal(await connector.getByRole('button',{name:'Replace connection',exact:true}).count(),1);
