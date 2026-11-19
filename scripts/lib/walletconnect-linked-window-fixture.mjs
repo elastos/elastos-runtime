@@ -46,7 +46,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   if(path.endsWith('/verify')){
    // LinkVerifiedAccount adds a row; the older window fixture replaces its list.
    const prior=[...fixture.state.accounts],response=await route.fetch();
-   if(response.ok())fixture.state.accounts=[...prior.filter(a=>!fixture.state.accounts.some(b=>a.address.toLowerCase()===b.address.toLowerCase()&&a.chain_namespace===b.chain_namespace)),...fixture.state.accounts].map((a,i)=>({...a,account_id:a.account_id||`fixture-account-${i}-${a.address}`,wallet_display_name:'Trust Wallet',wallet_mark:'wallet',linked_at:1,signing_available:true}));
+   if(response.ok())fixture.state.accounts=[...prior.filter(a=>!fixture.state.accounts.some(b=>a.address.toLowerCase()===b.address.toLowerCase()&&a.chain_namespace===b.chain_namespace)),...fixture.state.accounts].map((a,i)=>({...a,account_id:a.account_id||`fixture-account-${i}-${a.address}`,wallet_display_name:'WalletConnect',wallet_mark:'wallet',linked_at:1,signing_available:true}));
    return route.fulfill({response});
   }
   return route.fallback();
@@ -91,7 +91,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
    await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`});
    records.push({name,theme,...await frame.locator('main').evaluate(main=>({stage:main.dataset.state,text:main.innerText,actions:[...main.querySelectorAll('button')].map(b=>({action:b.dataset.action,label:b.innerText,primary:b.classList.contains('el-button-primary')}))}))});
   }
-  await writeFile(`${output}/${engine}/states.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),records},null,2));
+  await writeFile(`${output}/${engine}/states.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),sourceRef:sourceRef||null,records},null,2));
  }
  await state('internet-ready');
  return {fixture,peer,page,wallet,holdApi,waitWalletRead,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,openFromWallet,capture,settle:()=>settle(frame)};
