@@ -241,7 +241,10 @@ export function connectionView(input) {
     if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
   }
   let effectiveNotice = safetyNotice ?? notice;
-  if(supported&&!supported.includes('close-window')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id))))effectiveNotice=/Close this window\./.test(effectiveNotice)?effectiveNotice.replace('Close this window.','Close this window with Home’s window controls.'):effectiveNotice+' Close this window with Home’s window controls.';
+  if(supported&&!supported.includes('close-window')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){
+    const manualClose='Close this window with Home’s window controls';
+    effectiveNotice=/Close this window(?=[.,])/.test(effectiveNotice)?effectiveNotice.replace(/Close this window(?=[.,])/,manualClose):effectiveNotice+' '+manualClose+'.';
+  }
   const approvalSite = !screen.requestPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
   if(approvalSite&&(!supported||supported.includes('close-window'))&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});
   let focus = approvalSite || unknownRecovery || unknownLinkRecovery || screen.requiresSafeRetry&&safety!==false ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
