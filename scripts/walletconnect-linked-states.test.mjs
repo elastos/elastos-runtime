@@ -29,6 +29,9 @@ for(const engine of ['chromium','webkit']) {
   assert.match(await r.frame.locator('main').innerText(),/different network/);
   await r.peer.changeChain('eip155:1');await r.state('linked');await r.capture('original-network-returned');
   assert.doesNotMatch(await r.frame.locator('main').innerText(),/Wallet now shows|different account|different network/,'returning to the linked selection clears the old change notice');
+  await r.peer.changeChain('eip155:8453');await r.state('saved-unlinked');await r.click('finish');await r.state('linked');
+  assert.equal(r.fixture.state.accounts.length,2,'both network proofs are stored');
+  await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),1);await r.capture('same-address-on-both-networks');
  });
  test(`open Wallet receives the new linked account in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.wallet.locator('#wallet-account-state').filter({hasText:'0 accounts'}).waitFor();await r.link();

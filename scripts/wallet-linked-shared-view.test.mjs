@@ -1,15 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {browserFixture} from './lib/wallet-connection-browser-fixture.mjs';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {execFileSync} from 'node:child_process';
+import {fixture} from './lib/wallet-extension-window-fixture.mjs';
+import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';
+const playwright=requireProductSmokePlaywright();
 for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`linked ${kind} has useful copy and controls in ${engine}`,async t=>{
- const f=await browserFixture(engine);t.after(()=>f.close());
- const shown=await f.page.evaluate(async kind=>{
-  const {connectionView,renderConnection}=await import(`/capsules/wallet-${kind}/browser/wallet-connection-view.mjs`);
-  const view=connectionView({window:kind,stage:'linked',homeOrigin:'https://home.example',account:{name:kind==='metamask'?'MetaMask':'UniSat',mark:kind,accounts:[{address:kind==='metamask'?'0x'+'12'.repeat(20):'bc1q'+'a'.repeat(38),networks:[kind==='metamask'?'Ethereum':'Bitcoin']}]},supportedActions:['close-window','copy-address'],localSafety:false});
-  document.querySelector('#mount').replaceChildren(renderConnection(document,view));
-  return {text:document.querySelector('main').innerText,actions:view.actions};
- },kind);
+ const browser=await playwright[engine].launch({headless:true});t.after(()=>browser.close());
+ const f=await fixture(browser,kind);t.after(()=>f.close());
+ await f.state('ready');await f.action('connect').click();await f.state('linked');
+ const shown=await f.frame.locator('main').evaluate(main=>({text:main.innerText,actions:[...main.querySelectorAll('[data-action]')].map(b=>({id:b.dataset.action,primary:b.classList.contains('el-button-primary')}))}));
  assert.doesNotMatch(shown.text,/review this request|Back to connection|Manage in Inbox|Close this window/i);
  assert.ok(shown.actions.every(a=>!['connect','start-over','inbox','back-to-connection'].includes(a.id)));
  assert.ok(shown.actions.every(a=>!a.primary||a.id==='close-window'));
+ const output=process.env.WALLETCONNECT_LINKED_SCREENS;
+ if(output){
+  await mkdir(`${output}/${engine}`,{recursive:true});
+  for(const theme of ['light','dark']){
+   await f.frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);
+   await f.top.screenshot({path:`${output}/${engine}/linked-${kind}-${theme}.png`});
+  }
+  await writeFile(`${output}/${engine}/linked-${kind}.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,kind,...shown},null,2));
+ }
+ await f.action('copy-address').click();await f.top.waitForFunction(()=>testState.copies.length===1);
+ await f.action('close-window').click();await f.top.waitForFunction(()=>testState.closed===true);
 });
