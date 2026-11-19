@@ -22,6 +22,7 @@ const connectorTitles = Object.freeze({
   "wallet-unisat": "UniSat",
   "wallet-walletconnect": "WalletConnect",
 });
+const issuedLaunchTokens = new Map();
 const state = {
   launches: {
     "home-gui": 0,
@@ -187,6 +188,9 @@ function launchResponse(origin, target, query) {
     params.set(key, String(value));
   }
   params.set("home_origin", origin);
+  const ownerToken = launchToken(target);
+  const issuedToken = `${ownerToken}-${state.launches[target]}`;
+  issuedLaunchTokens.set(issuedToken, ownerToken);
   return {
     target,
     title: connectorTitles[target] || (target === "home-gui" ? "Desktop" : "Wallet"),
@@ -194,12 +198,12 @@ function launchResponse(origin, target, query) {
     launch_status: "launched",
     route:
       `/apps/${target}/?${params.toString()}` +
-      `#home_token=${encodeURIComponent(launchToken(target))}`,
+      `#home_token=${encodeURIComponent(issuedToken)}`,
   };
 }
 
 function requireToken(req, token, res) {
-  if (req.headers["x-elastos-home-token"] === token) {
+  if (req.headers["x-elastos-home-token"] === token || issuedLaunchTokens.get(req.headers["x-elastos-home-token"]) === token) {
     return true;
   }
   json(res, 401, { error: "fixture launch owner rejected" });
@@ -328,7 +332,11 @@ const server = createServer(async (req, res) => {
       json(res, 404, { error: "fixture route not found", path: url.pathname });
       return;
     }
-    const body = process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
+    const rootOnlyRef = process.env.HOME_WALLET_REFRESH_ROOT_ONLY === "1" ? ({
+      [join(repoRoot,"capsules/home-gui/browser/home-gui-shell.js")]:"0db7eb247c8d89f367d5458acb03339605cc216e:capsules/home-gui/browser/home-gui-shell.js",
+      [join(repoRoot,"capsules/wallet/browser/wallet.js")]:"40af50bac2d0047500185205c0a50cea3744677c:capsules/wallet/browser/wallet.js",
+    })[path] : null;
+    const body = rootOnlyRef ? execFileSync("git",["show",rootOnlyRef]) : process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
       ? execFileSync("git", ["show", "0db7eb247c8d89f367d5458acb03339605cc216e:capsules/home/browser/home-shell-host.js"])
       : readFileSync(path);
     res.writeHead(200, {
