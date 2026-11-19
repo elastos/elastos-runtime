@@ -48,9 +48,12 @@ for(const engine of ['chromium','webkit']) {
   await r.capture('same-phone-add-instructions');
   assert.match(await connector.locator('main').innerText(),/select another account in Trust Wallet/i,'the add path names the phone step before ending anything');
   await r.peer.changeAccount();await connector.locator('[data-state=account-changed]').waitFor();await r.capture('account-changed');
-  await connector.locator('[data-action=send-message]').click();await connector.locator('[data-state=linked]').waitFor();
+  const challenge=r.holdApi('/api/auth/evm/challenge'),verify=r.holdApi('/api/auth/evm/verify');r.peer.choose({request:'silent'});
+  await connector.locator('[data-action=send-message]').click();await challenge.entered;await r.state('preparing-connection');await r.capture('preparing-connection');challenge.release();
+  await r.state('link-wait');await r.capture('link-wait');await r.peer.answer('sign');await verify.entered;await r.state('checking-response');await r.capture('checking-response');verify.release();await r.state('linked');
   await r.wallet.locator('#wallet-account-state').filter({hasText:'2 accounts'}).waitFor({timeout:4000});
   assert.equal(new Set(r.fixture.state.accounts.map(a=>a.address.toLowerCase())).size,2);
+  assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),2,'Wallet displays both account cards');
   await r.capture('two-phone-accounts');
  });
  test(`Wallet adds a second wallet after an explicit disconnect in ${engine}`,{timeout:60000},async t=>{
@@ -62,12 +65,13 @@ for(const engine of ['chromium','webkit']) {
   assert.match(await r.frame.locator('main').innerText(),/linked accounts stay in Wallet/i);
   assert.equal(r.fixture.state.verified,1,'opening the add instructions preserves the first account and session');
   await r.click('back-to-connection');await r.state('linked');await r.click('add-account');await r.state('add-account');
-  await r.click('disconnect');await r.state('disconnected');await r.capture('disconnected');
+  const clearing=r.holdApi('/api/apps/wallet-walletconnect/storage','DELETE');await r.click('disconnect');await clearing.entered;await r.state('disconnecting');await r.capture('disconnecting');clearing.release();await r.state('disconnected');await r.capture('disconnected');
   const second=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:r.fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Second phone wallet',emitApprovalEvents:true});t.after(()=>second.stop());
   await r.click('connect');await r.state('qr-shown');await r.capture('second-wallet-qr');await r.click('copy-link');
   await second.pair(await r.page.evaluate(()=>window.copied));await r.state('linked');
   await r.wallet.locator('#wallet-account-state').filter({hasText:'2 accounts'}).waitFor({timeout:4000});await r.capture('two-wallets');
   assert.equal(new Set(r.fixture.state.accounts.map(a=>a.address.toLowerCase())).size,2);
+  assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),2,'Wallet displays both account cards');
  });
 
 }

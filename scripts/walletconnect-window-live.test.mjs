@@ -31,7 +31,7 @@ async function refreshAndWaitForRedraw(r){
  const read=r.page.waitForResponse(response=>response.url().endsWith('/internet'));await r.refresh();await read;await r.frame.locator('main').waitFor();
 }
 async function setup(t,engine,mutation){
- const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
+ const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws'),chains:['eip155:8453','eip155:1'],emitApprovalEvents:true});
  const engines=await importProductSmokePlaywright(),browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
  const page=await browser.newPage({viewport:{width:480,height:560}}),{errors}=observeWindowErrors(page,fixture);
  await page.route('**/*',r=>new URL(r.request().url()).origin===fixture.origin?r.continue():r.abort());

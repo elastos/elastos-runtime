@@ -9,6 +9,9 @@ import {importProductSmokePlaywright, productSmokeLaunchOptions} from '../produc
 const captures=new Map();
 export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
  const fixture=await windowFixture();
+ const apiGates=new Map(),gateReleases=[];
+ t.after(()=>gateReleases.forEach(release=>release()));
+ function holdApi(path,method='POST'){let enter,release;const entered=new Promise(resolve=>enter=resolve),wait=new Promise(resolve=>release=resolve);apiGates.set(method+' '+path,{enter,wait});gateReleases.push(release);return {entered,release};}
  let enterWalletRead,releaseWalletRead,firstWalletRead=true;
  const walletReadStarted=new Promise(resolve=>enterWalletRead=resolve),walletReadGate=new Promise(resolve=>releaseWalletRead=resolve);
  t.after(()=>releaseWalletRead());
@@ -26,6 +29,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
  const cors={'access-control-allow-origin':'*','access-control-allow-headers':'content-type,x-elastos-home-token','access-control-allow-methods':'GET,POST,OPTIONS'};
  await page.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname;
+  const gate=apiGates.get(route.request().method()+' '+path);if(gate){apiGates.delete(route.request().method()+' '+path);gate.enter();await gate.wait;}
   const json=value=>route.fulfill({headers:cors,contentType:'application/json',body:JSON.stringify(value)});
   if(route.request().method()==='OPTIONS')return json({});
   if(path==='/api/apps/wallet/wallet/summary'){
@@ -83,5 +87,5 @@ export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
   await writeFile(`${output}/${engine}/states.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),records},null,2));
  }
  await state('internet-ready');
- return {fixture,peer,page,wallet,walletReadStarted,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,openFromWallet,capture,settle:()=>settle(frame)};
+ return {fixture,peer,page,wallet,holdApi,walletReadStarted,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,openFromWallet,capture,settle:()=>settle(frame)};
 }
