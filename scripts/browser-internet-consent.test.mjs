@@ -828,10 +828,10 @@ test("566r3 a stop that stays pending times out with a stable error and needs a 
     await frame.locator("#browser-url").fill("https://example.com/stop-timeout");
     await frame.locator("#browser-url").press("Enter");
     const hint=frame.locator("#browser-internet-hint");
-    await hint.filter({hasText:"Browser is still stopping internet access. Try again in a moment."}).waitFor({timeout:13000});
+    await hint.filter({hasText:"Browser is still turning off internet access. Try again in a moment."}).waitFor({timeout:13000});
     f.state.stopPending=false;await page.waitForTimeout(2200);
     assert.equal(await hint.isVisible(),true);
-    assert.equal(await hint.innerText(),"Browser is still stopping internet access. Try again in a moment.");
+    assert.equal(await hint.innerText(),"Browser is still turning off internet access. Try again in a moment.");
     assert.equal(f.state.requestAttempts,1);assert.equal(f.state.requests,0);
     assert.deepEqual(f.state.opens,[]);assert.deepEqual(f.state.navigations,[]);
     assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==="home:open-target").length),0);
