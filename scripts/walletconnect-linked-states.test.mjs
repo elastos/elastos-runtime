@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {once} from 'node:events';
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {linkedWindow as fixtureWindow} from './lib/walletconnect-linked-window-fixture.mjs';
-const linkedWindow=(t,engine,options={})=>fixtureWindow(t,engine,{...options,sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='1'?'1c2dcb195f5ee294366627cd7dc7d2d2d21ad1f0':undefined});
+const linkedWindow=(t,engine,options={})=>fixtureWindow(t,engine,{...options,sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='original'?'0db7eb247c8d89f367d5458acb03339605cc216e':process.env.WALLETCONNECT_LINKED_BEFORE==='1'?'1c2dcb195f5ee294366627cd7dc7d2d2d21ad1f0':undefined});
 for(const engine of ['chromium','webkit']) {
  test(`linked window has true copy and useful controls in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();await r.capture('just-linked');
@@ -48,6 +48,7 @@ for(const engine of ['chromium','webkit']) {
  });
  test(`Wallet add control explains and adds another phone account in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();
+  if(process.env.WALLETCONNECT_LINKED_BEFORE==='original')await r.reopenWallet();
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
   await r.openFromWallet();const connector=r.frame;
   if(await connector.locator('[data-action=add-account]').count())await connector.locator('[data-action=add-account]').click();
@@ -67,6 +68,7 @@ for(const engine of ['chromium','webkit']) {
  });
  test(`Wallet adds a second wallet after an explicit disconnect in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();
+  if(process.env.WALLETCONNECT_LINKED_BEFORE==='original')await r.reopenWallet();
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
   await r.openFromWallet();
   await r.click('add-account');await r.state('add-account');await r.capture('add-account');

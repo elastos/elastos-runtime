@@ -66,8 +66,10 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   return route.fulfill({response,body});
  });
  if(sourceRef){
-  assert.equal(sourceRef,'1c2dcb195f5ee294366627cd7dc7d2d2d21ad1f0');
-  for(const [asset,path] of [['wallet/wallet.js','capsules/wallet/browser/wallet.js'],['wallet-walletconnect/walletconnect-window-state.mjs','capsules/wallet-walletconnect/browser/walletconnect-window-state.mjs']])await page.route(`**/apps/${asset}*`,route=>route.fulfill({headers:cors,contentType:'text/javascript',body:execFileSync('git',['show',`${sourceRef}:${path}`])}));
+  assert.ok(['1c2dcb195f5ee294366627cd7dc7d2d2d21ad1f0','0db7eb247c8d89f367d5458acb03339605cc216e'].includes(sourceRef));
+  const assets=['wallet/wallet.js','wallet-walletconnect/walletconnect-window-state.mjs'];
+  if(sourceRef.startsWith('0db7'))assets.push('home/home-wallet-connector-host.js','wallet-walletconnect/wallet-walletconnect.js','wallet-walletconnect/wallet-connection-view.mjs','wallet-walletconnect/wallet-connection-screens.mjs');
+  for(const asset of assets){const [app,...parts]=asset.split('/');await page.route(`**/apps/${asset}*`,route=>route.fulfill({headers:cors,contentType:'text/javascript',body:execFileSync('git',['show',`${sourceRef}:capsules/${app}/browser/${parts.join('/')}`])}));}
  }
  await page.goto(fixture.origin);
  frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
@@ -93,6 +95,8 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   }
   await writeFile(`${output}/${engine}/states.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),sourceRef:sourceRef||null,records},null,2));
  }
+ async function reopenWallet(){const navigated=page.waitForEvent('framenavigated',f=>f.url().includes('/apps/wallet/'));await page.getByRole('button',{name:'Reload Wallet',exact:true}).click();await navigated;await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').waitFor();}
+ if(sourceRef?.startsWith('0db7'))await page.evaluate(()=>{const button=document.createElement('button');button.textContent='Reload Wallet';button.style='position:absolute;top:0;right:0';button.onclick=()=>{const wallet=document.querySelector('#accounts');wallet.src=wallet.src;};document.body.append(button);});
  await state('internet-ready');
- return {fixture,peer,page,wallet,holdApi,waitWalletRead,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,openFromWallet,capture,settle:()=>settle(frame)};
+ return {fixture,peer,page,wallet,holdApi,waitWalletRead,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,reopenWallet,openFromWallet,capture,settle:()=>settle(frame)};
 }
