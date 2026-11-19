@@ -238,7 +238,7 @@ export function connectionView(input) {
     }
     if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
-    if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window')||actions.find(a=>a.id==='back-to-connection');if(next){next.primary=true;next.quiet=false;}}
+    if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
   }
   let effectiveNotice = safetyNotice ?? notice;
   if(supported&&!supported.includes('close-window')&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id))))effectiveNotice=/Close this window\./.test(effectiveNotice)?effectiveNotice.replace('Close this window.','Close this window with Home’s window controls.'):effectiveNotice+' Close this window with Home’s window controls.';

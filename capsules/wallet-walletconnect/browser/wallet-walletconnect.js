@@ -152,7 +152,7 @@ function draw() {
     phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
     outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,walletChange,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
     paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)?.outcome))},now);
-  if (connectionPage === 'add-account' && presentation.input.stage === 'linked') {presentation.input.stage='add-account';presentation.input.localReturn=true;}
+  if (connectionPage === 'add-account' && presentation.input.stage === 'linked') {presentation.input.stage='add-account';presentation.input.localReturn=false;}
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
   const canChooseRequests=Boolean(accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);

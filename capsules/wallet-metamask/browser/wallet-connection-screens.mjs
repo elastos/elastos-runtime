@@ -2293,7 +2293,7 @@ for(const window of ['walletconnect','metamask','unisat'])for(const stage of ['l
     definitions[window][stage].secondary=[{id:'add-account',label:'Add account',quiet:true}];
   }
 }
-definitions.walletconnect['add-account']={status:'Add an account.',notice:'To add an account, select another account in {{wallet}}, then return here. To use another wallet, disconnect this connection first. Your linked accounts stay in Wallet.',account:true};
+definitions.walletconnect['add-account']={status:'Add an account.',notice:'To add an account, select another account in {{wallet}}, then return here. To use another wallet, disconnect this connection first. Your linked accounts stay in Wallet.',account:true,secondary:[{id:'back-to-connection',label:'Back to connection',quiet:true}]};
 
 definitions.walletconnect['checking-response']={status:'Your wallet has answered. Home is checking the response.',notice:'Stopping here ends this wait. Home may still record the response.',optionalRequest:true,account:true,dispatched:true,primary:{id:'stop-waiting',label:'Stop waiting',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'stop-waiting'};
 definitions.walletconnect['home-read-unavailable']={status:'Home could not load your wallet requests.',notice:'Check again to load them.',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'refresh-status'};
