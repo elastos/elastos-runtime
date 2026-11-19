@@ -125,6 +125,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
             if(row.window==='walletconnect')expectedControls.push({label:'Add account',primary:false});
           }
           if(row.window==='walletconnect'&&row.stage==='internet-ready')expectedControls=expectedControls.filter(c=>c.label!=='Manage in Inbox');
+          if(row.window==='walletconnect'&&row.stage==='internet-refused')expectedControls=[{label:'Connect wallet',primary:true}];
           const fallbackClose=!expectedControls.length&&row.window==='metamask'&&expected?.inventory.some(s=>s.startsWith('WalletConnect [primary]'))&&(facts.payment||facts.capability);
           if(fallbackClose)expectedControls=[{label:'Close window',primary:true}];
           if(facts.approval){const main=expectedControls.filter(c=>c.primary),other=expectedControls.filter(c=>!c.primary&&c.label!=='Close window');expectedControls=[{label:'Close window',primary:false},...other.filter(c=>c.label.startsWith('View request')),...other.filter(c=>!c.label.startsWith('View request')),...main];}

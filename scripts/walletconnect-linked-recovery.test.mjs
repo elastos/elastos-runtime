@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import {linkedWindow} from './lib/walletconnect-linked-window-fixture.mjs';
 const sourceRef=process.env.WALLETCONNECT_LINKED_BEFORE==='copy'?'adf517637d41dfa8a42849e97f494e8b05eea708':undefined;
 for(const engine of ['chromium','webkit']){
+ test(`turned-off access can be requested again without a navigation loop in ${engine}`,{timeout:60000},async t=>{
+  const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});
+  await r.link();r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('linked-access-turned-off');
+  assert.equal(await r.frame.locator('[data-action=inbox],[data-action=back-to-connection]').count(),0,'a decided request cannot be answered again in Inbox');
+  assert.equal(await r.frame.locator('[data-action=connect].el-button-primary').count(),0,'a saved connection is replaced only by a named quiet action');
+  await r.click('connect');await r.state('internet-pending');await r.capture('linked-access-requested-again');
+  assert.equal(r.fixture.state.permission,'requested');assert.equal(await r.frame.locator('[data-action=inbox]').count(),1);
+ });
  test(`access-ready window offers the useful connection step in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine,{sourceRef});await r.capture('access-ready');
   assert.equal(await r.frame.locator('[data-action=inbox]').count(),0);

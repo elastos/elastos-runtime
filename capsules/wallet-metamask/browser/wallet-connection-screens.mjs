@@ -28,10 +28,10 @@ const definitions = {
     },
     "internet-refused": {
       "status": "Internet access is off for WalletConnect.",
-      "notice": "Allow access in Inbox, then return here to connect.",
+      "notice": "Connect a wallet to ask Home for internet access again.",
       "primary": {
-        "id": "inbox",
-        "label": "Open Inbox",
+        "id": "connect",
+        "label": "Connect wallet",
         "quiet": false
       }
     },

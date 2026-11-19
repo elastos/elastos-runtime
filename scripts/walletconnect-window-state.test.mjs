@@ -13,7 +13,7 @@ const request={request_id:'request-1',connector_id:'wallet-walletconnect',capsul
 const initial={permission:'granted',connection:{session},accounts:[account]};
 const cases=[
  ['nothing-saved',{}],['nothing-saved',{permission:'off',connection:{}}],['internet-ready',{permission:'granted'}],
- ['internet-pending',{permission:'requested',pending:{}}],['internet-refused',{permission:'refused'}],['internet-off',{permission:'revoked',connection:{}}],
+ ['internet-pending',{permission:'requested',pending:{}}],['internet-refused',{permission:'refused'}],['internet-refused',{permission:'revoked',connection:{}}],
  ['guest-access',{ownerNeeded:true,permission:'off'}],['window-expired',{expired:true}],
  ['preparing-qr',{busy:true,phase:'starting'}],['qr-shown',{qrData:'data:image/png;base64,AAAA'}],
  ['link-wait',{...initial,busy:true,phase:'ownership'}],

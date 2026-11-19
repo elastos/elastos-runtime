@@ -26,7 +26,7 @@ export function windowPresentation(state, nowSeconds) {
   else if (sent && permission && permission !== 'granted') stage=request.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'request-unavailable';
   else if (ownerNeeded && permission !== 'granted') stage = 'guest-access';
   else if (permission === 'requested') stage = pending ? request ? 'request-internet-pending' : 'internet-pending' : request ? 'request-internet-off' : 'internet-off';
-  else if (permission === 'refused') stage = 'internet-refused';
+  else if (permission === 'refused' || permission === 'revoked' && !request) stage = 'internet-refused';
   else if (permission === 'revoked' && connection) stage = request ? 'request-internet-off' : 'internet-off';
   else if (qrData) stage = 'qr-shown';
   else if (busy) {stage = state.checking ? 'checking-response' : phase === 'ownership' ? 'link-wait' : phase === 'signature' ? 'request-phone' : phase === 'transaction' ? 'transaction-phone' : phase === 'disconnecting' ? 'disconnecting' : state.action?.kind === 'approve' ? 'preparing-request' : phase === 'confirming' || state.action?.fresh === false ? 'preparing-connection' : 'preparing-qr';}
