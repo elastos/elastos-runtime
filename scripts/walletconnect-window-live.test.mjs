@@ -254,7 +254,8 @@ for(const engine of ['chromium','webkit'])test(`remaining live states and transa
  assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])test(`guest off and expired window in ${engine}`,{timeout:60000},async t=>{
- const r=await setup(t,engine);r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-off');await r.capture('internet-off');
+ const r=await setup(t,engine);r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('access-revoked');
+ r.fixture.setPermission('requested');await r.refresh();await r.state('internet-off');await r.capture('internet-off');
  r.fixture.state.guest=true;await r.frame.locator('[data-action=inbox]').click();r.fixture.setPermission('granted');await r.refresh();await r.state('internet-ready');
  r.fixture.setPermission('off');await r.click('connect');await r.state('guest-access');assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0,'owner-only recovery offers its real status check');await r.capture('guest-access');
  r.fixture.state.expiredLaunch=true;await r.reopen();await r.state('window-expired');await r.capture('window-expired');assert.equal(await r.frame.locator('button').count(),0,'unavailable N1 Close stays with the shell');
