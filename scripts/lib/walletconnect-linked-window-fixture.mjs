@@ -19,10 +19,12 @@ export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
  const engines=await importProductSmokePlaywright();
  const browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
  const page=await browser.newPage({viewport:{width:1040,height:620}});page.setDefaultTimeout(6000);
+ if(engine==='chromium')await page.context().grantPermissions(['local-network-access'],{origin:fixture.origin});
  const {errors}=observeWindowErrors(page,fixture);let frame;
  const walletReads=[],walletFailures=[];
  page.on('console',message=>{if(message.type()==='error')walletFailures.push({console:message.text().replaceAll('fixture-project','[test project]').slice(0,500)});});
  page.on('requestfailed',request=>{if(new URL(request.url()).pathname.startsWith('/api/apps/wallet/')||request.frame().url().includes('/apps/wallet/'))walletFailures.push({path:new URL(request.url()).pathname,error:request.failure()?.errorText});});
+ async function waitWalletRead(){let timer;try{await Promise.race([walletReadStarted,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Wallet did not start its account read: '+JSON.stringify(walletFailures))),6000);})]);}finally{clearTimeout(timer);}}
  const settle=await walletWindowLifetime(page,fixture);
  page.on('framenavigated',next=>{if(next.parentFrame()===page.mainFrame()&&next.url().includes('/apps/wallet-walletconnect/'))frame=next;});
  t.after(async()=>{try{await settle(frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[]);});
@@ -88,5 +90,5 @@ export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
   await writeFile(`${output}/${engine}/states.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),records},null,2));
  }
  await state('internet-ready');
- return {fixture,peer,page,wallet,holdApi,walletReadStarted,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,openFromWallet,capture,settle:()=>settle(frame)};
+ return {fixture,peer,page,wallet,holdApi,waitWalletRead,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,openFromWallet,capture,settle:()=>settle(frame)};
 }
