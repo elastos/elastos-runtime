@@ -64,7 +64,7 @@ export function windowPresentation(state, nowSeconds) {
   const selectionNotice=state.walletChanged && !linked && session?.address ? !isWalletConnectNetwork(session.chain) ? 'network-unsupported' : state.walletChange || 'account-changed' : undefined;
   const notice = connection?.removed ? 'connection-removed' : connection?.expired ? 'connection-expired' : selectionNotice || (!expired && permission === 'granted' && session && connection.relayConnected === false ? 'transport-reconnecting' : undefined);
   const connectionNotice=notice === stage ? undefined : notice;
-  const currentSelection=session?.address && (state.walletChanged && !linked || requestAccount && (!sameAccount(session.address,request.address) || session.chain !== request.chain_namespace)) ? {address:session.address,network:networkLabel(session.chain)} : undefined;
+  const currentSelection=session?.address && (state.walletChanged && !linked && stage === 'network-unsupported' || requestAccount && (!sameAccount(session.address,request.address) || session.chain !== request.chain_namespace)) ? {address:session.address,network:networkLabel(session.chain)} : undefined;
   const transactionHash = ['transaction-wallet-error','transaction-cancelled','transaction-timeout','transaction-reopened','transaction-done','checking-response'].includes(stage) && /^0x[0-9a-fA-F]{64}$/.test(state.unrecordedHash || '') ? state.unrecordedHash : undefined;
   const localSafety=Boolean(state.paymentPending || request?.intent === 'transaction_intent' && sent && !answered);
   const supportedActions=[...baseActions].filter(action=> !['finish','send-message'].includes(action) || session?.address && isWalletConnectNetwork(session.chain));

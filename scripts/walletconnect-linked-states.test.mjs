@@ -54,6 +54,7 @@ for(const engine of ['chromium','webkit']) {
   await r.capture('same-phone-add-instructions');
   assert.match(await connector.locator('main').innerText(),/select another account in Trust Wallet/i,'the add path names the phone step before ending anything');
   await r.peer.changeAccount();await connector.locator('[data-state=account-changed]').waitFor();await r.capture('account-changed');
+  assert.equal(await connector.locator('.connection-current-selection').count(),0,'the account card already shows the selected account');
   assert.equal(await connector.getByRole('button',{name:'Replace connection',exact:true}).count(),1);
   assert.equal(await connector.locator('[data-action=start-over].el-button-primary').count(),0);
   const challenge=r.holdApi('/api/auth/evm/challenge'),verify=r.holdApi('/api/auth/evm/verify'),prompt=once(r.peer.events,'request');r.peer.choose({request:'silent'});
