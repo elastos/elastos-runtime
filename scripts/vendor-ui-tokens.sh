@@ -130,6 +130,20 @@ for target_dir in home/browser assistant/browser system/browser library/browser 
   done
 done
 
+# Inactive enabling assets: the window lanes opt into the shared view later.
+for target_dir in wallet-metamask/browser wallet-unisat/browser wallet-walletconnect/browser; do
+  for asset in wallet-connection-view.mjs wallet-connection-screens.mjs wallet-connection-view.css connection-wallet.png connection-walletconnect.png connection-metamask.png connection-unisat.png; do
+    if [[ "$MODE" == "--check" ]]; then
+      if ! cmp -s "capsules/_shared/$asset" "capsules/$target_dir/$asset"; then
+        echo "[vendor-ui] DRIFT: capsules/$target_dir/$asset" >&2
+        FAILED=1
+      fi
+    else
+      cp "capsules/_shared/$asset" "capsules/$target_dir/$asset"
+    fi
+  done
+done
+
 # Marketplace uses only the controller; its compact rows take Marketplace's own list styles.
 for model_target in marketplace/browser/model-management.js system/browser/model-management.js system/browser/model-management.css; do
   model_source="capsules/_shared/${model_target##*/}"

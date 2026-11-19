@@ -149,3 +149,14 @@ try {
 }
 assert.deepEqual(failures, [], failures.join('\n'));
 await import('./home-fullscreen-browser.test.mjs');
+
+// The Rust content-sandbox harness installs and requires Chromium and WebKit.
+await import('./wallet-connection-view-layout.test.mjs');
+// Keep the 180-second Rust harness bounded; the standalone file runs all 480 cases.
+process.env.WALLET_VIEW_BROWSER_SMOKE='1';
+await import('./wallet-connection-view-origin.test.mjs');
+
+await import('./wallet-connection-view-round4.test.mjs');
+await import('./wallet-connection-view-live-needs.test.mjs');
+
+await import('./wallet-connection-view-round5.test.mjs');

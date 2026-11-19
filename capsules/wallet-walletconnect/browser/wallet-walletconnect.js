@@ -1,553 +1,344 @@
-import { installWalletConnectStorage } from './walletconnect-storage.mjs';
-import { createWalletConnectClient, walletConnectMessages, isWalletConnectNetwork } from './walletconnect-client.mjs';
-import {
-  createHomeClipboardClient,
-} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+import {installWalletConnectStorage} from './walletconnect-storage.mjs';
+import {createWalletConnectClient} from './walletconnect-client.mjs';
+import {mountConnection, captureConnectionPresentation, connectionKey} from './wallet-connection-view.mjs';
+import {windowPresentation, walletConnectView, errorStage, baseActions, signableRequest, connectorId, sameAccount} from './walletconnect-window-state.mjs';
+import {createHomeClipboardClient} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
 
-const CONNECTOR_ID = "wallet-walletconnect";
-const connectButton = document.querySelector("#wallet-connect");
-const statusNode = document.querySelector("#wallet-status");
-const stateNode = document.querySelector("#wallet-state");
-const accountsNode = document.querySelector("#wallet-accounts");
-const requestsNode = document.querySelector("#wallet-requests");
-const frameHomeToken = readLaunchToken();
-const homeOrigin = readQueryParam("home_origin");
-let hostEffectInFlight = false;
-let walletStateRevision = 0;
-let pendingEffect;
-let connectionCheckInFlight = false;
-let actionEpoch = 0;
-let currentPhase = 'idle';
-let connectionState;
-let linkedAccounts = [];
-let accountsLoaded = false;
-let recoveryAction;
-let launchExpired = false;
-let ownerConsentNeeded = false;
-let connectionNeedsReplacement = false;
-const clearMemory = installWalletConnectStorage(window);
+const CONNECTOR_ID = connectorId;
+const root = document.querySelector('#wallet-window');
+const frameHomeToken = readText(new URLSearchParams(location.hash.slice(1)).get('home_token'));
+const homeOrigin = readText(new URLSearchParams(location.search).get('home_origin'));
 const runtimeOrigin = new URL(import.meta.url).origin;
-const api = (resource, init={}) => fetchJson(resource.startsWith('/api/') ? runtimeOrigin+resource : `${runtimeOrigin}/api/apps/${CONNECTOR_ID}/${resource}`, {
-  ...init, headers:shellHeaders({...init.headers,'content-type':'application/json'}),
+const clearMemory = installWalletConnectStorage(window);
+let hostEffectInFlight = false, walletStateRevision = 0, connectionCheckInFlight = false, actionEpoch = 0;
+let walletChanged=false;
+let walletChange;
+let effectPhase = 'idle';
+let currentPhase = 'idle', connectionState, linkedAccounts = [], requests = [], accountsLoaded = false;
+let recoveryAction, launchExpired = false, ownerConsentNeeded = false, connectionNeedsReplacement = false;
+let pendingEffect, permissionStatus, connectionReturnPending = false, connectionTimer, connectionInterval;
+let rememberedFocus, mounted;
+let connectionPage, homeReadFailed=false;
+const requestOutcomes=new Map();
+let unrecordedHash,proofAccount;
+let dispatchedRequestId;
+let outcome, activeRequest, selectedId, deadline, qrData, qrControls, currentView, renderKey;
+let showPicker = false;
+let copying=false;
+let clipboardFeedback = '';
+let clipboardFeedbackKey;
+
+const homeClipboard = createHomeClipboardClient({targetId: CONNECTOR_ID,homeOrigin,homeToken:frameHomeToken});
+homeClipboard.start();
+const api = (resource, init={}) => {
+  if (init.method === 'POST' && (resource === '/api/auth/evm/verify' || /^wallet\/approvals\/[^/]+\/complete$/.test(resource))) {
+    const hash=JSON.parse(init.body || '{}').transaction_hash;
+    if (/^0x[0-9a-fA-F]{64}$/.test(hash || '')) unrecordedHash=hash;
+    currentPhase='checking';draw();
+  }
+  return fetchJson(resource.startsWith('/api/') ? runtimeOrigin + resource : `${runtimeOrigin}/api/apps/${CONNECTOR_ID}/${resource}`, {
+    ...init,headers:shellHeaders({...init.headers,'content-type':'application/json'}),
+  });
+};
+const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory,copyLink:copyConnectionLink,
+  pairingView:{show(data, controls){qrData=data;qrControls=controls;draw();},hide(result){qrData=undefined;qrControls=undefined;clipboardFeedback='';if(result?.connected)currentPhase='confirming';draw();}},
+  onPhase(phase, detail) {
+    if (phase === 'permission') {
+      permissionStatus=detail.status;connectionState={...connectionState,permission:detail};draw();return;
+    }
+    if (phase === 'changed') {
+      walletChanged ||= detail?.selectionChanged === true;
+      if (detail?.selectionChanged) {
+        const previous=connectionState?.session,next=detail.connection?.session;
+        walletChange=!next?.address ? undefined : !sameAccount(previous?.address,next.address) ? 'account-changed' : previous?.chain !== next.chain ? 'network-changed' : walletChange;
+      }
+      // Wallet notifications carry facts locally. Home authority stays on the base routes.
+      clipboardFeedback='';
+      if (detail?.connection) connectionState={...connectionState,...detail.connection};
+      const identityEvent=detail?.selectionChanged === true;
+      const retained=knownOutcome() || activeRequest?.intent === 'transaction_intent' && Boolean(outcome);
+      if (identityEvent && !retained && !dispatchedRequestId) outcome=undefined;
+      if (!hostEffectInFlight && identityEvent && !retained && !dispatchedRequestId) activeRequest=undefined;
+      draw();refreshReturnedWindow();
+      return;
+    }
+    if (phase !== 'pairing') clipboardFeedback='';
+    currentPhase = phase;effectPhase=phase;
+    if(phase==='ownership')proofAccount={address:detail.address,chain:detail.chain,name:detail.name};
+    if (['ownership','signature','transaction'].includes(phase)) {
+      if (phase !== 'ownership' && activeRequest) {dispatchedRequestId=activeRequest.request_id;activeRequest.status='approved';activeRequest.walletName=detail?.name;}
+      deadline = detail?.expiresAt || activeRequest?.expires_at || Math.floor(Date.now()/1000)+300;
+      checkConnection().catch(()=>{});
+    }
+    draw();
+  },
 });
-const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory,copyLink:copyConnectionLink,onPhase:phase=>{
-  currentPhase = phase;
-  if (phase === 'pairing') showStatus('Scan the QR code with your wallet app, or copy the connection link. Approve the connection there.','muted');
-  if (phase === 'ownership') showStatus('Open your wallet app on your phone and sign the linking message. If an older request is still open, decline it first.','muted');
-  if (phase === 'signature') showStatus('Open your wallet app on your phone and review the signature request.','muted');
-  if (phase === 'transaction') showStatus('Open your wallet app on your phone and review the transaction.','muted');
-  renderConnection();
-  if (phase === 'changed') refreshReturnedWindow();
-  else if (['ownership','signature','transaction'].includes(phase)) checkConnection().catch(()=>{});
-}});
-window.addEventListener('focus',refreshReturnedWindow);
-window.addEventListener('message', event => {
+
+root.addEventListener('click', async event => {
+  const button = event.target.closest('button[data-action]');
+  if (!button || button.disabled || !mounted?.root.contains(button)) return;
+  const action = button.dataset.action;
+  if (action === 'connect' || action === 'start-over') return onConnect();
+  if (action === 'finish' || action === 'send-message') return onConnect({fresh:false});
+  if (action === 'cancel') return qrControls ? qrControls.cancel() : cancelWalletWait();
+  if (action === 'stop-waiting') return cancelWalletWait();
+  if (action === 'disconnect') return disconnect();
+  if (action === 'inbox') return showInternetRequest();
+  if (action === 'back-to-connection') {
+    const connectionScreen=['linked','saved-unlinked','account-changed','account-unavailable-unknown','network-unsupported','wallet-removed','connection-expired','internet-off','internet-refused','nothing-saved','internet-ready'].includes(currentView.stage);
+    connectionPage=connectionPage==='access'||currentView.request||showPicker||!connectionScreen?'overview':'access';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
+  }
+  if (action === 'check-access' || action === 'check-status' || action === 'refresh-status') {
+    outcome = undefined;activeRequest = undefined;
+    await refreshWalletState().catch(()=>{});
+    await checkConnection();draw();return;
+  }
+  if (action === 'send-request') {
+    const id=button.dataset.walletRequestSign;
+    if (id && id === currentView?.request?.id) return onRequestClick(id);
+    return;
+  }
+  if (action === 'select-request') {
+    selectedId = button.dataset.focusKey.slice('select-request:'.length);showPicker=false;
+    connectionPage=undefined;const saved=requestOutcomes.get(selectedId);outcome=saved?.outcome;unrecordedHash=saved?.hash;dispatchedRequestId=saved?.dispatched?selectedId:undefined;activeRequest=requests.find(row=>row.request_id===selectedId);if(activeRequest&&saved?.walletName)activeRequest={...activeRequest,walletName:saved.walletName};draw();return;
+  }
+  if (action === 'view-requests') {connectionPage=undefined;outcome=undefined;activeRequest=undefined;selectedId=undefined;showPicker=true;draw();return;}
+  if (action === 'copy-link' || action === 'copy-address') {
+    const copyingQR=qrControls,copyingStage=copyFeedbackKey();
+    copying=true;button.disabled = true;
+    try {
+      if (action === 'copy-link') await copyingQR.copy();
+      else await homeClipboard.writeText(button.dataset.focusKey.slice('copy-address:'.length),{purpose:'wallet.address'});
+      if (copyFeedbackKey() !== copyingStage || action === 'copy-link' && qrControls !== copyingQR) return;
+      clipboardFeedback = action === 'copy-link' ? 'link-copied' : 'address-copied';
+      clipboardFeedbackKey=copyingStage;
+    } catch { if (copyFeedbackKey() !== copyingStage || action === 'copy-link' && qrControls !== copyingQR) return;clipboardFeedbackKey=copyingStage;clipboardFeedback = 'copy-failed'; }
+    finally { copying=false;button.disabled = false;draw(); }
+  }
+});
+root.addEventListener('focusin',event=>{
+  const node=event.target;
+  if(node?.dataset&&(node.dataset.action||node.dataset.focus))rememberedFocus={key:renderKey,action:node.dataset.action,focusKey:node.dataset.focusKey,outcome:node.dataset.focus};
+});
+root.addEventListener('keydown',event=>{
+  if (!currentView) return;
+  const result = connectionKey(currentView,{key:event.key,shiftKey:event.shiftKey,action:document.activeElement?.dataset.action});
+  if (!result) return;
+  event.preventDefault();
+  if (result.intent === 'cancel') qrControls?.cancel();
+  else root.querySelector(`[data-action="${result.focus}"]`)?.focus();
+});
+window.addEventListener('pagehide',()=>mounted?.dispose());
+window.addEventListener('focus',()=>{
+  if (!root.contains(document.activeElement) && rememberedFocus?.key === renderKey) {
+    const target=[...root.querySelectorAll('[data-action],[data-focus]')].find(node=>rememberedFocus.action ? node.dataset.action===rememberedFocus.action&&node.dataset.focusKey===rememberedFocus.focusKey : node.dataset.focus===rememberedFocus.outcome);
+    target?.focus({preventScroll:true});
+  }
+  refreshReturnedWindow();
+});
+window.addEventListener('message',event=>{
   if (event.source !== window.parent || event.origin !== 'null' || event.data?.type !== 'elastos:shell-layout') return;
   if (event.data.layout?.visible === true) refreshReturnedWindow();
 });
-let connectionTimer;
-let connectionInterval;
-let permissionPending = false;
-let permissionStatus;
-let connectionRevision;
-let connectionReturnPending = false;
+
+function draw() {
+  if(connectionPage==='access'&&permissionStatus==='granted'&&!connectionState?.session&&!connectionState?.removed&&!connectionState?.expired&&!homeReadFailed)connectionPage='overview';
+  if(mounted){const saved=captureConnectionPresentation(mounted.root);if(saved.action)rememberedFocus={key:renderKey,action:document.activeElement?.dataset.action,focusKey:saved.key,outcome:saved.action};}
+  if(activeRequest && /^(request|transaction)-/.test(outcome || '')) {
+    if(dispatchedRequestId===activeRequest.request_id || unrecordedHash)requestOutcomes.set(activeRequest.request_id,{outcome,hash:unrecordedHash,dispatched:dispatchedRequestId===activeRequest.request_id,walletName:activeRequest.walletName});
+    else requestOutcomes.delete(activeRequest.request_id);
+  }
+  const now = Math.floor(Date.now()/1000);
+  const presentation = windowPresentation({loading:!accountsLoaded,connection:connectionState,accounts:linkedAccounts,requests:connectionPage ? [] : requests,busy:hostEffectInFlight && !outcome,
+    phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
+    outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,walletChange,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
+    paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)?.outcome))},now);
+  if (connectionPage === 'access' && !hostEffectInFlight && !launchExpired) presentation.input.stage=permissionStatus === 'granted' ? 'internet-ready' : 'nothing-saved';
+  if (connectionPage) presentation.otherRequests=requests;
+  if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
+  const canChooseRequests=Boolean(accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);
+  presentation.input.supportedActions=presentation.input.supportedActions.filter(action=>!['view-requests','select-request'].includes(action)||canChooseRequests);
+  presentation.input.showNextRequests=canChooseRequests;
+  if (showPicker && canChooseRequests) {
+    presentation.input.stage='request-list';presentation.input.transactionHash=undefined;presentation.input.walletResult=undefined;presentation.request=requests.find(row=>row.request_id===selectedId)||requests[0];
+    presentation.otherRequests=requests.filter(row=>row.request_id!==presentation.request.request_id);
+  }
+  if (clipboardFeedback && clipboardFeedbackKey === `${presentation.input.stage}:${(presentation.input.stage.startsWith('request-') || presentation.input.stage.startsWith('transaction-') || presentation.input.stage==='checking-response' ? presentation.request?.request_id : '') || ''}:${presentation.input.account?.accounts[0]?.address || ''}`) presentation.input.copyFeedback=clipboardFeedback;
+  if (hostEffectInFlight && !outcome) presentation.input.supportedActions=presentation.input.supportedActions.filter(id=>['cancel','stop-waiting','copy-link'].includes(id));
+  currentView=walletConnectView(presentation);
+  const key=`${currentView.stage}:${currentView.request?.id || ''}`;
+  mounted=mountConnection(root,currentView,mounted);renderKey=key;
+  for (const button of mounted.root.querySelectorAll('[data-action=send-request]')) {button.dataset.walletRequestSign=currentView.request.id;button.dataset.walletRequestIntent=presentation.request.intent;}
+  for(const button of mounted.root.querySelectorAll('[data-action=copy-link],[data-action=copy-address]'))button.disabled=copying;
+
+}
+
 function watchConnection() {
-  if (launchExpired) { window.clearInterval(connectionTimer);connectionTimer = undefined;return; }
-  if (!frameHomeToken || typeof window.setInterval !== "function") return;
-  const interval = pendingEffect || permissionPending || hostEffectInFlight || permissionStatus && permissionStatus !== 'granted' || document.querySelector('dialog[open]') ? 1000 : 5000;
+  if (launchExpired) {clearInterval(connectionTimer);connectionTimer=undefined;return;}
+  if (!frameHomeToken) return;
+  const interval = pendingEffect || hostEffectInFlight || permissionStatus && permissionStatus !== 'granted' || qrData ? 1000 : 5000;
   if (connectionTimer && connectionInterval === interval) return;
-  window.clearInterval(connectionTimer);
-  connectionInterval = interval;
-  connectionTimer = window.setInterval(checkConnection, interval);
+  clearInterval(connectionTimer);connectionInterval=interval;
+  connectionTimer = setInterval(checkConnection,interval);
 }
 async function checkConnection() {
   if (launchExpired || !frameHomeToken || !accountsLoaded) return;
-  if (pendingEffect && (!pendingEffect.requestId || !Number.isFinite(pendingEffect.expiresAt) || pendingEffect.expiresAt <= Date.now())) pendingEffect = undefined;
-  if (connectionCheckInFlight) { watchConnection(); return; }
-  connectionCheckInFlight = true;
+  if (pendingEffect && (!pendingEffect.requestId || !Number.isFinite(pendingEffect.expiresAt) || pendingEffect.expiresAt <= Date.now())) pendingEffect=undefined;
+  if (connectionCheckInFlight) {watchConnection();return;}
+  connectionCheckInFlight=true;
   try {
-    const saved = pendingEffect;
-    const epoch = actionEpoch;
-    const current = await connector.effect({ kind: "status" });
+    const saved=pendingEffect,epoch=actionEpoch;
+    const current=await connector.effect({kind:'status'});
     if (epoch !== actionEpoch && current.permission.status === 'granted') return;
-    const previousPermission = permissionStatus;
-    permissionStatus = current.permission.status;
-    if (permissionStatus === 'granted') ownerConsentNeeded = false;
-    permissionPending = current.permission.status === "requested" && Boolean(current.permission.request);
-    if (saved && pendingEffect === saved && (!saved.requestId || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now() || current.permission.request?.id !== saved.requestId
-      || !['requested','granted'].includes(current.permission.status))) pendingEffect = undefined;
-    if (current.permission.status === 'granted' && pendingEffect && pendingEffect === saved && !hostEffectInFlight) {
-      const resume = pendingEffect.run;
-      pendingEffect = undefined;
-      resume();
-      return;
+    const previousPermission=permissionStatus;
+    if (current.permissionFresh !== false) permissionStatus=current.permission.status;
+    if (permissionStatus === 'granted') ownerConsentNeeded=false;
+    if (current.permissionFresh !== false && saved && pendingEffect === saved && (!saved.requestId || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now() || current.permission.request?.id !== saved.requestId || !['requested','granted'].includes(permissionStatus))) pendingEffect=undefined;
+    connectionState=current;
+    if (previousPermission !== permissionStatus && !activeRequest) outcome=undefined;
+    if (previousPermission !== permissionStatus && permissionStatus === 'granted' && activeRequest?.request_id !== dispatchedRequestId && !hostEffectInFlight) {outcome=undefined;activeRequest=undefined;}
+    draw();
+    if (current.permissionFresh !== false && permissionStatus === 'granted' && pendingEffect && pendingEffect === saved && !hostEffectInFlight) {
+      const resume=pendingEffect.run;pendingEffect=undefined;resume();return;
     }
-    if (current.permission.status === 'revoked' && (hostEffectInFlight || Boolean(connectionState?.session))) {
-      showStatus("Internet access for WalletConnect was turned off. Select Connect wallet to ask again.", "muted");
-    }
-    if (permissionStatus !== previousPermission || saved && permissionStatus === 'granted') {
-      if (permissionStatus === 'refused') showStatus(`Internet access for WalletConnect was refused. The Home owner can select Allow in Inbox. Then ${recoveryStep()}.`, "muted");
-      if (permissionStatus === 'granted' && !hostEffectInFlight && (saved || ['requested','refused','revoked'].includes(previousPermission))) showStatus(`Internet access is allowed. ${recoveryStep(true)}.`, "muted");
-    }
-    const previous = connectionState;
-    connectionState = current;
-    renderConnection();
-    if (!hostEffectInFlight && current.permission.status === 'granted') {
-      if (current.removed && !previous?.removed) showStatus('Your phone wallet removed this connection. Select Connect wallet for a new QR code.','muted');
-      else if (current.expired && !previous?.expired) showStatus('This phone connection expired. Select Connect wallet for a new QR code.','muted');
-      else if (current.session && !sessionIsLinked(current.session) && (!previous?.session || previous.revision !== current.revision)) showStatus(`Linking ${current.session.name} is unfinished. Open its app on your phone and select Finish linking, or select Connect wallet for a new QR code.`,'muted');
-    }
-    connectionRevision = current.revision;
-  } catch (error) { if (!hostEffectInFlight) showStatus(errorMessage(error),error.tone || 'muted'); }
+  } catch {} // A failed background read cannot change the wallet's last known outcome.
   finally {
-    connectionCheckInFlight = false;
-    watchConnection();
-    if (connectionReturnPending) {
-      connectionReturnPending = false;
-      checkConnection().catch(()=>{});
-    }
+    connectionCheckInFlight=false;watchConnection();
+    if (connectionReturnPending) {connectionReturnPending=false;checkConnection().catch(()=>{});}
   }
 }
 function refreshReturnedWindow() {
   refreshWalletState().catch(()=>{});
-  // A return after Inbox must observe access now, including when an older
-  // status read is still finishing. Coalesce returns into one fresh read.
-  if (connectionCheckInFlight) connectionReturnPending = true;
+  if (connectionCheckInFlight) connectionReturnPending=true;
   else checkConnection().catch(()=>{});
 }
-new MutationObserver(()=>{watchConnection();renderConnection();}).observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['open']});
-
-const homeClipboard = createHomeClipboardClient({
-  targetId: CONNECTOR_ID,
-  homeOrigin,
-  homeToken: frameHomeToken,
-});
-homeClipboard.start();
-
-boot();
-
-function boot() {
-  document.querySelector("#wallet-disconnect")?.addEventListener("click", async () => {
-    const epoch = ++actionEpoch;
-    try {
-      await requestCapsuleWalletEffect({kind:'disconnect'});
-      if (epoch === actionEpoch) { connectionState = undefined; showStatus('Disconnected. Linked accounts stay in Wallet.','muted'); }
-    } catch (error) { if (epoch === actionEpoch) { connectionNeedsReplacement = Boolean(error.freshConnection);renderConnection();showStatus(errorMessage(error),error.tone || 'error'); } }
-    finally { renderConnection();checkConnection().catch(()=>{}); }
-  });
-  connectButton?.addEventListener("click", () => onConnect());
-  document.querySelector('#wallet-finish')?.addEventListener('click',()=>onConnect({fresh:false}));
-  document.querySelector('#wallet-cancel')?.addEventListener('click',cancelWalletWait);
-  accountsNode?.addEventListener("click", onAccountClick);
-  requestsNode?.addEventListener("click", onRequestClick);
-  watchConnection();
-  checkConnection().catch(()=>{});
-  setState("0 linked");
-  refreshWalletState().catch((error) => {
-    showStatus(errorMessage(error), error.tone || "error");
-  });
+async function refreshWalletState() {
+  if (!frameHomeToken) {launchExpired=true;draw();return;}
+  const revision=++walletStateRevision;
+  const [accountSummary,requestSummary]=await Promise.all([
+    fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/accounts`,{headers:shellHeaders()}),
+    fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/approvals`,{headers:shellHeaders()}),
+  ]);
+  if (revision !== walletStateRevision) return;
+  linkedAccounts=Array.isArray(accountSummary?.accounts) ? accountSummary.accounts : [];
+  requests=(Array.isArray(requestSummary?.approval_requests) ? requestSummary.approval_requests : []).filter(signableRequest).map(row=>({...row,capsule_id:readText(row.capsule_id)}));
+  if (selectedId && !requests.some(row=>row.request_id===selectedId)) selectedId=undefined;
+  if(activeRequest&&!hostEffectInFlight&&!outcome&&activeRequest.request_id!==dispatchedRequestId&&!requests.some(row=>row.request_id===activeRequest.request_id))activeRequest=undefined;
+  if (outcome==='request-done' && activeRequest && requests.some(row=>row.request_id !== activeRequest.request_id)) outcome='request-next';
+  for(const id of requestOutcomes.keys())if(id!==activeRequest?.request_id&&!requests.some(row=>row.request_id===id))requestOutcomes.delete(id);
+  homeReadFailed=false;const first=!accountsLoaded;accountsLoaded=true;draw();
+  if (first) checkConnection().catch(()=>{});
 }
-
-function sessionIsLinked(session) {
-  return linkedAccounts.some(account=>account.chain_namespace === session.chain && readText(account.address).toLowerCase() === readText(session.address).toLowerCase());
-}
-function recoveryStep(capital = false) {
-  const review = recoveryAction?.kind === 'approve' && [...requestsNode.querySelectorAll('[data-wallet-request-sign]')].some(node=>node.dataset.walletRequestSign === recoveryAction.approvalRequestId);
-  const text = review ? 'select Review on your request to continue' : 'select Connect wallet to continue';
-  return capital ? text[0].toUpperCase()+text.slice(1) : text;
-}
-function renderConnection() {
-  if (launchExpired) {
-    for (const button of document.querySelectorAll('.wallet-shell button')) button.hidden = true;
-    const node = document.querySelector('#wallet-connection');
-    if (node.textContent !== 'Window expired') node.textContent = 'Window expired';
-    return;
-  }
-  const needsOwner = ownerConsentNeeded && permissionStatus !== 'granted';
-  const session = connectionState?.session;
-  const replace = connectionNeedsReplacement && Boolean(session);
-  for (const button of requestsNode.querySelectorAll('[data-wallet-request-sign]')) { button.disabled = hostEffectInFlight || needsOwner || replace;button.hidden = needsOwner || replace; }
-  const linked = session && sessionIsLinked(session);
-  connectButton.hidden = needsOwner || hostEffectInFlight || Boolean(linked) && !replace;
-  connectButton.disabled = hostEffectInFlight;
-  document.querySelector('#wallet-finish').hidden = needsOwner || hostEffectInFlight || replace || !session || Boolean(linked);
-  document.querySelector('#wallet-disconnect').hidden = hostEffectInFlight || replace || !linked;
-  document.querySelector('#wallet-cancel').hidden = !(hostEffectInFlight || pendingEffect) || Boolean(document.querySelector('dialog[open]'));
-  const label = hostEffectInFlight
-    ? currentPhase === 'starting' || currentPhase === 'idle' ? 'Preparing connection' : 'Waiting for phone'
-    : needsOwner ? 'Owner approval needed' : replace ? 'New connection needed' : linked ? `Linked · ${chainLabel(session.chain)}` : session ? 'Linking unfinished'
-    : connectionState?.removed ? 'Phone connection removed' : connectionState?.expired ? 'Phone connection expired' : 'Ready to connect';
-  const node = document.querySelector('#wallet-connection');
-  if (node.textContent !== label) node.textContent = label;
-}
-async function cancelWalletWait() {
-  ++actionEpoch;
-  pendingEffect = undefined;
-  try {
-    await connector.effect({kind:'cancel'});
-    connectionState = undefined;
-    showStatus(recoveryAction?.intent === 'transaction_intent' ? `Home stopped waiting. ${walletConnectMessages.transactionRecovery}` : 'Home stopped waiting for your wallet. Select Connect wallet for a new QR code.','muted');
-  } catch (error) { showStatus(errorMessage(error),error.tone || 'muted'); }
-  finally { hostEffectInFlight = false;currentPhase = 'idle';renderConnection();watchConnection();refreshWalletState().catch(()=>{}); }
-}
-async function copyConnectionLink(uri,{signal}) {
-  signal.throwIfAborted();
-  if (!homeClipboard.canRequest()) throw new Error('Home Clipboard is unavailable.');
-  const requestId = homeClipboard.newRequestId();
-  const cancel = ()=>homeClipboard.cancel(requestId);
-  signal.addEventListener('abort',cancel,{once:true});
-  try { await homeClipboard.writeText(uri,{purpose:'wallet.connection-link',requestId});signal.throwIfAborted(); }
-  finally { signal.removeEventListener('abort',cancel); }
-}
-async function onConnect({fresh = true} = {}) {
+function copyFeedbackKey() {return `${renderKey}:${currentView?.account?.accounts[0]?.address || ''}`;}
+function resetFeedback() {homeReadFailed=false;connectionPage=undefined;showPicker=false;proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;walletChange=undefined;outcome=undefined;clipboardFeedback='';deadline=undefined;}
+async function onConnect({fresh=true}={}) {
   if (hostEffectInFlight || launchExpired) return;
-  const epoch = ++actionEpoch;
-  connectionNeedsReplacement = false;
-  currentPhase = 'starting';
-  showStatus(fresh ? 'Preparing a new connection.' : 'Open your wallet app on your phone to finish linking.','muted');
+  resetFeedback();activeRequest=undefined;connectionNeedsReplacement=false;
+  const epoch=++actionEpoch;currentPhase='starting';effectPhase='starting';
   try {
     await requestCapsuleWalletEffect({kind:'link',fresh});
     if (epoch !== actionEpoch) return;
-    showStatus('Approval method added.','success');
-    notifyHomeSummaryChanged();
-    await refreshWalletState();
-  } catch (error) {
-    if (epoch === actionEpoch) { connectionNeedsReplacement = Boolean(error.freshConnection);renderConnection();showStatus(errorMessage(error),error.tone || 'error'); }
-  } finally {
-    if (epoch === actionEpoch) { renderConnection();checkConnection().catch(()=>{}); }
-  }
+    notifyHomeSummaryChanged();await refreshWalletState();outcome=undefined;
+  } catch (error) {if (epoch === actionEpoch && !outcome && !awaitingAccess()) {connectionNeedsReplacement=Boolean(error.freshConnection);outcome=errorStage(error,recoveryAction,effectPhase);}}
+  finally {if (epoch === actionEpoch) {draw();checkConnection().catch(()=>{});}}
 }
-
-async function refreshWalletState() {
-  if (!frameHomeToken) {
-    renderAccounts([]);
-    renderRequests([]);
-    showStatus("Open from Wallet to review approval requests.", "error");
-    return;
-  }
-  const revision = ++walletStateRevision;
-  const [accountSummary, requestSummary] = await Promise.all([
-    fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/accounts`, {
-      headers: shellHeaders(),
-    }),
-    fetchJson(`/api/apps/${CONNECTOR_ID}/wallet/approvals`, {
-      headers: shellHeaders(),
-    }),
-  ]);
-  if (revision !== walletStateRevision) return;
-  const accounts = Array.isArray(accountSummary?.accounts) ? accountSummary.accounts : [];
-  const requests = Array.isArray(requestSummary?.approval_requests)
-    ? requestSummary.approval_requests
-    : [];
-  linkedAccounts = accounts;
-  const firstAccounts = !accountsLoaded;
-  accountsLoaded = true;
-  renderAccounts(accounts);
-  renderRequests(requests);
-  renderConnection();
-  setState(accounts.length > 0 ? `${accounts.length} linked` : "0 linked");
-  if (firstAccounts) checkConnection().catch(()=>{});
-}
-
-function renderAccounts(accounts) {
-  if (!accountsNode) {
-    return;
-  }
-  accountsNode.replaceChildren();
-  if (accounts.length === 0) {
-    accountsNode.append(emptyNode("No linked accounts."));
-    return;
-  }
-  for (const account of accounts) {
-    accountsNode.append(accountCard(account));
-  }
-}
-
-function accountCard(account) {
-  const card = document.createElement("div");
-  card.className = "wallet-account";
-  const main = document.createElement("div");
-  main.className = "wallet-account-main";
-  const title = document.createElement("strong");
-  title.textContent = `Linked wallet · ${chainLabel(account?.chain_namespace)}`;
-  const address = document.createElement("code");
-  const addressText = readText(account?.address);
-  address.className = "wallet-address";
-  address.textContent = addressText || "Unknown address";
-  main.append(title, address);
-  const copy = document.createElement("button");
-  copy.className = "wallet-button wallet-button-secondary wallet-copy-button";
-  copy.type = "button";
-  copy.textContent = "Copy";
-  copy.dataset.walletCopyAddress = addressText;
-  copy.disabled = !addressText;
-  card.append(main, copy);
-  return card;
-}
-
-function renderRequests(requests) {
-  if (!requestsNode) {
-    return;
-  }
-  requestsNode.replaceChildren();
-  const connectorRequests = requests.filter((request) => (
-    !isManagedWalletRequest(request) && isWalletConnectSignableRequest(request)
-  ));
-  if (connectorRequests.length === 0) {
-    requestsNode.append(emptyNode("No approval requests."));
-    return;
-  }
-  for (const request of connectorRequests) {
-    requestsNode.append(requestCard(request));
-  }
-}
-
-function requestCard(request) {
-  const card = document.createElement("div");
-  card.className = "wallet-request";
-  const main = document.createElement("div");
-  main.className = "wallet-request-main";
-  const title = document.createElement("strong");
-  title.textContent = walletIntentLabel(request?.intent);
-  const meta = document.createElement("span");
-  const capsule = readText(request?.capsule_id) || "capsule";
-  const address = shortAddress(request?.address);
-  meta.textContent = `${capsule} · ${chainLabel(request.chain_namespace)}${address ? ` · ${address}` : ""}`;
-  const reason = document.createElement("small");
-  reason.textContent = readText(request?.reason)
-    || readText(request?.resource)
-    || "Approval requested.";
-  main.append(title, meta, reason);
-  if (request.status === 'approved' && request.intent === 'transaction_intent') {
-    const recovery = document.createElement('p');
-    recovery.textContent = walletConnectMessages.transactionRecovery;
-    card.append(main,recovery);
-    return card;
-  }
-  if (!isWalletConnectNetwork(request.chain_namespace)) {
-    const recovery = document.createElement('p');
-    recovery.textContent = walletConnectMessages.pendingUnsupportedNetwork(readText(request.chain_namespace).split(':')[1]);
-    card.append(main,recovery);
-    return card;
-  }
-  const sign = document.createElement("button");
-  sign.className = "wallet-button";
-  sign.type = "button";
-  sign.textContent = "Review";
-  sign.disabled = hostEffectInFlight;
-  sign.dataset.walletRequestSign = readText(request?.request_id);
-  sign.dataset.walletRequestIntent = readText(request?.intent);
-  card.append(main, sign);
-  return card;
-}
-
-async function onAccountClick(event) {
-  const button = event.target?.closest?.("[data-wallet-copy-address]");
-  const address = readText(button?.dataset?.walletCopyAddress);
-  if (!button || !address) {
-    return;
-  }
-  setButtonBusy(button, true);
-  try {
-    await copyText(address);
-    showStatus("Address copied.", "success");
-  } catch (error) {
-    showStatus(errorMessage(error), error.tone || "error");
-  } finally {
-    setButtonBusy(button, false);
-  }
-}
-
-async function onRequestClick(event) {
+async function onRequestClick(approvalRequestId=currentView?.request?.id || selectedId) {
   if (hostEffectInFlight || launchExpired) return;
-  const button = event.target?.closest?.("[data-wallet-request-sign]");
-  const approvalRequestId = readText(button?.dataset?.walletRequestSign);
-  if (!button || !approvalRequestId) {
-    return;
-  }
-  const epoch = ++actionEpoch;
-  currentPhase = "starting";
-  setButtonBusy(button, true);
-  showStatus("Preparing request.", "muted");
+  const request=(approvalRequestId ? requests.find(row=>row.request_id === approvalRequestId) : requests[0]) || (activeRequest?.request_id === approvalRequestId ? activeRequest : undefined);
+  if (!request) return;
+  resetFeedback();activeRequest=structuredClone(request);
+  const epoch=++actionEpoch;currentPhase='starting';effectPhase='starting';
   try {
-    const result = await requestCapsuleWalletEffect({ kind: "approve", approvalRequestId, intent:button.dataset.walletRequestIntent });
+    await requestCapsuleWalletEffect({kind:'approve',approvalRequestId:request.request_id,intent:request.intent});
     if (epoch !== actionEpoch) return;
-    watchConnection();
-    showStatus(
-      result.message || (result.effect === "transaction" ? "Transaction sent." : "Request signed."),
-      "success",
-    );
-    notifyHomeSummaryChanged();
-    await refreshWalletState();
-  } catch (error) {
-    if (epoch === actionEpoch) { connectionNeedsReplacement = Boolean(error.freshConnection);renderConnection();showStatus(errorMessage(error), error.tone || "error"); }
-    await refreshWalletState().catch(() => {});
-  } finally {
-    setButtonBusy(button, false);
-  }
+    notifyHomeSummaryChanged();await refreshWalletState();
+  } catch (error) {if (epoch === actionEpoch && !outcome && !awaitingAccess()) {connectionNeedsReplacement=Boolean(error.freshConnection);outcome=errorStage(error,recoveryAction,effectPhase);}}
+  finally {draw();}
 }
-
+async function disconnect() {
+  if (hostEffectInFlight || launchExpired) return;
+  resetFeedback();const epoch=++actionEpoch;currentPhase='disconnecting';effectPhase='disconnecting';
+  try {await requestCapsuleWalletEffect({kind:'disconnect'});if(epoch===actionEpoch){connectionState=undefined;outcome='disconnected';}}
+  catch(error){if(epoch===actionEpoch&&!launchExpired)outcome=errorStage(error,{kind:'disconnect'},'disconnecting');}
+  finally{draw();checkConnection().catch(()=>{});}
+}
+async function cancelWalletWait() {
+  const phase=currentPhase === 'checking' ? effectPhase : currentPhase;
+  const knownHash=currentPhase === 'checking' && phase === 'transaction' ? unrecordedHash : undefined;
+  const sentId=dispatchedRequestId;
+  const unsent=Boolean(pendingEffect) || activeRequest && activeRequest.request_id !== sentId;
+  ++actionEpoch;pendingEffect=undefined;resetFeedback();unrecordedHash=knownHash;dispatchedRequestId=sentId;
+  try {currentPhase='disconnecting';draw();await connector.effect({kind:'cancel'});connectionState=undefined;
+    if (unsent) {activeRequest=undefined;outcome=undefined;}
+    else outcome=phase === 'ownership' ? 'link-cancelled' : phase === 'signature' ? 'request-cancelled' : phase === 'transaction' ? 'transaction-cancelled' : 'qr-cancelled';
+  } catch {outcome=!unsent && activeRequest?.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'disconnect-error';draw();}
+  finally {hostEffectInFlight=false;currentPhase='idle';draw();watchConnection();refreshWalletState().catch(()=>{});}
+}
 async function requestCapsuleWalletEffect(action) {
-  const epoch = actionEpoch;
-  recoveryAction = action;
-  pendingEffect = undefined;
+  const epoch=actionEpoch;recoveryAction=action;pendingEffect=undefined;
   watchConnection();
   if (!frameHomeToken || hostEffectInFlight) throw new Error('A wallet request is already active.');
-  hostEffectInFlight = true;
-  renderConnection();
-  watchConnection();
+  hostEffectInFlight=true;draw();watchConnection();
   try {
     if (['link','approve'].includes(action.kind)) {
-      const consent = await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
-      permissionStatus = consent.status;
-      if (consent.status === 'granted') ownerConsentNeeded = false;
-      permissionPending = consent.status === 'requested' && Boolean(consent.request);
+      const consent=await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
+      if(epoch!==actionEpoch)throw new Error('Wallet connection cancelled.');
+      permissionStatus=consent.status;
+      if (consent.status === 'granted') ownerConsentNeeded=false;
       if (consent.status !== 'granted') {
-        pendingEffect = {requestId:consent.request?.id, expiresAt:(consent.request?.issued_at + 1800) * 1000, action, run: action.kind === 'link' ? ()=>onConnect({fresh:action.fresh !== false}) : () => {
-          const button = [...requestsNode.querySelectorAll('[data-wallet-request-sign]')].find(node => node.dataset.walletRequestSign === action.approvalRequestId);
-          if (button) return onRequestClick({target:button});
-        }};
-        watchConnection();
-        window.top.postMessage({type:'home:open-target',target:'inbox',query:{notification_id:'walletconnect-internet:permission'},homeToken:frameHomeToken},homeOrigin);
-        throw Object.assign(new Error('WalletConnect needs internet access. The Home owner can allow it in Inbox. Then continue here.'), {tone:'muted'});
+        pendingEffect={requestId:consent.request?.id,expiresAt:(consent.request?.issued_at+1800)*1000,action,run:action.kind === 'link' ? ()=>onConnect({fresh:action.fresh !== false}) : ()=>onRequestClick(action.approvalRequestId)};
+        watchConnection();showInternetRequest();
+        throw Object.assign(new Error('WalletConnect needs internet access. The Home owner can allow it in Inbox. Then continue here.'),{tone:'muted'});
       }
     }
-    return await connector.effect(action);
+    const result=await connector.effect(action);
+    if (epoch === actionEpoch) {
+      if (action.kind === 'approve') {outcome=result.effect === 'transaction' ? 'transaction-done' : 'request-done';activeRequest.status='completed';}
+      else outcome=action.kind === 'link' ? walletChanged ? undefined : 'linked' : 'disconnected';
+      draw();
+    }
+    return result;
+  } catch(error) {
+    if (epoch === actionEpoch && /^0x[0-9a-fA-F]{64}$/.test(error?.transactionHash || '')) unrecordedHash=error.transactionHash;
+    if (epoch === actionEpoch && !awaitingAccess()) {connectionNeedsReplacement=Boolean(error.freshConnection);outcome=errorStage(error,action,effectPhase);draw();}
+    throw error;
   } finally {
     if (epoch === actionEpoch) {
-      hostEffectInFlight = false;currentPhase = 'idle';
-      try {
-        connectionState = await connector.effect({kind:'status'});
-        permissionStatus = connectionState.permission.status;
-        if (permissionStatus === 'granted') ownerConsentNeeded = false;
-      } catch {}
-      renderConnection();watchConnection();
+      hostEffectInFlight=false;currentPhase='idle';effectPhase='idle';
+      deadline=undefined;draw();watchConnection();
+      try {connectionState=await connector.effect({kind:'status'});if(connectionState.permissionFresh !== false)permissionStatus=connectionState.permission.status;if(permissionStatus==='granted')ownerConsentNeeded=false;}catch{}
+      draw();watchConnection();
     }
-    await refreshWalletState().catch(() => {});
+    await refreshWalletState().catch(()=>{});
   }
 }
-
-function walletIntentLabel(intent) {
-  switch (readText(intent)) {
-    case "auth_challenge": return "Sign in";
-    case "browser_personal_sign": return "Sign message";
-    case "browser_typed_data_sign": return "Sign typed data";
-    case "capability_grant": return "Grant access";
-    case "credential": return "Issue credential";
-    case "publish_envelope": return "Publish";
-    case "transaction_intent": return "Transaction";
-    case "revocation": return "Revoke";
-    default: return "Wallet request";
-  }
+function showInternetRequest() {window.top.postMessage({type:'home:open-target',target:'inbox',query:{notification_id:'walletconnect-internet:permission'},homeToken:frameHomeToken},homeOrigin);}
+async function copyConnectionLink(uri,{signal}) {
+  signal.throwIfAborted();
+  if (!homeClipboard.canRequest()) throw new Error('Home Clipboard is unavailable.');
+  const requestId=homeClipboard.newRequestId(),cancel=()=>homeClipboard.cancel(requestId);
+  signal.addEventListener('abort',cancel,{once:true});
+  try {await homeClipboard.writeText(uri,{purpose:'wallet.connection-link',requestId});signal.throwIfAborted();}
+  finally {signal.removeEventListener('abort',cancel);}
 }
-
-function chainLabel(value) {
-  switch (readText(value)) {
-    case "eip155:1": return "Ethereum";
-    case "eip155:20": return "Elastos Smart Chain";
-    case "eip155:8453": return "Base";
-    case "eip155:11155111": return "Sepolia test network";
-    default: {
-      const chainId = readText(value).replace(/^eip155:/, "");
-      return chainId ? `an unsupported network (${chainId})` : "an unsupported network";
-    }
-  }
-}
-
-function isManagedWalletRequest(request) {
-  return ["managed_evm", "managed_btc_p2wpkh"].includes(readText(request?.proof_type));
-}
-
-function isWalletConnectSignableRequest(request) {
-  return readText(request?.connector_id) === CONNECTOR_ID
-    && readText(request?.intent) !== "bitcoin_bip322_proof"
-    && ["siwe", "siwe_erc1271"].includes(readText(request?.proof_type));
-}
-
-async function copyText(value) {
-  const text = readText(value);
-  if (!text) {
-    throw new Error("Clipboard is unavailable.");
-  }
-  await homeClipboard.writeText(text, { purpose: "wallet.address" });
-}
-
-async function fetchJson(url, init) {
-  const response = await fetch(url, init);
+async function fetchJson(url,init) {
+  const response=await fetch(url,init);
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
+    const detail=await response.text().catch(()=>'');
     if (detail.trim() === "Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.") {
-      ownerConsentNeeded = true;permissionStatus = 'off';permissionPending = false;renderConnection();watchConnection();
+      ownerConsentNeeded=true;permissionStatus='off';pendingEffect=undefined;draw();watchConnection();
       throw Object.assign(new Error('The Home owner can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
     }
-    if (response.status === 403) { launchExpired = true;renderConnection();watchConnection(); }
+    if (response.status === 403) {launchExpired=true;draw();watchConnection();}
     throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open WalletConnect again.' : detail.trim() || 'ElastOS could not complete this request. Try again.');
   }
   return response.json();
 }
+function shellHeaders(extra={}) {return {...extra,'x-elastos-home-token':frameHomeToken};}
+function notifyHomeSummaryChanged() {if(frameHomeToken && homeOrigin && window.top !== window)window.top.postMessage({type:'home:refresh-summary',homeToken:frameHomeToken},homeOrigin);}
+function readText(value) {return typeof value === 'string' ? value.trim() : '';}
+function knownOutcome() {return ['linked','request-done','request-next','transaction-done','request-declined','transaction-declined'].includes(outcome);}
+function awaitingAccess() {return Boolean(pendingEffect) || permissionStatus !== 'granted' && Boolean(ownerConsentNeeded || activeRequest && activeRequest.request_id !== dispatchedRequestId);}
+function showError(error) {homeReadFailed=true;if(!launchExpired && !hostEffectInFlight && !knownOutcome()){outcome=activeRequest ? errorStage(error,recoveryAction,effectPhase) : 'link-error';}draw();}
 
-function shellHeaders(extra = {}) {
-  return { ...extra, "x-elastos-home-token": frameHomeToken };
-}
-
-function notifyHomeSummaryChanged() {
-  if (frameHomeToken && homeOrigin && window.top !== window) {
-    window.top.postMessage({ type: "home:refresh-summary", homeToken: frameHomeToken }, homeOrigin);
-  }
-}
-
-function hasExactKeys(value, expectedKeys) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const actual = Object.keys(value).sort();
-  const expected = [...expectedKeys].sort();
-  return actual.length === expected.length
-    && actual.every((key, index) => key === expected[index]);
-}
-
-function readQueryParam(name) {
-  return readText(new URLSearchParams(window.location.search).get(name));
-}
-
-function readLaunchToken() {
-  return readText(
-    new URLSearchParams(window.location.hash.replace(/^#/, "")).get("home_token"),
-  );
-}
-
-function readText(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function shortAddress(value) {
-  const address = readText(value);
-  return address.length <= 14 ? address : `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-function emptyNode(message) {
-  const empty = document.createElement("div");
-  empty.className = "wallet-empty";
-  empty.textContent = message;
-  return empty;
-}
-
-function setState(message) {
-  if (stateNode) stateNode.textContent = message;
-}
-
-function showStatus(message, tone) {
-  if (!statusNode) return;
-  const text = readText(message);
-  statusNode.hidden = !text;
-  statusNode.textContent = text;
-  statusNode.dataset.tone = tone || "muted";
-}
-
-function setButtonBusy(button, busy) {
-  if (button) button.disabled = Boolean(busy);
-}
-
-function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error || "Wallet request failed.");
-}
+draw();watchConnection();refreshWalletState().catch(showError);

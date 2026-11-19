@@ -11,6 +11,7 @@ let currentApi;
 let retired = false;
 let initializing;
 let ownedCore;
+let ownedStorage;
 const api = (...args) => {
   if (retired) throw new Error("WalletConnect adapter retired.");
   return currentApi(...args);
@@ -33,6 +34,7 @@ export async function restoreWalletConnectEvm(options) {
   // its Core and revision-bound API; keep the stable prefix for stored sessions.
   if (!provider && !initializing) delete globalThis[`_walletConnectCore_${options.contextKey}`];
   if (!provider && !initializing) {
+  ownedStorage = runtimeStorage(api);
   initializing = EthereumProvider.init({
     projectId: options.projectId,
     customStoragePrefix: options.contextKey,
@@ -43,7 +45,7 @@ export async function restoreWalletConnectEvm(options) {
     disableProviderPing: true,
     events: ["accountsChanged", "chainChanged"],
     showQrModal: false,
-    storage: runtimeStorage(api),
+    storage: ownedStorage,
     logger: "silent",
     telemetryEnabled: false,
     metadata: options.metadata,
@@ -155,6 +157,7 @@ export async function disconnectWalletConnectEvm(options) {
   currentApi = options.api;
   const current = provider;
   const core = ownedCore;
+  const storage = ownedStorage;
   let timer;
   try {
     if (current?.session) await Promise.race([
@@ -163,6 +166,7 @@ export async function disconnectWalletConnectEvm(options) {
     ]);
   } finally {
     globalThis.clearTimeout(timer);
+    storage?.retire();
     retired = true;
     stopCore(core,current);
     retireRuntime();
