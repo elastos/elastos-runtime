@@ -46,7 +46,9 @@ for(const engine of ['chromium','webkit']){
   assert.equal(await r.wallet.locator('#wallet-account-state').innerText(),'1 account','turning off access keeps the linked Wallet account');
   await r.click('connect');await r.state('internet-pending');await r.capture('linked-access-requested-again');
   assert.equal(r.fixture.state.permission,'requested');assert.equal(await r.frame.locator('[data-action=inbox]').count(),1);
-  await r.click('cancel');await r.state('internet-off');await r.frame.locator('[data-action=connect]').waitFor();await r.capture('linked-access-request-without-wait');
+  const clearing=r.holdApi('/api/apps/wallet-walletconnect/storage','DELETE');await r.click('cancel');await clearing.entered;await r.state('disconnecting');
+  assert.equal(await r.frame.locator('button').count(),0,'cleanup owns the transition before recovery actions appear');await r.capture('linked-access-cancelling');
+  clearing.release();await r.state('internet-off');await r.frame.locator('[data-action=connect]').waitFor();await r.capture('linked-access-request-without-wait');
   assert.equal(await r.frame.locator('[data-action=connect]').count(),1,'a waiting access request can resume connection without a Back detour');
   await r.click('connect');await r.state('internet-pending');
  });

@@ -271,7 +271,7 @@ async function cancelWalletWait() {
   const confirmationAccount=phase === 'ownership' ? proofAccount : undefined;
   const unsent=Boolean(pendingEffect) || activeRequest && activeRequest.request_id !== sentId;
   ++actionEpoch;pendingEffect=undefined;resetFeedback();proofAccount=confirmationAccount;unrecordedHash=knownHash;dispatchedRequestId=sentId;
-  try {currentPhase='disconnecting';draw();await connector.effect({kind:'cancel'});connectionState={};
+  try {hostEffectInFlight=true;currentPhase='disconnecting';draw();await connector.effect({kind:'cancel'});connectionState={};
     if (unsent) {activeRequest=undefined;outcome=undefined;}
     else outcome=phase === 'ownership' ? 'link-cancelled' : phase === 'signature' ? 'request-cancelled' : phase === 'transaction' ? 'transaction-cancelled' : 'qr-cancelled';
   } catch {outcome=!unsent && activeRequest?.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'disconnect-error';draw();}
