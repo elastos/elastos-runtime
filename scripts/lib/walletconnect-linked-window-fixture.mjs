@@ -96,7 +96,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
    await wallet.locator('html').evaluate((node,theme)=>window.elastosTheme.set(theme),theme);
    assert.equal(await frame.evaluate(()=>window.elastosTheme.resolved()),theme);
    await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`,animations:'disabled'});
-   records.push({name,theme,...await frame.locator('main').evaluate(main=>({stage:main.dataset.state,text:main.innerText,actions:[...main.querySelectorAll('button')].map(b=>({action:b.dataset.action,label:b.innerText,primary:b.classList.contains('el-button-primary')}))}))});
+   records.push({name,theme,...await frame.locator('main').evaluate(main=>({stage:main.dataset.state,text:main.innerText,blocks:[...main.querySelectorAll('h1,h2,p,code')].filter(n=>n.getClientRects().length).map(n=>({tag:n.tagName,class:n.className,text:n.textContent.replace(/\s+/g,' ').trim()})),actions:[...main.querySelectorAll('button')].map(b=>({action:b.dataset.action,label:b.innerText,primary:b.classList.contains('el-button-primary')}))}))});
   }
   const receipt={head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),sourceRef:sourceRef||null,records};
   await writeFile(`${output}/${engine}/states.json`,JSON.stringify(receipt,null,2));
