@@ -2967,6 +2967,15 @@ fn write_home_state_probe(
         .as_ref()
         .and_then(|status| status["detail"].as_str())
     {
+        let detail = if let Some(wait) = detail.strip_prefix("Reconnecting to Community. Next try in ") {
+            format!("reconnecting, next try in {}", wait.trim_end_matches('.'))
+        } else if detail == "Reconnecting to Community" {
+            "reconnecting".to_string()
+        } else if let Some(detail) = detail.strip_prefix("Community is ") {
+            detail.trim_end_matches('.').to_string()
+        } else {
+            detail.to_string()
+        };
         writeln!(out, "  Community: {detail}")?;
     }
     if snapshot.room.pending_count > 0 {
@@ -3438,14 +3447,14 @@ mod tests {
     fn community_recovery_cli_keeps_remembered_peers_separate_from_link_health() {
         let mut snapshot = sample_snapshot_with_components(&[]);
         snapshot.runtime.peer_count = Some(2);
-        let detail = "Home is reconnecting to Community. Next check in 5 seconds.";
+        let detail = "Reconnecting to Community. Next try in 5 seconds.";
         snapshot.runtime.community = Some(
             serde_json::json!({"state":"reconnecting", "connected":false, "detail":detail, "next_retry_seconds":5}),
         );
         let mut output = Vec::new();
         write_home_state_probe(&mut output, &snapshot).unwrap();
         let text = String::from_utf8(output).unwrap();
-        assert!(text.contains(detail));
+        assert!(text.contains("Community: reconnecting, next try in 5 seconds"));
         assert!(text.contains("2 Carrier peers known"));
         assert!(!text.contains("peers reachable"));
         assert!(!text.contains("2 reachable"));
@@ -3474,7 +3483,7 @@ mod tests {
         let mut snapshot = sample_snapshot_with_components(&[]);
         snapshot.runtime.peer_count = Some(0);
         snapshot.runtime.community = Some(serde_json::json!({"state":"waiting_for_peers",
-            "detail":"Community is waiting for another Home."}));
+            "detail":"Waiting for another Home to come online."}));
         let mut output = Vec::new();
         write_home_state_probe(&mut output, &snapshot).unwrap();
         assert!(String::from_utf8(output)
@@ -4417,7 +4426,7 @@ mod tests {
             .route("/api/community/status", get(|headers: HeaderMap| async move {
                 assert_eq!(headers["authorization"], "Bearer fixture-status-token");
                 Json(serde_json::json!({"state":"reconnecting", "connected":false,
-                    "detail":"Home is reconnecting to Community. Next check in 5 seconds.", "next_retry_seconds":5}))
+                    "detail":"Reconnecting to Community. Next try in 5 seconds.", "next_retry_seconds":5}))
             }))
             .route("/api/auth/detach",post(move |headers: HeaderMap| {
                 let detached = detached_by_server.clone();

@@ -318,7 +318,7 @@ enum Commands {
         #[arg(long, conflicts_with_all = &["status", "json"])]
         browser: bool,
 
-        /// Keep Home in the foreground without opening the default browser
+        /// Run Home in this terminal without opening a web browser
         #[arg(long, requires = "browser")]
         no_open: bool,
 

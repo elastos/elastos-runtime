@@ -1223,10 +1223,10 @@ async fn fetch_verified_update_binary(
         .context("Binary SHA-256 missing")?;
     let binary_size = binary_info["size"].as_u64();
     println!(
-        "  Downloading binary ({}){}...",
+        "  Downloading ElastOS for {}{}…",
         release_platform,
         binary_size
-            .map(|n| format!(" [{}]", format_bytes(n as usize)))
+            .map(|n| format!(" ({})", format_bytes(n as usize)))
             .unwrap_or_default()
     );
     if let Some(owner) = restart_owner.as_ref() {
@@ -1239,7 +1239,7 @@ async fn fetch_verified_update_binary(
             "Checking the update. Home restarts when it is done.",
         )?;
     }
-    println!("  Downloaded binary: {}", format_bytes(binary_data.len()));
+    println!("  Downloaded {}.", format_bytes(binary_data.len()));
 
     // Verify SHA-256
     {
@@ -1459,14 +1459,14 @@ async fn run_upgrade_with_restart(
     let comp_size = comp_info["size"].as_u64();
 
     println!(
-        "  {} components.json{}...",
+        "  {} the update file list{}…",
         if restart_owner.is_some() {
             "Reading"
         } else {
             "Downloading"
         },
         comp_size
-            .map(|n| format!(" [{}]", format_bytes(n as usize)))
+            .map(|n| format!(" ({})", format_bytes(n as usize)))
             .unwrap_or_default()
     );
     if let Some(owner) = restart_owner.as_ref() {
@@ -1589,7 +1589,7 @@ async fn run_upgrade_with_restart(
             &previous.release,
             next_admission
                 .take()
-                .context("update release admission missing")?,
+                .context("Home could not prepare the update. Try again.")?,
             &source.publisher_dids,
         );
         let old_components = std::fs::read(data_dir.join("components.json"))?;
@@ -1685,7 +1685,7 @@ async fn run_upgrade_with_restart(
             &previous.release,
             next_admission
                 .take()
-                .context("update release admission missing")?,
+                .context("Home could not prepare the update. Try again.")?,
             &source.publisher_dids,
         );
         let changed_capsules =
@@ -1890,7 +1890,7 @@ async fn run_upgrade_with_restart(
             download_total,
         )?;
         owner.progress("downloading", DOWNLOAD_MESSAGE)?;
-        let support_plan = support_plan.context("update support plan missing")?;
+        let support_plan = support_plan.context("Home could not prepare the update. Try again.")?;
         Some(
             on_heap(|| {
                 crate::setup::stage_planned_update_support(
