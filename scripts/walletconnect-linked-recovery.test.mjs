@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import {linkedWindow} from './lib/walletconnect-linked-window-fixture.mjs';
 const sourceRef=process.env.WALLETCONNECT_LINKED_BEFORE==='copy'?'adf517637d41dfa8a42849e97f494e8b05eea708':undefined;
 for(const engine of ['chromium','webkit']){
+ test(`an empty phone account list recovers by choosing an account without replacing the connection in ${engine}`,{timeout:60000},async t=>{
+  const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});await r.link();
+  await r.peer.emptyAccounts();await r.state('account-unavailable-unknown');await r.capture('linked-account-not-shown');
+  assert.match(await r.frame.locator('main').innerText(),/Choose an account in your wallet, then return here/);
+  await r.peer.changeAccount(0);await r.state('linked');assert.equal(r.fixture.state.verified,1,'choosing the linked account restores it without a new connection or signature');await r.capture('linked-account-shown-again');
+ });
  test(`disconnecting gives an instruction owned by the connector frame in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});await r.link();
   const clearing=r.holdApi('/api/apps/wallet-walletconnect/storage','DELETE');await r.click('disconnect');await clearing.entered;await r.state('disconnecting');await r.capture('linked-disconnecting');
