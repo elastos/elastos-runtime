@@ -36,8 +36,9 @@ for(const engine of ['chromium','webkit']) {
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
   await r.openFromWallet();const connector=r.frame;
   if(await connector.locator('[data-action=add-account]').count())await connector.locator('[data-action=add-account]').click();
+  await r.capture('same-phone-add-instructions');
   assert.match(await connector.locator('main').innerText(),/select another account in Trust Wallet/i,'the add path names the phone step before ending anything');
-  await r.peer.changeAccount();await connector.locator('[data-state=account-changed]').waitFor();
+  await r.peer.changeAccount();await connector.locator('[data-state=account-changed]').waitFor();await r.capture('account-changed');
   await connector.locator('[data-action=send-message]').click();await connector.locator('[data-state=linked]').waitFor();
   await r.wallet.locator('#wallet-account-state').filter({hasText:'2 accounts'}).waitFor({timeout:4000});
   assert.equal(new Set(r.fixture.state.accounts.map(a=>a.address.toLowerCase())).size,2);

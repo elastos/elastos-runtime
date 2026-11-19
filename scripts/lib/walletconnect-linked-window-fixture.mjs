@@ -6,6 +6,7 @@ import {execFileSync} from 'node:child_process';
 import {windowFixture, observeWindowErrors, walletWindowLifetime} from './walletconnect-phone-window-fixture.mjs';
 import {scriptedPhoneWallet} from './walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright, productSmokeLaunchOptions} from '../product-smoke-browser.mjs';
+const captures=new Map();
 export async function linkedWindow(t,engine) {
  const fixture=await windowFixture();
  const peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Trust Wallet',emitApprovalEvents:true});
@@ -58,7 +59,7 @@ export async function linkedWindow(t,engine) {
  async function reopen(){await settle(frame);const loaded=page.waitForEvent('framenavigated',f=>f.parentFrame()===page.mainFrame()&&f.url().includes('/apps/wallet-walletconnect/'));await page.locator('#wallet').evaluate((node,src)=>node.src=src,nodeURL());frame=await loaded;await frame.locator('main[data-state]').waitFor();}
  function nodeURL(){return fixture.origin+'/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(fixture.origin)+'#home_token=fixture-wallet';}
  async function openFromWallet(){await settle(frame);const loaded=page.waitForEvent('framenavigated',f=>f.parentFrame()===page.mainFrame()&&f.url().includes('/apps/wallet-walletconnect/'));await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').click();frame=await loaded;await state('linked');}
- const records=[];
+ const records=captures.get(engine)||[];captures.set(engine,records);
  async function capture(name){
   const output=process.env.WALLETCONNECT_LINKED_SCREENS;if(!output)return;
   await mkdir(`${output}/${engine}`,{recursive:true});
