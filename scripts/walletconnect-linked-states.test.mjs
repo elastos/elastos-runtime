@@ -14,6 +14,10 @@ for(const engine of ['chromium','webkit']) {
   await r.click('copy-address');await r.frame.getByText('Address copied.',{exact:true}).waitFor();assert.equal(await r.page.evaluate(()=>window.copied),r.peer.address);await r.capture('address-copied');
   await r.reopen();await r.state('linked');await r.capture('linked-reopened');
   assert.doesNotMatch(await r.frame.locator('main').innerText(),/review this request|Back to connection|Manage in Inbox/i);
+  assert.deepEqual(await r.frame.locator('button').evaluateAll(nodes=>nodes.map(node=>node.dataset.action).sort()),['add-account','copy-address','disconnect']);
+  await r.click('add-account');await r.state('add-account');await r.click('back-to-connection');await r.state('linked');
+  await r.click('disconnect');await r.state('disconnected');await r.capture('all-linked-actions-walked');
+  assert.equal(await r.wallet.locator('#wallet-account-state').innerText(),'1 account','walking every linked-window action retains the account in Wallet');
  });
  test(`linked window cannot loop to a highlighted reconnect in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();
