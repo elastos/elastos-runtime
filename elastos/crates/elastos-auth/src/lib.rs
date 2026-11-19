@@ -154,7 +154,7 @@ impl AuthChallengeV1 {
             challenge_id: input.challenge_id,
             domain: input.domain,
             uri: input.uri,
-            statement: "Sign in to ElastOS Runtime.".to_string(),
+            statement: "Sign in to ElastOS.".to_string(),
             address,
             chain_id: input.chain_id,
             nonce: input.nonce,
