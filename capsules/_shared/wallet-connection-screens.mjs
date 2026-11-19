@@ -69,14 +69,7 @@ const definitions = {
         "id": "connect",
         "label": "Connect wallet",
         "quiet": false
-      },
-      "secondary": [
-        {
-          "id": "inbox",
-          "label": "Manage in Inbox",
-          "quiet": true
-        }
-      ]
+      }
     },
     "preparing-qr": {
       "status": "Getting your QR code…",

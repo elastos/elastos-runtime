@@ -16,7 +16,8 @@ export function ruleFacts(row, shared, expected) {
   const answered=receipts.has(row.stage)||message?.outcome==='request_unavailable'||request?.intent==='transaction_intent'&&!!message?.settled?.receipt;
   const guardedAccount=!!row.local.account && (['site-access-ended','account-unavailable','link-wait','linked'].includes(row.stage)||expected?.inventory.some(text=>['Account to confirm','Required account'].includes(text)));
   const approval=approvalStages[row.window].includes(row.stage)&&request?.capsule_id==='browser'&&!!request.requesting_origin;
-  return {approval,wait:!!expected?.wait&&!answered&&!approval&&row.stage!=='request-list',payment,answered,notSent,capability:row.window!=='metamask'||!!request||guardedAccount,needsExit:stopped.has(row.stage),focus:approval?'close-window':answered?'outcome':expected?.focus};
+  const linkedFocus=['walletconnect','metamask','unisat'].includes(row.window)&&['linked','linked-multiple'].includes(row.stage)?row.window==='walletconnect'?'outcome':'close-window':undefined;
+  return {approval,wait:!!expected?.wait&&!answered&&!approval&&row.stage!=='request-list',payment,answered,notSent,capability:row.window!=='metamask'||!!request||guardedAccount,needsExit:stopped.has(row.stage),focus:linkedFocus??(approval?'close-window':answered?'outcome':expected?.focus)};
 }
 export function ruleFailures(view, {row,shared,expected,facts}={}) {
   const f=facts || (row ? ruleFacts(row,shared,expected) : {});
