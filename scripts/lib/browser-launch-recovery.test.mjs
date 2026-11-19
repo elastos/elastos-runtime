@@ -4,6 +4,7 @@ import { startupCrashSignal, withBrowserLaunchRecovery } from "./browser-launch-
 
 test("startup classification requires the launch closure or the browser process signal", () => {
   assert.equal(startupCrashSignal(new Error("browserType.launch: Target page, context or browser has been closed\nBrowser logs:")), "unreported (browser closed)");
+  assert.equal(startupCrashSignal(new Error("browserType.launch: Browser closed.")), "unreported (browser closed)");
   assert.equal(startupCrashSignal(new Error("<process did exit: exitCode=null, signal=SIGSEGV>")), "SIGSEGV");
   assert.equal(startupCrashSignal(new Error("<launched> pid=123\nReceived signal 11 SI_KERNEL")), "signal 11");
   for (const message of ["Target page, context or browser has been closed", "page.goto: Target page, context or browser has been closed", "signal=SIGSEGV", "browserType.launch: Executable doesn't exist", "browserType.launch: proxy authentication failed"]) {

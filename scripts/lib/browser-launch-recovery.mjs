@@ -48,7 +48,7 @@ export function startupCrashSignal(error) {
   if (signal) return signal;
   const received = message.match(/<launched> pid=\d+[\s\S]*Received signal (\d+)/)?.[1];
   if (received) return `signal ${received}`;
-  return /^browserType\.launch: Target page, context or browser has been closed(?:\n|$)/.test(message)
+  return /^browserType\.launch: (?:Target page, context or browser has been closed|Browser (?:has been )?closed)[.!]?(?:\n|$)/.test(message)
     ? "unreported (browser closed)" : null;
 }
 

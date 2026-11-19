@@ -22,7 +22,7 @@ for (const [executable, options] of [
 ]) {
   const started = performance.now();
   let crashes = 0;
-  console.log(`STEP launch measurement ${executable}: ${count} attempts; ${options.executablePath || chromium.executablePath()}`);
+  console.log(`STEP launch measurement ${executable}: ${count} attempts; ${options.executablePath || "Playwright default headless shell"}`);
   for (let attempt = 1; attempt <= count; attempt++) {
     let browser;
     try {
