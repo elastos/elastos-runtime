@@ -49,13 +49,20 @@ The default human proof for Home. A passkey proves control of a local account to
 the runtime and unlocks short-lived sessions. It is not a wallet, not a DID, and
 normally does not expose raw key material for encryption.
 
+## Recovery Kit
+
+The recovery file saved by System's **Download Recovery Kit**. Keep it private,
+with its optional password. The [storage table](../SECURITY.md#stored-keys-and-recovery)
+defines its contents and the data that needs separate backups.
+
 ## Profile DID
 
 The stable person/contact identity used by signed People, discovery, accepted
 contacts, and direct-conversation identity. A Profile DID belongs to a
 principal-owned signed Profile document and can remain stable across device
-replacement or revocation when a valid Recovery Kit restores it. A stolen
-profile key requires a new identity. It is not the passkey and not the local principal
+replacement or revocation; see the
+[recovery coverage](../SECURITY.md#stored-keys-and-recovery). A stolen profile key
+requires a new identity. It is not the passkey and not the local principal
 identifier. It represents the person in collaboration, but the signed Profile
 document is not the human actor or the delivery device.
 
@@ -302,13 +309,13 @@ Availability receipts separately state which provider accepted or verified a
 responsibility to keep those bytes reachable. A CID grants no permission and
 makes no person, device, account, or global name claim.
 
-## Working copy, revision, head, key, copy
+## Working copy, revision, head, key, replica
 
 In the [target storage model](STORAGE_AND_ACCESS.md#two-kinds-of-data), a working
 copy is a file or database for frequent writes. A revision is a fixed save named
 by its CID. A head is the signed pointer that selects the current revision,
 also called a signed mutable head. A key encrypts private data and lets an
-authorised reader open it. A copy is a revision kept elsewhere under the owner's
+authorised reader open it. A replica is a revision kept elsewhere under the owner's
 storage policy.
 
 ## Service Offer

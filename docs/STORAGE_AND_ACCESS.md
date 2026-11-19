@@ -23,12 +23,13 @@ store that is still changing. This target model uses five building blocks:
 | Revision | A fixed save of the working copy, named by its CID. |
 | Head | A signed pointer that selects the current revision (the signed mutable head). |
 | Key | A secret that encrypts private data and lets an authorised reader open it. |
-| Copy | A revision kept in another place under the owner's storage policy. |
+| Replica | A revision kept in another place under the owner's storage policy. |
 
 The owner should choose where data stays and who can use it; Runtime should
 handle encryption, permission checks, and delivery. Protected sharing
 should grant specific uses, with separate permission for export or redistribution.
 Open publishing and permanent transfers should remain deliberate owner choices.
+People should see familiar actions: Open, Share, Manage access, Export, and Restore.
 
 ## One object model, four responsibilities
 
@@ -78,6 +79,7 @@ of data defines when to save a fixed revision:
   while it changes cannot produce that save.
 - A game supplies its save bytes at its own save boundary.
 - A conversation app saves drafts and message history at its declared boundaries.
+- Builder work uses the same ownership, protection, revision, availability, and recovery rules.
 - A run journal saves ordered events and durable operation identities.
 
 The selected durable store should acknowledge a save only after it commits a
@@ -88,7 +90,8 @@ remote retention are separate outcomes.
 State should stay separate from executable capsules, model packages, and service
 offers, so an update preserves the identity and permissions of the user's state.
 Narrow adapters should connect each file layout to the same protection, content,
-and authority contracts.
+and authority contracts. This common contract does not require one file layout
+or a new storage service.
 
 Storage placement should be separate from execution placement. For a remote
 Browser Engine with local storage, the consumer's store should keep the current
@@ -108,8 +111,8 @@ execution providers should separately need permission to use readable state.
 
 User history, provider settlement journals, and Runtime audit records should each
 have an owner, integrity rule, and bounded retention policy for secret redaction,
-removed history, and pending copy cleanup. Log controls should grant only the
-permitted rights. Acceptance must meet the release plan's required criteria and
+removed history, and pending replica cleanup. Log controls should grant only the
+permitted rights. Acceptance must meet the release plan's Required SA1-SA6 criteria and
 prove each payload's saves, restore, and failure handling. Game-save checks cover the shipped GBA
 surface; this contract adds no separate emulator product.
 
@@ -144,10 +147,10 @@ Permission to use a model through an approved inference provider is separate
 from permission to export its weights. Marketplace licensing should add rights
 and payment evidence to this object journey.
 
-## Copying storage and granting a copy are different actions
+## Storage replicas and exports are different actions
 
-Runtime should copy encrypted blocks for delivery, caching, backup, and repair
-under the storage policy. These copies can retain the object's protection and
+Runtime should replicate encrypted blocks for delivery, caching, backup, and repair
+under the storage policy. These replicas can retain the object's protection and
 authority requirements. An independently usable export, redistribution to a
 new audience, or release of reusable decryption material is a separate action.
 

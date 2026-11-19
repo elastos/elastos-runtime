@@ -71,37 +71,39 @@ Disk storage checked on 19 November 2026. Paths below are relative to the Home
 data folder; `<person>` is that person's folder name. The table describes
 application encryption; file names and filesystem metadata stay readable.
 
-Runtime creates a person's data key and retains a Recovery Kit during Profile
-setup. The Kit's recovery phrase protects that key. Runtime keeps the Kit,
-including that phrase, encrypted in `ElastOS/System/Auth/auth-state.json`; the unencrypted
+Runtime creates a person's data key during Profile setup. Its recovery phrase
+protects that key. Runtime keeps an internal recovery record, including the
+phrase, encrypted in `ElastOS/System/Auth/auth-state.json`; the unencrypted
 archive key is in `recovery-archive.key` beside it. Before that protection exists,
 Assistant, direct messages, and People refuse saves. Documents, Library, and
 Home settings can instead write plain data.
 
-In the last column, **key only** means the export restores the data key; you
-still need a separate copy of the files. The full bundle includes a Recovery Kit,
-plus the built-in Wallet keys and People identity/contacts present at export.
+System's **Download Recovery Kit** saves one recovery file, with optional password
+protection. Its coverage is listed below. Keys are stored next to the data they
+protect, in the same Home data folder; the person's data key is in the Auth archive above.
 
-| Data and storage path | Encrypted on disk? | Key location | Recovery Kit / full bundle |
+| Data and storage path | Encrypted on disk? | Key location | Recovery Kit restores |
 |---|---|---|---|
-| Assistant conversations and drafts: `Users/<person>/.AppData/ElastOS/Assistant/workspace-v2.json` | Yes; answer copies also appear in model run records | Person's data key, archived above | Key only / key only |
-| Direct messages: `Users/<person>/.AppData/ElastOS/Chat/direct-messages.json` | Yes | Person's data key | Key only / key only |
-| Community history: `collaboration/default-conversation/history-v1.json` | No | None | Omitted / omitted |
-| Contacts and Profile: `Users/<person>/.AppData/ElastOS/People`, `Users/<person>/.AppData/ElastOS/Profile` | Yes | Person's data key; Profile signing key inside the protected file | Key only / identity and contacts |
-| Documents: `Users/<person>/Documents`; titles and file names in `ElastOS/Documents/<document>/document.json`; published copies in `ipfs-repo` | Bodies when protection exists; metadata and published bytes are plain | Person's data key for bodies | Key only / key only |
-| Library files and records under `Users/<person>`; publication index under `ElastOS/SystemServices/Library`; published bytes in `ipfs-repo` | Private files/records when protection exists; published bytes and shared index are plain | Person's data key for private files/records | Key only / key only |
-| Notifications: `Local/Shared/System/Notifications` | No | None | Omitted / omitted |
-| Built-in Wallet: `ElastOS/SystemServices/Wallet/wallet-state.json` | Signing keys only; account and approval records are plain | Derived from nearby `wallet-key.hex` and the person's account ID | Omitted / built-in Wallet keys |
-| Browser profile: `Users/<person>/BrowserProfiles/default/profile.ext4` | No | None | Omitted / omitted |
-| Model run records: `providers/model-provider/journal` | No; retains answers, events, and a hash of the input under its retention policy | None | Omitted / omitted |
-| Model provider credentials: `providers/model-provider/secrets` | No; files restricted to the host account | None | Omitted / omitted |
-| Home settings: `Users/<person>/.AppData/ElastOS/Home` | When protection exists; browser preferences are separate | Person's data key | Key only / key only |
+| Home recovery authority: `ElastOS/System/Auth/auth-state.json` | Recovery material only; other auth state is plain | `recovery-archive.key` in the same Auth folder | Home recovery authority and data key |
+| Assistant conversations and drafts: `Users/<person>/.AppData/ElastOS/Assistant/workspace-v2.json` | Yes; answers also appear in model run records | Person's data key | Data key; files separate |
+| Direct messages: `Users/<person>/.AppData/ElastOS/Chat/direct-messages.json` | Yes | Person's data key | Data key; files separate |
+| Community history: `collaboration/default-conversation/history-v1.json` | No | None | Omitted |
+| Contacts and Profile: `Users/<person>/.AppData/ElastOS/People`, `Users/<person>/.AppData/ElastOS/Profile` | Yes | Person's data key; Profile signing key inside the protected file | Profile identity and contacts present at export |
+| Documents: `Users/<person>/Documents`; titles and file names in `ElastOS/Documents/<document>/document.json`; published bytes in `ipfs-repo` | Bodies when protection exists; metadata and published bytes are plain | Person's data key for bodies | Data key; files separate |
+| Library files and records under `Users/<person>`; publication index under `ElastOS/SystemServices/Library`; published bytes in `ipfs-repo` | Private files/records when protection exists; published bytes and shared index are plain | Person's data key for private files/records | Data key; files separate |
+| Notifications: `Local/Shared/System/Notifications` | No | None | Omitted |
+| Built-in Wallet: `ElastOS/SystemServices/Wallet/wallet-state.json` | Signing keys only; account and approval records are plain | Derived from nearby `wallet-key.hex` and the person's account ID | Built-in Wallet keys present at export |
+| Browser profile: `Users/<person>/BrowserProfiles/default/profile.ext4` | No | None | Omitted |
+| Model run records: `providers/model-provider/journal` | No; retains answers, events, and a hash of the input under its retention policy | None | Omitted |
+| Model provider credentials: `providers/model-provider/secrets` | No; files restricted to the host account | None | Omitted |
+| Home settings: `Users/<person>/.AppData/ElastOS/Home` | When protection exists; browser preferences are separate | Person's data key | Data key; files separate |
 
 Community history, notifications, document metadata, and the Wallet file are
 shared Home files, outside each person's private folder.
 
 The Runtime account, software running as that host account, root, and the
-hosting operator can read stored data and keys while Home is locked.
+hosting operator can read stored data, Wallet keys, and recovery material at any
+time, including while Home is locked.
 Passkeys control sign-in. An unlocked self-hosted Home trusts its owner and
 their host software. Protection against
 hosted operators and root belongs to [hosted protection (#209)](https://github.com/elastos/elastos-runtime/issues/209);
@@ -110,20 +112,16 @@ belongs to [locked Home protection (#210)](https://github.com/elastos/elastos-ru
 Recovery from a stolen device or Profile key requires a new identity.
 
 A complete data-folder copy contains the keys needed to read the protected data.
-Protect that backup, your Recovery Kit, and your full bundle as secrets. The full
-bundle offers optional password protection. Use hosted accounts only for public
+Protect that backup and your Recovery Kit as secrets. Use hosted accounts only for public
 demos; keep wallets, private data, and recovery material on your own device until
 hosted protection passes its acceptance gate. Independent review and installed
 proof remain security gates.
 
-If the disk is lost, a Kit alone cannot restore files or histories. A full bundle
-also restores its included Wallet keys and People identity/contacts; it leaves
-out the other bytes listed above, including the Browser profile and model
-credentials. Keep separate backups of those bytes. Neither export is a whole-Home
-backup. [Backup and recovery (#567)](https://github.com/elastos/elastos-runtime/issues/567)
+The Recovery Kit is not a whole-Home backup. Keep separate backups as listed in
+the table before the disk is lost. [Backup and recovery (#567)](https://github.com/elastos/elastos-runtime/issues/567)
 and [copies on your own devices (#498)](https://github.com/elastos/elastos-runtime/issues/498)
 own that work. The [target storage model](docs/STORAGE_AND_ACCESS.md) explains
-working copies, revisions, heads, keys, and copies.
+working copies, revisions, heads, keys, and replicas.
 
 ## Open Findings
 
