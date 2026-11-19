@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import {linkedWindow} from './lib/walletconnect-linked-window-fixture.mjs';
 const sourceRef=process.env.WALLETCONNECT_LINKED_BEFORE==='copy'?'adf517637d41dfa8a42849e97f494e8b05eea708':undefined;
 for(const engine of ['chromium','webkit']){
+ test(`a stopped account confirmation keeps the phone wallet name in ${engine}`,{timeout:60000},async t=>{
+  const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});
+  await r.link();await r.peer.changeAccount();await r.state('account-changed');r.peer.choose({request:'silent'});
+  await r.click('send-message');await r.state('link-wait');await r.click('stop-waiting');await r.state('link-cancelled');await r.capture('linked-confirmation-stopped');
+  const text=(await r.frame.locator('main').innerText()).replace(/\s+/g,' ');
+  assert.match(text,/The request may still be waiting in Trust Wallet/);assert.doesNotMatch(text,/waiting in WalletConnect/);
+ });
+ test(`a wallet-removed screen states the cause once in ${engine}`,{timeout:60000},async t=>{
+  const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});
+  await r.link();await r.peer.deleteConnection();await r.state('wallet-removed');await r.capture('linked-wallet-removed');
+  const text=await r.frame.locator('main').innerText();assert.equal(text.match(/Your wallet removed this connection\./g)?.length,1);
+ });
  test(`turned-off access can be requested again without a navigation loop in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});
   await r.link();r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('linked-access-turned-off');
