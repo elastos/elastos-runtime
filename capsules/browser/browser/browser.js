@@ -2125,7 +2125,7 @@ async function commitBrowserAuthority(event) {
       { signal: AbortSignal.timeout(10000) });
     const previousSummary = browserSummary || await window.__elastosBrowserRestoreBoot?.summaryPromise;
     if (!previousSummary?.principal_id || summary?.principal_id !== previousSummary.principal_id) {
-      throw new Error("Someone else is signed in to Home. Open Browser again from Home.");
+      throw new Error("Home could not confirm who is signed in. Open Browser again from Home.");
     }
     const launchIdentity = token => {
       try {
