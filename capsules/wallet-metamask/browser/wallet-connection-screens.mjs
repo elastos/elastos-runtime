@@ -39,10 +39,11 @@ const definitions = {
       "status": "Internet access is off for WalletConnect.",
       "notice": "Allow access in Inbox when you want to connect again.",
       "primary": {
-        "id": "inbox",
-        "label": "Open Inbox",
+        "id": "connect",
+        "label": "Connect wallet",
         "quiet": false
-      }
+      },
+      "secondary": [{"id":"inbox","label":"Open Inbox","quiet":true}]
     },
     "internet-expired": {
       "status": "The access request expired.",
