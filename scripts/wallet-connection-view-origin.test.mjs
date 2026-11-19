@@ -16,7 +16,7 @@ const origins=[...[1,63,87,89,118,135,253].map(n=>'https://'+host(n)), 'https://
 assert.equal(exact.length,135);assert.equal(origins.at(-1).length,512);
 const sizes=[[320,182],[360,596],[480,522],[390,844]];
 // Routine suite: all windows, both scales, boundary origins and viewports.
-// Full matrix: WALLET_VIEW_FULL_MATRIX=1 node scripts/run-node-tests.mjs scripts/wallet-connection-view-origin.test.mjs
+// Full matrix and every paint check: WALLET_VIEW_FULL_MATRIX=1 WALLET_VIEW_EXHAUSTIVE_PAINT=1 node scripts/run-node-tests.mjs scripts/wallet-connection-view-origin.test.mjs
 const ciSmoke=process.env.WALLET_VIEW_FULL_MATRIX!=='1'&&process.env.WALLET_VIEW_EXHAUSTIVE_PAINT!=='1';
 const exhaustivePaint=process.env.WALLET_VIEW_EXHAUSTIVE_PAINT==='1';
 if(process.env.WALLET_VIEW_BROWSER_SMOKE==='1')test.after(closeSmokeBrowsers);
