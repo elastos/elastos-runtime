@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 // Local two-runtime People/Chat acceptance.
 //
 // Drives two independent Home runtimes through the collaboration journey a
@@ -72,7 +73,7 @@ const SIDE_B = CONFIG.b;
 const RENAMED_A = `${SIDE_A.name} Renamed`;
 
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = withBrowserLaunchRecovery(require("playwright"));
 
 function fail(message, details) {
   const error = new Error(message);

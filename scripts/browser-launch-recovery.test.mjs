@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,17 @@ import { fileURLToPath } from "node:url";
 
 const product = new URL("./product-smoke-browser.mjs", import.meta.url).href;
 const runner = fileURLToPath(new URL("./run-node-tests.mjs", import.meta.url));
+
+test("native Playwright test launch imports use the shared recovery boundary", () => {
+  const scripts = new URL("./", import.meta.url);
+  for (const file of readdirSync(scripts).filter(file => file.endsWith(".mjs"))) {
+    const source = readFileSync(new URL(file, scripts), "utf8");
+    if (!/\.launch(?:PersistentContext)?\(/.test(source) || !/(?:require\([^\n]*(?:playwright|PLAYWRIGHT_MODULE)|from [^\n]*node_modules\/playwright)/.test(source)) continue;
+    // This probe measures the unmodified failure rate, outside recovery.
+    if (file === "browser-launch-measure.mjs") continue;
+    assert.match(source, /withBrowserLaunchRecovery/, file);
+  }
+});
 function fixture(t, scenario, files = 1) {
   const root = mkdtempSync(join(tmpdir(), "browser-launch-recovery-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

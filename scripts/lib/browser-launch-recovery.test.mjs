@@ -20,11 +20,12 @@ test("the shared wrapper preserves engine options, receivers, identities and exi
   for (const name of ["chromium", "firefox", "webkit"]) {
     const options = { headless: true, args: ["--fixture"] };
     const browser = { contexts: () => [] };
+    let persistentAttempts = 0;
     const type = {
       name: () => name,
       executablePath() { assert.equal(this, type); return "/fixture/browser"; },
       async launch(actual) { assert.equal(this, type); assert.equal(actual, options); return browser; },
-      async launchPersistentContext() { throw new Error("browserType.launchPersistentContext: Target page, context or browser has been closed AFTER_CONTEXT"); },
+      async launchPersistentContext() { persistentAttempts++; throw new Error("browserType.launchPersistentContext: Target page, context or browser has been closed AFTER_CONTEXT"); },
     };
     const raw = { [name]: type, request: {} };
     const wrapped = withBrowserLaunchRecovery(raw);
@@ -35,5 +36,6 @@ test("the shared wrapper preserves engine options, receivers, identities and exi
     assert.equal(wrapped[name].executablePath(), "/fixture/browser");
     assert.equal(await wrapped[name].launch(options), browser);
     await assert.rejects(wrapped[name].launchPersistentContext(), /AFTER_CONTEXT/);
+    assert.equal(persistentAttempts, 1);
   }
 });
