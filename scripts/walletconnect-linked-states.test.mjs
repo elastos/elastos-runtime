@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {once} from 'node:events';
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {linkedWindow as fixtureWindow} from './lib/walletconnect-linked-window-fixture.mjs';
-const linkedWindow=(t,engine,options={})=>fixtureWindow(t,engine,{...options,sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='original'?'0db7eb247c8d89f367d5458acb03339605cc216e':process.env.WALLETCONNECT_LINKED_BEFORE==='1'?'1c2dcb195f5ee294366627cd7dc7d2d2d21ad1f0':undefined});
+const linkedWindow=(t,engine,options={})=>fixtureWindow(t,engine,{...options,sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='original'?'0db7eb247c8d89f367d5458acb03339605cc216e':process.env.WALLETCONNECT_LINKED_BEFORE==='1'?'1c2dcb195f5ee294366627cd7dc7d2d2d21ad1f0':process.env.WALLETCONNECT_LINKED_BEFORE==='copy'?'adf517637d41dfa8a42849e97f494e8b05eea708':undefined});
 for(const engine of ['chromium','webkit']) {
  test(`linked window has true copy and useful controls in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();await r.capture('just-linked');
@@ -78,6 +78,7 @@ for(const engine of ['chromium','webkit']) {
   assert.equal(r.fixture.state.verified,1,'opening the add instructions preserves the first account and session');
   await r.click('back-to-connection');await r.state('linked');await r.click('add-account');await r.state('add-account');
   const clearing=r.holdApi('/api/apps/wallet-walletconnect/storage','DELETE');await r.click('disconnect');await clearing.entered;await r.state('disconnecting');await r.capture('disconnecting');clearing.release();await r.state('disconnected');await r.capture('disconnected');
+  assert.doesNotMatch(await r.frame.locator('main').innerText(),/Remove account|funds stay unchanged/,'adding another wallet has no unrelated removal instructions');
   const second=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:r.fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Second phone wallet',emitApprovalEvents:true});t.after(()=>second.stop());
   await r.click('connect');await r.state('qr-shown');await r.capture('second-wallet-qr');await r.click('copy-link');
   await second.pair(await r.page.evaluate(()=>window.copied));await r.state('linked');
