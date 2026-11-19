@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
+import { observeCopiedFeedback } from "./lib/wallet-copy-feedback.mjs";
 import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -648,22 +649,19 @@ async function run() {
 
     const copyButton = frame.locator("#wallet-account-card-copy .wallet-copy-icon");
     const clipboardSuccessCount = (await fixtureState(page)).clipboardRequests.length;
-    await copyButton.click();
-    await waitForCondition(async () => {
-      const requests = (await fixtureState(page)).clipboardRequests;
-      return requests.length === clipboardSuccessCount + 1
-        && requests.at(-1)?.purpose === "wallet.address"
-        && requests.at(-1)?.text === groupAddress;
-    }, 5000, "wallet clipboard success request");
-    await frame.waitForFunction(
-      () => {
-        const button = document.querySelector("#wallet-account-card-copy .wallet-copy-icon");
-        return button?.getAttribute("title") === "Copied"
-          && button?.getAttribute("aria-label") === "Copied";
-      },
-      undefined,
-      { timeout: 5000 },
-    );
+    const copiedFeedback = await observeCopiedFeedback(frame, "#wallet-account-card-copy .wallet-copy-icon");
+    try {
+      await copyButton.click();
+      await waitForCondition(async () => {
+        const requests = (await fixtureState(page)).clipboardRequests;
+        return requests.length === clipboardSuccessCount + 1
+          && requests.at(-1)?.purpose === "wallet.address"
+          && requests.at(-1)?.text === groupAddress;
+      }, 5000, "wallet clipboard success request");
+      await copiedFeedback.wait();
+    } finally {
+      await copiedFeedback.close();
+    }
     const clipboardSuccess = (await fixtureState(page)).clipboardRequests.at(-1);
     assert(
       clipboardSuccess?.purpose === "wallet.address" && clipboardSuccess?.text === groupAddress,
