@@ -7,7 +7,7 @@ import {windowFixture, observeWindowErrors, walletWindowLifetime} from './wallet
 import {scriptedPhoneWallet} from './walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright, productSmokeLaunchOptions} from '../product-smoke-browser.mjs';
 const captures=new Map();
-export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
+export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={}) {
  const fixture=await windowFixture();
  const apiGates=new Map(),gateReleases=[];
  t.after(()=>gateReleases.forEach(release=>release()));
@@ -65,6 +65,10 @@ export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
   body+=`<iframe id="accounts" sandbox="allow-scripts allow-forms" src="/apps/wallet/index.html?home_origin=${encodeURIComponent(fixture.origin)}#home_token=fixture-wallet-app"></iframe><script type="module">const host=await import('/apps/home/home-wallet-connector-host.js');addEventListener('message',e=>{if(e.source===document.querySelector('#wallet').contentWindow&&e.origin==='null'&&e.data?.type==='home:refresh-summary'&&e.data.homeToken==='fixture-wallet')host.notifyOpenWallets?.({kind:'app-frame',targetId:'wallet-walletconnect'},events=>document.querySelector('#accounts').contentWindow.postMessage({type:'elastos:runtime-events',events},'*'));if(e.data?.type==='home:open-target'&&e.data.target==='wallet-walletconnect'&&e.source===document.querySelector('#accounts').contentWindow){document.querySelector('#wallet').src='/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-wallet';}});</script>`;
   return route.fulfill({response,body});
  });
+ if(sourceRef){
+  assert.equal(sourceRef,'1c2dcb195f5ee294366627cd7dc7d2d2d21ad1f0');
+  for(const [asset,path] of [['wallet/wallet.js','capsules/wallet/browser/wallet.js'],['wallet-walletconnect/walletconnect-window-state.mjs','capsules/wallet-walletconnect/browser/walletconnect-window-state.mjs']])await page.route(`**/apps/${asset}*`,route=>route.fulfill({headers:cors,contentType:'text/javascript',body:execFileSync('git',['show',`${sourceRef}:${path}`])}));
+ }
  await page.goto(fixture.origin);
  frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
  const wallet=page.frameLocator('#accounts');await wallet.locator('.wallet-shell').waitFor();

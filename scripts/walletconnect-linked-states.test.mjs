@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {once} from 'node:events';
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
-import {linkedWindow} from './lib/walletconnect-linked-window-fixture.mjs';
+import {linkedWindow as fixtureWindow} from './lib/walletconnect-linked-window-fixture.mjs';
+const linkedWindow=(t,engine,options={})=>fixtureWindow(t,engine,{...options,sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='1'?'1c2dcb195f5ee294366627cd7dc7d2d2d21ad1f0':undefined});
 for(const engine of ['chromium','webkit']) {
  test(`linked window has true copy and useful controls in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();await r.capture('just-linked');
