@@ -17,8 +17,9 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
  if(output){
   await mkdir(`${output}/${engine}`,{recursive:true});
   for(const theme of ['light','dark']){
-   await f.frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);
-   await f.top.screenshot({path:`${output}/${engine}/linked-${kind}-${theme}.png`});
+   await f.frame.evaluate(theme=>window.elastosTheme.set(theme),theme);
+   assert.equal(await f.frame.evaluate(()=>window.elastosTheme.resolved()),theme);
+   await f.top.screenshot({path:`${output}/${engine}/linked-${kind}-${theme}.png`,animations:'disabled'});
   }
   await writeFile(`${output}/${engine}/linked-${kind}.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,kind,...shown},null,2));
  }

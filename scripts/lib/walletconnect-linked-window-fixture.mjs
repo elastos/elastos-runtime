@@ -91,9 +91,10 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   const output=process.env.WALLETCONNECT_LINKED_SCREENS;if(!output)return;
   await mkdir(`${output}/${engine}`,{recursive:true});
   for(const theme of ['light','dark']){
-   await frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);
-   await wallet.locator('html').evaluate((node,theme)=>node.dataset.elTheme=theme,theme);
-   await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`});
+   await frame.evaluate(theme=>window.elastosTheme.set(theme),theme);
+   await wallet.locator('html').evaluate((node,theme)=>window.elastosTheme.set(theme),theme);
+   assert.equal(await frame.evaluate(()=>window.elastosTheme.resolved()),theme);
+   await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`,animations:'disabled'});
    records.push({name,theme,...await frame.locator('main').evaluate(main=>({stage:main.dataset.state,text:main.innerText,actions:[...main.querySelectorAll('button')].map(b=>({action:b.dataset.action,label:b.innerText,primary:b.classList.contains('el-button-primary')}))}))});
   }
   await writeFile(`${output}/${engine}/states.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),sourceRef:sourceRef||null,records},null,2));
