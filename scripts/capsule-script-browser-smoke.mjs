@@ -152,7 +152,8 @@ await import('./home-fullscreen-browser.test.mjs');
 
 // The Rust content-sandbox harness installs and requires Chromium and WebKit.
 await import('./wallet-connection-view-layout.test.mjs');
-// Keep the 180-second Rust harness bounded; the standalone file runs all 480 cases.
+// The bounded Rust smoke and standalone default run 48 origin cases.
+// WALLET_VIEW_FULL_MATRIX=1 runs all 480; add WALLET_VIEW_EXHAUSTIVE_PAINT=1 for every paint check.
 process.env.WALLET_VIEW_BROWSER_SMOKE='1';
 await import('./wallet-connection-view-origin.test.mjs');
 
