@@ -582,7 +582,9 @@ Explore asks the chain whether the current account has access, including when
 this Home holds no copy. Visible cards read bounded listing/access results.
 Card reads can ask for the access result first. When Runtime can identify the
 account and establish its access, it returns an account-bound card response
-without fetching sale offers. Cards with no positive access result, full
+without fetching sale offers. When listing metadata holders are unavailable,
+Runtime can still resolve the item's verified chain identity and return a
+positive account access result. Cards with no positive access result, full
 listing details, and Buy still use verified offers. Open checks access again
 before it reads any protected content.
 Held access shows Open; an available offer without access shows Buy; an account
@@ -902,6 +904,8 @@ copies. An accepted upload reserves its spool space before sending bytes to
 Protect. Content's private import receives a separate charge before dispatch.
 The spool charge is released after its files are removed. Both charges stay
 in place if a lost import reply leaves the backend's use of the spool uncertain.
+An exact import retry reuses the import charge, which remains in the host total
+after the spool is removed.
 
 The source policy is exactly 2-of-3 across distinct operators and failure
 domains. Each custody node stores one share and checks the exact signed Runtime

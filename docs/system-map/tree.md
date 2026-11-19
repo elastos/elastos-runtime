@@ -84,9 +84,10 @@ Paths below are under `elastos/crates/elastos-server/src/` unless stated.
 | --- | --- |
 | Runtime mint, adoption and viewer lifecycle | `protected_content_runtime.rs` |
 | Remote object and DASH sources, upload and sealer authority | `remote_seal_source.rs`, `protected_content_runtime/remote_dash_source.rs`, `custody_pool_seal.rs`, `custody_pool_seal/service.rs` |
-| Encrypted package manifest, quota, private storage routing and receipt | `content.rs` |
+| Encrypted package manifest, private storage routing, pin and receipt | `content.rs` |
+| Remote seal spool and import reservations under the host's shared storage limit | `custody_pool_seal/storage.rs`, `protected_content_runtime.rs` |
 | Pool prepare, Wallet rights, release and buyer reads | `protected_content_pool_open.rs` |
-| Verified signed descriptor lookup | `custody_pool_descriptor.rs`, `custody_pool_resolver.rs` |
+| Verified signed descriptor lookup, rollover preparation and consent | `custody_pool_descriptor.rs`, `custody_pool_resolver.rs`, `api/gateway_custody.rs` |
 | Server staging, proof checks and session delivery | `custody_pool_service.rs` |
 | Accepted copy obligations, ownership and Stop | `custody_consent.rs` |
 | Private content transport and active-copy announcements | `carrier.rs` |

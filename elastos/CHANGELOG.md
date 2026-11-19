@@ -16,6 +16,11 @@ Protected content stays off by default behind the `protected_content` host
 setting.
 
 #### Protected content: Added
+- Homes can opt in to sealing new files and DASH videos on an eligible custody
+  pool member. The resulting listing carries the sealer's signed proof, and
+  the encrypted package stays in private storage.
+- Custody admins can prepare a successor committee and collect signed member
+  decisions while the current committee keeps serving existing assets.
 - An open attempted right after a mint or purchase waits instead of failing.
   Custody releases a key only on rights evidence read at the finalized block,
   which on Base trails a confirmed transaction by 15-20 minutes. Inside that
@@ -82,6 +87,9 @@ setting.
   metadata is public on IPFS.
 
 #### Protected content: Fixed
+- Retrying an item in Marketplace shows Checking immediately. Add listing
+  waits behind fewer background checks, and an account with verified access
+  can see Open even if the listing's metadata is temporarily unavailable.
 - A protected-content mint completes on the custody harness again. A replica
   a publisher places on a custody node over Carrier, by `ensure` or by
   `import_object`, is proven by that node's own verified local pin and is never

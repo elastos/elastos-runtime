@@ -687,6 +687,11 @@ target request.
 
 Availability stores bytes. Rights decide who may use them.
 
+For gateway CID reads, Runtime passes the admitted reader's scope to Content.
+Content performs the local read and selects bounded known-holder fallback
+where the scope permits it. The public seed gateway has local-only scope.
+Carrier enforces publication audience on peer reads.
+
 Protected content is encrypted before it is published. IPFS, Elacity,
 supernodes, and volunteers can store encrypted blocks. Runtime owns the open: it
 verifies the authenticated request, acquires typed Chain rights evidence through
@@ -702,6 +707,16 @@ public CID can expose encrypted bytes
 	valid rights holder gets scoped output
 	unauthorized opener gets no decrypt session
 ```
+
+### Remote sealer publication
+
+Content builds the manifest from the sealer's staged ciphertext, streams the
+package to private IPFS and checks every returned file CID before pinning.
+The upload spool is counted against the same host limit as custody shares and
+kept copies. Content adds a separate charge before dispatching the private
+import. Removing the spool releases its charge after the backend returns. If
+the import outcome is uncertain, both charges remain. An exact import retry
+reuses the held charge.
 
 ### Local retention is not a remote download
 

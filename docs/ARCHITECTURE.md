@@ -343,6 +343,22 @@ between Homes. A separate public Kubo store contains only validated metadata
 folders and covers, with admin consent. A public metadata pin does not publish
 the protected file or authorize a key release.
 
+For a gateway CID read, Runtime admits the reader and passes a read scope
+to Content. Content selects local storage and, for admitted Home apps,
+may fall back to a bounded fetch from known holders. The public seed gateway
+uses local reads. Carrier checks the publication audience before serving
+bytes across Homes. Content owns storage routing, while Runtime and the
+protected-content providers own the account rights and release checks.
+
+When remote sealing is enabled for an object or DASH mint, the creator
+Runtime journals a signed request and sends encrypted upload parts over
+Carrier to a verified pool sealer. The sealer's Protect provider encrypts
+the asset. Content streams the staged ciphertext into private IPFS, verifies
+the imported file table and pins the package. Its spool and import charges
+share the host storage limit with custody shares and kept copies. The creator
+Runtime verifies the signed result before using the Wallet and Chain mint
+flow. The portable listing carries the sealer's proof.
+
 Runtime resolves the item's signed pool descriptor against its immutable
 custody epoch. Descriptor v3 binds the pool's serving members. Runtime prepares
 server-side content sessions before requesting Wallet authorization; each
@@ -351,6 +367,13 @@ a contribution encrypted to the authorized server recipient. The server's
 Runtime-only decrypt provider reconstructs the CEK and encrypts output to the
 buyer's session delivery key; the server verifies each served part. Apps receive
 opaque launch authority and bounded reads.
+
+Custody can store a signed rollover proposal and its member decisions while
+the installed composition keeps serving. Verified descriptor refresh can
+discover an epoch absent from a reader's cache. Existing assets still require
+an authorized quorum for the epoch in their envelope, and a resumed mint
+uses its recorded composition. Activating a successor, moving shares and
+retiring an old quorum require separate protocols.
 
 Access belongs to the account's chain rights. Opening an available published
 asset from another Home does not require a contact relationship, pairing with
