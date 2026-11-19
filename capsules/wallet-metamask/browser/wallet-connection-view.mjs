@@ -212,7 +212,7 @@ export function connectionView(input) {
   if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Wallet activity before trying again.';safetyNotice=notice;actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
   const unknownLinkRecovery=safety===null&&stage==='link-error';
   if(unknownLinkRecovery){notice='Close this window. Check your wallet and Wallet activity before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
-  if(stage==='disconnecting')notice='Disconnecting continues after you close this window.';
+  if(stage==='disconnecting')notice=window==='walletconnect'&&supported&&!supported.includes('close-window')?'Keep this window open until disconnecting finishes.':'Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed'){notice+=' Home cannot save that answer.';if(safetyNotice!==null)safetyNotice=notice;}
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
   let outcome = parts(screen.status);
@@ -241,7 +241,7 @@ export function connectionView(input) {
     if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
   }
   let effectiveNotice = safetyNotice ?? notice;
-  if(supported&&!supported.includes('close-window')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){
+  if(supported&&!supported.includes('close-window')&&!(window==='walletconnect'&&stage==='disconnecting')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){
     const manualClose='Close this window with Home’s window controls';
     effectiveNotice=/Close this window(?=[.,])/.test(effectiveNotice)?effectiveNotice.replace(/Close this window(?=[.,])/,manualClose):effectiveNotice+' '+manualClose+'.';
   }
