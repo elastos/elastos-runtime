@@ -42,8 +42,6 @@ for(const engine of ['chromium','webkit']) {
  });
  test(`Wallet add control explains and adds another phone account in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();
-  // Opening Wallet again currently supplies the refresh that the link omitted.
-  await r.wallet.locator('body').evaluate(()=>window.dispatchEvent(new MessageEvent('message',{origin:'null',source:window.parent,data:{type:'elastos:wallet-refresh'}})));
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
   await r.openFromWallet();const connector=r.frame;
   if(await connector.locator('[data-action=add-account]').count())await connector.locator('[data-action=add-account]').click();
@@ -57,7 +55,6 @@ for(const engine of ['chromium','webkit']) {
  });
  test(`Wallet adds a second wallet after an explicit disconnect in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();
-  await r.wallet.locator('body').evaluate(()=>window.dispatchEvent(new MessageEvent('message',{origin:'null',source:window.parent,data:{type:'elastos:wallet-refresh'}})));
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
   await r.openFromWallet();
   await r.click('add-account');await r.state('add-account');await r.capture('add-account');
