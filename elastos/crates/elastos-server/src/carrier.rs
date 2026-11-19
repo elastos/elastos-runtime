@@ -3057,7 +3057,7 @@ pub(crate) async fn keep_member_copies(
         .ok()
         .filter(|bytes| {
             bytes.len() as u64
-                <= crate::protected_content_runtime::MAX_RUNTIME_PORTABLE_LISTING_BYTES
+                <= crate::protected_content_runtime::MAX_RUNTIME_REMOTE_PORTABLE_LISTING_BYTES
         })
         .and_then(|bytes| {
             crate::protected_content_runtime::protected_listing_package(&listing.manifest, &bytes)
@@ -3342,7 +3342,7 @@ async fn stage_member_copy(
                 manifest.files.as_slice(),
                 [file] if file.path == "listing.json"
                     && file.size
-                        <= crate::protected_content_runtime::MAX_RUNTIME_PORTABLE_LISTING_BYTES
+                        <= crate::protected_content_runtime::MAX_RUNTIME_REMOTE_PORTABLE_LISTING_BYTES
             )
     };
     if (listing && !listing_shape(&manifest))
@@ -10149,6 +10149,7 @@ pub(crate) mod tests {
     mod audit_j4_carrier;
     // AUDIT-REPRO J1 (red tests, no fix).
     mod audit_j1_placement_status;
+    mod remote_seal;
 
     const NONCANONICAL_ALIAS_DID: &str = "did:key:z2DQYePVrytqCLfdq5VSDGtksAZC9NAt75iCed5WwSKKVXt";
 

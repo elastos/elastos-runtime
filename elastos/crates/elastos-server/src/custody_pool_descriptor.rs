@@ -1,7 +1,7 @@
 //! Plan B T3.3: the pool owner's signed pool descriptor.
 //!
 //! The owner signs one descriptor for its pool with the pool authority key:
-//! the committee bundle of the installed composition, every member with its
+//! the current composition and retained epoch bundles, every member with its
 //! roles and route, and the pool's serve and mint policies. Members receive it
 //! over the pool-active transport, store it (it is public and holds no
 //! secret), and answer `describe` from it.
@@ -9,10 +9,9 @@
 //! The owner reads its composition through the release-time rule
 //! (`validate_custody_epoch_for_release_at`), not through the term-gated
 //! loader, so a pool past its members' term still re-signs its descriptor and
-//! its items keep playing (F1). The sequence orders descriptors within one
-//! composition; the owner never lowers it, also when the installed
-//! composition changes, so every node's descriptor high-water mark accepts a
-//! renewed pool.
+//! its items keep playing (F1). The sequence orders descriptors across
+//! compositions. A change in the installed composition must preserve the
+//! exact bundles and member routes already in the descriptor.
 //!
 //! Item 10 (user 2026-11-12 22:50; DEC-F1): the owner signs only the
 //! ticketless v2 descriptor, and each member route is the member's peer DID.
@@ -25,21 +24,24 @@
 //! is re-signed as v3 at its sequence + 1; the old signed bytes are never
 //! re-encoded, and a member keeps its copy as signed until a newer one comes.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::Context as _;
 use base64::Engine as _;
 use elastos_protected_content_contracts::{
-    validate_custody_epoch_for_release_at, CanonicalContract, CustodyEpochIssuerKeyV1,
+    validate_custody_epoch_for_release_at, CanonicalContract, CustodyEpochIssuerKeyV1, Digest32,
     MintPolicyV1, NodePublicKey, PoolAddressAnyV1, PoolAddressV2, PoolDescriptorStatementV3,
     PoolDidV1, PoolEpochBundleV1, PoolMemberRolesV1, PoolMemberRouteV2, PoolMemberV2, PoolMemberV3,
-    PoolTrustModeV1, RuntimeOperationIssuerKeyV1, ServePolicyV1,
+    PoolRolloverProposalV1, PoolTrustModeV1, RuntimeOperationIssuerKeyV1, ServePolicyV1,
     SignedCustodyCommitteeAuthorizationV1, SignedCustodyEpochV1, SignedCustodyPoolV1,
-    SignedPoolDescriptorAnyV1, SignedPoolDescriptorV3, VerifiedPoolDescriptorV1,
-    MAX_POOL_DESCRIPTOR_LIFETIME_SECS, MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1,
+    SignedPoolDescriptorAnyV1, SignedPoolDescriptorV3, SignedPoolRolloverConsentV1,
+    SignedPoolRolloverProposalV1, VerifiedPoolDescriptorV1, MAX_POOL_DESCRIPTOR_LIFETIME_SECS,
+    MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::collaboration_config::read_owner_only_file;
 use crate::collaboration_custody_messages::CustodyRefusal as WireRefusal;
@@ -56,9 +58,14 @@ use crate::protected_content_runtime::{
 
 const OWNER_DESCRIPTOR_FILE: &str = "custody-pool-descriptor.json";
 const OWNER_DESCRIPTOR_SCHEMA_V1: &str = "elastos.protected-content.custody-pool-descriptor/v1";
+const STAGED_ROLLOVER_FILE: &str = "custody-rollover-staged.json";
+const STAGED_ROLLOVER_SCHEMA_V1: &str = "elastos.protected-content.custody-rollover-staged/v1";
 /// The owner file holds one descriptor at its cap, as base64, plus its schema.
 const MAX_OWNER_DESCRIPTOR_FILE_BYTES: usize =
     MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1.div_ceil(3) * 4 + 1024;
+const MAX_STAGED_ROLLOVER_BYTES: usize =
+    MAX_OWNER_DESCRIPTOR_FILE_BYTES + MAX_CUSTODY_COMPOSITION_FILE_BYTES.div_ceil(3) * 4 + 8192;
+const MAX_ROLLOVER_CONSENT_BYTES: usize = 512;
 /// A member keeps the exact signed bytes, bounded by the descriptor cap (L14).
 const SERVED_DESCRIPTOR_FILE: &str = "custody-served-pool-descriptor.bin";
 /// The owner re-signs a descriptor this long before it expires.
@@ -86,6 +93,248 @@ struct OwnerDescriptorFileV1 {
     schema: String,
     /// Standard base64 of the signed descriptor's canonical bytes.
     descriptor_base64: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RolloverPreparedV1 {
+    proposal_base64: String,
+    descriptor_base64: String,
+    expires_at: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StagedRolloverV1 {
+    schema: String,
+    operation_id: [u8; 16],
+    input_digest: [u8; 32],
+    prepared: RolloverPreparedV1,
+    composition_base64: String,
+    #[serde(default)]
+    consents: BTreeMap<String, String>,
+}
+
+impl StagedRolloverV1 {
+    fn load(path: &Path) -> anyhow::Result<Option<Self>> {
+        if !present(path)? {
+            return Ok(None);
+        }
+        let bytes =
+            read_owner_only_file(path, MAX_STAGED_ROLLOVER_BYTES, "staged custody rollover")?;
+        let record: Self = serde_json::from_slice(&bytes)?;
+        anyhow::ensure!(
+            record.schema == STAGED_ROLLOVER_SCHEMA_V1,
+            "invalid staged custody rollover schema"
+        );
+        Ok(Some(record))
+    }
+
+    fn write(&self, path: &Path) -> anyhow::Result<()> {
+        let record = serde_json::to_vec(self)?;
+        anyhow::ensure!(
+            record.len() <= MAX_STAGED_ROLLOVER_BYTES,
+            "staged custody rollover exceeds its limit"
+        );
+        write_owner_only_bytes(path, &record)
+    }
+
+    fn verify(
+        &self,
+        previous: &SignedPoolDescriptorV3,
+        now: u64,
+    ) -> anyhow::Result<(
+        SignedPoolRolloverProposalV1,
+        SignedPoolDescriptorV3,
+        Digest32,
+    )> {
+        let proposal: SignedPoolRolloverProposalV1 = decode_canonical_contract_base64(
+            &self.prepared.proposal_base64,
+            4096,
+            "staged rollover proposal",
+        )?;
+        let candidate: SignedPoolDescriptorV3 = decode_canonical_contract_base64(
+            &self.prepared.descriptor_base64,
+            MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1,
+            "staged rollover descriptor",
+        )?;
+        let composition =
+            base64::engine::general_purpose::STANDARD.decode(&self.composition_base64)?;
+        let digest = Digest32::new(Sha256::digest(composition).into());
+        let staged = proposal.verify(previous, &candidate, digest, now)?;
+        anyhow::ensure!(
+            staged.operation_id == self.operation_id
+                && staged.expires_at == self.prepared.expires_at,
+            "invalid staged custody rollover binding"
+        );
+        Ok((proposal, candidate, digest))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct RolloverConsentRecordedV1 {
+    node_public_key: String,
+    approved: bool,
+}
+
+pub(crate) fn record_rollover_consent(
+    _write: &CustodyWriteGuard,
+    data_dir: &Path,
+    operation_id: [u8; 16],
+    decision_base64: &str,
+    now: u64,
+) -> anyhow::Result<RolloverConsentRecordedV1> {
+    use crate::custody_pool_setup::CustodyRefusal;
+
+    let refusal = || CustodyRefusal::new("invalid_rollover_consent");
+    let consent: SignedPoolRolloverConsentV1 = decode_canonical_contract_base64(
+        decision_base64,
+        MAX_ROLLOVER_CONSENT_BYTES,
+        "rollover consent",
+    )
+    .map_err(|_| refusal())?;
+    let _guard = lock()?;
+    let Some(SignedPoolDescriptorAnyV1::V3(previous)) = load_owner_descriptor(data_dir)? else {
+        return Err(CustodyRefusal::new("no_pool").into());
+    };
+    let path = protected_content_root(data_dir).join(STAGED_ROLLOVER_FILE);
+    let mut record = StagedRolloverV1::load(&path)?.ok_or_else(refusal)?;
+    if record.operation_id != operation_id {
+        return Err(refusal().into());
+    }
+    let (proposal, candidate, digest) = record.verify(&previous, now)?;
+    let statement = proposal
+        .verify_member_consent(&previous, &candidate, digest, &consent, now)
+        .map_err(|_| refusal())?;
+    let node_public_key = hex::encode(statement.node.as_bytes());
+    if let Some(kept_base64) = record.consents.get(&node_public_key) {
+        let kept: SignedPoolRolloverConsentV1 = decode_canonical_contract_base64(
+            kept_base64,
+            MAX_ROLLOVER_CONSENT_BYTES,
+            "stored rollover consent",
+        )?;
+        if kept == consent {
+            return Ok(RolloverConsentRecordedV1 {
+                node_public_key,
+                approved: statement.approved,
+            });
+        }
+        // A signed decline is final for this proposal. A delayed approval
+        // cannot replace it, even after the decline's submission window ends.
+        let kept_statement = proposal.verify_member_consent(
+            &previous,
+            &candidate,
+            digest,
+            &kept,
+            kept.statement().issued_at,
+        )?;
+        if kept_statement.node != statement.node || !kept_statement.approved || statement.approved {
+            return Err(refusal().into());
+        }
+    }
+    let encoded = base64::engine::general_purpose::STANDARD.encode(consent.canonical_bytes()?);
+    record.consents.insert(node_public_key.clone(), encoded);
+    record.write(&path)?;
+    Ok(RolloverConsentRecordedV1 {
+        node_public_key,
+        approved: statement.approved,
+    })
+}
+
+/// Persist a proposal for consent. The existing descriptor and composition
+/// remain the active ones, and a replay returns the exact staged bytes.
+pub(crate) fn stage_owner_rollover(
+    _write: &CustodyWriteGuard,
+    data_dir: &Path,
+    operation_id: [u8; 16],
+    input_digest: [u8; 32],
+    now: u64,
+    build_composition: impl FnOnce() -> anyhow::Result<Vec<u8>>,
+) -> anyhow::Result<RolloverPreparedV1> {
+    let _guard = lock()?;
+    let Some(SignedPoolDescriptorAnyV1::V3(previous)) = load_owner_descriptor(data_dir)? else {
+        return Err(crate::custody_pool_setup::CustodyRefusal::new("no_pool").into());
+    };
+    let active = installed_composition(data_dir, now)?
+        .ok_or_else(|| crate::custody_pool_setup::CustodyRefusal::new("no_pool"))?;
+    anyhow::ensure!(
+        previous.statement().epochs().contains(&active.bundle),
+        "the active custody composition is missing from the current descriptor"
+    );
+    let path = protected_content_root(data_dir).join(STAGED_ROLLOVER_FILE);
+    if let Some(kept) = StagedRolloverV1::load(&path)? {
+        if kept.operation_id == operation_id {
+            anyhow::ensure!(
+                kept.input_digest == input_digest,
+                "custody rollover operation has different inputs"
+            );
+            kept.verify(&previous, now)?;
+            return Ok(kept.prepared);
+        }
+        anyhow::ensure!(
+            kept.prepared.expires_at <= now,
+            "a custody rollover candidate is already staged"
+        );
+    }
+
+    let bytes = build_composition()?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_CUSTODY_COMPOSITION_FILE_BYTES,
+        "staged custody composition exceeds its limit"
+    );
+    let composition = parse_owner_composition(&bytes, now)?;
+    let stored = SignedPoolDescriptorAnyV1::from(previous.clone());
+    let candidate = build_descriptor(
+        data_dir,
+        &composition,
+        Some(&stored),
+        *stored.serve_policy(),
+        stored.mint_policy().clone(),
+        now,
+    )?;
+    let expires_at = now
+        .saturating_add(86_400)
+        .min(previous.statement().expires_at())
+        .min(candidate.statement().expires_at());
+    let statement = PoolRolloverProposalV1 {
+        pool: *previous.statement().pool(),
+        predecessor_sequence: previous.statement().sequence(),
+        predecessor_digest: previous.canonical_hash()?,
+        candidate_descriptor_digest: candidate.canonical_hash()?,
+        candidate_composition_digest: Digest32::new(Sha256::digest(&bytes).into()),
+        provisioning_epoch: composition.bundle.epoch_identity()?,
+        operation_id,
+        issued_at: now,
+        expires_at,
+    };
+    let signature = policy_authority_signature(
+        &crate::custody_pool_setup::policy_authority_key_path(data_dir),
+        &statement.canonical_bytes()?,
+    )?;
+    let digest = statement.candidate_composition_digest;
+    let proposal = SignedPoolRolloverProposalV1::new(
+        statement,
+        signature
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid custody rollover signature size"))?,
+    )?;
+    proposal.verify(&previous, &candidate, digest, now)?;
+    let base64 = base64::engine::general_purpose::STANDARD;
+    let prepared = RolloverPreparedV1 {
+        proposal_base64: base64.encode(proposal.canonical_bytes()?),
+        descriptor_base64: base64.encode(candidate.canonical_bytes()?),
+        expires_at,
+    };
+    StagedRolloverV1 {
+        schema: STAGED_ROLLOVER_SCHEMA_V1.into(),
+        operation_id,
+        input_digest,
+        prepared: prepared.clone(),
+        composition_base64: base64.encode(bytes),
+        consents: BTreeMap::new(),
+    }
+    .write(&path)?;
+    Ok(prepared)
 }
 
 fn owner_descriptor_path(data_dir: &Path) -> PathBuf {
@@ -116,7 +365,11 @@ fn installed_composition(
         MAX_CUSTODY_COMPOSITION_FILE_BYTES,
         "custody composition",
     )?;
-    let config: RuntimeCustodyCompositionConfigFile = serde_json::from_slice(&bytes)?;
+    parse_owner_composition(&bytes, now).map(Some)
+}
+
+fn parse_owner_composition(bytes: &[u8], now: u64) -> anyhow::Result<InstalledComposition> {
+    let config: RuntimeCustodyCompositionConfigFile = serde_json::from_slice(bytes)?;
     let authority = decode_custody_epoch_issuer_base64(
         &config.expected_policy_authority_base64,
         "expected_policy_authority",
@@ -153,11 +406,11 @@ fn installed_composition(
     let bundle = PoolEpochBundleV1::new(pool, epoch, authorization).map_err(|error| {
         anyhow::anyhow!("the installed custody pool is not a bundle: {error:?}")
     })?;
-    Ok(Some(InstalledComposition {
+    Ok(InstalledComposition {
         authority,
         bundle,
         config,
-    }))
+    })
 }
 
 /// Every committee member: hold, serve and seal by default; its route is the
@@ -322,34 +575,78 @@ fn sign_descriptor(
     mint: MintPolicyV1,
     now: u64,
 ) -> anyhow::Result<SignedPoolDescriptorV3> {
+    let descriptor = build_descriptor(data_dir, composition, stored.as_ref(), serve, mint, now)?;
+    let sequence = descriptor.statement().sequence();
+    if stored.as_ref().map(SignedPoolDescriptorAnyV1::sequence) != Some(sequence) {
+        store_owner_descriptor(data_dir, &descriptor)?;
+        tracing::debug!(sequence, "custody pool descriptor signed");
+    }
+    Ok(descriptor)
+}
+
+/// Sign and verify a candidate before publishing it as the owner's head.
+fn build_descriptor(
+    data_dir: &Path,
+    composition: &InstalledComposition,
+    stored: Option<&SignedPoolDescriptorAnyV1>,
+    serve: ServePolicyV1,
+    mint: MintPolicyV1,
+    now: u64,
+) -> anyhow::Result<SignedPoolDescriptorV3> {
     // #388 A2: every slot empty under `WciOperated`.
-    let members = members_for(data_dir, composition)?
+    let current_members = members_for(data_dir, composition)?
         .into_iter()
         .map(|member| PoolMemberV3::new(member, Vec::new()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| anyhow::anyhow!("the pool member is invalid: {error:?}"))?;
     let pool = PoolDidV1::from_issuer(composition.authority);
-    // Only a stored v3 descriptor is reused; any other is re-signed as v3.
-    if let Some(SignedPoolDescriptorAnyV1::V3(stored)) = &stored {
-        let statement = stored.statement();
-        let unchanged = statement.pool() == &pool
-            && statement.epochs() == std::slice::from_ref(&composition.bundle)
+    let (mut epochs, mut members) = match stored {
+        Some(stored) => owner_descriptor_history(stored, &pool, &composition.bundle)?,
+        None => (Vec::new(), BTreeMap::new()),
+    };
+    if !epochs.contains(&composition.bundle) {
+        let active_epoch = composition.bundle.epoch_identity()?;
+        for kept in &epochs {
+            anyhow::ensure!(
+                kept.epoch_identity()? != active_epoch,
+                "the installed custody composition would replace a kept epoch bundle"
+            );
+        }
+        epochs.push(composition.bundle.clone());
+    }
+    for member in current_members {
+        let kept = members
+            .entry(member.node_public_key())
+            .or_insert_with(|| member.clone());
+        anyhow::ensure!(
+            *kept == member,
+            "the installed custody composition would change a kept member route or role"
+        );
+    }
+    let members = members.into_values().collect::<Vec<_>>();
+    if let Some(SignedPoolDescriptorAnyV1::V3(previous)) = stored {
+        let statement = previous.statement();
+        let unchanged = statement.epochs() == epochs.as_slice()
             && statement.members() == members.as_slice()
             && statement.serve_policy() == &serve
             && statement.mint_policy() == &mint
             && statement.trust_mode() == PoolTrustModeV1::WciOperated;
         if unchanged && now.saturating_add(RESIGN_BEFORE_EXPIRY_SECS) < statement.expires_at() {
-            return Ok(stored.clone());
+            return Ok(previous.clone());
         }
     }
     // Never lowered, also when the installed composition changed (17:55).
-    let sequence = stored
-        .as_ref()
-        .map_or(1, |stored| stored.sequence().saturating_add(1));
+    let sequence = match stored {
+        Some(stored) => stored
+            .sequence()
+            .checked_add(1)
+            .context("custody pool descriptor sequence is exhausted")?,
+        None => 1,
+    };
     let statement = PoolDescriptorStatementV3::new(
         pool,
         sequence,
-        vec![composition.bundle.clone()],
+        epochs,
         members,
         serve,
         mint,
@@ -364,9 +661,67 @@ fn sign_descriptor(
     )?;
     let descriptor = SignedPoolDescriptorV3::new(statement, signature)
         .map_err(|error| anyhow::anyhow!("the signed pool descriptor is invalid: {error:?}"))?;
-    store_owner_descriptor(data_dir, &descriptor)?;
-    tracing::debug!(sequence, "custody pool descriptor signed");
+    descriptor.verify(now).map_err(|error| {
+        anyhow::anyhow!("the next custody pool descriptor does not verify: {error:?}")
+    })?;
     Ok(descriptor)
+}
+
+/// Authenticate the stored owner history at its issuance time. Its window
+/// limits live use, but expiry must never discard an existing asset's epoch.
+fn owner_descriptor_history(
+    stored: &SignedPoolDescriptorAnyV1,
+    pool: &PoolDidV1,
+    active: &PoolEpochBundleV1,
+) -> anyhow::Result<(
+    Vec<PoolEpochBundleV1>,
+    BTreeMap<NodePublicKey, PoolMemberV3>,
+)> {
+    anyhow::ensure!(
+        stored.pool() == pool,
+        "the stored custody descriptor names a different pool"
+    );
+    let issued_at = match stored {
+        SignedPoolDescriptorAnyV1::V1(descriptor) => descriptor.statement().issued_at(),
+        SignedPoolDescriptorAnyV1::V2(descriptor) => descriptor.statement().issued_at(),
+        SignedPoolDescriptorAnyV1::V3(descriptor) => descriptor.statement().issued_at(),
+    };
+    stored.verify(issued_at).map_err(|error| {
+        anyhow::anyhow!("the stored custody pool descriptor does not verify: {error:?}")
+    })?;
+    let SignedPoolDescriptorAnyV1::V3(previous) = stored else {
+        // Keep the existing single-bundle v3 upgrade, whose routes and trust
+        // come from the verified local composition.
+        anyhow::ensure!(
+            stored.epochs() == std::slice::from_ref(active),
+            "upgrade the kept custody descriptor before changing its composition"
+        );
+        return Ok((Vec::new(), BTreeMap::new()));
+    };
+    Ok((
+        previous.statement().epochs().to_vec(),
+        previous
+            .statement()
+            .members()
+            .iter()
+            .map(|member| (member.node_public_key(), member.clone()))
+            .collect(),
+    ))
+}
+
+/// A v3 successor must keep all previous bundles and routes. Until the
+/// retirement protocol exists, a descriptor update cannot withdraw serving authority.
+pub(crate) fn preserves_serving_history(
+    kept: &SignedPoolDescriptorAnyV1,
+    newer: &SignedPoolDescriptorAnyV1,
+) -> bool {
+    let SignedPoolDescriptorAnyV1::V3(kept) = kept else {
+        return true;
+    };
+    let SignedPoolDescriptorAnyV1::V3(newer) = newer else {
+        return false;
+    };
+    newer.preserves_serving_history(kept)
 }
 
 /// A served owner's descriptor (L13). The caller has checked what
@@ -410,8 +765,13 @@ pub(crate) fn store_member_descriptor(
             let same_composition = matching_bundle(kept.epochs(), kept.pool(), served)
                 .and_then(signed_pool_start)
                 == Some(pool_start);
-            if same_composition && kept.sequence() >= descriptor.sequence() {
+            if (same_composition || matches!(kept, SignedPoolDescriptorAnyV1::V3(_)))
+                && kept.sequence() >= descriptor.sequence()
+            {
                 return Ok(Err(STALE_NOTICE));
+            }
+            if !preserves_serving_history(&kept, descriptor) {
+                return Ok(Err(INVALID_DESCRIPTOR));
             }
         }
         entry.descriptor = Some(base64::engine::general_purpose::STANDARD.encode(&bytes));

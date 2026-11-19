@@ -5086,7 +5086,9 @@ async fn guard_an_oversized_listing_package_is_refused_before_any_fetch() {
             "listing.json",
             vec![
                 b' ';
-                crate::protected_content_runtime::MAX_RUNTIME_PORTABLE_LISTING_BYTES as usize + 1
+                crate::protected_content_runtime::MAX_RUNTIME_REMOTE_PORTABLE_LISTING_BYTES
+                    as usize
+                    + 1
             ],
         )],
         serde_json::json!([

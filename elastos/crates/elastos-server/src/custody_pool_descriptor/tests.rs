@@ -290,15 +290,7 @@ fn owner_descriptor_re_signs_after_the_pool_term() {
     late.verify(after_term).unwrap();
 }
 
-#[test]
-fn owner_descriptor_sequence_stays_monotonic_across_compositions() {
-    // 17:55: a renewed composition continues the sequence; it never starts
-    // again at 1, so each node's high-water mark accepts the renewed pool.
-    let owner = terminal_owner();
-    let now = now();
-    let first = owner_descriptor(&owner.data_dir, now).unwrap().unwrap();
-    assert_eq!(first.statement().sequence(), 1);
-
+fn rollover_composition_bytes(owner: &Owner, node_descriptors: &[Vec<u8>], now: u64) -> Vec<u8> {
     let key_bytes: [u8; 32] = std::fs::read(crate::custody_pool_setup::policy_authority_key_path(
         &owner.data_dir,
     ))
@@ -306,34 +298,292 @@ fn owner_descriptor_sequence_stays_monotonic_across_compositions() {
     .try_into()
     .unwrap();
     let authority = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
-    let descriptors = owner
-        .nodes
+    let descriptors = node_descriptors
         .iter()
-        .zip(NODE_LABELS)
-        .map(|(node, (name, location))| {
-            let bytes = carrier_descriptor_bytes(&node.device.verifying_key(), name, location);
-            validated_custody_node_descriptor(&bytes, "terminal node").unwrap()
-        })
+        .map(|bytes| validated_custody_node_descriptor(bytes, "terminal node").unwrap())
         .collect();
     let renewed = signed_custody_composition_config_at(
         &authority,
         descriptors,
         365,
         ThresholdV1::new(2, 3).unwrap(),
-        now + 3_600,
+        now,
     )
     .unwrap();
+    serde_json::to_vec(&serde_json::to_value(&renewed).unwrap()).unwrap()
+}
+
+fn install_composition_for_rollover(owner: &Owner, node_descriptors: &[Vec<u8>], now: u64) {
     write_owner_only_bytes(
         &runtime_custody_composition_config_path(&owner.data_dir),
-        &serde_json::to_vec(&serde_json::to_value(&renewed).unwrap()).unwrap(),
+        &rollover_composition_bytes(owner, node_descriptors, now),
     )
     .unwrap();
+}
 
-    let second = owner_descriptor(&owner.data_dir, now + 3_600)
-        .unwrap()
+fn fixture_node_descriptors(owner: &Owner) -> Vec<Vec<u8>> {
+    owner
+        .nodes
+        .iter()
+        .zip(NODE_LABELS)
+        .map(|(node, (name, location))| {
+            carrier_descriptor_bytes(&node.device.verifying_key(), name, location)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn staged_owner_rollover_replays_exact_candidate_without_changing_active_files() {
+    use ed25519_dalek::Signer as _;
+    use elastos_protected_content_contracts::PoolRolloverConsentV1;
+
+    let owner = card_owner().await;
+    let now = now();
+    let active = owner_descriptor(&owner.data_dir, now).unwrap().unwrap();
+    let active_path = runtime_custody_composition_config_path(&owner.data_dir);
+    let before = std::fs::read(&active_path).unwrap();
+    let replacement = Party::new("Eve", true);
+    let mut cards = owner
+        .nodes
+        .iter()
+        .zip(NODE_LABELS)
+        .map(|(node, (name, location))| CardInput::Remote {
+            text: card_for_device(&node.device.verifying_key(), name, location, STORAGE),
+        })
+        .collect::<Vec<_>>();
+    let (name, location) = NODE_LABELS[2];
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&[91; 32]);
+    let node = NodePublicKey::new(signing_key.verifying_key().to_bytes()).unwrap();
+    let mut node_descriptor: serde_json::Value = serde_json::from_slice(&carrier_descriptor_bytes(
+        &replacement.device.verifying_key(),
+        name,
+        location,
+    ))
+    .unwrap();
+    node_descriptor["node_public_key_hex"] =
+        serde_json::Value::String(format!("0x{}", hex::encode(node.as_bytes())));
+    cards[2] = CardInput::Remote {
+        text: crate::custody_node_card::encode_node_card(
+            &serde_json::to_vec(&node_descriptor).unwrap(),
+            &crate::custody_node_card::tests::ticket_for(&replacement.device.verifying_key()),
+            &["custody".to_owned(), "chain".to_owned()],
+            None,
+        )
+        .unwrap(),
+    };
+
+    let prepared = crate::custody_pool_setup::prepare_rollover(
+        &lock_custody_writes().await,
+        &owner.data_dir,
+        &cards,
+        365,
+        [1; 16],
+        now,
+    )
+    .unwrap();
+    let replay = crate::custody_pool_setup::prepare_rollover(
+        &lock_custody_writes().await,
+        &owner.data_dir,
+        &cards,
+        365,
+        [1; 16],
+        now + 1,
+    )
+    .unwrap();
+    assert_eq!(replay.descriptor_base64, prepared.descriptor_base64);
+    assert_eq!(replay.proposal_base64, prepared.proposal_base64);
+    assert_eq!(replay.expires_at, prepared.expires_at);
+    assert!(crate::custody_pool_setup::prepare_rollover(
+        &lock_custody_writes().await,
+        &owner.data_dir,
+        &cards,
+        182,
+        [1; 16],
+        now + 1,
+    )
+    .is_err());
+    assert!(crate::custody_pool_setup::prepare_rollover(
+        &lock_custody_writes().await,
+        &owner.data_dir,
+        &cards,
+        365,
+        [2; 16],
+        now + 1,
+    )
+    .is_err());
+
+    assert_eq!(std::fs::read(&active_path).unwrap(), before);
+    assert_eq!(
+        load_owner_descriptor(&owner.data_dir).unwrap(),
+        Some(any(&active))
+    );
+    let candidate: SignedPoolDescriptorV3 = decode_canonical_contract_base64(
+        &prepared.descriptor_base64,
+        MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1,
+        "test candidate",
+    )
+    .unwrap();
+    assert_eq!(
+        candidate.statement().sequence(),
+        active.statement().sequence() + 1
+    );
+    assert!(candidate.preserves_serving_history(&active));
+
+    let proposal: SignedPoolRolloverProposalV1 =
+        decode_canonical_contract_base64(&prepared.proposal_base64, 4096, "test proposal").unwrap();
+    let proposal_digest = proposal.canonical_hash().unwrap();
+    let encode_decision =
+        |digest, approved, issued_at, expires_at, key: &ed25519_dalek::SigningKey| {
+            let decision = PoolRolloverConsentV1 {
+                proposal_digest: digest,
+                node,
+                approved,
+                issued_at,
+                expires_at,
+            };
+            let signature = key.sign(&decision.canonical_bytes().unwrap()).to_bytes();
+            let signed = SignedPoolRolloverConsentV1::new(decision, signature).unwrap();
+            base64::engine::general_purpose::STANDARD.encode(signed.canonical_bytes().unwrap())
+        };
+    let approve = encode_decision(proposal_digest, true, now, now + 10, &signing_key);
+    let decline = encode_decision(proposal_digest, false, now + 1, now + 2, &signing_key);
+    let forged = encode_decision(proposal_digest, false, now, now + 10, &replacement.device);
+    let wrong_proposal = encode_decision(Digest32::new([2; 32]), true, now, now + 10, &signing_key);
+    let staged_path = protected_content_root(&owner.data_dir).join(STAGED_ROLLOVER_FILE);
+    let write = lock_custody_writes().await;
+    for (operation, decision) in [
+        ([2; 16], &approve),
+        ([1; 16], &forged),
+        ([1; 16], &wrong_proposal),
+    ] {
+        assert!(
+            record_rollover_consent(&write, &owner.data_dir, operation, decision, now).is_err()
+        );
+    }
+    let first = record_rollover_consent(&write, &owner.data_dir, [1; 16], &approve, now).unwrap();
+    assert!(first.approved);
+    let approved_bytes = std::fs::read(&staged_path).unwrap();
+    let replay =
+        record_rollover_consent(&write, &owner.data_dir, [1; 16], &approve, now + 1).unwrap();
+    assert_eq!(first, replay);
+    assert_eq!(approved_bytes, std::fs::read(&staged_path).unwrap());
+    let declined =
+        record_rollover_consent(&write, &owner.data_dir, [1; 16], &decline, now + 1).unwrap();
+    assert!(!declined.approved);
+    assert_eq!(
+        StagedRolloverV1::load(&staged_path)
+            .unwrap()
+            .unwrap()
+            .consents
+            .get(&declined.node_public_key),
+        Some(&decline)
+    );
+    assert!(record_rollover_consent(&write, &owner.data_dir, [1; 16], &approve, now + 3).is_err());
+    assert_eq!(std::fs::read(&active_path).unwrap(), before);
+    assert_eq!(
+        load_owner_descriptor(&owner.data_dir).unwrap(),
+        Some(any(&active))
+    );
+}
+
+#[test]
+fn owner_descriptor_sequence_stays_monotonic_across_compositions() {
+    let owner = terminal_owner();
+    let now = now();
+    let mut descriptors = fixture_node_descriptors(&owner);
+    install_composition_for_rollover(&owner, &descriptors, now);
+    let first = owner_descriptor(&owner.data_dir, now).unwrap().unwrap();
+    assert_eq!(first.statement().sequence(), 1);
+    let successors = ["Eve", "Fran", "Grace", "Hana"].map(|name| Party::new(name, true));
+    let mut previous = first;
+    for (index, replacement) in successors.iter().take(3).enumerate() {
+        let (name, location) = NODE_LABELS[2];
+        descriptors[2] =
+            carrier_descriptor_bytes(&replacement.device.verifying_key(), name, location);
+        let clock = now + 3_600 * (index as u64 + 1);
+        let active_path = runtime_custody_composition_config_path(&owner.data_dir);
+        let before = std::fs::read(&active_path).unwrap();
+        let candidate_bytes = rollover_composition_bytes(&owner, &descriptors, clock);
+        let candidate = parse_owner_composition(&candidate_bytes, clock).unwrap();
+        let prepared = build_descriptor(
+            &owner.data_dir,
+            &candidate,
+            Some(&any(&previous)),
+            *previous.statement().serve_policy(),
+            previous.statement().mint_policy().clone(),
+            clock,
+        )
         .unwrap();
-    assert_eq!(second.statement().sequence(), 2);
-    assert_ne!(second.statement().epochs(), first.statement().epochs());
+        assert_eq!(std::fs::read(&active_path).unwrap(), before);
+        assert_eq!(
+            load_owner_descriptor(&owner.data_dir).unwrap(),
+            Some(any(&previous))
+        );
+
+        install_composition_for_rollover(&owner, &descriptors, clock);
+        let next = owner_descriptor(&owner.data_dir, clock).unwrap().unwrap();
+        assert_eq!(
+            next.canonical_bytes().unwrap(),
+            prepared.canonical_bytes().unwrap()
+        );
+        let statement = next.statement();
+        assert_eq!(statement.sequence(), previous.statement().sequence() + 1);
+        assert_eq!(statement.pool(), previous.statement().pool());
+        assert_eq!(statement.epochs().len(), index + 2);
+        assert!(statement
+            .epochs()
+            .starts_with(previous.statement().epochs()));
+        assert!(previous
+            .statement()
+            .members()
+            .iter()
+            .all(|old| statement.members().contains(old)));
+        assert_eq!(
+            owner_descriptor(&owner.data_dir, clock + 1).unwrap(),
+            Some(next.clone())
+        );
+        previous = next;
+    }
+
+    let (name, location) = NODE_LABELS[2];
+    descriptors[2] =
+        carrier_descriptor_bytes(&successors[3].device.verifying_key(), name, location);
+    let clock = now + 4 * 3_600;
+    let active_path = runtime_custody_composition_config_path(&owner.data_dir);
+    let active_bytes = std::fs::read(&active_path).unwrap();
+    let candidate_bytes = rollover_composition_bytes(&owner, &descriptors, clock);
+    let candidate = parse_owner_composition(&candidate_bytes, clock).unwrap();
+    let error = build_descriptor(
+        &owner.data_dir,
+        &candidate,
+        Some(&any(&previous)),
+        *previous.statement().serve_policy(),
+        previous.statement().mint_policy().clone(),
+        clock,
+    )
+    .expect_err("the fifth bundle exceeds the signed descriptor epoch limit");
+    assert!(error.to_string().contains("pool_descriptor.epochs"));
+    assert_eq!(std::fs::read(active_path).unwrap(), active_bytes);
+    assert_eq!(
+        load_owner_descriptor(&owner.data_dir).unwrap(),
+        Some(any(&previous))
+    );
+}
+
+#[test]
+fn a_different_bundle_with_a_kept_epoch_identity_is_refused() {
+    let owner = terminal_owner();
+    let now = now();
+    let descriptors = fixture_node_descriptors(&owner);
+    install_composition_for_rollover(&owner, &descriptors, now);
+    let first = owner_descriptor(&owner.data_dir, now).unwrap().unwrap();
+    install_composition_for_rollover(&owner, &descriptors, now + 3_600);
+    let error = owner_descriptor(&owner.data_dir, now + 3_600).unwrap_err();
+    assert!(error.to_string().contains("replace a kept epoch bundle"));
+    assert_eq!(
+        load_owner_descriptor(&owner.data_dir).unwrap(),
+        Some(any(&first))
+    );
 }
 
 #[test]
@@ -518,6 +768,72 @@ async fn member_orders_descriptors_by_sequence_within_its_served_pool() {
         .unwrap()
         .unwrap();
     assert_eq!(kept.sequence(), 2);
+}
+
+#[test]
+fn member_refuses_a_successor_that_drops_a_kept_epoch() {
+    let owner = terminal_owner();
+    let now = now();
+    let mut descriptors = fixture_node_descriptors(&owner);
+    install_composition_for_rollover(&owner, &descriptors, now);
+    let original = owner_descriptor(&owner.data_dir, now).unwrap().unwrap();
+    let (_member, member_dir) = member_dir();
+    let original_facts = served_facts(original.statement().epochs(), 0);
+    store_served(&member_dir, &original_facts, &any(&original), now).unwrap();
+
+    let replacement = Party::new("Eve", true);
+    let (name, location) = NODE_LABELS[2];
+    descriptors[2] = carrier_descriptor_bytes(&replacement.device.verifying_key(), name, location);
+    let later = now + 3_600;
+    install_composition_for_rollover(&owner, &descriptors, later);
+    let successor = owner_descriptor(&owner.data_dir, later).unwrap().unwrap();
+    let successor_statement = successor.statement();
+    let new_epoch = &successor_statement.epochs()[1..];
+    let new_nodes = new_epoch[0].signed_epoch().statement().nodes();
+    let new_members = successor_statement
+        .members()
+        .iter()
+        .filter(|member| {
+            new_nodes
+                .iter()
+                .any(|node| node.node_public_key() == member.node_public_key())
+        })
+        .cloned()
+        .collect();
+    let incomplete_statement = PoolDescriptorStatementV3::new(
+        *successor_statement.pool(),
+        successor_statement.sequence(),
+        new_epoch.to_vec(),
+        new_members,
+        *successor_statement.serve_policy(),
+        successor_statement.mint_policy().clone(),
+        successor_statement.issued_at(),
+        successor_statement.expires_at(),
+        successor_statement.trust_mode(),
+    )
+    .unwrap();
+    let signature = policy_authority_signature(
+        &crate::custody_pool_setup::policy_authority_key_path(&owner.data_dir),
+        &incomplete_statement.canonical_bytes().unwrap(),
+    )
+    .unwrap();
+    let incomplete = SignedPoolDescriptorV3::new(incomplete_statement, signature).unwrap();
+    assert!(incomplete.verify(later).is_ok());
+
+    let successor_facts = served_facts(new_epoch, 0);
+    assert_eq!(
+        store_served(&member_dir, &successor_facts, &any(&incomplete), later),
+        Err(INVALID_DESCRIPTOR)
+    );
+    assert_eq!(
+        kept_descriptor_bytes(&member_dir, &original_facts),
+        original.canonical_bytes().unwrap()
+    );
+    store_served(&member_dir, &successor_facts, &any(&successor), later).unwrap();
+    assert_eq!(
+        kept_descriptor_bytes(&member_dir, &successor_facts),
+        successor.canonical_bytes().unwrap()
+    );
 }
 
 #[test]

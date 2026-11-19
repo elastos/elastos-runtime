@@ -21,7 +21,10 @@ use elastos_protected_content_custody::{
     provision_custody_envelope, PayloadChunkDecrypterV1, PayloadSealerV1,
     UnprovisionedSealedPayloadV1,
 };
-use elastos_protected_content_provider_contracts::MAX_OBJECT_FRAMED_CHUNK_BYTES_V1;
+use elastos_protected_content_provider_contracts::{
+    ATTEST_REMOTE_SEAL_UPLOAD_OP, AUTHORIZE_REMOTE_SEAL_SHARE_OP, MAX_OBJECT_FRAMED_CHUNK_BYTES_V1,
+    SIGN_REMOTE_SEAL_COMPLETION_OP,
+};
 use elastos_protected_content_rights::{
     chain_rights_evidence_request, CHAIN_PROVIDER_ID, CHAIN_RIGHTS_EVIDENCE_OP,
 };
@@ -279,7 +282,7 @@ impl ContentAvailabilityTestConfig {
     }
 }
 
-struct ContentAvailabilityTestProvider {
+pub(crate) struct ContentAvailabilityTestProvider {
     signing_key: SigningKey,
     config: ContentAvailabilityTestConfig,
     files: Mutex<BTreeMap<String, Vec<u8>>>,
@@ -372,9 +375,17 @@ impl ContentAvailabilityTestProvider {
             serde_json::to_vec(&manifest)
                 .map_err(|_| ProviderError::Provider("manifest encode failed".to_string()))?,
         );
+        let mut reply = json!({ "cid": Self::CID });
+        if request["include_file_cids"] == true {
+            let file_cids: BTreeMap<_, _> = stored
+                .iter()
+                .map(|(path, bytes)| (path, fixture_raw_cid(bytes)))
+                .collect();
+            reply["file_cids"] = json!(file_cids);
+        }
         *self.files.lock().await = stored;
         *self.manifest.lock().await = Some(manifest);
-        Ok(ok_provider_response(json!({ "cid": Self::CID })))
+        Ok(ok_provider_response(reply))
     }
 
     async fn status(&self) -> Result<Value, ProviderError> {
@@ -451,6 +462,17 @@ impl ContentAvailabilityTestProvider {
     }
 
     async fn fetch(&self, request: &Value) -> Result<Value, ProviderError> {
+        if request.get("path").is_none() {
+            let cid = request["cid"].as_str().unwrap_or_default();
+            let files = self.files.lock().await;
+            let bytes = files
+                .values()
+                .find(|bytes| fixture_raw_cid(bytes) == cid)
+                .ok_or_else(|| ProviderError::NotFound("content object CID".into()))?;
+            return Ok(ok_provider_response(json!({
+                "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+            })));
+        }
         let path = request
             .get("path")
             .and_then(Value::as_str)
@@ -515,8 +537,74 @@ impl ContentAvailabilityTestProvider {
         Ok(())
     }
 
-    async fn requests(&self) -> Vec<Value> {
+    pub(crate) async fn requests(&self) -> Vec<Value> {
         self.requests.lock().await.clone()
+    }
+}
+
+pub(crate) async fn register_remote_seal_content_fixture(
+    registry: &ProviderRegistry,
+    signing_key: SigningKey,
+) -> Arc<ContentAvailabilityTestProvider> {
+    let content = ContentAvailabilityTestProvider::with_signing_key(
+        signing_key,
+        ContentAvailabilityTestConfig::accepted_now(),
+    );
+    registry
+        .register_sub_provider("content", content.clone())
+        .await
+        .unwrap();
+    content
+}
+
+pub(crate) async fn register_remote_seal_provisional_policy_fixture(registry: &ProviderRegistry) {
+    registry
+        .register_sub_provider(
+            CHAIN_PROVIDER_ID,
+            Arc::new(RemoteSealProvisionalPolicyFixture),
+        )
+        .await
+        .unwrap();
+}
+
+struct RemoteSealProvisionalPolicyFixture;
+
+#[async_trait::async_trait]
+impl Provider for RemoteSealProvisionalPolicyFixture {
+    async fn handle(&self, _: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+        Err(ProviderError::Provider(
+            "policy fixture is invoke-only".into(),
+        ))
+    }
+
+    fn schemes(&self) -> Vec<&'static str> {
+        vec![CHAIN_PROVIDER_ID]
+    }
+
+    fn name(&self) -> &'static str {
+        "remote-seal-provisional-policy-fixture"
+    }
+
+    async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+        assert_eq!(request["op"], super::CHAIN_PROTECTED_CONTENT_POLICY_OP);
+        assert_eq!(request["action"], "view");
+        assert!(request.get("expected_item").is_none());
+        let content = EncryptedContentIdentityV1::from_canonical_bytes(
+            &super::decode_0x_hex(request["encrypted_content"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+        let kid = ContentAccessIdV1::new(
+            super::decode_0x_hex(request["content_access_id"].as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        )
+        .unwrap();
+        let policy = policy_body_for(content, kid, RightsActionV1::View);
+        Ok(ok_provider_response(json!({
+            "schema": CHAIN_PROTECTED_CONTENT_POLICY_SCHEMA_V1,
+            "policy_body": format!("0x{}", hex::encode(policy.canonical_bytes().unwrap())),
+        })))
     }
 }
 
@@ -540,6 +628,19 @@ impl Provider for ContentAvailabilityTestProvider {
         self.requests.lock().await.push(request.clone());
         match request.get("op").and_then(Value::as_str) {
             Some("publish") => self.publish(request).await,
+            Some(elastos_runtime::provider::STAGED_CONTENT_PUBLISH_OP) => {
+                // The fixture bills and signs the same manifest as the JSON
+                // fixture path. Its input files are small, unlike production.
+                let root = Path::new(request["directory"].as_str().unwrap());
+                let mut files = Vec::new();
+                crate::ipfs::collect_files_for_ipfs(root, root, &mut files).unwrap();
+                let mut request = request.clone();
+                request["files"] = Value::Array(files.iter().map(|path| {
+                    let bytes = std::fs::read(root.join(path)).unwrap();
+                    json!({"path": path, "data": base64::engine::general_purpose::STANDARD.encode(bytes)})
+                }).collect());
+                self.publish(&request).await
+            }
             Some("ensure") => Ok(ok_provider_response(json!({
                 "availability": { "status": self.config.status.clone() },
             }))),
@@ -1339,6 +1440,7 @@ pub(crate) fn runtime_custody_listing_record_for_test(
         published_at: Some(published_at),
         pool_mint_share_b64: None,
         sealed_rights_policy_base64: None,
+        remote_seal: None,
     };
     super::RuntimeCustodyListingRecord {
         schema: super::RUNTIME_LISTING_SCHEMA_V1.to_string(),
@@ -7422,6 +7524,22 @@ async fn sign_pool_statement_over_carrier_is_refused() {
     );
     assert!(wrapper.forwarded().is_empty());
 
+    for op in [
+        ATTEST_REMOTE_SEAL_UPLOAD_OP,
+        AUTHORIZE_REMOTE_SEAL_SHARE_OP,
+        SIGN_REMOTE_SEAL_COMPLETION_OP,
+    ] {
+        let error = wrapper
+            .send(json!({"op": op}), custody_carrier_envelope(op, 0x61))
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("op is local to the Runtime"),
+            "{error}"
+        );
+    }
+    assert!(wrapper.forwarded().is_empty());
+
     // The Runtime itself may ask its node for the signature.
     let signed = wrapper
         .send(
@@ -7725,14 +7843,19 @@ async fn carrier_status_lists_only_carrier_ops() {
 fn custody_ops_are_declared_in_the_surface() {
     use crate::custody_surface::{declared_ops, OP_CUSTODY_EVALUATE, TARGET_CUSTODY};
     let declared: Vec<&str> = declared_ops(TARGET_CUSTODY).collect();
-    // Every capsule op but `shutdown` is a declared op of the target, and
-    // the target declares only capsule ops and the wrapper's own `evaluate`.
+    // The additional ops are the wrapper's evaluation and the private seal signing commands.
     for op in CUSTODY_PROVIDER_OPERATIONS {
         assert_eq!(declared.contains(op), *op != "shutdown", "{op}");
     }
     for op in &declared {
         assert!(
-            *op == OP_CUSTODY_EVALUATE || CUSTODY_PROVIDER_OPERATIONS.contains(op),
+            matches!(
+                *op,
+                OP_CUSTODY_EVALUATE
+                    | ATTEST_REMOTE_SEAL_UPLOAD_OP
+                    | AUTHORIZE_REMOTE_SEAL_SHARE_OP
+                    | SIGN_REMOTE_SEAL_COMPLETION_OP
+            ) || CUSTODY_PROVIDER_OPERATIONS.contains(op),
             "{op}"
         );
     }
@@ -10449,7 +10572,7 @@ pub(crate) fn library_publish_test_input(
 }
 
 #[cfg(unix)]
-fn library_publish_test_input_with_renditions(
+pub(crate) fn library_publish_test_input_with_renditions(
     data_dir: &Path,
     principal_id: &str,
     renditions: &[(CencDashRenditionKindV2, usize)],
@@ -10516,11 +10639,30 @@ pub(crate) fn library_publish_test_mint_composition(
     elastos_protected_content_contracts::CustodyEpochIdentityV1,
     CustodyCommitteeAuthorizationIdentityV1,
 ) {
-    write_library_publish_test_composition(data_dir);
-    let registry = Arc::new(ProviderRegistry::new());
-    let composition = load_runtime_custody_composition(data_dir, registry)
-        .unwrap()
-        .unwrap();
+    let (_, now) = write_library_publish_test_composition(data_dir);
+    library_publish_node_bindings_at(data_dir, now)
+}
+
+#[cfg(unix)]
+fn library_publish_node_bindings_at(
+    data_dir: &Path,
+    now: u64,
+) -> (
+    Vec<RuntimeMintNodeBinding>,
+    CustodyPoolIdentityV1,
+    elastos_protected_content_contracts::CustodyEpochIdentityV1,
+    CustodyCommitteeAuthorizationIdentityV1,
+) {
+    let bytes = fs::read(custody_composition_config_path(data_dir)).unwrap();
+    let check = super::MintCompositionCheck::Provision;
+    let config = super::parse_runtime_custody_composition_config(bytes, now, check).unwrap();
+    let (composition, _) = super::build_runtime_custody_composition(
+        config,
+        Arc::new(ProviderRegistry::new()),
+        now,
+        check,
+    )
+    .unwrap();
     let configured = composition.configured_nodes().unwrap();
     let selected = resolve_runtime_mint_selected_nodes(
         composition.expected_policy_authority,
@@ -10528,7 +10670,7 @@ pub(crate) fn library_publish_test_mint_composition(
         &composition.signed_pool,
         &composition.signed_epoch,
         &composition.signed_committee_authorization,
-        crate::auth::now_ts(),
+        now,
         &configured,
     )
     .unwrap();
@@ -10633,6 +10775,7 @@ pub(crate) fn declared_prepared_media_for_test(seed: u8) -> super::RuntimePrepar
                 clear_init_segment: Vec::new(),
                 timescale: 15360,
                 segment_count: 2,
+                segment_parts: Vec::new(),
             })
             .collect(),
         preparation_receipt: digest(seed),
@@ -10712,8 +10855,19 @@ fn seed_settled_runtime_custody_mint_record(
     input: &RuntimeCustodyLibraryPublishInput,
     complete: bool,
 ) -> Digest32 {
+    let (_, now) = write_library_publish_test_composition(data_dir);
+    seed_settled_runtime_custody_mint_record_at(data_dir, input, complete, now)
+}
+
+#[cfg(unix)]
+fn seed_settled_runtime_custody_mint_record_at(
+    data_dir: &Path,
+    input: &RuntimeCustodyLibraryPublishInput,
+    complete: bool,
+    now: u64,
+) -> Digest32 {
     let (node_bindings, pool_identity, epoch_identity, committee_identity) =
-        library_publish_test_mint_composition(data_dir);
+        library_publish_node_bindings_at(data_dir, now);
     let journal = runtime_mint_journal(data_dir);
     let components = protected_dash_components_for_input(input);
     let threshold = ThresholdV1::new(2, 3).unwrap();
@@ -10816,6 +10970,54 @@ fn seed_settled_runtime_custody_mint_record(
         .mark_content_available(draft.mint_id(), &requirement, evidence)
         .unwrap();
     draft.mint_id()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn completed_local_mint_replays_after_its_retained_composition_expires() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    write_device_key(&data_dir, 0x21);
+    let input = library_publish_test_input(&data_dir, "person:local:expired-composition-replay");
+    let then = crate::auth::now_ts() - 7200;
+    let epoch = signed_custody_epoch();
+    write_owner_only_custody_composition_config(
+        &data_dir,
+        &custody_composition_config(then, library_publish_test_routes(&epoch)),
+    );
+    let mint_id = seed_settled_runtime_custody_mint_record_at(&data_dir, &input, true, then);
+    let journal = runtime_mint_journal(&data_dir);
+    let intent = journal
+        .mark_intent_completed(library_publish_request_id(&input), mint_id)
+        .unwrap();
+    let active = custody_composition_config_path(&data_dir);
+    super::retain_mint_composition(
+        &data_dir,
+        intent.custody_committee_authorization(),
+        &fs::read(&active).unwrap(),
+    )
+    .unwrap();
+    let registry = Arc::new(ProviderRegistry::new());
+    assert!(load_runtime_custody_composition(&data_dir, registry.clone()).is_err());
+
+    // With no provider registered, the completed result can only come from
+    // the existing journal. A fresh protect or custody write cannot pass.
+    let facts = publish_runtime_custody_library_object(&data_dir, registry.clone(), input.clone())
+        .await
+        .expect("a completed mint should still replay on its original composition");
+    assert_eq!(facts.mint_id, mint_id);
+    assert_eq!(journal.load_intent(intent.request_id()).unwrap(), intent);
+
+    let mut changed = input;
+    changed.wallet_account_id.push_str("-different");
+    let error = publish_runtime_custody_library_object(&data_dir, registry, changed)
+        .await
+        .expect_err("the expired composition cannot authorize a different wallet");
+    assert_eq!(
+        attempt_conflict_reason(&error),
+        RuntimeCustodyAttemptConflictReason::AuthorityChanged
+    );
 }
 
 #[cfg(unix)]
@@ -11480,7 +11682,7 @@ async fn runtime_custody_library_publish_recovers_open_handle_by_cancelling_befo
         .map(|node| node.binding().clone())
         .collect::<Vec<_>>();
     let journal = runtime_mint_journal(&data_dir);
-    load_or_persist_runtime_mint_intent(&journal, &composition, &input, mint_nodes).unwrap();
+    load_or_persist_runtime_mint_intent(&journal, &composition, &input, mint_nodes, None).unwrap();
     journal
         .mark_intent_protect_effect_started(request_id)
         .unwrap();
@@ -11685,6 +11887,7 @@ fn persisted_test_mint_intent(
         &composition,
         input,
         mint_nodes,
+        None,
     )
     .unwrap()
 }
@@ -16127,6 +16330,602 @@ fn write_object_protected_content_directory(
         framed_bytes,
     )
     .unwrap();
+}
+
+#[test]
+fn remote_listing_proof_has_its_own_size_bound() {
+    let record =
+        runtime_custody_listing_record_for_test(digest(0x65), "person:local:creator", "Film", NOW);
+    let mut package = record.package;
+    let legacy_limit = super::MAX_RUNTIME_PORTABLE_LISTING_BYTES as usize;
+    let remote_limit = super::MAX_RUNTIME_REMOTE_PORTABLE_LISTING_BYTES as usize;
+    let synthetic = vec![0; remote_limit + 1];
+    assert!(package
+        .check_encoded_listing_size(&synthetic[..legacy_limit])
+        .is_ok());
+    assert!(package
+        .check_encoded_listing_size(&synthetic[..legacy_limit + 1])
+        .is_err());
+    package.schema = super::RUNTIME_PORTABLE_LISTING_SCHEMA_V3.into();
+    assert!(package
+        .check_encoded_listing_size(&synthetic[..remote_limit])
+        .is_ok());
+    assert!(package.check_encoded_listing_size(&synthetic).is_err());
+}
+
+#[test]
+fn remote_seal_signed_file_table_must_cover_the_fetched_package() {
+    let framed_bytes = vec![0x5au8; 4160];
+    let files = object_protected_content_files(&test_object_identity(&framed_bytes)).unwrap();
+    let manifest = crate::content::ContentObjectManifest {
+        schema: "elastos.content.object.manifest/v1".into(),
+        kind: super::PROTECTED_CONTENT_OBJECT_KIND.into(),
+        content_digest: super::content_object_digest(&files),
+        files,
+        links: Vec::new(),
+        object_did: None,
+        publisher_did: None,
+    };
+    let cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+    let mut claimed: Vec<(String, String)> = manifest
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), cid.into()))
+        .collect();
+    assert_eq!(
+        super::remote_seal_manifest_file_cids(&manifest, &claimed).unwrap(),
+        vec![cid; 2]
+    );
+    assert!(super::remote_seal_manifest_file_cids(&manifest, &claimed[..1]).is_err());
+    claimed.swap(0, 1);
+    assert!(super::remote_seal_manifest_file_cids(&manifest, &claimed).is_err());
+    claimed.swap(0, 1);
+    claimed[1].1 = "ipfs://unparsed".into();
+    assert!(super::remote_seal_manifest_file_cids(&manifest, &claimed).is_err());
+}
+
+fn fixture_raw_cid(bytes: &[u8]) -> String {
+    let hash = cid::multihash::Multihash::<64>::wrap(0x12, &sha2::Sha256::digest(bytes)).unwrap();
+    cid::Cid::new_v1(0x55, hash).to_string()
+}
+
+#[derive(Default)]
+struct RemoteSealFinalityFixture {
+    policy: Mutex<Option<RightsPolicyBodyV1>>,
+    requests: Mutex<Vec<Value>>,
+}
+
+#[async_trait::async_trait]
+impl Provider for RemoteSealFinalityFixture {
+    async fn handle(&self, _: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+        Err(ProviderError::Provider(
+            "policy fixture is invoke-only".into(),
+        ))
+    }
+
+    fn schemes(&self) -> Vec<&'static str> {
+        vec![CHAIN_PROVIDER_ID]
+    }
+
+    fn name(&self) -> &'static str {
+        "remote-seal-finality-fixture"
+    }
+
+    async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+        self.requests.lock().await.push(request.clone());
+        let Some(policy) = self.policy.lock().await.clone() else {
+            return Ok(json!({
+                "status": "error",
+                "code": "item_binding_not_final",
+                "message": "fixture binding is not finalized",
+            }));
+        };
+        Ok(ok_provider_response(json!({
+            "schema": CHAIN_PROTECTED_CONTENT_POLICY_SCHEMA_V1,
+            "policy_body": format!("0x{}", hex::encode(policy.canonical_bytes().unwrap())),
+        })))
+    }
+}
+
+#[tokio::test]
+async fn remote_seal_publication_requires_finality_and_authorized_manifest_before_package_reads() {
+    use elastos_protected_content_contracts::test_fixtures::{
+        pool_bundle, pool_descriptor_signed_by, pool_did, runtime_issuer, CUSTODY_KEY_SEED_BASE,
+        POOL_AUTHORITY_SEED, POOL_NODE_SEEDS,
+    };
+    use elastos_protected_content_contracts::{
+        ClearLayoutV1, ClearPartIndexV1, MintPieceAadV1, MintRequestV1, RemoteShareAdmissionV1,
+        SignedMintRequestV1, SignedPoolDescriptorAnyV1,
+    };
+    use elastos_protected_content_custody::{
+        seal_mint_piece_v1, NodeCustodySecretKeyV1, RemoteObjectSealerV1,
+    };
+    use elastos_protected_content_runtime::{
+        prepare_remote_share_provision_request, verify_remote_seal_output,
+        RuntimeMintCreatorTerminalEvidence, RuntimeMintedItemV1,
+    };
+
+    let bundle = pool_bundle(xwing_public_key_bytes, NOW);
+    let descriptor: SignedPoolDescriptorAnyV1 =
+        pool_descriptor_signed_by(&bundle, 1, NOW, POOL_AUTHORITY_SEED).into();
+    let node = node_public_key(1);
+    let clear = vec![0x91; 4096];
+    let kid = content_access_id(0x34);
+    let epoch = bundle.epoch_identity().unwrap();
+    let request = MintRequestV1 {
+        pool: pool_did(),
+        epoch,
+        minter_issuer: runtime_issuer(POOL_AUTHORITY_SEED),
+        content_access_id: kid,
+        clear_layout: ClearLayoutV1::Object {
+            content_type: "application/pdf".into(),
+            length: clear.len() as u64,
+        },
+        request_nonce: [0x35; 16],
+        issued_at: NOW,
+        expires_at: NOW + 60,
+    };
+    let signature = node_signing_key(POOL_AUTHORITY_SEED).sign(&request.canonical_bytes().unwrap());
+    let request = SignedMintRequestV1::new(request, signature.to_bytes()).unwrap();
+    let (mut sealer, mut framed) =
+        RemoteObjectSealerV1::open(&request, &descriptor, node, NOW).unwrap();
+    let hash = request.canonical_hash().unwrap();
+    let aad = MintPieceAadV1 {
+        mint_request_hash: hash,
+        part: ClearPartIndexV1::ObjectChunk { index: 0 },
+        piece: 0,
+        piece_count: 1,
+    };
+    let session = sealer.attestation_statement().unwrap();
+    let sealed = seal_mint_piece_v1(&session.seal_session_public_key, &aad, &clear).unwrap();
+    sealer
+        .stage_piece(
+            &aad,
+            Digest32::new(sha2::Sha256::digest(clear).into()),
+            &sealed,
+            NOW,
+            |bytes| {
+                framed.extend_from_slice(bytes);
+                Ok(())
+            },
+        )
+        .unwrap();
+    let identity = test_object_identity(&framed);
+    let envelope = sealer
+        .finish(identity.encrypted_content(), NOW)
+        .unwrap()
+        .custody_envelope;
+    let directory = tempfile::tempdir().unwrap();
+    write_object_protected_content_directory(directory.path(), &identity, &framed);
+
+    let publisher = peer_did_for_seed(0x37);
+    let object = peer_did_for_seed(0x38);
+    let content =
+        ContentAvailabilityTestProvider::new(0x39, ContentAvailabilityTestConfig::accepted());
+    let required = RuntimeContentAvailabilityRequirement::new(
+        content.signer_did(),
+        object.clone(),
+        publisher.clone(),
+        super::PROTECTED_CONTENT_REPLICATION_POLICY,
+        3,
+        60,
+        5,
+    )
+    .unwrap();
+    let chain = Arc::new(RemoteSealFinalityFixture::default());
+    let registry = ProviderRegistry::new();
+    registry
+        .register_sub_provider(CHAIN_PROVIDER_ID, chain.clone())
+        .await
+        .unwrap();
+    registry
+        .register_sub_provider("content", content.clone())
+        .await
+        .unwrap();
+    let custody = tempfile::tempdir().unwrap();
+    let mut receipts = Vec::new();
+    let custody_root = |seed| {
+        let data_root = custody.path().join(format!("node-{seed}"));
+        #[cfg(unix)]
+        crate::protected_content_config::tests::owner_only_dir(&data_root);
+        #[cfg(not(unix))]
+        fs::create_dir(&data_root).unwrap();
+        custody_provider::LoadedCustodyProviderState {
+            expected_runtime_issuer: runtime_issuer(POOL_AUTHORITY_SEED),
+            node_public_key: node_public_key(seed),
+            node_signing_key: node_signing_key(seed),
+            node_custody_secret: NodeCustodySecretKeyV1::from_guarded_bytes(
+                zeroize::Zeroizing::new([CUSTODY_KEY_SEED_BASE + seed; 32]),
+            )
+            .unwrap(),
+            data_root,
+        }
+    };
+    let mut roots = POOL_NODE_SEEDS.map(custody_root);
+    let local_issuer = runtime_issuer(0x85);
+    let authorization = roots[0]
+        .authorize_remote_share(
+            pool_did(),
+            &descriptor,
+            &request,
+            &envelope.key_envelope_identity().unwrap(),
+            local_issuer,
+            NOW,
+        )
+        .unwrap();
+    let admission = RemoteShareAdmissionV1 {
+        descriptor: descriptor.clone(),
+        request: request.clone(),
+        authorization,
+    };
+    let sign = |bytes: &[u8]| node_signing_key(0x85).sign(bytes).to_bytes();
+    for root in &mut roots {
+        let provision = prepare_remote_share_provision_request(
+            admission.clone(),
+            &envelope,
+            root.node_public_key,
+            &sign,
+            NOW,
+        )
+        .unwrap();
+        let stored = root
+            .provision_remote_share(pool_did(), &provision.to_json_vec().unwrap(), NOW)
+            .unwrap();
+        receipts.push(
+            crate::custody_pool_seal::VerifiedRemoteShareReceipt::from_local_store(
+                stored.provisioned().receipt(),
+            ),
+        );
+    }
+    let published_identity = RuntimeContentIdentityV1::Object(identity.clone());
+    let publish = |receipts| {
+        super::publish_remote_sealed_content(
+            &registry,
+            directory.path(),
+            &published_identity,
+            &envelope,
+            receipts,
+            &required,
+            || NOW,
+        )
+    };
+    assert!(publish(&receipts[..2]).await.is_err());
+    let duplicate = vec![receipts[0]; receipts.len()];
+    assert!(publish(&duplicate).await.is_err());
+    assert!(content.requests().await.is_empty());
+    let publication = publish(&receipts).await.unwrap();
+    content.requests.lock().await.clear();
+    let statement = publication
+        .prepare_completion(&descriptor, &request, node, NOW)
+        .unwrap();
+    assert!(roots[1]
+        .sign_remote_seal_completion(pool_did(), &descriptor, &request, statement.clone(), NOW)
+        .is_err());
+    let mut different_mint = request.statement().clone();
+    different_mint.request_nonce = [0x36; 16];
+    let signature =
+        node_signing_key(POOL_AUTHORITY_SEED).sign(&different_mint.canonical_bytes().unwrap());
+    let different_mint = SignedMintRequestV1::new(different_mint, signature.to_bytes()).unwrap();
+    let replayed_publication = publication
+        .prepare_completion(&descriptor, &different_mint, node, NOW)
+        .unwrap();
+    assert!(roots[0]
+        .sign_remote_seal_completion(
+            pool_did(),
+            &descriptor,
+            &different_mint,
+            replayed_publication,
+            NOW
+        )
+        .is_err());
+    let mut wrong_commitment = statement.clone();
+    wrong_commitment.content_key_commitment = Digest32::new([0x37; 32]);
+    assert!(roots[0]
+        .sign_remote_seal_completion(pool_did(), &descriptor, &request, wrong_commitment, NOW)
+        .is_err());
+    let mut changed = statement.clone();
+    changed.completed_at = NOW + 1;
+    let completed = roots[0]
+        .sign_remote_seal_completion(pool_did(), &descriptor, &request, statement, NOW)
+        .unwrap();
+    let changed = roots[0]
+        .sign_remote_seal_completion(pool_did(), &descriptor, &request, changed, NOW + 1)
+        .unwrap();
+    let attestation = roots[0]
+        .attest_remote_seal_upload(pool_did(), &descriptor, &request, session, NOW)
+        .unwrap();
+    let owner = elastos_protected_content_runtime::PoolSessionSource {
+        endpoint_did: peer_did_for_seed(0x81),
+        local: false,
+    };
+    let foreign = elastos_protected_content_runtime::PoolSessionSource {
+        endpoint_did: peer_did_for_seed(0x82),
+        local: false,
+    };
+    let store = crate::custody_seal_completion::SealerCompletionStore::new(&roots[0].data_root);
+    let session_id = attestation.session_id();
+    assert!(store.replay(&owner, session_id, NOW).unwrap().is_none());
+    store
+        .commit(&owner, &descriptor, &request, &attestation, &completed, NOW)
+        .unwrap();
+    let restarted = crate::custody_seal_completion::SealerCompletionStore::new(&roots[0].data_root);
+    assert_eq!(
+        restarted.replay(&owner, session_id, NOW + 1).unwrap(),
+        Some(completed.clone())
+    );
+    assert!(restarted
+        .replay(&foreign, session_id, NOW + 1)
+        .unwrap()
+        .is_none());
+    assert!(restarted
+        .replay(&owner, session_id, NOW + 60)
+        .unwrap()
+        .is_none());
+    assert!(restarted
+        .commit(
+            &owner,
+            &descriptor,
+            &request,
+            &attestation,
+            &changed,
+            NOW + 1
+        )
+        .is_err());
+    restarted
+        .commit(
+            &owner,
+            &descriptor,
+            &request,
+            &attestation,
+            &completed,
+            NOW + 1,
+        )
+        .unwrap();
+    let completed = restarted
+        .replay(&owner, session_id, NOW + 1)
+        .unwrap()
+        .unwrap();
+    let output =
+        verify_remote_seal_output(&completed, &descriptor, &request, node, &envelope, NOW).unwrap();
+    let minter_output = elastos_protected_content_runtime::verify_recorded_remote_seal_attestation(
+        &completed,
+        &descriptor,
+        &request,
+        node,
+    )
+    .unwrap();
+    let fresh =
+        super::verify_fresh_remote_seal_publication(&registry, &minter_output, &required, || NOW)
+            .await
+            .unwrap();
+    assert_eq!(fresh.content_cid(), ContentAvailabilityTestProvider::CID);
+    let encode = |bytes: Vec<u8>| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let proof = super::RuntimePortableRemoteSealV1 {
+        descriptor_base64: encode(descriptor.canonical_bytes().unwrap()),
+        request_base64: encode(request.canonical_bytes().unwrap()),
+        completion_base64: encode(completed.canonical_bytes().unwrap()),
+    };
+    let verified_publisher = |cid, asset, issuer| {
+        proof.verify(
+            &envelope.key_envelope_identity().unwrap(),
+            asset,
+            minter_output.identity(),
+            envelope.manifest().content_key_commitment(),
+            cid,
+            issuer,
+        )
+    };
+    assert_eq!(
+        verified_publisher(
+            fresh.content_cid(),
+            kid,
+            runtime_issuer(POOL_AUTHORITY_SEED)
+        )
+        .unwrap(),
+        publisher
+    );
+    assert!(
+        verified_publisher("bafysubstituted", kid, runtime_issuer(POOL_AUTHORITY_SEED)).is_err()
+    );
+    assert!(verified_publisher(fresh.content_cid(), kid, runtime_issuer(0x33)).is_err());
+    assert!(verified_publisher(
+        fresh.content_cid(),
+        ContentAccessIdV1::new([9; 16]).unwrap(),
+        runtime_issuer(POOL_AUTHORITY_SEED)
+    )
+    .is_err());
+    let manifest_reads = content.requests().await;
+    assert_eq!(manifest_reads.len(), 1);
+    assert_eq!(manifest_reads[0]["op"], "fetch");
+    assert_eq!(
+        manifest_reads[0]["path"],
+        crate::content::CONTENT_OBJECT_MANIFEST_PATH
+    );
+    content.requests.lock().await.clear();
+    let verify_manifest = |expected_publisher| {
+        super::verify_non_holder_content(
+            &registry,
+            fresh.content_cid(),
+            &object,
+            minter_output.identity(),
+            Some(expected_publisher),
+            super::NonHolderCheck::ManifestOnly,
+            NOW,
+        )
+    };
+    assert!(verify_manifest(&publisher).await.is_ok());
+    assert!(verify_manifest(&object).await.is_err());
+    content.requests.lock().await.clear();
+
+    let later = NOW + required.max_age_seconds() + 1;
+    let minter_registry = ProviderRegistry::new();
+    let minter_content = ContentAvailabilityTestProvider::with_signing_key(
+        derived_device_key_for_seed(0x79).0,
+        ContentAvailabilityTestConfig::accepted_at(later),
+    );
+    minter_content
+        .seed_published_protected_content(directory.path(), &object, &publisher)
+        .await
+        .unwrap();
+    minter_registry
+        .register_sub_provider("content", minter_content.clone())
+        .await
+        .unwrap();
+    let minter_did = minter_content.signer_did();
+    let (refreshed_requirement, refreshed) = super::verify_remote_mint_publication(
+        &minter_registry,
+        &minter_output,
+        required.clone(),
+        &minter_did,
+        || later,
+    )
+    .await
+    .unwrap();
+    assert_eq!(refreshed.content_cid(), fresh.content_cid());
+    assert_eq!(refreshed.publisher_identity(), &publisher);
+    assert_eq!(refreshed_requirement.expected_provider_did(), minter_did);
+    assert_eq!(refreshed.checked_at(), later);
+    let refresh_calls = minter_content.requests().await;
+    assert!(refresh_calls.iter().any(|call| call["op"] == "ensure"));
+    assert_eq!(
+        refresh_calls
+            .iter()
+            .filter(|call| call["op"] == "fetch" && call.get("path").is_none())
+            .count(),
+        2
+    );
+
+    let mut forged = minter_output.statement().clone();
+    let mut receipt: Value = serde_json::from_slice(&forged.availability_receipt).unwrap();
+    receipt["signature"] = json!("invalid");
+    forged.availability_receipt = serde_json::to_vec(&receipt).unwrap();
+    let signature = node_signing_key(1).sign(&forged.canonical_bytes().unwrap());
+    let forged = elastos_protected_content_contracts::SignedSealCompletedV1::new(
+        forged,
+        signature.to_bytes(),
+    )
+    .unwrap();
+    let forged = elastos_protected_content_runtime::verify_recorded_remote_seal_attestation(
+        &forged,
+        &descriptor,
+        &request,
+        node,
+    )
+    .unwrap();
+    minter_content.requests.lock().await.clear();
+    let error = super::verify_remote_mint_publication(
+        &minter_registry,
+        &forged,
+        required.clone(),
+        &minter_did,
+        || later,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("signature is invalid"),
+        "{error:#}"
+    );
+    let refused_calls = minter_content.requests().await;
+    assert_eq!(refused_calls.len(), 1);
+    assert_eq!(
+        refused_calls[0]["path"],
+        crate::content::CONTENT_OBJECT_MANIFEST_PATH
+    );
+
+    let terminal = RuntimeMintCreatorTerminalEvidence::new(
+        ContentAvailabilityTestProvider::CID,
+        format!("ipfs://{}", ContentAvailabilityTestProvider::CID),
+        format!("0x{}", "11".repeat(20)),
+        "eip155:11155111",
+        "sepolia",
+        format!("0x{}", "22".repeat(20)),
+        "0x7",
+        "mint",
+        "0x1",
+        "0x1",
+        format!("0x{}", "00".repeat(20)),
+        None,
+        format!("0x{}", "33".repeat(32)),
+        NOW,
+    )
+    .unwrap();
+    let verify =
+        || super::verify_remote_seal_publication(&registry, &output, &terminal, &required, || NOW);
+    assert!(verify()
+        .await
+        .unwrap_err()
+        .is::<super::RuntimeMintSealAwaitingFinality>());
+    assert!(content.requests().await.is_empty());
+    let item = RuntimeMintedItemV1::from_creator_terminal(&terminal).unwrap();
+    let policy = policy_body_for(
+        identity.encrypted_content().clone(),
+        kid,
+        RightsActionV1::View,
+    )
+    .with_expected_item(item.expected_item());
+    let wrong_item = RuntimeMintedItemV1::from_parts(
+        terminal.chain_namespace(),
+        terminal.ledger(),
+        "0x8",
+        terminal.seller(),
+    )
+    .unwrap();
+    *chain.policy.lock().await = Some(
+        policy
+            .clone()
+            .with_expected_item(wrong_item.expected_item()),
+    );
+    assert!(verify().await.is_err());
+    assert!(content.requests().await.is_empty());
+    *chain.policy.lock().await = Some(policy.clone());
+    content
+        .seed_published_protected_content(directory.path(), &object, &publisher)
+        .await
+        .unwrap();
+    let (verified_policy, _) = verify().await.unwrap();
+    assert_eq!(verified_policy, policy);
+    let requests = content.requests().await;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["op"] == "fetch" && r.get("path").is_none())
+            .count(),
+        2
+    );
+    assert_eq!(requests[requests.len() - 2]["op"], "ensure");
+    assert_eq!(requests[requests.len() - 1]["op"], "status");
+    for request in chain.requests.lock().await.iter() {
+        assert_eq!(
+            request["content_access_id"],
+            format!("0x{}", hex::encode(kid.as_bytes()))
+        );
+        assert_eq!(request["expected_item"]["token_id"], "0x7");
+        assert_eq!(request["expected_item"]["channel"], terminal.ledger());
+        assert_eq!(request["expected_item"]["creator"], terminal.seller());
+    }
+
+    for (published_object, published_by) in [
+        (&object, peer_did_for_seed(0x40)),
+        (&publisher, publisher.clone()),
+    ] {
+        content
+            .seed_published_protected_content(directory.path(), published_object, &published_by)
+            .await
+            .unwrap();
+        content.requests.lock().await.clear();
+        assert!(verify().await.is_err());
+        let attempted = content.requests().await;
+        assert_eq!(
+            attempted.len(),
+            1,
+            "foreign manifest must refuse before file reads or ensure"
+        );
+        assert_eq!(
+            attempted[0]["path"],
+            crate::content::CONTENT_OBJECT_MANIFEST_PATH
+        );
+    }
 }
 
 #[test]
@@ -22097,6 +22896,7 @@ mod plan_b_non_holder {
             ContentAvailabilityTestProvider::CID,
             &content_id,
             &identity,
+            None,
             pcr::non_holder_check(pcr::PortableVerifyMode::Adopt).unwrap(),
             NOW,
         )
@@ -22135,6 +22935,7 @@ mod plan_b_non_holder {
             ContentAvailabilityTestProvider::CID,
             &content_id,
             &identity,
+            None,
             pcr::NonHolderCheck::ManifestOnly,
             NOW,
         )
@@ -22873,7 +23674,7 @@ async fn stop_serving_the_last_root_reports_a_failed_unregister_and_a_retry_fini
 #[tokio::test]
 async fn remove_reports_a_failed_refresh_and_a_retry_finishes() {
     let temp = safe_ancestor_tempdir();
-    let data_dir = temp.path().join("data");
+    let data_dir = temp.path().canonicalize().unwrap().join("data");
     owner_only_dir(&data_dir);
     crate::host_trust::seed_for_test(&data_dir, true);
     elastos_identity::load_or_create_device_key(&data_dir).unwrap();

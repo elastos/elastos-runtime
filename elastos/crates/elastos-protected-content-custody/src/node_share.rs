@@ -22,7 +22,7 @@ pub struct NodeLocalStoredShareV1 {
     node_public_key: NodePublicKey,
     stored_share: PqHybridSealedShareV1,
     /// S7-lite (ADV-02): the KID a pool-provisioned share is bound to, from
-    /// the minter's signed authorization stored with it. `None` for a V1
+    /// the signed admission evidence stored with it. `None` for a V1
     /// owner-provisioned share.
     bound_content_access_id: Option<ContentAccessIdV1>,
 }
@@ -98,8 +98,7 @@ impl NodeLocalStoredShareV1 {
         Ok(value)
     }
 
-    /// S7-lite: the same share bound to the KID of the minter's
-    /// authorization (ADV-02).
+    /// The same share bound to the KID in its verified admission (ADV-02).
     pub(crate) fn bound_to(mut self, content_access_id: ContentAccessIdV1) -> Self {
         self.bound_content_access_id = Some(content_access_id);
         self

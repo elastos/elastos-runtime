@@ -41,6 +41,7 @@
 // that function is: by Unicode scalar value count, not UTF-8 byte length.
 
 export const MARKET_LISTING_SCHEMA_V1 = "elastos.marketplace.listing/v1";
+export const MARKET_CARD_ACCESS_SCHEMA_V1 = "elastos.marketplace.card-access/v1";
 export const BUY_OFFER_PROGRESS_SCHEMA_V1 = "elastos.protected-content.buy-progress/v1";
 // `buy_offer`'s terminal success envelope: the item bought, the asset it
 // names, and how far adoption got. Exported so
@@ -192,6 +193,31 @@ export function parseMarketListing(value) {
     listing.accessSubject = value.access_subject;
   }
   return { ok: true, listing };
+}
+
+/** A positive card answer carries no offer terms or purchase authority. */
+export function parseMarketCardAccess(value) {
+  const error = keysError(value,
+    ["schema", "item", "asset", "access_state", "access_subject"], ["custody_route"]);
+  if (error) return fail(error);
+  if (value.schema !== MARKET_CARD_ACCESS_SCHEMA_V1
+    || !["creator", "purchased"].includes(value.access_state)
+    || typeof value.access_subject !== "string" || !ACCESS_SUBJECT.test(value.access_subject)
+    || ("custody_route" in value && !MARKET_CUSTODY_ROUTES.includes(value.custody_route))) {
+    return fail("invalid market card access");
+  }
+  const item = parseMarketItem(value.item);
+  if (!item.ok) return item;
+  const asset = parseMarketAsset(value.asset);
+  if (!asset.ok) return asset;
+  return { ok: true, listing: {
+    schema: value.schema,
+    item: item.item,
+    asset: asset.asset,
+    accessState: value.access_state,
+    accessSubject: value.access_subject,
+    custodyRoute: value.custody_route,
+  } };
 }
 
 /**

@@ -18,6 +18,7 @@ pub use bridge::{
     is_bridge_transport_failure, CapsuleProvider, ProviderBridge,
     ProviderConfig as BridgeProviderConfig,
 };
+pub use registry::STAGED_CONTENT_PUBLISH_OP;
 pub use registry::{
     decode_provider_stream_payload, EntryType, LocalIpfsCapacityObservation, Provider,
     ProviderByteRange, ProviderCarrierInvoker, ProviderCarrierRoute, ProviderError,

@@ -9758,17 +9758,40 @@ async fn test_runtime_custody_recoverable_attempts_are_offered_and_never_dropped
     assert!(settled.terminal().is_some());
     assert_offered(fx.unfinished(&input).await, "listing_not_assembled");
     assert!(fx.mint(mint_id).creator_state() == Some(&settled));
-    // Once Resume has published the listing and the Library recorded its
-    // publication (the production publish's last step, which the test-only
-    // creator tail stops short of; STAB-13), nothing is left to offer.
-    let published = fx.resume(&input, &facts).await.unwrap();
+    // The tail can publish the listing without filing the Library copy.
+    // Recording publication alone must leave the sealed mint recoverable.
+    let unfiled = fx.resume(&input, &facts).await.unwrap();
+    assert!(unfiled.capsule_uri.is_none());
     crate::library::record_runtime_custody_publication_for_test(
         fx.dir.path(),
         &input.principal_id,
         &input.object_uri,
-        &published,
+        &unfiled,
     )
     .unwrap();
+    assert_offered(fx.unfinished(&input).await, "listing_not_assembled");
+
+    mock_published_protected_content()
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .files
+        .insert(
+            "metadata.json".to_string(),
+            serde_json::to_vec(&json!({
+                "name": "recoverable.mp4",
+                "media": { "mimeType": "video/mp4" },
+                "properties": { "authority": MOCK_PROTECTED_CONTENT_AUTHORITY_GATEWAY },
+            }))
+            .unwrap(),
+        );
+    let filed = fx.resume(&input, &facts).await.unwrap();
+    assert_eq!(filed.listing_uri, unfiled.listing_uri);
+    assert!(filed
+        .capsule_uri
+        .as_deref()
+        .is_some_and(|uri| uri.contains("/Videos/")));
     assert!(matches!(fx.unfinished(&input).await, Outcome::Nothing));
 
     // Before any terms: the escrow and the failed publish are offered too, as
@@ -17838,6 +17861,7 @@ async fn add_listing_imports_a_composition_mint_on_an_independent_known_pool_hom
         &asset.package.content_cid,
         &asset.package.content_id,
         &identity,
+        None,
         crate::protected_content_runtime::NonHolderCheck::ManifestOnly,
         now,
     )

@@ -147,7 +147,16 @@ class FakeVideo extends EventTarget {
 function createDom() {
   const video = new FakeVideo();
   const status = { textContent: "", dataset: {} };
-  const overlay = { hidden: false };
+  const overlay = {
+    hidden: false,
+    children: [],
+    appendChild(child) {
+      this.children.push(child);
+    },
+    removeChild(child) {
+      this.children = this.children.filter((entry) => entry !== child);
+    },
+  };
   const overlayText = { textContent: "" };
   const nodes = new Map([
     ["player-video", video],
@@ -163,6 +172,10 @@ function createDom() {
     documentObject: {
       getElementById(id) {
         return nodes.get(id);
+      },
+      createElement(tag) {
+        assert.equal(tag, "button");
+        return new EventTarget();
       },
     },
   };
@@ -600,7 +613,7 @@ test("player keeps the first visible state when quiet close fails", async () => 
   );
 });
 
-test("player fails closed on malformed part data and closes once", async () => {
+test("player appends no malformed part and closes the stalled session on pagehide", async () => {
   const mintId = "12".repeat(32);
   const handle = "34".repeat(32);
   const fetchHarness = createFetchHarness([
@@ -639,11 +652,13 @@ test("player fails closed on malformed part data and closes once", async () => {
     }),
   ]);
   const dom = createDom();
-  const MediaSourceClass = createMediaSourceClass([]);
+  const windowObject = createWindowObject();
+  const recordedBuffers = [];
+  const MediaSourceClass = createMediaSourceClass(recordedBuffers);
   MediaSourceClass.supported.add('video/mp4; codecs="avc1.640028"');
   const controller = createPlayerController({
     documentObject: dom.documentObject,
-    windowObject: createWindowObject(),
+    windowObject,
     locationObject: {
       search: `?mint_id=${mintId}`,
       hash: "#home_token=token-3",
@@ -653,11 +668,17 @@ test("player fails closed on malformed part data and closes once", async () => {
     urlObject: createUrlObject(() => "blob:player"),
   });
 
-  await controller.startPlayback();
+  const playback = controller.startPlayback();
+  await flushMicrotasks(24);
 
   assert.equal(dom.overlay.hidden, false);
   assert.equal(dom.status.dataset.state, "error");
   assert.match(dom.status.textContent, /Media data is unavailable|Protected media is unavailable/);
+  assert.deepEqual(dom.overlay.children.map((child) => child.textContent), ["Try again"]);
+  assert.equal(recordedBuffers.length, 0);
+  assert.equal(fetchHarness.requests.filter((request) => request.op === "close_viewer").length, 0);
+  windowObject.dispatch("pagehide");
+  await playback;
   assert.equal(
     fetchHarness.requests.filter((request) => request.op === "close_viewer").length,
     1,
@@ -894,6 +915,7 @@ test("player preserves the first failure and closes once under repeated media er
   await Promise.resolve();
 
   assert.equal(dom.status.textContent, "Media data is unavailable.");
+  assert.deepEqual(dom.overlay.children.map((child) => child.textContent), ["Try again"]);
   assert.equal(
     fetchHarness.requests.filter((request) => request.op === "close_viewer").length,
     1,

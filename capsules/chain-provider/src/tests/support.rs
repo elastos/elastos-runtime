@@ -465,9 +465,17 @@ pub(super) fn spawn_scripted_rpc_server(
 /// built on it states what the chain looks like, so it holds whichever order
 /// the provider reads that state in.
 pub(super) fn spawn_rpc_state_server(state: Vec<(&'static str, Value, Value)>) -> String {
+    spawn_rpc_state_server_with_first_request(state, || {})
+}
+
+pub(super) fn spawn_rpc_state_server_with_first_request(
+    state: Vec<(&'static str, Value, Value)>,
+    first_request: impl FnOnce() + Send + 'static,
+) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
+        let mut first_request = Some(first_request);
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let Some(body) = read_http_request(&mut stream) else {
@@ -477,6 +485,9 @@ pub(super) fn spawn_rpc_state_server(state: Vec<(&'static str, Value, Value)>) -
                 write_http_reply(&mut stream, "400 Bad Request", "", "{}");
                 continue;
             };
+            if let Some(first_request) = first_request.take() {
+                first_request();
+            }
             let answer = state
                 .iter()
                 .find(|(method, params, _)| rpc["method"] == *method && rpc["params"] == *params);

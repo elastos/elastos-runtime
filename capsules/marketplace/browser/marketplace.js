@@ -20,12 +20,14 @@ import {
   offerCompletionMessage,
   DOWNLOAD_SAVED_COPY,
   MAX_MARKET_OFFERS,
+  MARKET_CARD_ACCESS_SCHEMA_V1,
   downloadControl,
   downloadRefusalCopy,
   marketItemClaim,
   marketItemKey,
   offersWithRecordedAttempt,
   parseBuyOfferAnswer,
+  parseMarketCardAccess,
   parseMarketListing,
 } from "./src/market-listing.js";
 // An item Base has not finalized yet: Runtime answers its listing read
@@ -2650,7 +2652,7 @@ import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js
   async function readCatalogAccess(key) {
     const [ledger, tokenId] = key.split("|");
     try {
-      const result = await readMarketListing({ item: { ledger, token_id: tokenId } });
+      const result = await readMarketListing({ item: { ledger, token_id: tokenId } }, undefined, true);
       if (result.legacy) {
         return listingReadOutcome({ legacy: true });
       }
@@ -2689,7 +2691,7 @@ import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js
   async function checkCatalogFinality(key) {
     const [ledger, tokenId] = key.split("|");
     try {
-      const result = await readMarketListing({ item: { ledger, token_id: tokenId } });
+      const result = await readMarketListing({ item: { ledger, token_id: tokenId } }, undefined, true);
       if (result.legacy) {
         return { kind: "done" };
       }
@@ -3048,19 +3050,21 @@ import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js
   // `legacy: true` tells the caller to fall back to today's
   // `import_runtime_custody` path unchanged; otherwise a parsed listing, or
   // this throws.
-  async function readMarketListing(start, actionId) {
-    const answer = await requestMarketListing(start, actionId);
+  async function readMarketListing(start, actionId, cardAccess = false) {
+    const answer = await requestMarketListing(start, actionId, cardAccess);
     if (answer && typeof answer === "object" && answer.legacy_listing === true) {
       return { legacy: true };
     }
-    const parsed = parseMarketListing(answer);
-    if (!parsed.ok) {
+    const isCardAnswer = cardAccess && answer?.schema === MARKET_CARD_ACCESS_SCHEMA_V1;
+    const parsed = isCardAnswer ? parseMarketCardAccess(answer) : parseMarketListing(answer);
+    if (!parsed.ok || (isCardAnswer && catalogLedgerKey(parsed.listing.item)
+      !== catalogLedgerKey({ ledger: start.item.ledger, tokenId: start.item.token_id }))) {
       throw Object.assign(new Error("That listing could not be read."), { code: "malformed" });
     }
     return { legacy: false, listing: parsed.listing };
   }
 
-  async function requestMarketListing(start, actionId) {
+  async function requestMarketListing(start, actionId, cardAccess = false) {
     const response = await fetch("/api/apps/marketplace/listing", {
       method: "POST",
       headers: {
@@ -3069,7 +3073,7 @@ import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js
         "x-elastos-home-token": homeToken,
         ...(actionId ? { "x-elastos-action-id": actionId } : {}),
       },
-      body: JSON.stringify({ start }),
+      body: JSON.stringify(cardAccess ? { start, card_access: true } : { start }),
       signal: AbortSignal.timeout(35000),
     });
     const data = await response.json().catch(() => ({}));
@@ -3918,6 +3922,9 @@ import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js
     importInFlight = true;
     els.importSubmit.disabled = true;
     els.importSubmit.setAttribute("aria-busy", "true");
+    // Card checks and Add share the chain provider. Let current checks finish
+    // while the foreground lookup and legacy import take their turns.
+    marketReadSlots.pause();
     try {
       // Diagnostic correlation only; Home-token and Runtime checks own authority.
       const actionId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -3940,6 +3947,7 @@ import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js
       importInFlight = false;
       els.importSubmit.disabled = false;
       els.importSubmit.removeAttribute("aria-busy");
+      marketReadSlots.resume();
       render();
     }
   }

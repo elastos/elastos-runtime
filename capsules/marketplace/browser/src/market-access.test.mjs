@@ -130,6 +130,58 @@ test("a read that throws leaves the card retrying, never available", async () =>
   assert.equal(watch.state("a"), "retrying");
 });
 
+test("Try again repaints immediately, then shows the new access result", async () => {
+  const reads = heldReads();
+  const { watch, changed } = watchWith(reads.read);
+  watch.show(["a"]);
+  await reads.answer(0, { kind: "retry" });
+  assert.equal(watch.state("a"), "retrying");
+  changed.length = 0;
+
+  watch.forget("a");
+  assert.equal(reads.pending.length, 2);
+  assert.equal(watch.state("a"), "checking");
+  assert.deepEqual(changed, ["a"], "the card must repaint before the reply");
+
+  await reads.answer(1, { kind: "listing", listing: listing({ accessState: "purchased" }) });
+  assert.equal(watch.state("a"), "held");
+  assert.deepEqual(changed, ["a", "a"]);
+});
+
+test("Try again takes the next free access slot ahead of background cards", async () => {
+  const reads = heldReads();
+  const { watch } = watchWith(reads.read, { slots: createReadSlots(1) });
+  watch.show(["failed"]);
+  await reads.answer(0, { kind: "retry" });
+  watch.show(["active", "background", "failed"]);
+  watch.forget("failed");
+  assert.deepEqual(reads.pending.map(({ key }) => key), ["failed", "active"]);
+
+  await reads.answer(1, { kind: "listing", listing: listing() });
+  assert.equal(reads.pending[2].key, "failed");
+  await reads.answer(2, { kind: "listing", listing: listing({ accessState: "creator" }) });
+  assert.equal(watch.state("failed"), "held");
+  assert.equal(reads.pending[3].key, "background");
+});
+
+test("an automatic retry shows progress and returns to Try again on failure", async () => {
+  const reads = heldReads();
+  const { watch, changed, timers } = watchWith(reads.read);
+  watch.show(["a"]);
+  await reads.answer(0, { kind: "retry" });
+  changed.length = 0;
+
+  await timers.runAll();
+  assert.equal(reads.pending.length, 2);
+  assert.deepEqual(changed, ["a"], "the card repaints when the retry starts");
+  assert.equal(watch.state("a"), "checking");
+
+  await reads.answer(1, { kind: "retry" });
+  assert.equal(watch.state("a"), "retrying");
+  assert.deepEqual(changed, ["a", "a"]);
+  assert.deepEqual(timers.delays(), [ACCESS_RETRY_BACKOFF_MS[1]]);
+});
+
 test("one function reads every listing answer: final refusals are unavailable, anything else is retried", () => {
   const read = listing();
   assert.deepEqual(listingReadOutcome({ listing: read }), { kind: "listing", listing: read });

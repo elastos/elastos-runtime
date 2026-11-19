@@ -1272,6 +1272,83 @@ async fn listing_object_is_unavailable_while_the_offers_cannot_be_read() {
     assert_eq!(answer, json!({ "code": "unavailable" }));
 }
 
+#[tokio::test]
+async fn an_entitled_market_card_does_not_wait_for_sale_offers() {
+    let mut chain = chain_with_item(LISTING_FOLDER, LISTING_KID);
+    chain.has_access = true;
+    chain.offers_unavailable = true;
+    let env = ListingEnv::new(
+        chain,
+        content_with(
+            LISTING_FOLDER,
+            "metadata.json",
+            &elastos_v1_metadata(LISTING_KID),
+        ),
+    )
+    .await;
+    let mut card = item_start();
+    card["card_access"] = json!(true);
+    let (status, answer) = env.post(card.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["schema"], "elastos.marketplace.card-access/v1");
+    assert_eq!(answer["access_state"], "purchased");
+    assert_eq!(answer["item"]["kid"], LISTING_KID);
+    assert!(answer.get("offers").is_none());
+    assert!(!env
+        .chain
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .any(|request| { request["op"] == "resolve_protected_content_item_offers" }));
+
+    env.chain.lock().unwrap().has_access = false;
+    let (status, answer) = env.post(card).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    assert_eq!(answer, json!({ "code": "unavailable" }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_entitled_market_card_uses_item_rights_when_metadata_holders_refuse() {
+    let mut chain = chain_with_item(LISTING_FOLDER, LISTING_KID);
+    chain.has_access = true;
+    chain.never_answers = Some("resolve_protected_content_item_offers");
+    let env = ListingEnv::new(chain, document_held_by_no_one("carrier_fetch_failed")).await;
+    let mut card = item_start();
+    card["card_access"] = json!(true);
+
+    let (status, answer) =
+        tokio::time::timeout(std::time::Duration::from_secs(1), env.post(card.clone()))
+            .await
+            .expect("an entitled card does not wait for offers or protected content");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["schema"], "elastos.marketplace.card-access/v1");
+    assert_eq!(answer["access_state"], "purchased");
+    assert_eq!(answer["item"]["kid"], Value::Null);
+    assert_eq!(answer["asset"]["readability"], "unknown");
+    assert!(answer.get("offers").is_none());
+    assert_eq!(env.content_paths(), vec!["metadata.json"]);
+
+    env.chain.lock().unwrap().has_access = false;
+    let (status, answer) = env.post(card).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
+    assert_eq!(answer, json!({ "code": "no_holder" }));
+    assert_eq!(env.content_paths(), vec!["metadata.json", "metadata.json"]);
+    let chain = env.chain.lock().unwrap();
+    assert_eq!(
+        chain
+            .requests
+            .iter()
+            .filter(|request| request["op"] == "resolve_protected_content_item_access")
+            .count(),
+        2
+    );
+    assert!(!chain.requests.iter().any(|request| matches!(
+        request["op"].as_str(),
+        Some("resolve_protected_content_item_offers" | "resolve_protected_content_purchase_access")
+    )));
+}
+
 /// A listing read that hangs in an inner call answers `unavailable` at the
 /// overall deadline (30 s, inside the page's 35 s abort), so the card's own
 /// retry takes over. The offers read here never answers; the clock is paused

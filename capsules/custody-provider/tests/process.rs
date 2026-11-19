@@ -1252,6 +1252,89 @@ mod pool_release {
             .as_bytes()
     }
 
+    #[test]
+    fn remote_upload_attestation_signs_only_for_the_selected_root_and_pool() {
+        use elastos_protected_content_contracts::test_fixtures::{
+            node_public_key, pool_bundle, pool_descriptor_routed, pool_did, signing_key,
+            POOL_AUTHORITY_SEED,
+        };
+        use elastos_protected_content_contracts::{
+            ClearLayoutV1, MintRequestV1, SealSessionAttestationV1, SignedMintRequestV1,
+            SignedPoolDescriptorAnyV1, SignedSealSessionAttestationV1,
+        };
+        use serde_json::json;
+
+        let temp = tempfile::tempdir().unwrap();
+        let config =
+            prepare_config_with_seeds(temp.path(), CUSTODY_KEY_SEED_BASE + POOL_NODE, POOL_NODE);
+        let mut provider = ProviderProcess::start();
+        assert_eq!(provider.request(config)["status"], "ok");
+        let now = now_unix_seconds();
+        let pool = pool_did();
+        let node = node_public_key(POOL_NODE);
+        let bundle = pool_bundle(xwing_public_key, now);
+        let descriptor: SignedPoolDescriptorAnyV1 =
+            pool_descriptor_routed(&bundle, 1, now, POOL_AUTHORITY_SEED, &|id| {
+                format!("did:key:z6MkFixture{id:02}")
+            })
+            .into();
+        let mint = MintRequestV1 {
+            pool,
+            epoch: bundle.epoch_identity().unwrap(),
+            minter_issuer: runtime_issuer(POOL_AUTHORITY_SEED),
+            content_access_id: ContentAccessIdV1::new([0x06; 16]).unwrap(),
+            clear_layout: ClearLayoutV1::Object {
+                content_type: "application/pdf".into(),
+                length: 16,
+            },
+            request_nonce: [0x07; 16],
+            issued_at: now,
+            expires_at: now + 30,
+        };
+        let signature = signing_key(POOL_AUTHORITY_SEED)
+            .sign(&mint.canonical_bytes().unwrap())
+            .to_bytes();
+        let mint = SignedMintRequestV1::new(mint, signature).unwrap();
+        let mut statement = SealSessionAttestationV1 {
+            pool,
+            epoch: bundle.epoch_identity().unwrap(),
+            sealer_node_public_key: node,
+            seal_session_id: [0x08; 16],
+            descriptor_digest: descriptor.canonical_hash().unwrap(),
+            seal_session_public_key: RecipientPublicKeyBytesV1::new(xwing_public_key(0x31))
+                .unwrap(),
+            mint_request_hash: mint.canonical_hash().unwrap(),
+            issued_at: now,
+            expires_at: now + 30,
+        };
+        let command = |statement: &SealSessionAttestationV1| {
+            json!({
+                "op": "attest_remote_seal_upload",
+                "pool_authority": pool.issuer().as_bytes(),
+                "descriptor": descriptor.canonical_bytes().unwrap(),
+                "mint_request": mint.canonical_bytes().unwrap(),
+                "statement": statement.canonical_bytes().unwrap(),
+            })
+        };
+        let reply = provider.request(command(&statement));
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let bytes: Vec<u8> = serde_json::from_value(reply["data"]["attestation"].clone()).unwrap();
+        let signed = SignedSealSessionAttestationV1::from_canonical_bytes(&bytes).unwrap();
+        signed
+            .verify_for_upload(&mint, &descriptor, node, statement.seal_session_id, now)
+            .unwrap();
+
+        let mut different_pool = command(&statement);
+        different_pool["pool_authority"] = json!(node_public_key(0x44).as_bytes());
+        assert_eq!(provider.request(different_pool)["status"], "error");
+        let mut injected = command(&statement);
+        injected["_runtime_invocation"] = json!({});
+        assert_eq!(provider.request(injected)["status"], "error");
+        statement.sealer_node_public_key = node_public_key(1);
+        assert_eq!(provider.request(command(&statement))["status"], "error");
+        provider.shutdown_and_wait_with_stdin_open();
+    }
+
     struct PoolNode {
         provider: ProviderProcess,
         /// S7-lite: the item's envelope and committee, for pool provisioning.
@@ -1409,6 +1492,302 @@ mod pool_release {
     fn error_code(response: &serde_json::Value) -> &str {
         assert_eq!(response["status"], "error", "{response}");
         response["code"].as_str().unwrap()
+    }
+
+    #[test]
+    fn isolated_remote_share_request_enforces_root_and_releases_the_original_asset() {
+        use custody_provider::{
+            CustodyProviderStateRootError, PoolDescriptorHighWaterV1, RemoteShareWriteError,
+        };
+        use elastos_protected_content_contracts::test_fixtures::{
+            pool_descriptor_signed_by, pool_did, POOL_AUTHORITY_SEED,
+        };
+        use elastos_protected_content_contracts::{
+            ClearLayoutV1, MintRequestV1, PoolDidV1, PoolProvisioningAuthorizationV1,
+            RemoteShareAdmissionV1, SealCompletedV1, SignedMintRequestV1,
+            SignedPoolProvisioningAuthorizationV1, SignedSealCompletedV1,
+        };
+        use elastos_protected_content_custody::RemoteObjectSealerV1;
+        use elastos_protected_content_provider_contracts::RemoteShareProvisionRequestV1;
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut node = PoolNode::start(temp.path(), None, None, false);
+        let root = fs::canonicalize(temp.path())
+            .unwrap()
+            .join("providers")
+            .join(format!(
+                "provider-{:02x}-{POOL_NODE:02x}",
+                CUSTODY_KEY_SEED_BASE + POOL_NODE
+            ));
+        let mut loaded = load_state_from_root(&root).unwrap();
+        let now = now_unix_seconds();
+        let selected = node_public_key(POOL_NODE);
+        let record = CustodyNodeProvisioningRecordV1::new(
+            node.key_envelope.clone(),
+            node.envelope.manifest().clone(),
+            selected,
+            node.envelope
+                .stored_share_for_node(selected)
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        let mint = MintRequestV1 {
+            pool: pool_did(),
+            epoch: node.bundle.epoch_identity().unwrap(),
+            minter_issuer: runtime_issuer(POOL_AUTHORITY_SEED),
+            content_access_id: policy_body().content_access_id(),
+            clear_layout: ClearLayoutV1::Object {
+                content_type: "application/pdf".into(),
+                length: 4096,
+            },
+            request_nonce: [0x51; 16],
+            issued_at: node.now,
+            expires_at: node.now + 200,
+        };
+        let mint_signature = node_signing_key(POOL_AUTHORITY_SEED)
+            .sign(&mint.canonical_bytes().unwrap())
+            .to_bytes();
+        let request = SignedMintRequestV1::new(mint, mint_signature).unwrap();
+        let sealer = POOL_NODE;
+        let sealer_runtime = 0x55;
+        let authorization = PoolProvisioningAuthorizationV1 {
+            pool: pool_did(),
+            epoch: node.bundle.epoch_identity().unwrap(),
+            sealer_node_public_key: node_public_key(sealer),
+            sealer_runtime_issuer: runtime_issuer(sealer_runtime),
+            key_envelope: node.key_envelope.clone(),
+            content_access_id: policy_body().content_access_id(),
+            mint_request_hash: request.canonical_hash().unwrap(),
+            issued_at: now,
+            expires_at: now + 60,
+        };
+        let signature = node_signing_key(sealer)
+            .sign(&authorization.canonical_bytes().unwrap())
+            .to_bytes();
+        let signed_provisioning =
+            signed_provisioning_valid_between(&record, sealer_runtime, now, now + 60);
+        let authorization =
+            SignedPoolProvisioningAuthorizationV1::new(authorization, signature).unwrap();
+        let frame = |sequence| {
+            RemoteShareProvisionRequestV1 {
+                record: record.clone(),
+                signed_provisioning: signed_provisioning.clone(),
+                admission: RemoteShareAdmissionV1 {
+                    descriptor: pool_descriptor_signed_by(
+                        &node.bundle,
+                        sequence,
+                        node.now,
+                        POOL_AUTHORITY_SEED,
+                    )
+                    .into(),
+                    request: request.clone(),
+                    authorization: authorization.clone(),
+                },
+            }
+            .to_json_vec()
+            .unwrap()
+        };
+        let accepted_frame = frame(3);
+        let marks = PoolDescriptorHighWaterV1::new(&loaded.data_root);
+        marks.record(pool_did().issuer().as_bytes(), 2).unwrap();
+        assert!(matches!(
+            loaded.provision_remote_share(pool_did(), &frame(1), now),
+            Err(RemoteShareWriteError::Refused)
+        ));
+        let foreign_pool = PoolDidV1::from_issuer(
+            CustodyEpochIssuerKeyV1::new(node_signing_key(0x77).verifying_key().to_bytes())
+                .unwrap(),
+        );
+        let descriptor = RemoteShareProvisionRequestV1::from_json_slice(&accepted_frame)
+            .unwrap()
+            .admission
+            .descriptor;
+        let authorize = serde_json::json!({
+            "op": "authorize_remote_seal_share",
+            "pool_authority": pool_did().issuer().as_bytes(),
+            "sealer_node": selected.as_bytes(),
+            "descriptor": descriptor.canonical_bytes().unwrap(),
+            "mint_request": request.canonical_bytes().unwrap(),
+            "key_envelope": node.key_envelope.canonical_bytes().unwrap(),
+            "runtime_issuer": runtime_issuer(sealer_runtime).as_bytes(),
+        });
+        let authorized = node.provider.request(authorize.clone());
+        assert_eq!(authorized["status"], "ok", "{authorized}");
+        let signed_bytes: Vec<u8> =
+            serde_json::from_value(authorized["data"]["authorization"].clone()).unwrap();
+        let authorized =
+            SignedPoolProvisioningAuthorizationV1::from_canonical_bytes(&signed_bytes).unwrap();
+        let (authorized, minter) = authorized
+            .verify_for_mint_request(
+                &descriptor,
+                &request,
+                &node.key_envelope,
+                now_unix_seconds(),
+            )
+            .unwrap();
+        assert_eq!(authorized.sealer_node_public_key, selected);
+        assert_eq!(
+            authorized.sealer_runtime_issuer,
+            runtime_issuer(sealer_runtime)
+        );
+        assert_eq!(minter, request.statement().minter_issuer);
+        let mut changed_pool = authorize;
+        changed_pool["pool_authority"] = serde_json::json!(foreign_pool.issuer().as_bytes());
+        assert_eq!(
+            error_code(&node.provider.request(changed_pool)),
+            "invalid_request"
+        );
+        let (session, _) =
+            RemoteObjectSealerV1::open(&request, &descriptor, selected, now).unwrap();
+        let statement = session.attestation_statement().unwrap();
+        let attestation = loaded
+            .attest_remote_seal_upload(pool_did(), &descriptor, &request, statement.clone(), now)
+            .unwrap();
+        assert_eq!(
+            attestation
+                .verify_for_upload(
+                    &request,
+                    &descriptor,
+                    selected,
+                    statement.seal_session_id,
+                    now
+                )
+                .unwrap(),
+            &statement.seal_session_public_key
+        );
+        let stale =
+            pool_descriptor_signed_by(&node.bundle, 1, node.now, POOL_AUTHORITY_SEED).into();
+        let (stale_session, _) =
+            RemoteObjectSealerV1::open(&request, &stale, selected, now).unwrap();
+        let mut wrong_mint = statement.clone();
+        wrong_mint.mint_request_hash = Digest32::new([0xc0; 32]);
+        let mut wrong_node = statement.clone();
+        wrong_node.sealer_node_public_key = node_public_key(1);
+        for (pool, descriptor, statement) in [
+            (foreign_pool, &descriptor, statement),
+            (pool_did(), &descriptor, wrong_mint),
+            (pool_did(), &descriptor, wrong_node),
+            (
+                pool_did(),
+                &stale,
+                stale_session.attestation_statement().unwrap(),
+            ),
+        ] {
+            assert_eq!(
+                loaded.attest_remote_seal_upload(pool, descriptor, &request, statement, now),
+                Err(CustodyProviderStateRootError::Conflict)
+            );
+        }
+        assert!(matches!(
+            loaded.provision_remote_share(foreign_pool, &accepted_frame, now),
+            Err(RemoteShareWriteError::Refused)
+        ));
+        let mut unexpected_field: serde_json::Value =
+            serde_json::from_slice(&accepted_frame).unwrap();
+        unexpected_field["op"] = "provision_remote_share".into();
+        assert!(matches!(
+            loaded.provision_remote_share(
+                pool_did(),
+                &serde_json::to_vec(&unexpected_field).unwrap(),
+                now
+            ),
+            Err(RemoteShareWriteError::Refused)
+        ));
+        assert_eq!(
+            error_code(&node.provider.request(unexpected_field)),
+            "invalid_request"
+        );
+        assert!(!custody_provider::node_share_store_dir(&root).exists());
+        let command = |pool: PoolDidV1, frame: &[u8]| {
+            serde_json::json!({
+                "op": "provision_remote_share",
+                "pool_authority": pool.issuer().as_bytes(),
+                "request": serde_json::from_slice::<serde_json::Value>(frame).unwrap(),
+            })
+        };
+        let foreign = node
+            .provider
+            .request(command(foreign_pool, &accepted_frame));
+        assert_eq!(error_code(&foreign), "provisioning_refused");
+        let stale = node.provider.request(command(pool_did(), &frame(1)));
+        assert_eq!(error_code(&stale), "provisioning_refused");
+        assert!(!custody_provider::node_share_store_dir(&root).exists());
+        let accepted = node.provider.request(command(pool_did(), &accepted_frame));
+        assert_eq!(accepted["status"], "ok", "{accepted}");
+        assert_eq!(accepted["data"]["already_stored"], false);
+        assert_eq!(
+            accepted["data"]["selected_node_public_key"],
+            serde_json::json!(selected.as_bytes())
+        );
+        assert_eq!(
+            accepted["data"]["record_sha256"],
+            serde_json::json!(record.record_identity().unwrap().record_sha256().as_bytes())
+        );
+        assert_eq!(
+            accepted["data"]["provisioning_id"],
+            serde_json::json!(signed_provisioning
+                .statement()
+                .provisioning_id()
+                .digest()
+                .as_bytes())
+        );
+        assert!(!marks.admits(pool_did().issuer().as_bytes(), 2).unwrap());
+        let mut replay = node.provider.request(command(pool_did(), &accepted_frame));
+        assert_eq!(replay["status"], "ok", "{replay}");
+        assert_eq!(replay["data"]["already_stored"], true);
+        replay["data"]["already_stored"] = false.into();
+        assert_eq!(accepted, replay);
+
+        let completion = SealCompletedV1 {
+            pool: pool_did(),
+            epoch: request.statement().epoch,
+            descriptor_digest: descriptor.canonical_hash().unwrap(),
+            sealer_node_public_key: selected,
+            sealer_device_did: descriptor.member_peer_did(selected).unwrap().to_string(),
+            content_publisher_did: "did:key:zFixturePublisher".into(),
+            mint_request_hash: request.canonical_hash().unwrap(),
+            content_access_id: request.statement().content_access_id,
+            key_envelope: node.key_envelope.clone(),
+            content_identity: vec![1],
+            content_key_commitment: node.envelope.manifest().content_key_commitment(),
+            package_cid: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".into(),
+            file_cids: vec![(
+                "object.epc1".into(),
+                "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".into(),
+            )],
+            availability_receipt: vec![1],
+            completed_at: now_unix_seconds(),
+        };
+        let sign_completion = |statement: &SealCompletedV1| {
+            serde_json::json!({
+                "op": "sign_remote_seal_completion",
+                "pool_authority": pool_did().issuer().as_bytes(),
+                "descriptor": descriptor.canonical_bytes().unwrap(),
+                "mint_request": request.canonical_bytes().unwrap(),
+                "statement": statement.canonical_bytes().unwrap(),
+            })
+        };
+        let signed = node.provider.request(sign_completion(&completion));
+        assert_eq!(signed["status"], "ok", "{signed}");
+        let bytes: Vec<u8> = serde_json::from_value(signed["data"]["completion"].clone()).unwrap();
+        let verified = SignedSealCompletedV1::from_canonical_bytes(&bytes).unwrap();
+        let (statement, _) = verified
+            .verify_for_request_at(&descriptor, &request, selected, now_unix_seconds())
+            .unwrap();
+        assert_eq!(statement, &completion);
+        let mut changed = completion;
+        changed.content_key_commitment = Digest32::new([0x70; 32]);
+        assert_eq!(
+            error_code(&node.provider.request(sign_completion(&changed))),
+            "invalid_request"
+        );
+
+        let mut spec = node.spec();
+        spec.descriptor_sequence = 3;
+        let fixture = pool_release_fixture(&spec);
+        let (request, response) = node.release_fixture(&fixture);
+        assert_eq!(contributions_of(&request, &response).len(), 1);
     }
 
     #[test]

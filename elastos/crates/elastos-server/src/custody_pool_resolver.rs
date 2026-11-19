@@ -47,6 +47,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::custody_consent::CustodyWriteGuard;
+use crate::custody_pool_descriptor::preserves_serving_history;
 use crate::custody_pool_setup::CustodyRefusal;
 use crate::custody_surface::TARGET_CUSTODY_POOL;
 use crate::protected_content_runtime::{
@@ -116,8 +117,8 @@ pub(crate) fn carrier_route_for(
     kept_card_tickets: &KeptCardTickets,
 ) -> ProviderCarrierRoute {
     let reply_wait_ms = match class {
-        PoolCallClass::Control => POOL_CONTROL_REPLY_WAIT_MS,
-        PoolCallClass::Read => POOL_READ_REPLY_WAIT_MS,
+        PoolCallClass::Control | PoolCallClass::SealFinalize => POOL_CONTROL_REPLY_WAIT_MS,
+        PoolCallClass::Read | PoolCallClass::SealUpload => POOL_READ_REPLY_WAIT_MS,
     };
     carrier_route_with_reply_wait(route, reply_wait_ms, kept_card_tickets)
 }
@@ -483,15 +484,29 @@ pub(crate) async fn add_known_pool_with<T: PoolSessionTransport>(
     };
     let mut file = load_known_pools(data_dir)?;
     match position_of_pool(&file, parsed.pool()) {
-        // T43-F1: a newer kept descriptor stays (monotonic per pool).
-        Some(index) if kept_sequence(&file.pools[index]) > verified.sequence() => {
-            tracing::debug!(
-                sequence = verified.sequence(),
-                "a newer descriptor of this pool is already kept"
-            );
-            return view_of(&file.pools[index]).context("the kept pool cannot be shown");
+        Some(index) => {
+            let kept = file.pools[index]
+                .descriptor()
+                .context("the kept pool is invalid")?;
+            if kept.sequence() > signed.sequence() {
+                return view_of(&file.pools[index]).context("the kept pool cannot be shown");
+            }
+            if kept.sequence() == signed.sequence() && kept != signed {
+                return Err(CustodyRefusal::with_detail(
+                    "pool_invalid",
+                    "the pool signed two different descriptors with the same sequence",
+                )
+                .into());
+            }
+            if !preserves_serving_history(&kept, &signed) {
+                return Err(CustodyRefusal::with_detail(
+                    "pool_invalid",
+                    "the pool descriptor removes an existing epoch or member route",
+                )
+                .into());
+            }
+            file.pools[index] = entry.clone();
         }
-        Some(index) => file.pools[index] = entry.clone(),
         None if file.pools.len() >= MAX_KNOWN_POOLS => {
             return Err(CustodyRefusal::new("too_many_pools").into());
         }
@@ -511,12 +526,6 @@ fn position_of_pool(
         kept.descriptor()
             .is_some_and(|descriptor| descriptor.pool() == pool)
     })
-}
-
-fn kept_sequence(entry: &KnownPoolEntry) -> u64 {
-    entry
-        .descriptor()
-        .map_or(0, |descriptor| descriptor.sequence())
 }
 
 /// T43-F2: the kept members' peer DIDs, read from the kept descriptor even
@@ -582,9 +591,9 @@ pub(crate) async fn refresh_known_pools<T: PoolSessionTransport>(
     refresh_known_pool_entries(data_dir, client, due, None, now).await
 }
 
-/// The shared describe/verify/monotonic-store path. A release refresh is
-/// restricted to the exact item epoch it already knows; expiry maintenance
-/// retains its existing descriptor-renewal behavior.
+/// The shared describe/verify/monotonic-store path. A release refresh must
+/// answer with the item's exact envelope bundle. Expiry maintenance can
+/// renew a descriptor without looking for a particular asset.
 async fn refresh_known_pool_entries<T: PoolSessionTransport>(
     data_dir: &Path,
     client: &PoolSessionClient<T>,
@@ -617,10 +626,16 @@ async fn refresh_known_pool_entries<T: PoolSessionTransport>(
                             && verified.epoch_for(key_envelope).is_some()
                     })
             });
-            if pool_matches && newer.sequence() > kept.sequence() {
+            if pool_matches
+                && newer.sequence() > kept.sequence()
+                && preserves_serving_history(&kept, &newer)
+            {
                 fresh.push(newer);
                 break;
             }
+        }
+        if key_envelope.is_some() && !fresh.is_empty() {
+            break;
         }
     }
     if fresh.is_empty() {
@@ -636,7 +651,9 @@ async fn refresh_known_pool_entries<T: PoolSessionTransport>(
             continue;
         };
         let entry = &mut file.pools[index];
-        if kept_sequence(entry) >= newer.sequence() {
+        if entry.descriptor().is_none_or(|kept| {
+            kept.sequence() >= newer.sequence() || !preserves_serving_history(&kept, &newer)
+        }) {
             continue;
         }
         entry.descriptor_b64 =
@@ -765,23 +782,30 @@ impl PoolResolverSource for KnownPoolSource {
             }
         };
         let now = crate::auth::now_ts();
-        // A release checks only its already verified pool and epoch, not
-        // every pool this Home knows. This finishes before the caller can
-        // prepare recipients or ask the Wallet, so no second approval is
-        // needed to replace a stale descriptor sequence.
-        let target = file
-            .pools
-            .iter()
-            .find(|entry| {
-                entry.descriptor().is_some_and(|signed| {
-                    signed.verify(now).is_ok_and(|verified| {
-                        verified.admits_new_release().is_ok()
-                            && verified.epoch_for(key_envelope).is_some()
-                    })
-                })
-            })
-            .cloned();
-        if let Some(target) = target {
+        // A known epoch can refresh only its matching pool. A new epoch
+        // may also have a different signed pool statement hash, so its
+        // envelope alone cannot identify the stable pool DID. Ask only
+        // previously verified authorities in that case, within the same
+        // aggregate budget. Describe carries only each known pool's DID.
+        let mut targets = Vec::new();
+        for entry in &file.pools {
+            let Some(verified) = entry
+                .descriptor()
+                .and_then(|signed| signed.verify(now).ok())
+            else {
+                continue;
+            };
+            if verified.admits_new_release().is_err() {
+                continue;
+            }
+            if verified.epoch_for(key_envelope).is_some() {
+                targets.clear();
+                targets.push(entry.clone());
+                break;
+            }
+            targets.push(entry.clone());
+        }
+        if !targets.is_empty() {
             let client = PoolSessionClient::new(self.transport.clone());
             // One existing epoch-node round (5 s connect + 15 s answer)
             // bounds the entire refresh, including all fallback peers.
@@ -794,7 +818,7 @@ impl PoolResolverSource for KnownPoolSource {
                 refresh_known_pool_entries(
                     &self.data_dir,
                     &client,
-                    vec![target],
+                    targets,
                     Some(key_envelope),
                     now,
                 ),

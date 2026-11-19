@@ -243,6 +243,8 @@ enum Request {
     },
     RuntimeAddLocalObject {
         object: LocalObject,
+        #[serde(default)]
+        include_file_cids: bool,
     },
     Init {
         #[serde(default)]
@@ -266,6 +268,8 @@ enum Request {
         files: Vec<DirFile>,
         #[serde(default = "default_true")]
         pin: bool,
+        #[serde(default)]
+        include_file_cids: bool,
         #[serde(default, rename = "_runtime_invocation")]
         _runtime_invocation: Option<serde_json::Value>,
     },
@@ -845,7 +849,10 @@ impl IpfsProvider {
                     private_preparation_error()
                 }
             }
-            Request::RuntimeAddLocalObject { object } => {
+            Request::RuntimeAddLocalObject {
+                object,
+                include_file_cids,
+            } => {
                 if !object.valid_shape() {
                     return private_preparation_error();
                 }
@@ -855,8 +862,8 @@ impl IpfsProvider {
                         eprintln!("ipfs-provider: local object backend unavailable: {error}");
                         return private_preparation_error();
                     }
-                    match self.kubo_add_local_object(&object) {
-                        Ok(cid) => Response::ok(serde_json::json!({"cid":cid})),
+                    match self.kubo_add_local_object(&object, include_file_cids) {
+                        Ok(data) => Response::ok(data),
                         Err(error) => {
                             eprintln!("ipfs-provider: local object import failed: {error}");
                             private_preparation_error()
@@ -876,7 +883,12 @@ impl IpfsProvider {
                 ..
             } => self.add_bytes(&data, &filename, pin),
             Request::AddPath { path, pin } => self.add_path(&path, pin),
-            Request::AddDirectory { files, pin, .. } => self.add_directory(files, pin),
+            Request::AddDirectory {
+                files,
+                pin,
+                include_file_cids,
+                ..
+            } => self.add_directory(files, pin, include_file_cids),
             Request::Cat {
                 cid,
                 path,
@@ -1367,13 +1379,18 @@ impl IpfsProvider {
         }
     }
 
-    fn add_directory(&mut self, files: Vec<DirFile>, pin: bool) -> Response {
+    fn add_directory(
+        &mut self,
+        files: Vec<DirFile>,
+        pin: bool,
+        include_file_cids: bool,
+    ) -> Response {
         if let Err(e) = self.ensure_kubo() {
             return Response::error("kubo_unavailable", &e);
         }
 
-        match self.kubo_add_directory(files, pin) {
-            Ok(cid) => Response::ok(serde_json::json!({ "cid": cid })),
+        match self.kubo_add_directory(files, pin, include_file_cids) {
+            Ok(data) => Response::ok(data),
             Err(e) => Response::error("add_failed", &e),
         }
     }
@@ -2025,7 +2042,12 @@ impl IpfsProvider {
         parse_add_response(&body_str)
     }
 
-    fn kubo_add_directory(&self, files: Vec<DirFile>, pin: bool) -> Result<String, String> {
+    fn kubo_add_directory(
+        &self,
+        files: Vec<DirFile>,
+        pin: bool,
+        include_file_cids: bool,
+    ) -> Result<serde_json::Value, String> {
         let boundary = format!("----elastos{}", now_unix_secs());
         let mut body = Vec::new();
 
@@ -2047,7 +2069,11 @@ impl IpfsProvider {
             .timeout(LARGE_HTTP_TIMEOUT)
             .send_bytes(&body)
             .map_err(|e| format!("IPFS add directory failed: {}", e))?;
-        directory_root(resp)
+        directory_add_result(
+            resp,
+            include_file_cids,
+            files.iter().map(|file| file.path.as_str()),
+        )
     }
 
     /// Adds one complete local object directory to Kubo unpinned, with the same
@@ -2055,7 +2081,11 @@ impl IpfsProvider {
     /// import; Runtime pins it only after comparing that CID. Files stream from
     /// disk through fds opened below the data root without following links.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn kubo_add_local_object(&self, object: &LocalObject) -> Result<String, String> {
+    fn kubo_add_local_object(
+        &self,
+        object: &LocalObject,
+        include_file_cids: bool,
+    ) -> Result<serde_json::Value, String> {
         let root = open_local_object_root(&self.data_dir, &object.root)
             .map_err(|e| format!("Local object root refused: {}", e))?;
         let boundary = format!("----elastos{}", now_unix_secs());
@@ -2085,7 +2115,11 @@ impl IpfsProvider {
             .timeout(LARGE_HTTP_TIMEOUT)
             .send(body)
             .map_err(|e| format!("IPFS add local object failed: {}", e))?;
-        directory_root(resp)
+        directory_add_result(
+            resp,
+            include_file_cids,
+            object.files.iter().map(|file| file.path.as_str()),
+        )
     }
 
     fn add_directory_url(&self, pin: bool) -> String {
@@ -2215,6 +2249,26 @@ fn guess_mime(path: &str) -> &'static str {
 }
 
 /// Root CID of a wrapped directory add: the NDJSON entry with an empty Name.
+fn directory_add_result<'a>(
+    resp: ureq::Response,
+    include_file_cids: bool,
+    paths: impl Iterator<Item = &'a str>,
+) -> Result<serde_json::Value, String> {
+    if !include_file_cids {
+        return Ok(serde_json::json!({ "cid": directory_root(resp)? }));
+    }
+    const MAX_FILE_CID_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
+    let mut response = String::new();
+    resp.into_reader()
+        .take(MAX_FILE_CID_RESPONSE_BYTES + 1)
+        .read_to_string(&mut response)
+        .map_err(|error| format!("Failed to read directory add response: {error}"))?;
+    if response.len() as u64 > MAX_FILE_CID_RESPONSE_BYTES {
+        return Err("Directory add response exceeds its bound".into());
+    }
+    directory_add_file_cids(&response, paths)
+}
+
 fn directory_root(resp: ureq::Response) -> Result<String, String> {
     if resp.status() != 200 {
         return Err(format!("IPFS add directory failed: HTTP {}", resp.status()));
@@ -2229,6 +2283,40 @@ fn directory_root(resp: ureq::Response) -> Result<String, String> {
         .filter(|hash| !hash.is_empty())
         .next_back()
         .ok_or_else(|| "No root CID in IPFS response".to_string())
+}
+
+fn directory_add_file_cids<'a>(
+    body: &str,
+    paths: impl Iterator<Item = &'a str>,
+) -> Result<serde_json::Value, String> {
+    let mut outstanding: std::collections::BTreeSet<_> = paths.collect();
+    let mut file_cids = std::collections::BTreeMap::new();
+    let mut root = None;
+    for line in body.lines().filter(|line| !line.is_empty()) {
+        let entry: serde_json::Value =
+            serde_json::from_str(line).map_err(|_| "Malformed directory add response")?;
+        let name = entry["Name"]
+            .as_str()
+            .ok_or("Directory add response is missing a path")?;
+        let cid = entry["Hash"]
+            .as_str()
+            .filter(|cid| !cid.is_empty())
+            .ok_or("Directory add response is missing a CID")?;
+        if name.is_empty() {
+            if root.replace(cid.to_owned()).is_some() {
+                return Err("Directory add response has multiple roots".into());
+            }
+        } else if outstanding.remove(name) {
+            file_cids.insert(name.to_owned(), cid.to_owned());
+        } else if file_cids.contains_key(name) {
+            return Err("Directory add response has a duplicate file".into());
+        }
+    }
+    if !outstanding.is_empty() {
+        return Err("Directory add response does not cover every file".into());
+    }
+    let root = root.ok_or("No root CID in IPFS response")?;
+    Ok(serde_json::json!({ "cid": root, "file_cids": file_cids }))
 }
 
 fn parse_add_response(body: &str) -> Result<String, String> {
@@ -3173,6 +3261,22 @@ mod tests {
     const DIRECTORY_ROOT_RESPONSE: &[u8] =
         b"{\"Name\":\"assets/data.bin\",\"Hash\":\"bafkfile\"}\n{\"Name\":\"\",\"Hash\":\"bafyroot\"}\n";
 
+    #[test]
+    fn directory_add_returns_only_requested_files_and_refuses_missing_or_duplicate_rows() {
+        let file = r#"{"Name":"assets/data.bin","Hash":"bafkfile"}"#;
+        let directory = r#"{"Name":"assets","Hash":"bafydirectory"}"#;
+        let root = r#"{"Name":"","Hash":"bafyroot"}"#;
+        let parse = |body: &str| directory_add_file_cids(body, ["assets/data.bin"].into_iter());
+        assert_eq!(
+            parse(&[file, directory, root].join("\n")).unwrap(),
+            serde_json::json!({ "cid": "bafyroot", "file_cids": { "assets/data.bin": "bafkfile" } })
+        );
+        assert!(parse(&[directory, root].join("\n")).is_err());
+        assert!(parse(&[file, file, root].join("\n")).is_err());
+        assert!(parse(&[file, root, root].join("\n")).is_err());
+        assert!(parse(&[file, directory].join("\n")).is_err());
+    }
+
     fn multipart_boundary(headers: &str) -> String {
         headers
             .lines()
@@ -3225,8 +3329,8 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            provider.kubo_add_directory(encoded, false).unwrap(),
-            "bafyroot"
+            provider.kubo_add_directory(encoded, false, false).unwrap(),
+            serde_json::json!({ "cid": "bafyroot" })
         );
         let (json_headers, json_body) = server.join().unwrap();
 
@@ -3243,7 +3347,10 @@ mod tests {
                 .collect(),
         };
         assert!(local.valid_shape());
-        assert_eq!(provider.kubo_add_local_object(&local).unwrap(), "bafyroot");
+        assert_eq!(
+            provider.kubo_add_local_object(&local, false).unwrap(),
+            serde_json::json!({"cid": "bafyroot"})
+        );
         let (headers, body) = server.join().unwrap();
         // The same add options and parts, apart from the random boundary, give
         // Kubo the same directory, so the CID equals the original JSON import.
@@ -3251,6 +3358,31 @@ mod tests {
         assert_eq!(headers.lines().next(), json_headers.lines().next());
         assert!(headers.lines().next().unwrap().contains("&pin=false&"));
         assert!(!headers.to_ascii_lowercase().contains("transfer-encoding:"));
+        assert_eq!(
+            without_boundary(&body, &multipart_boundary(&headers)),
+            without_boundary(&json_body, &multipart_boundary(&json_headers))
+        );
+        let reply = concat!(
+            "{\"Name\":\"assets/data.bin\",\"Hash\":\"bafydata\"}\n",
+            "{\"Name\":\"index.html\",\"Hash\":\"bafyindex\"}\n",
+            "{\"Name\":\"_elastos_object.json\",\"Hash\":\"bafymanifest\"}\n",
+            "{\"Name\":\"\",\"Hash\":\"bafyroot\"}\n",
+        );
+        let (port, server) = add_http_fixture(200, reply.as_bytes());
+        let provider = bounded_cat_fixture_provider(root.path(), port);
+        assert_eq!(
+            provider.kubo_add_local_object(&local, true).unwrap(),
+            serde_json::json!({
+                "cid": "bafyroot",
+                "file_cids": {
+                    "assets/data.bin": "bafydata",
+                    "index.html": "bafyindex",
+                    "_elastos_object.json": "bafymanifest",
+                },
+            })
+        );
+        let (headers, body) = server.join().unwrap();
+        assert_eq!(headers.lines().next(), json_headers.lines().next());
         assert_eq!(
             without_boundary(&body, &multipart_boundary(&headers)),
             without_boundary(&json_body, &multipart_boundary(&json_headers))
@@ -3338,7 +3470,9 @@ mod tests {
                 ],
             };
             assert!(candidate.valid_shape());
-            let error = provider.kubo_add_local_object(&candidate).unwrap_err();
+            let error = provider
+                .kubo_add_local_object(&candidate, false)
+                .unwrap_err();
             assert!(error.starts_with(refusal), "{path}: {error}");
         }
     }

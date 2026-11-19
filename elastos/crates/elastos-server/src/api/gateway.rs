@@ -1329,6 +1329,14 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
             post(custody_pool_verify),
         )
         .route(
+            crate::custody_surface::ROUTE_POOL_ROLLOVER_PREPARE,
+            post(custody_rollover_prepare),
+        )
+        .route(
+            crate::custody_surface::ROUTE_POOL_ROLLOVER_CONSENT,
+            post(custody_rollover_consent),
+        )
+        .route(
             crate::custody_surface::ROUTE_POOL_NOTIFY,
             post(custody_pool_notify),
         )

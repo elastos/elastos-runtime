@@ -95,10 +95,16 @@ export function cardAccessState(listing) {
  */
 export function createReadSlots(limit) {
   let active = 0;
+  let paused = false;
   const wakers = new Set();
+  function wakeWaitingReads() {
+    for (const wake of [...wakers]) {
+      wake();
+    }
+  }
   return {
     tryAcquire() {
-      if (active >= limit) {
+      if (paused || active >= limit) {
         return false;
       }
       active += 1;
@@ -106,9 +112,16 @@ export function createReadSlots(limit) {
     },
     release() {
       active -= 1;
-      for (const wake of [...wakers]) {
-        wake();
+      if (!paused) {
+        wakeWaitingReads();
       }
+    },
+    pause() {
+      paused = true;
+    },
+    resume() {
+      paused = false;
+      wakeWaitingReads();
     },
     onRelease(wake) {
       wakers.add(wake);
@@ -166,7 +179,10 @@ export function createAccessWatch({
 
   function state(key) {
     const entry = entries.get(key);
-    return entry && valid(entry) ? entry.state : "checking";
+    if (!entry || !valid(entry) || (entry.state === "retrying" && inFlight.has(key))) {
+      return "checking";
+    }
+    return entry.state;
   }
 
   function listing(key) {
@@ -272,6 +288,9 @@ export function createAccessWatch({
   async function run(key) {
     inFlight.add(key);
     const startedAt = now();
+    if (entries.get(key)?.state === "retrying") {
+      onChange(key);
+    }
     let result;
     try {
       result = await withReadDeadline(read(key), { kind: "retry" }, setTimer, clearTimer);
@@ -326,6 +345,7 @@ export function createAccessWatch({
   // running and answers as it would have. Shown cards without a state are
   // then read again.
   function forget(key) {
+    const repaint = key !== undefined && shown.has(key) && entries.has(key);
     const keys = key === undefined ? new Set([...entries.keys(), ...retryTimers.keys()]) : [key];
     for (const each of keys) {
       entries.delete(each);
@@ -334,7 +354,13 @@ export function createAccessWatch({
         retryTimers.delete(each);
       }
     }
+    if (repaint && !inFlight.has(key)) {
+      queue = [key, ...queue.filter((queued) => queued !== key)];
+    }
     show(shown);
+    if (repaint) {
+      onChange(key);
+    }
   }
 
   return { state, listing, note, show, pause, resume, forget };

@@ -629,6 +629,7 @@ impl<S: PoolContentSource> PoolSessionContentPort for ContentPlanePoolContentPor
 
 pub(crate) struct CustodyPoolServiceProvider<P, D, C, A> {
     server: PoolSessionServer<P, D, C, A>,
+    remote_seals: crate::custody_pool_seal::RemoteObjectSealService,
     data_dir: PathBuf,
     decrypt_ready: Arc<AtomicBool>,
     /// Where readiness is read; `None` keeps the flag as set (tests).
@@ -652,6 +653,7 @@ where
     ) -> Self {
         Self {
             server,
+            remote_seals: Default::default(),
             data_dir,
             decrypt_ready,
             registry,
@@ -677,10 +679,22 @@ where
     async fn answer(
         &self,
         op: &str,
-        request: &Value,
+        request: Value,
         source: &PoolSessionSource,
     ) -> Result<Value, &'static str> {
         let now = (self.clock)();
+        if crate::custody_surface::is_pool_seal_op(op) {
+            let registry = self
+                .registry
+                .as_ref()
+                .and_then(Weak::upgrade)
+                .ok_or("not_eligible_sealer")?;
+            return self
+                .remote_seals
+                .answer(&self.data_dir, &registry, op, request, source, now)
+                .await;
+        }
+        let request = &request;
         let refusal = |refusal: PoolSessionRefusal| refusal.code();
         match op {
             OP_CUSTODY_POOL_DESCRIBE => {
@@ -787,8 +801,10 @@ where
                 local: false,
             },
         };
-        self.refresh_readiness().await;
-        Ok(match self.answer(&op, &value, &source).await {
+        if !crate::custody_surface::is_pool_seal_op(&op) {
+            self.refresh_readiness().await;
+        }
+        Ok(match self.answer(&op, value, &source).await {
             Ok(data) => json!({ "status": "ok", "data": data }),
             Err(code) => {
                 // OPEN-LOOP F2: an operator sees why a pool open failed; the

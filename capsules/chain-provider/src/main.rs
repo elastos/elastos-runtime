@@ -3011,8 +3011,8 @@ impl ChainProvider {
         let mut first_error = None;
         let mut first_disagreement = None;
         let mut any_pending = false;
-        for rpc_url in &market.evidence_rpc_urls {
-            match self.observe_protected_content_mint_receipt_source(
+        let observe = |rpc_url: &str| {
+            self.observe_protected_content_mint_receipt_source(
                 network,
                 rpc_url,
                 mint,
@@ -3022,7 +3022,16 @@ impl ChainProvider {
                 ledger,
                 token_uri,
                 op_type_code,
-            ) {
+            )
+        };
+        // Read every source, including potential dissent, and retain configured
+        // order for error selection. At most two independent reads overlap.
+        let readings = market
+            .evidence_rpc_urls
+            .chunks(2)
+            .flat_map(|sources| read_sources_in_parallel(sources, &observe));
+        for reading in readings {
+            match reading {
                 Ok(MintReceiptSourceReading::Confirmed(observation)) => {
                     successful.push(observation)
                 }
@@ -3752,31 +3761,34 @@ impl ChainProvider {
         }))
     }
 
-    /// Observes a corroborated read's sources one by one (R47): origins still
-    /// cooling after a persistent 429 are asked last, and asking stops once
-    /// two observations agree on the same finalized block hash and tuple.
-    /// Returns what was observed, by source, and the first hard error a
-    /// source raised. Chain-id, pinning and disagreement rules stay with the
-    /// caller and apply to everything observed.
+    /// Start the first two sources together, then try further sources in
+    /// order until two agree. Sources cooling after a persistent 429 go last.
+    /// Return observations and the first hard error in that same source order.
+    /// The caller handles chain identity, block pinning and disagreements.
     fn observe_corroborating_sources<T, F>(
         &self,
         evidence_rpc_urls: &[String],
-        mut observe: F,
+        observe: F,
     ) -> (Vec<(String, T)>, Option<Response>)
     where
-        T: FinalizedObservation + PartialEq,
-        F: FnMut(&str) -> Result<Option<T>, Response>,
+        T: FinalizedObservation + PartialEq + Send,
+        F: Fn(&str) -> Result<Option<T>, Response> + Sync,
     {
+        let order = self.corroboration_order(evidence_rpc_urls);
+        let (first_sources, remaining_sources) = order.split_at(order.len().min(2));
+        let first_readings = read_sources_in_parallel(first_sources, &observe);
+        let readings = first_sources
+            .iter()
+            .zip(first_readings)
+            .chain(remaining_sources.iter().map(|url| (url, observe(url))));
         let mut observed = Vec::new();
         let mut first_error = None;
-        for rpc_url in self.corroboration_order(evidence_rpc_urls) {
-            match observe(&rpc_url) {
-                Ok(Some(observation)) => observed.push((rpc_url, observation)),
+        for (url, reading) in readings {
+            match reading {
+                Ok(Some(observation)) => observed.push((url.clone(), observation)),
                 Ok(None) => {}
                 Err(response) => {
-                    if first_error.is_none() {
-                        first_error = Some(response);
-                    }
+                    first_error.get_or_insert(response);
                 }
             }
             if two_observations_agree(&observed) {
@@ -3787,8 +3799,8 @@ impl ChainProvider {
     }
 
     /// The rights read's form of [`Self::observe_corroborating_sources`]: the
-    /// same sources, order and stopping rule, with independent sources asked
-    /// together instead of one after another.
+    /// same source order and stopping rule, with replacement reads started
+    /// as soon as a source drops out.
     ///
     /// No more sources are in flight than agreement can still need -- two
     /// before anything is observed, one after -- and the next source in
@@ -5535,6 +5547,30 @@ impl FinalizedObservation for ProtectedContentItemOffersObservation {
     fn finalized_block_hash(&self) -> Digest32 {
         self.finalized_block_hash
     }
+}
+
+/// Read a batch together and return the answers in source order.
+fn read_sources_in_parallel<T: Send>(
+    sources: &[String],
+    read: &(impl Fn(&str) -> T + Sync),
+) -> Vec<T> {
+    let Some((first, remaining)) = sources.split_first() else {
+        return Vec::new();
+    };
+    std::thread::scope(|scope| {
+        let calls = remaining
+            .iter()
+            .map(|url| scope.spawn(|| read(url)))
+            .collect::<Vec<_>>();
+        let first_reading = read(first);
+        std::iter::once(first_reading)
+            .chain(
+                calls
+                    .into_iter()
+                    .map(|call| call.join().expect("chain observation panicked")),
+            )
+            .collect()
+    })
 }
 
 /// R47: a corroborated read has what it needs once two observations agree on

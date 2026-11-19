@@ -17,14 +17,29 @@ import {
   downloadControl,
   DOWNLOAD_NO_ACCESS_COPY,
   DOWNLOAD_UNAVAILABLE_COPY,
+  MARKET_CARD_ACCESS_SCHEMA_V1,
   MARKET_LISTING_SCHEMA_V1,
   downloadRefusalCopy,
   marketItemClaim,
   marketItemKey,
   offersWithRecordedAttempt,
   parseBuyOfferAnswer,
+  parseMarketCardAccess,
   parseMarketListing,
 } from "./market-listing.js";
+
+test("card access accepts only an account-bound positive answer without offers", () => {
+  const { item, asset } = listingFixture();
+  const card = { schema: MARKET_CARD_ACCESS_SCHEMA_V1, item, asset,
+    access_state: "purchased", access_subject: "ab".repeat(16) };
+  assert.equal(parseMarketCardAccess(card).listing?.accessState, "purchased");
+  assert.equal(parseMarketListing(card).ok, false);
+  for (const invalid of [
+    { access_state: "available" }, { access_subject: null }, { custody_route: "other" }, { offers: [] },
+  ]) {
+    assert.equal(parseMarketCardAccess({ ...card, ...invalid }).ok, false);
+  }
+});
 
 // Built inline from the written contract (the listing object and the
 // buy_offer answers). The producer-written fixtures are exercised by the

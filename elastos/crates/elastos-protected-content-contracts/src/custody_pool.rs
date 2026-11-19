@@ -736,8 +736,7 @@ pub fn validate_custody_epoch_against_pool_at(
         signed_pool,
         signed_epoch,
         signed_committee_authorization,
-        now_unix_seconds,
-        validate_pool_member_active_at,
+        |member| validate_pool_member_active_at(member, now_unix_seconds),
     )
 }
 
@@ -760,8 +759,26 @@ pub fn validate_custody_epoch_for_release_at(
         signed_pool,
         signed_epoch,
         signed_committee_authorization,
-        now_unix_seconds,
-        validate_pool_member_releasable_at,
+        |member| validate_pool_member_releasable_at(member, now_unix_seconds),
+    )
+}
+
+/// Authenticate the committee as recorded in a historical artifact. This
+/// check is never sufficient to authorize current release or provisioning.
+pub(crate) fn validate_custody_epoch_for_history(
+    expected_policy_authority: CustodyEpochIssuerKeyV1,
+    expected_authorization_identity: CustodyCommitteeAuthorizationIdentityV1,
+    signed_pool: &SignedCustodyPoolV1,
+    signed_epoch: &SignedCustodyEpochV1,
+    signed_committee_authorization: &SignedCustodyCommitteeAuthorizationV1,
+) -> Result<ValidatedCustodyCommitteeV1, CustodyPoolError> {
+    validate_custody_epoch_with_member_rule(
+        expected_policy_authority,
+        expected_authorization_identity,
+        signed_pool,
+        signed_epoch,
+        signed_committee_authorization,
+        validate_pool_member_not_revoked,
     )
 }
 
@@ -771,8 +788,7 @@ fn validate_custody_epoch_with_member_rule(
     signed_pool: &SignedCustodyPoolV1,
     signed_epoch: &SignedCustodyEpochV1,
     signed_committee_authorization: &SignedCustodyCommitteeAuthorizationV1,
-    now_unix_seconds: u64,
-    member_rule: fn(&CustodyPoolMemberV1, u64) -> Result<(), CustodyPoolError>,
+    member_rule: impl Fn(&CustodyPoolMemberV1) -> Result<(), CustodyPoolError>,
 ) -> Result<ValidatedCustodyCommitteeV1, CustodyPoolError> {
     let verified_pool = signed_pool.verify(expected_policy_authority)?;
     let verified_epoch = signed_epoch.verify()?;
@@ -801,7 +817,7 @@ fn validate_custody_epoch_with_member_rule(
         if verified_epoch.approved_suites() != member.approved_suites() {
             return Err(CustodyPoolError::BindingMismatch("approved_suites"));
         }
-        member_rule(member, now_unix_seconds)?;
+        member_rule(member)?;
         if !operators.insert(member.operator_id()) {
             return Err(CustodyPoolError::PolicyViolation("duplicate_operator"));
         }
@@ -829,10 +845,7 @@ fn validate_pool_member_active_at(
     if now_unix_seconds >= member.valid_until() {
         return Err(CustodyPoolError::Expired);
     }
-    if member.state() == CustodyPoolMemberStateV1::Revoked {
-        return Err(CustodyPoolError::Revoked);
-    }
-    Ok(())
+    validate_pool_member_not_revoked(member)
 }
 
 fn validate_pool_member_releasable_at(
@@ -842,6 +855,10 @@ fn validate_pool_member_releasable_at(
     if now_unix_seconds < member.valid_from() {
         return Err(CustodyPoolError::NotYetValid);
     }
+    validate_pool_member_not_revoked(member)
+}
+
+fn validate_pool_member_not_revoked(member: &CustodyPoolMemberV1) -> Result<(), CustodyPoolError> {
     if member.state() == CustodyPoolMemberStateV1::Revoked {
         return Err(CustodyPoolError::Revoked);
     }

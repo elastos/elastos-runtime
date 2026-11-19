@@ -7,7 +7,7 @@
 //! All first-party providers (did, peer, model) use the `elastos://` namespace
 //! exclusively: `elastos://did/*`, `elastos://peer/*`, `elastos://model/*`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -15,10 +15,13 @@ use tokio::sync::{Mutex, RwLock};
 use base64::Engine as _;
 use elastos_common::localhost::{parse_localhost_path, parse_localhost_uri};
 
-fn private_ipfs_operation(op: &str) -> bool {
+pub const STAGED_CONTENT_PUBLISH_OP: &str = "runtime_publish_staged_content";
+
+fn private_storage_operation(op: &str) -> bool {
     matches!(
         op,
-        "runtime_prepare_backend"
+        STAGED_CONTENT_PUBLISH_OP
+            | "runtime_prepare_backend"
             | "runtime_hash_staged_directory"
             | "runtime_check_capacity"
             | "runtime_add_local_object"
@@ -1642,6 +1645,43 @@ impl ProviderRegistry {
         root: &std::path::Path,
         files: &[(String, u64)],
     ) -> Result<String, ProviderError> {
+        let request = Self::local_ipfs_object_request(root, files)?;
+        let result = self.send_local_ipfs_preparation(&request).await?;
+        LocalDirectoryHashResult::directory_cid(result)
+    }
+
+    /// Stream an unpinned local object and return the complete file CID table
+    /// from that same add. Content validates the table and decides retention.
+    pub async fn add_local_ipfs_object_with_file_cids(
+        &self,
+        root: &std::path::Path,
+        files: &[(String, u64)],
+    ) -> Result<(String, BTreeMap<String, String>), ProviderError> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct AddedObject {
+            cid: String,
+            file_cids: BTreeMap<String, String>,
+        }
+
+        let mut request = Self::local_ipfs_object_request(root, files)?;
+        request["include_file_cids"] = true.into();
+        let LocalIpfsResult::Ok {
+            data: Some(AddedObject { cid, file_cids }),
+        } = self.send_local_ipfs_preparation(&request).await?
+        else {
+            return Err(private_ipfs_unavailable());
+        };
+        let cid = LocalDirectoryHashResult::directory_cid(LocalIpfsResult::Ok {
+            data: Some(LocalDirectoryHashResult { cid }),
+        })?;
+        Ok((cid, file_cids))
+    }
+
+    fn local_ipfs_object_request(
+        root: &std::path::Path,
+        files: &[(String, u64)],
+    ) -> Result<serde_json::Value, ProviderError> {
         let root = checked_local_root(root)?;
         if files.is_empty() || files.len() > MAX_LOCAL_OBJECT_FILES {
             return Err(private_ipfs_unavailable());
@@ -1653,12 +1693,7 @@ impl ProviderRegistry {
                 .map(|(path, size)| LocalStagedFile { path, size: *size })
                 .collect(),
         };
-        let result = self
-            .send_local_ipfs_preparation(
-                &serde_json::json!({"op":"runtime_add_local_object","object":object}),
-            )
-            .await?;
-        LocalDirectoryHashResult::directory_cid(result)
+        Ok(serde_json::json!({"op":"runtime_add_local_object","object":object}))
     }
 
     /// Observe the actual Ready backend volume through the exact local provider.
@@ -1806,7 +1841,7 @@ impl ProviderRegistry {
         if request
             .get("op")
             .and_then(|v| v.as_str())
-            .is_some_and(private_ipfs_operation)
+            .is_some_and(private_storage_operation)
         {
             return Err(private_ipfs_unavailable());
         }
@@ -1834,6 +1869,27 @@ impl ProviderRegistry {
         provider.send_raw(request).await
     }
 
+    /// Dispatch the internal staged publication to the registered Content plane.
+    /// A local path is an implementation detail and has no capability resource.
+    pub async fn publish_staged_content(
+        &self,
+        request: &serde_json::Value,
+    ) -> Result<serde_json::Value, ProviderError> {
+        if request["op"] != STAGED_CONTENT_PUBLISH_OP {
+            return Err(private_ipfs_unavailable());
+        }
+        let provider = self
+            .sub_providers
+            .read()
+            .await
+            .get("content")
+            .and_then(SubProviderRegistration::ready_provider)
+            .ok_or_else(|| ProviderError::NoProvider("content".into()))?;
+        provider
+            .send_raw_fenced(request, super::dispatch::current())
+            .await
+    }
+
     async fn send_raw_with_target_visibility(
         &self,
         scheme: &str,
@@ -1848,7 +1904,7 @@ impl ProviderRegistry {
         if request
             .get("op")
             .and_then(|v| v.as_str())
-            .is_some_and(private_ipfs_operation)
+            .is_some_and(private_storage_operation)
         {
             return Err(private_ipfs_unavailable());
         }
@@ -1917,12 +1973,12 @@ impl ProviderRegistry {
                 "provider configuration is Runtime-owned".into(),
             ));
         }
-        if private_ipfs_operation(&invocation.op)
+        if private_storage_operation(&invocation.op)
             || invocation
                 .request
                 .get("op")
                 .and_then(|v| v.as_str())
-                .is_some_and(private_ipfs_operation)
+                .is_some_and(private_storage_operation)
         {
             return Err(private_ipfs_unavailable());
         }

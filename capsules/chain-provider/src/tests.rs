@@ -4211,6 +4211,36 @@ fn resolve_mint_receipt_against_urls(evidence_rpc_urls: Vec<String>) -> Response
     })
 }
 
+#[test]
+fn mint_receipt_overlaps_the_first_two_independent_sources() {
+    let gated_source = || {
+        let (started, observed) = std::sync::mpsc::channel();
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let url = spawn_rpc_state_server_with_first_request(
+            canonical_mint_receipt_source("0x35"),
+            move || {
+                let _ = started.send(());
+                let _ = wait.recv_timeout(Duration::from_secs(5));
+            },
+        );
+        (url, observed, release)
+    };
+    let (first, first_started, release_first) = gated_source();
+    let (second, second_started, release_second) = gated_source();
+    let resolution =
+        std::thread::spawn(move || resolve_mint_receipt_against_urls(vec![first, second]));
+    let first_observed = first_started.recv_timeout(Duration::from_secs(2));
+    let second_observed = second_started.recv_timeout(Duration::from_secs(2));
+    drop((release_first, release_second));
+    let response = resolution.join().unwrap();
+    assert!(first_observed.is_ok(), "the first source must be asked");
+    assert!(
+        second_observed.is_ok(),
+        "the second source must start before the first answers"
+    );
+    assert_eq!(ok_data(response)["token_id"], "0x3");
+}
+
 /// A block that is not yet deep enough may still change, so what it says
 /// about the receipt is not yet an answer.
 ///
@@ -5506,6 +5536,44 @@ fn resolve_protected_content_mint_receipt_rejects_invalid_or_ambiguous_receipts(
     );
 }
 
+fn resolve_market_request_with_overlapping_sources(
+    sequence: Vec<(&'static str, Value, Value)>,
+    request: Request,
+) -> Response {
+    let (started, observed) = std::sync::mpsc::channel();
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let first = spawn_rpc_state_server_with_first_request(sequence.clone(), move || {
+        started.send(()).unwrap();
+        let _ = wait.recv_timeout(Duration::from_secs(5));
+    });
+    let (second_started, second_observed) = std::sync::mpsc::channel();
+    let second = spawn_rpc_state_server_with_first_request(sequence, move || {
+        let _ = second_started.send(());
+    });
+    let resolution = std::thread::spawn(move || {
+        let mut provider = provider_with_rights_rpc_policies_and_purchase(
+            "http://127.0.0.1:9".to_string(),
+            "0x12345678",
+            json!([]),
+            protected_content_market_source(vec![first, second]),
+        );
+        provider.handle(request)
+    });
+    let first_request = observed.recv_timeout(Duration::from_secs(2));
+    let second_request = second_observed.recv_timeout(Duration::from_secs(2));
+    drop(release);
+    let response = resolution.join().unwrap();
+    assert!(
+        first_request.is_ok(),
+        "the first market source must be asked"
+    );
+    assert!(
+        second_request.is_ok(),
+        "the second market source must start before the first answers"
+    );
+    response
+}
+
 #[test]
 fn resolve_protected_content_verified_listing_returns_common_finalized_tuple() {
     let finalized_hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
@@ -5575,23 +5643,15 @@ fn resolve_protected_content_verified_listing_returns_common_finalized_tuple() {
             )),
         ),
     ];
-    let mut provider = provider_with_rights_rpc_policies_and_purchase(
-        "http://127.0.0.1:9".to_string(),
-        "0x12345678",
-        json!([]),
-        protected_content_market_source(vec![
-            spawn_rpc_sequence_asserting_server(sequence.clone()),
-            spawn_rpc_sequence_asserting_server(sequence),
-        ]),
-    );
-    let listing = ok_data(
-        provider.handle(Request::ResolveProtectedContentVerifiedListing {
+    let listing = ok_data(resolve_market_request_with_overlapping_sources(
+        sequence,
+        Request::ResolveProtectedContentVerifiedListing {
             network: "esc-local".to_string(),
             seller: "0x0000000000000000000000000000000000000011".to_string(),
             ledger: "0x0000000000000000000000000000000000000022".to_string(),
             token_id: "0x03".to_string(),
-        }),
-    );
+        },
+    ));
     assert_eq!(listing["schema"], PROTECTED_CONTENT_VERIFIED_LISTING_SCHEMA);
     assert_eq!(listing["chain_id"], 20);
     assert_eq!(
@@ -5846,20 +5906,14 @@ fn resolve_protected_content_item_reads_operative_and_token_uri() {
             abi_encoded_string_for_test(token_uri),
         ),
     ];
-    let mut provider = provider_with_rights_rpc_policies_and_purchase(
-        "http://127.0.0.1:9".to_string(),
-        "0x12345678",
-        json!([]),
-        protected_content_market_source(vec![
-            spawn_rpc_sequence_asserting_server(sequence.clone()),
-            spawn_rpc_sequence_asserting_server(sequence),
-        ]),
-    );
-    let item = ok_data(provider.handle(Request::ResolveProtectedContentItem {
-        network: "esc-local".to_string(),
-        ledger: ledger.to_string(),
-        token_id: "0x3".to_string(),
-    }));
+    let item = ok_data(resolve_market_request_with_overlapping_sources(
+        sequence,
+        Request::ResolveProtectedContentItem {
+            network: "esc-local".to_string(),
+            ledger: ledger.to_string(),
+            token_id: "0x3".to_string(),
+        },
+    ));
     assert_eq!(item["schema"], PROTECTED_CONTENT_ITEM_SCHEMA);
     assert_eq!(item["operative"], operative);
     assert_eq!(item["token_uri"], token_uri);

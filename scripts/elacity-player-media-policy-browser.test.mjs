@@ -123,9 +123,30 @@ function makeDashItem(dir) {
 
 const CONTENT_TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png" };
 
+function pendingOpen(stage) {
+  const awaitingWallet = stage === "rights_approval";
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    status: "error",
+    code: "library_error",
+    message: "Runtime custody viewer release is pending",
+    open_progress: {
+      schema: "elastos.protected-content.open-progress/v1",
+      stage,
+      resumable: true,
+      awaits_person: awaitingWallet,
+      connector_id: awaitingWallet ? "metamask" : null,
+      approval_request_id: awaitingWallet ? "approval-7" : null,
+      expires_at: awaitingWallet ? now + 290 : null,
+      ready_at: awaitingWallet ? null : now + 15,
+    },
+  };
+}
+
 /** The Player's own files under `policy`, and a provider that serves `item`. */
-async function startPlayerHome(item, policyFor) {
+async function startPlayerHome(item, policyFor, waitForFinality) {
   const calls = { open_viewer: 0, read_viewer: 0, close_viewer: 0 };
+  const openRequests = [];
   let nextPart = 0;
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://placeholder");
@@ -151,7 +172,12 @@ async function startPlayerHome(item, policyFor) {
       req.on("end", () => {
         calls[op] = (calls[op] ?? 0) + 1;
         const json = (data) => send(200, "application/json", JSON.stringify({ status: "ok", data }));
-        if (op === "open_viewer") return json(item.open);
+        if (op === "open_viewer") {
+          openRequests.push(JSON.parse(body));
+          const stage = waitForFinality && ["finalizing", "rights_approval"][openRequests.length - 1];
+          if (stage) return send(409, "application/json", JSON.stringify(pendingOpen(stage)));
+          return json(item.open);
+        }
         if (op === "close_viewer") return json({ closed: true });
         if (op === "read_viewer") {
           const request = JSON.parse(body);
@@ -193,20 +219,34 @@ async function startPlayerHome(item, policyFor) {
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  return { origin, calls, partsTotal: item.parts.length, partsRead: () => nextPart, close: () => server.close() };
+  return { origin, calls, openRequests, partsTotal: item.parts.length, partsRead: () => nextPart, close: () => server.close() };
 }
 
 /** Opens the Player as Home launches it and reports where playback ended. */
-async function playUnder(policyFor) {
+async function playUnder(policyFor, { waitForFinality = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "elacity-player-media-"));
-  const home = await startPlayerHome(makeDashItem(dir), policyFor);
-  const { chromium } = await importProductSmokePlaywright();
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  let home;
+  let browser;
   const consoleLines = [];
   try {
+    home = await startPlayerHome(makeDashItem(dir), policyFor, waitForFinality);
+    const { chromium } = await importProductSmokePlaywright();
+    browser = await chromium.launch({ channel: "chrome", headless: true });
     const page = await browser.newPage();
     page.on("console", (message) => consoleLines.push(`${message.type()}: ${message.text()}`));
     await page.goto(`${home.origin}/apps/elacity-player/?mint_id=${MINT}#home_token=demo-home-token`);
+    if (waitForFinality) {
+      const overlay = page.locator("#player-overlay-text");
+      await overlay.filter({ hasText: /being finalized on chain/ }).waitFor({ timeout: 5_000 });
+      assert.equal(home.calls.open_viewer, 1);
+      assert.equal(home.calls.read_viewer, 0);
+      assert.equal(await page.locator(".player-action").count(), 0);
+
+      await overlay.filter({ hasText: /approve playing this in metamask/i }).waitFor({ timeout: 20_000 });
+      assert.equal(home.calls.open_viewer, 2);
+      assert.equal(home.calls.read_viewer, 0);
+      assert.equal(await page.locator(".player-action").count(), 0);
+    }
     await page
       .waitForFunction(
         () => {
@@ -228,10 +268,10 @@ async function playUnder(policyFor) {
         src: video?.currentSrc ?? "",
       };
     });
-    return { ...seen, calls: { ...home.calls }, partsRead: home.partsRead(), partsTotal: home.partsTotal, console: consoleLines };
+    return { ...seen, calls: { ...home.calls }, openRequests: home.openRequests, partsRead: home.partsRead(), partsTotal: home.partsTotal, console: consoleLines };
   } finally {
-    await browser.close();
-    home.close();
+    await browser?.close();
+    home?.close();
     rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -253,6 +293,13 @@ test("control: the same Player and item play once media-src also allows blob:", 
   const seen = await playUnder((origin) => withBlobMedia(runtimePlayerPolicy(origin)));
   assert.equal(seen.mediaError, null, JSON.stringify(seen, null, 2));
   assert.equal(seen.calls.open_viewer, 1);
+  assert.equal(seen.partsRead, seen.partsTotal, JSON.stringify(seen, null, 2));
+  assert.ok(seen.currentTime > 0.5, JSON.stringify(seen, null, 2));
+});
+
+test("the Player retries after chain finality and plays once Wallet approval is ready", { skip }, async () => {
+  const seen = await playUnder(runtimePlayerPolicy, { waitForFinality: true });
+  assert.deepEqual(seen.openRequests, Array.from({ length: 3 }, () => ({ mint_id: MINT })));
   assert.equal(seen.partsRead, seen.partsTotal, JSON.stringify(seen, null, 2));
   assert.ok(seen.currentTime > 0.5, JSON.stringify(seen, null, 2));
 });

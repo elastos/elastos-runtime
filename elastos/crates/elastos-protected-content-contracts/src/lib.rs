@@ -17,8 +17,10 @@ mod node_set;
 mod policy;
 mod pool;
 mod pool_mint;
+mod pool_rollover;
 mod recipient_authorization;
 mod release_request;
+mod remote_seal;
 mod replay;
 mod rights;
 mod rights_receipt;
@@ -114,6 +116,11 @@ pub use pool::{
     MAX_VIEWER_DASH_RENDITION_V1,
 };
 pub use pool_mint::{PoolMintShareStatementV1, SignedPoolMintShareV1};
+pub use pool_rollover::{
+    ExpectedPoolRolloverReadinessV1, PoolRolloverConsentV1, PoolRolloverMemberEvidenceV1,
+    PoolRolloverProposalV1, PoolRolloverReadinessV1, SignedPoolRolloverConsentV1,
+    SignedPoolRolloverProposalV1, SignedPoolRolloverReadinessV1,
+};
 pub use recipient_authorization::{
     RecipientAuthorizationError, RecipientKeyAuthorizationContextV1,
     RecipientKeyAuthorizationStatementV1, RecipientPublicKeyBytesV1, RuntimeOperationIssuerKeyV1,
@@ -123,6 +130,14 @@ pub use recipient_authorization::{
 pub use release_request::{
     KeyReleaseError, KeyReleaseRequestV1, VerifiedKeyReleaseRequestV1,
     MAX_RELEASE_REQUEST_LIFETIME_SECS,
+};
+pub use remote_seal::{
+    ClearLayoutV1, ClearPartIndexV1, ClearRenditionV1, MintPieceAadV1, MintRequestV1,
+    PoolProvisioningAuthorizationV1, RemoteShareAdmissionV1, SealCompletedV1,
+    SealSessionAttestationV1, SignedMintRequestV1, SignedPoolProvisioningAuthorizationV1,
+    SignedSealCompletedV1, SignedSealSessionAttestationV1, MAX_REMOTE_SHARE_ADMISSION_BYTES_V1,
+    SEAL_DASH_MAX_SEGMENTS_PER_RENDITION, SEAL_OBJECT_CHUNK_CLEAR_BYTES,
+    SEAL_PIECE_MAX_CLEAR_BYTES, SEAL_PIECE_OVERHEAD_BYTES, SEAL_SESSION_GRACE_SECS,
 };
 pub use replay::{AtomicReplayClaimer, ReplayClaimEntryV1, ReplayClaimError, ReplayClaimKeyV1};
 pub use rights::{

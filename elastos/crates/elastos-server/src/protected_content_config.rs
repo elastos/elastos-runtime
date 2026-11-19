@@ -581,8 +581,8 @@ pub(crate) fn store_custody_node_descriptor_at(
     }
 }
 
-/// Sign the composition and install it create-only, then prove it through the
-/// Runtime loader, removing the file if the loader refuses it.
+/// Sign the composition and validate it through the Runtime loader before
+/// publishing it create-only.
 pub(crate) fn install_custody_composition(
     data_dir: &Path,
     authority_key: &Path,
@@ -595,20 +595,20 @@ pub(crate) fn install_custody_composition(
 
     validate_existing_data_dir(data_dir)?;
     ensure_owner_only_dir(&protected_content_root(data_dir), "protected-content root")?;
+    let config_bytes =
+        crate::protected_content_runtime::validate_generated_custody_composition(config_bytes)
+            .context("generated custody composition failed loader validation")?;
     let config_path = runtime_custody_composition_config_path(data_dir);
+    let installed = installed_custody_composition(&config, &config_bytes)?;
     create_owner_only_file(&config_path, &config_bytes, "custody composition")?;
-
-    // The Runtime loader is the single validation authority; prove the
-    // installed file end to end before reporting success.
-    if let Err(error) = crate::protected_content_runtime::load_runtime_custody_composition(
+    if let Err(error) = crate::protected_content_runtime::verify_published_custody_composition(
         data_dir,
-        std::sync::Arc::new(elastos_runtime::provider::ProviderRegistry::new()),
+        &config_bytes,
     ) {
         let _ = std::fs::remove_file(&config_path);
-        return Err(error.context("generated custody composition failed loader validation"));
+        return Err(error.context("published custody composition failed file validation"));
     }
-
-    installed_custody_composition(&config, &config_bytes)
+    Ok(installed)
 }
 
 pub(crate) fn verify_installed_custody_composition(
@@ -913,7 +913,7 @@ pub(crate) struct ValidatedCustodyNodeDescriptor {
     pub(crate) transport: RuntimeCustodyRouteTransportConfig,
 }
 
-fn read_policy_authority_key(path: &Path) -> anyhow::Result<SigningKey> {
+pub(crate) fn read_policy_authority_key(path: &Path) -> anyhow::Result<SigningKey> {
     let bytes = read_owner_only_file(path, 32, "protected-content policy authority key")?;
     let key: [u8; 32] = bytes.try_into().map_err(|_| {
         anyhow::anyhow!("protected-content policy authority key must contain exactly 32 bytes")

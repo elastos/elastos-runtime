@@ -132,6 +132,7 @@ fn sample_package() -> RuntimePortableListingPackage {
         published_at: Some(1),
         pool_mint_share_b64: None,
         sealed_rights_policy_base64: None,
+        remote_seal: None,
     }
 }
 

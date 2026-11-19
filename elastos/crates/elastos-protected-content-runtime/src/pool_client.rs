@@ -231,7 +231,7 @@ fn eligible_servers<'a>(
         .collect()
 }
 
-fn rendezvous_weight(session_seed: &[u8; 16], node: NodePublicKey) -> [u8; 32] {
+pub(crate) fn rendezvous_weight(session_seed: &[u8; 16], node: NodePublicKey) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(session_seed);
     hasher.update(node.as_bytes());
@@ -295,6 +295,8 @@ pub fn stripe_index(part: &ViewerPartIndexV1, servers: usize) -> usize {
 pub enum PoolCallClass {
     Control,
     Read,
+    SealUpload,
+    SealFinalize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

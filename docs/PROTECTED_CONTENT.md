@@ -218,6 +218,14 @@ clear media, staging, CEKs, shares and private process handles inside their
 owned boundaries. Carrier transports Runtime-selected content and custody
 operations; no capsule receives the transport route or key material.
 
+An independent Home can mint into a pool it uses. Its local protect provider
+encrypts the asset, and the pool's custody providers store the shares. The
+`custody-pool` service exposes descriptor discovery and playback sessions.
+It has no operation for encrypting another Home's asset. The descriptor's
+`max_seals_per_sealer` field is reserved for that workflow and does not
+enforce a host-wide limit today. The separate rights-policy seal is applied
+after Runtime verifies the finalized chain binding for the same asset.
+
 ### Importing a shared listing on another Home
 
 Import first verifies the original published package, metadata, chain binding
@@ -299,10 +307,14 @@ Runtime's own `manifest.json` in the same folder is never required to buy.
 
 The Runtime builds the listing object from the chain and that folder; the
 index (today the Elacity GraphQL endpoint) contributes an identifier and
-display text only, nothing the purchase relies on. Offers are read with the
-existing multi-source corroboration, every source pinned to the lowest
-finalized block among them; at most 32 sellers are read per item, and a
-listing states `offers_truncated` when there were more. A `buy_offer`
+display text only, nothing the purchase relies on. The chain provider starts
+the first two independent sources together for item, offer, KID binding, and
+verified-listing reads. It tries further sources in order when needed and
+pins disagreeing finalized heights to the lowest observed finalized block.
+Mint receipt verification reads all configured sources, up to two at a time,
+so a conflicting receipt still participates in the decision. At most 32
+sellers are read per item, and a listing states `offers_truncated` when there
+were more. A `buy_offer`
 request names the item, the asset URI, the seller and the terms the buyer
 agreed to. A purchase rests on the chain's terms only: Runtime verifies the
 item from the chain alone — `(ledger, token_id)` to a non-zero operative,
@@ -386,29 +398,172 @@ serve. When no pool resolves, the granted download, import, a
 listing-package `buy` and opening answer `custody_elsewhere` and write
 nothing.
 
-For a known pool that already has a verified, release-admitting descriptor for
-the item's exact epoch, a fresh resolve asks that pool's existing `describe`
-operation for a newer descriptor sequence before server preparation and Wallet
-approval. The whole targeted refresh, including fallback members, has a
-20-second budget per resolve call. A valid update must keep the pool and item
-epoch and advance the verified sequence. Unreachable or invalid answers leave
-the verified cache available, subject to node high-water checks. An
+Before server preparation and Wallet approval, a fresh resolve can use a known
+pool's verified routes to ask its `describe` operation for a newer descriptor.
+If a cached descriptor already matches the envelope, Runtime refreshes that
+pool. If no cached descriptor matches, Runtime can ask already known pool
+authorities and check their answers against the envelope. The whole lookup has
+a 20-second budget per resolve call. An update must be signed by the queried
+pool authority, match the exact envelope, advance the verified sequence, and
+keep the previously verified v3 bundles, member routes and trust mode.
+Unreachable or invalid answers leave any matching verified cache available,
+subject to node high-water checks. An
 unresponsive first peer may exhaust the entire budget. Pending polls may
 resolve again; this is not a 20-second budget for the whole Open journey.
 Active viewer reads and the cached listing projection do not perform this
 network refresh.
 
-A signed v3 descriptor can carry more than one epoch. For a mint from an
-earlier epoch to keep opening when a reader learns a newer descriptor, the
-current descriptor must still name that mint's exact epoch bundle and eligible
-original members. Those members must still provide an authorized quorum. The
-resolver selects the bundle by the mint's existing key envelope and uses the
-current descriptor sequence. Pool membership changes and retiring the old
-quorum require a separate handover protocol.
+A signed v3 descriptor can carry more than one epoch. The owner signer keeps
+the exact prior epoch bundles and member routes when signing for a different
+installed composition of the same pool. Existing assets still require an
+authorized quorum from their original epoch. Runtime selects that epoch from
+the asset's key envelope and uses the current descriptor sequence. When a new
+local mint starts, Runtime retains its selected composition beside its mint
+journal. Resume can load that composition and verifies it against the signed
+identities and node bindings stored in the intent. A completed mint can replay
+its stored result after the original term expires. Runtime still checks the
+same completed mint, source, Wallet and committee. Starting new provisioning
+requires a committee in its signed term.
 
-`buy_offer` checks the same thing before any Wallet request, for a new
-attempt and for an earlier attempt whose first Wallet request was never
-raised. Its check fails closed. It is `custody_elsewhere` when no pool this
+The Custody admin can stage a rollover candidate through the prepare route.
+Runtime stores the signed proposal, descriptor, and exact composition in an
+owner-only record. An exact retry returns the same proposal. The installed
+composition and published descriptor keep serving. The consent route records
+a successor member's signed decision against that exact proposal. A Custody
+admin can submit the signed record, and Runtime checks the member's signature.
+A recorded decline prevents a later approval of the same proposal. These
+routes stage evidence for a future switch. Active pool selection is unchanged.
+An independent Home currently picks the first term-valid epoch in the
+descriptor for a new mint. Once that epoch's term ends, it can select the
+next eligible epoch in the same descriptor. A resumed mint still uses its
+recorded epoch.
+For the current local development deployment, the activation plan is to
+upgrade the participating Homes and custody providers together. Before a
+successor is published, new provisioning must require the owner's committed
+epoch choice. An unsupported version must be refused at startup or at the
+provisioning boundary. An upgraded process must recover the same selection
+after restart. Descriptor refresh lets readers discover the serving epoch for
+an item. Transfer or retirement of its original quorum needs a separate
+protocol.
+
+The custody share store can validate and reload an isolated remote-sealing
+record. It retains the owner-signed pool descriptor, the minter's signed
+request and the sealer's signed authorization with the share. Each release
+checks the original content access ID. Existing share record formats keep
+their encoding. The remote record has a new format, so the providers that
+read a store must support that format before the first remote share is
+persisted there. The custody provider's private command accepts a bounded
+request and a pool identity that Runtime resolves for the loaded root.
+The provider checks that identity and its stored descriptor sequence before
+writing. It returns the stored share's record and provisioning identities.
+The test runs the command in the custody process, then exercises release
+against the stored share. Runtime accepts the remote-seal share through its
+pool provisioning operation. It binds the authenticated sender to the
+descriptor's sealer and to the Runtime issuer in the signed authorization.
+It resolves the receiving root, applies host storage limits, and serializes
+the write with Stop. The sender asks the local custody provider to sign for
+the verified envelope and sends a share to each node in its signed committee.
+It checks each reply against the expected node, record, and provisioning
+identity. A retry keeps verified results and sends to unresolved nodes.
+The isolated Runtime completion verifier binds the sealer's signature to the original
+request and descriptor, then checks the fetched envelope, key commitment,
+and typed object or DASH identity. The archived signature can be checked
+after descriptor expiry. The publication verifier checks the settled item's
+finalized chain binding through the chain provider. It checks the fetched
+manifest's object and publisher before reading package files. It checks
+the package paths and signed file CIDs against the content manifest, then
+requests a fresh availability receipt for the independently selected
+publisher and receipt signer. Live remote mint dispatch still needs integration.
+Before a remote open, the mint journal can retain the exact signed request,
+pool descriptor, and selected node. After restart, dispatch rechecks the
+local minter's identity and the request's validity before reusing that same
+selection. Runtime can ask the custody provider over its private command
+channel to sign the protect provider's session statement. The statement binds
+the session ID, upload key and exact descriptor digest. The custody provider
+checks the selected root, pool, stored descriptor sequence and signed mint
+request before signing. Runtime verifies the signature and the exact statement.
+The protect provider opens the object session on Runtime's private plane and
+returns the encrypted object header for Runtime to stage. It keeps the upload
+key in the provider. Repeating the same authorized Open returns the same
+header and session. The provider checks the pool limit, the host's eight
+remote upload slots and the shared limit for all protection sessions.
+The private transfer command retains its most recent response. After an
+uncertain reply, Runtime repeats the same command and saves any returned
+encrypted frame before it advances the sequence or reports the chunk as
+saved. Resume first settles the outstanding command so it can report the
+last chunk actually saved. A partial storage write makes the session
+unusable.
+At finalization Runtime reads the staged file and sends its ciphertext hash
+and size to the protect provider. The provider checks both against the
+completed upload before it creates encrypted shares. Runtime checks the
+returned envelope against the same file, signed request and custody
+committee, then writes the object manifest. Exact finalization retries
+return the saved envelope within the session window.
+The journal retains the verified attestation and the last cumulative
+acknowledgement. Resume rechecks the attestation's expiry, and an
+acknowledgement from another session or a backwards position is refused.
+The upload client reconciles the durable position with the sealer before
+sending another part. Once the complete upload is acknowledged, it retries
+finalize for the same session. Runtime stores the signed completion in a
+bounded owner-only file linked to the unchanged mint intent. After restart
+it can read that evidence even if the upload session has expired. Publication
+still requires fresh availability and finalized chain binding.
+The Carrier adapter uses the selected pool peer and rejects replies for a
+different session or upload piece. The custody-pool service accepts object
+upload requests from an admitted Carrier peer. It binds each session and
+reply to that endpoint, bounds the number of uploads and checks available
+host storage before staging a new object.
+The isolated object sealer discards partial chunks on resume and
+acknowledges a complete chunk only after staging succeeds. A failed
+staging write prevents resume and finalization for that session.
+The protect provider's isolated receiver uses the same bounded upload fields
+as the Runtime client. It checks the offered descriptor against the locally
+selected descriptor and binds parts to the authenticated peer and signed mint
+request. The receiver holds uploads within the signed limit for each pool.
+An exact retry after a lost open reply returns the same session to its
+authenticated owner. Resume reports the last staged chunk. The
+receiver reads the staged ciphertext back before producing the custody
+envelope and returns that same envelope when finalization is retried.
+A loopback Carrier test runs Runtime's upload coordinator and file adapter
+against an isolated receiver. It checks that a changed source file is
+rejected, a missing part acknowledgement is recovered through Resume, and a
+lost completion reply can be retrieved after reopening the mint journal.
+The journal can replay the saved result after the upload expires. The test
+uses a fixture publication and passes the staged envelope to private custody
+roots for all three recipients. The sealer signs the original mint and
+envelope binding. Runtime signs the
+exact node record, with an effect ID derived from the mint request, envelope
+and recipient. Fresh authorizations keep the original record, effect ID and
+content access ID on retry. Before calling Content, Runtime checks every
+committee receipt and the staged ciphertext. It also rechecks the admitted
+root and confirmed publisher. The same directory
+add supplies the package root and each file CID through Content. The publisher
+reads those files back and verifies the receipt before returning evidence for
+the completion statement. The Runtime builds the statement from that evidence
+and the signed mint request. The custody provider checks its own stored share
+against the exact request, descriptor, envelope, content access ID and key
+commitment before returning the node signature through its private command.
+Runtime verifies the signature and exact statement, then commits the signed
+reply to an owner-only record before returning it. A retry by the same authenticated
+Carrier endpoint can recover the identical reply within the original session
+window. The finalize wire reply uses the same signed completion format as a
+fresh reply. A different endpoint or an expired session receives no completion.
+The receiving service handles Open, part, Resume, and finalize for objects.
+Library mint selection and remote DASH sealing still need integration.
+The upload selector uses eligible nodes from the request's exact epoch and
+excludes this Home's routes and node keys by default. The sealer checks its
+host trust and the descriptor already kept for the selected root. The signed
+minter must match the Home authenticated by Carrier. That root
+must have its own confirmed publisher before the sealer accepts a file.
+For a prepared object file, the minter checks the full digest and length
+against the saved mint intent. It reads one bounded chunk at a time and
+checks the chunk again before encrypting it for the selected upload session.
+The file adapter takes an already authorized descriptor and creates no
+plaintext copy on disk. The installed Library workflow still needs wiring.
+
+`buy_offer` checks whether this Home can resolve custody before any Wallet
+request, for a new attempt and for an earlier attempt whose first Wallet
+request was never raised. Its check fails closed. It is `custody_elsewhere` when no pool this
 Home knows keeps the item. It is `unavailable` (nothing paid; try again)
 when the document, the KID's binding or this Home's custody state cannot be
 read now. It passes for an item of a pool this Home can reach, or one whose
@@ -425,9 +580,18 @@ resolve or fetch content does not revoke the account's chain rights.
 
 Explore asks the chain whether the current account has access, including when
 this Home holds no copy. Visible cards read bounded listing/access results.
+Card reads can ask for the access result first. When Runtime can identify the
+account and establish its access, it returns an account-bound card response
+without fetching sale offers. Cards with no positive access result, full
+listing details, and Buy still use verified offers. Open checks access again
+before it reads any protected content.
 Held access shows Open; an available offer without access shows Buy; an account
 that needs setup shows Add Wallet. Unknown results show View and retryable
-failures offer Try again. A refresh invalidates cached results and retries.
+failures offer Try again. A manual retry shows Checking immediately and
+takes the next free card-access slot ahead of queued background cards.
+Automatic retries show Checking while a read is running. Add listing lets
+already running card checks finish and defers new ones in that Marketplace
+tab until Add settles. A refresh invalidates cached results and retries.
 Runtime returns an opaque account-bound `access_subject`, so an answer from a
 previous account cannot become the current account's access result.
 
@@ -716,6 +880,28 @@ results. Generic Chain configuration remains separate and is not a
 protected-content fallback.
 
 ## Custody and decryption
+
+An operator can set `protected_content_remote_object_sealing = true` for new
+Library object mints and `protected_content_remote_dash_sealing = true` for
+new Library DASH mints. Both settings default to off. The selected custody
+pool must admit the Home's Runtime issuer and advertise an eligible sealer.
+Runtime sends the authorized preparation in encrypted parts. Once it saves the
+signed request, Resume keeps the same pool, sealer and content access ID even
+if the setting changes. The portable listing carries the sealer's signed
+publication proof. Public mint metadata retains the creator's profile.
+
+The sealer sends verified ciphertext to Content for publication. Content hashes
+the staged files, builds the package manifest, and streams the directory into
+the private IPFS store. It gets the root and file CIDs from that import and
+validates the complete file table before pinning. The sealer checks the stored
+package and its availability receipt before signing completion. Remote-seal
+listings use portable-listing v3, with a 1 MiB listing limit for the signed proof.
+
+Remote sealing shares the host storage limit with custody shares and kept
+copies. An accepted upload reserves its spool space before sending bytes to
+Protect. Content's private import receives a separate charge before dispatch.
+The spool charge is released after its files are removed. Both charges stay
+in place if a lost import reply leaves the backend's use of the spool uncertain.
 
 The source policy is exactly 2-of-3 across distinct operators and failure
 domains. Each custody node stores one share and checks the exact signed Runtime
@@ -1148,6 +1334,16 @@ with `ok = true` means transport completed, not that the provider accepted the
 operation: inspect the stage outcome and response status as well. These traces
 exclude full request bodies, tokens, Wallet signatures and URL query strings.
 Their presence alone does not identify or repair an Add listing failure.
+
+For a slow Add listing, compare the elapsed time of `chain_verification`
+with the bridge queue and execution times for its mint-receipt and listing
+reads. A successful import and a later card access check have separate
+request IDs and outcomes. If the card shows Try again, trace that card's
+listing request separately. Compare its item and offer stages with the
+overall deadline. A listing read that returns after the deadline cannot
+establish the account's access. To verify recovery, check that a fresh access
+read returns the expected account state and that the card shows the matching
+action. Use an account with verified access to check Open.
 
 Full `scripts/setup-source-home.sh` installs the stable Runtime under the
 platform data root at `bin/elastos`. It writes the owner-only

@@ -13,14 +13,14 @@ use elastos_protected_content_contracts::{
     validate_custody_epoch_against_pool_at, CanonicalContract, ContentAccessIdV1, ContractError,
     CustodyCommitteeAuthorizationIdentityV1, CustodyEnvelopeV1, CustodyEpochIssuerKeyV1,
     CustodyNodeProvisioningRecordV1, Digest32, NodeCustodyPublicKeyV1, NodePublicKey,
-    PoolMintShareStatementV1, RuntimeCustodyProvisioningIdV1,
+    PoolMintShareStatementV1, RemoteShareAdmissionV1, RuntimeCustodyProvisioningIdV1,
     RuntimeCustodyProvisioningStatementV1, RuntimeOperationIssuerKeyV1,
     SignedCustodyCommitteeAuthorizationV1, SignedCustodyEpochV1, SignedCustodyPoolV1,
     SignedPoolDescriptorAnyV1, SignedPoolMintShareV1, SignedRuntimeCustodyProvisioningV1,
     MAX_RUNTIME_CUSTODY_PROVISIONING_LIFETIME_SECS, PQ_HYBRID_SEALED_SHARE_MIN_BYTES,
 };
 use elastos_protected_content_provider_contracts::{
-    CustodyProviderRequestV1, PoolCustodyRequestV1,
+    CustodyProviderRequestV1, PoolCustodyRequestV1, RemoteShareProvisionRequestV1,
 };
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
@@ -33,6 +33,8 @@ use crate::{
 
 const PROVISIONING_ID_DOMAIN: &[u8] =
     b"elastos.protected-content.runtime-mint-node-provisioning-id/v1";
+const REMOTE_PROVISIONING_EFFECT_DOMAIN: &[u8] =
+    b"elastos.protected-content.remote-mint-provisioning-effect/v1";
 const REQUIRED_NODES: usize = 3;
 type RuntimeMintSigner = dyn Fn(&[u8]) -> [u8; 64] + Send + Sync + 'static;
 
@@ -790,22 +792,87 @@ fn signed_provision_parts(
         node.node_public_key(),
         sealed_share,
     )?;
+    let expires_at = now_unix_seconds
+        .checked_add(MAX_RUNTIME_CUSTODY_PROVISIONING_LIFETIME_SECS)
+        .ok_or(RuntimeMintCoordinatorError::OperationAuthority)?;
+    let signed = sign_node_provisioning(
+        &record,
+        draft.mint_id(),
+        issuer,
+        sign_statement,
+        now_unix_seconds,
+        expires_at,
+    )?;
+    Ok((record, signed))
+}
+
+/// Build the private request for one exact recipient in a remotely sealed
+/// envelope. Renewing the authorization preserves the node effect identity.
+pub fn prepare_remote_share_provision_request(
+    admission: RemoteShareAdmissionV1,
+    envelope: &CustodyEnvelopeV1,
+    recipient: NodePublicKey,
+    sign_statement: &(dyn Fn(&[u8]) -> [u8; 64] + Send + Sync),
+    now: u64,
+) -> Result<RemoteShareProvisionRequestV1, RuntimeMintCoordinatorError> {
+    let identity = envelope.key_envelope_identity()?;
+    let (authorization, _) = admission
+        .authorization
+        .verify_for_mint_request(&admission.descriptor, &admission.request, &identity, now)
+        .map_err(|_| RuntimeMintCoordinatorError::OperationAuthority)?;
+    let sealed_share = envelope
+        .stored_share_for_node(recipient)
+        .ok_or(RuntimeMintCoordinatorError::ProviderSelection)?;
+    let mut effect = Sha256::new();
+    effect.update(REMOTE_PROVISIONING_EFFECT_DOMAIN);
+    effect.update(authorization.mint_request_hash.as_bytes());
+    effect.update(identity.canonical_hash()?.as_bytes());
+    let effect = Digest32::new(effect.finalize().into());
+    let record = CustodyNodeProvisioningRecordV1::new(
+        identity,
+        envelope.manifest().clone(),
+        recipient,
+        sealed_share.clone(),
+    )?;
+    let issuer = authorization.sealer_runtime_issuer;
+    let signed_provisioning = sign_node_provisioning(
+        &record,
+        effect,
+        issuer,
+        sign_statement,
+        now,
+        authorization.expires_at,
+    )?;
+    signed_provisioning
+        .verify_for_record(&record, issuer, now)
+        .map_err(|_| RuntimeMintCoordinatorError::OperationAuthority)?;
+    Ok(RemoteShareProvisionRequestV1 {
+        record,
+        signed_provisioning,
+        admission,
+    })
+}
+
+fn sign_node_provisioning(
+    record: &CustodyNodeProvisioningRecordV1,
+    mint: Digest32,
+    issuer: RuntimeOperationIssuerKeyV1,
+    sign_statement: &(dyn Fn(&[u8]) -> [u8; 64] + Send + Sync),
+    now: u64,
+    expires_at: u64,
+) -> Result<SignedRuntimeCustodyProvisioningV1, RuntimeMintCoordinatorError> {
     let statement = RuntimeCustodyProvisioningStatementV1::new(
         issuer,
         record.record_identity()?,
-        mint_node_provisioning_id(draft.mint_id(), node.node_public_key())?,
-        now_unix_seconds,
-        now_unix_seconds
-            .checked_add(MAX_RUNTIME_CUSTODY_PROVISIONING_LIFETIME_SECS)
-            .ok_or(RuntimeMintCoordinatorError::OperationAuthority)?,
+        mint_node_provisioning_id(mint, record.selected_node_public_key())?,
+        now,
+        expires_at,
     )?;
-    let signature = sign_statement(
-        &statement
-            .canonical_bytes()
-            .map_err(|_| RuntimeMintCoordinatorError::OperationAuthority)?,
-    );
-    let signed = SignedRuntimeCustodyProvisioningV1::new(statement, signature.to_vec())?;
-    Ok((record, signed))
+    let signature = sign_statement(&statement.canonical_bytes()?);
+    Ok(SignedRuntimeCustodyProvisioningV1::new(
+        statement,
+        signature.to_vec(),
+    )?)
 }
 
 fn mint_node_provisioning_id(

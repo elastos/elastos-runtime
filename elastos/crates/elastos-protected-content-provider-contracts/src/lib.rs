@@ -18,6 +18,8 @@ mod pool_custody_tests;
 mod protect;
 mod protection_system;
 pub mod pssh;
+mod remote_seal_wire;
+mod remote_share;
 mod rights;
 #[cfg(test)]
 mod test_support;
@@ -86,6 +88,24 @@ pub use protection_system::{
 pub use pssh::{
     build_pssh_v1, parse_pssh_v0_or_v1, parse_pssh_v1, PsshBoxV1, ELASTOS_PQ_PROTECTION_SCHEME_V0,
     ELASTOS_PQ_PROTECTION_SCHEME_V1,
+};
+pub use remote_seal_wire::{
+    FinalizeRemoteDashSealReplyV1, FinalizeRemoteDashSealRequestV1,
+    FinalizeRemoteObjectSealReplyV1, FinalizeRemoteObjectSealRequestV1, OpenRemoteDashSealReplyV1,
+    OpenRemoteDashSealRequestV1, OpenRemoteObjectSealReplyV1, OpenRemoteObjectSealRequestV1,
+    RemoteObjectSealTransferV1, RemoteSealAckFieldsV1, RemoteSealAttestationReplyV1,
+    RemoteSealAttestationRequestV1, RemoteSealOpenFieldsV1, RemoteSealPartFieldsV1,
+    RemoteSealSessionFieldsV1, SignRemoteSealCompletionReplyV1, SignRemoteSealCompletionRequestV1,
+    TransferRemoteDashSealReplyV1, TransferRemoteDashSealRequestV1,
+    TransferRemoteObjectSealReplyV1, TransferRemoteObjectSealRequestV1,
+    ATTEST_REMOTE_SEAL_UPLOAD_OP, FINALIZE_REMOTE_DASH_SEAL_OP, FINALIZE_REMOTE_OBJECT_SEAL_OP,
+    MAX_REMOTE_SEAL_COMPLETION_BYTES_V1, OPEN_REMOTE_DASH_SEAL_OP, OPEN_REMOTE_OBJECT_SEAL_OP,
+    SIGN_REMOTE_SEAL_COMPLETION_OP, TRANSFER_REMOTE_DASH_SEAL_OP, TRANSFER_REMOTE_OBJECT_SEAL_OP,
+};
+pub use remote_share::{
+    AuthorizeRemoteSealShareReplyV1, AuthorizeRemoteSealShareRequestV1,
+    ProvisionRemoteShareCommandV1, RemoteShareDeliveryV1, RemoteShareProvisionReplyV1,
+    RemoteShareProvisionRequestV1, AUTHORIZE_REMOTE_SEAL_SHARE_OP, PROVISION_REMOTE_SHARE_CHILD_OP,
 };
 pub use rights::{
     RightsProviderRequestOpV1, RightsProviderRequestV1, RightsProviderResponseStatusV1,

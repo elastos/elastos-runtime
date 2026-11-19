@@ -83,6 +83,8 @@ Paths below are under `elastos/crates/elastos-server/src/` unless stated.
 | Responsibility | Source |
 | --- | --- |
 | Runtime mint, adoption and viewer lifecycle | `protected_content_runtime.rs` |
+| Remote object and DASH sources, upload and sealer authority | `remote_seal_source.rs`, `protected_content_runtime/remote_dash_source.rs`, `custody_pool_seal.rs`, `custody_pool_seal/service.rs` |
+| Encrypted package manifest, quota, private storage routing and receipt | `content.rs` |
 | Pool prepare, Wallet rights, release and buyer reads | `protected_content_pool_open.rs` |
 | Verified signed descriptor lookup | `custody_pool_descriptor.rs`, `custody_pool_resolver.rs` |
 | Server staging, proof checks and session delivery | `custody_pool_service.rs` |
@@ -94,6 +96,14 @@ Paths below are under `elastos/crates/elastos-server/src/` unless stated.
 | Key custody and decrypt primitives | `elastos/crates/elastos-protected-content-custody/` |
 
 Public metadata and cover pins are separate from protected ciphertext copies.
+With remote sealing enabled for the asset type, the creator Runtime saves and
+signs the mint request and sends encrypted upload pieces over Carrier to a
+verified sealer in the selected pool. The sealer Runtime coordinates share
+storage and asks Content to stream the staged encrypted package into private
+Kubo. Content owns the manifest, storage accounting, pin and availability
+receipt. The creator Runtime verifies the signed result and uses the Wallet
+and Chain flow. The portable listing carries the sealer proof, and public
+metadata names the creator.
 Account rights come from finalized chain checks, not Contacts or a manual import.
 See [Protected content](../PROTECTED_CONTENT.md) for the workflow and
 [Content availability](../CONTENT_AVAILABILITY.md) for the two IPFS stores.

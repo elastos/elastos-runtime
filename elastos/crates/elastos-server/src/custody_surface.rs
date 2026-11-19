@@ -22,6 +22,10 @@
 //! - `pool-hosting`: a Home that serves several pools, and its Hosting view
 //!   (Plan B S2).
 
+use elastos_protected_content_provider_contracts::{
+    ATTEST_REMOTE_SEAL_UPLOAD_OP, AUTHORIZE_REMOTE_SEAL_SHARE_OP, SIGN_REMOTE_SEAL_COMPLETION_OP,
+};
+
 /// What kind of wire item a row declares.
 // Rows are read by the conformance tests and the #173 record today; later
 // Plan B tasks read their ops and approvals at run time.
@@ -119,6 +123,20 @@ pub(crate) const OP_CUSTODY_POOL_SESSION_PREPARE: &str = "session.prepare";
 pub(crate) const OP_CUSTODY_POOL_SESSION_OPEN: &str = "session.open";
 pub(crate) const OP_CUSTODY_POOL_SESSION_READ: &str = "session.read";
 pub(crate) const OP_CUSTODY_POOL_SESSION_CLOSE: &str = "session.close";
+pub(crate) const OP_CUSTODY_POOL_SEAL_OPEN: &str = "seal.open";
+pub(crate) const OP_CUSTODY_POOL_SEAL_PART: &str = "seal.part";
+pub(crate) const OP_CUSTODY_POOL_SEAL_RESUME: &str = "seal.resume";
+pub(crate) const OP_CUSTODY_POOL_SEAL_FINALIZE: &str = "seal.finalize";
+
+pub(crate) fn is_pool_seal_op(op: &str) -> bool {
+    matches!(
+        op,
+        OP_CUSTODY_POOL_SEAL_OPEN
+            | OP_CUSTODY_POOL_SEAL_PART
+            | OP_CUSTODY_POOL_SEAL_RESUME
+            | OP_CUSTODY_POOL_SEAL_FINALIZE
+    )
+}
 
 // Gateway routes of the Custody app.
 pub(crate) const ROUTE_SUMMARY: &str = "/api/apps/custody/summary";
@@ -129,6 +147,8 @@ pub(crate) const ROUTE_LOCAL_NODE: &str = "/api/apps/custody/local-node";
 pub(crate) const ROUTE_POOL_CHECK: &str = "/api/apps/custody/pool/check";
 pub(crate) const ROUTE_POOL: &str = "/api/apps/custody/pool";
 pub(crate) const ROUTE_POOL_VERIFY: &str = "/api/apps/custody/pool/verify";
+pub(crate) const ROUTE_POOL_ROLLOVER_PREPARE: &str = "/api/apps/custody/pool/rollover/prepare";
+pub(crate) const ROUTE_POOL_ROLLOVER_CONSENT: &str = "/api/apps/custody/pool/rollover/consent";
 pub(crate) const ROUTE_POOL_NOTIFY: &str = "/api/apps/custody/pool/notify";
 pub(crate) const ROUTE_POOL_HEALTH: &str = "/api/apps/custody/pool/health";
 pub(crate) const ROUTE_POOL_MEMBER_REGISTER: &str =
@@ -307,6 +327,21 @@ pub(crate) const CUSTODY_SURFACE: &[SurfaceItem] = &[
         STAGE_POOL_SEAL,
     ),
     pending(
+        ATTEST_REMOTE_SEAL_UPLOAD_OP,
+        CUSTODY_LOCAL_OP,
+        STAGE_POOL_SEAL,
+    ),
+    pending(
+        AUTHORIZE_REMOTE_SEAL_SHARE_OP,
+        CUSTODY_LOCAL_OP,
+        STAGE_POOL_SEAL,
+    ),
+    pending(
+        SIGN_REMOTE_SEAL_COMPLETION_OP,
+        CUSTODY_LOCAL_OP,
+        STAGE_POOL_SEAL,
+    ),
+    pending(
         OP_COLLABORATION_CUSTODY_QUERY,
         COLLABORATION_CUSTODY_OP,
         STAGE_CUSTODY_DISCOVERY,
@@ -341,6 +376,18 @@ pub(crate) const CUSTODY_SURFACE: &[SurfaceItem] = &[
         CUSTODY_POOL_OP,
         STAGE_POOL_SESSION,
     ),
+    pending(OP_CUSTODY_POOL_SEAL_OPEN, CUSTODY_POOL_OP, STAGE_POOL_SEAL),
+    pending(OP_CUSTODY_POOL_SEAL_PART, CUSTODY_POOL_OP, STAGE_POOL_SEAL),
+    pending(
+        OP_CUSTODY_POOL_SEAL_RESUME,
+        CUSTODY_POOL_OP,
+        STAGE_POOL_SEAL,
+    ),
+    pending(
+        OP_CUSTODY_POOL_SEAL_FINALIZE,
+        CUSTODY_POOL_OP,
+        STAGE_POOL_SEAL,
+    ),
     // Routes.
     existing(ROUTE_SUMMARY, route("GET"), STAGE_CUSTODY_APP),
     existing(ROUTE_SIGNING_KEY, route("POST"), STAGE_CUSTODY_APP),
@@ -352,6 +399,16 @@ pub(crate) const CUSTODY_SURFACE: &[SurfaceItem] = &[
     existing(ROUTE_POOL, route("GET"), STAGE_CUSTODY_APP),
     existing(ROUTE_POOL, route("POST"), STAGE_CUSTODY_APP),
     existing(ROUTE_POOL_VERIFY, route("POST"), STAGE_CUSTODY_APP),
+    existing(
+        ROUTE_POOL_ROLLOVER_PREPARE,
+        route("POST"),
+        STAGE_CUSTODY_APP,
+    ),
+    existing(
+        ROUTE_POOL_ROLLOVER_CONSENT,
+        route("POST"),
+        STAGE_CUSTODY_APP,
+    ),
     pending(ROUTE_POOL_NOTIFY, route("POST"), STAGE_CUSTODY_DISCOVERY),
     existing(ROUTE_POOL_HEALTH, route("GET"), STAGE_CUSTODY_APP),
     existing(ROUTE_POOL_MEMBER_REGISTER, route("POST"), STAGE_CUSTODY_APP),

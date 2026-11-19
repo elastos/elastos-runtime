@@ -1257,6 +1257,48 @@ test("rights_expiry_shows_the_approval_stage_not_retry", async () => {
   assert.deepEqual(world.sources()[0].buffers.map(text), ["init", "seg0", "seg1"]);
 });
 
+test("the player polls through finality and plays after Wallet approval without Retry", async () => {
+  const finalizing = {
+    ok: false,
+    payload: progressPayload({
+      stage: "finalizing",
+      awaits_person: false,
+      connector_id: null,
+      approval_request_id: null,
+      expires_at: null,
+      ready_at: 1_000_015,
+    }),
+  };
+  const world = harness({
+    replies: [
+      finalizing,
+      finalizing,
+      { ok: false, payload: progressPayload() },
+      { payload: { status: "ok", data: openData({ segment_count: 1 }) } },
+      partReply("init"),
+      partReply("seg0"),
+    ],
+  });
+
+  await world.controller.startPlayback();
+  assert.equal(world.controller.getState().waitingStage, "finalizing");
+  assert.equal(world.overlayChildren().length, 0);
+  world.advance(15);
+  await world.tick();
+  assert.equal(world.controller.getState().waitingStage, "finalizing", "the estimate is not a deadline");
+  world.advance(15);
+  await world.tick();
+  assert.equal(world.controller.getState().waitingStage, "rights_approval");
+  assert.equal(world.overlayChildren().length, 0);
+  assert.equal(world.sources().length, 0, "protected bytes wait for the approved open");
+  await world.tick();
+
+  assert.equal(opensOf(world).length, 4);
+  assert.ok(opensOf(world).every(({ body }) => body.mint_id === MINT));
+  assert.equal(world.controller.getState().waiting, false);
+  assert.deepEqual(world.sources()[0].buffers.map(text), ["init", "seg0"]);
+});
+
 test("an early read error is not a reopen: no extra open, no Wallet", async () => {
   const world = harness({
     replies: [

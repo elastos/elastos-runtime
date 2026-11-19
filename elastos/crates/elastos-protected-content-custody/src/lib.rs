@@ -2,6 +2,7 @@
 
 mod cenc;
 mod delivery;
+mod mint_piece;
 mod node_share;
 mod node_store;
 mod payload;
@@ -12,6 +13,8 @@ mod protect;
 mod provision;
 mod reconstruct;
 mod release;
+mod remote_object;
+mod remote_upload;
 mod replay_store;
 mod secrets;
 mod share_wrap;
@@ -26,6 +29,9 @@ mod test_support;
 use thiserror::Error;
 
 pub use delivery::{open_viewer_part_v1, seal_viewer_part_v1, DeliverySecretKeyV1};
+pub use mint_piece::{
+    open_mint_piece_v1, seal_mint_piece_v1, SealSessionSecretKeyV1, MAX_SEALED_MINT_PIECE_BYTES,
+};
 pub use node_share::NodeLocalStoredShareV1;
 pub use node_store::{
     NodeLocalShareReceiptV1, NodeLocalShareStoreErrorV1, NodeLocalShareStoreV1,
@@ -66,6 +72,8 @@ pub use reconstruct::{
     reconstruct_content_key_into_decrypt_session, reconstruct_content_key_into_decrypt_session_v2,
     DecryptSessionReconstructionInputsV1, DecryptSessionReconstructionInputsV2,
 };
+pub use remote_object::{RemoteObjectSealerV1, RemoteSealedObjectV1};
+pub use remote_upload::RemoteSealUploadV1;
 pub use replay_store::DurableReplayClaimStoreV1;
 pub use secrets::{
     ContentEncryptionKeyV1, NodeCustodySecretKeyV1, RecipientPublicKeyV1, RecipientSecretKeyV1,

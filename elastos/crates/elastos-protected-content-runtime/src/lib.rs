@@ -19,10 +19,24 @@ mod pool_client_tests;
 mod pool_session;
 #[cfg(test)]
 mod pool_session_tests;
+mod remote_seal;
+mod remote_seal_client;
+mod remote_seal_wire;
 #[cfg(test)]
 mod test_media;
 #[cfg(test)]
 mod test_object;
+
+pub use remote_seal::{
+    verify_recorded_remote_seal_attestation, verify_recorded_remote_seal_output,
+    verify_remote_seal_output, VerifiedRemoteSealOutput, MAX_REMOTE_SEAL_COMPLETION_BYTES,
+};
+pub use remote_seal_client::{
+    prepare_remote_seal_upload, upload_remote_seal, RemoteSealAckV1, RemoteSealLocalIdentity,
+    RemoteSealOpenedV1, RemoteSealPartSource, RemoteSealTransport, RemoteSealUploadError,
+    RemoteSealUploadPieceV1, RemoteSealedPartV1,
+};
+pub use remote_seal_wire::PoolRemoteSealTransport;
 
 pub use coordinator::{
     wallet_rights_signature_result, RuntimeCustodyProvider, RuntimeProviderCallError,
@@ -36,10 +50,11 @@ pub use journal::{
     RuntimeReleaseTerminalResult,
 };
 pub use mint::{
-    resolve_recorded_runtime_mint_selected_nodes, resolve_runtime_mint_selected_nodes,
-    sign_pool_mint_share, RuntimeMintConfiguredCustodyProvider, RuntimeMintCoordinator,
-    RuntimeMintCoordinatorError, RuntimeMintCoordinatorOutcome, RuntimeMintNonterminalReason,
-    RuntimeMintPoolProvisioning, RuntimeMintSelectedNode,
+    prepare_remote_share_provision_request, resolve_recorded_runtime_mint_selected_nodes,
+    resolve_runtime_mint_selected_nodes, sign_pool_mint_share,
+    RuntimeMintConfiguredCustodyProvider, RuntimeMintCoordinator, RuntimeMintCoordinatorError,
+    RuntimeMintCoordinatorOutcome, RuntimeMintNonterminalReason, RuntimeMintPoolProvisioning,
+    RuntimeMintSelectedNode,
 };
 pub use mint_journal::{
     // Plan B T4.6.
@@ -73,6 +88,8 @@ pub use mint_journal::{
     RuntimeMintNodeEffectV1,
     RuntimeMintNodeReceipt,
     RuntimeMintRoyaltyShare,
+    RuntimeRemoteSealRequestV1,
+    RuntimeRemoteSealSessionV1,
     RuntimeVerifiedContentAvailability,
     RuntimeVerifiedContentFetchV1,
     RuntimeVerifiedContentIdentityRootV1,

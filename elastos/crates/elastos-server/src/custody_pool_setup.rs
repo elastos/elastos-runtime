@@ -260,10 +260,65 @@ pub(crate) enum FetchedCard {
 }
 
 /// One share slot: a pasted card, or this Home's own node.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) enum CardInput {
     Remote { text: String },
     ThisHome,
+}
+
+/// Compose and retain an inert candidate from the same checked inputs as an
+/// initial installation. Consents for that installation are not rollover
+/// consents, so nothing is installed or announced here.
+pub(crate) fn prepare_rollover(
+    write: &crate::custody_consent::CustodyWriteGuard,
+    data_dir: &Path,
+    cards: &[CardInput],
+    term_days: u16,
+    operation_id: [u8; 16],
+    now: u64,
+) -> anyhow::Result<crate::custody_pool_descriptor::RolloverPreparedV1> {
+    if !POOL_TERM_DAYS.contains(&term_days) {
+        return Err(CustodyRefusal::new("bad_term").into());
+    }
+    let input = serde_json::to_vec(&(cards, term_days))?;
+    crate::custody_pool_descriptor::stage_owner_rollover(
+        write,
+        data_dir,
+        operation_id,
+        Sha256::digest(&input).into(),
+        now,
+        || {
+            let (members, mut checks) = resolve_slots(data_dir, cards);
+            checks.extend(rule_results(&members));
+            if checks
+                .iter()
+                .any(|check| check.result == CheckOutcome::Fail)
+            {
+                return Err(CustodyRefusal::new("checks_failed").into());
+            }
+            let descriptors = distinct_custody_node_descriptors(
+                members
+                    .into_iter()
+                    .map(|member| member.descriptor)
+                    .collect(),
+            )?;
+            let authority = crate::protected_content_config::read_policy_authority_key(
+                &policy_authority_key_path(data_dir),
+            )?;
+            let config = crate::protected_content_config::signed_custody_composition_config_at(
+                &authority,
+                descriptors,
+                term_days,
+                elastos_protected_content_contracts::ThresholdV1::new(
+                    CUSTODY_THRESHOLD_REQUIRED,
+                    CUSTODY_THRESHOLD_TOTAL,
+                )?,
+                now,
+            )?;
+            let bytes = serde_json::to_vec(&serde_json::to_value(&config)?)?;
+            crate::protected_content_runtime::validate_generated_custody_composition(bytes)
+        },
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -3212,7 +3267,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn install_rolls_back_and_registers_nothing_when_loader_rejects() {
+    async fn install_publishes_and_registers_nothing_when_loader_rejects() {
         let dir = safe_ancestor_tempdir();
         let data_dir = data_dir(&dir);
         let cards = [
@@ -3239,8 +3294,8 @@ pub(crate) mod tests {
         assert_eq!(refusal(&error).code(), "install_failed");
         nothing_written(&data_dir);
 
-        // After the pool file: signing and the committee rules accept a term
-        // that ends now, and only the Runtime loader refuses it as expired.
+        // Signing and the committee rules accept a term that ends now. The
+        // Runtime loader refuses it as expired before the file is published.
         std::fs::remove_file(policy_authority_key_path(&data_dir)).unwrap();
         create_signing_key(&data_dir).unwrap();
         let error = install(&data_dir, &cards, 0).await.unwrap_err();

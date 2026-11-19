@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { parseRuntimeCustodyListings, uint256Decimal } from "./listing.js";
+import { createReadSlots } from "./market-access.js";
 
 const PAGE = process.env.MARKETPLACE_PAGE_UNDER_TEST || new URL("../marketplace.js", import.meta.url);
 
@@ -31,7 +32,7 @@ test("guard: a market that could not be read still says Try again", () => {
 // Exercise the page's actual click and fetch functions, without a browser or
 // credentials. The action header joins diagnostics only; request bodies and
 // existing Home-token authority stay unchanged.
-function importActionHarness({ withoutUuid = false } = {}) {
+function importActionHarness({ withoutUuid = false, failImport = false } = {}) {
   const source = readFileSync(PAGE, "utf8");
   const names = ["importListing", "readMarketListing", "requestMarketListing", "postObjectProvider"];
   const functions = names.map((name) => {
@@ -42,8 +43,10 @@ function importActionHarness({ withoutUuid = false } = {}) {
     return source.slice(start, end + 4);
   }).join("\n");
   const calls = [];
+  const slotAdmissions = [];
+  const marketReadSlots = createReadSlots(2);
   let ids = 0;
-  const page = new Function("fetch", "crypto", `
+  const page = new Function("fetch", "crypto", "marketReadSlots", `
     const homeToken = "fixture-home-token";
     let importInFlight = false;
     const els = { importInput: { value: "" }, importSubmit: {
@@ -59,10 +62,14 @@ function importActionHarness({ withoutUuid = false } = {}) {
     return { importListing, requestMarketListing, postObjectProvider };
   `)(async (route, init) => {
     calls.push({ route, init });
+    const admitted = marketReadSlots.tryAcquire();
+    slotAdmissions.push(admitted);
+    if (admitted) marketReadSlots.release();
+    if (failImport && route.endsWith("/import_runtime_custody")) throw new Error("unavailable");
     return { ok: true, json: async () => route === "/api/apps/marketplace/listing"
       ? { legacy_listing: true } : { status: "ok", data: {} } };
-  }, withoutUuid ? {} : { randomUUID: () => `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}` });
-  return { ...page, calls };
+  }, withoutUuid ? {} : { randomUUID: () => `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}` }, marketReadSlots);
+  return { ...page, calls, slotAdmissions, marketReadSlots };
 }
 
 test("one Add listing action joins lookup and legacy import, and the next click has a fresh ID", async () => {
@@ -93,6 +100,24 @@ test("unrelated listing reads and object operations omit the optional action hea
   await page.postObjectProvider("list_runtime_custody", {});
   for (const { init } of page.calls) {
     assert.equal(Object.hasOwn(init.headers, "x-elastos-action-id"), false);
+  }
+});
+
+test("Add listing defers card reads through legacy import and wakes them on success or failure", async () => {
+  for (const failImport of [false, true]) {
+    const { importListing, marketReadSlots, slotAdmissions } = importActionHarness({ failImport });
+    assert.ok(marketReadSlots.tryAcquire(), "a card read is already in flight");
+    let wakes = 0;
+    marketReadSlots.onRelease(() => { wakes += 1; });
+
+    await importListing(`elastos://bafy${"a".repeat(55)}`);
+
+    assert.deepEqual(slotAdmissions, [false, false]);
+    assert.equal(wakes, 1, "waiting cards are notified as soon as Add settles");
+    assert.ok(marketReadSlots.tryAcquire());
+    assert.equal(marketReadSlots.tryAcquire(), false, "Add does not release the in-flight card's slot");
+    marketReadSlots.release();
+    marketReadSlots.release();
   }
 });
 
@@ -138,7 +163,7 @@ test("successful Add reloads the real parser and Explore cards without hiding fe
   // Only DOM plumbing, decoration and optional cover fetching are doubles.
   // Add, local reload, parsing, dedup, grouping, cards and action buttons run
   // the shipping functions. This is not a browser/remote playback test.
-  const page = new Function("fetch", "parseRuntimeCustodyListings", "uint256Decimal", `
+  const page = new Function("fetch", "parseRuntimeCustodyListings", "uint256Decimal", "marketReadSlots", `
     const homeToken = "fixture-home-token";
     const crypto = { randomUUID: () => "fixture-add-action" };
     const window = { setTimeout() { return 1; }, clearTimeout() {} };
@@ -171,7 +196,7 @@ test("successful Add reloads the real parser and Explore cards without hiding fe
     const data = route.endsWith("/listing") ? { legacy_listing: true }
       : { status: "ok", data: route.endsWith("list_runtime_custody") ? payload : { status: "verified" } };
     return { ok: true, json: async () => data };
-  }, parseRuntimeCustodyListings, uint256Decimal);
+  }, parseRuntimeCustodyListings, uint256Decimal, createReadSlots(2));
   await page.importListing(`elastos://${cid}`);
   assert.deepEqual(calls, ["/api/apps/marketplace/listing", "/api/provider/object/import_runtime_custody",
     "/api/provider/object/list_runtime_custody"]);

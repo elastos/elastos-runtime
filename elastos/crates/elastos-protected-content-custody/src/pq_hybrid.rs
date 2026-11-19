@@ -18,6 +18,8 @@ use elastos_protected_content_contracts::{
 pub const SUITE_PQ_HYBRID: &str = CUSTODY_X_WING_AES256GCM_SUITE_ID_V1;
 const HKDF_DOMAIN_V1: &[u8] = b"elastos.protected-content.xwing-draft06.hkdf-sha256/v1";
 const PQ_HYBRID_AEAD_NONCE_BYTES: usize = 12;
+pub(crate) const PQ_HYBRID_SEALED_BYTES_OVERHEAD: usize =
+    X_WING_DRAFT06_CIPHERTEXT_BYTES + PQ_HYBRID_AEAD_NONCE_BYTES + 16;
 const PQ_HYBRID_WRAPPED_SHARE_BYTES: usize = 48;
 pub const X_WING_ENCAPSULATION_RANDOMNESS_BYTES: usize = x_wing::ENCAPSULATION_RANDOMNESS_SIZE;
 
@@ -281,9 +283,7 @@ pub(crate) fn open_bytes_with_domain(
     sealed: &[u8],
     aad: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>, PqHybridError> {
-    const AEAD_TAG_BYTES: usize = 16;
-    if sealed.len() < X_WING_DRAFT06_CIPHERTEXT_BYTES + PQ_HYBRID_AEAD_NONCE_BYTES + AEAD_TAG_BYTES
-    {
+    if sealed.len() < PQ_HYBRID_SEALED_BYTES_OVERHEAD {
         return Err(PqHybridError::InvalidCiphertext);
     }
     let (ciphertext, rest) = sealed.split_at(X_WING_DRAFT06_CIPHERTEXT_BYTES);

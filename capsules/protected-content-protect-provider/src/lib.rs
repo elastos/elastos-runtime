@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, Write};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use elastos_protected_content_contracts::{
     CustodyCommitteeAuthorizationIdentityV1, CustodyEpochIdentityV1, CustodyPoolIdentityV1,
@@ -15,14 +16,22 @@ use elastos_protected_content_provider_contracts::{
     CencMediaSuite, ChunkedPayloadObjectIdentityV1, CustodyProtectionHeader,
     ProtectFailureReasonV2, ProtectProviderRequestOpV1, ProtectProviderRequestV1,
     ProtectProviderResponseV1, ProtectionSessionNodeV1, ProviderFailureCodeV1,
-    ValidatedClearFmp4MediaSessionLayoutV1, MAX_OBJECT_PLAINTEXT_CHUNK_BYTES_V1,
-    MAX_PROVIDER_FRAME_BYTES_V1, MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1,
-    PROTECT_PROVIDER_REQUEST_SCHEMA_V1, PROTECT_PROVIDER_RESPONSE_SCHEMA_V1,
+    ValidatedClearFmp4MediaSessionLayoutV1, FINALIZE_REMOTE_DASH_SEAL_OP,
+    FINALIZE_REMOTE_OBJECT_SEAL_OP, MAX_OBJECT_PLAINTEXT_CHUNK_BYTES_V1,
+    MAX_PROVIDER_FRAME_BYTES_V1, MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1, OPEN_REMOTE_DASH_SEAL_OP,
+    OPEN_REMOTE_OBJECT_SEAL_OP, PROTECT_PROVIDER_REQUEST_SCHEMA_V1,
+    PROTECT_PROVIDER_RESPONSE_SCHEMA_V1, TRANSFER_REMOTE_DASH_SEAL_OP,
+    TRANSFER_REMOTE_OBJECT_SEAL_OP,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
 use tracing::info;
+
+mod remote_dash;
+mod remote_object;
+pub use remote_dash::RemoteDashSealerV1;
+pub use remote_object::{RemoteObjectReceiverV1, RemoteObjectUploadsV1};
 
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const INIT_ERROR_CODE: &str = "invalid_config";
@@ -196,6 +205,13 @@ struct ConfiguredProtectProvider {
     open_replays: BTreeMap<OpenReplayKey, OpenReplayEntry>,
     sessions: BTreeMap<HandleBytes, ProtectionSessionEntry>,
     closed_handles: BTreeSet<HandleBytes>,
+    remote_uploads: remote_object::PrivateRemoteUploads,
+}
+
+impl ConfiguredProtectProvider {
+    fn active_session_count(&self) -> usize {
+        self.sessions.len() + self.remote_uploads.len()
+    }
 }
 
 pub struct ProtectProvider {
@@ -241,6 +257,12 @@ impl ProtectProvider {
             Err(()) => return (invalid_request(), false),
         };
         let op = value.get("op").and_then(Value::as_str).map(str::to_owned);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |time| time.as_secs());
+        if let Some(state) = self.state.as_mut() {
+            state.remote_uploads.expire(now);
+        }
         match op.as_deref() {
             Some("init" | "status" | "shutdown") => {
                 if !control_request_has_exact_fields(&value, op.as_deref().unwrap_or_default()) {
@@ -271,7 +293,116 @@ impl ProtectProvider {
                 };
                 (self.handle_protect_request(&bytes), false)
             }
+            Some(OPEN_REMOTE_OBJECT_SEAL_OP) if envelope == EnvelopeState::Present => {
+                (self.open_remote_seal(value, now, false), false)
+            }
+            Some(OPEN_REMOTE_DASH_SEAL_OP) if envelope == EnvelopeState::Present => {
+                (self.open_remote_seal(value, now, true), false)
+            }
+            Some(TRANSFER_REMOTE_OBJECT_SEAL_OP) if envelope == EnvelopeState::Present => {
+                (self.transfer_remote_seal(value, now, false), false)
+            }
+            Some(TRANSFER_REMOTE_DASH_SEAL_OP) if envelope == EnvelopeState::Present => {
+                (self.transfer_remote_seal(value, now, true), false)
+            }
+            Some(FINALIZE_REMOTE_OBJECT_SEAL_OP) if envelope == EnvelopeState::Present => {
+                (self.finalize_remote_seal(value, now, false), false)
+            }
+            Some(FINALIZE_REMOTE_DASH_SEAL_OP) if envelope == EnvelopeState::Present => {
+                (self.finalize_remote_seal(value, now, true), false)
+            }
             _ => (invalid_request(), false),
+        }
+    }
+
+    fn open_remote_seal(&mut self, value: Value, now: u64, dash: bool) -> ProviderResponse {
+        let Some(state) = self.state.as_mut() else {
+            return invalid_request();
+        };
+        let has_protect_slot = state.active_session_count() < MAX_ACTIVE_SESSIONS_V1;
+        let reply = if dash {
+            let Ok(command) = serde_json::from_value(value) else {
+                return invalid_request();
+            };
+            state
+                .remote_uploads
+                .open_dash(command, has_protect_slot, now)
+                .map(|reply| json!(reply))
+        } else {
+            let Ok(command) = serde_json::from_value(value) else {
+                return invalid_request();
+            };
+            state
+                .remote_uploads
+                .open(command, has_protect_slot, now)
+                .map(|reply| json!(reply))
+        };
+        match reply {
+            Ok(reply) => ProviderResponse::ok(reply),
+            Err(CustodyError::BindingMismatch("remote_object_pool_busy")) => {
+                ProviderResponse::error("pool_busy", "the protect provider has no upload slot")
+            }
+            Err(_) => invalid_request(),
+        }
+    }
+
+    fn transfer_remote_seal(&mut self, value: Value, now: u64, dash: bool) -> ProviderResponse {
+        let Some(state) = self.state.as_mut() else {
+            return invalid_request();
+        };
+        let reply = if dash {
+            let Ok(command) = serde_json::from_value(value) else {
+                return invalid_request();
+            };
+            state.remote_uploads.transfer_dash(command, now)
+        } else {
+            let Ok(command) = serde_json::from_value(value) else {
+                return invalid_request();
+            };
+            state.remote_uploads.transfer(command, now)
+        };
+        match reply {
+            Ok(reply) => ProviderResponse::ok(json!(reply)),
+            Err(CustodyError::BindingMismatch("remote_object_session")) => {
+                ProviderResponse::error("seal_session_lost", "the upload session is unavailable")
+            }
+            Err(_) => invalid_request(),
+        }
+    }
+
+    fn finalize_remote_seal(&mut self, value: Value, now: u64, dash: bool) -> ProviderResponse {
+        let Some(state) = self.state.as_mut() else {
+            return invalid_request();
+        };
+        let reply = if dash {
+            let Ok(command) = serde_json::from_value(value) else {
+                return invalid_request();
+            };
+            state.remote_uploads.finalize_dash(command, now)
+        } else {
+            let Ok(command) = serde_json::from_value(value) else {
+                return invalid_request();
+            };
+            state.remote_uploads.finalize(command, now)
+        };
+        match reply {
+            Ok(reply) => ProviderResponse::ok(json!(reply)),
+            Err(CustodyError::BindingMismatch("remote_object_session")) => {
+                ProviderResponse::error("seal_session_lost", "the upload session is unavailable")
+            }
+            Err(CustodyError::BindingMismatch("remote_object_staged_ciphertext")) => {
+                ProviderResponse::error(
+                    "seal_staging_mismatch",
+                    "the encrypted object does not match the upload",
+                )
+            }
+            Err(CustodyError::BindingMismatch("remote_dash_staged_ciphertext")) => {
+                ProviderResponse::error(
+                    "seal_staging_mismatch",
+                    "the encrypted DASH package does not match the upload",
+                )
+            }
+            Err(_) => invalid_request(),
         }
     }
 
@@ -366,7 +497,7 @@ impl ProtectProvider {
                         ))
                     };
                 }
-                if state.sessions.len() >= MAX_ACTIVE_SESSIONS_V1 {
+                if state.active_session_count() >= MAX_ACTIVE_SESSIONS_V1 {
                     return typed_response(ProtectProviderResponseV1::new_failure(
                         ProviderFailureCodeV1::BackendUnavailable,
                     ));
@@ -818,7 +949,7 @@ impl ProtectProvider {
                         ProviderFailureCodeV1::BindingMismatch,
                     ));
                 }
-                if state.sessions.len() >= MAX_ACTIVE_SESSIONS_V1 {
+                if state.active_session_count() >= MAX_ACTIVE_SESSIONS_V1 {
                     return typed_response(ProtectProviderResponseV1::new_failure(
                         ProviderFailureCodeV1::BackendUnavailable,
                     ));
@@ -1130,7 +1261,7 @@ fn open_media_dash_within(
             failure(ProviderFailureCodeV1::BindingMismatch)
         };
     }
-    if state.sessions.len() >= MAX_ACTIVE_SESSIONS_V1 {
+    if state.active_session_count() >= MAX_ACTIVE_SESSIONS_V1 {
         return failure(ProviderFailureCodeV1::BackendUnavailable);
     }
     let mut layouts = Vec::with_capacity(representations.len());
@@ -1454,6 +1585,7 @@ fn load_provider_state(config: Value) -> Result<ConfiguredProtectProvider, ()> {
         open_replays: BTreeMap::new(),
         sessions: BTreeMap::new(),
         closed_handles: BTreeSet::new(),
+        remote_uploads: remote_object::PrivateRemoteUploads::default(),
     })
 }
 
@@ -1771,6 +1903,25 @@ mod tests {
         NodeCustodyPublicKeyV1::new(bytes).unwrap_or_else(|_| secret.public_key().unwrap())
     }
 
+    pub(crate) fn pool_custody_key(
+        seed: u8,
+    ) -> [u8; elastos_protected_content_contracts::PQ_HYBRID_WRAP_PUBLIC_KEY_BYTES] {
+        use elastos_protected_content_contracts::{
+            test_fixtures::CUSTODY_KEY_SEED_BASE, PQ_HYBRID_WRAP_PUBLIC_KEY_BYTES,
+        };
+        static KEYS: std::sync::OnceLock<[[u8; PQ_HYBRID_WRAP_PUBLIC_KEY_BYTES]; 3]> =
+            std::sync::OnceLock::new();
+        KEYS.get_or_init(|| {
+            std::array::from_fn(|_| {
+                *elastos_protected_content_custody::NodeCustodySecretKeyV1::generate()
+                    .unwrap()
+                    .public_key()
+                    .unwrap()
+                    .as_bytes()
+            })
+        })[usize::from(seed - CUSTODY_KEY_SEED_BASE - 1)]
+    }
+
     fn nodes() -> Vec<ProtectionSessionNodeV1> {
         vec![
             ProtectionSessionNodeV1::new(node_public_key(1), node_custody_public_key(1)).unwrap(),
@@ -1902,7 +2053,7 @@ mod tests {
         [moof, make_box(b"mdat", payload)].concat()
     }
 
-    fn wrap_request(request: &ProtectProviderRequestV1) -> Vec<u8> {
+    fn wrap_request(request: &impl Serialize) -> Vec<u8> {
         let mut value = serde_json::to_value(request).unwrap();
         let op = value["op"].as_str().unwrap().to_string();
         value.as_object_mut().unwrap().insert(
@@ -2713,6 +2864,211 @@ mod tests {
                 protected,
                 finalized,
             }
+        }
+
+        #[test]
+        fn remote_dash_commands_rebuild_staged_head_and_replay_one_transfer() {
+            use base64::Engine as _;
+            use ed25519_dalek::Signer as _;
+            use elastos_protected_content_contracts::test_fixtures::{
+                pool_bundle, pool_descriptor_signed_by, pool_did, runtime_issuer, signing_key,
+                POOL_AUTHORITY_SEED,
+            };
+            use elastos_protected_content_contracts::{
+                CanonicalContract, ClearLayoutV1, ClearPartIndexV1, ClearRenditionV1,
+                CustodyEnvelopeV1, MintPieceAadV1, MintRequestV1, SealSessionAttestationV1,
+                SignedMintRequestV1,
+            };
+            use elastos_protected_content_custody::seal_mint_piece_v1;
+            use elastos_protected_content_provider_contracts::{
+                FinalizeRemoteDashSealReplyV1, FinalizeRemoteDashSealRequestV1,
+                OpenRemoteDashSealReplyV1, OpenRemoteDashSealRequestV1, RemoteObjectSealTransferV1,
+                TransferRemoteDashSealReplyV1, TransferRemoteDashSealRequestV1,
+                TransferRemoteObjectSealRequestV1,
+            };
+
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let bundle = pool_bundle(pool_custody_key, now);
+            let descriptor: elastos_protected_content_contracts::SignedPoolDescriptorAnyV1 =
+                pool_descriptor_signed_by(&bundle, 1, now, POOL_AUTHORITY_SEED).into();
+            let kid = ContentAccessIdV1::new(KID).unwrap();
+            let inits = [init(V), init(A)];
+            let segments = [video_segment(0), audio_segment(0)];
+            let body = MintRequestV1 {
+                pool: pool_did(),
+                epoch: bundle.epoch_identity().unwrap(),
+                minter_issuer: runtime_issuer(POOL_AUTHORITY_SEED),
+                content_access_id: kid,
+                clear_layout: ClearLayoutV1::DashV2 {
+                    renditions: [V, A]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, kind)| ClearRenditionV1 {
+                            kind: kind.code(),
+                            init_len: inits[index].len() as u32,
+                            segment_lengths: vec![segments[index].len() as u32],
+                        })
+                        .collect(),
+                },
+                request_nonce: [0x51; 16],
+                issued_at: now,
+                expires_at: now + 60,
+            };
+            let signature = signing_key(POOL_AUTHORITY_SEED).sign(&body.canonical_bytes().unwrap());
+            let request = SignedMintRequestV1::new(body, signature.to_bytes()).unwrap();
+            let endpoint = "did:key:zCreator";
+            let mut provider = init_provider();
+            let open = OpenRemoteDashSealRequestV1::OpenRemoteDashSeal {
+                endpoint: endpoint.into(),
+                minter_issuer: *request.statement().minter_issuer.as_bytes(),
+                sealer_node: *node_public_key(1).as_bytes(),
+                descriptor: descriptor.canonical_bytes().unwrap(),
+                mint_request: request.canonical_bytes().unwrap(),
+            };
+            assert!(matches!(
+                provider.handle_frame(&serde_json::to_vec(&open).unwrap()).0,
+                ProviderResponse::Error {
+                    code: "invalid_request",
+                    ..
+                }
+            ));
+            let read_reply = |response| {
+                let ProviderResponse::Ok { data: Some(data) } = response else {
+                    panic!(
+                        "unexpected provider response: {}",
+                        serde_json::to_string(&response).unwrap()
+                    );
+                };
+                data
+            };
+            let opened: OpenRemoteDashSealReplyV1 =
+                serde_json::from_value(read_reply(provider.handle_frame(&wrap_request(&open)).0))
+                    .unwrap();
+            assert_eq!(
+                read_reply(provider.handle_frame(&wrap_request(&open)).0)["statement"],
+                json!(&opened.statement)
+            );
+            let attestation =
+                SealSessionAttestationV1::from_canonical_bytes(&opened.statement).unwrap();
+            let key = &attestation.seal_session_public_key;
+            let session_id = attestation.seal_session_id;
+            let foreign_route = TransferRemoteObjectSealRequestV1::TransferRemoteObjectSeal {
+                endpoint: endpoint.into(),
+                session_id,
+                sequence: 1,
+                transfer: RemoteObjectSealTransferV1::Resume,
+            };
+            assert!(matches!(
+                provider.handle_frame(&wrap_request(&foreign_route)).0,
+                ProviderResponse::Error {
+                    code: "seal_session_lost",
+                    ..
+                }
+            ));
+            let mut encrypted = Vec::new();
+            for (index, ((part, length), clear)) in request
+                .statement()
+                .clear_layout
+                .parts()
+                .unwrap()
+                .into_iter()
+                .zip(inits.iter().chain(&segments))
+                .enumerate()
+            {
+                assert_eq!(length as usize, clear.len());
+                let aad = MintPieceAadV1 {
+                    mint_request_hash: attestation.mint_request_hash,
+                    part,
+                    piece: 0,
+                    piece_count: 1,
+                };
+                let sealed = seal_mint_piece_v1(key, &aad, clear).unwrap();
+                let digest = Digest32::new(Sha256::digest(clear).into());
+                let transfer = TransferRemoteDashSealRequestV1::TransferRemoteDashSeal {
+                    endpoint: endpoint.into(),
+                    session_id,
+                    sequence: index as u32 + 1,
+                    transfer: RemoteObjectSealTransferV1::Part {
+                        part,
+                        piece: 0,
+                        piece_count: 1,
+                        part_clear_sha256: *digest.as_bytes(),
+                        sealed: base64::engine::general_purpose::STANDARD.encode(sealed),
+                    },
+                };
+                let frame = wrap_request(&transfer);
+                let data = read_reply(provider.handle_frame(&frame).0);
+                assert_eq!(read_reply(provider.handle_frame(&frame).0), data);
+                let reply: TransferRemoteDashSealReplyV1 = serde_json::from_value(data).unwrap();
+                assert_eq!(reply.sequence, index as u32 + 1);
+                assert_eq!(reply.last_protected, Some(part));
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(reply.framed_chunk.unwrap())
+                    .unwrap();
+                assert_ne!(&bytes, clear);
+                encrypted.push(bytes);
+            }
+            let rebuild = |kid| {
+                let declarations = [V, A]
+                    .into_iter()
+                    .zip(&encrypted[..2])
+                    .map(|(kind, bytes)| {
+                        CencDashRenditionDeclV2::from_init(kind, TIMESCALE, bytes, 1)
+                    })
+                    .collect();
+                let mut builder = CencDashIdentityBuilderV2::new(kid, declarations).unwrap();
+                for segment in &encrypted[2..] {
+                    builder.push_segment(segment).unwrap();
+                }
+                builder.finish().unwrap()
+            };
+            let different = rebuild(ContentAccessIdV1::new([0x88; 16]).unwrap());
+            let finalize = |head: &CencDashMediaIdentityV2| {
+                FinalizeRemoteDashSealRequestV1::FinalizeRemoteDashSeal {
+                    endpoint: endpoint.into(),
+                    session_id,
+                    sequence: 4,
+                    staged_identity: head.canonical_bytes().unwrap(),
+                }
+            };
+            assert!(matches!(
+                provider
+                    .handle_frame(&wrap_request(&finalize(&different)))
+                    .0,
+                ProviderResponse::Error {
+                    code: "seal_staging_mismatch",
+                    ..
+                }
+            ));
+            let head = rebuild(kid);
+            assert_eq!(head.default_kid(), kid);
+            let command = wrap_request(&finalize(&head));
+            let data = read_reply(provider.handle_frame(&command).0);
+            assert_eq!(read_reply(provider.handle_frame(&command).0), data);
+            let result: FinalizeRemoteDashSealReplyV1 = serde_json::from_value(data).unwrap();
+            assert_eq!(&result.content_access_id, kid.as_bytes());
+            assert_eq!(
+                &result.mint_request_hash,
+                attestation.mint_request_hash.as_bytes()
+            );
+            let envelope =
+                CustodyEnvelopeV1::from_canonical_bytes(&result.custody_envelope).unwrap();
+            assert_eq!(
+                envelope.manifest().encrypted_content(),
+                head.encrypted_content()
+            );
+            assert_eq!(
+                envelope.manifest().custody_epoch(),
+                bundle.epoch_identity().unwrap()
+            );
+            assert_eq!(envelope.stored_shares().len(), 3);
+            assert!(matches!(
+                request.statement().clear_layout.parts().unwrap()[1].0,
+                ClearPartIndexV1::DashInit { rendition: 2 }
+            ));
         }
 
         fn proof(

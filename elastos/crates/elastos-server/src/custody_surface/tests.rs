@@ -119,6 +119,9 @@ fn custody_target_ops_list_both_planes_in_surface_order() {
             OP_CUSTODY_RELEASE_POOL_CONTRIBUTION,
             OP_CUSTODY_SIGN_POOL_STATEMENT,
             OP_CUSTODY_PROVISION_POOL_NODE_SHARE,
+            ATTEST_REMOTE_SEAL_UPLOAD_OP,
+            AUTHORIZE_REMOTE_SEAL_SHARE_OP,
+            SIGN_REMOTE_SEAL_COMPLETION_OP,
         ]
     );
     assert_eq!(
@@ -137,6 +140,10 @@ fn custody_target_ops_list_both_planes_in_surface_order() {
             OP_CUSTODY_POOL_SESSION_OPEN,
             OP_CUSTODY_POOL_SESSION_READ,
             OP_CUSTODY_POOL_SESSION_CLOSE,
+            OP_CUSTODY_POOL_SEAL_OPEN,
+            OP_CUSTODY_POOL_SEAL_PART,
+            OP_CUSTODY_POOL_SEAL_RESUME,
+            OP_CUSTODY_POOL_SEAL_FINALIZE,
         ]
     );
 }
@@ -358,6 +365,10 @@ fn pending_approvals_are_the_173_items() {
         pool_op(OP_CUSTODY_POOL_SESSION_OPEN),
         pool_op(OP_CUSTODY_POOL_SESSION_READ),
         pool_op(OP_CUSTODY_POOL_SESSION_CLOSE),
+        pool_op(OP_CUSTODY_POOL_SEAL_OPEN),
+        pool_op(OP_CUSTODY_POOL_SEAL_PART),
+        pool_op(OP_CUSTODY_POOL_SEAL_RESUME),
+        pool_op(OP_CUSTODY_POOL_SEAL_FINALIZE),
         inbox_kind(INBOX_KIND_NODE_REQUEST),
         inbox_kind(INBOX_KIND_NODE_APPROVING),
         inbox_kind(INBOX_KIND_NODE_RESUMABLE),
@@ -390,6 +401,33 @@ fn pending_approvals_are_the_173_items() {
                 }
             ),
             OP_CUSTODY_SIGN_POOL_STATEMENT,
+        ),
+        (
+            format!(
+                "{:?}",
+                SurfaceKind::RuntimeLocalOp {
+                    target: TARGET_CUSTODY
+                }
+            ),
+            ATTEST_REMOTE_SEAL_UPLOAD_OP,
+        ),
+        (
+            format!(
+                "{:?}",
+                SurfaceKind::RuntimeLocalOp {
+                    target: TARGET_CUSTODY
+                }
+            ),
+            AUTHORIZE_REMOTE_SEAL_SHARE_OP,
+        ),
+        (
+            format!(
+                "{:?}",
+                SurfaceKind::RuntimeLocalOp {
+                    target: TARGET_CUSTODY
+                }
+            ),
+            SIGN_REMOTE_SEAL_COMPLETION_OP,
         ),
         // Plan B S7-lite T7.3: an admitted minter provisions a pool node.
         (

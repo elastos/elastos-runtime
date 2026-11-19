@@ -482,6 +482,23 @@ impl PayloadSealerV1 {
         Ok(encrypted_chunk)
     }
 
+    pub(crate) fn completed_encrypted_identity(
+        &self,
+    ) -> Result<EncryptedContentIdentityV1, CustodyError> {
+        let chunk_count = self.header.chunk_count()?;
+        if self.next_index != chunk_count {
+            return Err(CustodyError::InvalidPayload("chunk_count"));
+        }
+        let expected_bytes = self.header.expected_framed_bytes()?;
+        if self.framed_bytes != expected_bytes {
+            return Err(CustodyError::InvalidPayload("framed_ciphertext_bytes"));
+        }
+        Ok(EncryptedContentIdentityV1::new(
+            Digest32::new(self.hasher.clone().finalize().into()),
+            self.framed_bytes,
+        )?)
+    }
+
     /// Finish sealing without provisioning anything. Errors unless every
     /// chunk declared by the header has been sealed (`next_index ==
     /// chunk_count`) and the total framed byte count matches what the header
@@ -495,18 +512,7 @@ impl PayloadSealerV1 {
     /// its own error path — this method does not provision, so there is
     /// nothing to undo if the caller decides not to).
     pub fn finish_unprovisioned(self) -> Result<UnprovisionedSealedPayloadV1, CustodyError> {
-        let chunk_count = self.header.chunk_count()?;
-        if self.next_index != chunk_count {
-            return Err(CustodyError::InvalidPayload("chunk_count"));
-        }
-        let expected_bytes = self.header.expected_framed_bytes()?;
-        if self.framed_bytes != expected_bytes {
-            return Err(CustodyError::InvalidPayload("framed_ciphertext_bytes"));
-        }
-        let encrypted_content_identity = EncryptedContentIdentityV1::new(
-            Digest32::new(self.hasher.finalize().into()),
-            self.framed_bytes,
-        )?;
+        let encrypted_content_identity = self.completed_encrypted_identity()?;
         Ok(UnprovisionedSealedPayloadV1 {
             header: self.header,
             encrypted_content_identity,

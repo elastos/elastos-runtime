@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="elastos-c4-sha256" content="5e93f49d63ed2aa9f9fe390a9cea65e62757b8cfa61964b5611298df7fff0d7a">
+  <meta name="elastos-c4-sha256" content="bbb0ef1a862517181d506bdc5789e9b409de134e5b7f495b9e8aa3c493da95f8">
   <title>ElastOS C4 model</title>
   <style>
     :root {
@@ -630,11 +630,11 @@
         {
           id: "protected", group: "Dynamics", number: "14", level: "Dynamic view",
           title: "Protected-content open", question: "Who coordinates rights, custody release, and decryption when a buyer opens protected content?",
-          note: "Public Kubo holds validated metadata and covers only. Ciphertext stays in private offline IPFS and moves over Carrier. Rights authorize reading across Homes; source interfaces do not prove installed playback.",
+          note: "Content streams a remote sealer’s ciphertext into private offline IPFS and validates the file CIDs before pinning. Uploads and imports share the host storage limit with custody shares and kept copies. Carrier moves the ciphertext between eligible Homes. Public Kubo holds validated metadata and covers. Rights authorize reading across Homes; source interfaces do not prove installed playback.",
           kind: "sequence",
           participants: [
             P("viewer", "Launched viewer", "Opaque launch authority and bounded reads."),
-            P("runtime", "Buyer Runtime", "Verifies descriptor, manifest and session binding. Known-pool same-epoch refresh is bounded to 20 seconds per resolve, with verified-cache fallback; pending polls may repeat it."),
+            P("runtime", "Buyer Runtime", "Verifies descriptor, manifest and session binding. Refreshes through verified pool routes, including when the asset's epoch is missing. The 20-second budget applies to one resolve. Pending polls can repeat it."),
             P("pool", "Verified pool server", "Stages content; serves encrypted output to the buyer delivery key."),
             P("wallet", "Wallet Provider", "Signs the exact rights request and authorized recipients."),
             P("custody", "Epoch custody nodes", "Independently verify rights before recipient-sealed release."),

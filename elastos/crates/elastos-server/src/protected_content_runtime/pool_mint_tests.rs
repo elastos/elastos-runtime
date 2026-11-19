@@ -9,14 +9,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 use base64::Engine as _;
+use ed25519_dalek::Signer as _;
 use elastos_protected_content_contracts::test_fixtures::{
-    key_envelope_for, node_public_key, pool_bundle, pool_bundle_signed_by, pool_descriptor_routed,
-    pool_did, pool_mint_share, POOL_AUTHORITY_SEED,
+    key_envelope_for, node_public_key, pool_bundle, pool_bundle_signed_by, pool_bundle_with,
+    pool_descriptor_routed, pool_did, pool_mint_share, signing_key, POOL_AUTHORITY_SEED,
 };
 use elastos_protected_content_contracts::{
     CanonicalContract, ContentAccessIdV1, Digest32, EncryptedContentIdentityV1,
-    KeyEnvelopeIdentityV1, PoolEpochBundleV1, SignedPoolDescriptorAnyV1, SignedPoolMintShareV1,
-    PQ_HYBRID_WRAP_PUBLIC_KEY_BYTES,
+    KeyEnvelopeIdentityV1, PoolDescriptorStatementV3, PoolEpochBundleV1, SignedPoolDescriptorAnyV1,
+    SignedPoolDescriptorV3, SignedPoolMintShareV1, PQ_HYBRID_WRAP_PUBLIC_KEY_BYTES,
 };
 use elastos_runtime::provider::{
     ProviderCarrierRoute, ProviderInvocationTransport, ProviderRegistry,
@@ -75,6 +76,105 @@ fn routed(
 
 fn registry() -> Arc<ProviderRegistry> {
     Arc::new(ProviderRegistry::new())
+}
+
+#[cfg(unix)]
+#[test]
+fn composition_mint_resumes_with_the_original_bindings_after_rollover() {
+    let (_dir, data_dir) = home();
+    tests::write_library_publish_test_composition(&data_dir);
+    let input = tests::library_publish_test_input(&data_dir, "person:local:rollover-mint");
+    let source = (
+        input.principal_id.as_str(),
+        input.object_uri.as_str(),
+        input.source_storage.as_str(),
+    );
+    let now = crate::auth::now_ts();
+    let original =
+        load_runtime_custody_mint_pool(&data_dir, registry(), None, Some(source)).unwrap();
+    let configured = original.composition.configured_nodes().unwrap();
+    let bindings = original
+        .selected_nodes(&configured, now)
+        .unwrap()
+        .iter()
+        .map(|node| node.binding().clone())
+        .collect::<Vec<_>>();
+    let intent = load_or_persist_runtime_mint_intent(
+        &runtime_mint_journal(&data_dir),
+        &original.composition,
+        &input,
+        bindings.clone(),
+        None,
+    )
+    .unwrap();
+
+    let successor = pool_bundle_signed_by(|seed| xwing(seed + 8), now, None, None, 0x71);
+    let path = runtime_custody_composition_config_path(&data_dir);
+    let mut config: RuntimeCustodyCompositionConfigFile =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let encode = base64::engine::general_purpose::STANDARD;
+    config.signed_pool_base64 = encode.encode(successor.signed_pool().canonical_bytes().unwrap());
+    config.signed_epoch_base64 = encode.encode(successor.signed_epoch().canonical_bytes().unwrap());
+    config.signed_committee_authorization_base64 = encode.encode(
+        successor
+            .signed_committee_authorization()
+            .canonical_bytes()
+            .unwrap(),
+    );
+    config.expected_committee_authorization_identity_base64 = encode.encode(
+        successor
+            .signed_committee_authorization()
+            .authorization_identity()
+            .unwrap()
+            .canonical_bytes()
+            .unwrap(),
+    );
+    for (route, node) in config
+        .routes
+        .iter_mut()
+        .zip(successor.signed_epoch().statement().nodes())
+    {
+        route.node_public_key_base64 = encode.encode(node.node_public_key().as_bytes());
+    }
+    write_owner_only_bytes(
+        &path,
+        &canonical_custody_composition_config_bytes(&config).unwrap(),
+    )
+    .unwrap();
+
+    let fresh = load_runtime_custody_mint_pool(&data_dir, registry(), None, None).unwrap();
+    let successor_epoch = successor.epoch_identity().unwrap();
+    assert_ne!(successor_epoch, intent.custody_epoch());
+    assert_eq!(
+        fresh.composition.signed_epoch.epoch_identity().unwrap(),
+        successor_epoch
+    );
+    let resumed =
+        load_runtime_custody_mint_pool(&data_dir, registry(), None, Some(source)).unwrap();
+    assert!(resumed.used.is_none());
+    assert_eq!(
+        resumed.composition.signed_epoch.epoch_identity().unwrap(),
+        intent.custody_epoch()
+    );
+    let configured = resumed.composition.configured_nodes().unwrap();
+    let selected = resumed.selected_nodes(&configured, now).unwrap();
+    assert!(selected.iter().map(|node| node.binding()).eq(&bindings));
+
+    // A valid successor copied over the archive is still the wrong mint.
+    let archive =
+        retained_mint_composition_path(&data_dir, intent.custody_committee_authorization());
+    let original_bytes = fs::read(&archive).unwrap();
+    assert_ne!(original_bytes, fs::read(&path).unwrap());
+    write_owner_only_bytes(&archive, &fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        message(load_runtime_custody_mint_pool(
+            &data_dir,
+            registry(),
+            None,
+            Some(source)
+        )),
+        "the retained custody composition does not match the mint intent"
+    );
 }
 
 fn message(result: anyhow::Result<RuntimeCustodyMintPool>) -> String {
@@ -163,6 +263,265 @@ async fn a_home_that_only_uses_the_pool_mints_into_it_over_descriptor_routes() {
 }
 
 #[tokio::test]
+async fn fresh_library_object_records_remote_request_and_retries_it_with_setting_off() {
+    let (_dir, data_dir) = home();
+    let now = crate::auth::now_ts();
+    let bundle = pool_bundle(xwing, now);
+    let original = pool_descriptor_routed(&bundle, 1, now, POOL_AUTHORITY_SEED, &member_did);
+    let previous = original.statement();
+    let (device_key, local_did) = elastos_identity::load_existing_did(&data_dir).unwrap();
+    let issuer = RuntimeOperationIssuerKeyV1::new(device_key.verifying_key().to_bytes()).unwrap();
+    let statement = PoolDescriptorStatementV3::new(
+        *previous.pool(),
+        previous.sequence() + 1,
+        vec![bundle],
+        previous.members().to_vec(),
+        *previous.serve_policy(),
+        elastos_protected_content_contracts::MintPolicyV1::owner_default(issuer),
+        previous.issued_at(),
+        previous.expires_at(),
+        previous.trust_mode(),
+    )
+    .unwrap();
+    let signature = signing_key(POOL_AUTHORITY_SEED)
+        .sign(&statement.canonical_bytes().unwrap())
+        .to_bytes();
+    let descriptor = SignedPoolDescriptorV3::new(statement, signature.to_vec())
+        .unwrap()
+        .into();
+    keep_known(&data_dir, &descriptor, now).await;
+    let principal = "person:local:remote-object-mint";
+    let input = RuntimeCustodyLibraryPublishObjectInput {
+        principal_id: principal.into(),
+        object_uri: format!(
+            "{}/Documents/test.pdf",
+            crate::auth::principal_localhost_root(principal)
+        ),
+        source_storage: "plain_localhost_root".into(),
+        content_type: "application/pdf".into(),
+        wallet_account_id: "wallet-account-1".into(),
+        wallet_account_address: format!("0x{}", "11".repeat(20)),
+        creator_mint_source_digest: Digest32::new([0x11; 32]),
+        copies: "0x1".into(),
+        price: "5".into(),
+        channel: format!("0x{}", "22".repeat(20)),
+        pay_token: String::new(),
+        clear_plaintext: b"fixture PDF bytes".to_vec(),
+        listing: None,
+        pool_did: None,
+    };
+    let mut original_request = None;
+    for enabled in [true, false] {
+        fs::write(
+            data_dir.join("config.toml"),
+            format!("protected_content_remote_object_sealing = {enabled}\n"),
+        )
+        .unwrap();
+        // No Carrier is registered in this fixture. The application reaches
+        // the remote transport with the saved request and stops there.
+        let error =
+            publish_runtime_custody_library_object_content(&data_dir, registry(), input.clone())
+                .await
+                .unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<elastos_protected_content_runtime::RemoteSealUploadError>(),
+                Some(elastos_protected_content_runtime::RemoteSealUploadError::Transport(_))
+            ),
+            "{error:#}"
+        );
+        let (_, intent) = runtime_mint_attempt_state(
+            &data_dir,
+            principal,
+            &input.object_uri,
+            &input.source_storage,
+        )
+        .unwrap()
+        .unwrap();
+        let intent = intent.unwrap();
+        let remote = intent.remote_seal_request().unwrap();
+        assert_ne!(
+            descriptor.member_peer_did(remote.sealer()).unwrap(),
+            local_did
+        );
+        assert_eq!(remote.request().statement().minter_issuer, issuer);
+        assert_eq!(
+            remote.request().statement().content_access_id,
+            intent.content_access_id()
+        );
+        let request = (remote.request().canonical_bytes().unwrap(), remote.sealer());
+        if let Some(original) = original_request.replace(request.clone()) {
+            assert_eq!(original, request);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn remote_dash_source_binds_prepared_video_and_audio_and_refuses_changed_segment() {
+    use super::remote_dash_source::RemoteSealDashSource;
+    use elastos_protected_content_contracts::{
+        ClearPartIndexV1, MintPieceAadV1, MintRequestV1, SignedMintRequestV1,
+    };
+    use elastos_protected_content_custody::{open_mint_piece_v1, SealSessionSecretKeyV1};
+    use elastos_protected_content_runtime::RemoteSealPartSource;
+
+    let (_dir, home) = home();
+    let input = tests::library_publish_test_input(&home, "person:local:remote-dash");
+    let now = crate::auth::now_ts();
+    let descriptor = routed(&pool_bundle(xwing, now), 1, now, POOL_AUTHORITY_SEED);
+    keep_known(&home, &descriptor, now).await;
+    let pool = load_runtime_custody_mint_pool(&home, registry(), None, None).unwrap();
+    let configured = pool.composition.configured_nodes().unwrap();
+    let selected = pool.selected_nodes(&configured, now).unwrap();
+    let intent = runtime_mint_intent_with_access_id(
+        &pool.composition,
+        &input,
+        selected.iter().map(|node| node.binding().clone()).collect(),
+        kid(),
+    )
+    .unwrap();
+    let layout = RemoteSealDashSource::layout(&input.media).unwrap();
+    let parts = layout.parts().unwrap();
+    assert_eq!(parts[0].0, ClearPartIndexV1::DashInit { rendition: 1 });
+    assert_eq!(parts[1].0, ClearPartIndexV1::DashInit { rendition: 2 });
+    assert_eq!(
+        parts[2].0,
+        ClearPartIndexV1::DashSegment {
+            rendition: 1,
+            index: 0
+        }
+    );
+    let minter =
+        elastos_protected_content_contracts::test_fixtures::runtime_issuer(POOL_AUTHORITY_SEED);
+    let request = MintRequestV1 {
+        pool: pool_did(),
+        epoch: intent.custody_epoch(),
+        minter_issuer: minter,
+        content_access_id: intent.content_access_id(),
+        clear_layout: layout,
+        request_nonce: [0x51; 16],
+        issued_at: now,
+        expires_at: now + 60,
+    };
+    let signature = signing_key(POOL_AUTHORITY_SEED).sign(&request.canonical_bytes().unwrap());
+    let request = SignedMintRequestV1::new(request, signature.to_bytes()).unwrap();
+    let request_hash = request.canonical_hash().unwrap();
+    let journal = runtime_mint_journal(&home);
+    journal.persist_intent(&intent).unwrap();
+    let intent = journal
+        .record_intent_remote_seal_request(
+            intent.request_id(),
+            request,
+            descriptor,
+            node_public_key(1),
+            minter,
+            now,
+        )
+        .unwrap();
+    let source = RemoteSealDashSource::bind(&input.media, &intent).unwrap();
+    let secret = SealSessionSecretKeyV1::generate().unwrap();
+    let key = secret.public_key().unwrap();
+    for (part, bytes) in parts {
+        let sealed = source
+            .seal_part(&key, request_hash, part, bytes)
+            .await
+            .unwrap();
+        let mut clear = Vec::new();
+        for (index, piece) in sealed.pieces.iter().enumerate() {
+            let aad = MintPieceAadV1 {
+                mint_request_hash: request_hash,
+                part,
+                piece: index as u16,
+                piece_count: sealed.pieces.len() as u16,
+            };
+            clear.extend_from_slice(&open_mint_piece_v1(&secret, &aad, piece).unwrap());
+        }
+        let from_preparation = match part {
+            ClearPartIndexV1::DashInit { rendition } => input.media.renditions
+                [usize::from(rendition - 1)]
+            .clear_init_segment
+            .clone(),
+            ClearPartIndexV1::DashSegment { rendition, index } => {
+                fs::read(runtime_prepared_segment_path(
+                    &input.media.operation_root,
+                    input.media.renditions[usize::from(rendition - 1)].kind,
+                    index,
+                ))
+                .unwrap()
+            }
+            _ => unreachable!("DASH parts only"),
+        };
+        assert_eq!(clear, from_preparation);
+    }
+    let path = runtime_prepared_segment_path(
+        &input.media.operation_root,
+        input.media.renditions[0].kind,
+        0,
+    );
+    let mut modified = fs::read(&path).unwrap();
+    modified[0] ^= 1;
+    fs::write(path, &modified).unwrap();
+    let segment = ClearPartIndexV1::DashSegment {
+        rendition: 1,
+        index: 0,
+    };
+    assert!(source
+        .seal_part(&key, request_hash, segment, modified.len() as u64)
+        .await
+        .is_err());
+    let mut other_preparation = input.media.clone();
+    other_preparation.preparation_receipt = Digest32::new([0x52; 32]);
+    assert!(RemoteSealDashSource::bind(&other_preparation, &intent).is_err());
+}
+
+#[test]
+fn pool_mint_selection_moves_past_an_expired_first_epoch_but_resume_does_not() {
+    let (_dir, data_dir) = home();
+    let now = crate::auth::now_ts();
+    let first = pool_bundle_with(xwing, now, Some((now - 10, now + 60)), None);
+    let successor = pool_bundle(|seed| xwing(seed + 8), now);
+    let first_epoch = first.epoch_identity().unwrap();
+    let successor_epoch = successor.epoch_identity().unwrap();
+    assert_ne!(first_epoch, successor_epoch);
+
+    let original = pool_descriptor_routed(&first, 1, now, POOL_AUTHORITY_SEED, &member_did);
+    let previous = original.statement();
+    let statement = PoolDescriptorStatementV3::new(
+        *previous.pool(),
+        previous.sequence() + 1,
+        vec![first, successor],
+        previous.members().to_vec(),
+        *previous.serve_policy(),
+        previous.mint_policy().clone(),
+        previous.issued_at(),
+        previous.expires_at(),
+        previous.trust_mode(),
+    )
+    .unwrap();
+    let signature = signing_key(POOL_AUTHORITY_SEED)
+        .sign(&statement.canonical_bytes().unwrap())
+        .to_bytes()
+        .to_vec();
+    let bytes = SignedPoolDescriptorV3::new(statement, signature)
+        .unwrap()
+        .canonical_bytes()
+        .unwrap();
+    let descriptor = SignedPoolDescriptorAnyV1::from_canonical_bytes(&bytes).unwrap();
+    let selected_epoch = |when, recorded| {
+        runtime_custody_composition_for_pool(&data_dir, registry(), &descriptor, recorded, when)
+            .unwrap()
+            .signed_epoch
+            .epoch_identity()
+            .unwrap()
+    };
+
+    assert_eq!(selected_epoch(now, None), first_epoch);
+    assert_eq!(selected_epoch(now + 61, None), successor_epoch);
+    assert_eq!(selected_epoch(now + 61, Some(first_epoch)), first_epoch);
+}
+
+#[tokio::test]
 async fn two_used_pools_need_a_choice() {
     let (_dir, data_dir) = home();
     let now = crate::auth::now_ts();
@@ -219,6 +578,7 @@ async fn resume_after_the_used_pool_is_removed_still_finishes_on_the_recorded_po
         &pool.composition,
         &input,
         selected.iter().map(|node| node.binding().clone()).collect(),
+        None,
     )
     .unwrap();
     // The pool is removed from "Pools this Home uses", and another is added.
@@ -267,8 +627,14 @@ fn b64(value: &impl CanonicalContract) -> String {
 #[test]
 fn a_pool_minted_listing_is_pool_bound_on_every_home() {
     let share = pool_mint_share(pool_did(), &envelope(0x11), kid(), MINTER);
-    assert!(verify_pool_mint_share(Some(&b64(&share)), &envelope(0x11), kid()).unwrap());
-    assert!(!verify_pool_mint_share(None, &envelope(0x11), kid()).unwrap());
+    assert_eq!(
+        verify_pool_mint_share(Some(&b64(&share)), &envelope(0x11), kid()).unwrap(),
+        Some(share.statement().minter_runtime_issuer())
+    );
+    assert_eq!(
+        verify_pool_mint_share(None, &envelope(0x11), kid()).unwrap(),
+        None
+    );
     // The owner (who holds the ciphertext) and a third Home take one path.
     for holds in [true, false] {
         assert_eq!(
@@ -550,6 +916,7 @@ async fn a_recorded_mint_settles_on_its_pool_after_the_descriptor_and_term_expir
         .unwrap(),
         used: Some(descriptor.clone()),
         recorded: false,
+        completed_local_mint: None,
     };
     record_runtime_mint_attempt_pool(&data_dir, source, Some(&descriptor)).unwrap();
     let configured = started.composition.configured_nodes().unwrap();
@@ -559,6 +926,7 @@ async fn a_recorded_mint_settles_on_its_pool_after_the_descriptor_and_term_expir
         &started.composition,
         &input,
         selected.iter().map(|node| node.binding().clone()).collect(),
+        None,
     )
     .unwrap();
     // Now the descriptor and the term are past: no new mint goes into it.

@@ -13,11 +13,14 @@ use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use elastos_protected_content_contracts::{
-    CanonicalContract, ContentAccessIdV1, CustodyCommitteeAuthorizationIdentityV1,
-    CustodyEpochIdentityV1, CustodyNodeProvisioningRecordIdentityV1, CustodyPoolFailureDomainIdV1,
-    CustodyPoolIdentityV1, CustodyPoolOperatorIdV1, Digest32, EncryptedContentIdentityV1,
-    KeyEnvelopeIdentityV1, NodePublicKey, NodeSetV1, PoolDidV1, RightsPolicyIdentityV1,
-    RuntimeCustodyProvisioningIdV1, ThresholdV1,
+    CanonicalContract, ClearLayoutV1, ClearPartIndexV1, ContentAccessIdV1,
+    CustodyCommitteeAuthorizationIdentityV1, CustodyEpochIdentityV1,
+    CustodyNodeProvisioningRecordIdentityV1, CustodyPoolFailureDomainIdV1, CustodyPoolIdentityV1,
+    CustodyPoolOperatorIdV1, Digest32, EncryptedContentIdentityV1, KeyEnvelopeIdentityV1,
+    NodePublicKey, NodeSetV1, PoolDidV1, RecipientPublicKeyBytesV1, RightsPolicyIdentityV1,
+    RuntimeCustodyProvisioningIdV1, RuntimeOperationIssuerKeyV1, SealCompletedV1,
+    SignedMintRequestV1, SignedPoolDescriptorAnyV1, SignedSealCompletedV1,
+    SignedSealSessionAttestationV1, ThresholdV1,
 };
 use elastos_protected_content_provider_contracts::{
     CencDashMediaIdentityV2, CencDashRenditionKindV2, CencFmp4MediaIdentityV1,
@@ -29,6 +32,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
+use crate::remote_seal::MAX_REMOTE_SEAL_COMPLETION_BYTES;
+
 // v5 is the pre-Task-12 record format: a positional (no discriminant)
 // `CencFmp4MediaIdentityV1` is the only content identity it can carry. It is
 // read-only from here on; the ~61 files already on disk under
@@ -37,10 +42,13 @@ use thiserror::Error;
 const STORE_MAGIC_V5: &[u8; 8] = b"epc-mj05";
 const STORE_DIGEST_DOMAIN_V5: &[u8] = b"elastos/protected-content/runtime-mint-journal/v5";
 // v6 adds a `RuntimeContentIdentityV1` kind byte to the record framing so a
-// record can carry either a media or an object identity. The encoder only
-// ever writes v6; the decoder accepts both.
+// record can carry either a media or an object identity.
 const STORE_MAGIC: &[u8; 8] = b"epc-mj06";
 const STORE_DIGEST_DOMAIN: &[u8] = b"elastos/protected-content/runtime-mint-journal/v6";
+// Only remote mints use v7. Their record refers to the exact stored remote
+// request and signed completion rather than claiming local node receipts.
+const STORE_MAGIC_REMOTE: &[u8; 8] = b"epc-mj07";
+const STORE_DIGEST_DOMAIN_REMOTE: &[u8] = b"elastos/protected-content/runtime-mint-journal/v7";
 // v2 is the pre-Task-12b intent format: a positional (no discriminant) media
 // declaration (mime_type/codecs/clear_init_sha256/clear_segment_sha256) is
 // the only content an intent can carry. Read-only from here on; 22 real
@@ -72,6 +80,7 @@ const PENDING_ARCHIVE_PREFIX: &str = "archive-pending-";
 /// Archive directories are named `runtime-mint-set-aside-<date>`, beside the
 /// store.
 const ARCHIVE_DIR_PREFIX: &str = "runtime-mint-set-aside-";
+const REMOTE_COMPLETION_EXTENSION: &str = "seal-completed";
 const MINT_INTENT_SOURCE_BINDING_DOMAIN: &[u8] =
     b"elastos.protected-content.runtime-mint-intent-source-binding/v1";
 const MAX_STORE_FILE_BYTES: usize = 64 * 1024;
@@ -955,7 +964,7 @@ impl RuntimeMediaPreparationRecord {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum RuntimeMintIntentProtectState {
     NotStarted,
     OpenRequestPending,
@@ -963,6 +972,176 @@ enum RuntimeMintIntentProtectState {
     OpenHandlePendingClose([u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1]),
     SettledBeforeDraft(RuntimeMintIntentProtectSettlement),
     Completed(Digest32),
+    RemoteSeal(Box<RuntimeRemoteSealRequestV1>),
+}
+
+/// Exact verified inputs retained before the first external seal operation.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RuntimeRemoteSealRequestV1 {
+    request: SignedMintRequestV1,
+    descriptor: SignedPoolDescriptorAnyV1,
+    sealer: NodePublicKey,
+    session: Option<RuntimeRemoteSealSessionV1>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct RuntimeRemoteSealSessionV1 {
+    attestation: SignedSealSessionAttestationV1,
+    last_acked: Option<ClearPartIndexV1>,
+}
+
+impl RuntimeRemoteSealSessionV1 {
+    pub const fn session_id(&self) -> [u8; 16] {
+        self.attestation.session_id()
+    }
+
+    pub const fn last_acked(&self) -> Option<ClearPartIndexV1> {
+        self.last_acked
+    }
+}
+
+impl RuntimeRemoteSealRequestV1 {
+    pub fn request(&self) -> &SignedMintRequestV1 {
+        &self.request
+    }
+
+    pub fn descriptor(&self) -> &SignedPoolDescriptorAnyV1 {
+        &self.descriptor
+    }
+
+    pub const fn sealer(&self) -> NodePublicKey {
+        self.sealer
+    }
+
+    pub fn session(&self) -> Option<&RuntimeRemoteSealSessionV1> {
+        self.session.as_ref()
+    }
+
+    pub(crate) fn upload_is_acknowledged(&self) -> Result<bool, RuntimeMintJournalError> {
+        let layout = &self.request.statement().clear_layout;
+        let last = layout
+            .parts()
+            .map_err(|_| RuntimeMintJournalError::InvalidSelection)?
+            .last()
+            .map(|(part, _)| *part);
+        Ok(last.is_some()
+            && self
+                .session()
+                .and_then(RuntimeRemoteSealSessionV1::last_acked)
+                == last)
+    }
+
+    pub fn verify_resume(
+        &self,
+        minter: RuntimeOperationIssuerKeyV1,
+        now: u64,
+    ) -> Result<(&str, &RecipientPublicKeyBytesV1), RuntimeMintJournalError> {
+        let peer = self.verify_dispatch(minter, now)?;
+        let session = self.session().ok_or(RuntimeMintJournalError::Conflict)?;
+        let upload_key = session
+            .attestation
+            .verify_for_upload(
+                &self.request,
+                &self.descriptor,
+                self.sealer,
+                session.session_id(),
+                now,
+            )
+            .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
+        Ok((peer, upload_key))
+    }
+
+    pub fn verify_dispatch(
+        &self,
+        minter: RuntimeOperationIssuerKeyV1,
+        now: u64,
+    ) -> Result<&str, RuntimeMintJournalError> {
+        let request = self
+            .request
+            .verify_for_sealer(&self.descriptor, self.sealer, now)
+            .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
+        if request.minter_issuer != minter {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        self.descriptor
+            .member_peer_did(self.sealer)
+            .ok_or(RuntimeMintJournalError::InvalidSelection)
+    }
+
+    fn validate_intent(&self, intent: &RuntimeMintIntent) -> Result<(), RuntimeMintJournalError> {
+        let request = self.request.statement();
+        if self.descriptor.pool() != &request.pool
+            || request.content_access_id != intent.content_access_id
+            || request.epoch != intent.custody_epoch
+        {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        let bundle = self
+            .descriptor
+            .epochs()
+            .iter()
+            .find(|bundle| bundle.epoch_identity().ok() == Some(request.epoch))
+            .ok_or(RuntimeMintJournalError::InvalidSelection)?;
+        let pool = bundle
+            .signed_pool()
+            .pool_identity()
+            .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
+        let authorization = bundle
+            .signed_committee_authorization()
+            .authorization_identity()
+            .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
+        if pool != intent.custody_pool || authorization != intent.custody_committee_authorization {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        let content_matches = match (&request.clear_layout, &intent.content) {
+            (
+                ClearLayoutV1::Object {
+                    content_type,
+                    length,
+                },
+                RuntimeMintIntentContentV1::Object {
+                    content_type: expected,
+                    clear_plaintext_bytes,
+                    ..
+                },
+            ) => content_type == expected && length == clear_plaintext_bytes,
+            (
+                ClearLayoutV1::DashV2 { renditions },
+                RuntimeMintIntentContentV1::MediaDash {
+                    renditions: expected,
+                    ..
+                },
+            ) => {
+                renditions.len() == expected.len()
+                    && renditions.iter().zip(expected).all(|(clear, intent)| {
+                        clear.kind == intent.kind.code()
+                            && clear.segment_lengths.len() == intent.segment_count as usize
+                    })
+            }
+            _ => false,
+        };
+        let nodes = bundle.signed_epoch().statement().nodes();
+        if let Some(part) = self
+            .session()
+            .and_then(RuntimeRemoteSealSessionV1::last_acked)
+        {
+            if request.clear_layout.part_position(part).is_none() {
+                return Err(RuntimeMintJournalError::InvalidSelection);
+            }
+        }
+        if !content_matches
+            || nodes.len() != intent.nodes.len()
+            || !nodes.iter().all(|node| {
+                intent
+                    .nodes
+                    .iter()
+                    .any(|entry| entry.node_public_key == node.node_public_key())
+            })
+        {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1276,6 +1455,9 @@ impl RuntimeMintIntent {
             } => validate_dash_intent_renditions(*preparation_receipt, renditions)?,
         }
         match self.protect_state {
+            RuntimeMintIntentProtectState::RemoteSeal(ref remote) => {
+                remote.validate_intent(self)?
+            }
             RuntimeMintIntentProtectState::OpenHandlePendingCancel(handle)
             | RuntimeMintIntentProtectState::OpenHandlePendingClose(handle) => {
                 if handle == [0u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1] {
@@ -1324,6 +1506,17 @@ impl RuntimeMintIntent {
 
     pub const fn source_binding_digest(&self) -> Digest32 {
         self.source_binding_digest
+    }
+
+    pub fn object_source_identity(&self) -> Option<(Digest32, u64)> {
+        match &self.content {
+            RuntimeMintIntentContentV1::Object {
+                clear_plaintext_sha256,
+                clear_plaintext_bytes,
+                ..
+            } => Some((*clear_plaintext_sha256, *clear_plaintext_bytes)),
+            _ => None,
+        }
     }
 
     pub fn creator_wallet_account_id(&self) -> &str {
@@ -1418,6 +1611,14 @@ impl RuntimeMintIntent {
             RuntimeMintIntentProtectState::OpenHandlePendingClose(_) => "open_handle_pending_close",
             RuntimeMintIntentProtectState::SettledBeforeDraft(_) => "settled_before_draft",
             RuntimeMintIntentProtectState::Completed(_) => "completed",
+            RuntimeMintIntentProtectState::RemoteSeal(_) => "remote_seal",
+        }
+    }
+
+    pub fn remote_seal_request(&self) -> Option<&RuntimeRemoteSealRequestV1> {
+        match &self.protect_state {
+            RuntimeMintIntentProtectState::RemoteSeal(remote) => Some(remote),
+            _ => None,
         }
     }
 
@@ -2600,6 +2801,7 @@ impl RuntimeMintCreatorState {
 pub struct PersistedRuntimeMint {
     draft: RuntimeMintDraft,
     node_states: Vec<MintNodeState>,
+    remote_request_id: Option<Digest32>,
     custody_terminal: Option<RuntimeCustodyTerminalKind>,
     content_availability: Option<RuntimeVerifiedContentAvailability>,
     creator_state: Option<RuntimeMintCreatorState>,
@@ -2711,6 +2913,7 @@ impl RuntimeMintJournal {
                 })
                 .collect(),
             custody_terminal: None,
+            remote_request_id: None,
             content_availability: None,
             creator_state: None,
         };
@@ -2724,6 +2927,129 @@ impl RuntimeMintJournal {
         let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
         self.ensure_root_dir()?;
         self.write_or_replay_intent(intent)
+    }
+
+    /// Adopt a remote result only after the signed completion and independently
+    /// checked availability evidence agree with the local draft.
+    /// Preserve exact replays and the first verified availability receipt.
+    pub fn persist_remote_mint(
+        &self,
+        request_id: Digest32,
+        draft: &RuntimeMintDraft,
+        requirement: &RuntimeContentAvailabilityRequirement,
+        evidence: RuntimeVerifiedContentAvailability,
+    ) -> Result<PersistedRuntimeMint, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let intent = self.read_intent(request_id)?;
+        let remote = intent
+            .remote_seal_request()
+            .ok_or(RuntimeMintJournalError::Conflict)?;
+        let completion = self.read_recorded_completion(request_id, remote)?;
+        let verified = crate::verify_recorded_remote_seal_attestation(
+            &completion,
+            remote.descriptor(),
+            remote.request(),
+            remote.sealer(),
+        )
+        .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
+        if !evidence.matches_requirement(requirement) {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        let record = PersistedRuntimeMint {
+            draft: draft.clone(),
+            node_states: draft
+                .nodes
+                .iter()
+                .map(|binding| MintNodeState {
+                    binding: binding.clone(),
+                    effect: RuntimeMintNodeEffectV1::NotDispatched,
+                    receipt: None,
+                })
+                .collect(),
+            remote_request_id: Some(request_id),
+            custody_terminal: Some(RuntimeCustodyTerminalKind::CustodyProvisioned),
+            content_availability: Some(evidence),
+            creator_state: None,
+        };
+        if verified.identity() != draft.content_identity()
+            || !record_matches_intent(&record, &intent)
+            || !remote_completion_matches_record(&record, verified.statement())?
+        {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        if self
+            .find_mint_record_for_loaded_intent(&intent)?
+            .open()
+            .is_some_and(|existing| existing.draft != *draft)
+        {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        self.write_or_replay(&record)
+    }
+
+    fn read_recorded_completion(
+        &self,
+        request_id: Digest32,
+        remote: &RuntimeRemoteSealRequestV1,
+    ) -> Result<SignedSealCompletedV1, RuntimeMintJournalError> {
+        self.read_remote_seal_completion(
+            &self.remote_seal_completion_path(request_id),
+            remote,
+            remote.request().statement().minter_issuer,
+        )?
+        .ok_or(RuntimeMintJournalError::NotFound)
+    }
+
+    /// Recover the verified remote record for the exact source attempt. The
+    /// retained request remains available to recheck the signed completion.
+    pub fn load_adopted_remote_mint(
+        &self,
+        request_id: Digest32,
+    ) -> Result<Option<PersistedRuntimeMint>, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let intent = self.read_intent(request_id)?;
+        if intent.remote_seal_request().is_none() {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        let scan = self.find_mint_record_for_loaded_intent(&intent)?;
+        match scan.open {
+            Some(record) if record.remote_request_id == Some(request_id) => Ok(Some(record)),
+            Some(_) => Err(RuntimeMintJournalError::Conflict),
+            None => Ok(None),
+        }
+    }
+
+    /// Load the portable proof for a remotely sealed mint. Local mints keep
+    /// their existing listing format.
+    pub fn load_remote_mint_proof(
+        &self,
+        mint_id: Digest32,
+    ) -> Result<
+        Option<(
+            SignedPoolDescriptorAnyV1,
+            SignedMintRequestV1,
+            SignedSealCompletedV1,
+        )>,
+        RuntimeMintJournalError,
+    > {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let record = self.read_record(mint_id)?;
+        let Some(request_id) = record.remote_request_id else {
+            return Ok(None);
+        };
+        let intent = self.read_intent(request_id)?;
+        let remote = intent
+            .remote_seal_request()
+            .ok_or(RuntimeMintJournalError::Corrupt)?;
+        let completion = self.read_recorded_completion(request_id, remote)?;
+        Ok(Some((
+            remote.descriptor().clone(),
+            remote.request().clone(),
+            completion,
+        )))
     }
 
     pub fn load(&self, mint_id: Digest32) -> Result<PersistedRuntimeMint, RuntimeMintJournalError> {
@@ -2756,6 +3082,13 @@ impl RuntimeMintJournal {
         let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
         self.ensure_root_dir()?;
         let intent = self.read_intent(request_id)?;
+        self.find_mint_record_for_loaded_intent(&intent)
+    }
+
+    fn find_mint_record_for_loaded_intent(
+        &self,
+        intent: &RuntimeMintIntent,
+    ) -> Result<RuntimeMintIntentRecordScanV1, RuntimeMintJournalError> {
         let entries =
             fs::read_dir(&self.root_dir).map_err(|_| RuntimeMintJournalError::Unavailable)?;
         let mut open: Option<PersistedRuntimeMint> = None;
@@ -2771,7 +3104,7 @@ impl RuntimeMintJournal {
                 return Err(RuntimeMintJournalError::Unavailable);
             }
             let record = self.read_record(mint_id)?;
-            if !record_matches_intent(&record, &intent) {
+            if !record_matches_intent(&record, intent) {
                 continue;
             }
             // An aborted fan-out can never be continued: the envelope its
@@ -2928,6 +3261,250 @@ impl RuntimeMintJournal {
             RuntimeMintIntentProtectState::OpenRequestPending => Ok(intent),
             _ => Err(RuntimeMintJournalError::Conflict),
         }
+    }
+
+    /// Write the exact remote request before dispatch. A different selection
+    /// cannot overwrite a request that may already have reached a sealer.
+    pub fn record_intent_remote_seal_request(
+        &self,
+        request_id: Digest32,
+        request: SignedMintRequestV1,
+        descriptor: SignedPoolDescriptorAnyV1,
+        sealer: NodePublicKey,
+        minter: RuntimeOperationIssuerKeyV1,
+        now: u64,
+    ) -> Result<RuntimeMintIntent, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let mut intent = self.read_intent(request_id)?;
+        let remote = RuntimeRemoteSealRequestV1 {
+            request,
+            descriptor,
+            sealer,
+            session: None,
+        };
+        remote.validate_intent(&intent)?;
+        remote.verify_dispatch(minter, now)?;
+        match &intent.protect_state {
+            RuntimeMintIntentProtectState::NotStarted => {
+                intent.protect_state = RuntimeMintIntentProtectState::RemoteSeal(Box::new(remote));
+                self.write_replace_intent(&intent)?;
+                Ok(intent)
+            }
+            RuntimeMintIntentProtectState::RemoteSeal(existing)
+                if existing.request == remote.request
+                    && existing.descriptor == remote.descriptor
+                    && existing.sealer == remote.sealer =>
+            {
+                Ok(intent)
+            }
+            _ => Err(RuntimeMintJournalError::Conflict),
+        }
+    }
+
+    pub fn record_intent_remote_seal_session(
+        &self,
+        request_id: Digest32,
+        session_id: [u8; 16],
+        attestation: SignedSealSessionAttestationV1,
+        minter: RuntimeOperationIssuerKeyV1,
+        now: u64,
+    ) -> Result<RuntimeMintIntent, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let mut intent = self.read_intent(request_id)?;
+        let RuntimeMintIntentProtectState::RemoteSeal(remote) = &mut intent.protect_state else {
+            return Err(RuntimeMintJournalError::Conflict);
+        };
+        remote.verify_dispatch(minter, now)?;
+        attestation
+            .verify_for_upload(
+                &remote.request,
+                &remote.descriptor,
+                remote.sealer,
+                session_id,
+                now,
+            )
+            .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
+        match &remote.session {
+            Some(session) if session.attestation == attestation => return Ok(intent),
+            Some(_) => return Err(RuntimeMintJournalError::Conflict),
+            None => {}
+        }
+        remote.session = Some(RuntimeRemoteSealSessionV1 {
+            attestation,
+            last_acked: None,
+        });
+        self.write_replace_intent(&intent)?;
+        Ok(intent)
+    }
+
+    /// Record a cumulative acknowledgement from the authenticated sealer
+    /// after the client validates it against its sent parts.
+    pub fn record_intent_remote_seal_ack(
+        &self,
+        request_id: Digest32,
+        session_id: [u8; 16],
+        part: ClearPartIndexV1,
+        minter: RuntimeOperationIssuerKeyV1,
+        now: u64,
+    ) -> Result<RuntimeMintIntent, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let mut intent = self.read_intent(request_id)?;
+        let RuntimeMintIntentProtectState::RemoteSeal(remote) = &mut intent.protect_state else {
+            return Err(RuntimeMintJournalError::Conflict);
+        };
+        remote.verify_resume(minter, now)?;
+        let layout = &remote.request.statement().clear_layout;
+        let next = layout
+            .part_position(part)
+            .ok_or(RuntimeMintJournalError::InvalidSelection)?;
+        let session = remote
+            .session
+            .as_mut()
+            .ok_or(RuntimeMintJournalError::Conflict)?;
+        if session.session_id() != session_id {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        if let Some(previous) = session.last_acked {
+            if previous == part {
+                return Ok(intent);
+            }
+            let previous = layout
+                .part_position(previous)
+                .ok_or(RuntimeMintJournalError::Corrupt)?;
+            if next < previous {
+                return Err(RuntimeMintJournalError::Conflict);
+            }
+        }
+        session.last_acked = Some(part);
+        self.write_replace_intent(&intent)?;
+        Ok(intent)
+    }
+
+    /// Retain verified completion outside the original intent encoding. The
+    /// sidecar is immutable, and a large file table does not enlarge the
+    /// reader's existing bound for ordinary mint intents.
+    pub(crate) fn record_remote_seal_completion(
+        &self,
+        request_id: Digest32,
+        completion: SignedSealCompletedV1,
+        minter: RuntimeOperationIssuerKeyV1,
+        now: u64,
+    ) -> Result<SignedSealCompletedV1, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let intent = self.read_intent(request_id)?;
+        let remote = intent
+            .remote_seal_request()
+            .ok_or(RuntimeMintJournalError::Conflict)?;
+        let path = self.remote_seal_completion_path(request_id);
+        if let Some(existing) = self.read_remote_seal_completion(&path, remote, minter)? {
+            if existing != completion {
+                return Err(RuntimeMintJournalError::Conflict);
+            }
+            sync_directory(&self.root_dir)?;
+            return Ok(existing);
+        }
+        if !remote.upload_is_acknowledged()? {
+            return Err(RuntimeMintJournalError::Conflict);
+        }
+        remote.verify_resume(minter, now)?;
+        completion
+            .verify_for_request_at(remote.descriptor(), remote.request(), remote.sealer(), now)
+            .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
+        let bytes = completion
+            .canonical_bytes()
+            .map_err(|_| RuntimeMintJournalError::InvalidSelection)?;
+        if bytes.len() > MAX_REMOTE_SEAL_COMPLETION_BYTES {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        let temp_path = path.with_extension("seal-tmp");
+        let _ = fs::remove_file(&temp_path);
+        let mut file = open_owner_only_temp_file_for_write(&temp_path)?;
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        fs::rename(temp_path, path).map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        sync_directory(&self.root_dir)?;
+        Ok(completion)
+    }
+
+    pub(crate) fn load_remote_seal_completion(
+        &self,
+        request_id: Digest32,
+        minter: RuntimeOperationIssuerKeyV1,
+    ) -> Result<Option<SignedSealCompletedV1>, RuntimeMintJournalError> {
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        self.ensure_root_dir()?;
+        let intent = self.read_intent(request_id)?;
+        let remote = intent
+            .remote_seal_request()
+            .ok_or(RuntimeMintJournalError::Conflict)?;
+        self.read_remote_seal_completion(
+            &self.remote_seal_completion_path(request_id),
+            remote,
+            minter,
+        )
+    }
+
+    fn remote_seal_completion_path(&self, request_id: Digest32) -> PathBuf {
+        self.intent_path(request_id)
+            .with_extension(REMOTE_COMPLETION_EXTENSION)
+    }
+
+    fn read_remote_seal_completion(
+        &self,
+        path: &Path,
+        remote: &RuntimeRemoteSealRequestV1,
+        minter: RuntimeOperationIssuerKeyV1,
+    ) -> Result<Option<SignedSealCompletedV1>, RuntimeMintJournalError> {
+        if remote.request().statement().minter_issuer != minter {
+            return Err(RuntimeMintJournalError::InvalidSelection);
+        }
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC | nix::libc::O_NONBLOCK);
+        }
+        let file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(RuntimeMintJournalError::Unavailable),
+        };
+        let metadata = file
+            .metadata()
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        if !metadata.is_file() || metadata.len() > MAX_REMOTE_SEAL_COMPLETION_BYTES as u64 {
+            return Err(RuntimeMintJournalError::Corrupt);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.uid() != geteuid().as_raw()
+                || metadata.mode() & 0o777 != 0o600
+                || metadata.nlink() != 1
+            {
+                return Err(RuntimeMintJournalError::Corrupt);
+            }
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_REMOTE_SEAL_COMPLETION_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| RuntimeMintJournalError::Unavailable)?;
+        if bytes.len() > MAX_REMOTE_SEAL_COMPLETION_BYTES || !remote.upload_is_acknowledged()? {
+            return Err(RuntimeMintJournalError::Corrupt);
+        }
+        let completion = SignedSealCompletedV1::from_canonical_bytes(&bytes)
+            .map_err(|_| RuntimeMintJournalError::Corrupt)?;
+        completion
+            .verify_for_recorded_request(remote.descriptor(), remote.request(), remote.sealer())
+            .map_err(|_| RuntimeMintJournalError::Corrupt)?;
+        Ok(Some(completion))
     }
 
     pub fn mark_intent_protect_opened(
@@ -3397,18 +3974,23 @@ impl RuntimeMintJournal {
             sync_directory(parent)?;
         }
 
-        let mut names = Vec::new();
+        let mut names = mint_ids
+            .iter()
+            .map(|mint_id| hex::encode(mint_id.as_bytes()))
+            .collect::<Vec<_>>();
         if intent.is_some() {
+            let completion = self.remote_seal_completion_path(request_id);
+            if path_is_present(&completion)? {
+                names.push(format!(
+                    "intent-{}.{REMOTE_COMPLETION_EXTENSION}",
+                    hex::encode(request_id.as_bytes())
+                ));
+            }
             names.push(format!("intent-{}", hex::encode(request_id.as_bytes())));
         }
         if has_preparation {
             names.push(format!("prepare-{}", hex::encode(request_id.as_bytes())));
         }
-        names.extend(
-            mint_ids
-                .iter()
-                .map(|mint_id| hex::encode(mint_id.as_bytes())),
-        );
         // What is about to move, and where, so a move a crash interrupts can
         // be finished later rather than leaving its files in the live store.
         let base = compute_mint_intent_request_id(
@@ -3593,7 +4175,16 @@ impl RuntimeMintJournal {
                     && name
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
-                valid
+                let completion = name
+                    .split_once('.')
+                    .filter(|(_, extension)| *extension == REMOTE_COMPLETION_EXTENSION)
+                    .and_then(|(stem, _)| stem.strip_prefix("intent-"))
+                    .is_some_and(|id| {
+                        let id = std::ffi::OsStr::new(id);
+                        directory.file_name() == Some(id)
+                            && mint_id_from_record_file_name(id).is_some()
+                    });
+                (valid || completion)
                     .then(|| name.to_string())
                     .ok_or(RuntimeMintJournalError::Corrupt)
             })
@@ -3754,7 +4345,7 @@ impl RuntimeMintJournal {
         let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
         self.ensure_root_dir()?;
         let intent = self.read_intent(request_id)?;
-        if intent.completed_mint_id().is_some() {
+        if intent.completed_mint_id().is_some() || intent.remote_seal_request().is_some() {
             return Err(RuntimeMintJournalError::Conflict);
         }
         fs::remove_file(self.intent_path(request_id))
@@ -3855,7 +4446,9 @@ impl RuntimeMintJournal {
         let path = self.record_path(record.draft.mint_id);
         if path.exists() {
             let existing = self.read_record(record.draft.mint_id)?;
-            if existing.draft != record.draft {
+            if existing.draft != record.draft
+                || existing.remote_request_id != record.remote_request_id
+            {
                 return Err(RuntimeMintJournalError::Conflict);
             }
             return Ok(existing);
@@ -3975,6 +4568,21 @@ impl RuntimeMintJournal {
         let record = decode_record(&bytes)?;
         if record.draft.mint_id != mint_id {
             return Err(RuntimeMintJournalError::Corrupt);
+        }
+        if let Some(request_id) = record.remote_request_id {
+            let intent = self.read_intent(request_id)?;
+            let remote = intent
+                .remote_seal_request()
+                .ok_or(RuntimeMintJournalError::Corrupt)?;
+            let completion = self.read_recorded_completion(request_id, remote)?;
+            let (statement, _) = completion
+                .verify_for_recorded_request(remote.descriptor(), remote.request(), remote.sealer())
+                .map_err(|_| RuntimeMintJournalError::Corrupt)?;
+            if !record_matches_intent(&record, &intent)
+                || !remote_completion_matches_record(&record, statement)?
+            {
+                return Err(RuntimeMintJournalError::Corrupt);
+            }
         }
         Ok(record)
     }
@@ -4132,14 +4740,20 @@ fn encode_record(record: &PersistedRuntimeMint) -> Result<Vec<u8>, RuntimeMintJo
             push_nested(&mut payload, &bytes)?;
         }
     }
+    let (magic, domain) = if let Some(request_id) = record.remote_request_id {
+        push_digest(&mut payload, request_id);
+        (STORE_MAGIC_REMOTE, STORE_DIGEST_DOMAIN_REMOTE)
+    } else {
+        (STORE_MAGIC, STORE_DIGEST_DOMAIN)
+    };
     let digest = {
         let mut hasher = Sha256::new();
-        hasher.update(STORE_DIGEST_DOMAIN);
+        hasher.update(domain);
         hasher.update(&payload);
         hasher.finalize()
     };
     let mut out = Vec::with_capacity(8 + 32 + payload.len());
-    out.extend_from_slice(STORE_MAGIC);
+    out.extend_from_slice(magic);
     out.extend_from_slice(&digest);
     out.extend_from_slice(&payload);
     Ok(out)
@@ -4267,6 +4881,35 @@ fn record_matches_intent(record: &PersistedRuntimeMint, intent: &RuntimeMintInte
         && draft.committee() == intent.custody_committee_authorization
 }
 
+fn remote_completion_matches_record(
+    record: &PersistedRuntimeMint,
+    statement: &SealCompletedV1,
+) -> Result<bool, RuntimeMintJournalError> {
+    let draft = &record.draft;
+    let canonical_identity = match draft.content_identity() {
+        RuntimeContentIdentityV1::Object(object) => object.canonical_bytes(),
+        RuntimeContentIdentityV1::MediaDash(dash) => dash.canonical_bytes(),
+        RuntimeContentIdentityV1::Media(_) => return Ok(false),
+    }
+    .map_err(|_| RuntimeMintJournalError::Corrupt)?;
+    Ok(statement.content_identity == canonical_identity
+        && statement.key_envelope == draft.key_envelope
+        && statement.content_key_commitment == draft.content_key_commitment
+        && statement.content_access_id == draft.content_access_id
+        && record.custody_terminal == Some(RuntimeCustodyTerminalKind::CustodyProvisioned)
+        && record.node_states.iter().all(|node| {
+            node.effect == RuntimeMintNodeEffectV1::NotDispatched && node.receipt.is_none()
+        })
+        && record
+            .content_availability
+            .as_ref()
+            .is_some_and(|evidence| {
+                evidence.content_cid() == statement.package_cid
+                    && evidence.publisher_identity() == statement.content_publisher_did
+                    && evidence.matches_draft(draft)
+            }))
+}
+
 /// The draft's content must be the kind the intent declared; for a v2 DASH
 /// pair the head's rendition kinds and segment counts must be the intent's.
 fn content_matches_intent(
@@ -4305,8 +4948,11 @@ fn decode_record(bytes: &[u8]) -> Result<PersistedRuntimeMint, RuntimeMintJourna
     // ‖ nested canonical bytes). Everything after the identity field is
     // identical between the two versions.
     let is_v5 = &bytes[..8] == STORE_MAGIC_V5;
+    let is_remote = &bytes[..8] == STORE_MAGIC_REMOTE;
     let digest_domain = if is_v5 {
         STORE_DIGEST_DOMAIN_V5
+    } else if is_remote {
+        STORE_DIGEST_DOMAIN_REMOTE
     } else if &bytes[..8] == STORE_MAGIC {
         STORE_DIGEST_DOMAIN
     } else {
@@ -4453,6 +5099,11 @@ fn decode_record(bytes: &[u8]) -> Result<PersistedRuntimeMint, RuntimeMintJourna
         }
         _ => return Err(RuntimeMintJournalError::Corrupt),
     };
+    let remote_request_id = if is_remote {
+        Some(read_digest(payload, &mut off)?)
+    } else {
+        None
+    };
     if off != payload.len() {
         return Err(RuntimeMintJournalError::Corrupt);
     }
@@ -4471,6 +5122,7 @@ fn decode_record(bytes: &[u8]) -> Result<PersistedRuntimeMint, RuntimeMintJourna
     Ok(PersistedRuntimeMint {
         draft,
         node_states,
+        remote_request_id,
         custody_terminal,
         content_availability,
         creator_state,
@@ -4556,6 +5208,50 @@ fn encode_intent(intent: &RuntimeMintIntent) -> Result<Vec<u8>, RuntimeMintJourn
         RuntimeMintIntentProtectState::Completed(mint_id) => {
             payload.push(7);
             push_digest(&mut payload, mint_id);
+        }
+        RuntimeMintIntentProtectState::RemoteSeal(ref remote) => {
+            payload.push(8);
+            push_nested(
+                &mut payload,
+                &remote
+                    .request
+                    .canonical_bytes()
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+            )?;
+            push_nested(
+                &mut payload,
+                &remote
+                    .descriptor
+                    .canonical_bytes()
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+            )?;
+            payload.extend_from_slice(remote.sealer.as_bytes());
+            if let Some(session) = &remote.session {
+                payload.push(1);
+                push_nested(
+                    &mut payload,
+                    &session
+                        .attestation
+                        .canonical_bytes()
+                        .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+                )?;
+                match session.last_acked {
+                    None => payload.push(0),
+                    Some(ClearPartIndexV1::DashInit { rendition }) => {
+                        payload.extend_from_slice(&[1, rendition]);
+                    }
+                    Some(ClearPartIndexV1::DashSegment { rendition, index }) => {
+                        payload.extend_from_slice(&[2, rendition]);
+                        payload.extend_from_slice(&index.to_be_bytes());
+                    }
+                    Some(ClearPartIndexV1::ObjectChunk { index }) => {
+                        payload.push(3);
+                        payload.extend_from_slice(&index.to_be_bytes());
+                    }
+                }
+            } else {
+                payload.push(0);
+            }
         }
     }
     push_nested(
@@ -4741,6 +5437,21 @@ fn decode_intent(bytes: &[u8]) -> Result<RuntimeMintIntent, RuntimeMintJournalEr
             RuntimeMintIntentProtectSettlement::AlreadyAbsent,
         ),
         7 => RuntimeMintIntentProtectState::Completed(read_digest(payload, &mut off)?),
+        8 if !is_v2 => {
+            RuntimeMintIntentProtectState::RemoteSeal(Box::new(RuntimeRemoteSealRequestV1 {
+                request: SignedMintRequestV1::from_canonical_bytes(&read_nested(
+                    payload, &mut off,
+                )?)
+                .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+                descriptor: SignedPoolDescriptorAnyV1::from_canonical_bytes(&read_nested(
+                    payload, &mut off,
+                )?)
+                .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+                sealer: NodePublicKey::new(read_fixed(payload, &mut off)?)
+                    .map_err(|_| RuntimeMintJournalError::Corrupt)?,
+                session: read_remote_seal_session(payload, &mut off)?,
+            }))
+        }
         _ => return Err(RuntimeMintJournalError::Corrupt),
     };
     let custody_pool =
@@ -4785,6 +5496,38 @@ fn decode_intent(bytes: &[u8]) -> Result<RuntimeMintIntent, RuntimeMintJournalEr
     };
     intent.validate()?;
     Ok(intent)
+}
+
+fn read_remote_seal_session(
+    payload: &[u8],
+    off: &mut usize,
+) -> Result<Option<RuntimeRemoteSealSessionV1>, RuntimeMintJournalError> {
+    match read_u8(payload, off)? {
+        0 => return Ok(None),
+        1 => {}
+        _ => return Err(RuntimeMintJournalError::Corrupt),
+    }
+    let attestation =
+        SignedSealSessionAttestationV1::from_canonical_bytes(&read_nested(payload, off)?)
+            .map_err(|_| RuntimeMintJournalError::Corrupt)?;
+    let last_acked = match read_u8(payload, off)? {
+        0 => None,
+        1 => Some(ClearPartIndexV1::DashInit {
+            rendition: read_u8(payload, off)?,
+        }),
+        2 => Some(ClearPartIndexV1::DashSegment {
+            rendition: read_u8(payload, off)?,
+            index: u32::from_be_bytes(read_len4(payload, off)?),
+        }),
+        3 => Some(ClearPartIndexV1::ObjectChunk {
+            index: u32::from_be_bytes(read_len4(payload, off)?),
+        }),
+        _ => return Err(RuntimeMintJournalError::Corrupt),
+    };
+    Ok(Some(RuntimeRemoteSealSessionV1 {
+        attestation,
+        last_acked,
+    }))
 }
 
 fn encode_media_preparation(
@@ -5543,6 +6286,415 @@ mod tests {
         let parent = temp.path().join("owner-only-parent");
         create_owner_only_directory(&parent).unwrap();
         parent.join("runtime-mint")
+    }
+
+    #[tokio::test]
+    async fn remote_seal_journal_reloads_exact_request_and_refuses_replacement() {
+        use ed25519_dalek::Signer as _;
+        use elastos_protected_content_contracts::test_fixtures::{
+            pool_bundle, pool_descriptor_signed_by, pool_did, pool_provisioning_record,
+            runtime_issuer, signing_key, POOL_AUTHORITY_SEED,
+        };
+        use elastos_protected_content_contracts::{
+            MintRequestV1, SealCompletedV1, SealSessionAttestationV1, SEAL_OBJECT_CHUNK_CLEAR_BYTES,
+        };
+        use x_wing::kem::{Decapsulator as _, KeyExport as _};
+
+        let now = 2_000_000_000;
+        let bundle = pool_bundle(
+            |seed| {
+                x_wing::DecapsulationKey::from([seed; x_wing::DECAPSULATION_KEY_SIZE])
+                    .encapsulation_key()
+                    .to_bytes()
+                    .into()
+            },
+            now,
+        );
+        let descriptor = SignedPoolDescriptorAnyV1::from(pool_descriptor_signed_by(
+            &bundle,
+            1,
+            now,
+            POOL_AUTHORITY_SEED,
+        ));
+        let mut intent = object_intent(0x41);
+        let length = SEAL_OBJECT_CHUNK_CLEAR_BYTES + 1;
+        intent.content = RuntimeMintIntentContentV1::Object {
+            content_type: "application/octet-stream".into(),
+            clear_plaintext_sha256: Digest32::new(
+                Sha256::digest(vec![0x41; length as usize]).into(),
+            ),
+            clear_plaintext_bytes: length,
+        };
+        intent.custody_pool = bundle.signed_pool().pool_identity().unwrap();
+        intent.custody_epoch = bundle.epoch_identity().unwrap();
+        intent.custody_committee_authorization = bundle
+            .signed_committee_authorization()
+            .authorization_identity()
+            .unwrap();
+        let minter = runtime_issuer(POOL_AUTHORITY_SEED);
+        let sealer = node_public_key(1);
+        let mint = MintRequestV1 {
+            pool: pool_did(),
+            epoch: intent.custody_epoch,
+            minter_issuer: minter,
+            content_access_id: intent.content_access_id,
+            clear_layout: ClearLayoutV1::Object {
+                content_type: "application/octet-stream".into(),
+                length,
+            },
+            request_nonce: [0x41; 16],
+            issued_at: now,
+            expires_at: now + 60,
+        };
+        let sign = |request: MintRequestV1| {
+            let signature = signing_key(POOL_AUTHORITY_SEED)
+                .sign(&request.canonical_bytes().unwrap())
+                .to_bytes();
+            SignedMintRequestV1::new(request, signature).unwrap()
+        };
+        let signed = sign(mint.clone());
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        let journal = RuntimeMintJournal::new(&root);
+        journal.persist_intent(&intent).unwrap();
+        let id = intent.request_id();
+        let wrong_asset = sign(MintRequestV1 {
+            content_access_id: content_access_id(0x53),
+            ..mint.clone()
+        });
+        assert!(journal
+            .record_intent_remote_seal_request(
+                id,
+                wrong_asset,
+                descriptor.clone(),
+                sealer,
+                minter,
+                now,
+            )
+            .is_err());
+        let prepare = |endpoint, keys: &[NodePublicKey]| {
+            crate::prepare_remote_seal_upload(
+                &journal,
+                id,
+                signed.clone(),
+                descriptor.clone(),
+                minter,
+                crate::RemoteSealLocalIdentity {
+                    endpoint_did: endpoint,
+                    node_keys: keys,
+                },
+                now,
+            )
+        };
+        let local_peer = descriptor.member_peer_did(node_public_key(2)).unwrap();
+        assert!(matches!(
+            prepare(local_peer, &[sealer, node_public_key(3)]),
+            Err(RuntimeMintJournalError::InvalidSelection)
+        ));
+        assert!(journal
+            .load_intent(id)
+            .unwrap()
+            .remote_seal_request()
+            .is_none());
+        prepare(local_peer, &[node_public_key(3)]).unwrap();
+        let snapshot = fs::read(journal.intent_path(id)).unwrap();
+        assert!(matches!(
+            prepare(local_peer, &[sealer]),
+            Err(RuntimeMintJournalError::InvalidSelection)
+        ));
+        let restarted = RuntimeMintJournal::new(&root);
+        let loaded = restarted.load_intent(id).unwrap();
+        assert!(loaded.provider_effect_started());
+        let kept = loaded.remote_seal_request().unwrap();
+        assert_eq!(kept.request(), &signed);
+        assert_eq!(kept.descriptor(), &descriptor);
+        assert_eq!(kept.sealer(), sealer);
+        assert_eq!(
+            kept.verify_dispatch(minter, now + 1).unwrap(),
+            descriptor.member_peer_did(sealer).unwrap()
+        );
+        assert!(kept.verify_dispatch(runtime_issuer(0x51), now + 1).is_err());
+        assert!(kept.verify_dispatch(minter, now + 60).is_err());
+        restarted
+            .record_intent_remote_seal_request(
+                id,
+                signed.clone(),
+                descriptor.clone(),
+                sealer,
+                minter,
+                now + 1,
+            )
+            .unwrap();
+        let replacement = sign(MintRequestV1 {
+            request_nonce: [0x42; 16],
+            ..mint
+        });
+        assert!(matches!(
+            restarted.record_intent_remote_seal_request(
+                id,
+                replacement,
+                descriptor.clone(),
+                sealer,
+                minter,
+                now + 1
+            ),
+            Err(RuntimeMintJournalError::Conflict)
+        ));
+        assert!(matches!(
+            restarted.mark_intent_protect_effect_started(id),
+            Err(RuntimeMintJournalError::Conflict)
+        ));
+        assert!(matches!(
+            restarted.discard_unmintable_intent(id),
+            Err(RuntimeMintJournalError::Conflict)
+        ));
+        assert_eq!(fs::read(journal.intent_path(id)).unwrap(), snapshot);
+
+        let first = ClearPartIndexV1::ObjectChunk { index: 0 };
+        let second = ClearPartIndexV1::ObjectChunk { index: 1 };
+        let session_id = [0x63; 16];
+        assert!(restarted
+            .record_intent_remote_seal_ack(id, session_id, first, minter, now + 1)
+            .is_err());
+        let upload_key = RecipientPublicKeyBytesV1::new(
+            *bundle.signed_epoch().statement().nodes()[0]
+                .custody_public_key()
+                .as_bytes(),
+        )
+        .unwrap();
+        let attestation = SealSessionAttestationV1 {
+            pool: pool_did(),
+            epoch: intent.custody_epoch,
+            sealer_node_public_key: sealer,
+            seal_session_id: session_id,
+            descriptor_digest: descriptor.canonical_hash().unwrap(),
+            seal_session_public_key: upload_key,
+            mint_request_hash: signed.canonical_hash().unwrap(),
+            issued_at: now + 1,
+            expires_at: now + 50,
+        };
+        let sign_attestation = |statement: SealSessionAttestationV1| {
+            let sig = signing_key(1)
+                .sign(&statement.canonical_bytes().unwrap())
+                .to_bytes();
+            SignedSealSessionAttestationV1::new(statement, sig).unwrap()
+        };
+        let other_id = [0x64; 16];
+        let other = sign_attestation(SealSessionAttestationV1 {
+            seal_session_id: other_id,
+            ..attestation.clone()
+        });
+        let attestation = sign_attestation(attestation);
+        assert!(restarted
+            .record_intent_remote_seal_session(id, other_id, attestation.clone(), minter, now + 2)
+            .is_err());
+        restarted
+            .record_intent_remote_seal_session(id, session_id, attestation.clone(), minter, now + 2)
+            .unwrap();
+        assert!(restarted
+            .record_intent_remote_seal_session(id, other_id, other, minter, now + 2)
+            .is_err());
+        assert!(restarted
+            .record_intent_remote_seal_ack(id, other_id, first, minter, now + 2)
+            .is_err());
+        assert!(restarted
+            .record_intent_remote_seal_ack(
+                id,
+                session_id,
+                ClearPartIndexV1::ObjectChunk { index: 2 },
+                minter,
+                now + 2,
+            )
+            .is_err());
+        crate::remote_seal_client::tests::exercise_lost_ack(&root, id, session_id, minter, now + 2)
+            .await;
+        assert!(restarted
+            .record_intent_remote_seal_ack(id, session_id, first, minter, now + 2)
+            .is_err());
+        let acked_snapshot = fs::read(journal.intent_path(id)).unwrap();
+        let journal = RuntimeMintJournal::new(&root);
+        let resumed = journal.load_intent(id).unwrap();
+        let remote = resumed.remote_seal_request().unwrap();
+        assert_eq!(remote.session().unwrap().last_acked(), Some(second));
+        assert_eq!(remote.session().unwrap().session_id(), session_id);
+        assert_eq!(
+            remote.verify_resume(minter, now + 3).unwrap().1,
+            &upload_key
+        );
+        assert!(remote.verify_resume(minter, now + 50).is_err());
+        journal
+            .record_intent_remote_seal_session(id, session_id, attestation, minter, now + 3)
+            .unwrap();
+        journal
+            .record_intent_remote_seal_request(
+                id,
+                signed.clone(),
+                descriptor.clone(),
+                sealer,
+                minter,
+                now + 3,
+            )
+            .unwrap();
+        journal
+            .record_intent_remote_seal_ack(id, session_id, second, minter, now + 3)
+            .unwrap();
+        assert_eq!(fs::read(journal.intent_path(id)).unwrap(), acked_snapshot);
+
+        let encrypted =
+            EncryptedContentIdentityV1::new(Digest32::new([0x65; 32]), length + 128).unwrap();
+        let share_record = pool_provisioning_record(&bundle, &encrypted, 1);
+        let envelope = elastos_protected_content_contracts::CustodyEnvelopeV1::new(
+            share_record.manifest().clone(),
+            (1..=3)
+                .map(|seed| {
+                    let record = pool_provisioning_record(&bundle, &encrypted, seed);
+                    record.sealed_share().clone()
+                })
+                .collect(),
+        )
+        .unwrap();
+        let object =
+            ChunkedPayloadObjectIdentityV1::new(encrypted, "application/octet-stream", length, 64)
+                .unwrap();
+        let statement = SealCompletedV1 {
+            pool: pool_did(),
+            epoch: intent.custody_epoch,
+            descriptor_digest: descriptor.canonical_hash().unwrap(),
+            sealer_node_public_key: sealer,
+            sealer_device_did: descriptor.member_peer_did(sealer).unwrap().into(),
+            content_publisher_did: "did:key:z6MkPublisher".into(),
+            mint_request_hash: signed.canonical_hash().unwrap(),
+            content_access_id: intent.content_access_id,
+            key_envelope: envelope.key_envelope_identity().unwrap(),
+            content_identity: object.canonical_bytes().unwrap(),
+            content_key_commitment: envelope.manifest().content_key_commitment(),
+            package_cid: "bafyfixture".into(),
+            file_cids: vec![("object.epc1".into(), "bafyfile".into())],
+            availability_receipt: b"fixture".to_vec(),
+            completed_at: now + 3,
+        };
+        let sign_completion = |statement: SealCompletedV1| {
+            let sig = signing_key(1)
+                .sign(&statement.canonical_bytes().unwrap())
+                .to_bytes();
+            SignedSealCompletedV1::new(statement, sig).unwrap()
+        };
+        let completion = sign_completion(statement.clone());
+        assert!(journal
+            .load_remote_seal_completion(id, minter)
+            .unwrap()
+            .is_none());
+        let altered = sign_completion(SealCompletedV1 {
+            mint_request_hash: Digest32::new([0x66; 32]),
+            ..statement.clone()
+        });
+        assert!(journal
+            .record_remote_seal_completion(id, altered, minter, now + 3)
+            .is_err());
+        crate::remote_seal_client::tests::exercise_finalize_replay(
+            &root,
+            id,
+            session_id,
+            minter,
+            now + 3,
+            completion.clone(),
+        )
+        .await;
+        assert_eq!(fs::read(journal.intent_path(id)).unwrap(), acked_snapshot);
+        assert_eq!(
+            journal.load_remote_seal_completion(id, minter).unwrap(),
+            Some(completion.clone())
+        );
+        assert!(journal
+            .load_remote_seal_completion(id, runtime_issuer(0x51))
+            .is_err());
+        let make_draft = |policy_seed| {
+            RuntimeMintDraft::new_from_identity(
+                RuntimeContentIdentityV1::Object(object.clone()),
+                intent.content_access_id,
+                statement.key_envelope.clone(),
+                RightsPolicyIdentityV1::new(digest(policy_seed), 384).unwrap(),
+                statement.content_key_commitment,
+                statement.key_envelope.threshold(),
+                intent.nodes.clone(),
+            )
+            .unwrap()
+        };
+        let draft = make_draft(0x44);
+        let mut requirement = availability_requirement();
+        requirement.expected_publisher_did = statement.content_publisher_did.clone();
+        let mut evidence = object_availability_evidence(&draft, 0x51);
+        evidence.publisher_identity = statement.content_publisher_did.clone();
+        assert!(matches!(
+            journal.persist_remote_mint(id, &draft, &requirement, evidence.clone()),
+            Err(RuntimeMintJournalError::InvalidSelection)
+        ));
+        evidence.content_cid = statement.package_cid.clone();
+        let adopted = journal
+            .persist_remote_mint(id, &draft, &requirement, evidence.clone())
+            .unwrap();
+        assert_eq!(
+            adopted.custody_terminal(),
+            Some(RuntimeCustodyTerminalKind::CustodyProvisioned)
+        );
+        assert!(!adopted.all_receipts_present());
+        assert!(journal.persist_bound(&draft).is_err());
+        let restarted = RuntimeMintJournal::new(&root);
+        assert_eq!(restarted.load(draft.mint_id()).unwrap(), adopted);
+        assert_eq!(
+            restarted.load_adopted_remote_mint(id).unwrap(),
+            Some(adopted.clone())
+        );
+        assert_eq!(
+            restarted
+                .persist_remote_mint(id, &draft, &requirement, evidence.clone())
+                .unwrap(),
+            adopted
+        );
+        assert!(matches!(
+            restarted.persist_remote_mint(id, &make_draft(0x45), &requirement, evidence),
+            Err(RuntimeMintJournalError::Conflict)
+        ));
+        let conflict = sign_completion(SealCompletedV1 {
+            completed_at: now + 4,
+            ..statement
+        });
+        assert!(matches!(
+            journal.record_remote_seal_completion(id, conflict, minter, now + 4),
+            Err(RuntimeMintJournalError::Conflict)
+        ));
+        fs::write(
+            journal.remote_seal_completion_path(id),
+            b"invalid signature",
+        )
+        .unwrap();
+        assert!(matches!(
+            journal.load_remote_seal_completion(id, minter),
+            Err(RuntimeMintJournalError::Corrupt)
+        ));
+        assert!(matches!(
+            restarted.load(draft.mint_id()),
+            Err(RuntimeMintJournalError::Corrupt)
+        ));
+        fs::write(
+            journal.remote_seal_completion_path(id),
+            completion.canonical_bytes().unwrap(),
+        )
+        .unwrap();
+        let archive = journal
+            .archive_current_attempt(
+                &intent.principal_id,
+                "localhost://Users/test/Documents/protected-clear-object",
+                "plain_localhost_root",
+                &root
+                    .parent()
+                    .unwrap()
+                    .join(format!("{ARCHIVE_DIR_PREFIX}remote-test")),
+                b"{}",
+            )
+            .unwrap();
+        let archived = RuntimeMintJournal::new(archive.directory());
+        assert_eq!(archived.load(draft.mint_id()).unwrap(), adopted);
     }
 
     fn availability_requirement() -> RuntimeContentAvailabilityRequirement {
@@ -7307,6 +8459,7 @@ mod tests {
             draft,
             node_states: Vec::new(),
             custody_terminal: None,
+            remote_request_id: None,
             content_availability: None,
             creator_state: None,
         };
@@ -7561,6 +8714,7 @@ mod tests {
             draft,
             node_states,
             custody_terminal: None,
+            remote_request_id: None,
             content_availability: None,
             creator_state: None,
         };
@@ -7926,6 +9080,7 @@ mod tests {
             draft: draft.clone(),
             node_states: Vec::new(),
             custody_terminal: None,
+            remote_request_id: None,
             content_availability: None,
             creator_state: None,
         };
@@ -7953,6 +9108,7 @@ mod tests {
             draft: big,
             node_states: Vec::new(),
             custody_terminal: None,
+            remote_request_id: None,
             content_availability: None,
             creator_state: None,
         };
@@ -8221,6 +9377,7 @@ mod tests {
             draft,
             node_states: Vec::new(),
             custody_terminal: None,
+            remote_request_id: None,
             content_availability: None,
             creator_state: None,
         };

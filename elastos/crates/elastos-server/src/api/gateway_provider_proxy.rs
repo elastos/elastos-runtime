@@ -4146,10 +4146,9 @@ async fn publish_runtime_custody_creator_listing(
     let staging = tempfile::Builder::new()
         .prefix("creator-listing-")
         .tempdir_in(&parent)?;
-    std::fs::write(
-        staging.path().join("listing.json"),
-        serde_json::to_vec(&package)?,
-    )?;
+    let listing_bytes = serde_json::to_vec(&package)?;
+    package.check_encoded_listing_size(&listing_bytes)?;
+    std::fs::write(staging.path().join("listing.json"), listing_bytes)?;
     let links = [
         ("metadata".to_string(), package.metadata_cid.clone()),
         ("encrypted-content".to_string(), package.content_cid.clone()),
@@ -7817,6 +7816,7 @@ mod tests {
             published_at: Some(1),
             pool_mint_share_b64: None,
             sealed_rights_policy_base64: None,
+            remote_seal: None,
         }
     }
 

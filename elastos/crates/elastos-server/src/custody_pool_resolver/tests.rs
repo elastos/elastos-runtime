@@ -260,6 +260,43 @@ async fn known_pool_add_verifies_and_stores() {
 }
 
 #[tokio::test]
+async fn known_pool_add_refuses_a_signed_fork_at_the_kept_sequence() {
+    let (_dir, data_dir) = data_dir();
+    let kept = descriptor(1);
+    let fork = SignedPoolDescriptorAnyV1::from(pool_descriptor_with(
+        &pool_bundle(xwing, NOW),
+        1,
+        ServePolicyV1 {
+            max_servers_per_session: 2,
+            ..ServePolicyV1::DEFAULT
+        },
+        None,
+        runtime_issuer(0x43),
+        NOW,
+    ));
+    assert_ne!(kept, fork);
+    assert_eq!(kept.pool(), fork.pool());
+    assert_eq!(kept.sequence(), fork.sequence());
+    assert!(fork.verify(NOW).is_ok());
+    let transport = FakeTransport::describing(&[kept.clone(), fork, kept.clone()]);
+    let client = PoolSessionClient::new(&transport);
+    let address = address_for(*kept.pool());
+    let write = crate::custody_consent::lock_custody_writes().await;
+    add_known_pool_with(&write, &data_dir, &client, &address, NOW)
+        .await
+        .unwrap();
+    let refused = add_known_pool_with(&write, &data_dir, &client, &address, NOW)
+        .await
+        .expect_err("a different signed descriptor must not replace the same sequence");
+    assert_eq!(refusal_code(&refused), "pool_invalid");
+    assert_eq!(known_pool_descriptors(&data_dir), vec![kept.clone()]);
+    add_known_pool_with(&write, &data_dir, &client, &address, NOW + 1)
+        .await
+        .unwrap();
+    assert_eq!(known_pool_descriptors(&data_dir), vec![kept]);
+}
+
+#[tokio::test]
 async fn known_pool_add_refuses_a_descriptor_for_another_pool() {
     let (_dir, data_dir) = data_dir();
     let write = crate::custody_consent::lock_custody_writes().await;
@@ -414,6 +451,8 @@ fn buyer_routes_every_member_by_peer_did() {
         for (class, wait) in [
             (PoolCallClass::Control, POOL_CONTROL_REPLY_WAIT_MS),
             (PoolCallClass::Read, POOL_READ_REPLY_WAIT_MS),
+            (PoolCallClass::SealUpload, POOL_READ_REPLY_WAIT_MS),
+            (PoolCallClass::SealFinalize, POOL_CONTROL_REPLY_WAIT_MS),
         ] {
             match carrier_route_for(member.route(), class, &buyer) {
                 ProviderCarrierRoute::PeerDid {
@@ -606,7 +645,10 @@ async fn known_pool_refresh_after_expiry_reaches_a_kept_member() {
     add_answering(&data_dir, &address, descriptor(1)).await;
 
     let later = NOW + 86_400 + 100;
-    let bundle = pool_bundle(xwing, later);
+    // Renewal authenticates the same bundle under a later descriptor
+    // window. Rewriting the signed pool statement changes old envelopes'
+    // binding even if the committee's keys are identical.
+    let bundle = pool_bundle(xwing, NOW);
     let renewed: SignedPoolDescriptorAnyV1 = pool_descriptor_with(
         &bundle,
         2,

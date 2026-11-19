@@ -9,10 +9,11 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 use elastos_protected_content_contracts::{
-    CanonicalContract, CustodyNodeProvisioningRecordIdentityV1, CustodyNodeProvisioningRecordV1,
-    Digest32, KeyEnvelopeIdentityV1, NodePublicKey, RuntimeCustodyProvisioningIdV1,
-    RuntimeOperationIssuerKeyV1, SignedPoolMintShareV1, SignedRuntimeCustodyProvisioningV1,
-    MAX_KEY_ENVELOPE_BYTES,
+    CanonicalContract, ContentAccessIdV1, CustodyNodeProvisioningRecordIdentityV1,
+    CustodyNodeProvisioningRecordV1, Digest32, KeyEnvelopeIdentityV1, NodePublicKey, PoolDidV1,
+    RemoteShareAdmissionV1, RuntimeCustodyProvisioningIdV1, RuntimeOperationIssuerKeyV1,
+    SealCompletedV1, SignedPoolMintShareV1, SignedRuntimeCustodyProvisioningV1,
+    MAX_KEY_ENVELOPE_BYTES, MAX_REMOTE_SHARE_ADMISSION_BYTES_V1,
 };
 
 use crate::{NodeCustodySecretKeyV1, NodeLocalStoredShareV1};
@@ -21,6 +22,7 @@ const STORE_MAGIC: &[u8; 8] = b"epc-ns01";
 /// Plan B POOL-MINT: an entry a Home that uses the pool provisioned keeps its
 /// signed share statement after the provisioning statement (ADV-02).
 const POOL_STORE_MAGIC: &[u8; 8] = b"epc-ns02";
+const REMOTE_STORE_MAGIC: &[u8; 8] = b"epc-ns03";
 const STORE_DIGEST_DOMAIN: &[u8] = b"elastos/protected-content/node-share-store/state/v1";
 const SLOT_DIGEST_DOMAIN: &[u8] = b"elastos/protected-content/node-share-store/slot/v1";
 /// POOL-MINT (PM-F1): a pool share's file is its (minting Home, KID) slot.
@@ -37,7 +39,7 @@ const MAX_POOL_MINT_SHARE_BYTES: usize = 8 * 1024;
 const MAX_STORE_FILE_BYTES: usize = POOL_STORE_HEADER_BYTES
     + MAX_RECORD_BYTES
     + MAX_SIGNED_PROVISIONING_BYTES
-    + MAX_POOL_MINT_SHARE_BYTES
+    + MAX_REMOTE_SHARE_ADMISSION_BYTES_V1
     + STORE_DIGEST_BYTES;
 const MAX_NODE_SHARE_RECORDS: usize = 4096;
 
@@ -290,7 +292,7 @@ impl NodeLocalShareStoreV1 {
             accepted_at: now,
             record_bytes,
             signed_provisioning_bytes: signed_bytes,
-            pool_mint_share_bytes: None,
+            authority: ShareAuthority::Root,
             receipt_hash: receipt.receipt_hash(),
         };
 
@@ -356,14 +358,55 @@ impl NodeLocalShareStoreV1 {
                 now,
             )
             .map_err(NodeShareProvisionErrorV1::RefusedBeforeWrite)?;
-        let (prepared, minter) = prepared;
+        self.commit_pool_share(prepared, node_custody_secret)
+    }
+
+    /// The caller admits the current descriptor and this node's serving
+    /// state before provisioning. The store independently verifies the
+    /// signed request, sealer authorization and exact record before writing.
+    pub fn provision_remote_node_share_classified(
+        &self,
+        record: &CustodyNodeProvisioningRecordV1,
+        signed_provisioning: &SignedRuntimeCustodyProvisioningV1,
+        admission: &RemoteShareAdmissionV1,
+        expected_pool: PoolDidV1,
+        node_custody_secret: &NodeCustodySecretKeyV1,
+        now: u64,
+    ) -> Result<PoolProvisionedNodeShareV1, NodeShareProvisionErrorV1> {
+        let prepare = || {
+            if admission.descriptor.pool() != &expected_pool {
+                return Err(crate::CustodyError::BindingMismatch("remote_share_pool"));
+            }
+            let binding = remote_share_binding(admission, record, now)?;
+            let prepared = self.prepare_node_share(
+                record,
+                signed_provisioning,
+                binding.signing_issuer,
+                node_custody_secret,
+                now,
+            )?;
+            let bytes = admission.canonical_bytes()?;
+            if bytes.len() > MAX_REMOTE_SHARE_ADMISSION_BYTES_V1 {
+                return Err(NodeLocalShareStoreErrorV1::Unavailable.into());
+            }
+            Ok(self.bind_pool_slot(prepared, binding, ShareAuthority::Remote(bytes)))
+        };
+        let prepared = prepare().map_err(NodeShareProvisionErrorV1::RefusedBeforeWrite)?;
+        self.commit_pool_share(prepared, node_custody_secret)
+    }
+
+    fn commit_pool_share(
+        &self,
+        prepared: PreparedNodeShareV1,
+        node_custody_secret: &NodeCustodySecretKeyV1,
+    ) -> Result<PoolProvisionedNodeShareV1, NodeShareProvisionErrorV1> {
         self.ensure_root_dir()
             .map_err(|error| NodeShareProvisionErrorV1::StoreUncertain(error.into()))?;
         let _lock = ExclusiveFileLock::acquire(&self.lock_path)
             .map_err(|error| NodeShareProvisionErrorV1::StoreUncertain(error.into()))?;
         self.cleanup_stale_temps()
             .map_err(|error| NodeShareProvisionErrorV1::StoreUncertain(error.into()))?;
-        self.write_once_pool_entry(prepared, minter, node_custody_secret)
+        self.write_once_pool_entry(prepared, node_custody_secret)
     }
 
     fn prepare_pool_node_share(
@@ -373,20 +416,42 @@ impl NodeLocalShareStoreV1 {
         mint_share: &SignedPoolMintShareV1,
         node_custody_secret: &NodeCustodySecretKeyV1,
         now: u64,
-    ) -> Result<(PreparedNodeShareV1, RuntimeOperationIssuerKeyV1), crate::CustodyError> {
+    ) -> Result<PreparedNodeShareV1, crate::CustodyError> {
         let (minter, content_access_id) = mint_share_binding(mint_share, record)?;
-        let mut prepared = self.prepare_node_share(
+        let prepared = self.prepare_node_share(
             record,
             signed_provisioning,
             minter,
             node_custody_secret,
             now,
         )?;
-        prepared.entry.pool_mint_share_bytes = Some(canonical_pool_mint_share_bytes(mint_share)?);
-        prepared.node_share = prepared.node_share.bound_to(content_access_id);
+        let authority = ShareAuthority::PoolMint(canonical_pool_mint_share_bytes(mint_share)?);
+        Ok(self.bind_pool_slot(
+            prepared,
+            PoolShareBinding {
+                minter,
+                signing_issuer: minter,
+                content_access_id,
+            },
+            authority,
+        ))
+    }
+
+    fn bind_pool_slot(
+        &self,
+        mut prepared: PreparedNodeShareV1,
+        binding: PoolShareBinding,
+        authority: ShareAuthority,
+    ) -> PreparedNodeShareV1 {
+        prepared.entry.authority = authority;
+        prepared.node_share = prepared.node_share.bound_to(binding.content_access_id);
         // PM-F1: the file is the (minting Home, KID) slot, and the receipt
         // names that slot.
-        let slot_hash = pool_slot_hash_for(minter, content_access_id, self.node_public_key);
+        let slot_hash = pool_slot_hash_for(
+            binding.minter,
+            binding.content_access_id,
+            self.node_public_key,
+        );
         let receipt = receipt_for(
             slot_hash,
             prepared.receipt.record_identity(),
@@ -398,13 +463,12 @@ impl NodeLocalShareStoreV1 {
         prepared.entry.slot_hash = slot_hash;
         prepared.entry.receipt_hash = receipt.receipt_hash();
         prepared.receipt = receipt;
-        Ok((prepared, minter))
+        prepared
     }
 
     fn write_once_pool_entry(
         &self,
         prepared: PreparedNodeShareV1,
-        minter: RuntimeOperationIssuerKeyV1,
         node_custody_secret: &NodeCustodySecretKeyV1,
     ) -> Result<PoolProvisionedNodeShareV1, NodeShareProvisionErrorV1> {
         let PreparedNodeShareV1 {
@@ -429,10 +493,17 @@ impl NodeLocalShareStoreV1 {
                 // an entry loads only from the slot its own minter and KID
                 // address: only that minter's identical record is an exact
                 // retry (PM-F1, PM-F4).
+                if !existing
+                    .authority
+                    .matches_pool_retry(&entry.authority)
+                    .map_err(uncertain)?
+                {
+                    return Err(refused(NodeLocalShareStoreErrorV1::Conflict.into()));
+                }
                 let stored = validate_loaded_entry(
                     existing.clone(),
                     self.node_public_key,
-                    minter,
+                    None,
                     node_custody_secret,
                 )
                 .map_err(uncertain)?;
@@ -507,7 +578,7 @@ impl NodeLocalShareStoreV1 {
         validate_loaded_entry(
             entry,
             self.node_public_key,
-            expected_runtime_issuer,
+            Some(expected_runtime_issuer),
             node_custody_secret,
         )
     }
@@ -531,10 +602,43 @@ impl NodeLocalShareStoreV1 {
         validate_loaded_entry(
             entry,
             self.node_public_key,
-            expected_runtime_issuer,
+            Some(expected_runtime_issuer),
             node_custody_secret,
         )
         .map(Some)
+    }
+
+    /// Confirm the node's persisted remote share belongs to the original
+    /// upload before its signing key vouches for the completed package.
+    pub fn confirm_remote_seal_share(
+        &self,
+        completion: &SealCompletedV1,
+        node_custody_secret: &NodeCustodySecretKeyV1,
+    ) -> Result<(), crate::CustodyError> {
+        self.ensure_root_dir()?;
+        let _lock = ExclusiveFileLock::acquire(&self.lock_path)?;
+        let entry = self
+            .entry_for_envelope(&completion.key_envelope)?
+            .ok_or(NodeLocalShareStoreErrorV1::Unavailable)?;
+        let ShareAuthority::Remote(bytes) = &entry.authority else {
+            return Err(NodeLocalShareStoreErrorV1::Conflict.into());
+        };
+        let admission = RemoteShareAdmissionV1::from_canonical_bytes(bytes)?;
+        if admission.request.canonical_hash()? != completion.mint_request_hash
+            || admission.descriptor.canonical_hash()? != completion.descriptor_digest
+            || admission.authorization.statement().sealer_node_public_key
+                != completion.sealer_node_public_key
+        {
+            return Err(NodeLocalShareStoreErrorV1::Conflict.into());
+        }
+        let stored = validate_loaded_entry(entry, self.node_public_key, None, node_custody_secret)?;
+        let share = stored.node_share();
+        if share.bound_content_access_id() != Some(completion.content_access_id)
+            || share.manifest().content_key_commitment() != completion.content_key_commitment
+        {
+            return Err(NodeLocalShareStoreErrorV1::Conflict.into());
+        }
+        Ok(())
     }
 
     /// How many shares this store holds (Plan B T2.1, `shares_held` in the
@@ -620,7 +724,7 @@ impl NodeLocalShareStoreV1 {
                     return validate_loaded_entry(
                         existing,
                         self.node_public_key,
-                        expected_runtime_issuer,
+                        Some(expected_runtime_issuer),
                         node_custody_secret,
                     );
                 }
@@ -659,7 +763,7 @@ impl NodeLocalShareStoreV1 {
                 continue;
             };
             let stored = read_entry_from_path(&entry.path(), slot_hash, self.node_public_key)?;
-            if stored.pool_mint_share_bytes.is_none() {
+            if stored.authority == ShareAuthority::Root {
                 continue;
             }
             let record =
@@ -727,13 +831,20 @@ impl NodeLocalShareStoreV1 {
             };
             let Some(minter) = read_entry_from_path(&entry.path(), slot_hash, self.node_public_key)
                 .ok()
-                .and_then(|stored| stored.pool_mint_share_bytes)
-                .and_then(|bytes| SignedPoolMintShareV1::from_canonical_bytes(&bytes).ok())
-                .and_then(|share| {
-                    share
-                        .verify_signature()
-                        .ok()
-                        .map(|statement| statement.minter_runtime_issuer())
+                .and_then(|stored| {
+                    let record =
+                        CustodyNodeProvisioningRecordV1::from_canonical_bytes(&stored.record_bytes)
+                            .ok()?;
+                    let binding = stored
+                        .authority
+                        .binding(&record, stored.accepted_at)
+                        .ok()??;
+                    let expected_slot = pool_slot_hash_for(
+                        binding.minter,
+                        binding.content_access_id,
+                        self.node_public_key,
+                    );
+                    (expected_slot == stored.slot_hash).then_some(binding.minter)
                 })
             else {
                 continue;
@@ -759,7 +870,7 @@ impl NodeLocalShareStoreV1 {
             return Ok(None);
         }
         let entry = self.read_entry_for_slot(slot_hash)?;
-        let Some(bytes) = entry.pool_mint_share_bytes else {
+        let ShareAuthority::PoolMint(bytes) = entry.authority else {
             return Ok(None);
         };
         let share = SignedPoolMintShareV1::from_canonical_bytes(&bytes)?;
@@ -962,9 +1073,85 @@ struct StoreEntryV1 {
     accepted_at: u64,
     record_bytes: Vec<u8>,
     signed_provisioning_bytes: Vec<u8>,
-    /// POOL-MINT: the minting Home's signed share statement of a pool entry.
-    pool_mint_share_bytes: Option<Vec<u8>>,
+    authority: ShareAuthority,
     receipt_hash: Digest32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ShareAuthority {
+    Root,
+    PoolMint(Vec<u8>),
+    Remote(Vec<u8>),
+}
+
+struct PoolShareBinding {
+    minter: RuntimeOperationIssuerKeyV1,
+    signing_issuer: RuntimeOperationIssuerKeyV1,
+    content_access_id: ContentAccessIdV1,
+}
+
+impl ShareAuthority {
+    fn binding(
+        &self,
+        record: &CustodyNodeProvisioningRecordV1,
+        accepted_at: u64,
+    ) -> Result<Option<PoolShareBinding>, crate::CustodyError> {
+        match self {
+            Self::Root => Ok(None),
+            Self::PoolMint(bytes) => {
+                let share = SignedPoolMintShareV1::from_canonical_bytes(bytes)?;
+                let (minter, content_access_id) = mint_share_binding(&share, record)?;
+                Ok(Some(PoolShareBinding {
+                    minter,
+                    signing_issuer: minter,
+                    content_access_id,
+                }))
+            }
+            Self::Remote(bytes) => {
+                let admission = RemoteShareAdmissionV1::from_canonical_bytes(bytes)?;
+                remote_share_binding(&admission, record, accepted_at).map(Some)
+            }
+        }
+    }
+
+    fn matches_pool_retry(&self, incoming: &Self) -> Result<bool, crate::CustodyError> {
+        match (self, incoming) {
+            (Self::PoolMint(_), Self::PoolMint(_)) => Ok(true),
+            (Self::Remote(stored), Self::Remote(incoming)) => {
+                // The request stays fixed even when authorization is renewed.
+                // Both admissions are verified separately at their own times.
+                let stored = RemoteShareAdmissionV1::from_canonical_bytes(stored)?;
+                let incoming = RemoteShareAdmissionV1::from_canonical_bytes(incoming)?;
+                Ok(stored.request == incoming.request
+                    && stored.authorization.statement().sealer_node_public_key
+                        == incoming.authorization.statement().sealer_node_public_key
+                    && stored.authorization.statement().sealer_runtime_issuer
+                        == incoming.authorization.statement().sealer_runtime_issuer)
+            }
+            _ => Ok(false),
+        }
+    }
+}
+
+fn remote_share_binding(
+    admission: &RemoteShareAdmissionV1,
+    record: &CustodyNodeProvisioningRecordV1,
+    now: u64,
+) -> Result<PoolShareBinding, crate::CustodyError> {
+    let (statement, minter) = admission
+        .authorization
+        .verify_for_mint_request(
+            &admission.descriptor,
+            &admission.request,
+            record.key_envelope_identity(),
+            now,
+        )
+        .map_err(|_| crate::CustodyError::BindingMismatch("remote_share_admission"))?;
+    Ok(PoolShareBinding {
+        minter,
+        signing_issuer: statement.sealer_runtime_issuer,
+        content_access_id: statement.content_access_id,
+    })
 }
 
 /// The issuer and KID a pool entry's share statement binds (no clock, S1 rev 3
@@ -1004,7 +1191,7 @@ fn canonical_pool_mint_share_bytes(
 fn validate_loaded_entry(
     entry: StoreEntryV1,
     expected_node_public_key: NodePublicKey,
-    expected_runtime_issuer: RuntimeOperationIssuerKeyV1,
+    expected_runtime_issuer: Option<RuntimeOperationIssuerKeyV1>,
     node_custody_secret: &NodeCustodySecretKeyV1,
 ) -> Result<ProvisionedNodeLocalShareV1, crate::CustodyError> {
     let record = CustodyNodeProvisioningRecordV1::from_canonical_bytes(&entry.record_bytes)?;
@@ -1018,24 +1205,22 @@ fn validate_loaded_entry(
     }
     // S7-lite (ADV-02): a pool entry loads under the issuer and KID of the
     // share statement it was stored with; a V1 entry under the root's issuer.
-    let (issuer, bound) = match &entry.pool_mint_share_bytes {
-        Some(bytes) => {
-            let mint_share = SignedPoolMintShareV1::from_canonical_bytes(bytes)?;
-            if mint_share.canonical_bytes()? != *bytes {
-                return Err(NodeLocalShareStoreErrorV1::Corrupt.into());
-            }
-            let (minter, content_access_id) = mint_share_binding(&mint_share, &record)?;
-            (minter, Some(content_access_id))
-        }
-        None => (expected_runtime_issuer, None),
-    };
+    let binding = entry.authority.binding(&record, entry.accepted_at)?;
     // The file is the entry's slot: (minting Home, KID) for a pool share
     // (PM-F1), the key envelope for a V1 share.
-    let slot_hash = match bound {
-        Some(content_access_id) => {
-            pool_slot_hash_for(issuer, content_access_id, expected_node_public_key)
-        }
-        None => slot_hash_for(record.key_envelope_identity(), expected_node_public_key)?,
+    let (slot_hash, issuer) = match &binding {
+        Some(binding) => (
+            pool_slot_hash_for(
+                binding.minter,
+                binding.content_access_id,
+                expected_node_public_key,
+            ),
+            binding.signing_issuer,
+        ),
+        None => (
+            slot_hash_for(record.key_envelope_identity(), expected_node_public_key)?,
+            expected_runtime_issuer.ok_or(NodeLocalShareStoreErrorV1::Corrupt)?,
+        ),
     };
     if slot_hash != entry.slot_hash {
         return Err(NodeLocalShareStoreErrorV1::Corrupt.into());
@@ -1047,8 +1232,8 @@ fn validate_loaded_entry(
         expected_node_public_key,
         node_custody_secret,
     )?;
-    if let Some(content_access_id) = bound {
-        node_share = node_share.bound_to(content_access_id);
+    if let Some(binding) = binding {
+        node_share = node_share.bound_to(binding.content_access_id);
     }
     let receipt = receipt_for(
         entry.slot_hash,
@@ -1175,36 +1360,42 @@ fn encode_entry(
         .map_err(|_| NodeLocalShareStoreErrorV1::Unavailable)?;
     let signed_len = u32::try_from(entry.signed_provisioning_bytes.len())
         .map_err(|_| NodeLocalShareStoreErrorV1::Unavailable)?;
-    let mint_share = entry.pool_mint_share_bytes.as_deref();
-    if mint_share.is_some_and(|bytes| bytes.is_empty() || bytes.len() > MAX_POOL_MINT_SHARE_BYTES) {
+    let (magic, proof, proof_limit) = match &entry.authority {
+        ShareAuthority::Root => (STORE_MAGIC, None, 0),
+        ShareAuthority::PoolMint(bytes) => {
+            (POOL_STORE_MAGIC, Some(bytes), MAX_POOL_MINT_SHARE_BYTES)
+        }
+        ShareAuthority::Remote(bytes) => (
+            REMOTE_STORE_MAGIC,
+            Some(bytes),
+            MAX_REMOTE_SHARE_ADMISSION_BYTES_V1,
+        ),
+    };
+    if proof.is_some_and(|bytes| bytes.is_empty() || bytes.len() > proof_limit) {
         return Err(NodeLocalShareStoreErrorV1::Unavailable);
     }
     let mut payload = Vec::with_capacity(
         POOL_STORE_HEADER_BYTES
             + entry.record_bytes.len()
             + entry.signed_provisioning_bytes.len()
-            + mint_share.map_or(0, <[u8]>::len),
+            + proof.map_or(0, Vec::len),
     );
-    payload.extend_from_slice(if mint_share.is_some() {
-        POOL_STORE_MAGIC
-    } else {
-        STORE_MAGIC
-    });
+    payload.extend_from_slice(magic);
     payload.extend_from_slice(node_public_key.as_bytes());
     payload.extend_from_slice(entry.slot_hash.as_bytes());
     payload.extend_from_slice(&entry.accepted_at.to_be_bytes());
     payload.extend_from_slice(&record_len.to_be_bytes());
     payload.extend_from_slice(&signed_len.to_be_bytes());
     payload.extend_from_slice(entry.receipt_hash.as_bytes());
-    if let Some(mint_share) = mint_share {
-        let mint_share_len =
-            u32::try_from(mint_share.len()).map_err(|_| NodeLocalShareStoreErrorV1::Unavailable)?;
-        payload.extend_from_slice(&mint_share_len.to_be_bytes());
+    if let Some(proof) = proof {
+        let proof_len =
+            u32::try_from(proof.len()).map_err(|_| NodeLocalShareStoreErrorV1::Unavailable)?;
+        payload.extend_from_slice(&proof_len.to_be_bytes());
     }
     payload.extend_from_slice(&entry.record_bytes);
     payload.extend_from_slice(&entry.signed_provisioning_bytes);
-    if let Some(mint_share) = mint_share {
-        payload.extend_from_slice(mint_share);
+    if let Some(proof) = proof {
+        payload.extend_from_slice(proof);
     }
     if payload.len() + STORE_DIGEST_BYTES > MAX_STORE_FILE_BYTES {
         return Err(NodeLocalShareStoreErrorV1::Unavailable);
@@ -1224,9 +1415,11 @@ fn decode_entry(
         return Err(NodeLocalShareStoreErrorV1::Corrupt);
     }
     let (payload, digest) = bytes.split_at(bytes.len() - STORE_DIGEST_BYTES);
-    let pool_entry = match &payload[..8] {
-        magic if magic == STORE_MAGIC => false,
-        magic if magic == POOL_STORE_MAGIC => true,
+    let magic = &payload[..8];
+    let proof_limit = match magic {
+        magic if magic == STORE_MAGIC => 0,
+        magic if magic == POOL_STORE_MAGIC => MAX_POOL_MINT_SHARE_BYTES,
+        magic if magic == REMOTE_STORE_MAGIC => MAX_REMOTE_SHARE_ADMISSION_BYTES_V1,
         _ => return Err(NodeLocalShareStoreErrorV1::Corrupt),
     };
     if store_integrity_digest(payload) != digest {
@@ -1269,7 +1462,7 @@ fn decode_entry(
     if signed_len == 0 || signed_len > MAX_SIGNED_PROVISIONING_BYTES {
         return Err(NodeLocalShareStoreErrorV1::Corrupt);
     }
-    let (header_len, mint_share_len) = if pool_entry {
+    let (header_len, proof_len) = if proof_limit > 0 {
         if payload.len() < POOL_STORE_HEADER_BYTES {
             return Err(NodeLocalShareStoreErrorV1::Corrupt);
         }
@@ -1278,7 +1471,7 @@ fn decode_entry(
                 .try_into()
                 .map_err(|_| NodeLocalShareStoreErrorV1::Corrupt)?,
         ) as usize;
-        if length == 0 || length > MAX_POOL_MINT_SHARE_BYTES {
+        if length == 0 || length > proof_limit {
             return Err(NodeLocalShareStoreErrorV1::Corrupt);
         }
         (POOL_STORE_HEADER_BYTES, length)
@@ -1288,20 +1481,29 @@ fn decode_entry(
     let expected_len = header_len
         .checked_add(record_len)
         .and_then(|value| value.checked_add(signed_len))
-        .and_then(|value| value.checked_add(mint_share_len))
+        .and_then(|value| value.checked_add(proof_len))
         .ok_or(NodeLocalShareStoreErrorV1::Corrupt)?;
     if payload.len() != expected_len {
         return Err(NodeLocalShareStoreErrorV1::Corrupt);
     }
     let record_start = header_len;
     let signed_start = record_start + record_len;
-    let mint_share_start = signed_start + signed_len;
+    let proof_start = signed_start + signed_len;
+    let authority = match magic {
+        magic if magic == POOL_STORE_MAGIC => {
+            ShareAuthority::PoolMint(payload[proof_start..].to_vec())
+        }
+        magic if magic == REMOTE_STORE_MAGIC => {
+            ShareAuthority::Remote(payload[proof_start..].to_vec())
+        }
+        _ => ShareAuthority::Root,
+    };
     Ok(StoreEntryV1 {
         slot_hash,
         accepted_at,
         record_bytes: payload[record_start..signed_start].to_vec(),
-        signed_provisioning_bytes: payload[signed_start..mint_share_start].to_vec(),
-        pool_mint_share_bytes: pool_entry.then(|| payload[mint_share_start..].to_vec()),
+        signed_provisioning_bytes: payload[signed_start..proof_start].to_vec(),
+        authority,
         receipt_hash,
     })
 }
@@ -1698,6 +1900,165 @@ mod tests {
                 .to_vec(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn remote_share_reloads_under_the_sealer_issuer_and_original_asset() {
+        use crate::test_support::{
+            pool_node_custody_secret, pool_release_test, pool_release_test_with,
+            xwing_public_key_from_seed,
+        };
+        use elastos_protected_content_contracts::test_fixtures::{
+            pool_bundle, pool_descriptor_signed_by, pool_did, POOL_AUTHORITY_SEED,
+        };
+        use elastos_protected_content_contracts::{
+            ClearLayoutV1, MintRequestV1, PoolProvisioningAuthorizationV1, RightsPolicyBodyV1,
+            SignedMintRequestV1, SignedPoolProvisioningAuthorizationV1,
+        };
+
+        let release = pool_release_test(vec![(9, 1)], 1, 0x55);
+        let envelope = &release.envelope;
+        let node = node_public_key(1);
+        let record = CustodyNodeProvisioningRecordV1::new(
+            envelope.key_envelope_identity().unwrap(),
+            envelope.manifest().clone(),
+            node,
+            envelope.stored_share_for_node(node).unwrap().clone(),
+        )
+        .unwrap();
+        let temp = temp_root();
+        let store = store(temp.path(), 1);
+        let secret = pool_node_custody_secret(1);
+        let asset = release
+            .fixture
+            .operation
+            .statement()
+            .policy_body()
+            .content_access_id();
+        let unrelated_asset = ContentAccessIdV1::new([0x43; 16]).unwrap();
+        let bundle = pool_bundle(xwing_public_key_from_seed, NOW);
+        let descriptor = pool_descriptor_signed_by(&bundle, 1, NOW, POOL_AUTHORITY_SEED);
+        let make_admission = |nonce, kid, now| {
+            let request = MintRequestV1 {
+                pool: pool_did(),
+                epoch: bundle.epoch_identity().unwrap(),
+                minter_issuer: runtime_issuer(POOL_AUTHORITY_SEED),
+                content_access_id: asset,
+                clear_layout: ClearLayoutV1::Object {
+                    content_type: "application/pdf".into(),
+                    length: 4096,
+                },
+                request_nonce: [nonce; 16],
+                issued_at: NOW,
+                expires_at: NOW + 300,
+            };
+            let signature = runtime_key(POOL_AUTHORITY_SEED)
+                .sign(&request.canonical_bytes().unwrap())
+                .to_bytes();
+            let request = SignedMintRequestV1::new(request, signature).unwrap();
+            let authorization = PoolProvisioningAuthorizationV1 {
+                pool: pool_did(),
+                epoch: bundle.epoch_identity().unwrap(),
+                sealer_node_public_key: node,
+                sealer_runtime_issuer: runtime_issuer(0x55),
+                key_envelope: record.key_envelope_identity().clone(),
+                content_access_id: kid,
+                mint_request_hash: request.canonical_hash().unwrap(),
+                issued_at: now,
+                expires_at: now + 60,
+            };
+            let signature = runtime_key(1)
+                .sign(&authorization.canonical_bytes().unwrap())
+                .to_bytes();
+            RemoteShareAdmissionV1 {
+                descriptor: descriptor.clone().into(),
+                request,
+                authorization: SignedPoolProvisioningAuthorizationV1::new(authorization, signature)
+                    .unwrap(),
+            }
+        };
+        let persist = |admission: &RemoteShareAdmissionV1, issuer, now| {
+            let signed = signed_provisioning(&record, issuer, 0x63, now, now + 60);
+            store.provision_remote_node_share_classified(
+                &record,
+                &signed,
+                admission,
+                pool_did(),
+                &secret,
+                now,
+            )
+        };
+        let wrong_asset = make_admission(1, unrelated_asset, NOW);
+        assert!(persist(&wrong_asset, 0x55, NOW)
+            .unwrap_err()
+            .proves_not_stored());
+        let admission = make_admission(1, asset, NOW);
+        assert!(persist(&admission, POOL_AUTHORITY_SEED, NOW)
+            .unwrap_err()
+            .proves_not_stored());
+        assert_eq!(store.count().unwrap(), 0);
+        let accepted = persist(&admission, 0x55, NOW).unwrap();
+        assert!(!accepted.already_stored());
+        let slot = accepted.provisioned().receipt().slot_hash();
+        let original_bytes = std::fs::read(store.record_path(slot)).unwrap();
+        assert!(original_bytes.starts_with(REMOTE_STORE_MAGIC));
+        let reopened = NodeLocalShareStoreV1::new(node, store.root_dir.clone());
+        let loaded = reopened
+            .load_node_share(
+                record.key_envelope_identity(),
+                runtime_issuer(0x66),
+                &secret,
+            )
+            .unwrap();
+        assert_eq!(loaded, *accepted.provisioned());
+        assert_eq!(loaded.node_share().bound_content_access_id(), Some(asset));
+        loaded
+            .node_share()
+            .validate_pool_release_claim_context(&release.fixture.authenticated(), node, NOW + 3)
+            .unwrap();
+        let wrong_release = pool_release_test_with(vec![(9, 1)], 1, 0x55, |spec| {
+            let policy = &spec.policy;
+            spec.policy = RightsPolicyBodyV1::new(
+                policy.encrypted_content().clone(),
+                unrelated_asset,
+                policy.required_action(),
+                policy.subject_source(),
+                policy.chain_id(),
+                policy.contract_address(),
+                policy.function_selector(),
+                policy.method_abi(),
+                policy.observation_finality(),
+            )
+            .unwrap();
+        });
+        assert_eq!(
+            wrong_release.fixture.binding.key_envelope(),
+            record.key_envelope_identity(),
+        );
+        assert!(matches!(
+            loaded.node_share().validate_pool_release_claim_context(
+                &wrong_release.fixture.authenticated(),
+                node,
+                NOW + 3,
+            ),
+            Err(crate::CustodyError::BindingMismatch("content_access_id"))
+        ));
+        assert_eq!(
+            reopened.accepted_pool_minters().unwrap(),
+            [runtime_issuer(POOL_AUTHORITY_SEED)]
+        );
+        let refreshed = make_admission(1, asset, NOW + 61);
+        let replay = persist(&refreshed, 0x55, NOW + 61).unwrap();
+        assert!(replay.already_stored());
+        assert_eq!(replay.provisioned(), accepted.provisioned());
+        let other_request = make_admission(2, asset, NOW + 62);
+        assert!(persist(&other_request, 0x55, NOW + 62)
+            .unwrap_err()
+            .proves_not_stored());
+        assert_eq!(
+            std::fs::read(store.record_path(slot)).unwrap(),
+            original_bytes
+        );
     }
 
     fn temp_root() -> tempfile::TempDir {
@@ -2177,7 +2538,7 @@ mod tests {
             accepted_at: NOW + 1,
             record_bytes: vec![1, 2, 3, 4],
             signed_provisioning_bytes: signed_bytes,
-            pool_mint_share_bytes: None,
+            authority: ShareAuthority::Root,
             receipt_hash: stored.receipt().receipt_hash(),
         };
         write_owner_only(

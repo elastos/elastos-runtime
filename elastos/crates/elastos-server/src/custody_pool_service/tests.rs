@@ -997,7 +997,7 @@ fn part_json(part: ViewerPartIndexV1) -> Value {
 #[tokio::test]
 async fn custody_pool_target_is_declared_and_allowed() {
     // The surface declares the target as a Runtime provider target that
-    // Carrier admits, with exactly its five ops.
+    // Carrier admits each declared viewing and sealing operation.
     assert!(carrier_target_allowed(TARGET_CUSTODY_POOL));
     assert!(crate::carrier::carrier_provider_target_allowed(
         TARGET_CUSTODY_POOL
@@ -1011,6 +1011,10 @@ async fn custody_pool_target_is_declared_and_allowed() {
         OP_CUSTODY_POOL_SESSION_OPEN,
         OP_CUSTODY_POOL_SESSION_READ,
         OP_CUSTODY_POOL_SESSION_CLOSE,
+        crate::custody_surface::OP_CUSTODY_POOL_SEAL_OPEN,
+        crate::custody_surface::OP_CUSTODY_POOL_SEAL_PART,
+        crate::custody_surface::OP_CUSTODY_POOL_SEAL_RESUME,
+        crate::custody_surface::OP_CUSTODY_POOL_SEAL_FINALIZE,
     ];
     for op in ops {
         assert!(carrier_op_allowed(TARGET_CUSTODY_POOL, op), "{op}");

@@ -394,6 +394,35 @@ pub struct CencDashRenditionDeclV2 {
 }
 
 impl CencDashRenditionDeclV2 {
+    /// Build a declaration from an encrypted init read back from staging.
+    /// The signed kind and KID must agree with the protected track.
+    pub fn from_staged_init(
+        kind: CencDashRenditionKindV2,
+        kid: ContentAccessIdV1,
+        protected_init: &[u8],
+        segment_count: u32,
+    ) -> Result<Self, ContractError> {
+        let hash = Digest32::new(Sha256::digest(protected_init).into());
+        let init = ValidatedCencDashInitV2::new_in(
+            &PROTECTION,
+            protected_init,
+            hash,
+            protected_init.len() as u64,
+        )?;
+        if init.rendition().kind() != kind
+            || init.content_access_id() != kid
+            || init.protection_system() != Some(PROTECTION.writer().id)
+        {
+            return Err(ContractError::InvalidField("init_segment_bytes"));
+        }
+        Ok(Self::from_init(
+            kind,
+            init.rendition().timescale(),
+            protected_init,
+            segment_count,
+        ))
+    }
+
     /// A declaration for `protected_init` with the pinned mime/codecs of `kind`.
     pub fn from_init(
         kind: CencDashRenditionKindV2,

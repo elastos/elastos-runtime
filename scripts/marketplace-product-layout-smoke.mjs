@@ -22,6 +22,7 @@ const mediaPendingBuyToken = "marketplace-media-pending-buy-token";
 // cannot be reached at all. Both hold one listing of this Home's own.
 const marketRetryToken = "marketplace-market-retry-token";
 const marketDownToken = "marketplace-market-down-token";
+const marketCardRetryToken = "marketplace-card-retry-token";
 const mediaCreatorMint = "a".repeat(64);
 const mediaPurchasedMint = "b".repeat(64);
 const mediaAvailableMint = "c".repeat(64);
@@ -36,7 +37,7 @@ const mediaBareMetadataCid = "QmUwdnvSofKYGnBSWwqtgnEJLWMPD9fDv9ZdvSrbFSg7ov";
 const importedListingUri = "elastos://QmcHh9eQuLiisfxZo4m4TxaVTSYzs4AF4LaVcmkd2o2Y76";
 const mediaPayToken = "0x1111111111111111111111111111111111111111";
 const mediaSellerAddress = "0x2222222222222222222222222222222222222222";
-const mediaTokenId = "0x7";
+const localMediaLedger = "0x2222222222222222222222222222222222222223";
 // A market whose items Base has not finalized yet. Its page runs on a held
 // clock, so waiting for finality takes no real time.
 const marketFinalityToken = "marketplace-market-finality-token";
@@ -365,7 +366,9 @@ function mediaListing({ mintId, displayName, accessState, quantity, price, codec
     price,
     pay_token: mediaPayToken,
     seller_address: mediaSellerAddress,
-    token_id: mediaTokenId,
+    chain_namespace: "eip155:8453",
+    ledger: localMediaLedger,
+    token_id: `0x${mintId.slice(0, 2)}`,
     published_at: 1_756_293_600,
     purchase_in_flight: false,
     availability: mediaAvailability,
@@ -723,7 +726,7 @@ function startServer() {
       // while the test proves another item's sheet is untouched by its polls.
       buyOfferWaitingSellers: new Set(["0x34daf3000000000000000000000000000000beef"]),
       slowBuyBarrier: createBarrier(),
-      exploreListingBarrier: createBarrier(),
+      exploreListingBarrier: null,
       // Two assets nobody on this Home holds a listing for: the market has
       // them, and this Home can buy them and cannot open them.
       catalogItems: [
@@ -869,6 +872,12 @@ function startServer() {
     [mediaEmptyToken]: { catalogFailuresRemaining: 0 },
     [marketRetryToken]: firstLoadScenario(1),
     [marketDownToken]: firstLoadScenario(Number.POSITIVE_INFINITY),
+    [marketCardRetryToken]: {
+      ...firstLoadScenario(0),
+      firstMarketBarrier: null,
+      accessRetry: { reads: 0, automaticReply: createBarrier(), manualReply: createBarrier() },
+      importReply: createBarrier(),
+    },
     [marketFinalityToken]: {
       catalogFailuresRemaining: 0,
       mediaListings: [],
@@ -908,7 +917,7 @@ function startServer() {
       const url = new URL(request.url, "http://localhost");
       if (request.method === "OPTIONS") {
         response.writeHead(204, {
-          "access-control-allow-headers": "content-type,x-elastos-home-token",
+          "access-control-allow-headers": "content-type,x-elastos-home-token,x-elastos-action-id",
           "access-control-allow-methods": "GET,POST,OPTIONS",
           "access-control-allow-origin": "null",
         }).end();
@@ -1139,6 +1148,56 @@ function startServer() {
         // here. Details on its card reads this listing.
         if (start.item && start.item.ledger === marketExploreLedger && start.item.token_id === marketExplorePaperTokenId) {
           json(response, marketExplorePaperListingFixture());
+          return;
+        }
+        if (start.item?.ledger === firstLoadMarketItem.ledger
+            && start.item?.token_id === firstLoadMarketItem.tokenId) {
+          const retry = state[token]?.accessRetry;
+          if (retry) {
+            retry.reads += 1;
+            if (retry.reads === 1) {
+              json(response, { code: "unavailable" }, 503);
+              return;
+            }
+            if (retry.reads === 2) {
+              await retry.automaticReply.promise;
+              json(response, { code: "unavailable" }, 503);
+              return;
+            }
+            await retry.manualReply.promise;
+          }
+          const listing = marketListingFixture();
+          const item = { ...listing.item, ledger: firstLoadMarketItem.ledger, token_id: firstLoadMarketItem.tokenId };
+          if (retry && body.card_access === true) {
+            json(response, {
+              schema: "elastos.marketplace.card-access/v1",
+              item,
+              asset: listing.asset,
+              access_state: "purchased",
+              access_subject: "ab".repeat(16),
+            });
+            return;
+          }
+          json(response, {
+            ...listing,
+            item,
+            access_state: retry ? "purchased" : listing.access_state,
+            source: { ...listing.source, start: "item" },
+          });
+          return;
+        }
+        // The local shelf also asks for account access, keyed by the same
+        // ledger and token as its stored listing.
+        const local = state[token]?.mediaListings?.find((listing) =>
+          listing.ledger === start.item?.ledger && listing.token_id === start.item?.token_id);
+        if (local) {
+          const listing = marketListingFixture();
+          json(response, {
+            ...listing,
+            item: { ...listing.item, ledger: local.ledger, token_id: local.token_id },
+            access_state: local.access_state,
+            source: { ...listing.source, start: "item" },
+          });
           return;
         }
         // The page cuts `ipfs://<cid>/<file>` back to its folder before it
@@ -1513,6 +1572,11 @@ function startServer() {
         const token = String(request.headers["x-elastos-home-token"] || "");
         const body = await readJsonBody(request);
         requestLog.push({ path: url.pathname, token, method: request.method, body });
+        if (token === marketCardRetryToken && body?.listing_uri === importedListingUri) {
+          await state[token].importReply.promise;
+          json(response, { status: "ok", data: { status: "verified" } });
+          return;
+        }
         if (token === normalToken && body?.listing_uri === importedListingUri) {
           state[normalToken].mediaListings = [
             ...state[normalToken].mediaListings,
@@ -1962,7 +2026,7 @@ async function runFinalityScenario(browser, port, state, requestLog, notFoundPat
     await waitForRequestCount(requestLog, marketFinalityToken, "/api/apps/marketplace/listing", 1);
     const before = await cardState(frame, finalityFreshItem);
     assert(
-      before.label === "Buy" && before.disabled && before.ariaDisabled === "true" && before.action === ""
+      before.label === "Checking…" && before.disabled && before.ariaDisabled === "true" && before.action === ""
         && before.note === "Confirming on Base · ready in about 18 min",
       "A card the index published inside the finality window starts disabled, with its estimate",
       before,
@@ -1974,6 +2038,7 @@ async function runFinalityScenario(browser, port, state, requestLog, notFoundPat
     );
     scenario.finality.get(finalityKey(finalityFreshItem)).barrier.release();
     await waitForNote(frame, finalityFreshItem, "Confirming on Base · ready in about 5 min");
+    await card(frame, finalityPressedItem).locator('[data-action="buy-listing"]').waitFor();
     assert(
       (await frame.locator('[data-action="buy-listing"]').count()) === 1,
       "Only the item Runtime has not finalized waits; the other keeps its Buy",
@@ -1997,19 +2062,26 @@ async function runFinalityScenario(browser, port, state, requestLog, notFoundPat
       "The re-check at ready_at enables Buy and drops the note",
       { reads: listingReads(finalityFreshItem), after },
     );
-    await page.clock.fastForward(10 * 60_000);
+    // Stay within the settled access TTL. A later background access refresh
+    // is independent of the finality watch and can replace these buttons.
+    await page.clock.fastForward(60_000);
     assert(listingReads(finalityFreshItem) === 2, "No re-check outlives the wait");
 
     // A press Runtime answers `pending_finality`: the person reads why, and
     // the card waits from then on.
     const pageNow = Math.floor((await frame.evaluate(() => Date.now())) / 1000);
+    const pressedBuy = card(frame, finalityPressedItem).locator('button[data-action="buy-listing"]:enabled');
+    await pressedBuy.waitFor({ state: "visible" });
+    const pressedReadsBefore = listingReads(finalityPressedItem);
     scenario.finality.set(finalityKey(finalityPressedItem), { readyAt: pageNow + 600 });
-    await card(frame, finalityPressedItem).locator('[data-action="buy-listing"]').click();
+    await pressedBuy.click();
     await waitForToastText(frame, "Confirming on Base · ready in about 10 min");
     await waitForNote(frame, finalityPressedItem, "Confirming on Base · ready in about 10 min");
     const pressed = await cardState(frame, finalityPressedItem);
+    const pressedReadsAfter = pressedReadsBefore + 1;
     assert(
-      pressed.disabled && pressed.action === "" && (await frame.locator(".detail-modal.active, #detail-modal.active").count()) === 0,
+      pressed.disabled && pressed.action === "" && listingReads(finalityPressedItem) === pressedReadsAfter
+        && (await frame.locator(".detail-modal.active, #detail-modal.active").count()) === 0,
       "A pending answer disables the pressed card and opens no sheet",
       pressed,
     );
@@ -2021,10 +2093,13 @@ async function runFinalityScenario(browser, port, state, requestLog, notFoundPat
     }, hidden);
     await setTabHidden(true);
     await page.clock.fastForward(15 * 60_000);
-    assert(listingReads(finalityPressedItem) === 1, "A hidden tab does not re-read a waiting card");
+    assert(listingReads(finalityPressedItem) === pressedReadsAfter, "A hidden tab does not re-read a waiting card");
+    const visibleNow = Math.floor((await frame.evaluate(() => Date.now())) / 1000);
+    scenario.finality.set(finalityKey(finalityPressedItem), { readyAt: visibleNow + 120 });
     await setTabHidden(false);
-    await waitForRequestCount(requestLog, marketFinalityToken, "/api/apps/marketplace/listing", 4);
-    assert(listingReads(finalityPressedItem) === 2, "Back in sight, the overdue re-check runs once");
+    await waitForNote(frame, finalityPressedItem, "Confirming on Base · ready in about 2 min");
+    assert(listingReads(finalityPressedItem) === pressedReadsAfter + 1,
+      "Back in sight, the overdue re-check runs once");
 
     // Off screen, nothing is read; back on screen, the overdue re-check runs
     // once and the card is enabled.
@@ -2032,13 +2107,13 @@ async function runFinalityScenario(browser, port, state, requestLog, notFoundPat
     await frame.locator('[data-destination="discover"]').click();
     await frame.locator('.store-row[data-app="people"]').first().waitFor();
     await page.clock.fastForward(15 * 60_000);
-    assert(listingReads(finalityPressedItem) === 2, "A card that is not shown is not re-read");
+    assert(listingReads(finalityPressedItem) === pressedReadsAfter + 1, "A card that is not shown is not re-read");
     await frame.locator('[data-destination="media"]').click();
     await frame.waitForFunction(
       (id) => document.querySelector(`[data-id="${id}"] [data-action="buy-listing"]`) !== null,
       `${finalityPressedItem.ledger}:${finalityPressedItem.tokenId}`,
     );
-    assert(listingReads(finalityPressedItem) === 3, "Shown again, the overdue re-check runs once");
+    assert(listingReads(finalityPressedItem) === pressedReadsAfter + 2, "Shown again, the overdue re-check runs once");
     assert(pageErrors.length === 0, "The finality scenario saw page errors", pageErrors);
     assert(
       notFoundPaths.length === notFoundBefore,
@@ -2046,6 +2121,49 @@ async function runFinalityScenario(browser, port, state, requestLog, notFoundPat
       notFoundPaths.slice(notFoundBefore),
     );
   } finally {
+    await page.close();
+  }
+}
+
+async function runCardAccessRetryScenario(browser, port, state, requestLog) {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const { accessRetry: retry, importReply } = state[marketCardRetryToken];
+  try {
+    await page.clock.install();
+    await page.goto(`http://127.0.0.1:${port}/fixture-token/${marketCardRetryToken}`);
+    const frame = await waitForMarketplaceFrame(page);
+    await frame.locator('.store-row[data-app="people"]').first().waitFor();
+    await frame.locator('[data-destination="media"]').click();
+    const card = frame.locator(`[data-id="${firstLoadMarketItemId}"]`);
+    const retryButton = card.locator('[data-action="retry-access"]');
+    const checking = card.getByRole("button", { name: "Checking…", exact: true });
+    await retryButton.waitFor();
+    assert(await card.getByRole("button", { name: "Buy", exact: true }).count() === 0,
+      "An unanswered access check must not offer Buy");
+
+    await frame.locator("#import-listing-uri").fill(importedListingUri);
+    await frame.locator("#import-listing-submit").click();
+    await waitForRequestCount(requestLog, marketCardRetryToken, "/api/provider/object/import_runtime_custody", 1);
+    await page.clock.fastForward(16_000);
+    await page.clock.runFor(100);
+    assert(retry.reads === 1 && await retryButton.isVisible(),
+      "A card retry that comes due during Add must wait for the import to finish", retry.reads);
+    importReply.release();
+    await waitForToastText(frame, "Listing added.");
+    await checking.waitFor();
+    assert(await checking.isDisabled(), "An automatic retry shows a disabled Checking button");
+    retry.automaticReply.release();
+    await retryButton.waitFor();
+
+    await retryButton.press("Enter");
+    await checking.waitFor();
+    retry.manualReply.release();
+    await card.getByRole("button", { name: "Open", exact: true }).waitFor();
+    assert(retry.reads === 3, "Each retry asks once and the granted account reaches Open", retry.reads);
+  } finally {
+    importReply.release();
+    retry.automaticReply.release();
+    retry.manualReply.release();
     await page.close();
   }
 }
@@ -2067,6 +2185,7 @@ async function run() {
     assert(address && typeof address === "object", "fixture server did not bind");
     const port = address.port;
     await runFinalityScenario(browser, port, state, requestLog, notFoundPaths);
+    await runCardAccessRetryScenario(browser, port, state, requestLog);
 
     page.on("pageerror", (error) => {
       pageErrors.push(error?.stack || String(error));
@@ -2188,6 +2307,7 @@ async function run() {
     await frame.locator('.store-row-media').first().waitFor();
     const mediaTitle = await frame.locator("#store-title").textContent();
     assert(mediaTitle?.trim() === "Media", "Marketplace must expose the Media destination", { mediaTitle });
+    await frame.locator(`.card[data-mint="${mediaCreatorMint}"]`).waitFor();
     const mediaRows = await frame.locator(".store-row-media").evaluateAll((nodes) =>
       nodes.map((node) => node.textContent?.trim() || ""),
     );
@@ -2526,10 +2646,14 @@ async function run() {
       !(await paperCard.locator('[data-action="download-copy"]').isVisible()),
       "A folded menu stays shut until it is asked for",
     );
-    await paperCard.locator('[data-action="card-menu"]').click();
+    const menuToggle = paperCard.locator('[data-action="card-menu"]');
+    // Exercise native keyboard activation and the accessible state. In this
+    // headless fixture Chrome can deliver a pointer click to the outer frame
+    // element even when the inner frame reports the button at that point.
+    await menuToggle.press("Enter");
+    await paperCard.locator('[data-action="download-copy"]').waitFor({ state: "visible" });
     assert(
-      (await paperCard.locator('[data-action="download-copy"]').isVisible())
-        && (await paperCard.locator('[data-action="card-menu"]').getAttribute("aria-expanded")) === "true",
+      (await menuToggle.getAttribute("aria-expanded")) === "true",
       "Opening the menu reveals the same actions a video shows plainly",
     );
     await frame.locator("#store-title").click();
@@ -2965,8 +3089,9 @@ async function run() {
       importRequest,
     );
     await ensureCard(mediaImportedMint);
-    await frame.locator(`.store-row-media[data-mint="${mediaImportedMint}"]`).waitFor();
-    const importedRowText = await frame.locator(`.store-row-media[data-mint="${mediaImportedMint}"]`).textContent();
+    const importedCard = frame.locator(`.store-row-media[data-mint="${mediaImportedMint}"]`);
+    await importedCard.locator('[data-action="buy-media"]').waitFor();
+    const importedRowText = await importedCard.textContent();
     assert(
       // The control says what it does: an item this Home does not hold is
       // bought, and one it holds is opened.
@@ -3134,12 +3259,22 @@ async function run() {
 
     // Task 10: Explore's own Buy reaches the same sheet through the chain's
     // own key -- never an account, never a mint this Home does not hold.
-    const listingRequestsBeforeExplore = requestLog.filter((entry) => entry.path === "/api/apps/marketplace/listing").length;
     await frame.locator('[data-media-tab="explore"]').click();
     await frame.locator('.card-title:text-is("Someone Else\'s Film")').waitFor();
     const exploreFilmCard = frame.locator('.card:has(.card-title:text-is("Someone Else\'s Film"))');
-    await exploreFilmCard.locator('[data-action="buy-listing"]').click();
-    await waitForRequestCount(requestLog, normalToken, "/api/apps/marketplace/listing", listingRequestsBeforeExplore + 1);
+    const filmBuy = exploreFilmCard.locator('[data-action="buy-listing"]');
+    await filmBuy.waitFor();
+    const filmListingRequests = () => requestLog.filter((entry) =>
+      entry.path === "/api/apps/marketplace/listing"
+      && entry.token === normalToken
+      && entry.body?.start?.item?.ledger === marketExploreLedger
+      && entry.body?.start?.item?.token_id === marketExploreTokenId);
+    const listingRequestsBeforeExplore = filmListingRequests().length;
+    // Let the automatic account check answer before holding the read
+    // triggered by the person's click.
+    state[normalToken].exploreListingBarrier = createBarrier();
+    await filmBuy.click();
+    await filmBuy.and(exploreFilmCard.locator('[aria-busy="true"]')).waitFor();
     // While the listing is read the card says it is working, and a second
     // press asks nothing more (UI-M11).
     const exploreBuyBusy = await exploreFilmCard.locator('[data-action="buy-listing"]').getAttribute("aria-busy");
@@ -3148,12 +3283,12 @@ async function run() {
     await page.waitForTimeout(200);
     assert(
       exploreBuyBusy === "true"
-        && requestLog.filter((entry) => entry.path === "/api/apps/marketplace/listing").length === listingRequestsBeforeExplore + 1,
+        && filmListingRequests().length === listingRequestsBeforeExplore + 1,
       "Explore's Buy must show it is busy while the listing is read, and a second press must not read it again",
       { exploreBuyBusy },
     );
     state[normalToken].exploreListingBarrier.release();
-    const exploreListingRequest = requestLog.filter((entry) => entry.path === "/api/apps/marketplace/listing").at(-1);
+    const exploreListingRequest = filmListingRequests().at(-1);
     assert(
       exploreListingRequest?.method === "POST"
         && JSON.stringify(exploreListingRequest.body) === JSON.stringify({
@@ -3630,7 +3765,7 @@ async function run() {
       "A bought item whose readability is not learned yet says Purchased and offers Details",
       unlearnedState,
     );
-    await foreignCard.locator('[data-action="item-details"]').click();
+    await foreignCard.locator('[data-action="item-details"]').press("Enter");
     await frame.locator("#detail-modal.active .item-properties").waitFor();
     const foreignProperties = await itemProperties();
     const foreignSheet = await sheetFacts();
@@ -4014,7 +4149,7 @@ async function run() {
       { reads: marketReads(marketDownToken) },
     );
     state[marketDownToken].marketFailuresRemaining = 0;
-    await downFrame.locator('[data-action="retry-market"]').click();
+    await downFrame.locator('[data-action="retry-market"]').press("Enter");
     await downFrame.locator(`.store-row-media[data-id="${firstLoadMarketItemId}"]`).waitFor();
     assert(
       marketReads(marketDownToken) === 3
@@ -4040,7 +4175,7 @@ async function run() {
     // renders its file name instead. That is an expected answer rather than a
     // failure, so it is named here rather than counted.
     const metadataMisses = nonOkResponses.filter((entry) =>
-      entry.url.endsWith(`/ipfs/${mediaBareMetadataCid}/metadata.json`) && entry.status === 404);
+      entry.url.endsWith(`/content/${mediaBareMetadataCid}/metadata.json`) && entry.status === 404);
     // The deliberate `/listing` refusals whose wording the sheet test reads.
     const listingRefusals = nonOkResponses.filter((entry) =>
       entry.url.endsWith("/api/apps/marketplace/listing") && [400, 404, 409, 503].includes(entry.status));

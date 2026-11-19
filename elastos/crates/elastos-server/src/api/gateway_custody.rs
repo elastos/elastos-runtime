@@ -45,6 +45,21 @@ pub(super) struct CustodyCheckRequest {
     slots: Vec<CustodySlot>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CustodyRolloverPrepareRequest {
+    slots: Vec<CustodySlot>,
+    term_days: u64,
+    operation_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CustodyRolloverConsentRequest {
+    operation_id: String,
+    decision_base64: String,
+}
+
 /// The step-up request of Include this Home; the body adds `step_up_token`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,9 +123,14 @@ struct CustodySlot {
 
 fn custody_refusal_response(code: &str, detail: Option<&str>) -> Response {
     let status = match code {
-        "bad_request" | "bad_slot" | "bad_term" | "bad_labels" | "bad_address" | "bad_pool" => {
-            StatusCode::BAD_REQUEST
-        }
+        "bad_request"
+        | "bad_slot"
+        | "bad_term"
+        | "bad_labels"
+        | "bad_address"
+        | "bad_pool"
+        | "bad_operation_id"
+        | "invalid_rollover_consent" => StatusCode::BAD_REQUEST,
         "protected_content_off"
         | "no_pool"
         | "no_local_node"
@@ -555,6 +575,79 @@ pub(super) async fn custody_pool_check(
     };
     let checks = custody_pool_setup::check(&state.data_dir, &cards);
     Json(serde_json::json!({ "checks": checks })).into_response()
+}
+
+fn rollover_operation_id(encoded: &str) -> Option<[u8; 16]> {
+    let mut operation_id = [0_u8; 16];
+    hex::decode_to_slice(encoded, &mut operation_id).ok()?;
+    (operation_id != [0; 16] && hex::encode(operation_id) == encoded).then_some(operation_id)
+}
+
+pub(super) async fn custody_rollover_prepare(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    body: Result<Json<CustodyRolloverPrepareRequest>, JsonRejection>,
+) -> Response {
+    if let Err(response) = require_custody_admin(&state, &headers) {
+        return *response;
+    }
+    let Json(input) = match body {
+        Ok(body) => body,
+        Err(rejection) => return custody_bad_request(rejection),
+    };
+    let Some(term_days) = u16::try_from(input.term_days)
+        .ok()
+        .filter(|days| POOL_TERM_DAYS.contains(days))
+    else {
+        return custody_refusal_response("bad_term", None);
+    };
+    let Some(operation_id) = rollover_operation_id(&input.operation_id) else {
+        return custody_refusal_response("bad_operation_id", None);
+    };
+    let cards = match card_inputs(input.slots) {
+        Ok(cards) => cards,
+        Err(response) => return *response,
+    };
+    let write = custody_consent::lock_custody_writes().await;
+    match custody_pool_setup::prepare_rollover(
+        &write,
+        &state.data_dir,
+        &cards,
+        term_days,
+        operation_id,
+        crate::auth::now_ts(),
+    ) {
+        Ok(prepared) => Json(prepared).into_response(),
+        Err(error) => custody_error_response(error),
+    }
+}
+
+pub(super) async fn custody_rollover_consent(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    body: Result<Json<CustodyRolloverConsentRequest>, JsonRejection>,
+) -> Response {
+    if let Err(response) = require_custody_admin(&state, &headers) {
+        return *response;
+    }
+    let Json(input) = match body {
+        Ok(body) => body,
+        Err(rejection) => return custody_bad_request(rejection),
+    };
+    let Some(operation_id) = rollover_operation_id(&input.operation_id) else {
+        return custody_refusal_response("bad_operation_id", None);
+    };
+    let write = custody_consent::lock_custody_writes().await;
+    match crate::custody_pool_descriptor::record_rollover_consent(
+        &write,
+        &state.data_dir,
+        operation_id,
+        &input.decision_base64,
+        crate::auth::now_ts(),
+    ) {
+        Ok(recorded) => Json(recorded).into_response(),
+        Err(error) => custody_error_response(error),
+    }
 }
 
 pub(super) async fn custody_pool_install(

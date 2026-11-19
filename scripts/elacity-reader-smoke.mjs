@@ -573,7 +573,7 @@ async function run() {
   // so a refusal that stops happening is a failure too.
   const REFUSALS = [
     {
-      name: "an inline style the engine's parser tried to apply while building an adversarial chapter",
+      name: "an inline style in the sandboxed Reader",
       match: (text) => /style-src/.test(text),
     },
     {
@@ -689,6 +689,7 @@ async function run() {
     assert(state.position === "Page 2 of 2" && state.width === 7, "the pager must reach page 10", state);
 
     // --- a book, chapter by chapter ---------------------------------------
+    const chapterConsoleStart = consoleErrors.length;
     frame = await openCase(page, "55".repeat(32), port);
     state = await frame.evaluate(() => ({
       kind: document.getElementById("reader-kind").textContent,
@@ -768,6 +769,7 @@ async function run() {
       "words in an element the rebuild unwraps must survive",
       audit,
     );
+    const chapterConsoleEnd = consoleErrors.length;
 
     // --- a book that reads the other way ----------------------------------
     frame = await openCase(page, "88".repeat(32), port);
@@ -842,6 +844,19 @@ async function run() {
       "a session this reader refuses must not be read from",
       wrongKindCalls,
     );
+
+    // Probe the policy directly. Parsing a chapter does not necessarily try
+    // to apply its styles, and engines differ in what they report for it.
+    const inlineStyleApplied = await frame.evaluate(() => {
+      const probe = document.createElement("style");
+      probe.textContent = ":root { --reader-smoke-inline-style: applied }";
+      document.head.appendChild(probe);
+      const value = getComputedStyle(document.documentElement)
+        .getPropertyValue("--reader-smoke-inline-style").trim();
+      probe.remove();
+      return value === "applied";
+    });
+    assert(!inlineStyleApplied, "the Reader must block an inline stylesheet");
 
     // --- how a background thread is refused at this origin ------------------
     const workers = await frame.evaluate(async () => {
@@ -930,7 +945,11 @@ async function run() {
         consoleErrors,
       );
     }
-    const unexpected = consoleErrors.filter((text) => !REFUSALS.some((refusal) => refusal.match(text)));
+    const unexpected = consoleErrors.filter((text, index) => {
+      const blockedChapterHandler = index >= chapterConsoleStart && index < chapterConsoleEnd
+        && /Executing inline event handler violates.*script-src.*action has been blocked/i.test(text);
+      return !blockedChapterHandler && !REFUSALS.some((refusal) => refusal.match(text));
+    });
     assert(unexpected.length === 0, "the reader must run without a console error of its own", unexpected);
     assert(notFound.length === 0, "the reader must not ask for anything that is not there", notFound);
     assert(

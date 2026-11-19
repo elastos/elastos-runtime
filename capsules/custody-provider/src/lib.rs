@@ -2,9 +2,18 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 
-use ed25519_dalek::SigningKey;
-use elastos_protected_content_contracts::{NodePublicKey, RuntimeOperationIssuerKeyV1};
-use elastos_protected_content_custody::NodeCustodySecretKeyV1;
+use ed25519_dalek::{Signer as _, SigningKey};
+use elastos_protected_content_contracts::{
+    CanonicalContract, KeyEnvelopeIdentityV1, NodePublicKey, PoolDidV1,
+    PoolProvisioningAuthorizationV1, RuntimeOperationIssuerKeyV1, SealCompletedV1,
+    SealSessionAttestationV1, SignedMintRequestV1, SignedPoolDescriptorAnyV1,
+    SignedPoolProvisioningAuthorizationV1, SignedSealCompletedV1, SignedSealSessionAttestationV1,
+    MAX_RUNTIME_CUSTODY_PROVISIONING_LIFETIME_SECS,
+};
+use elastos_protected_content_custody::{
+    NodeCustodySecretKeyV1, NodeLocalShareStoreV1, PoolProvisionedNodeShareV1,
+};
+use elastos_protected_content_provider_contracts::RemoteShareProvisionRequestV1;
 pub use elastos_protected_content_provider_contracts::{
     parse_and_verify_provisioning_output, provisioning_receipt,
     ProvisionedCustodyProviderPublicKeys, ProvisioningOutputError,
@@ -52,6 +61,204 @@ pub struct LoadedCustodyProviderState {
     pub node_signing_key: SigningKey,
     pub node_custody_secret: NodeCustodySecretKeyV1,
     pub data_root: PathBuf,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RemoteShareWriteError {
+    /// The provider refused the request before committing the share.
+    Refused,
+    /// The caller must reconcile before assuming a retry has no prior effect.
+    OutcomeUnknown,
+}
+
+impl LoadedCustodyProviderState {
+    /// Sign the public attestation returned by the local protect provider.
+    /// The caller provides the authorized root's pool independently from the
+    /// upload and must obtain the statement on the private provider channel.
+    pub fn attest_remote_seal_upload(
+        &self,
+        expected_pool: PoolDidV1,
+        descriptor: &SignedPoolDescriptorAnyV1,
+        request: &SignedMintRequestV1,
+        statement: SealSessionAttestationV1,
+        now: u64,
+    ) -> Result<SignedSealSessionAttestationV1, CustodyProviderStateRootError> {
+        if statement.sealer_node_public_key != self.node_public_key {
+            return Err(CustodyProviderStateRootError::Conflict);
+        }
+        self.require_current_pool(expected_pool, descriptor)?;
+        let bytes = statement
+            .canonical_bytes()
+            .map_err(|_| CustodyProviderStateRootError::InvalidConfig)?;
+        let signature = self.node_signing_key.sign(&bytes).to_bytes();
+        let attestation = SignedSealSessionAttestationV1::new(statement, signature)
+            .map_err(|_| CustodyProviderStateRootError::InvalidConfig)?;
+        attestation
+            .verify_for_upload(
+                request,
+                descriptor,
+                self.node_public_key,
+                attestation.session_id(),
+                now,
+            )
+            .map_err(|_| CustodyProviderStateRootError::Conflict)?;
+        Ok(attestation)
+    }
+
+    /// Authorize share provisioning for the envelope produced by the private
+    /// protect provider. The caller supplies the sealer's local Runtime issuer,
+    /// and obtains the envelope identity from that provider's verified output.
+    pub fn authorize_remote_share(
+        &self,
+        expected_pool: PoolDidV1,
+        descriptor: &SignedPoolDescriptorAnyV1,
+        request: &SignedMintRequestV1,
+        envelope: &KeyEnvelopeIdentityV1,
+        local_issuer: RuntimeOperationIssuerKeyV1,
+        now: u64,
+    ) -> Result<SignedPoolProvisioningAuthorizationV1, CustodyProviderStateRootError> {
+        self.require_current_pool(expected_pool, descriptor)?;
+        let mint = request
+            .verify_for_sealer(descriptor, self.node_public_key, now)
+            .map_err(|_| CustodyProviderStateRootError::Conflict)?;
+        let expires_at = now
+            .checked_add(MAX_RUNTIME_CUSTODY_PROVISIONING_LIFETIME_SECS)
+            .ok_or(CustodyProviderStateRootError::InvalidConfig)?
+            .min(mint.expires_at)
+            .min(descriptor.expires_at());
+        let statement = PoolProvisioningAuthorizationV1 {
+            pool: expected_pool,
+            epoch: mint.epoch,
+            sealer_node_public_key: self.node_public_key,
+            sealer_runtime_issuer: local_issuer,
+            key_envelope: envelope.clone(),
+            content_access_id: mint.content_access_id,
+            mint_request_hash: request
+                .canonical_hash()
+                .map_err(|_| CustodyProviderStateRootError::InvalidConfig)?,
+            issued_at: now,
+            expires_at,
+        };
+        let bytes = statement
+            .canonical_bytes()
+            .map_err(|_| CustodyProviderStateRootError::InvalidConfig)?;
+        let signature = self.node_signing_key.sign(&bytes).to_bytes();
+        let signed = SignedPoolProvisioningAuthorizationV1::new(statement, signature)
+            .map_err(|_| CustodyProviderStateRootError::InvalidConfig)?;
+        signed
+            .verify_for_mint_request(descriptor, request, envelope, now)
+            .map_err(|_| CustodyProviderStateRootError::Conflict)?;
+        Ok(signed)
+    }
+
+    /// Sign a completion supplied by the authorized local publication path.
+    /// A node may vouch only for its own stored share of this exact mint.
+    pub fn sign_remote_seal_completion(
+        &self,
+        expected_pool: PoolDidV1,
+        descriptor: &SignedPoolDescriptorAnyV1,
+        request: &SignedMintRequestV1,
+        statement: SealCompletedV1,
+        now: u64,
+    ) -> Result<SignedSealCompletedV1, CustodyProviderStateRootError> {
+        self.require_current_pool(expected_pool, descriptor)?;
+        if statement.sealer_node_public_key != self.node_public_key || statement.completed_at > now
+        {
+            return Err(CustodyProviderStateRootError::Conflict);
+        }
+        let bytes = statement
+            .canonical_bytes()
+            .map_err(|_| CustodyProviderStateRootError::InvalidConfig)?;
+        let store = NodeLocalShareStoreV1::new(
+            self.node_public_key,
+            self.data_root.join(NODE_SHARE_STORE_DIR),
+        );
+        store
+            .confirm_remote_seal_share(&statement, &self.node_custody_secret)
+            .map_err(|_| CustodyProviderStateRootError::Conflict)?;
+        let signature = self.node_signing_key.sign(&bytes).to_bytes();
+        let completed = SignedSealCompletedV1::new(statement, signature)
+            .map_err(|_| CustodyProviderStateRootError::InvalidConfig)?;
+        completed
+            .verify_for_request_at(descriptor, request, self.node_public_key, now)
+            .map_err(|_| CustodyProviderStateRootError::Conflict)?;
+        Ok(completed)
+    }
+
+    fn require_current_pool(
+        &self,
+        pool: PoolDidV1,
+        descriptor: &SignedPoolDescriptorAnyV1,
+    ) -> Result<(), CustodyProviderStateRootError> {
+        if descriptor.pool() != &pool
+            || !PoolDescriptorHighWaterV1::new(&self.data_root)
+                .admits(pool.issuer().as_bytes(), descriptor.sequence())
+                .map_err(|_| CustodyProviderStateRootError::MissingOrUnsafe)?
+        {
+            return Err(CustodyProviderStateRootError::Conflict);
+        }
+        Ok(())
+    }
+
+    /// Apply a private remote-sealer request to this root. The caller supplies
+    /// the pool independently from its authorization for this root.
+    pub fn provision_remote_share(
+        &mut self,
+        expected_pool: PoolDidV1,
+        frame: &[u8],
+        now: u64,
+    ) -> Result<PoolProvisionedNodeShareV1, RemoteShareWriteError> {
+        let request = RemoteShareProvisionRequestV1::from_json_slice(frame)
+            .map_err(|_| RemoteShareWriteError::Refused)?;
+        self.provision_remote_share_request(expected_pool, &request, now)
+    }
+
+    pub fn provision_remote_share_request(
+        &mut self,
+        expected_pool: PoolDidV1,
+        request: &RemoteShareProvisionRequestV1,
+        now: u64,
+    ) -> Result<PoolProvisionedNodeShareV1, RemoteShareWriteError> {
+        let descriptor = &request.admission.descriptor;
+        if descriptor.pool() != &expected_pool
+            || request.record.selected_node_public_key() != self.node_public_key
+        {
+            return Err(RemoteShareWriteError::Refused);
+        }
+        let issuer = expected_pool.issuer();
+        let pool = issuer.as_bytes();
+        let marks = PoolDescriptorHighWaterV1::new(&self.data_root);
+        if !marks
+            .admits(pool, descriptor.sequence())
+            .map_err(|_| RemoteShareWriteError::OutcomeUnknown)?
+        {
+            return Err(RemoteShareWriteError::Refused);
+        }
+        let store = NodeLocalShareStoreV1::new(
+            self.node_public_key,
+            self.data_root.join(NODE_SHARE_STORE_DIR),
+        );
+        let receipt = store
+            .provision_remote_node_share_classified(
+                &request.record,
+                &request.signed_provisioning,
+                &request.admission,
+                expected_pool,
+                &self.node_custody_secret,
+                now,
+            )
+            .map_err(|error| {
+                if error.proves_not_stored() {
+                    RemoteShareWriteError::Refused
+                } else {
+                    RemoteShareWriteError::OutcomeUnknown
+                }
+            })?;
+        marks
+            .record(pool, descriptor.sequence())
+            .map_err(|_| RemoteShareWriteError::OutcomeUnknown)?;
+        Ok(receipt)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

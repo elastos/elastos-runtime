@@ -13,24 +13,33 @@ use std::collections::BTreeMap;
 use custody_provider::{
     load_state_from_root, parse_runtime_issuer_hex, parse_state_root_from_provider_init,
     parse_state_roots_from_provider_init, provision_state_root, provisioning_receipt,
-    PoolDescriptorHighWaterV1, PROVISIONING_SCHEMA_V1,
+    LoadedCustodyProviderState, PoolDescriptorHighWaterV1, RemoteShareWriteError,
+    PROVISIONING_SCHEMA_V1,
 };
-use ed25519_dalek::{Signer as _, SigningKey};
+use ed25519_dalek::Signer as _;
+#[cfg(test)]
+use ed25519_dalek::SigningKey;
 use elastos_protected_content_contracts::{
-    AuthenticatedRuntimeReleaseOperationV2, KeyReleaseError, NodePublicKey,
-    RuntimeOperationIssuerKeyV1, RuntimeReleaseOperationAnyV1,
+    AuthenticatedRuntimeReleaseOperationV2, CanonicalContract, CustodyEpochIssuerKeyV1,
+    KeyEnvelopeIdentityV1, KeyReleaseError, NodePublicKey, PoolDidV1, RuntimeOperationIssuerKeyV1,
+    RuntimeReleaseOperationAnyV1, SealCompletedV1, SealSessionAttestationV1, SignedMintRequestV1,
+    SignedPoolDescriptorAnyV1, MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1,
 };
 use elastos_protected_content_custody::{
-    CustodyError, DurableReplayClaimStoreV1, NodeCustodySecretKeyV1, NodeLocalShareStoreV1,
-    RecipientPublicKeyV1,
+    CustodyError, DurableReplayClaimStoreV1, NodeLocalShareStoreV1, RecipientPublicKeyV1,
 };
 use elastos_protected_content_provider_contracts::{
-    CustodyProviderRequestOpV1, CustodyProviderRequestV1, CustodyProviderRequestValidationErrorV1,
-    CustodyProviderResponseV1, PoolCustodyRequestOpV1, PoolCustodyRequestV1, PoolCustodyResponseV1,
-    ProviderFailureCodeV1, RightsProviderResponseV1, ValidatedCustodyProviderRequestV1,
-    ValidatedPoolCustodyRequestV1, ValidatedRightsProviderRequestV1,
+    AuthorizeRemoteSealShareReplyV1, AuthorizeRemoteSealShareRequestV1, CustodyProviderRequestOpV1,
+    CustodyProviderRequestV1, CustodyProviderRequestValidationErrorV1, CustodyProviderResponseV1,
+    PoolCustodyRequestOpV1, PoolCustodyRequestV1, PoolCustodyResponseV1, ProviderFailureCodeV1,
+    ProvisionRemoteShareCommandV1, RemoteSealAttestationReplyV1, RemoteSealAttestationRequestV1,
+    RemoteShareProvisionReplyV1, RemoteShareProvisionRequestV1, RightsProviderResponseV1,
+    SignRemoteSealCompletionReplyV1, SignRemoteSealCompletionRequestV1,
+    ValidatedCustodyProviderRequestV1, ValidatedPoolCustodyRequestV1,
+    ValidatedRightsProviderRequestV1, ATTEST_REMOTE_SEAL_UPLOAD_OP, AUTHORIZE_REMOTE_SEAL_SHARE_OP,
     CUSTODY_PROVIDER_REQUEST_SCHEMA_V1, CUSTODY_PROVIDER_RESPONSE_SCHEMA_V1,
-    MAX_PROVIDER_FRAME_BYTES_V1,
+    MAX_PROVIDER_FRAME_BYTES_V1, MAX_REMOTE_SEAL_COMPLETION_BYTES_V1,
+    PROVISION_REMOTE_SHARE_CHILD_OP, SIGN_REMOTE_SEAL_COMPLETION_OP,
 };
 use elastos_protected_content_rights::{
     chain_rights_evidence_request_any, evaluate_validated_rights_with_evidence_at,
@@ -119,10 +128,7 @@ struct ListedRoot {
 }
 
 struct ConfiguredCustodyProvider {
-    expected_runtime_issuer: RuntimeOperationIssuerKeyV1,
-    node_public_key: NodePublicKey,
-    node_signing_key: SigningKey,
-    node_custody_secret: NodeCustodySecretKeyV1,
+    loaded: LoadedCustodyProviderState,
     share_store: NodeLocalShareStoreV1,
     replay_store: DurableReplayClaimStoreV1,
     pool_high_water: PoolDescriptorHighWaterV1,
@@ -188,6 +194,18 @@ impl CustodyProvider {
             Some("prepare_evidence" | "settle_evidence") => {
                 (self.handle_private_rights_request(&value), false)
             }
+            Some(ATTEST_REMOTE_SEAL_UPLOAD_OP) => {
+                (self.handle_remote_upload_attestation(value), false)
+            }
+            Some(AUTHORIZE_REMOTE_SEAL_SHARE_OP) => {
+                (self.handle_remote_share_authorization(value), false)
+            }
+            Some(SIGN_REMOTE_SEAL_COMPLETION_OP) => {
+                (self.handle_remote_seal_completion(value), false)
+            }
+            Some(PROVISION_REMOTE_SHARE_CHILD_OP) => {
+                (self.handle_remote_share_provision(value), false)
+            }
             _ => (invalid_request(), false),
         }
     }
@@ -252,7 +270,7 @@ impl CustodyProvider {
                 match loaded {
                     Some(root) => json!({
                         "path": listed.path,
-                        "node_public_key": format!("0x{}", hex_bytes(root.node_public_key.as_bytes())),
+                        "node_public_key": format!("0x{}", hex_bytes(root.loaded.node_public_key.as_bytes())),
                         "configured": true,
                         "shares_held": root.share_store.count().ok(),
                     }),
@@ -308,6 +326,193 @@ impl CustodyProvider {
         }
     }
 
+    fn handle_remote_upload_attestation(&self, value: Value) -> ProviderResponse {
+        let Some(set) = self.roots.as_ref() else {
+            return not_configured();
+        };
+        let Ok(RemoteSealAttestationRequestV1::AttestRemoteSealUpload {
+            pool_authority,
+            descriptor,
+            mint_request,
+            statement,
+        }) = serde_json::from_value(value)
+        else {
+            return invalid_request();
+        };
+        if descriptor.len() > MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1
+            || mint_request.len() > 8 * 1024
+            || statement.len() > 4 * 1024
+        {
+            return invalid_request();
+        }
+        let (Ok(pool_issuer), Ok(descriptor), Ok(request), Ok(statement)) = (
+            CustodyEpochIssuerKeyV1::new(pool_authority),
+            SignedPoolDescriptorAnyV1::from_canonical_bytes(&descriptor),
+            SignedMintRequestV1::from_canonical_bytes(&mint_request),
+            SealSessionAttestationV1::from_canonical_bytes(&statement),
+        ) else {
+            return invalid_request();
+        };
+        let node = statement.sealer_node_public_key;
+        let Some(root) = set.roots.get(&node) else {
+            return set.unconfigured_or_unknown(node);
+        };
+        let Ok(attestation) = root.loaded.attest_remote_seal_upload(
+            PoolDidV1::from_issuer(pool_issuer),
+            &descriptor,
+            &request,
+            statement,
+            now_unix_seconds(),
+        ) else {
+            return invalid_request();
+        };
+        let Ok(attestation) = attestation.canonical_bytes() else {
+            return invalid_request();
+        };
+        ProviderResponse::ok(json!(RemoteSealAttestationReplyV1 { attestation }))
+    }
+
+    fn handle_remote_share_provision(&mut self, value: Value) -> ProviderResponse {
+        let Some(set) = self.roots.as_mut() else {
+            return not_configured();
+        };
+        let Ok(ProvisionRemoteShareCommandV1::ProvisionRemoteShare {
+            pool_authority,
+            request,
+        }) = serde_json::from_value(value)
+        else {
+            return invalid_request();
+        };
+        let Ok(issuer) = CustodyEpochIssuerKeyV1::new(pool_authority) else {
+            return invalid_request();
+        };
+        let Some(request) = serde_json::to_vec(&request)
+            .ok()
+            .and_then(|frame| RemoteShareProvisionRequestV1::from_json_slice(&frame).ok())
+        else {
+            return invalid_request();
+        };
+        let node = request.record.selected_node_public_key();
+        let Some(root) = set.roots.get_mut(&node) else {
+            return set.unconfigured_or_unknown(node);
+        };
+        let outcome = root.loaded.provision_remote_share_request(
+            PoolDidV1::from_issuer(issuer),
+            &request,
+            now_unix_seconds(),
+        );
+        let stored = match outcome {
+            Ok(stored) => stored,
+            Err(RemoteShareWriteError::Refused) => return provisioning_refused(),
+            Err(RemoteShareWriteError::OutcomeUnknown) => return backend_unavailable(),
+        };
+        let receipt = stored.provisioned().receipt();
+        let record = receipt.record_identity();
+        ProviderResponse::ok(json!(RemoteShareProvisionReplyV1 {
+            selected_node_public_key: *receipt.selected_node_public_key().as_bytes(),
+            record_sha256: *record.record_sha256().as_bytes(),
+            record_bytes: record.record_bytes(),
+            provisioning_id: *receipt.provisioning_id().digest().as_bytes(),
+            already_stored: stored.already_stored(),
+        }))
+    }
+
+    fn handle_remote_share_authorization(&self, value: Value) -> ProviderResponse {
+        let Some(set) = self.roots.as_ref() else {
+            return not_configured();
+        };
+        let Ok(AuthorizeRemoteSealShareRequestV1::AuthorizeRemoteSealShare {
+            pool_authority,
+            sealer_node,
+            descriptor,
+            mint_request,
+            key_envelope,
+            runtime_issuer,
+        }) = serde_json::from_value(value)
+        else {
+            return invalid_request();
+        };
+        if descriptor.len() > MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1
+            || mint_request.len() > 8 * 1024
+            || key_envelope.len() > 4 * 1024
+        {
+            return invalid_request();
+        }
+        let (Ok(pool), Ok(node), Ok(issuer), Ok(descriptor), Ok(request), Ok(identity)) = (
+            CustodyEpochIssuerKeyV1::new(pool_authority),
+            NodePublicKey::new(sealer_node),
+            RuntimeOperationIssuerKeyV1::new(runtime_issuer),
+            SignedPoolDescriptorAnyV1::from_canonical_bytes(&descriptor),
+            SignedMintRequestV1::from_canonical_bytes(&mint_request),
+            KeyEnvelopeIdentityV1::from_canonical_bytes(&key_envelope),
+        ) else {
+            return invalid_request();
+        };
+        let Some(root) = set.roots.get(&node) else {
+            return set.unconfigured_or_unknown(node);
+        };
+        let Ok(signed) = root.loaded.authorize_remote_share(
+            PoolDidV1::from_issuer(pool),
+            &descriptor,
+            &request,
+            &identity,
+            issuer,
+            now_unix_seconds(),
+        ) else {
+            return invalid_request();
+        };
+        let Ok(authorization) = signed.canonical_bytes() else {
+            return invalid_request();
+        };
+        ProviderResponse::ok(json!(AuthorizeRemoteSealShareReplyV1 { authorization }))
+    }
+
+    fn handle_remote_seal_completion(&self, value: Value) -> ProviderResponse {
+        let Some(set) = self.roots.as_ref() else {
+            return not_configured();
+        };
+        let Ok(SignRemoteSealCompletionRequestV1::SignRemoteSealCompletion {
+            pool_authority,
+            descriptor,
+            mint_request,
+            statement,
+        }) = serde_json::from_value(value)
+        else {
+            return invalid_request();
+        };
+        if descriptor.len() > MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1
+            || mint_request.len() > 8 * 1024
+            || statement.len() > MAX_REMOTE_SEAL_COMPLETION_BYTES_V1
+        {
+            return invalid_request();
+        }
+        let (Ok(pool), Ok(descriptor), Ok(request), Ok(statement)) = (
+            CustodyEpochIssuerKeyV1::new(pool_authority),
+            SignedPoolDescriptorAnyV1::from_canonical_bytes(&descriptor),
+            SignedMintRequestV1::from_canonical_bytes(&mint_request),
+            SealCompletedV1::from_canonical_bytes(&statement),
+        ) else {
+            return invalid_request();
+        };
+        let node = statement.sealer_node_public_key;
+        let Some(root) = set.roots.get(&node) else {
+            return set.unconfigured_or_unknown(node);
+        };
+        let Ok(signed) = root.loaded.sign_remote_seal_completion(
+            PoolDidV1::from_issuer(pool),
+            &descriptor,
+            &request,
+            statement,
+            now_unix_seconds(),
+        ) else {
+            return invalid_request();
+        };
+        let Ok(completion) = signed.canonical_bytes() else {
+            return invalid_request();
+        };
+        ProviderResponse::ok(json!(SignRemoteSealCompletionReplyV1 { completion }))
+    }
+
     fn handle_private_rights_request(&mut self, value: &Value) -> ProviderResponse {
         let Some(set) = self.roots.as_ref() else {
             return not_configured();
@@ -350,8 +555,8 @@ impl CustodyProvider {
                     }
                     match state.share_store.load_node_share_if_present(
                         operation.binding().key_envelope(),
-                        state.expected_runtime_issuer,
-                        &state.node_custody_secret,
+                        state.loaded.expected_runtime_issuer,
+                        &state.loaded.node_custody_secret,
                     ) {
                         Ok(Some(_)) => {}
                         Ok(None) => return unknown_envelope(),
@@ -375,7 +580,7 @@ impl CustodyProvider {
                 // one evidence refusal the Runtime can recover from.
                 let evidence_ended = evidence.expires_at() <= now;
                 match evaluate_validated_rights_with_evidence_at(
-                    &state.node_signing_key,
+                    &state.loaded.node_signing_key,
                     &request,
                     evidence,
                     now,
@@ -397,8 +602,8 @@ impl ConfiguredCustodyProvider {
         let now = now_unix_seconds();
         let request = match ValidatedCustodyProviderRequestV1::decode_and_validate_at(
             bytes,
-            self.expected_runtime_issuer,
-            self.node_public_key,
+            self.loaded.expected_runtime_issuer,
+            self.loaded.node_public_key,
             now,
         ) {
             Ok(request) => request,
@@ -414,8 +619,8 @@ impl ConfiguredCustodyProvider {
                 match self.share_store.provision_node_share_classified(
                     provision.custody_node_provisioning_record(),
                     provision.signed_runtime_custody_provisioning(),
-                    self.expected_runtime_issuer,
-                    &self.node_custody_secret,
+                    self.loaded.expected_runtime_issuer,
+                    &self.loaded.node_custody_secret,
                     now,
                 ) {
                     Ok(_) => typed_response(CustodyProviderResponseV1::new_provisioned(provision)),
@@ -441,8 +646,8 @@ impl ConfiguredCustodyProvider {
                 let key_envelope = operation.binding().key_envelope();
                 let node_share = match self.share_store.load_node_share(
                     key_envelope,
-                    self.expected_runtime_issuer,
-                    &self.node_custody_secret,
+                    self.loaded.expected_runtime_issuer,
+                    &self.loaded.node_custody_secret,
                 ) {
                     Ok(value) => value,
                     Err(_) => {
@@ -462,8 +667,8 @@ impl ConfiguredCustodyProvider {
                     operation,
                     release.signed_node_rights_decision(),
                     node_share.node_share(),
-                    &self.node_signing_key,
-                    &self.node_custody_secret,
+                    &self.loaded.node_signing_key,
+                    &self.loaded.node_custody_secret,
                     &recipient_public_key,
                     now,
                     release
@@ -494,7 +699,7 @@ impl ConfiguredCustodyProvider {
         let now = now_unix_seconds();
         let request = match ValidatedPoolCustodyRequestV1::decode_and_validate_at(
             bytes,
-            self.node_public_key,
+            self.loaded.node_public_key,
             now,
         ) {
             Ok(request) => request,
@@ -519,8 +724,8 @@ impl ConfiguredCustodyProvider {
                 }
                 let node_share = match self.share_store.load_node_share_if_present(
                     operation.binding().key_envelope(),
-                    self.expected_runtime_issuer,
-                    &self.node_custody_secret,
+                    self.loaded.expected_runtime_issuer,
+                    &self.loaded.node_custody_secret,
                 ) {
                     Ok(Some(node_share)) => node_share,
                     Ok(None) => return unknown_envelope(),
@@ -539,8 +744,8 @@ impl ConfiguredCustodyProvider {
                     operation.clone(),
                     release.signed_node_rights_decision(),
                     node_share.node_share(),
-                    &self.node_signing_key,
-                    &self.node_custody_secret,
+                    &self.loaded.node_signing_key,
+                    &self.loaded.node_custody_secret,
                     now,
                     decision_expires_at,
                     now,
@@ -590,8 +795,8 @@ impl ConfiguredCustodyProvider {
                 }
                 match self.share_store.load_node_share_if_present(
                     key_envelope,
-                    self.expected_runtime_issuer,
-                    &self.node_custody_secret,
+                    self.loaded.expected_runtime_issuer,
+                    &self.loaded.node_custody_secret,
                 ) {
                     Ok(Some(_)) => {}
                     Ok(None) => return unknown_envelope(),
@@ -605,7 +810,7 @@ impl ConfiguredCustodyProvider {
                 let Ok(signing_bytes) = signing.signing_bytes() else {
                     return invalid_request();
                 };
-                let signature = self.node_signing_key.sign(&signing_bytes).to_bytes();
+                let signature = self.loaded.node_signing_key.sign(&signing_bytes).to_bytes();
                 typed_pool_response(PoolCustodyResponseV1::new_pool_statement_signature(
                     &request, signature,
                 ))
@@ -643,7 +848,7 @@ impl ConfiguredCustodyProvider {
             provision.custody_node_provisioning_record(),
             provision.signed_runtime_custody_provisioning(),
             provision.signed_pool_mint_share(),
-            &self.node_custody_secret,
+            &self.loaded.node_custody_secret,
             now,
         ) {
             Ok(_) => {
@@ -887,7 +1092,7 @@ fn load_root_set(config: Value) -> Result<CustodyRootSet, ()> {
             });
             continue;
         };
-        let key = state.node_public_key;
+        let key = state.loaded.node_public_key;
         set.roots.insert(key, state);
         set.listed.push(ListedRoot {
             path: root.path,
@@ -918,8 +1123,6 @@ fn load_root_set(config: Value) -> Result<CustodyRootSet, ()> {
 fn load_provider_state(root: &std::path::Path) -> Result<ConfiguredCustodyProvider, ()> {
     let loaded = load_state_from_root(root).map_err(|_| ())?;
     let state = ConfiguredCustodyProvider {
-        expected_runtime_issuer: loaded.expected_runtime_issuer,
-        node_public_key: loaded.node_public_key,
         share_store: NodeLocalShareStoreV1::new(
             loaded.node_public_key,
             loaded
@@ -931,8 +1134,7 @@ fn load_provider_state(root: &std::path::Path) -> Result<ConfiguredCustodyProvid
             loaded.data_root.join("replay"),
         ),
         pool_high_water: PoolDescriptorHighWaterV1::new(&loaded.data_root),
-        node_signing_key: loaded.node_signing_key,
-        node_custody_secret: loaded.node_custody_secret,
+        loaded,
     };
     state.share_store.validate().map_err(|_| ())?;
     state.pool_high_water.validate().map_err(|_| ())?;

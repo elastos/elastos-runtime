@@ -17,7 +17,7 @@ use base64::Engine as _;
 use elastos_runtime::provider::{
     Provider, ProviderByteRange, ProviderCarrierRoute, ProviderError, ProviderInvocation,
     ProviderInvocationTransport, ProviderProgress, ProviderRegistry, ProviderStreamOptions,
-    ProviderTransfer, ResourceRequest, ResourceResponse,
+    ProviderTransfer, ResourceRequest, ResourceResponse, STAGED_CONTENT_PUBLISH_OP,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -107,7 +107,7 @@ pub const CONTENT_OBJECT_MANIFEST_PATH: &str = OBJECT_MANIFEST_PATH;
 const MAX_LOCAL_OBJECT_DIRS: usize = 16;
 const MAX_LOCAL_OBJECT_WALK_DEPTH: usize = 8;
 // Bounds the one local object file Runtime reads whole: 4096 manifest entries.
-const MAX_LOCAL_OBJECT_MANIFEST_BYTES: u64 = 1024 * 1024;
+pub(crate) const MAX_LOCAL_OBJECT_MANIFEST_BYTES: u64 = 1024 * 1024;
 const LOCAL_OBJECT_WALK_SKIP: &[&str] = &[
     "ipfs-repo",
     "logs",
@@ -2506,6 +2506,7 @@ pub(crate) struct ContentPublishRequirements {
     /// MEMBER-COPIES: the Carrier DIDs the remote placement targets, every
     /// one of them, instead of the one placement the shortfall asks for.
     placement_targets: Vec<String>,
+    include_file_cids: bool,
 }
 
 impl ContentPublishRequirements {
@@ -2521,6 +2522,7 @@ impl ContentPublishRequirements {
             require_live_multi_peer_proof,
             availability_policy: None,
             placement_targets: Vec::new(),
+            include_file_cids: false,
         })
     }
 
@@ -2555,6 +2557,9 @@ impl ContentPublishRequirements {
         if let Some(policy) = &self.availability_policy {
             request["availability_policy"] = Value::String(policy.clone());
         }
+        if self.include_file_cids {
+            request["include_file_cids"] = Value::Bool(true);
+        }
     }
 }
 
@@ -2575,6 +2580,7 @@ pub async fn publish_directory_via_provider_with_kind(
         None,
     )
     .await
+    .and_then(|response| content_response_cid(&response))
 }
 
 pub(crate) async fn publish_directory_via_provider_with_kind_and_requirements(
@@ -2595,6 +2601,66 @@ pub(crate) async fn publish_directory_via_provider_with_kind_and_requirements(
         Some(requirements),
     )
     .await
+    .and_then(|response| content_response_cid(&response))
+}
+
+/// Stream a verified, Runtime-owned protected package through Content.
+pub(crate) async fn publish_staged_protected_content(
+    registry: &ProviderRegistry,
+    dir: &Path,
+    object_did: &str,
+    publisher_did: &str,
+    requirements: ContentPublishRequirements,
+) -> anyhow::Result<(String, BTreeMap<String, String>)> {
+    let mut request = json!({
+        "op": STAGED_CONTENT_PUBLISH_OP,
+        "directory": dir,
+        "kind": "directory",
+        "object_kind": "protected-content",
+        "object_did": object_did,
+        "publisher_did": publisher_did,
+        "include_file_cids": true,
+        "pin": true,
+    });
+    requirements.apply_to_publish_request(&mut request);
+    let response = registry.publish_staged_content(&request).await?;
+    published_directory_cids(&response)
+}
+
+#[cfg(test)]
+async fn publish_directory_with_file_cids(
+    registry: &ProviderRegistry,
+    dir: &Path,
+    object_kind: &str,
+    object_did: &str,
+    publisher_did: &str,
+    mut requirements: ContentPublishRequirements,
+) -> anyhow::Result<(String, BTreeMap<String, String>)> {
+    requirements.include_file_cids = true;
+    let response = publish_directory_via_provider_impl(
+        registry,
+        dir,
+        object_kind,
+        Some(object_did),
+        Some(publisher_did),
+        &[],
+        Some(requirements),
+    )
+    .await?;
+    published_directory_cids(&response)
+}
+
+fn published_directory_cids(
+    response: &Value,
+) -> anyhow::Result<(String, BTreeMap<String, String>)> {
+    let cid = content_response_cid(response)?;
+    let mut files: BTreeMap<String, String> =
+        serde_json::from_value(response["data"]["file_cids"].clone())?;
+    anyhow::ensure!(
+        files.remove(CONTENT_OBJECT_MANIFEST_PATH).is_some(),
+        "published directory has no Content manifest CID"
+    );
+    Ok((cid, files))
 }
 
 pub(crate) async fn publish_directory_via_provider_with_kind_links_and_requirements(
@@ -2616,6 +2682,7 @@ pub(crate) async fn publish_directory_via_provider_with_kind_links_and_requireme
         Some(requirements),
     )
     .await
+    .and_then(|response| content_response_cid(&response))
 }
 
 /// MEMBER-COPIES: asks the placement targets in `requirements` to keep a copy
@@ -2655,6 +2722,7 @@ pub async fn publish_directory_via_provider_with_kind_and_links(
         None,
     )
     .await
+    .and_then(|response| content_response_cid(&response))
 }
 
 async fn publish_directory_via_provider_impl(
@@ -2665,7 +2733,7 @@ async fn publish_directory_via_provider_impl(
     publisher_did: Option<&str>,
     links: &[(String, String)],
     requirements: Option<ContentPublishRequirements>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Value> {
     let mut files = Vec::new();
     crate::ipfs::collect_files_for_ipfs(dir, dir, &mut files)?;
     if files.is_empty() {
@@ -2716,7 +2784,7 @@ async fn publish_directory_via_provider_impl(
         .send_raw("content", &request)
         .await
         .map_err(|err| anyhow::anyhow!("content provider unavailable: {err}"))?;
-    content_response_cid(&response)
+    Ok(response)
 }
 
 pub async fn publish_bytes_via_provider(
@@ -3459,7 +3527,8 @@ impl Provider for ContentProvider {
 
     async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
         match request.get("op").and_then(|op| op.as_str()) {
-            Some("publish") => self.publish(request).await,
+            Some("publish") => self.publish(request, None).await,
+            Some(STAGED_CONTENT_PUBLISH_OP) => self.publish_staged(request).await,
             Some("fetch") => self.fetch(request).await,
             Some("import_exact") => self.import_exact(request).await,
             Some("admission") => self.admission(request).await,
@@ -3787,75 +3856,139 @@ impl ContentProvider {
         }))
     }
 
-    async fn publish(&self, request: &Value) -> Result<Value, ProviderError> {
+    async fn publish_staged(&self, request: &Value) -> Result<Value, ProviderError> {
+        let parent = crate::protected_content_runtime::protected_content_root(&self.data_dir);
+        let root = request["directory"]
+            .as_str()
+            .map(PathBuf::from)
+            .filter(|path| {
+                path.parent() == Some(parent.as_path())
+                    || crate::custody_pool_seal::storage::is_remote_seal_spool(&self.data_dir, path)
+            })
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("publish-"))
+            })
+            .ok_or_else(|| {
+                ProviderError::Provider("invalid protected publication directory".into())
+            })?;
+        let object_did = request["object_did"].as_str().map(str::to_owned);
+        let publisher_did = request["publisher_did"].as_str().map(str::to_owned);
+        let staged = tokio::task::spawn_blocking(move || {
+            stage_content_publish(root, object_did, publisher_did)
+        })
+        .await
+        .map_err(|_| {
+            ProviderError::Provider("protected publication preparation failed".into())
+        })??;
+        self.publish(request, Some(&staged)).await
+    }
+
+    async fn publish(
+        &self,
+        request: &Value,
+        staged: Option<&StagedContentPublish>,
+    ) -> Result<Value, ProviderError> {
         let kind = request.get("kind").and_then(|kind| kind.as_str());
+        let include_file_cids = request.get("include_file_cids") == Some(&Value::Bool(true));
         let pin = request
             .get("pin")
             .and_then(|pin| pin.as_bool())
             .unwrap_or(true);
         let registry = self.registry()?;
 
-        let ipfs_request = match kind {
-            Some("directory") => {
-                let files = request
-                    .get("files")
-                    .cloned()
-                    .unwrap_or_else(|| Value::Array(Vec::new()));
-                if !files.is_array() {
-                    return Ok(provider_error("invalid_request", "files must be an array"));
+        let (ipfs_op, ipfs_request, expected_files, accounting_observation) =
+            if let Some(staged) = staged {
+                (
+                    "runtime_add_local_object".to_string(),
+                    Value::Null,
+                    staged.files.iter().map(|(path, _)| path.clone()).collect(),
+                    staged.accounting,
+                )
+            } else {
+                let mut ipfs_request = match kind {
+                    Some("directory") => {
+                        let files = request
+                            .get("files")
+                            .cloned()
+                            .unwrap_or_else(|| Value::Array(Vec::new()));
+                        if !files.is_array() {
+                            return Ok(provider_error("invalid_request", "files must be an array"));
+                        }
+                        let files = with_directory_object_manifest(
+                            files,
+                            request
+                                .get("object_kind")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("directory"),
+                            request.get("object_did").and_then(|value| value.as_str()),
+                            request
+                                .get("publisher_did")
+                                .and_then(|value| value.as_str()),
+                            request.get("links"),
+                        )?;
+                        json!({
+                            "op": "add_directory",
+                            "files": files,
+                            "pin": pin,
+                        })
+                    }
+                    Some("file") => {
+                        let data = request
+                            .get("data")
+                            .and_then(|data| data.as_str())
+                            .filter(|data| !data.trim().is_empty())
+                            .ok_or_else(|| {
+                                ProviderError::Provider("content file publish requires data".into())
+                            })?;
+                        let filename = request
+                            .get("filename")
+                            .and_then(|filename| filename.as_str())
+                            .filter(|filename| !filename.trim().is_empty())
+                            .unwrap_or("content.bin");
+                        json!({
+                            "op": "add_bytes",
+                            "data": data,
+                            "filename": filename,
+                            "pin": pin,
+                        })
+                    }
+                    Some(_) | None => {
+                        return Ok(provider_error(
+                            "unsupported_content_kind",
+                            "content publish supports kind=directory or kind=file",
+                        ));
+                    }
+                };
+                if include_file_cids {
+                    if kind != Some("directory") {
+                        return Ok(provider_error(
+                            "invalid_request",
+                            "file CIDs require a directory publish",
+                        ));
+                    }
+                    ipfs_request["include_file_cids"] = Value::Bool(true);
                 }
-                let files = with_directory_object_manifest(
-                    files,
-                    request
-                        .get("object_kind")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("directory"),
-                    request.get("object_did").and_then(|value| value.as_str()),
-                    request
-                        .get("publisher_did")
-                        .and_then(|value| value.as_str()),
-                    request.get("links"),
-                )?;
-                json!({
-                    "op": "add_directory",
-                    "files": files,
-                    "pin": pin,
-                })
-            }
-            Some("file") => {
-                let data = request
-                    .get("data")
-                    .and_then(|data| data.as_str())
-                    .filter(|data| !data.trim().is_empty())
-                    .ok_or_else(|| {
-                        ProviderError::Provider("content file publish requires data".into())
-                    })?;
-                let filename = request
-                    .get("filename")
-                    .and_then(|filename| filename.as_str())
-                    .filter(|filename| !filename.trim().is_empty())
-                    .unwrap_or("content.bin");
-                json!({
-                    "op": "add_bytes",
-                    "data": data,
-                    "filename": filename,
-                    "pin": pin,
-                })
-            }
-            Some(_) | None => {
-                return Ok(provider_error(
-                    "unsupported_content_kind",
-                    "content publish supports kind=directory or kind=file",
-                ));
-            }
-        };
+                let expected_files: BTreeSet<String> = if include_file_cids {
+                    ipfs_request["files"]
+                        .as_array()
+                        .expect("directory files are an array")
+                        .iter()
+                        .filter_map(|file| file["path"].as_str().map(str::to_owned))
+                        .collect()
+                } else {
+                    Default::default()
+                };
 
-        let ipfs_op = ipfs_request
-            .get("op")
-            .and_then(|value| value.as_str())
-            .unwrap_or("publish")
-            .to_string();
-        let accounting_observation = content_accounting_observation_from_publish_request(request);
+                let ipfs_op = ipfs_request["op"].as_str().unwrap_or("publish").to_string();
+                (
+                    ipfs_op,
+                    ipfs_request,
+                    expected_files,
+                    content_accounting_observation_from_publish_request(request),
+                )
+            };
         let requirements = AvailabilityRequirements::from_request(request);
         let object_did = request
             .get("object_did")
@@ -3888,16 +4021,65 @@ impl ContentProvider {
         // apart. A publish that takes minutes is almost always the second, and
         // saying so should not require inferring it.
         let started = std::time::Instant::now();
-        let ipfs_response = self
-            .invoke_provider(
+        let ipfs_response = if let Some(staged) = staged {
+            use crate::custody_pool_seal::storage::{
+                is_remote_seal_spool, reserve_spool_import, settle_spool_import,
+            };
+            let seal_spool = is_remote_seal_spool(&self.data_dir, &staged.root);
+            if seal_spool {
+                let bytes = staged
+                    .files
+                    .iter()
+                    .fold(0_u64, |total, (_, bytes)| total.saturating_add(*bytes));
+                reserve_spool_import(&self.data_dir, &staged.root, bytes)
+                    .await
+                    .map_err(|error| ProviderError::Provider(error.to_string()))?;
+            }
+            let (cid, file_cids) = registry
+                .add_local_ipfs_object_with_file_cids(&staged.root, &staged.files)
+                .await?;
+            if seal_spool {
+                settle_spool_import(&self.data_dir, &staged.root)
+                    .map_err(|error| ProviderError::Provider(error.to_string()))?;
+            }
+            provider_ok(json!({"cid": cid, "file_cids": file_cids}))
+        } else {
+            self.invoke_provider(
                 &registry,
                 "ipfs",
                 &ipfs_op,
                 ipfs_request,
                 ProviderTransfer::Bytes,
             )
-            .await?;
+            .await?
+        };
         let cid = provider_response_cid(&ipfs_response)?;
+        let file_cids = include_file_cids
+            .then(|| {
+                let table = ipfs_response["data"]["file_cids"]
+                    .as_object()
+                    .ok_or_else(|| {
+                        ProviderError::Provider("content backend response missing file CIDs".into())
+                    })?;
+                if table.len() != expected_files.len()
+                    || !expected_files.iter().all(|path| {
+                        table
+                            .get(path)
+                            .and_then(Value::as_str)
+                            .is_some_and(is_valid_cid)
+                    })
+                {
+                    return Err(ProviderError::Provider(
+                        "content backend returned an invalid file CID table".into(),
+                    ));
+                }
+                Ok(Value::Object(table.clone()))
+            })
+            .transpose()?;
+        if staged.is_some() && pin {
+            self.pin_imported_cid(&registry, &cid, "content staged publication")
+                .await?;
+        }
         tracing::debug!(
             phase = "ipfs_add",
             op = %ipfs_op,
@@ -3977,13 +4159,17 @@ impl ContentProvider {
             "content publish phase"
         );
 
-        Ok(provider_ok(json!({
+        let mut data = json!({
             "cid": cid,
             "uri": format!("elastos://{cid}"),
             "availability": outcome.to_json(),
             "repair_task": repair_task,
             "receipt": receipt,
-        })))
+        });
+        if let Some(file_cids) = file_cids {
+            data["file_cids"] = file_cids;
+        }
+        Ok(provider_ok(data))
     }
 
     async fn admission(&self, request: &Value) -> Result<Value, ProviderError> {
@@ -9251,6 +9437,124 @@ fn directory_object_manifest(
             size: bytes.len() as u64,
         });
     }
+    Ok(manifest_from_files(
+        object_files,
+        kind,
+        object_did.map(str::to_owned),
+        publisher_did.map(str::to_owned),
+        links,
+    ))
+}
+
+struct StagedContentPublish {
+    root: PathBuf,
+    files: Vec<(String, u64)>,
+    accounting: ContentAccountingObservation,
+}
+
+impl Drop for StagedContentPublish {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.root.join(OBJECT_MANIFEST_PATH));
+    }
+}
+
+fn stage_content_publish(
+    root: PathBuf,
+    object_did: Option<String>,
+    publisher_did: Option<String>,
+) -> Result<StagedContentPublish, ProviderError> {
+    fn failed() -> ProviderError {
+        ProviderError::Provider("protected publication staging is invalid".into())
+    }
+
+    // The sealer exclusively owns this spool. Still refuse symbolic links
+    // and special files before reading, and bound the metadata retained here.
+    if !root.symlink_metadata().map_err(|_| failed())?.is_dir() {
+        return Err(failed());
+    }
+    let mut entries = vec![root.clone()];
+    let mut files = Vec::new();
+    let mut bytes = 0_u64;
+    let mut visited = 0;
+    while let Some(dir) = entries.pop() {
+        for entry in std::fs::read_dir(dir).map_err(|_| failed())? {
+            visited += 1;
+            if visited >= 4096 {
+                return Err(failed());
+            }
+            let entry = entry.map_err(|_| failed())?;
+            let file_type = entry.file_type().map_err(|_| failed())?;
+            let absolute = entry.path();
+            let path = absolute
+                .strip_prefix(&root)
+                .ok()
+                .and_then(Path::to_str)
+                .filter(|path| *path != OBJECT_MANIFEST_PATH && validate_content_path(path).is_ok())
+                .ok_or_else(failed)?;
+            if file_type.is_dir() {
+                entries.push(absolute);
+            } else if file_type.is_file() {
+                let size = entry.metadata().map_err(|_| failed())?.len();
+                bytes = bytes.checked_add(size).ok_or_else(failed)?;
+                let sha256 = local_object_file_sha256(&absolute, size).ok_or_else(failed)?;
+                files.push(ContentObjectFile {
+                    path: path.to_owned(),
+                    sha256,
+                    size,
+                });
+            } else {
+                return Err(failed());
+            }
+        }
+    }
+    if files.is_empty() {
+        return Err(failed());
+    }
+    let manifest = manifest_from_files(
+        files,
+        "protected-content".into(),
+        object_did,
+        publisher_did,
+        Vec::new(),
+    );
+    let encoded = serde_json::to_vec(&manifest).map_err(|_| failed())?;
+    if encoded.len() as u64 > MAX_LOCAL_OBJECT_MANIFEST_BYTES {
+        return Err(failed());
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(root.join(OBJECT_MANIFEST_PATH))
+        .map_err(|_| failed())?;
+    let accounting = ContentAccountingObservation {
+        files: Some(manifest.files.len() as u64),
+        bytes: Some(bytes),
+    };
+    let mut staged = StagedContentPublish {
+        root,
+        files: manifest
+            .files
+            .into_iter()
+            .map(|file| (file.path, file.size))
+            .collect(),
+        accounting,
+    };
+    file.write_all(&encoded).map_err(|_| failed())?;
+    staged
+        .files
+        .push((OBJECT_MANIFEST_PATH.into(), encoded.len() as u64));
+    // Match the part order of the existing JSON directory publish.
+    staged.files.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(staged)
+}
+
+fn manifest_from_files(
+    mut object_files: Vec<ContentObjectFile>,
+    kind: String,
+    object_did: Option<String>,
+    publisher_did: Option<String>,
+    links: Vec<ContentObjectLink>,
+) -> ContentObjectManifest {
     object_files.sort_by(|a, b| a.path.cmp(&b.path));
 
     let mut hasher = sha2::Sha256::new();
@@ -9263,15 +9567,15 @@ fn directory_object_manifest(
         hasher.update(b"\0");
     }
 
-    Ok(ContentObjectManifest {
+    ContentObjectManifest {
         schema: OBJECT_MANIFEST_SCHEMA.to_string(),
         kind,
         content_digest: format!("sha256:{:x}", hasher.finalize()),
         files: object_files,
         links,
-        object_did: object_did.map(str::to_string),
-        publisher_did: publisher_did.map(str::to_string),
-    })
+        object_did,
+        publisher_did,
+    }
 }
 
 fn validate_content_object_kind(kind: &str) -> Result<String, ProviderError> {
@@ -9638,7 +9942,17 @@ mod tests {
                         .lock()
                         .await
                         .push(files.as_array().cloned().unwrap_or_default());
-                    Ok(provider_ok(json!({ "cid": TEST_CID })))
+                    let mut data = json!({ "cid": TEST_CID });
+                    if request["include_file_cids"] == true {
+                        let files: BTreeMap<_, _> = files
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|file| (file["path"].as_str().unwrap(), TEST_CID))
+                            .collect();
+                        data["file_cids"] = json!(files);
+                    }
+                    Ok(provider_ok(data))
                 }
                 Some("add_bytes") => {
                     let filename = request
@@ -11928,6 +12242,118 @@ mod tests {
         assert_eq!(manifest.files.len(), 1);
         assert_eq!(manifest.files[0].path, "index.md");
         assert!(manifest.content_digest.starts_with("sha256:"));
+    }
+
+    #[tokio::test]
+    async fn content_publish_file_cids_returns_only_leafs_in_the_content_package() {
+        let (_data_dir, registry, ipfs, _) = registry_with_content_and_ipfs().await;
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("index.md"), b"content").unwrap();
+        let (cid, files) = publish_directory_with_file_cids(
+            &registry,
+            directory.path(),
+            "document",
+            "did:key:z6Mkobject",
+            "did:key:z6Mkpublisher",
+            ContentPublishRequirements::new(1, false).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(cid, TEST_CID);
+        assert_eq!(
+            files,
+            [("index.md".into(), TEST_CID.into())].into_iter().collect()
+        );
+        assert_eq!(ipfs.requests.lock().await[0]["include_file_cids"], true);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn content_staged_publication_streams_private_files_before_pin() {
+        use crate::custody_pool_seal::storage::RemoteSealStorage;
+        use crate::protected_content_runtime::host_custody_storage_bytes;
+
+        let (data_dir, registry, ipfs, _) = registry_with_content_and_ipfs().await;
+        crate::host_trust::write_host_trust(
+            data_dir.path(),
+            crate::host_trust::HostTrustModeV1::WciOperated,
+            Some(2048),
+        )
+        .unwrap();
+        let staged = RemoteSealStorage::reserve(data_dir.path(), 2048)
+            .await
+            .unwrap();
+        let root = staged.directory();
+        std::fs::write(root.join("encrypted.bin"), b"ciphertext").unwrap();
+        let public_attempt = json!({"op": STAGED_CONTENT_PUBLISH_OP, "directory": root});
+        assert!(registry.send_raw("content", &public_attempt).await.is_err());
+        let policy = ContentPublishRequirements::new(1, false)
+            .unwrap()
+            .with_availability_policy(LOCAL_PIN_AVAILABILITY_POLICY)
+            .unwrap();
+        let refused = publish_staged_protected_content(
+            &registry,
+            root,
+            "did:key:z6Mkobject",
+            "did:key:z6Mkpublisher",
+            policy.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert!(refused
+            .to_string()
+            .contains(crate::host_trust::HOST_STORAGE_FULL));
+        assert!(ipfs.requests.lock().await.is_empty());
+        assert_eq!(host_custody_storage_bytes(data_dir.path()).unwrap(), 2048);
+        crate::host_trust::write_host_trust(
+            data_dir.path(),
+            crate::host_trust::HostTrustModeV1::WciOperated,
+            Some(4096),
+        )
+        .unwrap();
+        let (cid, files) = publish_staged_protected_content(
+            &registry,
+            root,
+            "did:key:z6Mkobject",
+            "did:key:z6Mkpublisher",
+            policy,
+        )
+        .await
+        .unwrap();
+        assert_eq!(cid, TEST_CID);
+        assert_eq!(
+            files,
+            BTreeMap::from([("encrypted.bin".into(), TEST_CID.into())])
+        );
+        let requests = ipfs.requests.lock().await;
+        assert_eq!(
+            requests
+                .iter()
+                .map(|req| req["op"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["runtime_add_local_object", "pin"]
+        );
+        assert_eq!(requests[0]["include_file_cids"], true);
+        assert_eq!(
+            requests[0]["object"]["files"][1],
+            json!({"path": "encrypted.bin", "size": 10})
+        );
+        assert!(!root.join(OBJECT_MANIFEST_PATH).exists());
+        let imported: u64 = requests[0]["object"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|file| file["size"].as_u64().unwrap())
+            .sum();
+        assert_eq!(
+            host_custody_storage_bytes(data_dir.path()).unwrap(),
+            2048 + imported
+        );
+        drop(staged);
+        assert_eq!(
+            host_custody_storage_bytes(data_dir.path()).unwrap(),
+            imported
+        );
     }
 
     #[tokio::test]

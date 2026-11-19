@@ -41,6 +41,7 @@ use elastos_runtime::provider::dispatch::DispatchFence;
 use tracing::Instrument;
 
 pub(crate) const MARKET_LISTING_SCHEMA_V1: &str = "elastos.marketplace.listing/v1";
+const MARKET_CARD_ACCESS_SCHEMA_V1: &str = "elastos.marketplace.card-access/v1";
 
 /// Every ElastOS protection scheme, whichever version, begins with this.
 /// An entry that carries it and is not the current, complete scheme is
@@ -141,6 +142,8 @@ enum ParsedMarketListingStart {
 #[serde(deny_unknown_fields)]
 pub(in crate::api::gateway) struct MarketListingRequest {
     pub start: MarketListingStart,
+    #[serde(default)]
+    card_access: bool,
 }
 
 /// The only way to obtain one is `verify_market_item_binding`.
@@ -701,6 +704,7 @@ pub(crate) async fn build_market_listing_object(
     state: &GatewayState,
     authority: &RuntimeWalletAuthority,
     start: &MarketListingStart,
+    card_access: bool,
 ) -> Result<serde_json::Value, MarketListingRefusal> {
     let located = LocatedMarketStart::locate(state, start).await?;
     let item = located.item().clone();
@@ -721,17 +725,21 @@ pub(crate) async fn build_market_listing_object(
         })
     };
     let unread = located.without_document();
-    let (proven, offers, account) = tokio::try_join!(
-        async {
-            match located.prove(state).await {
-                Ok(verified) => Ok(Some(verified)),
-                Err(MarketListingRefusal::NoHolder) => Ok(None),
-                Err(refusal) => Err(refusal),
-            }
-        },
-        resolve_market_item_offers(state, &item),
-        account,
-    )?;
+    let document = async {
+        match located.prove(state).await {
+            Ok(verified) => Ok(Some(verified)),
+            Err(MarketListingRefusal::NoHolder) => Ok(None),
+            Err(refusal) => Err(refusal),
+        }
+    };
+    let (proven, account, offers) = if card_access {
+        let (proven, account) = tokio::try_join!(document, account)?;
+        (proven, account, None)
+    } else {
+        let (proven, account, offers) =
+            tokio::try_join!(document, account, resolve_market_item_offers(state, &item))?;
+        (proven, account, Some(offers))
+    };
     let no_holder = proven.is_none();
     let verified = proven.unwrap_or(unread);
     let started = tokio::time::Instant::now();
@@ -746,6 +754,20 @@ pub(crate) async fn build_market_listing_object(
     if no_holder && access_state == "available" {
         return Err(MarketListingRefusal::NoHolder);
     }
+    let access_subject = account.as_ref().and_then(|account| {
+        let home_key = market_listing_access_subject_key(&state.data_dir)?;
+        Some(market_listing_access_subject(
+            &home_key,
+            authority.verified_context().principal_id(),
+            &verified.item.chain_namespace,
+            account,
+        ))
+    });
+    let offers = match offers {
+        None if access_subject.is_some() && matches!(access_state, "creator" | "purchased") => None,
+        None => Some(resolve_market_item_offers(state, &item).await?),
+        Some(offers) => Some(offers),
+    };
     let metadata = verified
         .metadata
         .as_ref()
@@ -758,7 +780,7 @@ pub(crate) async fn build_market_listing_object(
         "unknown"
     };
     let mut object = serde_json::json!({
-        "schema": MARKET_LISTING_SCHEMA_V1,
+        "schema": if offers.is_some() { MARKET_LISTING_SCHEMA_V1 } else { MARKET_CARD_ACCESS_SCHEMA_V1 },
         "item": {
             "chain_namespace": verified.item.chain_namespace,
             "network": verified.item.network,
@@ -780,29 +802,23 @@ pub(crate) async fn build_market_listing_object(
             ),
             "readability": readability,
         },
-        "offers": offers.offers,
         "access_state": access_state,
-        "source": {
+    });
+    if let Some(offers) = offers {
+        object["offers"] = serde_json::json!(offers.offers);
+        object["source"] = serde_json::json!({
             "start": start.label(),
             "read_at_block": format!("0x{:x}", offers.finalized_block_number),
-        },
-    });
-    if offers.truncated {
-        object["offers_truncated"] = serde_json::Value::Bool(true);
+        });
+        if offers.truncated {
+            object["offers_truncated"] = serde_json::Value::Bool(true);
+        }
     }
     if access_unknown {
         object["access_unknown"] = serde_json::Value::Bool(true);
     }
-    if let (Some(account), Some(home_key)) = (
-        account.as_ref(),
-        market_listing_access_subject_key(&state.data_dir),
-    ) {
-        object["access_subject"] = serde_json::Value::String(market_listing_access_subject(
-            &home_key,
-            authority.verified_context().principal_id(),
-            &verified.item.chain_namespace,
-            account,
-        ));
+    if let Some(access_subject) = access_subject {
+        object["access_subject"] = serde_json::Value::String(access_subject);
     }
     // Stated only when proven (S4-Q18): `pool` when this Home can reach the
     // item's pool, `unresolved` when it cannot, so the page disables Buy,
@@ -874,11 +890,14 @@ async fn marketplace_listing_inner(
             return invalid_start();
         }
     };
-    if request.start.parse().is_none() {
+    let Some(parsed_start) = request.start.parse() else {
+        return invalid_start();
+    };
+    if request.card_access && !matches!(parsed_start, ParsedMarketListingStart::Item { .. }) {
         return invalid_start();
     }
-    let folder = match request.start.parse() {
-        Some(ParsedMarketListingStart::Folder(cid)) => cid,
+    let folder = match parsed_start {
+        ParsedMarketListingStart::Folder(cid) => cid,
         _ => String::new(),
     };
     tracing::Span::current().record("start_kind", request.start.label());
@@ -888,7 +907,9 @@ async fn marketplace_listing_inner(
     // answered by then is `unavailable`, the same answer as any other
     // unreadable chain or folder.
     let answer = async {
-        match build_market_listing_object(&state, &authority, &request.start).await {
+        match build_market_listing_object(&state, &authority, &request.start, request.card_access)
+            .await
+        {
             Ok(object) => Json(object).into_response(),
             Err(MarketListingRefusal::AssetMismatch) => (
                 StatusCode::CONFLICT,

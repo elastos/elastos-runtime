@@ -685,22 +685,34 @@ impl PoolEpochBundleV1 {
     fn validate_for_release(
         &self,
         authority: CustodyEpochIssuerKeyV1,
-        now: u64,
+        now: Option<u64>,
     ) -> Result<ValidatedCustodyCommitteeV1, PoolContractError> {
-        Ok(validate_custody_epoch_for_release_at(
-            authority,
-            self.signed_committee_authorization
-                .authorization_identity()?,
-            &self.signed_pool,
-            &self.signed_epoch,
-            &self.signed_committee_authorization,
-            now,
-        )?)
+        let authorization = self
+            .signed_committee_authorization
+            .authorization_identity()?;
+        if let Some(now) = now {
+            Ok(validate_custody_epoch_for_release_at(
+                authority,
+                authorization,
+                &self.signed_pool,
+                &self.signed_epoch,
+                &self.signed_committee_authorization,
+                now,
+            )?)
+        } else {
+            Ok(crate::custody_pool::validate_custody_epoch_for_history(
+                authority,
+                authorization,
+                &self.signed_pool,
+                &self.signed_epoch,
+                &self.signed_committee_authorization,
+            )?)
+        }
     }
 
     /// The provisioning rule (POOL-MINT): the pool term is open at `now`
     /// (`validate_custody_epoch_against_pool_at`).
-    fn validate_for_provisioning(
+    pub(crate) fn validate_for_provisioning(
         &self,
         authority: CustodyEpochIssuerKeyV1,
         now: u64,
@@ -1059,11 +1071,13 @@ impl<M: DescriptorMember> DescriptorBody<M> {
         &self,
         statement_bytes: &[u8],
         authority_signature: &[u8],
-        now: u64,
+        now: Option<u64>,
     ) -> Result<VerifiedPoolDescriptorV1, PoolContractError> {
         let authority = self.pool.issuer();
         verify_ed25519(*authority.as_bytes(), statement_bytes, authority_signature)?;
-        map_window(self.issued_at, self.expires_at, now)?;
+        if let Some(now) = now {
+            map_window(self.issued_at, self.expires_at, now)?;
+        }
         let mut committee_nodes = HashSet::new();
         let mut server_bound = MAX_SESSION_RECIPIENTS_V2;
         for bundle in &self.epochs {
@@ -1253,7 +1267,7 @@ impl SignedPoolDescriptorV1 {
         self.statement.body.verify(
             &self.statement.canonical_bytes()?,
             &self.authority_signature,
-            now,
+            Some(now),
         )
     }
 
@@ -1420,7 +1434,7 @@ impl SignedPoolDescriptorV2 {
         self.statement.body.verify(
             &self.statement.canonical_bytes()?,
             &self.authority_signature,
-            now,
+            Some(now),
         )
     }
 
@@ -1599,9 +1613,36 @@ impl SignedPoolDescriptorV3 {
         &self.authority_signature
     }
 
+    /// An update retains all serving bundles, roles, routes and trust slots
+    /// until a separate retirement protocol authorizes their removal.
+    pub fn preserves_serving_history(&self, kept: &Self) -> bool {
+        let kept = kept.statement();
+        let newer = self.statement();
+        kept.trust_mode() == newer.trust_mode()
+            && kept
+                .epochs()
+                .iter()
+                .all(|epoch| newer.epochs().contains(epoch))
+            && kept
+                .members()
+                .iter()
+                .all(|member| newer.members().contains(member))
+    }
+
     /// As [`SignedPoolDescriptorV2::verify`], and the verified form carries
     /// the descriptor's trust.
     pub fn verify(&self, now: u64) -> Result<VerifiedPoolDescriptorV1, PoolContractError> {
+        self.verify_with_clock(Some(now))
+    }
+
+    pub(crate) fn verify_historical(&self) -> Result<VerifiedPoolDescriptorV1, PoolContractError> {
+        self.verify_with_clock(None)
+    }
+
+    fn verify_with_clock(
+        &self,
+        now: Option<u64>,
+    ) -> Result<VerifiedPoolDescriptorV1, PoolContractError> {
         CanonicalBody::validate(self)?;
         let mut verified = self.statement.body.verify(
             &self.statement.canonical_bytes()?,

@@ -1,59 +1,110 @@
-//! AUDIT-REPRO J3-F6 (red, no fix): a known pool goes stale after its owner
-//! signs a newer epoch.
+//! An independent Home can learn an epoch from a newer signed descriptor.
 
 use super::*;
 
-use elastos_protected_content_contracts::test_fixtures::pool_bundle_with;
-
-/// The owner re-forms its pool: the new descriptor (sequence 2) names only
-/// the new epoch (`owner_descriptor` signs `vec![composition.bundle]`,
-/// custody_pool_descriptor.rs:349-358). This Home kept sequence 1, which
-/// still has more than a day left. An item of the new epoch does not resolve
-/// here, and the only refresh -- `refresh_known_pools`, which is also what
-/// `refresh_in_background` runs -- asks a known pool only once its kept
-/// descriptor has under a day left (`REFRESH_BEFORE_EXPIRY_SECS`); a failed
-/// resolve triggers nothing. Owner descriptors live 30 days.
 #[tokio::test]
 async fn audit_j3_f6_an_item_of_a_newer_epoch_refreshes_the_known_pool() {
-    let (_dir, data_dir) = data_dir();
-    let address = address_for(pool_did());
-    add_answering(&data_dir, &address, descriptor(1)).await;
-    // Just after the kept descriptor was signed: more than a day left.
-    let now = NOW - 1;
+    let now = crate::auth::now_ts();
+    let (_reader_dir, reader) = data_dir();
+    let (_owner_dir, owner) = data_dir();
+    let original = pool_bundle(xwing, now);
+    let stale = pool_descriptor_with(
+        &original,
+        1,
+        ServePolicyV1::DEFAULT,
+        None,
+        runtime_issuer(0x43),
+        now,
+    );
+    let original_item = key_envelope_for(
+        &original,
+        &EncryptedContentIdentityV1::new(Digest32::new([0x2c; 32]), 4096).unwrap(),
+    );
+    let successor = pool_bundle(|seed| xwing(seed + 8), now);
+    let successor_item = key_envelope_for(&successor, original_item.encrypted_content());
+    assert_ne!(successor_item.custody_pool(), original_item.custody_pool());
+    let current = sign_successor_for_test(
+        &stale,
+        successor.clone(),
+        stale.statement().members().to_vec(),
+    );
+    let address = address_for(*current.pool());
+    let write = crate::custody_consent::lock_custody_writes().await;
+    keep_known_pool_for_test(&write, &reader, &address, &stale.into(), now).unwrap();
+    drop(write);
+    assert_eq!(known_pools(&reader).unwrap()[0].sequence, 1);
+    assert!(
+        crate::protected_content_runtime::runtime_custody_pool_for_key_envelope_cached(
+            &reader,
+            &successor_item,
+            now
+        )
+        .is_err()
+    );
 
-    let newer_bundle = pool_bundle_with(xwing, NOW, Some((NOW - 10, NOW + 2 * 86_400)), None);
-    let newer: SignedPoolDescriptorAnyV1 = pool_descriptor_with(
-        &newer_bundle,
+    let drops_original = SignedPoolDescriptorAnyV1::from(pool_descriptor_with(
+        &successor,
         2,
         ServePolicyV1::DEFAULT,
         None,
         runtime_issuer(0x43),
-        NOW,
-    )
-    .into();
-    let item_of_newer_epoch = key_envelope_for(
-        &newer_bundle,
-        &EncryptedContentIdentityV1::new(Digest32::new([0x2c; 32]), 4096).unwrap(),
+        now,
+    ));
+    assert!(drops_original
+        .verify(now)
+        .unwrap()
+        .epoch_for(&successor_item)
+        .is_some());
+    let answers = vec![drops_original; 4];
+    let transport = FakeTransport::describing(&answers);
+    assert_eq!(
+        refresh_known_pool_entries(
+            &reader,
+            &PoolSessionClient::new(&transport),
+            load_known_pools(&reader).unwrap().pools,
+            Some(&successor_item),
+            now,
+        )
+        .await
+        .unwrap(),
+        0,
+        "even an authentic successor that matches the new asset must keep the existing epoch"
     );
-    let registry = Arc::new(ProviderRegistry::new());
-    assert!(
-        home_pool_resolver(&data_dir, registry)
-            .resolve(&item_of_newer_epoch, &[], now)
-            .await
-            .is_err(),
-        "precondition: the item of the newer epoch does not resolve under the kept descriptor"
-    );
+    assert!(!transport.calls.lock().unwrap().is_empty());
+    assert_eq!(known_pools(&reader).unwrap()[0].sequence, 1);
 
-    // The pool answers its newer descriptor to anyone who asks.
-    let transport = FakeTransport::describing(&[newer.clone(), newer]);
-    let replaced = refresh_known_pools(&data_dir, &PoolSessionClient::new(&transport), now)
+    let served = Arc::new(CurrentDescriptorProvider {
+        descriptor: current,
+        describe_calls: Default::default(),
+    });
+    let remote = Arc::new(ProviderRegistry::new());
+    remote
+        .register_runtime_provider_target(TARGET_CUSTODY_POOL, served.clone())
         .await
         .unwrap();
+    let registry = Arc::new(ProviderRegistry::new());
+    registry
+        .set_carrier_invoker(Arc::new(DescriptorDispatchCarrier {
+            remote,
+            remote_home: owner,
+            source: iroh::SecretKey::from_bytes(&[0x79; 32]).public(),
+        }))
+        .await;
+
+    let resolved = home_pool_resolver(&reader, registry)
+        .resolve(&successor_item, &[], now)
+        .await
+        .expect("the resolver must discover the new epoch from an already known pool");
+    assert_eq!(resolved.descriptor.sequence(), 2);
+    assert_eq!(resolved.epoch, successor);
     assert_eq!(
-        replaced,
-        1,
-        "a known pool with an unresolvable item of its own must be asked for its newer descriptor; \
-         describe calls made: {}",
-        transport.calls.lock().unwrap().len()
+        crate::protected_content_runtime::runtime_custody_pool_for_key_envelope_cached(
+            &reader,
+            &original_item,
+            now,
+        )
+        .unwrap()
+        .epoch,
+        original
     );
 }

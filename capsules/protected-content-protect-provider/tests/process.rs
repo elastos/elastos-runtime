@@ -111,7 +111,10 @@ fn local_json_runtime_invocation_abi() -> serde_json::Value {
 }
 
 fn wrap_runtime_request(request: &ProtectProviderRequestV1) -> serde_json::Value {
-    let mut value = serde_json::to_value(request).unwrap();
+    with_local_runtime_envelope(serde_json::to_value(request).unwrap())
+}
+
+fn with_local_runtime_envelope(mut value: serde_json::Value) -> serde_json::Value {
     let op = value["op"].as_str().unwrap().to_string();
     value.as_object_mut().unwrap().insert(
         "_runtime_invocation".to_string(),
@@ -130,6 +133,218 @@ fn wrap_runtime_request(request: &ProtectProviderRequestV1) -> serde_json::Value
         }),
     );
     value
+}
+
+#[test]
+fn remote_object_open_is_private_and_replays_the_exact_upload() {
+    use base64::Engine as _;
+    use ed25519_dalek::Signer as _;
+    use elastos_protected_content_contracts::test_fixtures::{
+        node_public_key, pool_bundle, pool_descriptor_routed, pool_did, runtime_issuer,
+        signing_key, CUSTODY_KEY_SEED_BASE, POOL_AUTHORITY_SEED, POOL_NODE_SEEDS,
+    };
+    use elastos_protected_content_contracts::{
+        CanonicalContract, ClearLayoutV1, ClearPartIndexV1, CustodyEnvelopeV1, MintPieceAadV1,
+        MintRequestV1, SealSessionAttestationV1, SignedMintRequestV1, SignedPoolDescriptorAnyV1,
+    };
+    use std::collections::BTreeMap;
+    use std::sync::OnceLock;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let pool = pool_did();
+    let node = node_public_key(1);
+    let bundle = pool_bundle(
+        |seed| {
+            static KEYS: OnceLock<BTreeMap<u8, NodeCustodyPublicKeyV1>> = OnceLock::new();
+            *KEYS.get_or_init(|| {
+                POOL_NODE_SEEDS
+                    .into_iter()
+                    .map(|node| (CUSTODY_KEY_SEED_BASE + node, node_custody_public_key()))
+                    .collect()
+            })[&seed]
+                .as_bytes()
+        },
+        now,
+    );
+    let descriptor: SignedPoolDescriptorAnyV1 =
+        pool_descriptor_routed(&bundle, 1, now, POOL_AUTHORITY_SEED, &|id| {
+            format!("did:key:z6MkFixture{id:02}")
+        })
+        .into();
+    let issuer = runtime_issuer(POOL_AUTHORITY_SEED);
+    let mint = MintRequestV1 {
+        pool,
+        epoch: bundle.epoch_identity().unwrap(),
+        minter_issuer: issuer,
+        content_access_id: ContentAccessIdV1::new([0x05; 16]).unwrap(),
+        clear_layout: ClearLayoutV1::Object {
+            content_type: "application/pdf".into(),
+            length: 16,
+        },
+        request_nonce: [0x06; 16],
+        issued_at: now,
+        expires_at: now + 60,
+    };
+    let signature = signing_key(POOL_AUTHORITY_SEED)
+        .sign(&mint.canonical_bytes().unwrap())
+        .to_bytes();
+    let mint = SignedMintRequestV1::new(mint, signature).unwrap();
+    let request = json!({
+        "op": "open_remote_object_seal",
+        "endpoint": "did:key:z6MkFixture99",
+        "minter_issuer": issuer.as_bytes(),
+        "sealer_node": node.as_bytes(),
+        "descriptor": descriptor.canonical_bytes().unwrap(),
+        "mint_request": mint.canonical_bytes().unwrap(),
+    });
+    let mut provider = ProviderProcess::start();
+    assert_eq!(
+        provider.request_json(json!({"op": "init", "config": init_config()}))["status"],
+        "ok"
+    );
+    assert_eq!(provider.request_json(request.clone())["status"], "error");
+    let opened = provider.request_json(with_local_runtime_envelope(request.clone()));
+    assert_eq!(opened["status"], "ok", "{opened}");
+    let bytes: Vec<u8> = serde_json::from_value(opened["data"]["statement"].clone()).unwrap();
+    let statement = SealSessionAttestationV1::from_canonical_bytes(&bytes).unwrap();
+    assert_eq!(statement.mint_request_hash, mint.canonical_hash().unwrap());
+    assert_eq!(
+        statement.descriptor_digest,
+        descriptor.canonical_hash().unwrap()
+    );
+    assert_eq!(statement.sealer_node_public_key, node);
+    assert!(!opened["data"]["framed_header"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(request.clone())),
+        opened
+    );
+    let mut foreign = request.clone();
+    foreign["endpoint"] = json!("did:key:z6MkFixture98");
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(foreign))["status"],
+        "error"
+    );
+    let mut wrong_issuer = request;
+    wrong_issuer["minter_issuer"] = json!(runtime_issuer(0x18).as_bytes());
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(wrong_issuer))["status"],
+        "error"
+    );
+    let clear = [0x27; 16];
+    let part = ClearPartIndexV1::ObjectChunk { index: 0 };
+    let aad = MintPieceAadV1 {
+        mint_request_hash: statement.mint_request_hash,
+        part,
+        piece: 0,
+        piece_count: 1,
+    };
+    let sealed = elastos_protected_content_custody::seal_mint_piece_v1(
+        &statement.seal_session_public_key,
+        &aad,
+        &clear,
+    )
+    .unwrap();
+    let command = json!({
+        "op": "transfer_remote_object_seal",
+        "endpoint": "did:key:z6MkFixture99",
+        "session_id": statement.seal_session_id,
+        "sequence": 1,
+        "transfer": {
+            "action": "part",
+            "part": part,
+            "piece": 0,
+            "piece_count": 1,
+            "part_clear_sha256": <[u8; 32]>::from(Sha256::digest(clear)),
+            "sealed": base64::engine::general_purpose::STANDARD.encode(sealed),
+        }
+    });
+    assert_eq!(provider.request_json(command.clone())["status"], "error");
+    let chunk = provider.request_json(with_local_runtime_envelope(command.clone()));
+    assert_eq!(chunk["status"], "ok", "{chunk}");
+    assert_eq!(chunk["data"]["sequence"], 1);
+    assert_eq!(chunk["data"]["last_protected"], json!(part));
+    let framed_chunk = base64::engine::general_purpose::STANDARD
+        .decode(chunk["data"]["framed_chunk"].as_str().unwrap())
+        .unwrap();
+    assert!(framed_chunk.len() > clear.len());
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(command.clone())),
+        chunk
+    );
+    let mut foreign_transfer = command.clone();
+    foreign_transfer["endpoint"] = json!("did:key:z6MkFixture98");
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(foreign_transfer))["status"],
+        "error"
+    );
+    let mut altered_replay = command.clone();
+    let different_hash = [0x12; 32];
+    altered_replay["transfer"]["part_clear_sha256"] = json!(different_hash);
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(altered_replay))["status"],
+        "error"
+    );
+    let mut resume = command.clone();
+    resume["sequence"] = json!(3);
+    resume["transfer"] = json!({"action": "resume"});
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(resume.clone()))["status"],
+        "error"
+    );
+    resume["sequence"] = json!(2);
+    let resumed = provider.request_json(with_local_runtime_envelope(resume));
+    assert_eq!(resumed["status"], "ok");
+    assert_eq!(resumed["data"]["last_protected"], json!(part));
+    assert!(resumed["data"]["framed_chunk"].is_null());
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(command))["status"],
+        "error"
+    );
+    let mut ciphertext: Vec<u8> =
+        serde_json::from_value(opened["data"]["framed_header"].clone()).unwrap();
+    ciphertext.extend_from_slice(&framed_chunk);
+    let ciphertext_sha256: [u8; 32] = Sha256::digest(&ciphertext).into();
+    let finalize = json!({
+        "op": "finalize_remote_object_seal",
+        "endpoint": "did:key:z6MkFixture99",
+        "session_id": statement.seal_session_id,
+        "sequence": 2,
+        "ciphertext_sha256": ciphertext_sha256,
+        "ciphertext_bytes": ciphertext.len(),
+    });
+    let mut wrong = finalize.clone();
+    wrong["ciphertext_sha256"] = json!(different_hash);
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(wrong.clone()))["status"],
+        "error"
+    );
+    let signed = provider.request_json(with_local_runtime_envelope(finalize.clone()));
+    assert_eq!(signed["status"], "ok", "{signed}");
+    let bytes: Vec<u8> =
+        serde_json::from_value(signed["data"]["custody_envelope"].clone()).unwrap();
+    let envelope = CustodyEnvelopeV1::from_canonical_bytes(&bytes).unwrap();
+    let identity = envelope.key_envelope_identity().unwrap();
+    assert_eq!(identity.custody_epoch(), statement.epoch);
+    assert_eq!(
+        identity.encrypted_content().ciphertext_sha256(),
+        Digest32::new(ciphertext_sha256)
+    );
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(finalize)),
+        signed
+    );
+    assert_eq!(
+        provider.request_json(with_local_runtime_envelope(wrong))["status"],
+        "error"
+    );
+    provider.shutdown_and_assert_clean();
 }
 
 fn typed_ok_response(
