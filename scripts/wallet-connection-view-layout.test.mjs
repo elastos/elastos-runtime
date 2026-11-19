@@ -206,11 +206,11 @@ for(const engine of ['chromium','webkit'])test(`isolated names share text baseli
      }
     }
     const mark=document.querySelector('.connection-account-header .connection-heading img')?.getBoundingClientRect();
-    const note=[...document.querySelectorAll('.connection-content > .connection-note')].at(-1),button=document.querySelector('.connection-content > .connection-actions [data-action="open-wallet"]');
+    const note=[...document.querySelectorAll('.connection-content > .connection-note')].at(-1),button=document.querySelector('.connection-content > .connection-actions [data-action="close-window"]');
     return {baselines,mark:mark&&{width:mark.width,height:mark.height},gap:note&&button?note.getBoundingClientRect().top-button.getBoundingClientRect().bottom:null,computed:[...document.querySelectorAll('.connection-computed-detail')].map(e=>({text:e.textContent,hasAppLabel:!!e.querySelector('.connection-detail-label')})),app:[...document.querySelectorAll('.connection-context')].map(e=>e.textContent)};
    });
    if(name.includes('/request-')||name==='walletconnect/link-wait'){assert(measured.baselines.length,name+': baseline samples');assert(measured.baselines.every(b=>b.delta<=.5),name+': '+JSON.stringify(measured.baselines));}
-   if(name.endsWith('/linked')){assert.deepEqual(measured.mark,{width:36,height:36});if(name==='metamask/linked')assert(measured.gap>=8,'stop-sharing note has space after Open Wallet');}
+   if(name.endsWith('/linked')){assert.deepEqual(measured.mark,{width:36,height:36});if(name==='metamask/linked')assert(measured.gap>=8,'stop-sharing note has space after Close window');}
    if(name==='walletconnect/transaction-declined'){assert.equal(measured.computed.length,1);assert.equal(measured.computed[0].hasAppLabel,false);assert(!measured.computed[0].text.includes('From app:'));}
    assert(measured.app.every(text=>!text.includes('BrowserSite reported by Browser:')&&!text.includes('Browser  Site reported')),'Browser shown once');
    checks.push({name,...measured});
