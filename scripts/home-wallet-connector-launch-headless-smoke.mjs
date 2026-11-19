@@ -213,7 +213,7 @@ function requireToken(req, token, res) {
 async function handleApi(req, res, url) {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
-      "access-control-allow-headers": "content-type,x-elastos-home-token",
+      "access-control-allow-headers": "content-type,x-elastos-home-token,if-match",
       "access-control-allow-methods": "GET,POST,OPTIONS",
       "access-control-allow-origin": "*",
     });
@@ -289,7 +289,7 @@ async function handleApi(req, res, url) {
     }
     if (target === "wallet-walletconnect" && req.method === "GET" && ["wallet/config", "storage"].some(resource => url.pathname === `/api/apps/${target}/${resource}`)) {
       if (!requireToken(req, token, res)) return true;
-      json(res, 200, url.pathname.endsWith("/wallet/config") ? { walletconnect: { project_id: "fixture-project", storage_revision: '\"0\"' } } : {});
+      json(res, 200, url.pathname.endsWith("/wallet/config") ? { walletconnect: { project_id: "fixture-project", storage_revision: JSON.stringify("0") } } : {});
       return true;
     }
     if (
