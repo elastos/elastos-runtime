@@ -1375,7 +1375,7 @@ mod tests {
         let (signing_key, challenge) = challenge();
         let mut message = challenge.siwe_message();
         message = message.replace(
-            "Sign in to ElastOS Runtime.",
+            "Sign in to ElastOS.",
             "Sign this harmless demo message.",
         );
         let signature = sign_message(&signing_key, &message);
