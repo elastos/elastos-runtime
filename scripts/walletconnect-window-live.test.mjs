@@ -78,7 +78,8 @@ async function setup(t,engine,mutation){
   if(!output)return;
   await mkdir(`${output}/${engine}`,{recursive:true});
   for(const theme of ['dark','light']){
-   await frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);
+   await frame.evaluate(theme=>window.elastosTheme.set(theme),theme);
+   assert.equal(await frame.evaluate(()=>window.elastosTheme.resolved()),theme);
    const before=await frame.evaluate(()=>({top:document.querySelector('main').scrollTop,key:document.activeElement?.dataset.focusKey,focus:document.activeElement?.dataset.focus,focused:document.hasFocus()}));
    const wanted=await frame.locator('button:visible:enabled').evaluateAll(nodes=>nodes.map(node=>node.dataset.focusKey));
    await frame.locator('body').evaluate(body=>{body.tabIndex=-1;body.focus();});
@@ -90,7 +91,7 @@ async function setup(t,engine,mutation){
    }
    for(const key of wanted)assert.ok(reached.has(key),`${name}: ${key} is reachable with Tab`);
    await frame.evaluate(before=>{document.querySelector('main').scrollTop=before.top;const nodes=[...document.querySelectorAll('[data-focus-key]')];const node=nodes.find(node=>node.dataset.focusKey===before.key)||[...document.querySelectorAll('[data-focus]')].find(node=>node.dataset.focus===before.focus);if(node)node.focus({preventScroll:true});else if(before.focused)document.body.focus({preventScroll:true});},before);
-   await pause(40);await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`});
+   await pause(40);await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`,animations:'disabled'});
    const result=await frame.locator('main').evaluate(main=>({state:main.dataset.state,text:main.innerText,actions:[...main.querySelectorAll('button')].map(b=>({action:b.dataset.action,text:b.innerText,disabled:b.disabled})),width:main.scrollWidth,viewport:innerWidth,frameHeight:innerHeight,bodyScroll:document.body.scrollHeight>innerHeight}));
    assert.equal(result.frameHeight,522,`${name}: 38px Home title bar leaves 522px`);assert.ok(result.width<=result.viewport+1,`${name}: horizontal fit`);assert.equal(result.bodyScroll,false,`${name}: single scroll owner`);
    records.push({name,theme,...result,sourceIdentity,sourceHashes,environment:{node:process.version,platform:process.platform,arch:process.arch,browser:browser.version()}});
