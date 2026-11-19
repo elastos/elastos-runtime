@@ -7,8 +7,11 @@ import {windowFixture, observeWindowErrors, walletWindowLifetime} from './wallet
 import {scriptedPhoneWallet} from './walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright, productSmokeLaunchOptions} from '../product-smoke-browser.mjs';
 const captures=new Map();
-export async function linkedWindow(t,engine) {
+export async function linkedWindow(t,engine,{holdWalletRead=false}={}) {
  const fixture=await windowFixture();
+ let enterWalletRead,releaseWalletRead,firstWalletRead=true;
+ const walletReadStarted=new Promise(resolve=>enterWalletRead=resolve),walletReadGate=new Promise(resolve=>releaseWalletRead=resolve);
+ t.after(()=>releaseWalletRead());
  const peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Trust Wallet',emitApprovalEvents:true});
  const engines=await importProductSmokePlaywright();
  const browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
@@ -23,7 +26,11 @@ export async function linkedWindow(t,engine) {
   const path=new URL(route.request().url()).pathname;
   const json=value=>route.fulfill({headers:cors,contentType:'application/json',body:JSON.stringify(value)});
   if(route.request().method()==='OPTIONS')return json({});
-  if(path==='/api/apps/wallet/wallet/summary')return json({wallet_accounts:{available:true,accounts:fixture.state.accounts,default_accounts:[]},wallet_approvals:{available:true,approval_requests:[],pending_count:0},approval_methods:{walletconnect:{available:true}}});
+  if(path==='/api/apps/wallet/wallet/summary'){
+   const snapshot=structuredClone({wallet_accounts:{available:true,accounts:fixture.state.accounts,default_accounts:[]},wallet_approvals:{available:true,approval_requests:[],pending_count:0},approval_methods:{walletconnect:{available:true}}});
+   if(firstWalletRead&&holdWalletRead){firstWalletRead=false;enterWalletRead();await walletReadGate;}
+   return json(snapshot);
+  }
   if(path==='/api/wallet/prices')return json({prices:{},unavailable:true});
   if(path==='/api/provider/chain/balance')return json({status:'unavailable'});
   if(path.endsWith('/verify')){
@@ -72,5 +79,5 @@ export async function linkedWindow(t,engine) {
   await writeFile(`${output}/${engine}/states.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),records},null,2));
  }
  await state('internet-ready');
- return {fixture,peer,page,wallet,get frame(){return frame;},state,click,link,pair,refresh,reopen,openFromWallet,capture,settle:()=>settle(frame)};
+ return {fixture,peer,page,wallet,walletReadStarted,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,openFromWallet,capture,settle:()=>settle(frame)};
 }

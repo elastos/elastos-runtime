@@ -34,6 +34,12 @@ for(const engine of ['chromium','webkit']) {
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor({timeout:4000});
   await r.capture('wallet-live-account');
  });
+ test(`Wallet refresh after linking follows an older in-flight read in ${engine}`,{timeout:60000},async t=>{
+  const r=await linkedWindow(t,engine,{holdWalletRead:true});await r.walletReadStarted;await r.link();
+  await r.page.waitForFunction(()=>window.events.some(e=>e.type==='home:refresh-summary'));
+  r.releaseWalletRead();
+  await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor({timeout:4000});await r.capture('wallet-refresh-after-older-read');
+ });
  test(`Wallet add control explains and adds another phone account in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();
   // Opening Wallet again currently supplies the refresh that the link omitted.
