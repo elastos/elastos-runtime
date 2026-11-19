@@ -7849,7 +7849,7 @@ pub(super) async fn system_summary(
                 system_runtime_log(&state.data_dir).await
             } else {
                 SystemRuntimeLogSummary {
-                    note: Some("Only the Home owner can see Runtime activity.".to_string()),
+                    note: Some("Only an admin can see Home activity.".to_string()),
                     ..SystemRuntimeLogSummary::default()
                 }
             }

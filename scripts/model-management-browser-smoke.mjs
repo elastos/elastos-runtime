@@ -156,11 +156,11 @@ try {
     const memory = app === "marketplace" ? {
       fits: "Fits this device's memory. It needs some free memory to reply.",
       insufficient: "Needs more memory than this device has. Choose a smaller model.",
-      unavailable: "Couldn't check this device's memory. Ask the Home owner to check the memory limits.",
+      unavailable: "Couldn't check this device's memory. Ask an admin to check the memory limits.",
     } : {
       fits: "This device has enough memory for this model. Replies also need some of it free when the model runs.",
       insufficient: "This device has less memory than this model requires. Choose a smaller model.",
-      unavailable: "This Home could not check the device memory. Ask the Home owner to check the memory limits, then try again.",
+      unavailable: "This Home could not check the device memory. Ask an admin to check the memory limits, then try again.",
     };
     phase = "unprepared"; kept = false; failure = false; calls.length = 0;
     dispatchUnavailableReason = null;
@@ -277,7 +277,7 @@ try {
     await frame.getByText(copy.absent, { exact: true }).waitFor();
     for (const [code, explanation] of [
       ["model_memory_insufficient", "This device has less memory than this model requires. Choose a smaller model."],
-      ["model_memory_observation_unavailable", "This Home could not check the device memory. Ask the Home owner to check the memory limits, then try again."],
+      ["model_memory_observation_unavailable", "This Home could not check the device memory. Ask an admin to check the memory limits, then try again."],
       ["memory_budget_unavailable", "This model exceeds the local model memory budget. Choose a smaller model or increase the budget, then Retry."],
       ["cache_budget_unavailable", "This model does not fit the local cache budget. Remove an unneeded model, choose a smaller model, or increase the budget, then Retry."],
       ["request_expired", "This request is no longer valid. Check your device's clock, then try again."],
