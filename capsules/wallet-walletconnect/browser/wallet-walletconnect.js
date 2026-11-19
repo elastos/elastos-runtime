@@ -148,7 +148,7 @@ function draw() {
     else requestOutcomes.delete(activeRequest.request_id);
   }
   const now = Math.floor(Date.now()/1000);
-  const presentation = windowPresentation({loading:!accountsLoaded,connection:connectionState,accounts:linkedAccounts,requests:connectionPage ? [] : requests,busy:hostEffectInFlight && !outcome,
+  const presentation = windowPresentation({loading:!accountsLoaded || !connectionState && !outcome && !hostEffectInFlight && !homeReadFailed && !launchExpired,connection:connectionState,accounts:linkedAccounts,requests:connectionPage ? [] : requests,busy:hostEffectInFlight && !outcome,
     phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
     outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,walletChange,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
     paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)?.outcome))},now);
@@ -200,7 +200,10 @@ async function checkConnection() {
     if (current.permissionFresh !== false && permissionStatus === 'granted' && pendingEffect && pendingEffect === saved && !hostEffectInFlight) {
       const resume=pendingEffect.run;pendingEffect=undefined;resume();return;
     }
-  } catch {} // A failed background read cannot change the wallet's last known outcome.
+  } catch {
+    // Keep established facts on a background failure; an initial failure needs recovery.
+    if (!connectionState) {homeReadFailed=true;draw();}
+  }
   finally {
     connectionCheckInFlight=false;watchConnection();
     if (connectionReturnPending) {connectionReturnPending=false;checkConnection().catch(()=>{});}

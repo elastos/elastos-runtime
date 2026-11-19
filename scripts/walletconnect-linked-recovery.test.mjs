@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import {linkedWindow} from './lib/walletconnect-linked-window-fixture.mjs';
 const sourceRef=process.env.WALLETCONNECT_LINKED_BEFORE==='copy'?'adf517637d41dfa8a42849e97f494e8b05eea708':undefined;
 for(const engine of ['chromium','webkit']){
+ test(`a reopened linked window waits for saved connection restoration before offering controls in ${engine}`,{timeout:60000},async t=>{
+  const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});await r.link();
+  const restoring=r.holdApi('/api/apps/wallet-walletconnect/storage','GET');await r.reopen();await restoring.entered;await r.capture('linked-restoring');
+  assert.equal(await r.frame.locator('[data-action=connect],[data-action=start-over]').count(),0,'restoration cannot offer a fresh connection before the saved session is known');
+  restoring.release();await r.state('linked');await r.capture('linked-restored');
+ });
+ test(`a failed initial connection read offers a working retry in ${engine}`,{timeout:60000},async t=>{
+  const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});await r.link();
+  await r.page.route('**/internet',route=>route.fulfill({status:503,body:'Unavailable'}));await r.reopen();await r.state('home-read-unavailable');await r.capture('linked-connection-read-failed');
+  assert.equal(await r.frame.locator('[data-action=connect],[data-action=start-over]').count(),0);
+  await r.page.unroute('**/internet');await r.click('refresh-status');await r.state('linked');
+ });
  test(`an empty phone account list recovers by choosing an account without replacing the connection in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});await r.link();
   await r.peer.emptyAccounts();await r.state('account-unavailable-unknown');await r.capture('linked-account-not-shown');
