@@ -7,7 +7,7 @@ for(const engine of ['chromium','webkit']){
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});
   await r.link();r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('linked-access-turned-off');
   assert.equal(await r.frame.locator('[data-action=inbox],[data-action=back-to-connection]').count(),0,'a decided request cannot be answered again in Inbox');
-  assert.equal(await r.frame.locator('[data-action=connect].el-button-primary').count(),0,'a saved connection is replaced only by a named quiet action');
+  assert.equal(await r.wallet.locator('#wallet-account-state').innerText(),'1 account','turning off access keeps the linked Wallet account');
   await r.click('connect');await r.state('internet-pending');await r.capture('linked-access-requested-again');
   assert.equal(r.fixture.state.permission,'requested');assert.equal(await r.frame.locator('[data-action=inbox]').count(),1);
  });
