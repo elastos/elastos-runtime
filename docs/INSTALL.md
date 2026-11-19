@@ -528,14 +528,17 @@ curl -fsSL https://elastos.elacitylabs.com/install.sh | bash -s -- --uninstall -
 ```
 
 This deletes your identity, wallets and recovery material on this computer.
-Keep your Recovery Kit first: it is the only way to restore that identity.
+Keep your Recovery Kit and separate data backups first; check the
+[storage table](../SECURITY.md#stored-keys-and-recovery) for coverage.
 
 ## Data, keys and backups
 
 Runtime stores keys next to the data they protect in its data home. A full
 backup of that home contains all keys, including wallet keys. Protect the backup
-with the same care as the running Home. A Recovery Kit is sensitive recovery
-material; keep it under your own control.
+with the same care as the running Home. System's **Download Recovery Kit** saves
+one recovery file. Keep it under your own control, with its optional password.
+The [storage table](../SECURITY.md#stored-keys-and-recovery) lists its contents
+and the data that needs separate backups.
 
 Use hosted accounts only for public demos. Keep wallets, private data and
 recovery material on your own device until
@@ -550,8 +553,8 @@ operators and root, and other software or OS users while a self-hosted Home is
 locked. An unlocked self-hosted Home trusts its owner and their host software.
 A stolen device or profile key requires a new identity.
 
-Lost every passkey? Your Recovery Kit brings your account back on the same
-Home, even when guest accounts are off:
+If you lose every passkey, use your Recovery Kit on the same Home, even when guest
+accounts are off:
 
 1. On the computer that runs Home, as the user who installed it, run
    the command shown on the sign-in screen, for example

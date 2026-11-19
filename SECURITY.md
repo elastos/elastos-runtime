@@ -27,14 +27,8 @@ also runs as a native host process. The web Terminal is disabled by default;
 host developer mode and closed guest registration are required to enable it.
 An enabled Terminal runs commands with the host user's rights.
 
-The seed operator can read hosted data, wallet keys and recovery material.
-Passkeys control sign-in; stored data and keys remain accessible to the Runtime
-account and root while Home is locked. Protection against hosted operators and
-root, and against other software or OS users while a self-hosted Home is locked,
-is the target of [hosted protection](https://github.com/elastos/elastos-runtime/issues/209)
-and [locked Home protection](https://github.com/elastos/elastos-runtime/issues/210).
-An unlocked self-hosted Home trusts its owner and their host software. Recovery
-from a stolen device or profile key requires a new identity.
+Stored data has a separate boundary. [Stored keys and recovery](#stored-keys-and-recovery)
+explains host access while Home is locked and what the Recovery Kit contains.
 
 The [isolation plan](https://github.com/elastos/elastos-runtime/issues/173)
 records the remaining gates. Source checks describe this source tree. Accepted
@@ -73,12 +67,63 @@ is a trusted display that binds what the person sees to the approved effect.
 
 ## Stored keys and recovery
 
-Keys are stored next to the data they protect. Full data-home backups include
-all keys. Protect those backups and your Recovery Kit as secrets. Encryption
-with keys stored on the same host leaves those secrets accessible to its
-operator. Use hosted accounts only for public demos; keep wallets, private data
-and recovery material on your own device until hosted protection passes its
-acceptance gate. Independent review and installed proof remain security gates.
+Disk storage checked on 19 November 2026. Paths below are relative to the Home
+data folder; `<person>` is that person's folder name. The table describes
+application encryption; file names and filesystem metadata stay readable.
+
+Runtime creates a person's data key during Profile setup or, if the key is missing,
+during Recovery Kit export. The person's recovery phrase protects that key.
+Runtime keeps an internal recovery record, including the
+phrase, encrypted in `ElastOS/System/Auth/auth-state.json`; the unencrypted
+archive key is in `recovery-archive.key` beside it. Before that protection exists,
+Assistant, direct messages, and People refuse saves. Documents, Library, and
+Home settings can instead write plain data.
+
+System's **Download Recovery Kit** saves one recovery file, with optional password
+protection. Its coverage is listed below. Keys are stored next to the data they
+protect, in the same Home data folder; the person's data key is in the Auth archive above.
+
+| Data and storage path | Encrypted on disk? | Key location | Recovery Kit restores |
+|---|---|---|---|
+| Home recovery authority: `ElastOS/System/Auth/auth-state.json` | Recovery material only; other auth state is plain | `recovery-archive.key` in the same Auth folder | Home recovery authority and data key (not passkeys or sessions) |
+| Assistant conversations and drafts: `Users/<person>/.AppData/ElastOS/Assistant/workspace-v2.json` | Yes; answers also appear in model run records | Person's data key | Data key; files separate |
+| Direct messages: `Users/<person>/.AppData/ElastOS/Chat/direct-messages.json` | Yes | Person's data key | Data key; files separate |
+| Community history: `collaboration/default-conversation/history-v1.json` | No | None | Omitted |
+| Contacts and Profile: `Users/<person>/.AppData/ElastOS/People`, `Users/<person>/.AppData/ElastOS/Profile` | Yes | Person's data key; Profile signing key inside the protected file | Profile identity and contacts present at export |
+| Documents: `Users/<person>/Documents`; titles and file names in `ElastOS/Documents/<document>/document.json`; published bytes in `ipfs-repo` | Bodies when protection exists; metadata and published bytes are plain | Person's data key for bodies | Data key; files separate |
+| Library files and records under `Users/<person>`; publication index under `ElastOS/SystemServices/Library`; published bytes in `ipfs-repo` | Private files/records when protection exists; published bytes and shared index are plain | Person's data key for private files/records | Data key; files separate |
+| Notifications: `Local/Shared/System/Notifications` | No | None | Omitted |
+| Built-in Wallet: `ElastOS/SystemServices/Wallet/wallet-state.json` | Signing keys only; account and approval records are plain | Derived from nearby `wallet-key.hex` and the person's account ID | Built-in Wallet keys present at export |
+| Browser profile: `Users/<person>/BrowserProfiles/default/profile.ext4` | No | None | Omitted |
+| Model run records: `providers/model-provider/journal` | No; retains answers, events, and a hash of the input under its retention policy | None | Omitted |
+| Model provider credentials: `providers/model-provider/secrets` | No; files restricted to the host account | None | Omitted |
+| Home settings: `Users/<person>/.AppData/ElastOS/Home` | When protection exists; browser preferences are separate | Person's data key | Data key; files separate |
+
+Community history, notifications, document metadata, and the Wallet file are
+shared Home files, outside each person's private folder.
+
+The Runtime account, software running as that host account, root, and the
+hosting operator can read stored data, Wallet keys, and recovery material at any
+time, including while Home is locked.
+Passkeys control sign-in. An unlocked self-hosted Home trusts its owner and
+their host software. Protection against
+hosted operators and root belongs to [hosted protection (#209)](https://github.com/elastos/elastos-runtime/issues/209);
+protection against other software or OS users while a self-hosted Home is locked
+belongs to [locked Home protection (#210)](https://github.com/elastos/elastos-runtime/issues/210).
+Recovery from a stolen device or Profile key requires a new identity.
+
+A complete data-folder copy contains the keys needed to read the protected data.
+Protect that backup and your Recovery Kit as secrets. Use hosted accounts only for public
+demos; keep wallets, private data, and recovery material on your own device until
+hosted protection passes its acceptance gate. Independent review and installed
+proof remain security gates.
+
+The Recovery Kit is not a whole-Home backup. Keep separate backups as listed in
+the table before the disk is lost. [Backup and recovery (#567)](https://github.com/elastos/elastos-runtime/issues/567),
+[file backup (#603)](https://github.com/elastos/elastos-runtime/issues/603),
+and [replicas on your own devices (#498)](https://github.com/elastos/elastos-runtime/issues/498)
+own that work. The [target storage model](docs/STORAGE_AND_ACCESS.md) explains
+working copies, revisions, heads, keys, and replicas.
 
 ## Open Findings
 
@@ -123,9 +168,9 @@ Over HTTP, an ordinary Home's raw CID routes (`/content/<cid>`, `/ipfs/<cid>`,
 CID gateway.
 Only a node that serves publisher content (a seed) answers the raw
 `content_fetch` byte operation or serves without these checks. In this
-release a seed accepts no new copies from other Homes; copies it already holds
-stay. A Home accepts a new copy from a peer only if the owner gave that peer
-the `content.replica` permission; copies it already holds stay. The owner
+release a seed accepts no new replicas from other Homes; replicas it already holds
+stay. A Home accepts a new replica from a peer only if the owner gave that peer
+the `content.replica` permission; replicas it already holds stay. The owner
 trusts such a peer like an own device: it can ask the Home to pin content,
 import complete content and read storage status. An import pins only the CID
 it was asked for and never removes an existing pin. No peer can publish,
