@@ -37,6 +37,7 @@ for(const engine of ['chromium','webkit']) {
   // The host opens the connector's existing saved session, as the real Home does.
   const connector=r.page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
   await connector.locator('[data-state=linked]').waitFor();
+  if(await connector.locator('[data-action=add-account]').count())await connector.locator('[data-action=add-account]').click();
   assert.match(await connector.locator('main').innerText(),/select another account in Trust Wallet/i,'the add path names the phone step before ending anything');
   await r.peer.changeAccount();await connector.locator('[data-state=account-changed]').waitFor();
   await connector.locator('[data-action=send-message]').click();await connector.locator('[data-state=linked]').waitFor();

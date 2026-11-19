@@ -8,7 +8,7 @@ import {scriptedPhoneWallet} from './walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright, productSmokeLaunchOptions} from '../product-smoke-browser.mjs';
 export async function linkedWindow(t,engine) {
  const fixture=await windowFixture();
- const peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Trust Wallet'});
+ const peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Trust Wallet',emitApprovalEvents:true});
  const engines=await importProductSmokePlaywright();
  const browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
  const page=await browser.newPage({viewport:{width:1040,height:620}});page.setDefaultTimeout(6000);
@@ -52,7 +52,7 @@ export async function linkedWindow(t,engine) {
  async function link(){await state('internet-ready');await click('connect');await state('qr-shown');await pair();await state('linked');}
  async function pair(){await click('copy-link');await page.waitForFunction(()=>window.copied.startsWith('wc:'));await peer.pair(await page.evaluate(()=>window.copied));}
  async function refresh(){await frame.evaluate(()=>window.dispatchEvent(new Event('focus')));}
- async function reopen(){await settle(frame);await page.locator('#wallet').evaluate((node,src)=>node.src=src,nodeURL());await page.waitForFunction(()=>document.querySelector('#wallet').contentWindow!==null);frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await frame.locator('main[data-state]').waitFor();}
+ async function reopen(){await settle(frame);const loaded=page.waitForEvent('framenavigated',f=>f.parentFrame()===page.mainFrame()&&f.url().includes('/apps/wallet-walletconnect/'));await page.locator('#wallet').evaluate((node,src)=>node.src=src,nodeURL());frame=await loaded;await frame.locator('main[data-state]').waitFor();}
  function nodeURL(){return fixture.origin+'/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(fixture.origin)+'#home_token=fixture-wallet';}
  const records=[];
  async function capture(name){
