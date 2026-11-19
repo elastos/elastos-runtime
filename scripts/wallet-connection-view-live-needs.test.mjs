@@ -17,7 +17,7 @@ test('live needs: all added stages have named window-local production fixtures',
 test('live needs: a supported-action projection withholds authority and keeps manual recovery',()=>{
  for(const row of states){
   const args=fixtureArguments(row),original=reduceConnection(...args);args[0].supportedActions=[];
-  const v=reduceConnection(...args);assert.deepEqual(v.actions,[],row.designState);assert.equal(viewText(v.status),viewText(original.status));assert.match(viewText(v.notice),/Home’s window controls/);
+  const v=reduceConnection(...args);assert.deepEqual(v.actions,[],row.designState);assert.equal(viewText(v.status),viewText(original.status));if(row.window==='walletconnect'&&row.stage==='disconnecting')assert.equal(viewText(v.notice),'Keep this window open until disconnecting finishes.');else assert.match(viewText(v.notice),/Home’s window controls/);
  }
  assert(!connectionView({window:'unisat',stage:'ready',supportedActions:['use-walletconnect']}).actions.length,'an allow-list cannot invent a compatible connector');
  assert.throws(()=>connectionView({window:'metamask',stage:'ready',supportedActions:['invented-route']}),/closed supported actions/);
