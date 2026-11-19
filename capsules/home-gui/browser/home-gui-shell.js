@@ -1,7 +1,6 @@
 import { focusOpenBrowserWindow } from "./shell-windows.js?v=home-20261101d";
 import {
   bindHomeGuiInteractions,
-  broadcastHomeGuiRuntimeEvents,
   attachAuthorizedHomeGuiTarget,
   closeHomeGuiWindowForToken,
   openHomeGuiTarget,
@@ -442,7 +441,6 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (message.type === "elastos:runtime-events" && Array.isArray(message.events)) {
-    broadcastHomeGuiRuntimeEvents(message.events);
     postToHome({ type: "home:refresh-summary" });
     return;
   }

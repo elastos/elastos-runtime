@@ -332,11 +332,7 @@ const server = createServer(async (req, res) => {
       json(res, 404, { error: "fixture route not found", path: url.pathname });
       return;
     }
-    const rootOnlyRef = process.env.HOME_WALLET_REFRESH_ROOT_ONLY === "1" ? ({
-      [join(repoRoot,"capsules/home-gui/browser/home-gui-shell.js")]:"0db7eb247c8d89f367d5458acb03339605cc216e:capsules/home-gui/browser/home-gui-shell.js",
-      [join(repoRoot,"capsules/wallet/browser/wallet.js")]:"40af50bac2d0047500185205c0a50cea3744677c:capsules/wallet/browser/wallet.js",
-    })[path] : null;
-    const body = rootOnlyRef ? execFileSync("git",["show",rootOnlyRef]) : process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
+    const body = process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
       ? execFileSync("git", ["show", "0db7eb247c8d89f367d5458acb03339605cc216e:capsules/home/browser/home-shell-host.js"])
       : readFileSync(path);
     res.writeHead(200, {
