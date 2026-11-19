@@ -33,7 +33,9 @@ export async function linkedWindow(t,engine) {
   return route.fallback();
  });
  await page.route('**/apps/wallet/**',async route=>{
-  const name=new URL(route.request().url()).pathname.split('/apps/wallet/')[1]||'index.html';
+  const path=new URL(route.request().url()).pathname;
+  if(!path.startsWith('/apps/wallet/'))return route.fallback();
+  const name=path.slice('/apps/wallet/'.length)||'index.html';
   assert.ok(!name.split('/').includes('..'));
   const file=new URL('../../capsules/wallet/browser/'+name,import.meta.url);
   return route.fulfill({headers:cors,contentType:({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html','.png':'image/png','.svg':'image/svg+xml','.woff2':'font/woff2'})[extname(name)]||'application/octet-stream',body:await readFile(file)});
