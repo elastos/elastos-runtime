@@ -13,7 +13,8 @@ async function setup(t,engine,mutation){
  await page.route('**/*',route=>new URL(route.request().url()).origin===fixture.origin?route.continue():route.abort());
  if(mutation)await page.route(`**/${mutation.file}*`,async route=>{const source=await readFile(new URL('../capsules/wallet-walletconnect/browser/'+mutation.file,import.meta.url),'utf8');assert.ok(source.includes(mutation.from));await route.fulfill({contentType:'text/javascript',body:source.replace(mutation.from,mutation.to)});});
  const settle=await walletWindowLifetime(page,fixture);
- defer(async()=>{await settle(r.frame);assert.deepEqual(errors,[]);});
+ defer(()=>settle(r.frame));
+ t.after(()=>assert.deepEqual(errors,[]));
  const r={fixture,peer,page,frame:null};
  r.reopen=async()=>{await settle(r.frame);await page.goto(fixture.origin);r.frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await r.frame.locator('main').waitFor();};
  r.state=name=>r.frame.locator(`main[data-state="${name}"]`).waitFor({timeout:20000});

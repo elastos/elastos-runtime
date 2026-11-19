@@ -52,7 +52,8 @@ async function setup(t,engine,mutation){
   window.clearTimeout=id=>{active.delete(id);nativeClear(id);};
  });
  const settle=await walletWindowLifetime(page,fixture);let frame;
- defer(async()=>{await settle(frame);assert.deepEqual(errors,[],'every live walk rejects unexpected page errors');});
+ defer(()=>settle(frame));
+ t.after(()=>assert.deepEqual(errors,[],'every live walk rejects unexpected page errors'));
  async function leave(){await settle(frame);await page.goto('about:blank');}
  async function reopen(){
   await settle(frame);
