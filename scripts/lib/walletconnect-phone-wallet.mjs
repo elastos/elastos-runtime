@@ -54,6 +54,13 @@ export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:84
         if(notify)await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'accountsChanged',data:[account.address]}});
       }
     },
+    async approvalEvents(){
+      for(const session of client.session.getAll()){
+        const {acknowledged}=await client.update({topic:session.topic,namespaces:session.namespaces});await acknowledged();
+        await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'accountsChanged',data:[account.address]}});
+        await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'chainChanged',data:Number(approvedChains[0].split(':')[1])}});
+      }
+    },
     async emptyAccounts(){for(const session of client.session.getAll())await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'accountsChanged',data:[]}});},
     async changeChain(chain){for(const session of client.session.getAll())await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'chainChanged',data:Number(chain.split(':')[1])}});},
     async updateSession(){for(const session of client.session.getAll()){const {acknowledged}=await client.update({topic:session.topic,namespaces:session.namespaces});await acknowledged();}},
