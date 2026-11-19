@@ -20,7 +20,6 @@ test('failed WebKit launch releases the already started relay and SDK peer',()=>
  assert.doesNotMatch(result.stdout+result.stderr,/cleanup failed/i);
 });
 
-
 test('the reporter names missing WebKit as the reason for skipping window cases',()=>{
  const helper=new URL('./lib/walletconnect-window-resources.mjs',import.meta.url).href;
  const script=`
@@ -30,6 +29,7 @@ test('the reporter names missing WebKit as the reason for skipping window cases'
  `;
  const env={...process.env,PLAYWRIGHT_BROWSERS_PATH:'/missing-wallet-test-browsers'};
  delete env.ELASTOS_PLAYWRIGHT_MODULE;
+ delete env.NODE_TEST_CONTEXT;
  const result=spawnSync(process.execPath,['--test-reporter=spec','--input-type=module','--eval',script],{encoding:'utf8',timeout:30000,env});
  assert.equal(result.error,undefined,'the skip probe exits naturally');
  assert.equal(result.status,0,'missing WebKit remains an optional skip');
