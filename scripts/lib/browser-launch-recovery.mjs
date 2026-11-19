@@ -11,7 +11,8 @@ let localRelaunches = 0;
 let standalone = false;
 
 function summary(count) {
-  console.error(`Browser launch summary: ${count} relaunch(es); limit 3; ${count > 3 ? "FAIL" : "PASS"}`);
+  // The bounded Rust harness forwards stdout even when its smoke succeeds.
+  console.log(`Browser launch summary: ${count} relaunch(es); limit 3; ${count > 3 ? "FAIL" : "PASS"}`);
   return count > 3;
 }
 
@@ -62,7 +63,7 @@ async function launch(browserType, options, site) {
     if (!signal) throw first;
     const { name, file } = currentTest.getStore() ?? {};
     const label = String(name ? `${file}: ${name}` : site).replace(/\s+/g, " ").slice(0, 600);
-    console.error(`Browser launch relaunch: ${label}; engine=${browserType.name()}; signal=${signal}; attempt=2/2`);
+    console.log(`Browser launch relaunch: ${label}; engine=${browserType.name()}; signal=${signal}; attempt=2/2`);
     const ledger = process.env.ELASTOS_BROWSER_LAUNCH_LEDGER;
     if (ledger) appendFileSync(ledger, "1\n"); // One O_APPEND write per event across processes.
     else localRelaunches++;

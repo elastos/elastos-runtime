@@ -68,9 +68,9 @@ function fixture(t, scenario, files = 1) {
 test("one native startup crash relaunches once and names the test, engine, signal and total", t => {
   const r = fixture(t, "once").run();
   assert.equal(r.status, 0, r.output);
-  assert.match(r.output, /Browser launch relaunch:.*injected once 0.*chromium.*SIGSEGV/);
+  assert.match(r.stdout, /Browser launch relaunch:.*injected once 0.*chromium.*SIGSEGV/);
   assert.match(r.output, /FIXTURE launch=2/);
-  assert.match(r.output, /Browser launch summary: 1 relaunch\(es\); limit 3; PASS/);
+  assert.match(r.stdout, /Browser launch summary: 1 relaunch\(es\); limit 3; PASS/);
 });
 
 test("two startup crashes fail with both browser logs", t => {
