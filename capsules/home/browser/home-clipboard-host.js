@@ -235,7 +235,7 @@ export function createHomeClipboardPrompt({
     ],
     "wallet-walletconnect:wallet.connection-link:write": [
       "Copy wallet connection link?",
-      "Copy this link to connect a wallet on this computer.",
+      "Paste it into a wallet app on this computer.",
       "Copy link",
     ],
     "library:resource.uri:write": [
