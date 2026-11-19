@@ -2,7 +2,7 @@ import test,{describe} from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync} from 'node:fs';
 import {writeFile} from 'node:fs/promises';
-import {browserFixture,playwright,temporaryProof} from './lib/wallet-connection-browser-fixture.mjs';
+import {browserFixture,playwright,temporaryProof,closeSmokeBrowsers} from './lib/wallet-connection-browser-fixture.mjs';
 import {observeApproval,assertApprovalGeometry,assertApprovalPaint,assertEverySiteLinePaint,approvalIds} from './lib/wallet-connection-approval-oracle.mjs';
 import {states,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
 
@@ -19,6 +19,7 @@ const sizes=[[320,182],[360,596],[480,522],[390,844]];
 // Full matrix: WALLET_VIEW_FULL_MATRIX=1 node scripts/run-node-tests.mjs scripts/wallet-connection-view-origin.test.mjs
 const ciSmoke=process.env.WALLET_VIEW_FULL_MATRIX!=='1'&&process.env.WALLET_VIEW_EXHAUSTIVE_PAINT!=='1';
 const exhaustivePaint=process.env.WALLET_VIEW_EXHAUSTIVE_PAINT==='1';
+if(process.env.WALLET_VIEW_BROWSER_SMOKE==='1')test.after(closeSmokeBrowsers);
 const requested=process.env.WALLET_VIEW_PROOF_DIR;
 const proof=await temporaryProof('wallet-view-origin-',requested);
 test.after(async()=>proof.cleanup());
@@ -73,8 +74,9 @@ async function activate(page,resize){
  const events=await page.evaluate(()=>window.approvalActivations);assert.equal(events.length,3);assert(events.every(e=>e.visible),'site final line visible at pointer, Enter and Space activation');
  return events;
 }
-describe('structural approval access and paint',{concurrency:false},()=>{
-for(const engine of ['chromium','webkit']){
+// Independent engine journeys may overlap in the bounded combined smoke.
+describe('structural approval access and paint',{concurrency:process.env.WALLET_VIEW_BROWSER_SMOKE==='1'?2:false},()=>{
+for(const engine of ['chromium','webkit'])describe(engine+' approval journey',{concurrency:false},()=>{
  const optional=engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE;
  const receipts=[];
  for(const scale of [1,2])describe(`F1: origins in ${engine} at zoom ${scale}`,{skip:optional?'WebKit required in content-sandbox CI':false},()=>{
@@ -121,6 +123,6 @@ for(const engine of ['chromium','webkit']){
    });
   }finally{await f.close();}
  });
-}
+});
 
 });

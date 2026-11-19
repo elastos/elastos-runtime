@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
 import {readFile,mkdir} from 'node:fs/promises';
 import {resolve,extname} from 'node:path';
 import {temporaryDirectory} from './wallet-connection-test-temp.mjs';
@@ -9,12 +8,12 @@ export const playwright=requireProductSmokePlaywright();
 const root=resolve(fileURLToPath(new URL('../../',import.meta.url)));
 // The combined smoke shares engine processes; each fixture keeps its own context.
 const smokeBrowsers=new Map();
-test.after(async()=>{
+export async function closeSmokeBrowsers(){
  const results=await Promise.allSettled([...smokeBrowsers.values()].map(async pending=>(await pending).close()));
  smokeBrowsers.clear();
  const errors=results.filter(row=>row.status==='rejected').map(row=>row.reason);
  if(errors.length)throw new AggregateError(errors,'View browser cleanup failed');
-});
+}
 async function acquireBrowser(engine,reuse){
  if(!reuse)return playwright[engine].launch({headless:true});
  let pending=smokeBrowsers.get(engine);
