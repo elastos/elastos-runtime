@@ -182,7 +182,7 @@ require protection against host tampering need a supported execution boundary
 and evidence for it. The recipient can choose a compatible environment; a
 provider's unsupported claim is insufficient to satisfy the policy.
 
-Runtime should prevent unauthorised replicas inside the enforced boundary. The
+Runtime should prevent unauthorised copies inside the enforced boundary. The
 limit is information that has already escaped that boundary or was deliberately
 exported. Removing a grant cannot recover such information, including external
 recordings. Ordinary export paths still require full permission enforcement.

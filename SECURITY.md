@@ -71,8 +71,8 @@ Disk storage checked on 19 November 2026. Paths below are relative to the Home
 data folder; `<person>` is that person's folder name. The table describes
 application encryption; file names and filesystem metadata stay readable.
 
-Runtime creates a person's data key during Profile setup or Recovery Kit export
-if the key is missing. The person's recovery phrase protects that key.
+Runtime creates a person's data key during Profile setup or, if the key is missing,
+during Recovery Kit export. The person's recovery phrase protects that key.
 Runtime keeps an internal recovery record, including the
 phrase, encrypted in `ElastOS/System/Auth/auth-state.json`; the unencrypted
 archive key is in `recovery-archive.key` beside it. Before that protection exists,
