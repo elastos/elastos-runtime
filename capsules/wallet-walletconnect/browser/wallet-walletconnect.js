@@ -84,9 +84,9 @@ root.addEventListener('click', async event => {
   if (action === 'stop-waiting') return cancelWalletWait();
   if (action === 'disconnect') return disconnect();
   if (action === 'inbox') return showInternetRequest();
+  if (action === 'add-account') {connectionPage='add-account';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;}
   if (action === 'back-to-connection') {
-    const connectionScreen=['linked','saved-unlinked','account-changed','account-unavailable-unknown','network-unsupported','wallet-removed','connection-expired','internet-off','internet-refused','nothing-saved','internet-ready'].includes(currentView.stage);
-    connectionPage=connectionPage==='access'||currentView.request||showPicker||!connectionScreen?'overview':'access';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
+    connectionPage='overview';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
   }
   if (action === 'check-access' || action === 'check-status' || action === 'refresh-status') {
     outcome = undefined;activeRequest = undefined;
@@ -142,7 +142,6 @@ window.addEventListener('message',event=>{
 });
 
 function draw() {
-  if(connectionPage==='access'&&permissionStatus==='granted'&&!connectionState?.session&&!connectionState?.removed&&!connectionState?.expired&&!homeReadFailed)connectionPage='overview';
   if(mounted){const saved=captureConnectionPresentation(mounted.root);if(saved.action)rememberedFocus={key:renderKey,action:document.activeElement?.dataset.action,focusKey:saved.key,outcome:saved.action};}
   if(activeRequest && /^(request|transaction)-/.test(outcome || '')) {
     if(dispatchedRequestId===activeRequest.request_id || unrecordedHash)requestOutcomes.set(activeRequest.request_id,{outcome,hash:unrecordedHash,dispatched:dispatchedRequestId===activeRequest.request_id,walletName:activeRequest.walletName});
@@ -153,7 +152,7 @@ function draw() {
     phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
     outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,walletChange,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
     paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)?.outcome))},now);
-  if (connectionPage === 'access' && !hostEffectInFlight && !launchExpired) presentation.input.stage=permissionStatus === 'granted' ? 'internet-ready' : 'nothing-saved';
+  if (connectionPage === 'add-account' && presentation.input.stage === 'linked') {presentation.input.stage='add-account';presentation.input.localReturn=true;}
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
   const canChooseRequests=Boolean(accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);

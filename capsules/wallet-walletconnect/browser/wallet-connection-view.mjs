@@ -143,7 +143,7 @@ function accountDisplay(account, window, summary) {
 }
 
 export function connectionView(input) {
-  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests'];
+  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests','linkedConnection'];
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
   const { window, stage } = input;
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
@@ -153,6 +153,7 @@ export function connectionView(input) {
   requireValue(input.copyFeedback===undefined||Object.hasOwn(copyFeedbacks,input.copyFeedback),'closed copy feedback');
   requireValue(input.connectionNotice===undefined||Object.hasOwn(connectionNotices,input.connectionNotice),'closed connection notice');
   requireValue(input.showNextRequests===undefined||typeof input.showNextRequests==='boolean','next requests flag');
+  requireValue(input.linkedConnection===undefined||typeof input.linkedConnection==='boolean','linked connection flag');
   requireValue(input.localReturn===undefined||typeof input.localReturn==='boolean','local return flag');
   const currentSelection=input.currentSelection?clone(input.currentSelection):null;
   requireValue(!currentSelection||plain(currentSelection)&&Object.keys(currentSelection).length===2&&bounded(currentSelection.address,128)&&bounded(currentSelection.network,80),'closed current selection');
@@ -226,6 +227,7 @@ export function connectionView(input) {
   if (screen.qr) actions = [{id:'copy-link',label:parts('Copy link'),primary:false,quiet:false},{id:'cancel',label:parts('Cancel'),primary:false,quiet:false}];
   if(screen.requiresSafeRetry&&safety!==false){const close=actions.find(a=>a.id==='close-window');if(close){close.primary=true;close.quiet=false;}}
   if(transactionHash)actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over'&&a.id!=='use-walletconnect');
+  if(input.linkedConnection)actions=actions.map(a=>['connect','start-over'].includes(a.id)?{...a,label:parts('Replace connection'),primary:false,quiet:true}:a);
   const localNavigationAllowed=!screen.qr&&!actions.some(a=>['stop-waiting','cancel'].includes(a.id));
   if(input.localReturn&&localNavigationAllowed)actions.push({id:'back-to-connection',label:parts('Back to connection'),primary:false,quiet:true});
   if(supported){
@@ -234,7 +236,7 @@ export function connectionView(input) {
       notice=answered?'Return to {{app}} to make a new request.':screen.dispatched||/timeout|cancelled/.test(stage)?'An operation may still be waiting in {{wallet}}. Closing this window does not cancel it. Home will ignore a later answer.':'Open {{wallet}} to check its account and connection.';
       if(summary?.transaction&&!knownNotSent)notice='The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Wallet activity before trying again.';
     }
-    if(removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
+    if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
     if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window')||actions.find(a=>a.id==='back-to-connection');if(next){next.primary=true;next.quiet=false;}}
   }

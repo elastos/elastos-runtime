@@ -145,7 +145,7 @@ for (const status of ['rejected','dismissed']) test(`final view maps the explici
 });
 for (const blocked of [{status:'approved',intent:'transaction_intent'},{intent:'browser_typed_data_sign'},{expires_at:now-1}])test(`F1 default skips a lone blocked record ${JSON.stringify(blocked)}`,()=>{
  const view=walletConnectView(windowPresentation({...initial,requests:[{...request,...blocked}]},now));
- assert.equal(view.stage,'linked');assert.ok(view.actions.some(a=>a.id==='back-to-connection'));assert.equal(view.queueCount,1);
+ assert.equal(view.stage,'linked');assert.ok(view.actions.every(a=>a.id!=='back-to-connection'));assert.equal(view.queueCount,1);
 });
 test('safe account retry uses explicit false safety and the supported-actions interface',()=>{
  const p=windowPresentation({...initial,outcome:'link-error'},now);assert.equal(p.input.localSafety,false);

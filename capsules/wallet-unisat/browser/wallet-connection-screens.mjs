@@ -2284,6 +2284,17 @@ for(const window of ['walletconnect','metamask','unisat']){
   });
 }
 
+// A completed link needs only dismissal; adding another account is a separate choice.
+for(const window of ['walletconnect','metamask','unisat'])for(const stage of ['linked',...(window==='walletconnect'?['linked-multiple']:[])]){
+  definitions[window][stage].primary={id:'close-window',label:'Close window',quiet:false};
+  definitions[window][stage].focus='close-window';
+  if(window==='walletconnect'){
+    definitions[window][stage].focusOutcome=true;
+    definitions[window][stage].secondary=[{id:'add-account',label:'Add account',quiet:true}];
+  }
+}
+definitions.walletconnect['add-account']={status:'Add an account.',notice:'To add an account, select another account in {{wallet}}, then return here. To use another wallet, disconnect this connection first. Your linked accounts stay in Wallet.',account:true};
+
 definitions.walletconnect['checking-response']={status:'Your wallet has answered. Home is checking the response.',notice:'Stopping here ends this wait. Home may still record the response.',optionalRequest:true,account:true,dispatched:true,primary:{id:'stop-waiting',label:'Stop waiting',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'stop-waiting'};
 definitions.walletconnect['home-read-unavailable']={status:'Home could not load your wallet requests.',notice:'Check again to load them.',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'refresh-status'};
 definitions.walletconnect['disconnect-error']={status:'Home could not finish disconnecting this wallet.',notice:'Try disconnecting again. Closing this window does not finish disconnecting.',primary:{id:'disconnect',label:'Disconnect',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'disconnect'};

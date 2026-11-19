@@ -506,7 +506,7 @@ for(const engine of ['chromium','webkit'])test(`final shared loading retry and c
  await r.page.route('**/wallet/accounts',async route=>{entered();await held;await route.continue();});
  await r.reopen();await reading;await r.state('wallet-loading');await r.capture('wallet-loading');release();await r.state('linked');await r.page.unroute('**/wallet/accounts');
  await r.page.route('**/wallet/accounts',route=>route.fulfill({status:503,body:'Home unavailable'}));await r.reopen();await r.state('home-read-unavailable');await r.capture('home-read-unavailable');await r.page.unroute('**/wallet/accounts');await r.click('refresh-status');await r.state('linked');
- await r.click('back-to-connection');await r.state('internet-ready');await r.capture('connection-internet-controls');
+ await r.click('add-account');await r.state('add-account');await r.capture('connection-add-account');await r.click('back-to-connection');await r.state('linked');
 });
 
 for(const engine of ['chromium','webkit'])test(`a known hash survives leaving for the next request in ${engine}`,{timeout:60000},async t=>{
