@@ -703,6 +703,14 @@ try {
     }
 
     if (target === "wallet-walletconnect") {
+      for (const observed of [page.mainFrame(), homeGui, wallet]) await observed.evaluate(() => {
+        window.fixtureAccountHints = [];
+        addEventListener("message", event => {
+          if (!["elastos:runtime-events", "home:refresh-summary"].includes(event.data?.type)) return;
+          window.fixtureAccountHints.push({type:event.data.type,origin:event.origin,parent:event.source===window.parent,top:event.source===window.top,hasToken:!!event.data.homeToken,kinds:(event.data.events||[]).slice(0,5).map(row=>row.kind)});
+          window.fixtureAccountHints = window.fixtureAccountHints.slice(-8);
+        });
+      });
       const notify = () => connector.evaluate(() => window.top.postMessage({
         type: "home:refresh-summary",
         homeToken: new URLSearchParams(location.hash.slice(1)).get("home_token"),
@@ -718,7 +726,12 @@ try {
       await page.waitForTimeout(150);
       assert(state.walletSummaryReads === readsBeforeSibling, "a sibling connector cannot forward Home GUI events");
       await notify();
-      await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "1 account", null, {timeout:4000});
+      try {
+        await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "1 account", null, {timeout:4000});
+      } catch (cause) {
+        const frames = await Promise.all([page.mainFrame(),homeGui,wallet].map(frame=>frame.evaluate(()=>({hints:window.fixtureAccountHints,label:document.querySelector("#wallet-account-state")?.textContent,status:document.querySelector("#wallet-status")?.textContent}))));
+        throw new Error("Account refresh failed: "+JSON.stringify({readsBefore:readsBeforeSibling,readsAfter:state.walletSummaryReads,frames}),{cause});
+      }
       state.walletAccounts = [];
       await notify();
       await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "0 accounts", null, {timeout:4000});
