@@ -97,7 +97,9 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
    await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`,animations:'disabled'});
    records.push({name,theme,...await frame.locator('main').evaluate(main=>({stage:main.dataset.state,text:main.innerText,actions:[...main.querySelectorAll('button')].map(b=>({action:b.dataset.action,label:b.innerText,primary:b.classList.contains('el-button-primary')}))}))});
   }
-  await writeFile(`${output}/${engine}/states.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),sourceRef:sourceRef||null,records},null,2));
+  const receipt={head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),engine,version:browser.version(),sourceRef:sourceRef||null,records};
+  await writeFile(`${output}/${engine}/states.json`,JSON.stringify(receipt,null,2));
+  await writeFile(`${output}/${engine}/${name}.json`,JSON.stringify({...receipt,records:records.filter(row=>row.name===name)},null,2));
  }
  async function reopenWallet(){const navigated=page.waitForEvent('framenavigated',f=>f.url().includes('/apps/wallet/'));await page.getByRole('button',{name:'Reload Wallet',exact:true}).click();await navigated;await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').waitFor();}
  if(sourceRef?.startsWith('0db7'))await page.evaluate(()=>{const button=document.createElement('button');button.textContent='Reload Wallet';button.style='position:absolute;top:0;right:0';button.onclick=()=>{const wallet=document.querySelector('#accounts');wallet.src=wallet.src;};document.body.append(button);});
