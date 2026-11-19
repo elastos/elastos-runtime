@@ -10,8 +10,11 @@ for(const engine of ['chromium','webkit']){
  });
  test(`expired linked window gives one clear close instruction in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine,{sourceRef});await r.link();
-  await r.page.waitForLoadState('networkidle');
-  await r.frame.waitForFunction(()=>{const life=window.__walletFixtureLifetime;return !life.pending&&!life.fetches&&!life.bodies;});
+  await r.frame.waitForFunction(()=>{
+   const life=window.__walletFixtureLifetime;
+   if(life.pending||life.fetches||life.bodies||life.providers.some(p=>p.signer.client.engine.relayMessageCache?.length||p.signer.client.engine.requestQueue?.queue?.length)){window.__linkedIdleSince=undefined;return false;}
+   window.__linkedIdleSince??=performance.now();return performance.now()-window.__linkedIdleSince>=500;
+  });
   r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');await r.capture('linked-window-expired');
   const text=(await r.frame.locator('main').innerText()).replace(/\s+/g,' ');
   assert.equal(text.match(/Close this window/g)?.length,1,'Home close advice replaces the old instruction');
