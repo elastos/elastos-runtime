@@ -29,6 +29,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
  page.on('framenavigated',next=>{if(next.parentFrame()===page.mainFrame()&&next.url().includes('/apps/wallet-walletconnect/'))frame=next;});
  t.after(async()=>{try{await settle(frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[]);});
  await page.route('**/*',route=>new URL(route.request().url()).origin===fixture.origin?route.continue():route.abort());
+ const readFileSyncClipboard=await readFile(new URL('../../capsules/home/browser/home-clipboard-client.js',import.meta.url));
  const cors={'access-control-allow-origin':'*','access-control-allow-headers':'content-type,x-elastos-home-token','access-control-allow-methods':'GET,POST,OPTIONS'};
  await page.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname;
@@ -59,6 +60,8 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   const file=new URL('../../capsules/wallet/browser/'+name,import.meta.url);
   return route.fulfill({headers:cors,contentType:({'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.html':'text/html','.png':'image/png','.svg':'image/svg+xml','.woff2':'font/woff2'})[extname(name)]||'application/octet-stream',body:await readFile(file)});
  });
+ // Shared modules are fixture assets too; each opaque frame receives its own CORS response.
+ await page.route('**/apps/home/home-clipboard-client.js*',route=>route.fulfill({headers:cors,contentType:'text/javascript',body:readFileSyncClipboard}));
  await page.route(fixture.origin+'/',async route=>{
   const response=await route.fetch();let body=await response.text();
   body=body.replace('</style>','iframe{width:480px;height:522px;vertical-align:top}#accounts{width:550px;height:580px}</style>');
