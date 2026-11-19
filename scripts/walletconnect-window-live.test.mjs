@@ -3,11 +3,10 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
-import {windowFixture,observeWindowErrors,walletWindowLifetime} from './lib/walletconnect-phone-window-fixture.mjs';
-import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
-import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
+import {observeWindowErrors,walletWindowLifetime} from './lib/walletconnect-phone-window-fixture.mjs';
+import {windowResources,windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 const output=process.env.WALLETCONNECT_WINDOW_SCREENS;
-for(const engine of ['chromium','webkit'])for(const change of ['supported network','unsupported network','empty accounts'])test(`selection notice says only the true sentence for ${change} in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])for(const change of ['supported network','unsupported network','empty accounts'])test(`selection notice says only the true sentence for ${change} in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.peer.choose({chains:['eip155:8453',change==='unsupported network'?'eip155:137':'eip155:1']});await r.link();
  if(change==='empty accounts')await r.peer.emptyAccounts();else await r.peer.changeChain(change==='supported network'?'eip155:1':'eip155:137');
  const stage=change==='empty accounts'?'account-unavailable-unknown':change==='supported network'?'saved-unlinked':'network-unsupported';
@@ -31,8 +30,7 @@ async function refreshAndWaitForRedraw(r){
  const read=r.page.waitForResponse(response=>response.url().endsWith('/internet'));await r.refresh();await read;await r.frame.locator('main').waitFor();
 }
 async function setup(t,engine,mutation){
- const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
- const engines=await importProductSmokePlaywright(),browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
+ const {fixture,peer,browser,defer}=await windowResources(t,engine);
  const page=await browser.newPage({viewport:{width:480,height:560}}),{errors}=observeWindowErrors(page,fixture);
  await page.route('**/*',r=>new URL(r.request().url()).origin===fixture.origin?r.continue():r.abort());
  if(mutation)await page.route(`**/${mutation.file}*`,async route=>{
@@ -54,7 +52,7 @@ async function setup(t,engine,mutation){
   window.clearTimeout=id=>{active.delete(id);nativeClear(id);};
  });
  const settle=await walletWindowLifetime(page,fixture);let frame;
- t.after(async()=>{try{await settle(frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[],'every live walk rejects unexpected page errors');});
+ defer(async()=>{await settle(frame);assert.deepEqual(errors,[],'every live walk rejects unexpected page errors');});
  async function leave(){await settle(frame);await page.goto('about:blank');}
  async function reopen(){
   await settle(frame);
@@ -105,7 +103,7 @@ async function setup(t,engine,mutation){
  return {assertSharedTree,fixture,peer,page,get frame(){return frame;},errors,state,click,refresh,capture,qr,pair,link,approval,reopen,leave};
 }
 for(const engine of ['chromium','webkit']){
- test(`shared WalletConnect real phone journey in ${engine}`,{timeout:180000},async t=>{
+ test(`shared WalletConnect real phone journey in ${engine}`,windowTestOptions(engine,180000),async t=>{
   const r=await setup(t,engine);await r.capture('internet-ready');
   r.fixture.setPermission('off');await r.click('connect');await r.state('internet-pending');await r.capture('internet-pending');
   r.fixture.setPermission('refused');await r.refresh();await r.state('internet-refused');await r.capture('internet-refused');
@@ -124,7 +122,7 @@ for(const engine of ['chromium','webkit']){
   await r.reopen();await r.state('linked');await r.click('disconnect');await r.state('disconnected');await r.capture('disconnected');await r.link();
   assert.deepEqual(r.errors,[]);
  });
- test(`shared WalletConnect refusal saved-session stop and timeout in ${engine}`,{timeout:180000},async t=>{
+ test(`shared WalletConnect refusal saved-session stop and timeout in ${engine}`,windowTestOptions(engine,180000),async t=>{
   const r=await setup(t,engine);
   r.peer.choose({proposal:'reject'});await r.qr();await r.pair();await r.state('connection-declined');await r.capture('connection-declined');
   r.peer.choose({proposal:'approve',request:'reject'});await r.qr();await r.pair();await r.state('link-declined');await r.capture('link-declined');
@@ -141,7 +139,7 @@ for(const engine of ['chromium','webkit']){
   await r.qr();await r.pair();await r.state('link-wait');await r.click('stop-waiting');await r.state('link-cancelled');await r.capture('link-cancelled');
   assert.deepEqual(r.errors,[]);
  });
- test(`shared WalletConnect wallet changes in ${engine}`,{timeout:180000},async t=>{
+ test(`shared WalletConnect wallet changes in ${engine}`,windowTestOptions(engine,180000),async t=>{
   const r=await setup(t,engine);await r.link();await r.peer.changeAccount();await r.state('account-changed');await r.capture('account-changed');
   assert.match(await r.frame.locator('code.connection-address').innerText(),new RegExp(r.peer.address.slice(0,6),'i'));
   assert.equal(r.fixture.state.verified,1,'account notification never links');
@@ -180,7 +178,7 @@ for(const [name,mutation,probe] of [
  assert.equal(caught,true,`deliberate ${name} escaped its independent guard`);
 });
 
-for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])for(const event of ['account','session-account','network','empty','update','removed'])test(`scripted phone ${event} during ${phase} in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])for(const event of ['account','session-account','network','empty','update','removed'])test(`scripted phone ${event} during ${phase} in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.peer.choose({chains:['eip155:8453','eip155:1']});
  if(phase==='ownership'){
   r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.some(e=>e.kind==='request'),'phone holds proof');
@@ -222,7 +220,7 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
  assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`remaining live states and transaction hash in ${engine}`,{timeout:180000},async t=>{
+for(const engine of ['chromium','webkit'])test(`remaining live states and transaction hash in ${engine}`,windowTestOptions(engine,180000),async t=>{
  const r=await setup(t,engine);r.fixture.setPermission('off');await r.click('connect');await r.state('internet-pending');
  let release;const held=new Promise(resolve=>{release=resolve;});
  await r.page.route('**/relay-admission',async route=>{await held;await route.continue();});t.after(()=>release());
@@ -252,7 +250,7 @@ for(const engine of ['chromium','webkit'])test(`remaining live states and transa
  }
  assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`guest off and expired window in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`guest off and expired window in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-off');await r.capture('internet-off');
  r.fixture.state.guest=true;await r.frame.locator('[data-action=inbox]').click();r.fixture.setPermission('granted');await r.refresh();await r.state('internet-ready');
  r.fixture.setPermission('off');await r.click('connect');await r.state('guest-access');assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0,'owner-only recovery offers its real status check');await r.capture('guest-access');
@@ -260,7 +258,7 @@ for(const engine of ['chromium','webkit'])test(`guest off and expired window in 
  assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`wallet answer replaces the wait before a delayed Home summary in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`wallet answer replaces the wait before a delayed Home summary in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('delayed-summary');r.peer.choose({request:'silent'});
  await r.click('send-request');await r.state('request-phone');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'phone received message');
  let release;const held=new Promise(resolve=>{release=resolve;});t.after(()=>release());
@@ -270,7 +268,7 @@ for(const engine of ['chromium','webkit'])test(`wallet answer replaces the wait 
  await r.capture('answer-before-summary');release();assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`keyboard activation and long-card redraw preserve focus and scroll in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`keyboard activation and long-card redraw preserve focus and scroll in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.frame.locator('[data-action=connect]').press('Enter');await r.state('qr-shown');
  await r.frame.locator('[data-action=copy-link]').press('Space');await until(()=>r.page.evaluate(()=>window.copied.startsWith('wc:')),'keyboard Copy link writes through Home');await r.peer.pair(await r.page.evaluate(()=>window.copied));await r.state('linked');
  await r.approval('long-keyboard',{reason:'Review this message from the requesting app. '.repeat(40),requesting_origin:'https://'+('a'.repeat(60)+'.').repeat(3)+'example.test'});await r.state('request-waiting');
@@ -286,7 +284,7 @@ for(const engine of ['chromium','webkit'])test(`keyboard activation and long-car
  await refreshAndWaitForRedraw(r);assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.focus),'outcome','result redraw preserves the non-action outcome focus');assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`background wallet redraw keeps Home keyboard focus in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`background wallet redraw keeps Home keyboard focus in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await focusWithKeyboard(r,'copy-address');
  await r.page.evaluate(()=>{const input=document.createElement('input');input.id='home-note';input.style.position='fixed';input.style.top='0';document.body.append(input);input.focus();});
  await r.page.keyboard.press('x');assert.deepEqual(await r.page.evaluate(()=>({focused:document.hasFocus(),value:document.querySelector('#home-note').value})),{focused:true,value:'x'},'Home owns the native keystroke before the wallet redraw');
@@ -295,12 +293,12 @@ for(const engine of ['chromium','webkit'])test(`background wallet redraw keeps H
  await r.frame.evaluate(()=>window.focus());await refreshAndWaitForRedraw(r);assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.action),'copy-address','returning restores the same account action');assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`unsupported wallet network is named and cannot be linked in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`unsupported wallet network is named and cannot be linked in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.peer.choose({chains:['eip155:8453','eip155:137']});await r.link();await r.peer.changeChain('eip155:137');await r.state('network-unsupported');
  assert.match(await r.frame.locator('main').innerText(),/Unsupported network.*137/);assert.equal(await r.frame.locator('[data-action=finish]').count(),0);assert.equal(r.fixture.state.verified,1);
  await r.capture('network-unsupported');await r.click('back-to-connection');await r.state('internet-ready');await r.click('connect');await r.state('qr-shown');assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])test(`relay drops and returns during ${phase} in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])test(`relay drops and returns during ${phase} in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);
  if(phase==='ownership'){r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.some(e=>e.kind==='request'),'proof published');}
  else{await r.link();if(phase==='signature'||phase==='result'){await r.approval('relay-message');if(phase==='signature')r.peer.choose({request:'silent'});await r.click('send-request');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'message published');await r.state(phase==='signature'?'request-phone':'request-done');}}
@@ -310,7 +308,7 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
  if(phase==='ownership'||phase==='signature'){await r.peer.answer('sign');await r.state(phase==='ownership'?'linked':'request-done');}
  assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])test(`session expiry is observed during ${phase} in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])test(`session expiry is observed during ${phase} in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);
  if(phase==='ownership'){r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.some(e=>e.kind==='request'),'proof published');}
  else{await r.link();if(phase==='signature'||phase==='result'){await r.approval('expiry-message');if(phase==='signature')r.peer.choose({request:'silent'});await r.click('send-request');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'message published');await r.state(phase==='signature'?'request-phone':'request-done');}}
@@ -321,14 +319,14 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
  if(phase==='result')assert.match(await r.frame.locator('main').innerText(),/Message signed.*This wallet connection expired/s);
 });
 
-for(const engine of ['chromium','webkit'])test(`a returned transaction hash stays visible when Home cannot confirm it in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a returned transaction hash stays visible when Home cannot confirm it in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();r.fixture.state.completeFails=true;await r.approval('unconfirmed-hash',{intent:'transaction_intent'});await r.click('send-request');await r.state('transaction-wallet-error');
  assert.equal(r.fixture.state.completed,0);assert.equal(r.fixture.state.returnedHash,r.peer.lastTransactionHash);
  assert.ok((await r.frame.locator('main').innerText()).includes(r.peer.lastTransactionHash),'the exact returned hash survives the failed existing completion route');
  await r.capture('transaction-hash-unconfirmed');assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`a wallet answer names Home while its existing completion is pending in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a wallet answer names Home while its existing completion is pending in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('checking-response');
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),checking=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
  await r.page.route('**/wallet/approvals/checking-response/complete',async route=>{entered();await held;await route.continue();});
@@ -337,7 +335,7 @@ for(const engine of ['chromium','webkit'])test(`a wallet answer names Home while
  release();await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`proof checking stays bound while the wallet changes account in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`proof checking stays bound while the wallet changes account in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine),first=r.peer.address;
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),checking=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
  await r.page.route('**/api/auth/evm/verify',async route=>{entered();await held;await route.continue();});
@@ -348,12 +346,12 @@ for(const engine of ['chromium','webkit'])test(`proof checking stays bound while
  assert.equal(await r.frame.locator('[data-action=send-message]').count(),1);await r.capture('account-changed-after-proof-response');assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`an account change after proof awaits explicit Finish during a delayed Home refresh in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`an account change after proof awaits explicit Finish during a delayed Home refresh in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);let release,entered;const held=new Promise(resolve=>{release=resolve;}),refreshing=new Promise(resolve=>{entered=resolve;});t.after(()=>release());await r.page.route('**/wallet/accounts',async route=>{if(r.fixture.state.verified===1){entered();await held;}await route.continue();});
  await r.qr();await r.pair();await refreshing;await r.state('linked');assert.equal(r.fixture.state.verified,1);await r.peer.changeAccount();await r.state('account-changed');assert.match(await r.frame.locator('main').innerText(),new RegExp(r.peer.address.slice(0,6),'i'));assert.equal(r.fixture.state.verified,1,'the changed account has no automatic proof');await r.peer.changeAccount(0);await r.state('linked');assert.equal(r.fixture.state.verified,1,'returning to the just-proven account sends no extra proof');await r.peer.changeAccount(1);await r.state('account-changed');await r.capture('account-changed-during-linked-refresh');release();await r.page.unroute('**/wallet/accounts');await r.click('send-message');await r.state('linked');assert.equal(r.fixture.state.verified,2);assert.equal(r.fixture.state.accounts[0].address.toLowerCase(),r.peer.address.toLowerCase());assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`the selected second request finishes before the first can be sent in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`the selected second request finishes before the first can be sent in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('first');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'second',reason:'Second request'});await r.refresh();await r.state('request-multiple');
  await r.click('view-requests');await r.state('request-list');await r.frame.locator('[data-focus-key="select-request:second"]').click();assert.equal(await r.frame.locator('.connection-request').getAttribute('data-request-id'),'second');
  let release,entered,first=true;const held=new Promise(resolve=>{release=resolve;}),captured=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
@@ -365,7 +363,7 @@ for(const engine of ['chromium','webkit'])test(`the selected second request fini
  release();await (await staleResponse).finished();await r.frame.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await r.state('request-done');assert.equal(await r.frame.locator('[data-action=send-request]').count(),0,'an older pending snapshot cannot restore either completed request');assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`cleanup refusal local stop and permission recovery states in ${engine}`,{timeout:180000},async t=>{
+for(const engine of ['chromium','webkit'])test(`cleanup refusal local stop and permission recovery states in ${engine}`,windowTestOptions(engine,180000),async t=>{
  const r=await setup(t,engine);r.fixture.state.deleteFails=true;await r.click('connect');await r.state('link-error');await r.capture('cleanup-error');
  r.fixture.state.deleteFails=false;await r.link();
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),deleting=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
@@ -380,7 +378,7 @@ for(const engine of ['chromium','webkit'])test(`cleanup refusal local stop and p
  assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])test(`session extension during ${phase} keeps the current request in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])test(`session extension during ${phase} keeps the current request in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);
  if(phase==='ownership'){r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.some(e=>e.kind==='request'),'proof published');}
  else{await r.link();if(phase==='signature'||phase==='result'){await r.approval('extended-session');if(phase==='signature')r.peer.choose({request:'silent'});await r.click('send-request');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'message published');await r.state(phase==='signature'?'request-phone':'request-done');}}
@@ -390,12 +388,12 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
  assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`read failure during a phone wait retains Stop waiting in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`read failure during a phone wait retains Stop waiting in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();r.peer.choose({request:'silent'});await r.approval('read-failure');await r.click('send-request');await r.state('request-phone');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'message published');
  await r.page.route('**/wallet/accounts',route=>route.fulfill({status:503,body:'Unavailable'}));await r.refresh();await r.state('request-phone');assert.equal(await r.frame.locator('[data-action=stop-waiting]:enabled').count(),1);await r.capture('home-read-failed-during-wait');
  await r.page.unroute('**/wallet/accounts');await r.peer.answer('sign');await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])for(const ending of ['permission','expiry'])test(`sent transaction survives ${ending} without a Send control in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])for(const ending of ['permission','expiry'])test(`sent transaction survives ${ending} without a Send control in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('sent-transaction',{intent:'transaction_intent'});r.peer.choose({request:'silent'});await r.click('send-request');await r.state('transaction-phone');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'transaction published');
  if(ending==='permission'){r.fixture.setPermission('revoked');await r.refresh();}
  else{await r.frame.evaluate(()=>{const now=Date.now;Date.now=()=>now()+8*86400*1000;const core=globalThis['_walletConnectCore_wallet-walletconnect'];for(const name of core.heartbeat.events.eventNames())core.heartbeat.events.emit(name);});await r.refresh();}
@@ -403,76 +401,76 @@ for(const engine of ['chromium','webkit'])for(const ending of ['permission','exp
  if(ending==='permission'){r.fixture.setPermission('granted');await r.refresh();await r.state('transaction-wallet-error');assert.equal(await r.frame.locator('[data-action=send-request]').count(),0);await r.capture('transaction-after-access-returned');}
  assert.equal(r.fixture.state.approvals[0].status,'approved');assert.equal(r.fixture.state.completed,0);assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`a blocked first request leaves the real queue usable in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a blocked first request leaves the real queue usable in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('blocked',{intent:'browser_typed_data_sign'});r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'valid',intent:'credential'});await r.reopen();await r.state('request-multiple');assert.equal(await r.frame.locator('.connection-request').first().getAttribute('data-request-id'),'valid');await r.capture('blocked-first-queue');
  await r.click('send-request');await r.state('request-next');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='valid').status,'completed');assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`picker cannot replace an expired window in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`picker cannot replace an expired window in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('one');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'two'});await r.refresh();await r.click('view-requests');await r.state('request-list');r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.equal(await r.frame.locator('button').count(),0,'expired queue offers no inoperative local picker');await r.capture('expired-window-from-picker');assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`proof timeout survives relay and session-extension updates in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`proof timeout survives relay and session-extension updates in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.some(e=>e.kind==='request'),'proof published');await r.frame.evaluate(()=>{for(const fn of window.longTimers)fn();});await r.state('link-timeout');
  await r.peer.extendSession();await r.refresh();await r.state('link-timeout');r.fixture.setRelayAvailable(false);await r.frame.getByText(/WalletConnect is reconnecting/).waitFor();await r.state('link-timeout');r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/WalletConnect is reconnecting/).count(),'transport returns');await r.state('link-timeout');await r.capture('proof-timeout-after-session-events');assert.equal(r.fixture.state.verified,0);assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])for(const cleanupFails of [false,true])test(`a known hash survives stopping Home completion in ${engine}${cleanupFails?' when cleanup fails':''}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])for(const cleanupFails of [false,true])test(`a known hash survives stopping Home completion in ${engine}${cleanupFails?' when cleanup fails':''}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('hash-before-stop',{intent:'transaction_intent'});
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),checking=new Promise(resolve=>{entered=resolve;});t.after(()=>release());await r.page.route('**/wallet/approvals/hash-before-stop/complete',async route=>{entered();await held;await route.continue();});
  await r.click('send-request');await checking;await r.frame.getByText('Your wallet has answered. Home is checking the response.',{exact:true}).waitFor();r.fixture.state.deleteFails=cleanupFails;await r.click('stop-waiting');const stopped=cleanupFails?'transaction-wallet-error':'transaction-cancelled';await r.state(stopped);assert.ok((await r.frame.locator('main').innerText()).includes(r.peer.lastTransactionHash));await r.capture(cleanupFails?'known-hash-after-failed-stop':'known-hash-after-stop');release();await until(()=>r.fixture.state.completed===1,'the existing posted completion can finish');await r.state(stopped);assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`Send remains bound to its visible request ID in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`Send remains bound to its visible request ID in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('current');const before=r.fixture.state.calls.filter(row=>row.path.endsWith('/approve')).length;
  await r.frame.locator('[data-action=send-request]').evaluate(button=>button.dataset.walletRequestSign='stale-other-request');await r.click('send-request');await pause(200);
  assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/approve')).length,before,'a stale control cannot send the current different request');assert.equal(r.fixture.state.completed,0);await r.frame.locator('[data-action=send-request]').evaluate(button=>button.dataset.walletRequestSign='current');await r.click('send-request');await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`a confirmed signature survives a failed following summary read in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a confirmed signature survives a failed following summary read in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('answered-before-read-failure');r.peer.choose({request:'silent'});await r.click('send-request');await r.state('request-phone');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'message published');
  await r.page.route('**/wallet/accounts',route=>route.fulfill({status:503,body:'Unavailable'}));await r.peer.answer('sign');await r.state('request-done');await pause(200);await r.state('request-done');assert.equal(r.fixture.state.completed,1);await r.capture('known-result-with-summary-error');assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`idle background read failure recovers without replacing wallet facts in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`idle background read failure recovers without replacing wallet facts in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.page.route('**/internet',route=>route.fulfill({status:503,body:'Unavailable'}));await r.page.route('**/wallet/accounts',route=>route.fulfill({status:503,body:'Unavailable'}));await r.refresh();await r.state('linked');
  await r.peer.changeAccount();await r.state('account-changed');assert.match(await r.frame.locator('main').innerText(),new RegExp(r.peer.address.slice(0,6),'i'),'wallet selection refreshes even while the Home read fails');
  await r.page.unroute('**/internet');await r.page.unroute('**/wallet/accounts');await r.refresh();await r.state('account-changed');await r.capture('background-read-recovered');assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`unsent request returns to Send after refusal and later Allow in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`unsent request returns to Send after refusal and later Allow in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('access-return');r.fixture.setPermission('off');await r.click('send-request');await r.state('request-internet-pending');r.fixture.setPermission('refused');await r.refresh();await r.state('internet-refused');r.fixture.setPermission('granted');await r.refresh();await r.state('request-waiting');await r.capture('unsent-request-after-access-return');
  await r.click('send-request');await r.state('qr-shown');await r.pair();await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`a no-op wallet update keeps timeout recovery and a known hash in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a no-op wallet update keeps timeout recovery and a known hash in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.some(e=>e.kind==='request'),'proof published');await r.frame.evaluate(()=>{for(const fn of window.longTimers)fn();});await r.state('link-timeout');await r.peer.updateSession();await r.refresh();await r.state('link-timeout');await r.peer.answer('reject');await r.click('check-access');await r.state('saved-unlinked');r.peer.choose({request:'sign'});await r.click('finish');await r.state('linked');
  r.fixture.state.completeFails=true;await r.approval('retained-hash',{intent:'transaction_intent'});await r.click('send-request');await r.state('transaction-wallet-error');const hash=r.peer.lastTransactionHash;await r.peer.updateSession();await r.refresh();await r.state('transaction-wallet-error');assert.ok((await r.frame.locator('main').innerText()).includes(hash));await r.peer.deleteConnection();await r.state('transaction-wallet-error');assert.ok((await r.frame.locator('main').innerText()).includes(hash));await r.capture('known-hash-after-wallet-removed');assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`failed Disconnect has a working fresh connection recovery in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`failed Disconnect has a working fresh connection recovery in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();r.fixture.state.deleteFails=true;await r.click('disconnect');await r.state('disconnect-error');await r.capture('disconnect-error');assert.match(await r.frame.locator('main').innerText(),/Home could not finish disconnecting/);r.fixture.state.deleteFails=false;await r.click('disconnect');await r.state('disconnected');await r.link();assert.equal(r.fixture.state.verified,2);assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`a cached grant never repeats the saved permission action in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a cached grant never repeats the saved permission action in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('fresh-grant');r.fixture.setPermission('off');await r.page.route('**/internet',route=>route.request().method()==='GET'?route.fulfill({status:503,body:'Unavailable'}):route.continue());
  const posts=()=>r.fixture.state.calls.filter(row=>row.path.endsWith('/internet')&&row.method==='POST').length;
  await r.click('send-request');await r.state('request-internet-pending');const once=posts();await r.refresh();await r.refresh();assert.equal(posts(),once,'a cached old grant cannot trigger another permission POST');assert.equal(r.fixture.state.completed,0);
  r.fixture.setPermission('granted');await r.page.unroute('**/internet');await r.refresh();await r.state('qr-shown');await r.pair();await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`clipboard refusal pending answer and retry stay in the shared view in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`clipboard refusal pending answer and retry stay in the shared view in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.qr();await r.page.evaluate(()=>window.clipboardAllowed=false);await r.click('copy-link');await r.frame.getByText('Could not copy. Try again.',{exact:true}).waitFor();assert.ok(await r.page.evaluate(()=>window.copied===''),'denied copy leaves the fixture clipboard empty');await r.capture('qr-copy-denied');
  await r.page.evaluate(()=>{window.clipboardAllowed=true;window.holdClipboard=true;});await r.click('copy-link');assert.equal(await r.frame.locator('[data-action=copy-link]').isDisabled(),true);await r.capture('qr-copy-pending');await r.page.evaluate(()=>{window.holdClipboard=false;for(const reply of window.clipboardReplies.splice(0))reply();});await r.frame.getByText('Link copied.',{exact:true}).waitFor();await r.peer.pair(await r.page.evaluate(()=>window.copied));await r.state('linked');
  const copied=await r.page.evaluate(()=>window.copied);await r.page.evaluate(()=>window.clipboardAllowed=false);await r.click('copy-address');await r.frame.getByText('Could not copy. Try again.',{exact:true}).waitFor();assert.ok(await r.page.evaluate(copied=>window.copied===copied,copied),'denied copy preserves the fixture clipboard');await r.capture('address-copy-denied');await r.page.evaluate(()=>window.clipboardAllowed=true);await r.click('copy-address');await r.frame.getByText('Address copied.',{exact:true}).waitFor();assert.equal(await r.page.evaluate(()=>window.copied),r.peer.address);await r.capture('address-copied');assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`initial off picker and unsent connection-loss scenes recover in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`initial off picker and unsent connection-loss scenes recover in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.fixture.setPermission('off');await r.refresh();await r.state('nothing-saved');await r.capture('nothing-saved');r.fixture.setPermission('granted');await r.refresh();await r.state('internet-ready');await r.link();
  await r.approval('unsent');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'other',reason:'Another waiting request'});await r.refresh();await r.click('view-requests');await r.state('request-list');await r.capture('request-list');await r.frame.locator('[data-focus-key="select-request:unsent"]').click();r.fixture.state.approvals=r.fixture.state.approvals.filter(row=>row.request_id==='unsent');await r.refresh();await r.state('request-waiting');
  await r.peer.deleteConnection();await r.state('request-wallet-removed');await r.capture('request-wallet-removed');assert.equal(r.fixture.state.approvals[0].status,'pending');await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('request-waiting');
  await until(()=>r.fixture.pendingDeliveryAcks()===0,'Runtime acknowledged prior wallet responses');await r.page.waitForLoadState('networkidle');await r.leave();const sessions=Object.entries(r.fixture.state.keys).find(([key])=>key.endsWith('//session'))?.[1];assert.ok(Array.isArray(sessions)&&sessions.length,'real SDK persisted its session');for(const session of sessions)session.expiry=Math.floor(Date.now()/1000)-1;
  const proposals=r.peer.trace.filter(row=>row.kind==='proposal').length;await r.reopen();await r.state('request-connection-expired');await r.capture('request-connection-expired');assert.equal(r.peer.trace.filter(row=>row.kind==='proposal').length,proposals,'opening an expired saved session sends no new proposal');await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('request-waiting');await r.click('send-request');await r.state('request-done');assert.equal(r.fixture.state.completed,1);await r.capture('recovered-after-unsent-session-expiry');assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`an invalid Home handoff sends nothing to the phone in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`an invalid Home handoff sends nothing to the phone in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('invalid-home-handoff');const before=r.peer.trace.filter(row=>row.kind==='request').length;r.fixture.state.invalidSignatureHandoff=true;await r.click('send-request');await r.state('request-unavailable');assert.equal(r.peer.trace.filter(row=>row.kind==='request').length,before,'invalid handoff never opens a signing prompt');assert.equal(r.fixture.state.completed,0);await r.capture('home-handoff-unavailable');await r.peer.deleteConnection();await r.state('request-unavailable');await r.capture('home-handoff-unavailable-after-removal');assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`an expired Home-approved transaction reopens as result unknown in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`an expired Home-approved transaction reopens as result unknown in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('already-sent-expired',{intent:'transaction_intent'});r.peer.choose({request:'silent'});await r.click('send-request');await r.state('transaction-phone');await until(()=>r.peer.trace.filter(row=>row.kind==='request').length>=2,'phone holds the actual transaction');assert.equal(r.fixture.state.approvals[0].status,'approved');
  await r.leave();r.fixture.state.approvals[0].expires_at=Math.floor(Date.now()/1000)-1;await r.reopen();await r.frame.getByRole('button',{name:'View requests',exact:true}).click();await r.frame.getByRole('button',{name:'View request',exact:true}).click();await r.state('transaction-reopened');assert.equal(await r.frame.locator('[data-action=send-request],[data-action=start-over]').count(),0);await r.capture('expired-approved-transaction-reopened');
  await r.peer.deleteConnection();await r.state('transaction-wallet-removed');await r.capture('expired-approved-transaction-wallet-removed');assert.equal(r.fixture.state.completed,0);assert.equal(r.peer.trace.filter(row=>row.kind==='request').length,2,'reopen and deletion send no second transaction');assert.deepEqual(r.errors,[]);
 });
-for(const engine of ['chromium','webkit'])test(`a saved silent proof waits for the old phone prompt before its fresh proof in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a saved silent proof waits for the old phone prompt before its fresh proof in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.filter(row=>row.kind==='request').length===1,'phone holds the original proof');
  await r.reopen();await r.state('saved-unlinked');await r.capture('saved-unfinished-proof');assert.equal(r.fixture.state.verified,0);assert.equal(r.fixture.state.accounts.length,0);assert.equal(await r.frame.locator('.connection-qr').count(),0);assert.equal(r.peer.trace.filter(row=>row.kind==='request').length,1,'restore alone sends no proof');
  const oldChallenge=r.fixture.state.challenge.message;await r.click('finish');await r.state('link-wait');await until(()=>r.fixture.state.challenge.message!==oldChallenge,'Finish creates a fresh Home challenge');await r.capture('saved-proof-retry-wait');
@@ -480,7 +478,7 @@ for(const engine of ['chromium','webkit'])test(`a saved silent proof waits for t
  await r.peer.answer('sign');await until(()=>r.peer.trace.filter(row=>row.kind==='request').length===2,'phone receives the new proof after answering the old prompt');assert.equal(r.fixture.state.verified,0,'the valid old signature cannot link the fresh challenge');await r.state('link-wait');
  await r.peer.answer('sign');await r.state('linked');assert.equal(r.fixture.state.verified,1);assert.equal(r.fixture.state.accounts[0].chain_namespace,'eip155:8453');assert.equal(r.peer.trace.filter(row=>row.kind==='proposal').length,1,'explicit Finish reuses the saved session');
 });
-for(const engine of ['chromium','webkit'])for(const kind of ['connection','request'])test(`neutral preparation names the existing ${kind} action in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])for(const kind of ['connection','request'])test(`neutral preparation names the existing ${kind} action in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);
  if(kind==='connection'){r.peer.choose({request:'reject'});await r.qr();await r.pair();await r.state('link-declined');r.peer.choose({request:'sign'});}
  else {await r.link();await r.approval('preparation-message');}
@@ -490,16 +488,16 @@ for(const engine of ['chromium','webkit'])for(const kind of ['connection','reque
  await r.state(kind==='connection'?'linked':'request-done');assert.equal(r.fixture.state.verified,1);assert.equal(r.fixture.state.completed,kind==='connection'?0:1);
 });
 
-for(const engine of ['chromium','webkit'])test(`Stop waiting cleanup failure has a working fresh-connection recovery in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`Stop waiting cleanup failure has a working fresh-connection recovery in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('stop-cleanup-error');r.peer.choose({request:'silent'});await r.click('send-request');await r.state('request-phone');await until(()=>r.peer.trace.filter(row=>row.kind==='request').length>=2,'phone holds the message');r.fixture.state.deleteFails=true;await r.click('stop-waiting');await r.state('disconnect-error');await r.capture('stop-cleanup-error');assert.equal(r.fixture.state.completed,0);r.fixture.state.deleteFails=false;await r.link();assert.equal(r.fixture.state.verified,2);assert.equal(r.fixture.state.completed,0,'fresh connection never reuses the consumed message');assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`an unsent transaction Cancel cleanup failure keeps truthful recovery in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`an unsent transaction Cancel cleanup failure keeps truthful recovery in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('unsent-stop-error',{intent:'transaction_intent'});let release,entered;const held=new Promise(resolve=>{release=resolve;}),approving=new Promise(resolve=>{entered=resolve;});t.after(()=>release());await r.page.route('**/wallet/approvals/unsent-stop-error/approve',async route=>{const response=await route.fetch();entered();await held;await route.fulfill({response});});
  await r.click('send-request');await approving;await r.state('preparing-request');r.fixture.state.deleteFails=true;await r.click('cancel');await r.state('disconnect-error');assert.equal(r.peer.trace.some(row=>row.kind==='request'&&row.method==='eth_sendTransaction'),false);await r.capture('unsent-transaction-stop-cleanup-error');release();await r.page.unroute('**/wallet/approvals/unsent-stop-error/approve');r.fixture.state.deleteFails=false;await r.click('disconnect');await r.state('disconnected');await r.click('connect');await r.state('qr-shown');await r.pair();await r.state('linked');await r.click('view-requests');await r.frame.locator('[data-focus-key="select-request:unsent-stop-error"]').click();await r.state('transaction-reopened');assert.equal(r.fixture.state.verified,2);assert.equal(r.peer.trace.some(row=>row.kind==='request'&&row.method==='eth_sendTransaction'),false,'the cancelled unsent transaction stays unused');assert.equal(r.fixture.state.completed,0);assert.deepEqual(r.errors,[]);
 });
 
-for(const engine of ['chromium','webkit'])test(`final shared loading retry and current linked account in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`final shared loading retry and current linked account in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();
  r.fixture.state.accounts.push({address:'0x'+'56'.repeat(20),chain_namespace:'eip155:1',connector_id:'wallet-walletconnect',proof_type:'siwe'});await r.refresh();await r.state('linked');assert.equal(await r.frame.locator('.connection-account code').count(),1);assert.equal(r.fixture.state.accounts.length,2);await r.capture('linked-with-other-home-accounts');
  let release,entered;const held=new Promise(resolve=>release=resolve),reading=new Promise(resolve=>entered=resolve);t.after(()=>release());
@@ -509,14 +507,14 @@ for(const engine of ['chromium','webkit'])test(`final shared loading retry and c
  await r.click('back-to-connection');await r.state('internet-ready');await r.capture('connection-internet-controls');
 });
 
-for(const engine of ['chromium','webkit'])test(`a known hash survives leaving for the next request in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a known hash survives leaving for the next request in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();r.fixture.state.completeFails=true;await r.approval('hash-before-next',{intent:'transaction_intent'});await r.click('send-request');await r.state('transaction-wallet-error');const hash=r.peer.lastTransactionHash;
  r.fixture.state.completeFails=false;r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'next-message',intent:'credential',status:'pending'});await r.refresh();
  await r.click('view-requests');await r.frame.locator('[data-focus-key="select-request:next-message"]').click();await r.click('send-request');await r.state('request-next');assert.equal(r.fixture.state.completed,1);
  await r.click('view-requests');await r.frame.locator('[data-focus-key="select-request:hash-before-next"]').click();await r.state('transaction-wallet-error');assert.equal(await r.frame.locator('.connection-hash').innerText(),hash);assert.equal(await r.frame.locator('[data-action=send-request]').count(),0);assert.equal(r.peer.trace.filter(e=>e.kind==='request'&&e.method==='eth_sendTransaction').length,1,'local navigation never sends the old transaction again');await r.capture('known-hash-after-next-request');
 });
 
-for(const engine of ['chromium','webkit'])test(`a pre-send failure can be reviewed again without reconnecting in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a pre-send failure can be reviewed again without reconnecting in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('retry-unsent');
  await r.page.route('**/wallet/approvals/retry-unsent/approve',route=>route.fulfill({status:503,body:'Home unavailable'}));
  await r.click('send-request');await r.state('request-unavailable');assert.equal(r.fixture.state.approvals[0].status,'pending');assert.equal(r.peer.trace.filter(e=>e.kind==='request').length,1,'only the completed account proof reached the phone');
@@ -524,14 +522,14 @@ for(const engine of ['chromium','webkit'])test(`a pre-send failure can be review
  await r.click('send-request');await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.verified,1,'retry does not reconnect or relink');
 });
 
-for(const engine of ['chromium','webkit'])test(`request picker capability follows refused access and window expiry in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`request picker capability follows refused access and window expiry in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('queue-first');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'queue-second'});await r.refresh();await r.state('request-multiple');
  r.fixture.setPermission('refused');await r.refresh();await r.state('internet-refused');assert.equal(await r.frame.locator('[data-action=view-requests]').count(),0,'a refused gate cannot open the local picker');await r.capture('refused-queue-no-picker');
  r.fixture.setPermission('granted');await r.refresh();await r.state('request-multiple');await r.click('view-requests');await r.state('request-list');
  r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.equal(await r.frame.locator('button').count(),0,'an expired gate cannot open or select a cached request');await r.capture('expired-queue-no-controls');
 });
 
-for(const engine of ['chromium','webkit'])test(`outcome focus returns after a real background redraw in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`outcome focus returns after a real background redraw in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const mutation=process.env.WALLETCONNECT_FIX1_BREAK==='F2'?{file:'wallet-walletconnect.js',from:'action:document.activeElement?.dataset.action,focusKey:saved.key',to:'action:saved.action,focusKey:saved.key'}:undefined;
  const r=await setup(t,engine,mutation);await r.link();await r.frame.locator('[data-focus=outcome]').focus();await refreshAndWaitForRedraw(r);
  await r.page.evaluate(()=>{const input=document.createElement('input');input.id='home-outcome-note';input.style.position='fixed';input.style.top='0';document.body.append(input);input.focus();});await r.page.keyboard.press('x');assert.equal(await r.page.locator('#home-outcome-note').inputValue(),'x');
@@ -540,7 +538,7 @@ for(const engine of ['chromium','webkit'])test(`outcome focus returns after a re
  r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/WalletConnect is reconnecting/).count(),'the relay returned');assert.equal(r.fixture.state.verified,1);
 });
 
-for(const engine of ['chromium','webkit'])test(`answered request choices follow the same access gate in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`answered request choices follow the same access gate in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('answer-first');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'answer-second'});await r.refresh();await r.state('request-multiple');await r.click('send-request');await r.state('request-next');await r.frame.locator('[data-action=select-request]').waitFor();
  r.fixture.setPermission('refused');await r.refresh();await r.frame.locator('[data-action=select-request]').waitFor({state:'detached'});await r.state('request-next');assert.equal(await r.frame.locator('[data-action=view-requests]').count(),0);assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='answer-second').status,'pending');await r.capture('answered-queue-refused-no-picker');
  r.fixture.setPermission('granted');await r.refresh();await r.frame.locator('[data-action=select-request]').waitFor();await r.click('select-request');await r.state('request-waiting');assert.equal(r.fixture.state.completed,1,'reselection itself never sends a request');

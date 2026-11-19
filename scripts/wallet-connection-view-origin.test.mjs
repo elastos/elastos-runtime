@@ -15,7 +15,9 @@ function host(length){if(length<=63)return 'a'.repeat(length);const tail='.attac
 const origins=[...[1,63,87,89,118,135,253].map(n=>'https://'+host(n)), 'https://'+exact,'https://'+lookalike,'https://'+host(499)+':4444'];
 assert.equal(exact.length,135);assert.equal(origins.at(-1).length,512);
 const sizes=[[320,182],[360,596],[480,522],[390,844]];
-const ciSmoke=process.env.WALLET_VIEW_BROWSER_SMOKE==='1';
+// Routine suite: all windows, both scales, boundary origins and viewports.
+// Full matrix: WALLET_VIEW_FULL_MATRIX=1 node scripts/run-node-tests.mjs scripts/wallet-connection-view-origin.test.mjs
+const ciSmoke=process.env.WALLET_VIEW_FULL_MATRIX!=='1'&&process.env.WALLET_VIEW_EXHAUSTIVE_PAINT!=='1';
 const exhaustivePaint=process.env.WALLET_VIEW_EXHAUSTIVE_PAINT==='1';
 const requested=process.env.WALLET_VIEW_PROOF_DIR;
 const proof=await temporaryProof('wallet-view-origin-',requested);
@@ -71,18 +73,16 @@ async function activate(page,resize){
  const events=await page.evaluate(()=>window.approvalActivations);assert.equal(events.length,3);assert(events.every(e=>e.visible),'site final line visible at pointer, Enter and Space activation');
  return events;
 }
-describe('structural approval access and paint',{concurrency:false,timeout:exhaustivePaint||!ciSmoke?1800000:360000},()=>{
+describe('structural approval access and paint',{concurrency:false},()=>{
 for(const engine of ['chromium','webkit']){
  const optional=engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE;
- test(`F1: full origins and fixed feedback in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false,timeout:exhaustivePaint||!ciSmoke?900000:175000},async t=>{
-  const receipts=[];
-  const runScale=async scale=>{
-   // At 200% effective browser zoom, a physical window contains half as many CSS pixels.
-   const f=await browserFixture(engine,{width:320/scale,height:182/scale,scale,delayFont:true});
-   try{
-    for(const window of ['metamask','walletconnect','unisat'])for(const [width,height]of (ciSmoke?[[320,182],[480,522]]:sizes))for(const i of (ciSmoke?[7,9]:origins.map((_,i)=>i))){
-     if(t.signal.aborted)throw new Error('approval matrix cancelled');
-     try {
+ const receipts=[];
+ for(const scale of [1,2])describe(`F1: origins in ${engine} at zoom ${scale}`,{skip:optional?'WebKit required in content-sandbox CI':false},()=>{
+  let f;
+  test.before(async()=>{f=await browserFixture(engine,{width:320/scale,height:182/scale,scale,delayFont:true});});
+  test.after(async()=>{await f?.close();});
+  for(const window of ['metamask','walletconnect','unisat'])for(const [width,height]of (ciSmoke?[[320,182],[480,522]]:sizes))for(const i of (ciSmoke?[7,9]:origins.map((_,i)=>i)))
+   test(`${window} ${width}x${height} origin ${i} (${origins[i].length} chars)`,async()=>{
      await f.page.setViewportSize({width:Math.floor(width/scale),height:Math.floor(height/scale)});
      const delayedFamily=await f.prepareFont();
      await mount(f.page,{window,origin:origins[i],compact:scale===2||width<=360});
@@ -93,13 +93,12 @@ for(const engine of ['chromium','webkit']){
      await f.releaseFont();const fontAfter=await f.page.evaluate(family=>[...document.fonts].find(f=>f.family===family)?.status,delayedFamily);assert.equal(fontAfter,'loaded','real web font arrives after fallback paint');await check(f.page,{paint:false});measured.loadedFontLinesPainted=await assertEverySiteLinePaint(f.page);
      const events=await activate(f.page,{width:Math.floor((width===320?360:320)/scale),height:Math.floor((height===182?596:182)/scale)});
      receipts.push({window,width,height,scale,origin:origins[i],fontBefore,fontAfter,...measured,events});
-     }catch(error){error.stack=`${engine}/${window}/${width}x${height}/zoom${scale}/origin${origins[i].length}:\n${error.stack}`;throw error;}
-    }
-   }finally{await f.close();}
-  };
-  for(const scale of [1,2])await runScale(scale);
-  const f=await browserFixture(engine);try{await mount(f.page,{unnamed:true,long:false,compact:false});assert.equal(await f.page.locator('.connection-app').textContent(),'Requesting app');if(requested)await f.page.screenshot({path:`${proof.path}/unnamed-app-${engine}.png`});}finally{await f.close();}
+
+   });
+ });
+ test(`F1: matrix receipt and unnamed app in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false},async()=>{
   assert.equal(receipts.length,ciSmoke?24:240);
+  const f=await browserFixture(engine);try{await mount(f.page,{unnamed:true,long:false,compact:false});assert.equal(await f.page.locator('.connection-app').textContent(),'Requesting app');if(requested)await f.page.screenshot({path:`${proof.path}/unnamed-app-${engine}.png`});}finally{await f.close();}
   await writeFile(`${proof.path}/approval-${engine}.json`,JSON.stringify(receipts,null,2)+'\n');
  });
  test(`F1: six independent layout and paint breaks fail in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false},async t=>{

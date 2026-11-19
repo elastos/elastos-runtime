@@ -1,21 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {windowFixture,observeWindowErrors,walletWindowLifetime} from './lib/walletconnect-phone-window-fixture.mjs';
-import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
-import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
+import {observeWindowErrors,walletWindowLifetime} from './lib/walletconnect-phone-window-fixture.mjs';
+import {windowResources,windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function setup(t,engine,mutation){
  if(process.env.WALLETCONNECT_FIX1_BREAK==='B6')mutation={file:'walletconnect-client.mjs',from:"const {connectWithView} = await import('./walletconnect-pairing.mjs');\n        signal?.throwIfAborted();",to:"const {connectWithView} = await import('./walletconnect-pairing.mjs');"};
  if(process.env.WALLETCONNECT_FIX1_BREAK==='P7')mutation={file:'wallet-walletconnect.js',from:"if (detail?.connection) connectionState={...connectionState,...detail.connection};",to:'void detail;'};
  if(process.env.WALLETCONNECT_FIX1_BREAK==='C1')mutation={file:'wallet-walletconnect.js',from:"if(epoch!==actionEpoch)throw new Error('Wallet connection cancelled.');",to:'void epoch;'};
- const fixture=await windowFixture(),peer=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:fixture.origin.replace('http','ws')});
- const engines=await importProductSmokePlaywright(),browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
+ const {fixture,peer,browser,defer}=await windowResources(t,engine);
  const page=await browser.newPage({viewport:{width:480,height:560}}),{errors}=observeWindowErrors(page,fixture);
  await page.route('**/*',route=>new URL(route.request().url()).origin===fixture.origin?route.continue():route.abort());
  if(mutation)await page.route(`**/${mutation.file}*`,async route=>{const source=await readFile(new URL('../capsules/wallet-walletconnect/browser/'+mutation.file,import.meta.url),'utf8');assert.ok(source.includes(mutation.from));await route.fulfill({contentType:'text/javascript',body:source.replace(mutation.from,mutation.to)});});
  const settle=await walletWindowLifetime(page,fixture);
- t.after(async()=>{try{await settle(r.frame);}finally{await peer.stop();await browser.close();await fixture.stop();}assert.deepEqual(errors,[]);});
+ defer(async()=>{await settle(r.frame);assert.deepEqual(errors,[]);});
  const r={fixture,peer,page,frame:null};
  r.reopen=async()=>{await settle(r.frame);await page.goto(fixture.origin);r.frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));await r.frame.locator('main').waitFor();};
  r.state=name=>r.frame.locator(`main[data-state="${name}"]`).waitFor({timeout:20000});
@@ -27,7 +25,7 @@ async function setup(t,engine,mutation){
  await r.reopen();return r;
 }
 for(const engine of ['chromium','webkit']){
- test(`F1 blocked-first and phone-declined transaction keep connection controls reachable in ${engine}`,{timeout:90000},async t=>{
+ test(`F1 blocked-first and phone-declined transaction keep connection controls reachable in ${engine}`,windowTestOptions(engine,90000),async t=>{
   const r=await setup(t,engine);await r.link();
   r.request('typed',{intent:'browser_typed_data_sign'});await r.refresh();await r.state('linked');await r.choose('typed');await r.state('request-unsendable');
   await r.click('Back to connection');await r.state('linked');await r.click('Back to connection');await r.state('internet-ready');
@@ -39,19 +37,19 @@ for(const engine of ['chromium','webkit']){
   await r.reopen();await r.state('linked');assert.doesNotMatch(await r.frame.locator('main').innerText(),/Transaction result unknown/,'approved recovery never owns the default screen');
   await r.click('Disconnect');await r.state('disconnected');await r.click('Connect wallet');await r.state('qr-shown');await r.click('Cancel');
  });
- for(const ending of ['refused','failed'])test(`next waiting request is reachable after ${ending} through visible controls in ${engine}`,{timeout:60000},async t=>{
+ for(const ending of ['refused','failed'])test(`next waiting request is reachable after ${ending} through visible controls in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await setup(t,engine);await r.link();r.request('first');r.request('second');await r.refresh();await r.state('request-multiple');
   r.peer.choose({request:ending==='refused'?'reject':'sign'});r.fixture.state.invalidSignatureHandoff=ending==='failed';
   await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state(ending==='refused'?'request-declined':'request-unavailable');
   assert.equal(r.fixture.state.completed,0);r.fixture.state.invalidSignatureHandoff=false;r.peer.choose({request:'sign'});
   await r.choose('second');await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='second').status,'completed');
  });
- test(`linked account and saved unfinished connection name the real wallet in ${engine}`,{timeout:60000},async t=>{
+ test(`linked account and saved unfinished connection name the real wallet in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await setup(t,engine);await r.link();assert.match(await r.frame.locator('.connection-account').innerText(),/Scripted phone wallet/);
   const extra='0x'+'56'.repeat(20);r.fixture.state.accounts.push({address:extra,chain_namespace:'eip155:1',connector_id:'wallet-walletconnect',proof_type:'siwe'});await r.refresh();await r.state('linked');assert.equal(await r.frame.locator('.connection-account code').count(),1,'the connection names only its own account');assert.doesNotMatch(await r.frame.locator('.connection-account').innerText(),/Ethereum/);assert.equal(r.fixture.state.accounts.length,2,'Home retains its other linked account');
   r.fixture.state.accounts=[];await r.reopen();await r.state('saved-unlinked');assert.match(await r.frame.locator('main').innerText(),/Scripted phone wallet/);assert.equal(await r.frame.locator('.connection-qr').count(),0);
  });
- test(`account change during a signature keeps the consumed request and outside-prompt notice in ${engine}`,{timeout:60000},async t=>{
+ test(`account change during a signature keeps the consumed request and outside-prompt notice in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await setup(t,engine);await r.link();const requestedAccount=r.peer.address;r.request('change');await r.refresh();await r.state('request-waiting');r.peer.choose({request:'silent'});await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('request-phone');
   await r.page.waitForLoadState('networkidle');let release,entered;const held=new Promise(resolve=>release=resolve),reading=new Promise(resolve=>entered=resolve);
   await r.page.route('**/internet',async route=>{if(route.request().method()==='GET'){entered();await held;}await route.continue();});
@@ -61,12 +59,12 @@ for(const engine of ['chromium','webkit']){
   }finally{release();await (await response).finished();}
   await r.page.waitForLoadState('networkidle');
  });
- test(`P9 selected unconfirmed hash survives status polls in ${engine}`,{timeout:60000},async t=>{
+ test(`P9 selected unconfirmed hash survives status polls in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await setup(t,engine);await r.link();r.request('hash',{intent:'transaction_intent'});await r.refresh();await r.state('transaction-waiting');r.fixture.state.completeFails=true;await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('transaction-wallet-error');
   const before=await r.frame.locator('.connection-hash').evaluate(node=>{const range=document.createRange();range.selectNodeContents(node);getSelection().removeAllRanges();getSelection().addRange(range);window.selectedHashNode=node;return getSelection().toString();});assert.match(before,/^0x[0-9a-f]{64}$/i);
   await pause(6500);assert.equal(await r.frame.evaluate(()=>getSelection().toString()),before);assert.equal(await r.frame.evaluate(()=>document.contains(window.selectedHashNode)),true);
  });
- test(`B6 Stop during pairing import discards the old adapter before fresh Connect in ${engine}`,{timeout:60000},async t=>{
+ test(`B6 Stop during pairing import discards the old adapter before fresh Connect in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await setup(t,engine);let entered,release;const held=new Promise(resolve=>release=resolve),loading=new Promise(resolve=>entered=resolve);let imports=0;
   r.page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/vendor/reown-appkit.js'))imports++;});
   await r.page.route('**/walletconnect-pairing.mjs',async route=>{entered();await held;await route.continue();});t.after(()=>release());
@@ -75,14 +73,14 @@ for(const engine of ['chromium','webkit']){
  });
 }
 
-for(const engine of ['chromium','webkit'])test(`a new review replaces a saved Connect only after visible Cancel in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`a new review replaces a saved Connect only after visible Cancel in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.state('internet-ready');r.fixture.setPermission('off');await r.refresh();await r.state('nothing-saved');
  await r.click('Connect wallet');await r.state('internet-pending');r.request('new-review');await r.refresh();await r.state('request-internet-pending');await r.click('Cancel');await r.state('request-internet-off');
  const verified=r.fixture.state.verified;r.fixture.setPermission('granted');await r.refresh();await r.state('request-waiting');assert.equal(r.fixture.state.verified,verified,'Allow cannot resume the cancelled saved Connect');
  await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('qr-shown');await r.click('Copy link');await r.frame.getByText('Link copied.',{exact:true}).waitFor();await r.peer.pair(await r.page.evaluate(()=>window.copied));await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.verified,verified,'the explicit request resumes Send rather than the old account proof');
 });
 
-for(const engine of ['chromium','webkit'])test(`Cancel before Home internet reply prevents a late wallet prompt in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`Cancel before Home internet reply prevents a late wallet prompt in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);let release,entered;const held=new Promise(resolve=>release=resolve),posting=new Promise(resolve=>entered=resolve);t.after(()=>release());
  await r.page.route('**/internet',async route=>{if(route.request().method()!=='POST')return route.continue();const response=await route.fetch();entered();await held;await route.fulfill({response});});
  await r.state('internet-ready');await r.click('Connect wallet');await posting;await r.click('Cancel');await r.state('qr-cancelled');release();
