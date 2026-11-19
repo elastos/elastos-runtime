@@ -55,8 +55,21 @@ function fixture(t, scenario, files = 1) {
   const env = { ...process.env, ELASTOS_PLAYWRIGHT_MODULE: module };
   delete env.NODE_TEST_CONTEXT;
   delete env.ELASTOS_BROWSER_LAUNCH_LEDGER;
-  const run = () => {
-    const result = spawnSync(process.execPath, [runner, "--timeout=10000", ...paths], {
+  const run = ({ nested = false } = {}) => {
+    let entrypoints = paths;
+    if (nested) {
+      const orchestrator = join(root, "nested.mjs");
+      writeFileSync(orchestrator, `import test from 'node:test';import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';
+        test('nested real test supervisors',()=>{
+          const env={...process.env};delete env.NODE_TEST_CONTEXT;
+          for(const file of ${JSON.stringify(paths)}){
+            const r=spawnSync(process.execPath,[${JSON.stringify(runner)},'--timeout=10000',file],{env,encoding:'utf8',timeout:20000});
+            assert.ifError(r.error);assert.equal(r.status,0,r.stdout+r.stderr);
+          }
+        });`);
+      entrypoints = [orchestrator];
+    }
+    const result = spawnSync(process.execPath, [runner, "--timeout=10000", ...entrypoints], {
       env, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024,
     });
     assert.ifError(result.error);
@@ -95,4 +108,11 @@ for (const files of [3, 4]) test(`the run counts relaunches across ${files} test
   assert.equal(r.status, files > 3 ? 1 : 0, r.output);
   assert.match(r.output, new RegExp(`Browser launch summary: ${files} relaunch\\(es\\); limit 3; ${files > 3 ? "FAIL" : "PASS"}`));
   assert.match(r.output, new RegExp(`Node test guard: ${files > 3 ? "FAIL" : "PASS"}`));
+});
+
+test("nested supervisors charge real browser relaunches to the outer suite", t => {
+  const r = fixture(t, "once", 4).run({ nested: true });
+  assert.equal(r.status, 1, r.output);
+  assert.match(r.stdout, /Browser launch summary: 4 relaunch\(es\); limit 3; FAIL/);
+  assert.match(r.stdout, /Node test guard: FAIL/);
 });

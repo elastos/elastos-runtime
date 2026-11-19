@@ -16,9 +16,12 @@ function summary(count) {
   return count > 3;
 }
 
-// The test-worker leader owns one ledger across all file processes and their
-// smoke children. Nested supervisors get a separate ledger for their fixtures.
+// The outer test-worker leader owns one ledger across file processes, smoke
+// children and nested supervisors. Isolated fixtures clear the inherited path.
 export function createBrowserLaunchRun() {
+  if (process.env.ELASTOS_BROWSER_LAUNCH_LEDGER) {
+    return { ledger: process.env.ELASTOS_BROWSER_LAUNCH_LEDGER, finish: code => code };
+  }
   const directory = mkdtempSync(join(tmpdir(), "browser-launch-run-"));
   const ledger = join(directory, "relaunches");
   writeFileSync(ledger, "", { mode: 0o600 });
