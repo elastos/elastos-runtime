@@ -5,9 +5,10 @@ storage direction. Product support requires implementation and acceptance.
 For what is stored and protected today, read
 [Security: stored keys and recovery](../SECURITY.md#stored-keys-and-recovery).
 The gaps belong to [backup and recovery (#567)](https://github.com/elastos/elastos-runtime/issues/567),
+[file backup (#603)](https://github.com/elastos/elastos-runtime/issues/603),
 [key custody (#210)](https://github.com/elastos/elastos-runtime/issues/210),
 [host protection (#209)](https://github.com/elastos/elastos-runtime/issues/209),
-[copies on your own devices (#498)](https://github.com/elastos/elastos-runtime/issues/498),
+[replicas on your own devices (#498)](https://github.com/elastos/elastos-runtime/issues/498),
 and [isolation (#173)](https://github.com/elastos/elastos-runtime/issues/173).
 
 ## Two kinds of data
@@ -181,7 +182,7 @@ require protection against host tampering need a supported execution boundary
 and evidence for it. The recipient can choose a compatible environment; a
 provider's unsupported claim is insufficient to satisfy the policy.
 
-Runtime should prevent unauthorised copies inside the enforced boundary. The
+Runtime should prevent unauthorised replicas inside the enforced boundary. The
 limit is information that has already escaped that boundary or was deliberately
 exported. Removing a grant cannot recover such information, including external
 recordings. Ordinary export paths still require full permission enforcement.

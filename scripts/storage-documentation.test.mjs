@@ -87,7 +87,13 @@ function checkRecoveryCoverage(document) {
   ]) {
     const row = table.split("\n").find((line) => line.startsWith(`| ${name}`));
     assert.ok(row, `find the ${name} row`);
-    assert.equal(row.split("|")[4].trim(), coverage, `${name}: single-file export coverage`);
+    const actual = row.split("|")[4].trim();
+    if (name === "Home recovery authority") {
+      assert.ok(actual.includes(coverage), `${name}: single-file export coverage`);
+      assert.match(actual, /\bnot passkeys or sessions\b/i, "exclude sign-in state from recovery");
+    } else {
+      assert.equal(actual, coverage, `${name}: single-file export coverage`);
+    }
   }
 }
 

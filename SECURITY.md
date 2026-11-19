@@ -28,7 +28,7 @@ host developer mode and closed guest registration are required to enable it.
 An enabled Terminal runs commands with the host user's rights.
 
 Stored data has a separate boundary. [Stored keys and recovery](#stored-keys-and-recovery)
-explains host access while Home is locked and what each recovery export contains.
+explains host access while Home is locked and what the Recovery Kit contains.
 
 The [isolation plan](https://github.com/elastos/elastos-runtime/issues/173)
 records the remaining gates. Source checks describe this source tree. Accepted
@@ -71,8 +71,9 @@ Disk storage checked on 19 November 2026. Paths below are relative to the Home
 data folder; `<person>` is that person's folder name. The table describes
 application encryption; file names and filesystem metadata stay readable.
 
-Runtime creates a person's data key during Profile setup. Its recovery phrase
-protects that key. Runtime keeps an internal recovery record, including the
+Runtime creates a person's data key during Profile setup or Recovery Kit export
+if the key is missing. The person's recovery phrase protects that key.
+Runtime keeps an internal recovery record, including the
 phrase, encrypted in `ElastOS/System/Auth/auth-state.json`; the unencrypted
 archive key is in `recovery-archive.key` beside it. Before that protection exists,
 Assistant, direct messages, and People refuse saves. Documents, Library, and
@@ -84,7 +85,7 @@ protect, in the same Home data folder; the person's data key is in the Auth arch
 
 | Data and storage path | Encrypted on disk? | Key location | Recovery Kit restores |
 |---|---|---|---|
-| Home recovery authority: `ElastOS/System/Auth/auth-state.json` | Recovery material only; other auth state is plain | `recovery-archive.key` in the same Auth folder | Home recovery authority and data key |
+| Home recovery authority: `ElastOS/System/Auth/auth-state.json` | Recovery material only; other auth state is plain | `recovery-archive.key` in the same Auth folder | Home recovery authority and data key (not passkeys or sessions) |
 | Assistant conversations and drafts: `Users/<person>/.AppData/ElastOS/Assistant/workspace-v2.json` | Yes; answers also appear in model run records | Person's data key | Data key; files separate |
 | Direct messages: `Users/<person>/.AppData/ElastOS/Chat/direct-messages.json` | Yes | Person's data key | Data key; files separate |
 | Community history: `collaboration/default-conversation/history-v1.json` | No | None | Omitted |
@@ -118,8 +119,9 @@ hosted protection passes its acceptance gate. Independent review and installed
 proof remain security gates.
 
 The Recovery Kit is not a whole-Home backup. Keep separate backups as listed in
-the table before the disk is lost. [Backup and recovery (#567)](https://github.com/elastos/elastos-runtime/issues/567)
-and [copies on your own devices (#498)](https://github.com/elastos/elastos-runtime/issues/498)
+the table before the disk is lost. [Backup and recovery (#567)](https://github.com/elastos/elastos-runtime/issues/567),
+[file backup (#603)](https://github.com/elastos/elastos-runtime/issues/603),
+and [replicas on your own devices (#498)](https://github.com/elastos/elastos-runtime/issues/498)
 own that work. The [target storage model](docs/STORAGE_AND_ACCESS.md) explains
 working copies, revisions, heads, keys, and replicas.
 
@@ -166,9 +168,9 @@ Over HTTP, an ordinary Home's raw CID routes (`/content/<cid>`, `/ipfs/<cid>`,
 CID gateway.
 Only a node that serves publisher content (a seed) answers the raw
 `content_fetch` byte operation or serves without these checks. In this
-release a seed accepts no new copies from other Homes; copies it already holds
-stay. A Home accepts a new copy from a peer only if the owner gave that peer
-the `content.replica` permission; copies it already holds stay. The owner
+release a seed accepts no new replicas from other Homes; replicas it already holds
+stay. A Home accepts a new replica from a peer only if the owner gave that peer
+the `content.replica` permission; replicas it already holds stay. The owner
 trusts such a peer like an own device: it can ask the Home to pin content,
 import complete content and read storage status. An import pins only the CID
 it was asked for and never removes an existing pin. No peer can publish,
