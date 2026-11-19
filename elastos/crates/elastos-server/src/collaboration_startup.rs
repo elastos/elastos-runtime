@@ -4409,7 +4409,7 @@ mod tests {
         assert!(statuses
             .first()
             .unwrap()
-            .starts_with("Home is reconnecting to Community. Next check in "));
+            .starts_with("Reconnecting to Community. Next try in "));
         assert_eq!(statuses.last().unwrap(), "Community is connected.");
         assert!(statuses
             .iter()

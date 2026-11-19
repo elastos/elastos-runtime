@@ -59,7 +59,7 @@ impl elastos_runtime::provider::Provider for CommunityStatusProvider {
             Self::Active(port) => port.community_status(),
             Self::WaitingForGrant => serde_json::json!({
                 "state":"waiting_for_grant", "connected":false,
-                "detail":"Community needs a conversation grant from its network authority.",
+                "detail":"Waiting for permission to join Community.",
                 "next_retry_seconds":null,
             }),
         })
@@ -1068,7 +1068,7 @@ mod tests {
         let other = fixture.port.clone();
         assert_eq!(
             other.conversation_transport_view().status.as_deref(),
-            Some("Home is starting Community. It is checking the link.")
+            Some("Connecting to Community…")
         );
         let now = tokio::time::Instant::now();
         fixture
@@ -1085,7 +1085,7 @@ mod tests {
         assert!(!reconnecting.available);
         assert_eq!(
             reconnecting.status.as_deref(),
-            Some("Home is reconnecting to Community. Next check in 60 seconds.")
+            Some("Reconnecting to Community. Next try in 60 seconds.")
         );
         fixture.port.set_community_connected(true);
         assert!(other.conversation_transport_view().available);
@@ -1297,7 +1297,7 @@ mod tests {
             });
         let waiting = read(&app, &owner.token).await;
         assert_eq!(waiting["state"], "waiting_for_peers");
-        assert_eq!(waiting["detail"], "Community is waiting for another Home.");
+        assert_eq!(waiting["detail"], "Waiting for another Home to come online.");
         assert!(waiting["next_retry_seconds"].is_null());
         fixture.port.set_community_joined(false).unwrap();
         let status = read(&app, &owner.token).await;
@@ -1320,7 +1320,7 @@ mod tests {
         assert_eq!(waiting["state"], "waiting_for_grant");
         assert_eq!(
             waiting["detail"],
-            "Community needs a conversation grant from its network authority."
+            "Waiting for permission to join Community."
         );
         assert_eq!(waiting["connected"], false);
         assert!(waiting["next_retry_seconds"].is_null());

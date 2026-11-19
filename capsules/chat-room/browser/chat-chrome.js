@@ -19,8 +19,8 @@
           not_joined: "Community not joined",
           left: "Left Community",
           reconnecting: "Reconnecting to Community",
-          starting: "Home is starting Community. It is checking the link.",
-          waiting_for_peers: "Community is waiting for another Home.",
+          starting: "Connecting to Community…",
+          waiting_for_peers: "Waiting for another Home to come online.",
           live: "Community live",
         };
         if (communityStatus) {

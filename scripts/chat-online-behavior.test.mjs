@@ -132,7 +132,7 @@ for (const width of [375, 1280]) {
     await retained.waitFor({timeout:5000});
     const states = [
       ["starting",true,"Preparing Community with the revised designer wording."],
-      ["reconnecting",true,"Home is reconnecting to Community. Next check in 60 seconds."],
+      ["reconnecting",true,"Reconnecting to Community. Next try in 60 seconds."],
       ["waiting_for_peers",true,"Waiting for a Home with the revised designer wording."],
       ["left",false,"You left Community."],
     ];
