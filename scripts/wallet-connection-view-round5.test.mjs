@@ -61,9 +61,20 @@ async function variant(engine,mutate,run){const f=await browserFixture(engine,{w
  return await run(f);
  }finally{await f.close();}}
 async function labelGuard(f){const args=fixtureArguments(states.find(r=>r.designState==='metamask/request-waiting'),{compact:true});await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));},args);assert.equal(await f.page.locator('.connection-site-row > span').textContent(),'Site reported by Browser');}
-async function focusGuard(f,engine,capture=false){await f.page.evaluate(()=>document.fonts.ready);const args=approvalArguments(approvalCatalog.stages.find(r=>r.window==='metamask'&&r.stage==='request-waiting'));args[1].summary={...args[1].summary,expires_at:null};
+async function focusGuard(f,engine,capture=false){const args=approvalArguments(approvalCatalog.stages.find(r=>r.window==='metamask'&&r.stage==='request-waiting'));args[1].summary={...args[1].summary,expires_at:null};
  const mount=args=>f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.m=m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args),window.m);return{focus:document.activeElement.dataset.focus||document.activeElement.dataset.action||document.activeElement.tagName,top:window.m.root.scrollTop};},args);
- await mount(args);await f.page.locator('[data-action="send-request"]').focus();await f.page.evaluate(()=>{document.querySelector('main').scrollTop=40;});assert.equal(await f.page.locator('main').evaluate(e=>e.scrollTop),40,'the before position exists');args[1].summary.status='approved';const got=await mount(args);assert.equal(got.focus,'outcome');assert.equal(got.top,40);const box=await f.page.locator('[data-focus="outcome"]').boundingBox();assert(box.y>=0&&box.y+box.height<=182,'replacement focus stays visible');if(capture)await f.page.screenshot({path:proof.path+'/approved-focus-'+engine+'.png'});return got;
+ await mount(args);
+ // Fonts are requested by the mounted card. Establish the precondition after
+ // that layout, without a deferred native focus scroll overwriting scrollTop.
+ await f.page.evaluate(async()=>{
+  await document.fonts.ready;
+  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  document.querySelector('[data-action="send-request"]').focus({preventScroll:true});
+  document.querySelector('main').scrollTop=40;
+  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+ });
+ assert.equal(await f.page.locator('[data-action="send-request"]').evaluate(button=>button===document.activeElement),true,'Send owns focus before approval');
+ assert.equal(await f.page.locator('main').evaluate(e=>e.scrollTop),40,'the before position exists');args[1].summary.status='approved';const got=await mount(args);assert.equal(got.focus,'outcome','replacement focuses the outcome');assert.equal(got.top,40,'replacement keeps the before scroll');const box=await f.page.locator('[data-focus="outcome"]').boundingBox();assert(box.y>=0&&box.y+box.height<=182,'replacement focus stays visible');if(capture)await f.page.screenshot({path:proof.path+'/approved-focus-'+engine+'.png'});return got;
 }
 for(const engine of ['chromium','webkit']){const skip=engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in test-elastos content-sandbox job':false;
  test('R5 K14: exact site label excludes its punctuation in '+engine,{skip},async()=>{
@@ -71,7 +82,7 @@ for(const engine of ['chromium','webkit']){const skip=engine==='webkit'&&!exists
  });
  test('R5 P1: an approved same-card request keeps scroll and focuses its outcome in '+engine,{skip},async()=>{
  const got=await variant(engine,null,f=>focusGuard(f,engine,true));
- for(const mutate of [s=>s.replace('||target(view.focus,view.focusKey)',''),()=>round4Source])await assert.rejects(()=>variant(engine,mutate,f=>focusGuard(f,engine)),assert.AssertionError);
+ for(const mutate of [s=>s.replace('||target(view.focus,view.focusKey)',''),()=>round4Source])await assert.rejects(()=>variant(engine,mutate,f=>focusGuard(f,engine)),error=>error instanceof assert.AssertionError&&/^replacement (focuses the outcome|keeps the before scroll|focus stays visible)/.test(error.message));
  receipts.push({engine,case:'P1',...got,result:'PASS / product fallback break and pinned old product CAUGHT'});
  });
  test('R5: Runtime resolution and neutral extension cards render literally in '+engine,{skip},async()=>variant(engine,null,async f=>{
