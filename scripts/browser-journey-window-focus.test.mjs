@@ -1,3 +1,4 @@
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -6,7 +7,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = withBrowserLaunchRecovery(require("playwright"));
 const main = readFileSync(new URL("./home-passkey-virtual-auth-smoke.mjs", import.meta.url), "utf8");
 const windows = readFileSync(new URL("../capsules/home-gui/browser/shell-windows.js", import.meta.url), "utf8");
 const surface = readFileSync(new URL("../capsules/home-gui/browser/shell-surface.js", import.meta.url), "utf8");

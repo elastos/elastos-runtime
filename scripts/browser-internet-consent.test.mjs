@@ -1,3 +1,4 @@
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFileSync, mkdirSync } from "node:fs";
@@ -5,7 +6,7 @@ import http from "node:http";
 import test from "node:test";
 import {makeSystemSummary,makeAppearanceRecord,inertSystemApiResponse} from "./system-uiux-fixture.mjs";
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = withBrowserLaunchRecovery(require("playwright"));
 const root = new URL("../", import.meta.url);
 const consentText = "Browser opens websites using this computer's internet connection, or another connection you chose in Browser settings. Websites can see that connection's address. You can turn this off at any time here in Inbox.";
 const hostScript = `window.messages=[];window.approvals=[];window.passkeyAllowed=true;window.holdPasskey=false;

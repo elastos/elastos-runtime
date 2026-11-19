@@ -1,3 +1,4 @@
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFileSync, mkdirSync } from "node:fs";
@@ -6,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = withBrowserLaunchRecovery(require("playwright"));
 const root = new URL("../", import.meta.url);
 
 test("Browser paints a status before scripts, through preparation and actionable failures", async () => {
