@@ -69,7 +69,7 @@ export function windowPresentation(state, nowSeconds) {
   const localSafety=Boolean(state.paymentPending || request?.intent === 'transaction_intent' && sent && !answered);
   const supportedActions=[...baseActions].filter(action=> !['finish','send-message'].includes(action) || session?.address && isWalletConnectNetwork(session.chain));
   return {input:{walletResult,window:'walletconnect',stage,account,waitSeconds,qrData:qrData || undefined,homeOrigin:state.homeOrigin,
-    localSafety,linkedConnection:linked,compact:false,targetNetwork:networkLabel(request?.chain_namespace),supportedActions,
+    localSafety,linkedConnection:Boolean(session),compact:false,targetNetwork:networkLabel(request?.chain_namespace),supportedActions,
     connectionNotice,currentSelection,transactionHash,localReturn:!expired&&!state.loading&&!['home-read-unavailable','guest-access'].includes(stage)&&!['linked','disconnected','saved-unlinked','account-changed','account-unavailable-unknown','network-unsupported','wallet-removed','connection-expired','internet-off','internet-refused','nothing-saved','internet-ready'].includes(stage),showNextRequests:true},request,otherRequests:requests.filter(row => row.request_id !== request?.request_id)};
 }
 
