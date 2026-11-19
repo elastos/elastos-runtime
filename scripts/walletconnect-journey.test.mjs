@@ -171,7 +171,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await allowed;
     assert.equal(status,'granted');
     failSummary=true;await drainForReload();await Promise.all([walletFrame.waitForNavigation({waitUntil:'load'}),walletFrame.evaluate(()=>location.reload())]);
-    try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Home could not load your wallet requests.'}).waitFor({timeout:5000}); } catch(error) {console.log({status:await wallet.locator('main').innerText(),hasLaunch:await walletFrame.evaluate(()=>!!location.hash),errors});throw error;}
+    try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Home could not load the wallet details.'}).waitFor({timeout:5000}); } catch(error) {console.log({status:await wallet.locator('main').innerText(),hasLaunch:await walletFrame.evaluate(()=>!!location.hash),errors});throw error;}
     for(const value of ['dark','light']){await theme(value);await shot(`r16-error-${value}`);}
     assert.deepEqual(errors,[]);
     assert.equal(actions.filter(action=>action.action_id.includes('-turn-off:')).length,1);

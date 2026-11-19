@@ -109,7 +109,7 @@ test('final needs: network-only notices keep the proof wait without inventing an
  }
 });
 test('new WC needs: read and cleanup failures keep their existing recovery actions',()=>{
- const read=connectionView({window:'walletconnect',stage:'home-read-unavailable'});assert.match(viewText(read.status),/Home could not load your wallet requests/);assert.equal(read.focus,'refresh-status');assert(read.actions.some(a=>a.id==='refresh-status'));
+ const read=connectionView({window:'walletconnect',stage:'home-read-unavailable'});assert.match(viewText(read.status),/Home could not load the wallet details/);assert.equal(read.focus,'refresh-status');assert(read.actions.some(a=>a.id==='refresh-status'));
  const cleanup=connectionView({window:'walletconnect',stage:'disconnect-error'});assert.match(viewText(cleanup.status),/Home could not finish disconnecting/);assert.equal(cleanup.focus,'disconnect');assert(cleanup.actions.some(a=>a.id==='disconnect'));
  const empty=connectionView({window:'walletconnect',stage:'account-unavailable-unknown',localSafety:false});assert.match(viewText(empty.status),/not showing an account/);assert.doesNotMatch(viewText(empty.notice),/Confirm this account/);assert.equal(empty.actions.find(a=>a.primary).id,'start-over');
  const unknown=connectionView({window:'walletconnect',stage:'account-unavailable-unknown',localSafety:null});assert(!unknown.actions.some(a=>a.id==='start-over'));assert.equal(unknown.focus,'close-window');
