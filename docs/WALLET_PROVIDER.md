@@ -1037,8 +1037,7 @@ recovery action. Runtime still checks ID/status/expiry/proof independently.
 **After this work.** An existing grant/step-up stale-ID/status/expiry refusal has one fixed answer:
 HTTP 409 with exactly the N2 error body and code conflict. The existing request,
 step-up and answer checks keep their semantics; only their conflict projection
-is standardized. Inbox displays exactly: `This request has changed. Refresh
-Inbox and review the current request.` It refreshes, creates no automatic retry
+is standardized. Inbox displays exactly: `Refresh Inbox and review the current request before trying again.` It refreshes, creates no automatic retry
 and neither grants nor fabricates a question on that error. This is response
 classification, not a new consent fence or producer change.
 

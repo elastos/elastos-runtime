@@ -118,7 +118,7 @@ export async function runtimeView(t, app, state = {}) {
         state.decisionComplete = true;
         const pending = state.approvals.filter(r => r.status === "pending");
         return json({ available:true, pending_count:pending.length, approval_requests:pending,
-          ...(dismissed ? { receipt_status:"dismissed", note:"Request dismissed. This does not cancel a transaction in your wallet. Check your wallet before sending again." } : {}) });
+          ...(dismissed ? { receipt_status:"dismissed", note:"Request dismissed. This does not cancel the transaction in your wallet. Check your wallet before making a new request." } : {}) });
       }
       if (url.pathname === "/api/wallet/prices") return json({ prices: {}, unavailable: true });
       if (url.pathname === "/api/provider/chain/balance") return json(state.balance ? { status:"ok", data:{balance_hex:"0xde0b6b3a7640000"} } : { status: "unavailable" });

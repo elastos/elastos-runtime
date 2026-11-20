@@ -299,7 +299,7 @@ pub(super) async fn answer(
     ensure_admin_context(&state.data_dir, &launch.context)?;
     anyhow::ensure!(
         launch.launch_context.executable_actor == INBOX_CAPSULE_ID,
-        "Inbox launch required"
+        "Open Inbox from Home, then try again."
     );
     if let Some(id) = action_id.strip_prefix("browser-internet-turn-off:") {
         revoke(state, launch, Some(id), token).await?;
@@ -755,7 +755,7 @@ async fn action_inner(
     anyhow::ensure!(input.action == "revoke", "Invalid Browser internet action");
     anyhow::ensure!(
         launch.launch_context.executable_actor == INBOX_CAPSULE_ID,
-        "Inbox launch required"
+        "Open Inbox from Home, then try again."
     );
     revoke(state, &launch, None, input.step_up_token.as_deref()).await
 }
@@ -768,7 +768,7 @@ async fn revoke(
 ) -> anyhow::Result<serde_json::Value> {
     anyhow::ensure!(
         launch.launch_context.executable_actor == INBOX_CAPSULE_ID,
-        "Inbox launch required"
+        "Open Inbox from Home, then try again."
     );
     ensure_admin_context(&state.data_dir, &launch.context)?;
     let mut live = state.browser_internet.generation.lock().await;

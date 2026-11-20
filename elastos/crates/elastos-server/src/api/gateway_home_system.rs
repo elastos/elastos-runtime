@@ -8115,7 +8115,7 @@ fn system_community_membership_summary(state: &GatewayState) -> serde_json::Valu
         "configured": membership.is_some(),
         "joined": joined,
         "detail": if membership.is_none() {
-            "Community is not set up on this Home.".to_string()
+            "Community is unavailable on this Home.".to_string()
         } else if joined {
             state.collaboration_chat_product_port.as_ref().and_then(|port| port.conversation_transport_view().status).unwrap_or_default()
         } else {
@@ -8150,7 +8150,7 @@ pub(super) async fn system_community_membership_update(
     let Some(port) = state.collaboration_chat_product_port.as_ref() else {
         return (
             StatusCode::CONFLICT,
-            "Community is not set up on this Home.",
+            "Community is unavailable on this Home.",
         )
             .into_response();
     };

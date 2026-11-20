@@ -36,7 +36,7 @@ pub(super) async fn system_source_switch_channel(
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({
-                "error":"Ask an admin to choose the update channel."
+                "error":"Ask an admin of this Home to choose the update channel."
             })),
         )
             .into_response();
@@ -627,7 +627,7 @@ pub(super) async fn system_update_apply(
     if require_admin_principal(&state.data_dir, &launch.context).is_err() {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error":"Ask an admin to install this update."})),
+            Json(serde_json::json!({"error":"Ask an admin of this Home to install this update."})),
         )
             .into_response();
     }

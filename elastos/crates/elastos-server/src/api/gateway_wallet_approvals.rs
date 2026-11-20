@@ -91,7 +91,7 @@ pub(in crate::api::gateway) async fn reject_wallet_approval_request(
             if dismissed {
                 summary.receipt_status = Some("dismissed".to_string());
                 summary.note = Some(
-                    "Request dismissed. This does not cancel a transaction in your wallet. Check your wallet before sending again."
+                    "Request dismissed. This does not cancel the transaction in your wallet. Check your wallet before making a new request."
                         .to_string(),
                 );
             }

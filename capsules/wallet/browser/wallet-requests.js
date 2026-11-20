@@ -264,7 +264,7 @@ export function createWalletRequests({
         body: JSON.stringify({ reason: button.dataset.walletApprovedTransaction === "true" ? "Dismissed in Wallet" : "Rejected in Wallet" }),
       });
       const message = result?.receipt_status === "dismissed"
-        ? "Request dismissed. This does not cancel a transaction in your wallet. Check your wallet before sending again."
+        ? "Request dismissed. This does not cancel the transaction in your wallet. Check your wallet before making a new request."
         : "Request rejected.";
       if (request) {
         acknowledgement = { ...request, request_id: requestId, status:"rejected",

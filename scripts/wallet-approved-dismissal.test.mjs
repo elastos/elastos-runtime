@@ -108,7 +108,7 @@ for (const dismissed of [false, true]) test(`Wallet uses the current rejection r
   button.dataset.walletRequestReject = "approval:stale";
   await requests.onRequestClick({ target: button });
   assert.equal(messages.at(-1), dismissed
-    ? "Request dismissed. This does not cancel a transaction in your wallet. Check your wallet before sending again."
+    ? "Request dismissed. This does not cancel the transaction in your wallet. Check your wallet before making a new request."
     : "Request rejected.");
 });
 

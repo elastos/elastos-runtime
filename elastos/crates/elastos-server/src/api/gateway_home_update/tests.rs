@@ -1065,7 +1065,7 @@ async fn system_update_post_requires_system_launch_and_admin_role() {
         (
             member.system_token.as_str(),
             StatusCode::FORBIDDEN,
-            Some("Ask an admin to install this update."),
+            Some("Ask an admin of this Home to install this update."),
         ),
     ] {
         let response = app
