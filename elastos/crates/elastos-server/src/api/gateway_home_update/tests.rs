@@ -1519,7 +1519,7 @@ async fn system_update_failures_explain_the_cause_without_private_error_details(
             anyhow::Error::from(crate::update::InvalidInstalledVersion)
                 .context("private source detail"),
             StatusCode::CONFLICT,
-            "elastos update --force",
+            "Home's log has the repair steps",
         ),
         (
             anyhow::anyhow!("private verification detail"),
@@ -2855,7 +2855,7 @@ async fn update_repair_details_go_only_to_home_log() {
     ] {
         assert!(
             output.contains(detail),
-            "repair detail missing from Home log: {detail}"
+            "repair detail missing from Home log: {detail}; captured log: {output}"
         );
     }
     assert!(!output.contains("private-path-sentinel"));

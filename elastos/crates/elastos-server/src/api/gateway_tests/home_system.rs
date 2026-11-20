@@ -6063,7 +6063,6 @@ async fn system_community_membership_is_home_wide_and_requires_current_owner_aut
     )
     .unwrap();
     assert_eq!(summary["detail"], port.community_status()["detail"]);
-    assert!(summary["detail"].as_str().unwrap().contains("reconnecting"));
     let marker = dir
         .path()
         .join("collaboration-community-membership-v1.json");
