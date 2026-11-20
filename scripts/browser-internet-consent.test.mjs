@@ -766,7 +766,7 @@ test("566r2 Return waits for Turn Off then files once and navigates only after A
     await frame.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
     await frame.locator("#browser-url").fill("https://example.com/stop-first");
     await frame.locator("#browser-url").press("Enter");
-    await frame.locator("#browser-internet-hint").filter({hasText:"Your request will open in Inbox"}).waitFor({timeout:4000});
+    await frame.locator("#browser-internet-hint").filter({hasText:"Your request opens in Inbox after that."}).waitFor({timeout:4000});
     await frame.locator("#browser-url").fill("https://example.com/stop-latest");
     await frame.locator("#browser-url").press("Enter");
     await page.waitForTimeout(2300);
@@ -789,7 +789,7 @@ test("566r2 Return waits for Turn Off then files once and navigates only after A
     const closed=await browser.newPage();await closed.goto(f.url+"?restore=1");
     const b=closed.frameLocator("iframe");await b.getByRole("button",{name:"Open Inbox",exact:true}).waitFor();
     await b.locator("#browser-url").fill("https://example.com/closed");await b.locator("#browser-url").press("Enter");
-    await b.locator("#browser-internet-hint").filter({hasText:"Your request will open in Inbox"}).waitFor();
+    await b.locator("#browser-internet-hint").filter({hasText:"Your request opens in Inbox after that."}).waitFor();
     await closed.close();f.state.stopPending=false;await new Promise(r=>setTimeout(r,500));assert.equal(f.state.requests,0);
   } finally {await browser.close();await f.close();}
 });
