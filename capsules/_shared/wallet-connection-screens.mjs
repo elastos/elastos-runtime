@@ -2268,7 +2268,7 @@ for(const window of ['walletconnect','metamask','unisat']){
     'wallet-loading':{status:'Loading your wallet connections.',primary:close},
     'wallet-unavailable':{status:'Home could not load your wallet connections.',primary:refresh,secondary:[close],focus:'refresh-status'},
     'home-wallet-required':{status:'Create or import an account in Wallet to continue.',primary:{id:'open-wallet',label:'Open Wallet',quiet:false},secondary:[close]},
-    'provider-unavailable':{status:'The connection to your browser wallet is unavailable.',notice:'Open {{wallet}} to check its connection.',primary:refresh,secondary:[close]},
+    'provider-unavailable':{status:'The connection to your wallet is unavailable.',notice:'Open {{wallet}} to check its connection.',primary:refresh,secondary:[close]},
     'account-changed':{requiresSafeRetry:true,status:'Your wallet is using a different account.',notice:'Confirm this account is yours before you use it in Home.',primary:{id:window==='walletconnect'?'send-message':'connect',label:window==='walletconnect'?'Send message':'Connect',quiet:false},secondary:window==='walletconnect'?[{id:'start-over',label:'Get new QR code',quiet:false},close]:[close],account:true},
     'account-unavailable-unknown':{requiresSafeRetry:true,status:'Your wallet is not showing an account.',notice:'Open {{wallet}} and choose an account, then connect again.',primary:{id:'connect',label:'Connect',quiet:false},secondary:[close]},
     'network-unsupported':{status:'This network is not supported here.',notice:'Choose a supported network in {{wallet}}.',primary:close},

@@ -17,7 +17,7 @@ const renderedViews = new WeakSet();
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 const requestTitles={auth_challenge:'Review sign-in request',capability_grant:'Review access request',credential:'Sign a credential',publish_envelope:'Review publishing request',transaction_intent:'Send transaction',browser_account_access:'Share your wallet address with this site',browser_personal_sign:'Sign a message',browser_typed_data_sign:'Sign typed data',bitcoin_bip322_proof:'Confirm this Bitcoin account is yours',revocation:'Review request'};
 const requestTitleValues=[...Object.values(requestTitles),'Review request','Approval request'];
-const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','network-unsupported':'This network is not supported here.','network-unknown':'Your wallet’s network could not be identified.','transport-unavailable':'The connection to your wallet was lost.','transport-reconnecting':'WalletConnect is reconnecting.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your browser wallet is unavailable.'};
+const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','network-unsupported':'This network is not supported here.','network-unknown':'Your wallet’s network could not be identified.','transport-unavailable':'The connection to your wallet was lost.','transport-reconnecting':'WalletConnect is reconnecting.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your wallet is unavailable.'};
 const copyFeedbacks={'link-copied':'Link copied.','address-copied':'Address copied.','copy-failed':'Could not copy. Try again.'};
 const brands = { walletconnect: 'WalletConnect', metamask: 'MetaMask', unisat: 'UniSat', panel: 'Wallet' };
 // H:754 (busy recovery), H:767-779 (unknown cross-window work).
@@ -250,7 +250,7 @@ export function connectionView(input) {
   let effectiveNotice = safetyNotice ?? notice;
   if(supported&&!supported.includes('close-window')&&!(window==='walletconnect'&&stage==='disconnecting')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){
     const manualClose=windowManualClose(window);
-    effectiveNotice=/Close this window(?=[.,])/.test(effectiveNotice)?effectiveNotice.replace(/Close this window[.,] ?/,manualClose+' ').replace(/ then /, ' Then ').trim():effectiveNotice+' '+manualClose;
+    effectiveNotice=window!=='metamask'&&effectiveNotice.includes('Close this window,')?effectiveNotice.replace('Close this window',manualClose.slice(0,-1)):/Close this window(?=[.,])/.test(effectiveNotice)?effectiveNotice.replace(/Close this window[.,] ?/,manualClose+' ').replace(/ then /, ' Then ').trim():effectiveNotice+' '+manualClose;
   }
   const approvalSite = !screen.requestPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
   if(approvalSite&&(!supported||supported.includes('close-window'))&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});
