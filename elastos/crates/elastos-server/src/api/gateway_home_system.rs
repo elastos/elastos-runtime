@@ -7506,7 +7506,7 @@ fn services_attach_peer_runtime_blocking(
     let response = services_peer_provider_request_blocking(
         &transport,
         "get_ticket",
-        serde_json::json!({"exported": true}),
+        serde_json::json!({"shared": true}),
     )?;
     let peer_id = response
         .get("data")

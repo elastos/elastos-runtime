@@ -1815,6 +1815,25 @@ mod tests {
     }
 
     #[test]
+    fn relay_pin_survives_certificate_renewal_with_the_same_key() {
+        use sha2::Digest as _;
+        let key = rcgen::KeyPair::generate().unwrap();
+        let first = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap()
+            .self_signed(&key).unwrap();
+        let mut renewed = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap();
+        renewed.serial_number = Some(42u64.into());
+        let renewed = renewed.self_signed(&key).unwrap();
+        assert_ne!(first.der(), renewed.der());
+        let pin = sha2::Sha256::digest(key.public_key_der()).into();
+        let relay: RelayUrl = "https://localhost/".parse().unwrap();
+        let verifier = pinned_relay_identity_tls(&relay, CaTlsConfig::embedded(), Some(pin))
+            .server_cert_verifier(Arc::new(rustls::crypto::ring::default_provider())).unwrap();
+        for cert in [first.der(), renewed.der()] {
+            assert!(verifier.verify_server_cert(cert, &[], &ServerName::try_from("localhost").unwrap(), &[], UnixTime::now()).is_ok());
+        }
+    }
+
+    #[test]
     fn relay_certificate_identity_rejects_a_different_key_at_the_same_address() {
         use sha2::Digest as _;
         let (certs, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();

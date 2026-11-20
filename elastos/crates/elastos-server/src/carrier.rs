@@ -1595,6 +1595,16 @@ pub(crate) fn exported_endpoint_addr(addr: iroh::EndpointAddr) -> iroh::Endpoint
     next
 }
 
+/// Ordinary shared tickets keep the build's direct routes while the meeting
+/// point is off. A selected relay owns the public-address export policy.
+pub(crate) fn shared_endpoint_addr(addr: iroh::EndpointAddr) -> iroh::EndpointAddr {
+    if addr.addrs.iter().any(iroh::TransportAddr::is_relay) {
+        exported_endpoint_addr(addr)
+    } else {
+        addr
+    }
+}
+
 pub(crate) fn export_connect_ticket(ticket: &str) -> Result<String> {
     anyhow::ensure!(
         ticket.len() <= crate::collaboration_network::MAX_CONNECT_TICKET_BYTES,
@@ -1620,7 +1630,7 @@ pub(crate) fn export_connect_ticket(ticket: &str) -> Result<String> {
             && endpoints.len() <= crate::collaboration_network::MAX_ENDPOINTS_PER_TICKET,
         "Carrier ticket endpoint count exceeds its bound"
     );
-    let endpoints: Vec<_> = endpoints.into_iter().map(exported_endpoint_addr).collect();
+    let endpoints: Vec<_> = endpoints.into_iter().map(shared_endpoint_addr).collect();
     let bytes = serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":endpoints}))?;
     let encoded = data_encoding::BASE32_NOPAD
         .encode(&bytes)
@@ -7541,7 +7551,9 @@ impl Provider for CarrierGossipProvider {
                 };
                 // The publisher bootstrap asks for the ticket it shares beyond
                 // this host; local callers keep every address (#336).
-                let addr = if request["exported"].as_bool() == Some(true) {
+                let addr = if request["shared"].as_bool() == Some(true) {
+                    shared_endpoint_addr(addr)
+                } else if request["exported"].as_bool() == Some(true) {
                     exported_endpoint_addr(addr)
                 } else {
                     addr
@@ -9131,7 +9143,10 @@ pub(crate) mod tests {
             .with_ip_addr("192.168.4.5:5000".parse().unwrap())
             .with_ip_addr("100.101.102.103:5000".parse().unwrap())
             .with_ip_addr("[2606:4700::123]:5000".parse().unwrap());
-        assert_eq!(exported_endpoint_addr(mixed.clone()), mixed);
+        assert_eq!(shared_endpoint_addr(mixed.clone()), mixed);
+        let ticket = serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":[mixed.clone()]})).unwrap();
+        let ticket = data_encoding::BASE32_NOPAD.encode(&ticket).to_ascii_lowercase();
+        assert_eq!(decode_ticket_endpoints(&export_connect_ticket(&ticket).unwrap()), vec![mixed]);
         for address in [
             "192.168.4.5:5000",
             "100.64.1.5:5000",
@@ -9140,7 +9155,7 @@ pub(crate) mod tests {
         ] {
             let addr = iroh::EndpointAddr::new(id).with_ip_addr(address.parse().unwrap());
             assert_eq!(
-                exported_endpoint_addr(addr.clone()),
+                shared_endpoint_addr(addr.clone()),
                 addr,
                 "relay off lost {address}"
             );

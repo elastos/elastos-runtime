@@ -1824,7 +1824,7 @@ fn finalize_reserved_request(
 
 fn local_endpoint_ticket(endpoint: &Endpoint) -> Option<String> {
     let mut watcher = endpoint.watch_addr();
-    let addr = crate::carrier::exported_endpoint_addr(watcher.get());
+    let addr = crate::carrier::shared_endpoint_addr(watcher.get());
     let ticket_json = serde_json::json!({
         "topic": null,
         "endpoints": [addr],

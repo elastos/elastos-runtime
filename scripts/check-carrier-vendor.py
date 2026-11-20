@@ -7,7 +7,6 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
-import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "elastos/vendor/carrier-provenance.json"
@@ -26,12 +25,40 @@ def fingerprint(directory):
     return files
 
 
+def lock_packages(text):
+    """Read Cargo-generated package identity fields, using Python 3.9 stdlib.
+
+    This is deliberately a lockfile identity reader, not a TOML parser. Cargo
+    emits these fields as JSON-compatible basic strings. Keep all other bytes
+    unchanged in the audit projection.
+    """
+    packages = []
+    for block in re.findall(r'\[\[package\]\][\s\S]*?(?=\n\[\[|\Z)', text):
+        package = {}
+        for line in block.splitlines()[1:]:
+            match = re.match(r'^(name|version|source)\s*=', line)
+            if match:
+                key = match[1]
+                if key in package:
+                    raise ValueError("duplicate lockfile identity field")
+                value = json.loads(line.split("=", 1)[1].strip())
+                if not isinstance(value, str):
+                    raise ValueError("invalid lockfile identity field")
+                package[key] = value
+        if not all(key in package for key in ("name", "version")):
+            raise ValueError("incomplete lockfile package identity")
+        packages.append(package)
+    if not packages:
+        raise ValueError("lockfile has no packages")
+    return packages
+
+
 def check(root, manifest):
     for crate in manifest:
         if fingerprint(root / "elastos/vendor" / crate["name"]) != crate["files"]:
             raise ValueError(f"{crate['name']} differs from its reviewed provenance")
     for lock in LOCKS:
-        packages = tomllib.loads((root / lock).read_text())["package"]
+        packages = lock_packages((root / lock).read_text())
         for crate in manifest:
             matches = [package for package in packages if package["name"] == crate["name"]]
             if len(matches) != 1 or matches[0]["version"] != crate["version"] or "source" in matches[0]:
@@ -42,7 +69,7 @@ def audit_lock(text, manifest):
     """Restore upstream identity only in an audit projection, preserving every dependency."""
     def project(match):
         block = match.group(0)
-        package = tomllib.loads(block)["package"][0]
+        package = lock_packages(block)[0]
         for crate in manifest:
             if package["name"] == crate["name"]:
                 if package["version"] != crate["version"] or "source" in package:

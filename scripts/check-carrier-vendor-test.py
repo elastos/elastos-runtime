@@ -3,7 +3,8 @@ import copy
 import importlib.util
 from pathlib import Path
 import tempfile
-import tomllib
+import json
+import subprocess
 import unittest
 
 spec = importlib.util.spec_from_file_location("carrier_vendor", Path(__file__).with_name("check-carrier-vendor.py"))
@@ -15,11 +16,24 @@ class VendorIdentity(unittest.TestCase):
     def test_audit_projection_keeps_dependencies_and_restores_advisory_identity(self):
         source = 'version = 4\n\n[[package]]\nname = "iroh-relay"\nversion = "1.4.1"\ndependencies = ["bytes"]\n\n[[package]]\nname = "bytes"\nversion = "1.0.0"\n'
         manifest = [{"name": "iroh-relay", "version": "1.4.1", "registry_checksum": "a" * 64}]
-        packages = tomllib.loads(vendor.audit_lock(source, manifest))["package"]
-        self.assertEqual(packages[0]["dependencies"], ["bytes"])
+        projected = vendor.audit_lock(source, manifest)
+        packages = vendor.lock_packages(projected)
+        self.assertIn('dependencies = ["bytes"]', projected)
         self.assertEqual(packages[0]["source"], "registry+https://github.com/rust-lang/crates.io-index")
-        self.assertEqual(packages[0]["checksum"], "a" * 64)
-        self.assertEqual(packages[1], tomllib.loads(source)["package"][1])
+        self.assertIn('checksum = "' + "a" * 64 + '"', projected)
+        self.assertEqual(packages[1], vendor.lock_packages(source)[1])
+
+    def test_gate_python_can_run_the_checker(self):
+        import sys
+        result = subprocess.run([sys.executable, str(vendor.ROOT / "scripts/check-carrier-vendor.py")],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_lockfile_identity_rejects_ambiguous_fields(self):
+        for fields in ('name = "x"\n', 'name = "x"\nversion = 1\n',
+                       'name = "x"\nname = "y"\nversion = "1"\n'):
+            with self.assertRaises((ValueError, json.JSONDecodeError)):
+                vendor.lock_packages('[[package]]\n' + fields)
 
     def test_file_changes_additions_and_removals_fail(self):
         with tempfile.TemporaryDirectory() as directory:

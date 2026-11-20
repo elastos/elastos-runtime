@@ -529,6 +529,17 @@ mod tests {
     }
 
     #[test]
+    fn delivery_note_has_one_retry_claim_and_none_for_removed_contacts() {
+        for issue in [DirectDeliveryIssue::PeerUnreachable, DirectDeliveryIssue::SystemDnsUnavailable, DirectDeliveryIssue::ReceiptWaitPassed] {
+            let active = pending_delivery_note(true, true, None, Some(issue)).unwrap();
+            assert_eq!(active.matches("trying").count(), 1);
+            let removed = pending_delivery_note(true, false, None, Some(issue)).unwrap();
+            assert!(!removed.contains("trying"));
+            assert!(!removed.contains("DNS"));
+        }
+    }
+
+    #[test]
     fn failed_delivery_explains_only_fixed_reasons_and_keeps_retry_window() {
         let uncertain =
             pending_delivery_note(true, true, None, Some(DirectDeliveryIssue::PeerUnreachable))

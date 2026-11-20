@@ -619,7 +619,7 @@ async fn fetch_local_peer_ticket(
         client_token,
         peer_cap,
         "get_ticket",
-        serde_json::json!({"exported": true}),
+        serde_json::json!({"shared": true}),
     )
     .await?;
     body.get("data")

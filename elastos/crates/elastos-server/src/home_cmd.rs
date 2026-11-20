@@ -2797,7 +2797,7 @@ async fn fetch_ticket(
         peer_cap,
         "peer",
         "get_ticket",
-        &serde_json::json!({"exported": true}),
+        &serde_json::json!({"shared": true}),
     )
     .await?;
     body.get("data")
