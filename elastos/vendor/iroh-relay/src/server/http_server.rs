@@ -81,16 +81,18 @@ struct ConnectionCounts {
     established: usize,
     networks: HashMap<IpAddr, (usize, usize)>,
     recent: HashMap<IpAddr, (usize, std::time::Instant)>,
+    budgets: HashMap<IpAddr, super::streams::HomeBucket>,
 }
 
 #[derive(Debug, Default)]
-struct NetworkAdmission(Arc<Mutex<ConnectionCounts>>, super::ConnectionLimits);
+struct NetworkAdmission(Arc<Mutex<ConnectionCounts>>, super::ConnectionLimits, Option<ClientRateLimit>);
 
 #[derive(Debug)]
 pub(super) struct ConnectionPermit {
     counts: Arc<Mutex<ConnectionCounts>>,
     network: IpAddr,
     established: AtomicBool,
+    budget: Option<super::streams::HomeBucket>,
 }
 
 impl NetworkAdmission {
@@ -115,6 +117,13 @@ impl NetworkAdmission {
         {
             return None;
         }
+        counts.budgets.retain(|_, bucket| Arc::strong_count(bucket) > 1
+            || bucket.lock().expect("source byte budget").full_at() > tokio::time::Instant::now());
+        let budget = if let Some(rate) = self.2 {
+            if !counts.budgets.contains_key(&network) && counts.budgets.len() >= self.1.total { return None; }
+            Some(counts.budgets.entry(network).or_insert_with(|| Arc::new(Mutex::new(
+                super::streams::Bucket::from_config(Some(rate)).expect("validated source budget").expect("source budget")))).clone())
+        } else { None };
         counts.recent.entry(network).or_insert((0, now)).0 += 1;
         counts.pending += 1;
         counts.networks.entry(network).or_default().0 += 1;
@@ -122,6 +131,7 @@ impl NetworkAdmission {
             counts: self.0.clone(),
             network,
             established: AtomicBool::new(false),
+            budget,
         }))
     }
 }
@@ -474,6 +484,7 @@ pub(super) struct ServerBuilder {
     home_rx_ratelimit: Option<super::HomeRateLimit>,
     pub(super) connections: super::ConnectionLimits,
     pub(super) global_rx: Option<ClientRateLimit>,
+    pub(super) network_rx: Option<ClientRateLimit>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
     /// Access control for endpoints.
@@ -494,6 +505,7 @@ impl ServerBuilder {
             home_rx_ratelimit: None,
             connections: super::ConnectionLimits::default(),
             global_rx: None,
+            network_rx: None,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: Arc::new(AllowAll),
             metrics: None,
@@ -588,6 +600,8 @@ impl ServerBuilder {
         let mut service = service.with_home_rate_limit(self.home_rx_ratelimit);
         let inner = Arc::get_mut(&mut service.0).expect("new service owner");
         inner.network_admission.1 = self.connections;
+        super::streams::Bucket::from_config(self.network_rx).map_err(|error| e!(SpawnError::InvalidRateLimit, error))?;
+        inner.network_admission.2 = self.network_rx;
         inner.global_budget = super::streams::Bucket::from_config(self.global_rx)
             .map_err(|error| e!(SpawnError::InvalidRateLimit, error))?
             .map(|bucket| Arc::new(Mutex::new(bucket)));
@@ -1048,6 +1062,7 @@ impl Inner {
         let mut guard = authentication
             .authorize_with(&request, &self.access, &mut io)
             .await?;
+        let network_budget = network_permit.as_ref().and_then(|permit| permit.budget.clone());
         guard._network_permit = network_permit;
 
         trace!("accept: verified authorization");
@@ -1071,6 +1086,7 @@ impl Inner {
             })
             .transpose()?;
         client_conn_builder.global_budget = self.global_budget.clone();
+        client_conn_builder.network_budget = network_budget;
         client_conn_builder.server_shutdown = self.closing.clone();
         trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 

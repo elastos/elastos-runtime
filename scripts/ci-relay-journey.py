@@ -78,7 +78,9 @@ def main():
             record = json.loads(receipt_path.read_text())
             print(json.dumps({key: record.get(key) for key in (
                 "candidate", "source_tree", "installed_runtime_sha256", "network_arrangement", "results",
-                "route_observations", "discovery_packets", "automatic_direct", "transitions", "visible_failure", "delivery_warning_count", "all_carrier_paths_blocked", "promotion_setup", "status", "failure", "browser_failure", "registration_refusals", "process_cleanup", "fixture_removed")}), flush=True)
+                "route_observations", "meeting_point", "discovery_packets", "automatic_direct", "transitions", "visible_failure", "delivery_warning_count", "all_carrier_paths_blocked", "promotion_setup", "status", "failure", "browser_failure", "registration_refusals", "process_cleanup", "fixture_removed")}), flush=True)
+            if result.returncode == 0:
+                assert journey["two_home_receipt_valid"](record, journey["installed_message_identity"](data), args.network_arrangement), "installed relay receipt failed its complete acceptance guard"
         if result.returncode:
             raise RuntimeError("real two-NAT installed journey failed")
         print("two-NAT installed message journey: PASS", flush=True)

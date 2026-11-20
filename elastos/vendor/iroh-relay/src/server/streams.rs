@@ -454,11 +454,21 @@ impl Bucket {
         self.last_fill += self.refill_period * refill_periods;
     }
 
-    fn full_at(&mut self) -> time::Instant {
+    pub(super) fn full_at(&mut self) -> time::Instant {
         self.update_state();
         let missing = self.max.saturating_sub(self.fill);
         let periods = missing.saturating_add(self.refill - 1) / self.refill;
         self.last_fill + self.refill_period * u32::try_from(periods).unwrap_or(u32::MAX)
+    }
+
+    /// Reserves current credit only. A caller that waits retains its own frame;
+    /// it cannot add debt that delays unrelated sources or control replies.
+    pub(super) fn try_consume(&mut self, bytes: usize) -> bool {
+        self.update_state();
+        let bytes = i64::try_from(bytes).unwrap_or(i64::MAX);
+        if self.fill < bytes { return false; }
+        self.fill -= bytes;
+        true
     }
 
     /// Attempts to consume `bytes` tokens from the bucket.

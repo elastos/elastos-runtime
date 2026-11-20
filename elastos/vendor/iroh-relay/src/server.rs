@@ -506,6 +506,8 @@ pub struct Limits {
     pub connections: ConnectionLimits,
     /// Shared receive budget across every authenticated relay connection.
     pub global_rx: Option<ClientRateLimit>,
+    /// Shared source-allocation budget, retained across socket replacement.
+    pub network_rx: Option<ClientRateLimit>,
     /// Rate limits for incoming traffic from a client connection.
     pub client_rx: Option<ClientRateLimit>,
     /// Shared authenticated-endpoint budget for encoded relay frames. Retained
@@ -829,6 +831,7 @@ impl Server {
                 builder = builder.home_rx_ratelimit(relay_config.limits.home_rx);
                 builder.connections = relay_config.limits.connections;
                 builder.global_rx = relay_config.limits.global_rx;
+                builder.network_rx = relay_config.limits.network_rx;
                 let (http_addr, tls_config) = match relay_config.tls {
                     Some(tls_config) => {
                         let server_tls_config = match tls_config.cert {

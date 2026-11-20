@@ -72,6 +72,10 @@ impl ClientSettings {
             release_url.is_some() == release_certificate.is_some(),
             "incomplete release meeting point"
         );
+        if network == Some("direct") {
+            anyhow::ensure!(url.is_none() && certificate.is_none(), "direct Carrier rejects relay settings");
+            return Ok(Self { relay: None, certificate: None });
+        }
         let released = release_url.is_some();
         if let Some(release_url) = release_url {
             anyhow::ensure!(
@@ -117,7 +121,7 @@ impl ClientSettings {
         anyhow::ensure!(
             certificate.is_some()
                 || (!released
-                    && cfg!(any(test, feature = "carrier-test-relay"))
+                    && cfg!(test)
                     && relay.scheme() == "http"),
             "relay mode requires its pinned certificate identity"
         );
@@ -165,7 +169,7 @@ pub(super) fn apply_relay_pinned(
             && relay.fragment().is_none(),
         "ELASTOS_RELAY_URL must be an HTTP(S) origin without credentials"
     );
-    let http_fixture = cfg!(any(test, feature = "carrier-test-relay"))
+    let http_fixture = cfg!(test)
         && relay.host().is_some_and(|host| match host {
             url::Host::Ipv4(ip) => ip.is_loopback() || ip.is_documentation(),
             url::Host::Ipv6(ip) => ip.is_loopback(),
@@ -453,26 +457,19 @@ pub(super) async fn configured_server(
     let tls = match (cert, key) {
         (Some(cert), Some(key)) => {
             let provider = Arc::new(rustls::crypto::ring::default_provider());
-            let resolver = iroh_relay::server::reloading_resolver(
-                &provider,
-                cert.as_str()
-                    .context("carrier_relay_tls_cert must be a PEM path")?
-                    .into(),
-                key.as_str()
-                    .context("carrier_relay_tls_key must be a PEM path")?
-                    .into(),
-                iroh_relay::server::DEFAULT_CERT_RELOAD_INTERVAL,
-            )
-            .await
-            .map_err(|error| anyhow::anyhow!("Carrier TLS configuration failed: {error:#}"))?;
+            use rustls::pki_types::pem::PemObject as _;
+            let certificate = CertificateDer::pem_file_iter(cert.as_str().context("carrier_relay_tls_cert must be a PEM path")?)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            anyhow::ensure!(!certificate.is_empty(), "Carrier relay certificate is empty");
+            let private = rustls::pki_types::PrivateKeyDer::from_pem_file(key.as_str().context("carrier_relay_tls_key must be a PEM path")?)?;
             Some(
                 rustls::ServerConfig::builder_with_provider(provider)
                     .with_safe_default_protocol_versions()?
                     .with_no_client_auth()
-                    .with_cert_resolver(resolver),
+                    .with_single_cert(certificate, private)?,
             )
         }
-        (None, None) if cfg!(any(test, feature = "carrier-test-relay")) && discovery.is_none() => {
+        (None, None) if cfg!(test) && discovery.is_none() => {
             None
         }
         _ => anyhow::bail!(
@@ -544,6 +541,11 @@ pub(super) async fn configured_server(
         "carrier_relay_burst_bytes",
         2 * 1024 * 1024,
     )?);
+    anyhow::ensure!(global.bytes_per_second.get() >= 640, "global byte rate must reserve 64 source budgets");
+    let mut source = iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(global.bytes_per_second.get() / 64).expect("source rate"));
+    source.max_burst_bytes = std::num::NonZeroU32::new(global.max_burst_bytes.expect("configured global burst").get().div_ceil(64));
+    anyhow::ensure!(global.max_burst_bytes.expect("configured burst").get() >= 2 * 1024 * 1024, "global burst must admit the largest relay frame");
+    relay.limits.network_rx = Some(source);
     relay.limits.global_rx = Some(global);
     let admission = Arc::new(RelayAdmission::new(connections.total));
     relay.access = admission.clone();
@@ -825,14 +827,8 @@ mod tests {
             Some(&pin)
         )
         .is_err());
-        assert!(ClientSettings::from_inputs(
-            Some("direct"),
-            None,
-            None,
-            Some("https://relay.example/"),
-            Some(&pin)
-        )
-        .is_err());
+        assert!(ClientSettings::from_inputs(Some("direct"), None, None, Some("https://relay.example/"), Some(&pin)).unwrap().relay.is_none());
+        assert!(ClientSettings::from_inputs(Some("direct"), Some("https://other.example/"), None, Some("https://relay.example/"), Some(&pin)).is_err());
         assert!(ClientSettings::from_inputs(None, None, None, None, None)
             .unwrap()
             .relay
@@ -1216,6 +1212,142 @@ mod tests {
             "fresh sockets must share the Home's byte bucket"
         );
     }
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn three_source_floods_preserve_another_homes_heartbeats_and_delivery() {
+        use futures_util::SinkExt as _;
+        use iroh_relay::protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg};
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        // This owned CONNECT fixture binds the actual relay-facing TCP source.
+        // Its input is bounded and contains no credentials.
+        async fn source_proxy(source: [u8; 4], destination: std::net::SocketAddr) -> (url::Url, tokio::task::JoinHandle<()>) {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/", listener.local_addr().unwrap()).parse().unwrap();
+            let task = tokio::spawn(async move {
+                let mut children = tokio::task::JoinSet::new();
+                loop {
+                    tokio::select! {
+                        connection = listener.accept() => {
+                            let (mut incoming, _) = connection.unwrap();
+                            children.spawn(async move {
+                                let mut request = Vec::new();
+                                tokio::time::timeout(Duration::from_secs(5), async {
+                                    while !request.ends_with(b"\r\n\r\n") {
+                                        assert!(request.len() < 2048);
+                                        request.push(incoming.read_u8().await.unwrap());
+                                    }
+                                }).await.unwrap();
+                                assert!(request.starts_with(b"CONNECT "));
+                                let socket = tokio::net::TcpSocket::new_v4().unwrap();
+                                socket.bind((source, 0).into()).unwrap();
+                                let mut outgoing = socket.connect(destination).await.unwrap();
+                                incoming.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.unwrap();
+                                let _ = tokio::io::copy_bidirectional(&mut incoming, &mut outgoing).await;
+                            });
+                        }
+                        _ = children.join_next(), if !children.is_empty() => {}
+                    }
+                }
+            });
+            (url, task)
+        }
+        let mut relay = iroh_relay::server::RelayConfig::new("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap());
+        apply_byte_limits(&mut relay, 64 * 1024, 128 * 1024);
+        let rate = |bytes, burst| {
+            let mut rate = iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(bytes).unwrap());
+            rate.max_burst_bytes = std::num::NonZeroU32::new(burst);
+            rate
+        };
+        relay.limits.global_rx = Some(rate(1024 * 1024, 2 * 1024 * 1024));
+        relay.limits.network_rx = Some(rate(16 * 1024, 32 * 1024));
+        let mut config = iroh_relay::server::ServerConfig::default();
+        config.relay = Some(relay);
+        let server = iroh_relay::server::Server::spawn(config).await.unwrap();
+        let address = server.http_addr().unwrap();
+        let url: RelayUrl = format!("http://{address}/").parse().unwrap();
+        let tls = CaTlsConfig::embedded().client_config(Arc::new(rustls::crypto::ring::default_provider())).unwrap();
+        let mut proxies = Vec::new();
+        let mut sources = Vec::new();
+        for last in [2, 3, 6, 4, 5] {
+            let (proxy, task) = source_proxy([127, 0, 0, last], address).await;
+            sources.push(proxy);
+            proxies.push(task);
+        }
+        let connect = |key: u8, source: usize| iroh_relay::client::ClientBuilder::new(
+            url.clone(), iroh::SecretKey::from_bytes(&[key; 32]), system_dns())
+            .tls_client_config(tls.clone()).proxy_url(sources[source].clone());
+        let mut attackers = Vec::new();
+        let absent = iroh::SecretKey::from_bytes(&[244; 32]).public();
+        for index in 0..96u8 {
+            let client = connect(index + 1, usize::from(index / 32)).connect().await.unwrap();
+            let (mut stream, mut sink) = client.split();
+            attackers.push(tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    tokio::select! {
+                        _ = tick.tick() => {
+                            if sink.send(ClientToRelayMsg::Datagrams { dst_endpoint_id: absent, datagrams: Datagrams::from(vec![42; 65500]) }).await.is_err() { break; }
+                        }
+                        message = stream.next() => match message {
+                            Some(Ok(RelayToClientMsg::Ping(ping))) => { if sink.send(ClientToRelayMsg::Pong(ping)).await.is_err() { break; } }
+                            Some(Ok(_)) => {}
+                            _ => break,
+                        }
+                    }
+                }
+            }));
+        }
+        let (mut h_stream, h_sink) = connect(245, 3).connect().await.unwrap().split();
+        let (mut p_stream, p_sink) = connect(246, 4).connect().await.unwrap().split();
+        let h_sink = Arc::new(tokio::sync::Mutex::new(h_sink));
+        let h_control = h_sink.clone();
+        let h_pings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = h_pings.clone();
+        let h_reader = tokio::spawn(async move {
+            while let Some(message) = h_stream.next().await {
+                match message.unwrap() {
+                    RelayToClientMsg::Ping(ping) => {
+                        h_control.lock().await.send(ClientToRelayMsg::Pong(ping)).await.unwrap();
+                        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    _ => {}
+                }
+            }
+            panic!("honest Home disconnected during source floods");
+        });
+        let (received, mut arrivals) = tokio::sync::mpsc::channel(2);
+        let p_reader = tokio::spawn(async move {
+            let mut sink = p_sink;
+            while let Some(message) = p_stream.next().await {
+                match message.unwrap() {
+                    RelayToClientMsg::Ping(ping) => sink.send(ClientToRelayMsg::Pong(ping)).await.unwrap(),
+                    RelayToClientMsg::Datagrams { datagrams, .. } => received.send(datagrams.contents).await.unwrap(),
+                    _ => {}
+                }
+            }
+            panic!("honest recipient disconnected during source floods");
+        });
+        tokio::time::sleep(Duration::from_secs(65)).await;
+        let live = !h_reader.is_finished() && !p_reader.is_finished();
+        let heartbeats = h_pings.load(std::sync::atomic::Ordering::SeqCst);
+        let started = Instant::now();
+        let delivered = if live {
+            h_sink.lock().await.send(ClientToRelayMsg::Datagrams {
+                dst_endpoint_id: iroh::SecretKey::from_bytes(&[246; 32]).public(),
+                datagrams: Datagrams::from(vec![7; 1024]),
+            }).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(1), arrivals.recv()).await.ok().flatten()
+        } else { None };
+        eprintln!("hostile source floods: sockets=96 networks=3 live={live} heartbeats={heartbeats} delivered={} elapsed_ms={}", delivered.as_ref().map_or(0, |bytes| bytes.len()), started.elapsed().as_millis());
+        for task in attackers { task.abort(); let _ = task.await; }
+        h_reader.abort(); let _ = h_reader.await;
+        p_reader.abort(); let _ = p_reader.await;
+        server.shutdown().await.unwrap();
+        for task in proxies { task.abort(); let _ = task.await; }
+        assert!(live && heartbeats >= 3, "healthy Home lost its relay heartbeat under three source floods");
+        assert_eq!(delivered.as_deref(), Some(&vec![7; 1024][..]), "another source must deliver within one second");
+    }
+
     #[tokio::test]
     async fn global_byte_budget_survives_many_homes_and_reconnects() {
         use futures_util::SinkExt as _;

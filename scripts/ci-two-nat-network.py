@@ -31,7 +31,8 @@ class MessageNetwork:
             command("ip", "link", "set", "lo", "up")
             command("iptables", "-N", "carrier-qad")
             command("iptables", "-A", "INPUT", "-p", "udp", "--dport", "7842", "-j", "carrier-qad")
-            command("iptables", "-A", "carrier-qad", "-j", "ACCEPT")
+            for address in self.router_ips.values():
+                command("iptables", "-A", "carrier-qad", "-s", address, "-j", "ACCEPT")
             command("ip", "link", "add", "wan", "type", "bridge")
             command("ip", "addr", "add", "203.0.113.1/24", "dev", "wan")
             command("ip", "link", "set", "wan", "up")

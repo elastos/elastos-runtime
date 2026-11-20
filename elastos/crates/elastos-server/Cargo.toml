@@ -118,6 +118,9 @@ getrandom = "0.2"
 data-encoding = "2.6"
 custody-provider = { path = "../../../capsules/custody-provider" }
 
+[build-dependencies]
+url = "2.5"
+
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 iroh = { version = "=1.4.1", features = ["test-utils", "unstable-net-report"] }
@@ -143,6 +146,4 @@ bytes = "1.7"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std"] }
 
 [features]
-# Isolated installed fixtures only; release builds use the default feature set.
-carrier-test-relay = []
 default = []

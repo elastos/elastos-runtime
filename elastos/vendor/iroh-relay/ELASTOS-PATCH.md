@@ -62,3 +62,15 @@ The final actor flush uses the existing write deadline, including during owned
 shutdown. A peer that leaves a real output buffer full cannot hold shutdown open.
 
 The test-only self_signed_tls_pem helper supplies disposable certificate material for Runtime failed-start fixtures.
+
+Runtime source quotas group IPv6 by /48, retain admission pacing across sockets,
+and reserve capacity for 64 source allocations. Home and source byte budgets
+retain debt across connections; the global forwarding budget reserves current
+credit only. Relay control replies stay readable during application waits.
+Native TLS loads its approved identity at process startup.
+
+After a deliberate vendor edit, format the crate on Linux, review the diff and
+run `python3 scripts/check-carrier-vendor.py --record-provenance`. The source
+gate checks this provenance without rewriting it. The advisory job projects the
+two product lock graphs to their upstream registry identities in temporary
+audit input; the shipped lock files keep the patched sources.

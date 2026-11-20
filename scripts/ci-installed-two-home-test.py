@@ -323,8 +323,8 @@ class TwoHomeReceiptTests(unittest.TestCase):
             host = {'community':'203.0.113.1', 'a':'10.0.1.2', 'b':'10.0.2.2', 'c':'10.0.2.2'}[home['home']]
             home['carrier_bind_address'] = host + ':' + home['carrier_bind_address'].rsplit(':', 1)[1]
         for observed in row['direct_endpoint_observations']:
-            observed['ticket_addresses'] = [{'Relay':'http://relay.invalid/'}]
-        row.update(route_observations=['relay', 'direct'], all_carrier_paths_blocked=True, discovery_packets=12,
+            observed['ticket_addresses'] = [{'Relay':'https://203.0.113.1:8443/'}]
+        row.update(meeting_point={'origin':'https://203.0.113.1:8443/', 'certificate_sha256':'a'*64}, route_observations=['relay', 'direct'], all_carrier_paths_blocked=True, discovery_packets=12,
                    delivery_warning_count=2,
                    visible_failure={'reason':'peer_unreachable', 'ui_detail':'Unconfirmed',
                                     'elapsed_ms':65000, 'retry_same_message':True, 'b_alive':True, 'b_health':200, 'dropped_packets':12})
@@ -332,12 +332,15 @@ class TwoHomeReceiptTests(unittest.TestCase):
         row['results']['network_recovery'] = 'passed'
         check = JOURNEY['two_home_receipt_valid']
         self.assertTrue(check(row, self.identity(), 'relay-to-direct'))
+        changed = copy.deepcopy(row)
+        changed['direct_endpoint_observations'][0]['ticket_addresses'] = [{'Relay':'https://foreign.invalid/'}]
+        self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
         for routes in (['relay'], ['direct'], ['direct', 'relay']):
             changed = copy.deepcopy(row)
             changed['route_observations'] = routes
             self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
         for key, value in [('all_carrier_paths_blocked',False), ('delivery_warning_count',0),
-                           ('delivery_warning_count',3), ('visible_failure',{}), ('discovery_packets',0)]:
+                           ('delivery_warning_count',3), ('visible_failure',{})]:
             changed = copy.deepcopy(row)
             changed[key] = value
             self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))

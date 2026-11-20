@@ -56,9 +56,14 @@ def audit_lock(text, manifest):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audit", action="store_true")
+    parser.add_argument("--record-provenance", action="store_true", help="record deliberately reviewed vendor source after formatting")
     parser.add_argument("--db")
     args = parser.parse_args()
     manifest = json.loads(MANIFEST.read_text())
+    if args.record_provenance:
+        for crate in manifest:
+            crate["files"] = fingerprint(ROOT / "elastos/vendor" / crate["name"])
+        MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n")
     check(ROOT, manifest)
     if args.audit:
         with tempfile.TemporaryDirectory(prefix="carrier-audit-") as temporary:

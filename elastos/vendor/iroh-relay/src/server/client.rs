@@ -71,6 +71,7 @@ pub struct Config<S> {
     pub(crate) rate_limited: Option<watch::Receiver<u64>>,
     pub(crate) home_budget: Option<super::streams::HomeBucket>,
     pub(crate) global_budget: Option<super::streams::HomeBucket>,
+    pub(crate) network_budget: Option<super::streams::HomeBucket>,
     pub(crate) server_shutdown: CancellationToken,
 }
 
@@ -92,6 +93,7 @@ impl<S> Config<S> {
             rate_limited: None,
             home_budget: None,
             global_budget: None,
+            network_budget: None,
             server_shutdown: CancellationToken::new(),
         }
     }
@@ -140,6 +142,7 @@ impl Client {
             rate_limited,
             home_budget,
             global_budget,
+            network_budget,
             server_shutdown,
         } = config;
         let endpoint_id = guard.endpoint_id;
@@ -162,6 +165,7 @@ impl Client {
             rate_limited,
             home_budget,
             global_budget,
+            network_budget,
             server_shutdown,
             metrics,
         };
@@ -350,6 +354,7 @@ struct Actor<S> {
     rate_limited: Option<watch::Receiver<u64>>,
     home_budget: Option<super::streams::HomeBucket>,
     global_budget: Option<super::streams::HomeBucket>,
+    network_budget: Option<super::streams::HomeBucket>,
     server_shutdown: CancellationToken,
     metrics: Arc<Metrics>,
 }
@@ -421,29 +426,45 @@ where
                     }
                 }
                 _ = &mut budget_wait, if pending_frame.is_some() => {
-                    self.handle_frame(Some(Ok(pending_frame.take().expect("owned budgeted frame")))).await?;
-                    ping_interval.reset();
+                    let frame: &ClientToRelayMsg = pending_frame.as_ref().expect("owned budgeted frame");
+                    let allowed = self.global_budget.as_ref().is_none_or(|budget| budget.lock()
+                        .expect("global byte budget").try_consume(frame.encoded_len()));
+                    if allowed {
+                        self.handle_frame(Some(Ok(pending_frame.take().expect("owned budgeted frame")))).await?;
+                    } else {
+                        budget_wait.as_mut().reset(async_time::Instant::now() + Duration::from_millis(100));
+                    }
                 }
-                maybe_frame = self.stream.next(), if pending_frame.is_none() => {
+                maybe_frame = self.stream.next() => {
                     match maybe_frame {
-                        Some(Ok(frame)) => {
-                            let deadline = [&self.home_budget, &self.global_budget].into_iter()
+                        Some(Ok(frame)) if !matches!(frame, ClientToRelayMsg::Datagrams { .. }) => {
+                            // Relay liveness never waits behind application data.
+                            self.handle_frame(Some(Ok(frame))).await?;
+                        }
+                        Some(Ok(frame)) if pending_frame.is_none() => {
+                            let deadline = [&self.home_budget, &self.network_budget].into_iter()
                                 .filter_map(|budget| budget.as_ref().and_then(|budget| budget.lock()
-                                    .expect("relay byte bucket").consume(frame.encoded_len()).err()))
+                                    .expect("source or Home byte budget").consume(frame.encoded_len()).err()))
                                 .max();
-                            if let Some(deadline) = deadline {
+                            let global_allowed = deadline.is_none() && self.global_budget.as_ref().is_none_or(|budget|
+                                budget.lock().expect("global byte budget").try_consume(frame.encoded_len()));
+                            if global_allowed {
+                                self.handle_frame(Some(Ok(frame))).await?;
+                            } else {
                                 pending_frame = Some(frame);
-                                budget_wait.as_mut().reset(deadline);
+                                budget_wait.as_mut().reset(deadline.unwrap_or_else(|| async_time::Instant::now() + Duration::from_millis(100)));
                                 if !rate_limit_notified && self.protocol_version == ProtocolVersion::V2 {
                                     self.write_frame(RelayToClientMsg::Status(Status::RateLimited)).await
                                         .map_err(|error| e!(RunError::WriteFrame,error))?;
                                     rate_limit_notified = true;
                                 }
-                            } else { self.handle_frame(Some(Ok(frame))).await?; }
+                            }
                         }
+                        // One waiting datagram per connection bounds memory. QUIC
+                        // retransmits discarded data; control frames remain readable.
+                        Some(Ok(_)) => {}
                         other => self.handle_frame(other).await?,
                     }
-                    // reset the ping interval, we just received a message
                     ping_interval.reset();
                 }
                 // Second priority, sending regular packets
@@ -712,6 +733,7 @@ mod tests {
             rate_limited: None,
             home_budget: None,
             global_budget: None,
+            network_budget: None,
             server_shutdown: CancellationToken::new(),
             metrics,
         };

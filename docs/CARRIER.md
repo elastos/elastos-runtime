@@ -491,7 +491,7 @@ public address, as direct-only Homes require. Relay-mode tickets share public IP
 hints only; Runtime supplies the approved meeting point. Source Homes select
 `ELASTOS_CARRIER_NETWORK=relay`, `ELASTOS_RELAY_URL` and
 `ELASTOS_RELAY_CERT_SHA256` explicitly. Released Homes use their built-in pair;
-conflicting environment settings stop startup with an explanation.
+an explicit direct-only setting uses IP routes and accepts an empty relay override. Conflicting relay settings stop startup with an explanation.
 
 Chat shows the message time after the recipient's signed receipt arrives. An
 unconfirmed message retains its signed envelope and retries while Home is on,
@@ -526,8 +526,8 @@ carrier_relay_burst_bytes = 2097152
 The OS grants the service permission to bind TCP 443. The firewall admits TCP
 443 and UDP 7842 directly to this process. Existing Home gateway routes retain
 their own listener. Discovery uses the protocol's fixed UDP port. Clear HTTP is
-available only in unit tests or binaries built with `carrier-test-relay` for
-isolated fixtures; the release builder uses default features. TLS mode keeps
+available only in unit tests. Installed fixtures use HTTPS with a disposable
+certificate pin; the release builder uses default features. TLS mode keeps
 its captive-portal helper on an ephemeral loopback port.
 
 Ingress keeps total and pending capacity for at least 64 source allocations;
@@ -535,7 +535,9 @@ IPv4 uses the actual address and IPv6 uses /48. Each allocation can start at
 most twice its live-connection allowance per minute. Home admission retains
 reconnect pacing across sockets. Discovery validates the source before holding
 bounded, timed state. An endpoint's frame budget survives reconnects; a second
-shared budget applies to every endpoint together. These rates count encoded
+shared budget applies to every endpoint together. Each source allocation shares
+one sixty-fourth of the global rate and burst. Ping and Pong bypass application
+budgets, and control replies remain readable while one data frame waits. These rates count encoded
 client relay frames; forwarding sends a second copy, and TLS, handshake and
 control overhead add traffic. They are application traffic budgets, not an OS
 link shaper. Operators size the link for that overhead.
@@ -551,7 +553,9 @@ Pass the approved HTTPS origin and hex digest as `carrier_relay_url` and
 embed both in each Runtime. Source builds use `ELASTOS_RELEASE_RELAY_URL` and
 `ELASTOS_RELEASE_RELAY_CERT_SHA256` as explicit build inputs. The release signer
 verifies the resulting artifacts and signs their checksums through the existing
-release ceremony. The operator then restarts the approved seed service.
+release ceremony. The operator then restarts the approved seed service. The process loads its
+certificate once at startup, so automatic certificate-file renewal changes the
+active identity only after an operator restart.
 
 From a different network, check `https://<approved-origin>/healthz` with a TLS
 client configured to trust that certificate and compare its DER digest with the

@@ -1922,7 +1922,7 @@ MESSAGE_NETWORKS = {
 }
 
 
-def message_endpoints_valid(homes, observations, arrangement):
+def message_endpoints_valid(homes, observations, arrangement, relay=None):
     settings = MESSAGE_NETWORKS.get(arrangement)
     if settings is None:
         return False
@@ -1944,7 +1944,7 @@ def message_endpoints_valid(homes, observations, arrangement):
         if arrangement == "same-host":
             if observed != [{settings["ticket_transport"]: addresses[name]}]:
                 return False
-        elif not observed or not any("Relay" in addr for addr in observed):
+        elif not relay or not observed or not any(addr.get("Relay") == relay for addr in observed):
             return False
         counts[name] += 1
     return counts == settings["launches"]
@@ -2021,7 +2021,7 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host", node_
             and all(item.get("status") == "passed" and item.get("after")
                     and sum(item["after"].values()) == 0 for item in cleanup)
             and row.get("browser_cross_home_http_requests") == 0
-            and message_endpoints_valid(homes, row.get("direct_endpoint_observations", []), network_arrangement)
+            and message_endpoints_valid(homes, row.get("direct_endpoint_observations", []), network_arrangement, row.get("meeting_point", {}).get("origin"))
             and all(row.get("results", {}).get(name) == "passed" for name in (
                 "community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"))
             and all(row.get("negative_controls", {}).get(name, {}).get("assertion_rejected") is True
@@ -2033,7 +2033,7 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host", node_
                  all(route in {"direct", "relay"} for route in row["route_observations"]) and
                  (network_arrangement != "forced-relay" or set(row["route_observations"]) == {"relay"}) and
                  (network_arrangement != "relay-to-direct" or row["route_observations"][0] == "relay" and "direct" in row["route_observations"][1:]))
-            and (network_arrangement == "same-host" or row.get("discovery_packets", 0) > 0)
+            and (network_arrangement != "two-nat" or row.get("discovery_packets", 0) > 0)
             and (network_arrangement != "two-nat" or row.get("automatic_direct") is True)
             and (network_arrangement == "same-host" or (
                 row.get("all_carrier_paths_blocked") is True and
@@ -2216,6 +2216,7 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
                 der = subprocess.run(["openssl", "x509", "-in", str(certificate), "-outform", "DER"],
                     check=True, capture_output=True, timeout=10).stdout
                 relay_identity = hashlib.sha256(der).hexdigest()
+                record["meeting_point"] = {"origin": relay_url, "certificate_sha256": relay_identity}
             for name in (NODE, "a", "b"):
                 stage(name)
             if network == "relay-to-direct":
@@ -2292,8 +2293,10 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
                 assert 1 <= len(warnings) <= 2, "blocked interval warn log must be present and rate limited"
                 record["delivery_warning_count"] = len(warnings)
                 record["discovery_packets"] = topology.discovery_packets()
-                assert record["discovery_packets"] > 0, "HTTPS fixture did not exercise address discovery"
+                if network == "forced-relay":
+                    assert record["discovery_packets"] == 0, "forced relay allowed Home discovery UDP"
                 if network == "two-nat":
+                    assert record["discovery_packets"] > 0, "HTTPS fixture did not exercise Home address discovery"
                     assert "direct" in record["route_observations"], "automatic direct path was not observed"
                     record["automatic_direct"] = True
             assert transition_evidence_valid(record), "two-Home transition evidence is incomplete"
