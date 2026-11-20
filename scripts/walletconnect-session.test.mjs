@@ -8,7 +8,7 @@ const {SignClient} = walletConnectFixtureRequire('@walletconnect/sign-client');
 import {execFileSync} from 'node:child_process';
 import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const chains = ['eip155:1','eip155:20','eip155:8453','eip155:11155111'];
-const unsupported = 'Your wallet did not approve a network this Home supports. Select Connect wallet and choose Ethereum, Elastos Smart Chain, Base or Sepolia in your phone wallet.';
+const unsupported = 'Your wallet did not approve a network this Home supports. Select Connect wallet and choose Ethereum, Elastos Smart Chain, Base or Sepolia in your wallet.';
 const expiryReplies=['ownership','signature'].map(scope=>[`${scope} wallet expiry-text reply`,['eip155:8453'],{scope,code:6,message:'Request expired. Please try again.',expected:scope==='ownership'?'linkError':'signatureError'}]);
 const declines = [4001,5000].flatMap(code => ['proposal','signature'].map(scope => [`${scope} decline ${code}`,['eip155:8453'],{scope,code}]));
 for (const [name,approved,rejection] of [['Base only',['eip155:8453']],['unsupported only',['eip155:137']],['all four',chains],...declines,...expiryReplies]) {
