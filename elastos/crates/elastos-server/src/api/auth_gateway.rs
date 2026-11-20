@@ -1840,7 +1840,7 @@ async fn full_recovery_bundle_export_inner(
         "created_at": now,
         "instructions": [
             "Keep this Recovery Kit private and offline. It restores the included keys and any saved Profile and contacts. Keep copies of your files elsewhere.",
-            "To use it, choose Recover this Home with your Recovery Kit on the Home sign-in screen, or Import Recovery Kit in System."
+            "To use it on a Home you cannot sign in to, use the recovery option on Home's sign-in screen. When signed in, choose Import Recovery Kit in System."
         ]
     });
     if let Some(people_identity) = people_identity {
@@ -3308,7 +3308,7 @@ fn create_recovery_kit_for_principal(
         created_at,
         instructions: vec![
             "Keep this Recovery Kit private and offline. It restores access to encrypted files that you kept separately.".to_string(),
-            "To use it, choose Recover this Home with your Recovery Kit on the Home sign-in screen, or Import Recovery Kit in System.".to_string(),
+            "To use it on a Home you cannot sign in to, use the recovery option on Home's sign-in screen. When signed in, choose Import Recovery Kit in System.".to_string(),
         ],
     })
 }
