@@ -47,7 +47,7 @@ pub(super) async fn capsule_contract_audit_summary(
         .union(&installed_active_names)
         .cloned()
         .collect::<BTreeSet<_>>();
-    let catalog = capsule_catalog_summary(data_dir);
+    let catalog = capsule_catalog_summary_async(data_dir).await;
     audit_catalog_membership(
         &active_capsule_names,
         catalog.capsules.iter().map(|capsule| capsule.name.clone()),
@@ -108,7 +108,9 @@ pub(super) async fn capsule_contract_audit_summary(
         }
     }
 
-    let launch_targets = home_launch_targets(data_dir)
+    let data = data_dir.to_path_buf();
+    let launch_targets = blocking_capsule_inventory(move || home_launch_targets(&data))
+        .await
         .into_iter()
         .map(|target| (target.target.clone(), target))
         .collect::<BTreeMap<_, _>>();
@@ -922,6 +924,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             cache_dir: data_dir.join("cache"),
             data_dir: data_dir.to_path_buf(),

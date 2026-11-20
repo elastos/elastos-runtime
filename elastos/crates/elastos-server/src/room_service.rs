@@ -379,6 +379,9 @@ pub struct RoomTransportView {
     pub available: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub community_joined: Option<bool>,
+    /// Runtime state is independent of designer-controlled display text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community_state: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -826,7 +829,10 @@ impl RoomSessionAuthorization {
                 &self.session_id,
                 now,
             )
-            .map_err(|_| anyhow::anyhow!("invalid or expired session authority"))?;
+            .map_err(|err| {
+                tracing::warn!(error = %err, "invalid or expired session authority");
+                anyhow::anyhow!("invalid or expired session authority")
+            })?;
             if grant.principal_id != self.principal_id
                 || grant.proof_binding_id != proof
                 || grant.grant_id != self.grant_id

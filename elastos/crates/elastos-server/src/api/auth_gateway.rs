@@ -41,6 +41,7 @@ use super::gateway::{
     is_wallet_connector_capsule_id, issue_home_launch_token_for_auth_grant,
     require_home_launch_token_binding, require_runtime_wallet_authority, runtime_wallet_authority,
     GatewayState, RuntimeWalletAdapter, RuntimeWalletAuthority, HOME_CAPSULE_ID, HOME_ROUTE,
+    WALLET_WALLETCONNECT_CAPSULE_ID,
 };
 
 use crate::auth::AUTH_SESSION_TTL_SECS;
@@ -93,6 +94,8 @@ pub struct EvmChallengeResponse {
 pub struct EvmVerifyRequest {
     pub message: String,
     pub signature: String,
+    #[serde(default)]
+    pub wallet_peer_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3599,21 +3602,28 @@ pub(in crate::api) struct WalletLinkContext {
     authority: RuntimeWalletAuthority,
 }
 
-fn require_wallet_link_context(
+#[derive(Debug)]
+struct WalletConnectorBridgeRequired;
+
+impl std::fmt::Display for WalletConnectorBridgeRequired {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Wallet linking requires the trusted Home wallet connector bridge")
+    }
+}
+
+impl std::error::Error for WalletConnectorBridgeRequired {}
+
+async fn require_wallet_link_context(
     state: &GatewayState,
     headers: &HeaderMap,
 ) -> anyhow::Result<WalletLinkContext> {
-    let authority = require_runtime_wallet_authority(
-        &state.data_dir,
-        headers,
-        &[super::gateway::WALLET_WALLETCONNECT_CAPSULE_ID],
-    )?;
-    let verified = authority.verified_context();
-    let app = verified.actor().to_string();
-    verified_wallet_link_context(state, &app, authority)
+    let authority =
+        super::gateway::walletconnect_connector_launch_authority(&state.data_dir, headers)
+            .map_err(|_| anyhow::Error::new(WalletConnectorBridgeRequired))?;
+    verified_wallet_link_context(state, WALLET_WALLETCONNECT_CAPSULE_ID, authority).await
 }
 
-pub(in crate::api) fn verified_wallet_link_context(
+pub(in crate::api) async fn verified_wallet_link_context(
     state: &GatewayState,
     app: &str,
     authority: RuntimeWalletAuthority,
@@ -3631,7 +3641,7 @@ pub(in crate::api) fn verified_wallet_link_context(
         proof_binding_id: verified.proof_binding_id().map(ToString::to_string),
         grant_id: verified.grant_id().to_string(),
     };
-    super::gateway::ensure_wallet_connector_configured(&state.data_dir, app)?;
+    super::gateway::ensure_wallet_connector_configured_async(&state.data_dir, app).await?;
     if context.proof_binding_id.is_none() {
         anyhow::bail!("missing proof-bound auth session");
     }
@@ -4104,7 +4114,7 @@ async fn evm_challenge_inner(
     headers: &HeaderMap,
     input: EvmChallengeRequest,
 ) -> anyhow::Result<EvmChallengeResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     evm_challenge_for_wallet_link(state, headers, input, link).await
 }
 
@@ -4174,7 +4184,7 @@ async fn evm_verify_inner(
     headers: &HeaderMap,
     input: EvmVerifyRequest,
 ) -> anyhow::Result<EvmVerifyResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     evm_verify_for_wallet_link(state, input, link).await
 }
 
@@ -4188,6 +4198,12 @@ pub(in crate::api) async fn evm_verify_for_wallet_link(
         context,
         authority,
     } = link;
+    elastos_wallet_contract::validate_wallet_display_fields(
+        &app,
+        None,
+        input.wallet_peer_name.as_deref(),
+    )
+    .map_err(|code| anyhow::anyhow!("{code}: invalid wallet display metadata"))?;
     let session_proof_binding_id = context
         .proof_binding_id
         .clone()
@@ -4306,6 +4322,9 @@ pub(in crate::api) async fn evm_verify_for_wallet_link(
             address,
             proof_type: proof_type.clone(),
             label: None,
+
+            provider_id: None,
+            wallet_peer_name: input.wallet_peer_name.clone(),
         },
     )
     .await?;
@@ -4354,7 +4373,7 @@ async fn btc_challenge_inner(
     headers: &HeaderMap,
     input: BtcChallengeRequest,
 ) -> anyhow::Result<BtcChallengeResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     btc_challenge_for_wallet_link(state, headers, input, link).await
 }
 
@@ -4427,7 +4446,7 @@ async fn btc_verify_inner(
     headers: &HeaderMap,
     input: BtcVerifyRequest,
 ) -> anyhow::Result<BtcVerifyResponse> {
-    let link = require_wallet_link_context(state, headers)?;
+    let link = require_wallet_link_context(state, headers).await?;
     btc_verify_for_wallet_link(state, input, link).await
 }
 
@@ -4521,6 +4540,9 @@ pub(in crate::api) async fn btc_verify_for_wallet_link(
             address,
             proof_type,
             label: None,
+
+            provider_id: None,
+            wallet_peer_name: None,
         },
     )
     .await?;
@@ -4786,12 +4808,15 @@ pub(in crate::api) fn auth_error_response(err: anyhow::Error) -> Response {
         )
             .into_response();
     }
-    if err.is::<RecoveryKitPreparationRefused>() {
+    if err.is::<RecoveryKitPreparationRefused>()
+        || err.is::<crate::auth::LastAdminPasskeyRemovalDenied>()
+    {
         return (StatusCode::CONFLICT, err.to_string()).into_response();
     }
     let text = err.to_string();
     let status = if err.is::<PasskeyRegistrationDenied>()
         || err.is::<crate::auth::OwnerEnrollmentDenied>()
+        || err.is::<WalletConnectorBridgeRequired>()
         || text.contains("missing")
         || text.contains("invalid")
         || text.contains("expired")
@@ -4960,6 +4985,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.to_path_buf(),
             data_dir: data_dir.to_path_buf(),
@@ -5222,6 +5248,7 @@ mod tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(std::sync::OnceLock::new()),
             cache_dir: data_dir.to_path_buf(),
             data_dir: data_dir.to_path_buf(),
@@ -6633,6 +6660,13 @@ mod tests {
             crate::auth::active_passkey_principal_count(temp.path()).unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn wallet_connector_bridge_refusal_is_typed_even_with_context() {
+        let error =
+            anyhow::Error::new(WalletConnectorBridgeRequired).context("wallet link refused");
+        assert_eq!(auth_error_response(error).status(), StatusCode::FORBIDDEN);
     }
 
     #[test]
@@ -9819,6 +9853,493 @@ mod tests {
         }));
     }
 
+    async fn passkey_http(
+        app: &axum::Router,
+        path: &str,
+        headers: &HeaderMap,
+        body: Value,
+    ) -> (StatusCode, HeaderMap, Value) {
+        use tower::ServiceExt;
+        let mut request = axum::http::Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        request.headers_mut().extend(headers.clone());
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| json!(String::from_utf8_lossy(&bytes)));
+        (status, headers, body)
+    }
+
+    fn passkey_removal_test_router(state: GatewayState) -> axum::Router {
+        use axum::routing::post;
+        axum::Router::new()
+            .route(
+                "/api/auth/passkeys/:proof_binding_id/revoke",
+                post(passkey_revoke),
+            )
+            .route(
+                "/api/auth/passkeys/:proof_binding_id/demote-guest",
+                post(passkey_demote_guest),
+            )
+            .route("/api/auth/passkey/add/begin", post(passkey_add_begin))
+            .route("/api/auth/passkey/add/complete", post(passkey_add_complete))
+            .route("/api/auth/owner-recovery/begin", post(owner_recovery_begin))
+            .route(
+                "/api/auth/owner-recovery/complete",
+                post(owner_recovery_complete),
+            )
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn last_admin_passkey_http_guest_leaves_and_admin_removes_another_person() {
+        for (target_role, self_removal) in [
+            (crate::auth::RuntimePrincipalRole::Guest, true),
+            (crate::auth::RuntimePrincipalRole::Guest, false),
+            (crate::auth::RuntimePrincipalRole::Admin, false),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let owner = passkey_add_account(
+                temp.path(),
+                "owner",
+                crate::auth::RuntimePrincipalRole::Admin,
+            );
+            let target = passkey_add_account(temp.path(), "other-person", target_role);
+            let target_binding = records_for(temp.path(), &target.principal_id)[0]
+                .proof_binding_id
+                .clone();
+            let state = test_gateway_state(temp.path());
+            let app = passkey_removal_test_router(state.clone());
+            let actor = if self_removal { &target } else { &owner };
+            let (status, headers, body) = passkey_http(
+                &app,
+                &format!("/api/auth/passkeys/{target_binding}/revoke"),
+                &actor.host_headers,
+                json!({}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["status"], "revoked");
+            assert_eq!(headers.contains_key(SET_COOKIE), self_removal);
+            if self_removal {
+                assert!(headers[SET_COOKIE].to_str().unwrap().contains("Max-Age=0"));
+            }
+            let target_state =
+                crate::auth::load_principal_for_proof_binding(temp.path(), &target_binding)
+                    .unwrap();
+            assert!(target_state
+                .proof_binding
+                .passkey
+                .unwrap()
+                .revoked_at
+                .is_some());
+            let auth = crate::auth::load_auth_state(temp.path()).unwrap();
+            assert!(auth
+                .sessions
+                .iter()
+                .all(|session| session.grant.proof_binding_id != target_binding
+                    || session.revoked_at.is_some()));
+            assert_eq!(
+                crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
+                1
+            );
+            let credentials = state.identity_manager().unwrap().lock().await.credentials();
+            assert_eq!(credentials.len(), 1);
+            assert_eq!(credentials[0].credential_id, "owner");
+            // A removed passkey's token has lost authority through the real route.
+            let (status, _, _) = passkey_http(
+                &app,
+                &format!("/api/auth/passkeys/{target_binding}/revoke"),
+                &target.host_headers,
+                json!({}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+    }
+
+    #[tokio::test]
+    async fn last_admin_passkey_http_owner_adds_first_then_removes_current_passkey() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = passkey_add_account(
+            temp.path(),
+            "owner",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let old_binding = records_for(temp.path(), &owner.principal_id)[0]
+            .proof_binding_id
+            .clone();
+        let state = test_gateway_state(temp.path());
+        let app = passkey_removal_test_router(state.clone());
+        let (status, _, begin) = passkey_http(
+            &app,
+            "/api/auth/passkey/add/begin",
+            &owner.host_headers,
+            json!({
+                "schema": PASSKEY_ADD_BEGIN_REQUEST_SCHEMA, "app_token": owner.system_token,
+                "step_up_token": passkey_add_approval(temp.path(), &owner),
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{begin}");
+        let response = crate::auth::passkey_attestation_with_id_for_test(
+            begin["options"]["publicKey"]["challenge"].as_str().unwrap(),
+            "localhost",
+            "http://localhost:61180",
+            b"replacement",
+        );
+        let (status, _, added) = passkey_http(
+            &app,
+            "/api/auth/passkey/add/complete",
+            &owner.host_headers,
+            json!({
+                "schema": PASSKEY_ADD_COMPLETE_REQUEST_SCHEMA, "app_token": owner.system_token,
+                "ceremony_id": begin["ceremony_id"], "response": response,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{added}");
+        assert_eq!(
+            crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
+            2
+        );
+        let credentials = state.identity_manager().unwrap().lock().await.credentials();
+        let old = credentials
+            .iter()
+            .find(|credential| credential.credential_id == "owner")
+            .unwrap();
+        let another_window = local_profile_sign_in(temp.path(), old);
+        let replacement = credentials
+            .iter()
+            .find(|credential| credential.credential_id != "owner")
+            .unwrap();
+        let replacement_session = local_profile_sign_in(temp.path(), replacement);
+        let (status, headers, body) = passkey_http(
+            &app,
+            &format!("/api/auth/passkeys/{old_binding}/revoke"),
+            &owner.host_headers,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(headers[SET_COOKIE].to_str().unwrap().contains("Max-Age=0"));
+        assert!(!crate::auth::is_auth_session_active(
+            temp.path(),
+            &another_window.session_id,
+            crate::auth::now_ts()
+        )
+        .unwrap());
+        assert!(crate::auth::is_auth_session_active(
+            temp.path(),
+            &replacement_session.session_id,
+            crate::auth::now_ts()
+        )
+        .unwrap());
+        assert_eq!(
+            crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
+            1
+        );
+        assert_eq!(
+            state
+                .identity_manager()
+                .unwrap()
+                .lock()
+                .await
+                .credentials()
+                .len(),
+            1
+        );
+        // The old, retained admin binding cannot permit removal of the replacement.
+        let token = issue_home_launch_token_for_auth_grant(
+            temp.path(),
+            HOME_CAPSULE_ID,
+            &replacement_session,
+        )
+        .unwrap();
+        let (status, _, body) = passkey_http(
+            &app,
+            &format!(
+                "/api/auth/passkeys/{}/revoke",
+                added["proof_binding_id"].as_str().unwrap()
+            ),
+            &home_token_headers(&token),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    }
+
+    // Competing route requests return one success and one refusal, leaving an
+    // admin. The identity-manager mutex also serializes these requests, so this
+    // test does not isolate the auth-state lock. The guard and mutation share
+    // mutate_auth_state in revoke_passkey_for_actor.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn last_admin_passkey_http_concurrent_self_removals_keep_one_admin() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = passkey_add_account(
+            temp.path(),
+            "first",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let second = passkey_add_account(
+            temp.path(),
+            "second",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let first_binding = records_for(temp.path(), &first.principal_id)[0]
+            .proof_binding_id
+            .clone();
+        let second_binding = records_for(temp.path(), &second.principal_id)[0]
+            .proof_binding_id
+            .clone();
+        let app = passkey_removal_test_router(test_gateway_state(temp.path()));
+        let first_path = format!("/api/auth/passkeys/{first_binding}/revoke");
+        let second_path = format!("/api/auth/passkeys/{second_binding}/revoke");
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let attempts = [
+            (first_path, first.host_headers),
+            (second_path, second.host_headers),
+        ]
+        .map(|(path, headers)| {
+            let app = app.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                passkey_http(&app, &path, &headers, json!({})).await
+            })
+        });
+        let [first, second] = attempts;
+        let (first_result, second_result) = (first.await.unwrap(), second.await.unwrap());
+        let mut statuses = [first_result.0, second_result.0];
+        statuses.sort();
+        assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
+        assert_eq!(
+            crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn last_admin_passkey_http_refuses_with_guests_and_revoked_admins() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = passkey_add_account(
+            temp.path(),
+            "owner",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let guest = passkey_add_account(
+            temp.path(),
+            "guest",
+            crate::auth::RuntimePrincipalRole::Guest,
+        );
+        let former_admin = passkey_add_account(
+            temp.path(),
+            "former-admin",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let owner_binding = records_for(temp.path(), &owner.principal_id)[0]
+            .proof_binding_id
+            .clone();
+        let former_binding = records_for(temp.path(), &former_admin.principal_id)[0]
+            .proof_binding_id
+            .clone();
+        let app = passkey_removal_test_router(test_gateway_state(temp.path()));
+        let (status, _, body) = passkey_http(
+            &app,
+            &format!("/api/auth/passkeys/{former_binding}/revoke"),
+            &owner.host_headers,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let before = std::fs::read(crate::auth::auth_state_path(temp.path()).unwrap()).unwrap();
+        let (status, _, body) = passkey_http(
+            &app,
+            &format!("/api/auth/passkeys/{owner_binding}/revoke"),
+            &owner.host_headers,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body, "Add another admin passkey before removing this one.");
+        assert_eq!(
+            std::fs::read(crate::auth::auth_state_path(temp.path()).unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(records_for(temp.path(), &guest.principal_id).len(), 1);
+        assert_eq!(
+            crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn last_admin_passkey_http_owner_recovery_replaces_the_only_passkey() {
+        let temp = local_profile_fixture_root();
+        let (_, original) = local_profile_owner_grant(temp.path());
+        let protection =
+            crate::auth::store_test_principal_root_protection(temp.path(), &original.principal_id);
+        let kit = crate::auth::recovery_kit_from_archive(
+            temp.path(),
+            protection.protectors[0].archive.as_ref().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
+            1
+        );
+        let code = crate::auth::arm_owner_recovery(
+            temp.path(),
+            "http://localhost:61180",
+            "localhost",
+            300,
+        )
+        .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("host", HeaderValue::from_static("localhost:61180"));
+        headers.insert("origin", HeaderValue::from_static("http://localhost:61180"));
+        headers.insert(OWNER_RECOVERY_HEADER, HeaderValue::from_str(&code).unwrap());
+        let app = passkey_removal_test_router(test_gateway_state(temp.path()));
+        let (status, _, begin) =
+            passkey_http(&app, "/api/auth/owner-recovery/begin", &headers, json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{begin}");
+        let response = crate::auth::passkey_attestation_with_id_for_test(
+            begin["options"]["publicKey"]["challenge"].as_str().unwrap(),
+            "localhost",
+            "http://localhost:61180",
+            b"recovered-owner",
+        );
+        let (status, headers, body) = passkey_http(
+            &app,
+            "/api/auth/owner-recovery/complete",
+            &headers,
+            json!({
+                "ceremony_id": begin["ceremony_id"], "response": response,
+                "bundle": {"schema": FULL_RECOVERY_BUNDLE_SCHEMA, "bundle_id": "bundle:only-owner",
+                    "principal_id": kit.principal_id, "localhost_root": kit.localhost_root,
+                    "data_kit": kit, "wallet_recovery_keys": []},
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(headers.contains_key(SET_COOKIE));
+        assert_eq!(body["principal_id"], original.principal_id);
+        assert_ne!(body["proof_binding_id"], original.proof_binding_id);
+        assert!(!crate::auth::is_auth_session_active(
+            temp.path(),
+            &original.session_id,
+            crate::auth::now_ts()
+        )
+        .unwrap());
+        assert_eq!(
+            crate::auth::active_admin_passkey_principal_count(temp.path()).unwrap(),
+            1
+        );
+    }
+
+    // The original route reproduction removed the only credential, returned
+    // 500 on sign-in and 403 on first-owner setup. Refusal keeps sign-in open.
+    #[tokio::test]
+    async fn last_admin_passkey_http_refusal_keeps_sign_in_available() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_gateway_state(temp.path());
+        let mut credential = test_credential();
+        credential.rp_id = "localhost".into();
+        store_test_credential(temp.path(), credential.clone());
+        seed_test_passkey_principal(
+            &state,
+            &credential,
+            "http://localhost:61180",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let grant = issue_passkey_session_grant(
+            &state,
+            "identity-test",
+            &credential,
+            "http://localhost:61180",
+            true,
+            "lockout reproduction",
+        )
+        .unwrap();
+        let app = axum::Router::new()
+            .route(
+                "/api/auth/passkeys/:proof_binding_id/revoke",
+                axum::routing::post(passkey_revoke),
+            )
+            .route(
+                "/api/auth/passkey/authenticate/begin",
+                axum::routing::post(passkey_authenticate_begin),
+            )
+            .route(
+                "/api/auth/passkey/register/begin",
+                axum::routing::post(passkey_register_begin),
+            )
+            .with_state(state.clone());
+        let headers = home_token_headers(&grant.home_token);
+        let before = std::fs::read(crate::auth::auth_state_path(temp.path()).unwrap()).unwrap();
+        let (status, response_headers, body) = passkey_http(
+            &app,
+            &format!("/api/auth/passkeys/{}/revoke", grant.proof_binding_id),
+            &headers,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body, "Add another admin passkey before removing this one.");
+        assert!(!response_headers.contains_key(SET_COOKIE));
+        assert_eq!(
+            std::fs::read(crate::auth::auth_state_path(temp.path()).unwrap()).unwrap(),
+            before
+        );
+        assert!(crate::auth::is_auth_session_active(
+            temp.path(),
+            &grant.session_id,
+            crate::auth::now_ts(),
+        )
+        .unwrap());
+        assert_eq!(
+            state
+                .identity_manager()
+                .unwrap()
+                .lock()
+                .await
+                .credentials()
+                .len(),
+            1
+        );
+        let (status, _, body) =
+            guided_owner_http(&app, "/api/auth/passkey/authenticate/begin", "", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _, body) = guided_owner_http(
+            &app,
+            "/api/auth/passkey/register/begin",
+            "",
+            json!({"intent": {"purpose": "create", "public_name": "Owner"}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, "guest passkey registration is disabled");
+        assert_eq!(
+            crate::auth::active_passkey_principal_count(temp.path()).unwrap(),
+            1
+        );
+        assert_eq!(
+            crate::auth::load_auth_state(temp.path())
+                .unwrap()
+                .principals
+                .len(),
+            1
+        );
+    }
+
     #[tokio::test]
     async fn passkey_revoke_removes_credential_and_revokes_current_session() {
         let temp = tempfile::tempdir().unwrap();
@@ -9829,6 +10350,13 @@ mod tests {
             "https://elastos.elacitylabs.com",
             crate::auth::RuntimePrincipalRole::Admin,
         );
+        seed_test_passkey_principal(
+            &state,
+            &test_credential_2(),
+            "https://elastos.elacitylabs.com",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        store_test_credential(temp.path(), test_credential_2());
         let credential = test_credential();
         store_test_credential(temp.path(), credential.clone());
         let grant = issue_passkey_session_grant(
@@ -9858,7 +10386,12 @@ mod tests {
         .unwrap());
         let manager = state.identity_manager().unwrap();
         let manager = manager.lock().await;
-        assert!(manager.credentials().is_empty());
+        let credentials = manager.credentials();
+        assert_eq!(credentials.len(), 1);
+        assert_eq!(
+            credentials[0].credential_id,
+            test_credential_2().credential_id
+        );
     }
 
     #[tokio::test]
@@ -10299,7 +10832,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn last_admin_passkey_cannot_be_removed_while_guests_remain() {
+    async fn last_active_admin_passkey_cannot_be_removed() {
         let temp = tempfile::tempdir().unwrap();
         let state = test_gateway_state(temp.path());
         seed_test_passkey_principal(
@@ -10346,7 +10879,7 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert!(err.contains("last admin passkey cannot be removed"));
+        assert_eq!(err, "Add another admin passkey before removing this one.");
         assert!(crate::auth::is_auth_session_active(
             temp.path(),
             &admin.session_id,

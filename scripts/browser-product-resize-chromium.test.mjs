@@ -1,3 +1,4 @@
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import http from "node:http";
@@ -15,7 +16,7 @@ const require = createRequire(
     import.meta.url,
   ),
 );
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
+const { chromium } = withBrowserLaunchRecovery(require(process.env.PLAYWRIGHT_MODULE || "playwright"));
 
 function listen(server) {
   return new Promise((resolve, reject) => {

@@ -404,8 +404,8 @@
                   <div><dt>Device identity</dt><dd></dd></div>
                 </dl>
               </div>
-              <div id="runtime-update" class="pc2-group-row" hidden>
-                <div class="pc2-card-label" data-field="update-heading">Home update</div>
+              <div id="runtime-update" class="pc2-group-row" tabindex="-1" hidden>
+                <div class="pc2-card-label" data-field="update-heading">ElastOS update</div>
                 <p id="runtime-update-status" class="pc2-card-sublabel" role="status" aria-live="polite"></p>
                 <div id="runtime-update-progress" hidden></div>
                 <div class="runtime-update-changes" data-field="update-notes" hidden>
@@ -416,6 +416,16 @@
                   <div data-field="update-publisher-row"><dt>Publisher</dt><dd data-field="update-publisher"></dd></div>
                 </dl>
                 <button id="runtime-update-apply" class="pc2-btn pc2-btn-secondary" type="button" hidden disabled>Update and restart Home</button>
+              </div>
+              <div id="update-background" class="pc2-group-row" hidden>
+                <div class="pc2-card-row">
+                  <label class="pc2-card-label" id="update-background-label" for="update-background-choice"></label>
+                  <label class="system-switch">
+                    <input id="update-background-choice" type="checkbox" role="switch" aria-labelledby="update-background-label" aria-describedby="update-background-message">
+                    <span class="system-switch-track" aria-hidden="true"></span>
+                  </label>
+                </div>
+                <p id="update-background-message" class="pc2-card-sublabel" role="status"></p>
               </div>
               <div class="pc2-group-row">
                 <div class="pc2-card-row">
@@ -468,6 +478,21 @@
 
     <p class="system-error" hidden></p>
   </main>
+  <dialog id="passkey-remove-dialog" aria-labelledby="passkey-remove-title" aria-describedby="passkey-remove-details">
+    <form method="dialog">
+      <h2 id="passkey-remove-title">Remove passkey?</h2>
+      <div id="passkey-remove-details">
+        <p data-field="passkey-remove-person"></p>
+        <p data-field="passkey-remove-current" hidden>You are using this passkey in this window.</p>
+        <p>All windows signed in with this passkey will be signed out.</p>
+        <p data-field="passkey-remove-copy"></p>
+      </div>
+      <div class="passkey-remove-dialog-actions">
+        <button class="system-button system-button-secondary" value="cancel">Cancel</button>
+        <button class="system-button" value="remove">Remove passkey</button>
+      </div>
+    </form>
+  </dialog>
   <script src="./system-tabs.js?v=download-progress-20261112"></script>
   <script type="module" src="./system.js?v=download-progress-20261112"></script>
 </body>

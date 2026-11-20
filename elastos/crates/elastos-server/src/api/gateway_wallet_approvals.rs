@@ -35,6 +35,12 @@ pub(in crate::api::gateway) async fn system_wallet_approval_reject(
     .await
 }
 
+pub(in crate::api::gateway) fn wallet_approval_is_dismissal(request: &serde_json::Value) -> bool {
+    request["approved_at"].as_u64().is_some()
+        && request["intent"] == "transaction_intent"
+        && request["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
+}
+
 pub(in crate::api::gateway) async fn reject_wallet_approval_request(
     state: &GatewayState,
     context: &HomeLaunchTokenContext,
@@ -59,20 +65,37 @@ pub(in crate::api::gateway) async fn reject_wallet_approval_request(
     )
     .await
     {
-        Ok(_) => {
+        Ok(rejected) => {
+            let dismissed = wallet_approval_is_dismissal(&rejected["approval_request"]);
             let _ = append_wallet_approval_audit(
                 &state.data_dir,
                 WalletApprovalAuditInput {
                     capsule_id,
-                    event_type: "wallet.approval.rejected",
+                    event_type: if dismissed {
+                        "wallet.approval.dismissed"
+                    } else {
+                        "wallet.approval.rejected"
+                    },
                     principal_id: &context.principal_id,
                     session_id: &context.session_id,
                     request_id,
-                    result: "rejected",
-                    reason: "Wallet approval rejected through Runtime authority",
+                    result: if dismissed { "dismissed" } else { "rejected" },
+                    reason: if dismissed {
+                        elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON
+                    } else {
+                        "Wallet approval rejected through Runtime authority"
+                    },
                 },
             );
-            Json(system_wallet_approvals_summary(state, authority, false).await).into_response()
+            let mut summary = system_wallet_approvals_summary(state, authority, false).await;
+            if dismissed {
+                summary.receipt_status = Some("dismissed".to_string());
+                summary.note = Some(
+                    "Request dismissed. This does not cancel the transaction in your wallet. Check your wallet before making a new request."
+                        .to_string(),
+                );
+            }
+            Json(summary).into_response()
         }
         Err(err) => system_error_response(err),
     }
@@ -203,7 +226,7 @@ pub(in crate::api::gateway) async fn approve_pending_managed_wallet_request(
     if request.intent == "browser_account_access" && capsule_id != WALLET_CAPSULE_ID {
         anyhow::bail!("Review Browser account access in Wallet before allowing it");
     }
-    if !is_managed_wallet_proof_type(&request.proof_type) {
+    if !is_managed_wallet_proof_type(&request.proof_type) || request.connector_id.is_some() {
         anyhow::bail!("Open the approval method to approve external wallet requests");
     }
     let request_id = request.request_id.as_str();
@@ -248,6 +271,12 @@ pub(in crate::api::gateway) async fn approve_external_wallet_request(
     capsule_id: &str,
 ) -> anyhow::Result<WalletApprovalReviewOutcome> {
     let request = pending_wallet_approval_request(state, authority, request_id).await?;
+    if capsule_id == WALLET_WALLETCONNECT_CAPSULE_ID {
+        anyhow::ensure!(
+            request.status == "pending" && request.expires_at > now_ts(),
+            "WalletConnect request changed or expired"
+        );
+    }
     if is_managed_wallet_proof_type(&request.proof_type) {
         anyhow::bail!("Use System to approve built-in wallet requests");
     }
@@ -282,7 +311,7 @@ pub(in crate::api::gateway) async fn approve_external_wallet_request(
             wallet_connector_label(capsule_id)
         ),
         handoff,
-        approval_request: None,
+        approval_request: data.get("approval_request").cloned(),
     })
 }
 
@@ -295,7 +324,7 @@ pub(in crate::api::gateway) async fn complete_external_wallet_approval(
     capsule_id: &str,
     audit_reason: &str,
 ) -> anyhow::Result<SystemWalletApprovalsSummary> {
-    runtime_wallet_data(
+    let completed = runtime_wallet_data(
         state,
         authority,
         elastos_wallet_contract::WalletProviderOperationV2::CompleteConnectorHandoff {
@@ -309,19 +338,35 @@ pub(in crate::api::gateway) async fn complete_external_wallet_approval(
         },
     )
     .await?;
+    let late_receipt = completed["approval_request"]["status"] == "rejected";
+    let receipt_status = if late_receipt {
+        "sent_after_dismissal"
+    } else {
+        "completed"
+    };
     append_wallet_approval_audit(
         &state.data_dir,
         WalletApprovalAuditInput {
             capsule_id,
-            event_type: "wallet.approval.completed",
+            event_type: if late_receipt {
+                "wallet.approval.sent_after_dismissal"
+            } else {
+                "wallet.approval.completed"
+            },
             principal_id: &context.principal_id,
             session_id: &context.session_id,
             request_id,
-            result: "completed",
-            reason: audit_reason,
+            result: receipt_status,
+            reason: if late_receipt {
+                "Request dismissed. Your wallet reported this transaction as sent."
+            } else {
+                audit_reason
+            },
         },
     )?;
-    Ok(system_wallet_approvals_summary(state, authority, false).await)
+    let mut summary = system_wallet_approvals_summary(state, authority, false).await;
+    summary.receipt_status = Some(receipt_status.to_string());
+    Ok(summary)
 }
 
 pub(in crate::api::gateway) async fn pending_wallet_approval_request(
@@ -363,7 +408,24 @@ pub(in crate::api::gateway) async fn system_wallet_approvals_summary(
                 .and_then(|value| value.as_array())
                 .into_iter()
                 .flatten()
-                .filter_map(system_wallet_approval_summary)
+                .filter_map(|record| {
+                    let mut summary = system_wallet_approval_summary(record)?;
+                    let actor = authority.verified_context().actor();
+                    let private_audience = matches!(actor, WALLET_CAPSULE_ID | INBOX_CAPSULE_ID)
+                        || (!is_managed_wallet_proof_type(&summary.proof_type)
+                            && summary.connector_id.as_deref() == Some(actor));
+                    if private_audience
+                        && record["principal_id"].as_str()
+                            == Some(authority.verified_context().principal_id())
+                        && (summary.intent != "transaction_intent"
+                            || gateway_transaction_effects::wallet_display_transaction_bound(
+                                state, authority, record,
+                            ))
+                    {
+                        summary.requesting_origin = wallet_request_display_origin(record);
+                    }
+                    Some(summary)
+                })
                 .collect::<Vec<_>>();
             let pending_count = approval_requests
                 .iter()
@@ -371,6 +433,7 @@ pub(in crate::api::gateway) async fn system_wallet_approvals_summary(
                 .count();
             SystemWalletApprovalsSummary {
                 available: true,
+                receipt_status: None,
                 pending_count,
                 approval_requests,
                 handoff: None,
@@ -496,6 +559,13 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
         .get("signature_receipt")
         .filter(|value| value.is_object());
     Some(SystemWalletApprovalSummary {
+        requesting_app_name: Some(gateway_home_runtime::app_shell_title(
+            value
+                .get("requested_by_actor")
+                .or_else(|| value.get("capsule_id"))?
+                .as_str()?,
+        )),
+        requesting_origin: None,
         request_id: value.get("request_id")?.as_str()?.to_string(),
         status: value.get("status")?.as_str()?.to_string(),
         intent: value.get("intent")?.as_str()?.to_string(),
@@ -508,6 +578,11 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
         reason: value.get("reason")?.as_str()?.to_string(),
         account_id: value.get("account_id")?.as_str()?.to_string(),
         address: value.get("address")?.as_str()?.to_string(),
+        chain_namespace: value
+            .get("chain_namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
         proof_type: value
             .get("proof_type")
             .and_then(|value| value.as_str())
@@ -528,11 +603,100 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
                     .and_then(|value| value.get("completed_at"))
                     .and_then(|value| value.as_u64())
             }),
+        approved_at: value.get("approved_at").and_then(|value| value.as_u64()),
         transaction_hash: signed_result
             .and_then(|value| value.get("transaction_hash"))
             .and_then(|value| value.as_str())
             .map(ToString::to_string),
     })
+}
+
+/// Display context from the local Browser producer's immutable recorded fields.
+/// The caller applies audience/session visibility and the transaction effect check.
+pub(in crate::api::gateway) fn wallet_request_display_origin(
+    record: &serde_json::Value,
+) -> Option<String> {
+    if record.get("schema")?.as_str()? != "elastos.wallet.approval_request/v1" {
+        return None;
+    }
+    if record.get("requested_by_actor")?.as_str()? != BROWSER_CAPSULE_ID {
+        return None;
+    }
+    let payload = record.get("payload")?;
+    if serde_json::to_vec(payload).ok()?.len() > 32 * 1024 {
+        return None;
+    }
+    let text = |key: &str| payload.get(key).and_then(|v| v.as_str());
+    for key in [
+        "principal_id",
+        "session_id",
+        "account_id",
+        "chain_namespace",
+    ] {
+        if key == "chain_namespace" && record["intent"] == "browser_account_access" {
+            continue;
+        }
+        if text(key)? != record.get(key)?.as_str()? || text(key)?.is_empty() {
+            return None;
+        }
+    }
+    let address_key = if record["intent"] == "transaction_intent" {
+        "from"
+    } else {
+        "address"
+    };
+    if !text(address_key)?.eq_ignore_ascii_case(record.get("address")?.as_str()?) {
+        return None;
+    }
+    match record.get("intent")?.as_str()? {
+        "browser_personal_sign"
+            if text("schema")? == "elastos.browser.wallet-signature-request/v1"
+                && payload.get("requires_wallet_approval")?.as_bool()?
+                && text("method")? == "personal_sign" => {}
+        "browser_typed_data_sign"
+            if text("schema")? == "elastos.browser.wallet-signature-request/v1"
+                && payload.get("requires_wallet_approval")?.as_bool()?
+                && matches!(
+                    text("method")?,
+                    "eth_signTypedData" | "eth_signTypedData_v3" | "eth_signTypedData_v4"
+                ) => {}
+        "transaction_intent"
+            if text("schema")? == "elastos.chain.unsigned_transaction_intent/v1"
+                && text("source")? == "browser_wallet" => {}
+        "browser_account_access"
+            if text("schema")? == "elastos.browser.account-access-request/v1"
+                && wallet_account_access_review(record).is_some() => {}
+        _ => return None,
+    }
+    let origin = text("origin")?;
+    if origin.is_empty()
+        || origin.len() > 512
+        || !origin.is_ascii()
+        || origin.bytes().any(|b| {
+            b.is_ascii_whitespace()
+                || b.is_ascii_control()
+                || matches!(b, b'\\' | b'@' | b'?' | b'#')
+        })
+    {
+        return None;
+    }
+    let (_, authority) = origin.split_once("://")?;
+    if authority.is_empty() || authority.contains('/') {
+        return None;
+    }
+    let parsed = url::Url::parse(origin).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return None;
+    }
+    let page = url::Url::parse(text("page_url")?).ok()?;
+    if parsed.origin() != page.origin() {
+        return None;
+    }
+    let display = parsed.origin().ascii_serialization();
+    if display.is_empty() || display.len() > 512 || !display.is_ascii() {
+        return None;
+    }
+    Some(display)
 }
 
 fn wallet_account_access_review(value: &serde_json::Value) -> Option<serde_json::Value> {
@@ -604,4 +768,200 @@ fn wallet_account_access_review(value: &serde_json::Value) -> Option<serde_json:
         "address": text("address")?,
         "grant_expires_at": grant_expires_at,
     }))
+}
+
+#[cfg(test)]
+mod wallet_display_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn browser_request(origin: &str, page_url: &str) -> serde_json::Value {
+        json!({"schema":"elastos.wallet.approval_request/v1", "request_id":"request:display", "status":"pending", "intent":"browser_personal_sign",
+            "requested_by_actor":"browser", "principal_id":"person:test", "session_id":"session:test",
+            "account_id":"account:test", "address":"0xabc", "chain_namespace":"eip155:20", "resource":"wallet:test",
+            "reason":"Sign message", "proof_type":"siwe", "connector_id":"wallet-metamask", "created_at":1, "expires_at":u64::MAX,
+            "payload":{"schema":"elastos.browser.wallet-signature-request/v1", "requires_wallet_approval":true, "method":"personal_sign",
+                "principal_id":"person:test", "session_id":"session:test", "account_id":"account:test",
+                "chain_namespace":"eip155:20", "address":"0xabc", "origin":origin, "page_url":page_url}})
+    }
+
+    #[test]
+    fn n7_origin_form_and_ascii_vectors() {
+        for (source, page, expected) in [
+            (
+                "https://Shop.Example:443",
+                "https://shop.example/pay?q=secret",
+                Some("https://shop.example"),
+            ),
+            (
+                "http://localhost:8099",
+                "http://localhost:8099/pay",
+                Some("http://localhost:8099"),
+            ),
+            (
+                "https://[2001:db8::1]:443",
+                "https://[2001:db8::1]/",
+                Some("https://[2001:db8::1]"),
+            ),
+            (
+                "https://xn--bcher-kva.example",
+                "https://xn--bcher-kva.example/",
+                Some("https://xn--bcher-kva.example"),
+            ),
+            (
+                "https://shop_sub.example:8443",
+                "https://shop_sub.example:8443/private",
+                Some("https://shop_sub.example:8443"),
+            ),
+            ("https://bücher.example", "https://bücher.example/", None),
+            (
+                "https://user:pass@shop.example",
+                "https://shop.example/",
+                None,
+            ),
+            ("https://@shop.example", "https://shop.example/", None),
+            ("https://shop.example/", "https://shop.example/", None),
+            ("https://shop.example/pay", "https://shop.example/pay", None),
+            ("https://shop.example?q", "https://shop.example/", None),
+            (
+                "https://shop.example#fragment",
+                "https://shop.example/",
+                None,
+            ),
+            ("https://shop.example", "https://other.example/", None),
+            ("https:\\shop.example", "https://shop.example/", None),
+            ("https://shop.\nexample", "https://shop.example/", None),
+        ] {
+            let record = browser_request(source, page);
+            let before = record.clone();
+            assert_eq!(
+                wallet_request_display_origin(&record).as_deref(),
+                expected,
+                "{source:?}"
+            );
+            assert_eq!(record, before);
+        }
+        let mut large = browser_request("https://shop.example", "https://shop.example/");
+        large["payload"]["private"] = json!("x".repeat(32768));
+        assert_eq!(wallet_request_display_origin(&large), None);
+    }
+
+    #[test]
+    fn n7_site_absent_or_forged_origin() {
+        let valid = browser_request("https://shop.example", "https://shop.example/private");
+        assert!(wallet_request_display_origin(&valid).is_some());
+        for field in [
+            "principal_id",
+            "session_id",
+            "account_id",
+            "address",
+            "chain_namespace",
+        ] {
+            let mut record = valid.clone();
+            record["payload"][field] = json!("forged");
+            assert_eq!(wallet_request_display_origin(&record), None, "{field}");
+        }
+        for origin in [
+            serde_json::Value::Null,
+            json!(123),
+            json!(""),
+            json!("a".repeat(513)),
+        ] {
+            let mut record = valid.clone();
+            record["payload"]["origin"] = origin;
+            assert_eq!(wallet_request_display_origin(&record), None);
+        }
+        let mut other = valid.clone();
+        other["requested_by_actor"] = json!("notes");
+        other["requesting_origin"] = json!("https://shop.example");
+        assert_eq!(wallet_request_display_origin(&other), None);
+        let mut remote = valid.clone();
+        remote["payload"]["schema"] = json!("elastos.browser.engine.wallet-consumer-request/v1");
+        assert_eq!(wallet_request_display_origin(&remote), None);
+        // Generic summary mapping remains app-only for Home/System/Chat.
+        assert!(
+            serde_json::to_value(system_wallet_approval_summary(&valid).unwrap())
+                .unwrap()
+                .get("requesting_origin")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn n3_external_inbox_review_action_classification() {
+        for proof in ["siwe", "unknown", "", "managed_evm", "managed_btc_p2wpkh"] {
+            for connector in [
+                serde_json::Value::Null,
+                json!("wallet-metamask"),
+                json!("unknown"),
+            ] {
+                let mut record = browser_request("https://shop.example", "https://shop.example/");
+                record["proof_type"] = json!(proof);
+                record["connector_id"] = connector.clone();
+                let mut notifications = HomeNotificationsSummary::default();
+                append_wallet_approval_notifications(
+                    &mut notifications,
+                    vec![system_wallet_approval_summary(&record).unwrap()],
+                );
+                let external = !is_managed_wallet_proof_type(proof) || !connector.is_null();
+                assert_eq!(
+                    notifications.entries[0]
+                        .action_ref
+                        .as_ref()
+                        .unwrap()
+                        .action_id,
+                    format!(
+                        "wallet-{}-request:request:display",
+                        if external { "review" } else { "approve" }
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn n3_requester_provenance_without_site_invention() {
+        let mut record = browser_request("https://shop.example", "https://shop.example/");
+        record["capsule_id"] = json!("forged");
+        record["reason"] = json!("Home says https://fake.example");
+        let summary = system_wallet_approval_summary(&record).unwrap();
+        assert_eq!(summary.capsule_id, "browser");
+        assert!(summary.requesting_origin.is_none());
+    }
+
+    #[test]
+    fn n7_account_access_uses_same_projection() {
+        let mut record = browser_request("https://shop.example", "https://shop.example/private");
+        record["intent"] = json!("browser_account_access");
+        record["launch_id"] = json!("launch:browser");
+        let payload = record["payload"].as_object_mut().unwrap();
+        payload.insert(
+            "schema".into(),
+            json!("elastos.browser.account-access-request/v1"),
+        );
+        payload.insert("permission".into(), json!("eth_accounts"));
+        payload.insert("launch_id".into(), json!("launch:browser"));
+        payload.insert("proof_binding_id".into(), json!("proof:fixture"));
+        payload.insert("requested_chain_namespace".into(), json!("eip155:20"));
+        payload.insert(
+            "chain_namespaces".into(),
+            json!(["eip155:20", "eip155:8453"]),
+        );
+        payload.insert("grant_expires_at".into(), json!(now_ts() + 600));
+        payload.insert("requires_wallet_approval".into(), json!(true));
+        let before = record.clone();
+        assert_eq!(
+            wallet_request_display_origin(&record).as_deref(),
+            Some("https://shop.example")
+        );
+        assert_eq!(
+            record, before,
+            "site projection keeps the account-access proof bindings"
+        );
+        record["payload"]["origin"] = serde_json::Value::Null;
+        assert!(
+            wallet_request_display_origin(&record).is_none(),
+            "page_url supplies no display fallback"
+        );
+    }
 }

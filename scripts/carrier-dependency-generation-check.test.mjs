@@ -23,13 +23,13 @@ function compatibleGraph() {
     ["quinn-proto", "0.11.19"],
     ["quick-xml", "0.41.0"],
     ["bincode", "1.3.3"],
-    ["elastos-identity", "2.0.1"],
+    ["elastos-identity", "2.0.2"],
     ["x25519-dalek", "2.0.1"],
   ];
   const packages = entries.map(([name, version]) => ({ name, version, id: `${name}@${version}` }));
   const edges = new Map([
     ["iroh@1.4.1", ["ed25519-dalek@3.0.0-rc.0"]],
-    ["elastos-identity@2.0.1", ["ed25519-dalek@2.2.0"]],
+    ["elastos-identity@2.0.2", ["ed25519-dalek@2.2.0"]],
   ]);
   return {
     packages,
@@ -108,7 +108,7 @@ test("rejects the retired DNS resolver", () => {
   assert.throws(() => inspectMetadata(graph, "fixture"), /resolves hickory-resolver as/);
 });
 
-for (const source of ["elastos-identity@2.0.1", "iroh@1.4.1"]) {
+for (const source of ["elastos-identity@2.0.2", "iroh@1.4.1"]) {
   test(`rejects a disconnected ${source}`, () => {
     const graph = compatibleGraph();
     graph.resolve.nodes.find(node => node.id === source).deps = [];

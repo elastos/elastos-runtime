@@ -8,11 +8,16 @@ license = "MIT"
 [[bin]]
 name = "exit-provider"
 path = "src/main.rs"
+required-features = ["http"]
+
+[features]
+default = ["http"]
+http = ["dep:ureq"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-ureq = "2"
+ureq = { version = "2", optional = true }
 url = "2"
 
 [dev-dependencies]

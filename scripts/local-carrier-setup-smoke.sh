@@ -5,6 +5,9 @@ set -euo pipefail
 # tree world-readable and setup fails with "Runtime data root must be
 # owner-only".
 umask 077
+# This fixture proves the default unconfigured installation independently of operator inputs.
+unset ELASTOS_WALLETCONNECT_PROJECT_FILE ELASTOS_WALLETCONNECT_PROJECT_ID
+
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ELASTOS_ROOT="${REPO_ROOT}/elastos"
@@ -369,6 +372,9 @@ def write_capsule_archive(name, capsule_dir):
         browser_dir = capsule_dir / "browser"
         if browser_dir.is_dir():
             tar.add(browser_dir, arcname=f"{name}/browser")
+        if name == "wallet-walletconnect":
+            # Match the release capsule: its pinned SDK lives beside browser/.
+            tar.add(capsule_dir / "vendor", arcname=f"{name}/vendor")
         if name == "home-cli":
             renderer = pathlib.Path(os.environ["HOME_CLI_RENDERER"])
             if not renderer.is_file() or renderer.is_symlink() or not os.access(renderer, os.X_OK):
@@ -402,6 +408,15 @@ browser_capsules = {
 }
 for name, capsule_dir in browser_capsules.items():
     write_capsule_archive(name, capsule_dir)
+
+# Keep this fixture aligned with the actual default profile, without a second list.
+for name in manifest["profiles"]["home"]["components"]:
+    info = platform_info(name)
+    archive = artifacts_dir / info["release_path"]
+    if not archive.is_file() or info.get("size", 0) != archive.stat().st_size:
+        raise SystemExit(f"default Home fixture artifact missing or stale: {name}")
+    if info.get("checksum") != "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest():
+        raise SystemExit(f"default Home fixture checksum differs: {name}")
 
 components_dest.parent.mkdir(parents=True, exist_ok=True)
 components_dest.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -619,6 +634,7 @@ for installed in \
     "${DATA_DIR}/capsules/assistant/browser/index.html" \
     "${DATA_DIR}/capsules/wallet/browser/index.html" \
     "${DATA_DIR}/capsules/wallet-metamask/browser/index.html" \
+    "${DATA_DIR}/capsules/wallet-walletconnect/browser/index.html" \
     "${DATA_DIR}/capsules/wallet-unisat/browser/index.html"
 do
     if [[ ! -f "${installed}" ]]; then
@@ -626,7 +642,7 @@ do
         exit 1
     fi
 done
-# Hidden in 0.8.0: the Home profile leaves them out; `setup --with` adds them.
+# Optional components are installed through `setup --with`.
 for absent in \
     "${DATA_DIR}/bin/content-block-graph-provider" \
     "${DATA_DIR}/bin/media-provider" \
@@ -634,14 +650,16 @@ for absent in \
     "${DATA_DIR}/bin/protected-content-decrypt-provider" \
     "${DATA_DIR}/tools/media-tools" \
     "${DATA_DIR}/capsules/services" \
-    "${DATA_DIR}/capsules/elacity-player" \
-    "${DATA_DIR}/capsules/wallet-walletconnect"
+    "${DATA_DIR}/capsules/elacity-player"
 do
     if [[ -e "${absent}" ]]; then
         echo "hidden component installed by the Home profile: ${absent}" >&2
         exit 1
     fi
 done
+
+# Prove the web Home before the CLI starts its own managed Runtime.
+node "${REPO_ROOT}/scripts/walletconnect-installed-policy-smoke.mjs" "${ELASTOS_BIN}" "${DATA_DIR}" "${TEST_ROOT}"
 
 STATUS_OUT="${TEST_ROOT}/home-status.txt"
 test -x "${DATA_DIR}/capsules/home-cli/bin/home-cli"

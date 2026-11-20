@@ -1053,10 +1053,11 @@ class CliFixtureTests(unittest.TestCase):
                 self.assertEqual(observer.cli_refusal(observer.CLI_INSTALLER_CASE, {"exit": exit_code}, stdout, stderr, unchanged)["status"], "failed")
         self.assertEqual(observer.cli_refusal("wrong-signer-head", failure, "Fetching release:", "Signer DID mismatch", True)["status"], "failed")
         for code, unchanged in ((0, True), (124, True), (1, False)):
-            self.assertEqual(observer.cli_refusal("tampered-binary", {"exit": code}, "Downloading binary", "SHA-256 mismatch", unchanged)["status"], "failed")
-        self.assertEqual(observer.cli_refusal("tampered-binary", failure, "Downloading binary\nDownloading components", "SHA-256 mismatch", True)["status"], "failed")
+            self.assertEqual(observer.cli_refusal("tampered-binary", {"exit": code}, "Downloading ElastOS for", "SHA-256 mismatch", unchanged)["status"], "failed")
+        self.assertEqual(observer.cli_refusal("tampered-binary", failure, "Downloading ElastOS for\nDownloading the update file list", "SHA-256 mismatch", True)["status"], "failed")
         for case, stdout, stderr in (("wrong-platform", "Fetching release:", "No binary CID for platform aarch64-darwin"),
-                                     ("wrong-version", "Downloading binary\nDownloading components", "Installed binary version mismatch")):
+                                     ("wrong-version", "Downloading binary\nDownloading components", "Downloaded binary version mismatch"),
+                                     ("wrong-version", "Downloading ElastOS for\nDownloading the update file list", "Installed binary version mismatch")):
             self.assertEqual(observer.cli_refusal(case, failure, stdout, stderr, True)["status"], "passed")
             for changed_stdout, changed_stderr, unchanged in ((stdout, "Carrier connection failed", True), (stdout, stderr, False)):
                 self.assertEqual(observer.cli_refusal(case, failure, changed_stdout, changed_stderr, unchanged)["status"], "failed")
@@ -1608,6 +1609,26 @@ class CliFixtureTests(unittest.TestCase):
         self.assertEqual(proof["home_sha256"], observer.digest(directory / self.manifest["initial_home"]["entrypoint"]))
         self.assertNotIn("attach_secret", json.dumps(proof))
         self.assertNotIn("private fixture token", json.dumps(proof))
+
+    def test_initial_home_probe_binds_the_no_open_choice(self):
+        home, directory, process, status, identities, executables, response = self.initial_home_fixture()
+        path = directory / "update-controller/receipt.json"
+        receipt = observer.cli_private_json(path)
+        receipt["launch"]["args"].append(base64.b64encode(b"--no-open").decode())
+        receipt["launch_sha256"] = hashlib.sha256(json.dumps(
+            {key: receipt["launch"][key] for key in ("args", "environment", "cwd")},
+            separators=(",", ":")).encode()).hexdigest()
+        observer.write(path, receipt)
+        with patch.object(observer, "cli_process_identity", side_effect=identities.get), \
+             patch.object(observer, "cli_process_executable", side_effect=executables.get), \
+             patch.object(observer, "cli_home_response", side_effect=response), patch.object(observer, "lock_state", return_value="held"):
+            # The option stays in the existing args field and is bound by the launch hash.
+            proof = observer.cli_observe_initial_home(SimpleNamespace(roots={}), self.manifest,
+                                                      home, process, status, no_open=True)
+            self.assertTrue(proof["authenticated_health"])
+            with self.assertRaisesRegex(ValueError, "launch receipt differs"):
+                observer.cli_observe_initial_home(SimpleNamespace(roots={}), self.manifest,
+                                                  home, process, status)
 
     def test_initial_home_admission_requires_signed_native_support_and_preservation(self):
         self.initial_home_fixture()
@@ -2319,6 +2340,7 @@ class CliFixtureTests(unittest.TestCase):
             process = SimpleNamespace(pid=4242, poll=lambda: None, wait=lambda timeout=None: order.append("home-closed") or 0)
 
             def spawn(argv, env, cwd, label, umask=-1):
+                self.assertEqual(argv[1:], ["home", "--browser", "--no-open"])
                 umasks[label] = umask
                 return process
 
@@ -2675,16 +2697,18 @@ class CliFixtureTests(unittest.TestCase):
                     elif name in observer.CLI_REFUSALS:
                         self.returncode = 1
                         if name == "tampered-binary":
-                            stdout, stderr = "Downloading binary", "SHA-256 mismatch"
+                            stdout, stderr = "Downloading ElastOS for", "SHA-256 mismatch"
                         elif name == "wrong-platform":
                             stdout, stderr = "Fetching release:", "No release available for platform:" if argv[0] == "/bin/bash" else "No binary CID for platform"
                         elif name == "wrong-version":
-                            stdout, stderr = "Downloading binary\nDownloading components", "Downloaded binary version mismatch" if argv[0] == "/bin/bash" else "Installed binary version mismatch"
+                            stdout, stderr = "Downloading ElastOS for\nDownloading the update file list", "Downloaded binary version mismatch" if argv[0] == "/bin/bash" else "Installed binary version mismatch"
                         else:
                             stdout = "Fetching release:" if name == "wrong-signer-release" else "Checking for updates"
                             stderr = "Envelope signer differs from the pinned maintainer DID" if argv[0] == "/bin/bash" else "Signer DID mismatch"
                             if argv[0] == "/bin/bash" and name == "wrong-signer-release":
                                 stdout = "Verifying release signature"
+                        if argv[0] == "/bin/bash":
+                            stdout = stdout.replace("Downloading ElastOS for", "Downloading binary").replace("Downloading the update file list", "Downloading components")
                     elif argv[0] == "/bin/bash":
                         copy_publication(self.home, name, first=True, gateway=kwargs["env"]["ELASTOS_PUBLISHER_GATEWAY"])
                         lock = self.home / observer.CLI_DATA / "host-process.lock"

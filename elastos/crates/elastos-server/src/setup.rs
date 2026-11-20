@@ -5,6 +5,7 @@
 //! bounded preparation path, not this archive installer.
 
 use crate::api::capsule_inventory::MAX_MODEL_CATALOG_BYTES;
+pub mod walletconnect;
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -4110,10 +4111,7 @@ pub(crate) async fn stage_planned_update_support(
         } = asset;
         let name = row.name();
         let info = row.info();
-        println!(
-            "  Downloading support asset {name} ({})...",
-            relative.display()
-        );
+        println!("  Downloading {name} ({})…", relative.display());
         let bytes = fetch_admitted_row(fetch, &row, &mut *owner).await?;
         let dest = stage.path().join(&relative);
         if let Some(component) = component {
@@ -4188,7 +4186,7 @@ pub(crate) async fn stage_planned_update_support(
     }) {
         owner.progress(
             "verifying",
-            "Checking the model catalogue. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when the update is ready.",
         )?;
     }
     if let Some((relative, source)) =
@@ -4256,7 +4254,7 @@ async fn fetch_admitted_row(
     let bytes = fetch(key).await?;
     owner.progress(
         "verifying",
-        "Verifying the update. Home restarts when the update is ready.",
+        "Checking the update. Home restarts when the update is ready.",
     )?;
     verify_release_bytes(name, &bytes, asset)?;
     Ok(bytes)
@@ -6012,7 +6010,6 @@ pub(crate) mod tests {
         // download either); each stays installable with `setup --with`.
         let hidden = [
             "services",
-            "wallet-walletconnect",
             "content-block-graph-provider",
             "elacity-player",
             "protected-content-protect-provider",

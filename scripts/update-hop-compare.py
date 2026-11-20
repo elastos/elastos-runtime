@@ -533,7 +533,7 @@ def run(config, output):
                                **update_evidence(config, before, after, host_text, command_text)}
                 write(output / (role + "-observation.json"), observation)
                 checks = compare(observation)
-                stages = ["Installing ", "Downloading binary", "Binary verified", "Downloading components",
+                stages = ["Installing ", "Downloading binary", "Downloading ElastOS for", "Binary verified", "Downloading components", "Downloading the update file list",
                           "Components verified", "Installed binary:", "Installed binary verified",
                           "Installed components:", "support assets", "Capsule cache", "Principal-root readiness:",
                           "installed successfully!"]
@@ -2853,13 +2853,15 @@ def cli_install_gateway(home_path, present):
 def cli_refusal(case, command, stdout, stderr, unchanged):
     boundary = {"tampered-binary": "SHA-256", "wrong-platform": "platform", "wrong-version": "version",
                 CLI_INSTALLER_CASE: "installer"}.get(case, "sign")
+    binary_started = any(label in stdout for label in ("Downloading binary", "Downloading ElastOS for"))
+    components_started = any(label in stdout for label in ("Downloading components", "Downloading the update file list"))
     # An unavailable holder, invalid CID or an unrelated failure is not a refusal proof.
     if case == "tampered-binary":
-        evidence = "SHA-256 mismatch" in stderr and "Downloading binary" in stdout and "Downloading components" not in stdout and "Binary verified" not in stdout
+        evidence = "SHA-256 mismatch" in stderr and binary_started and not components_started and "Binary verified" not in stdout
     elif case == "wrong-platform":
-        evidence = ("No release available for platform:" in stderr or "No binary CID for platform" in stderr) and "Downloading binary" not in stdout
+        evidence = ("No release available for platform:" in stderr or "No binary CID for platform" in stderr) and not binary_started
     elif case == "wrong-version":
-        evidence = ("Downloaded binary version mismatch" in stderr or "Installed binary version mismatch" in stderr) and "Downloading binary" in stdout
+        evidence = ("Downloaded binary version mismatch" in stderr or "Installed binary version mismatch" in stderr) and binary_started
     elif case == CLI_INSTALLER_CASE:
         evidence = (CLI_INSTALL_COMMAND in stderr
                     and "does not know: " + CLI_FUTURE_COMPONENT in stderr
@@ -2867,7 +2869,7 @@ def cli_refusal(case, command, stdout, stderr, unchanged):
     else:
         evidence = ("Signer DID mismatch" in stderr or "Envelope signer differs from the pinned maintainer DID" in stderr)
         release_reached = "Fetching release:" in stdout or "Verifying release signature" in stdout
-        evidence = evidence and release_reached == (case == "wrong-signer-release") and "Downloading binary" not in stdout
+        evidence = evidence and release_reached == (case == "wrong-signer-release") and not binary_started
     return {"status": "passed" if command["exit"] not in (0, 124) and evidence and unchanged else "failed",
             "boundary": boundary, "preserved": unchanged, **command}
 
@@ -3001,7 +3003,7 @@ def cli_home_snapshot(manifest, home_path):
                           for key, paths in manifest["preserve"].items()}}
 
 
-def cli_observe_initial_home(processes, manifest, home_path, process, status, release="old"):
+def cli_observe_initial_home(processes, manifest, home_path, process, status, release="old", *, no_open=False):
     directory = home_path / CLI_DATA
     expected = manifest["files"][manifest["publications"][release]["binary"]]["sha256"]
     controller = directory / "update-controller/runtime"
@@ -3018,7 +3020,8 @@ def cli_observe_initial_home(processes, manifest, home_path, process, status, re
     need(hashlib.sha256(signed).hexdigest() == manifest["files"][manifest["publications"][release]["release"]]["sha256"]
          and receipt["trusted_source"] == source_for_home(home_path), "controller signed release or trust differs")
     launch = receipt["launch"]
-    need([base64.b64decode(value, validate=True) for value in launch["args"]] == [b"home", b"--browser"]
+    expected_args = [b"home", b"--browser"] + ([b"--no-open"] if no_open else [])
+    need([base64.b64decode(value, validate=True) for value in launch["args"]] == expected_args
          and base64.b64decode(launch["cwd"], validate=True) == os.fsencode(home_path)
          and hashlib.sha256(json.dumps({key: launch[key] for key in ("args", "environment", "cwd")}, separators=(",", ":")).encode()).hexdigest() == receipt["launch_sha256"],
          "controller launch receipt differs")
@@ -3391,19 +3394,19 @@ def cli_ubuntu_layout(processes, manifest, home_path, evidence, steps):
     opener = cli_path(home_path / CLI_DATA, CLI_OPENER)
     env["PATH"] = str(opener.parent) + ":" + env["PATH"]
     processes.roots[str(opener)] = {manifest["files"][manifest["consumer"]["files"][CLI_OPENER]]["sha256"]}
-    process = processes.spawn([str(home_path / ".local/bin/elastos"), "home", "--browser"], env, home_path, "ubuntu-home",
+    process = processes.spawn([str(home_path / ".local/bin/elastos"), "home", "--browser", "--no-open"], env, home_path, "ubuntu-home",
                               umask=CLI_UBUNTU_UMASK)
     try:
         status_path, deadline, ready = home_path / CLI_DATA / "update-controller/status.json", time.monotonic() + 150, None
         while ready is None and process.poll() is None and time.monotonic() < deadline:
             status = cli_private_json(status_path) if status_path.exists() else {}
             if status.get("phase") == "ready" and status.get("controller_pid") == process.pid:
-                ready = cli_observe_initial_home(processes, manifest, home_path, process, status, "new")
+                ready = cli_observe_initial_home(processes, manifest, home_path, process, status, "new", no_open=True)
             else:
                 time.sleep(.2)
         need(ready is not None and ready["authenticated_health"], "Home did not start on the default Ubuntu account layout"
              + cli_ci_stderr_detail(processes, manifest, "ubuntu-home", "Home"))
-        evidence["home"] = {"generation": ready["generation"], "authenticated_health": True}
+        evidence["home"] = {"generation": ready["generation"], "authenticated_health": True, "no_open": True}
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)

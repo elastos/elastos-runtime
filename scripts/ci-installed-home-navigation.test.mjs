@@ -1,3 +1,4 @@
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
@@ -10,7 +11,7 @@ import { openInstalledApp, openInstalledAssistant, reopenInstalledAssistant, res
 import { publicJourneyFailure } from "./ci-installed-home-failure.mjs";
 
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = withBrowserLaunchRecovery(require("playwright"));
 const dockStyle = readFileSync(new URL("../capsules/home-gui/browser/style.css", import.meta.url));
 
 test("installed recovery uses Assistant's visible Home control while Home's dock is hidden", async t => {

@@ -37,6 +37,8 @@ const uiSoundsInput = document.querySelector("#ui-sounds");
 const passkeyStatusNode = document.querySelector('[data-field="passkey-status"]');
 const accountListNode = document.querySelector("#account-list");
 const passkeyAddButton = document.querySelector("#passkey-add");
+const passkeyRemoveDialog = document.querySelector("#passkey-remove-dialog");
+const LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE = "Add another admin passkey before removing this one.";
 const recoveryDownloadButton = document.querySelector("#recovery-download");
 const recoveryProfileSetup = document.querySelector("#recovery-profile-setup");
 const recoveryProfileName = document.querySelector("#recovery-profile-name");
@@ -61,6 +63,11 @@ const technicalInspectDetailNode = document.querySelector("#technical-inspect-de
 const technicalInspectStatusNode = document.querySelector("#technical-inspect-status");
 const technicalInspectRefreshButton = document.querySelector("#technical-inspect-refresh");
 const deviceDidCopyButton = document.querySelector("#device-did-copy");
+const backgroundChoice = document.querySelector("#update-background-choice");
+let backgroundBusy = false;
+let backgroundSaveError = "";
+let backgroundSaveState = "";
+let focusUpdateRequested = false;
 const runtimeUpdateNode = document.querySelector("#runtime-update");
 const runtimeUpdateButton = document.querySelector("#runtime-update-apply");
 const runtimeUpdateProgressNode = document.querySelector("#runtime-update-progress");
@@ -195,6 +202,7 @@ const backgroundImage = createHomeBackgroundImage({
   onError: () => showBackgroundStatus("Home could not load the image. Close System and open it to retry.", "error"),
 });
 
+configureUpdateNotice();
 boot().catch((error) => {
   console.error("system boot failed", error);
   showError(error);
@@ -294,12 +302,14 @@ function configureHomeRecoverySave() {
           ok = await onRecoveryDownload({ isActive: () => active && frameHomeToken === apiHomeToken });
         } else if (data.action === "navigate" && query && typeof query === "object"
           && !Array.isArray(query)
-          && Object.keys(query).every(key => key === "settings" || key === "recovery")
+          && Object.keys(query).every(key => key === "settings" || key === "recovery" || key === "focus")
           && typeof query.settings === "string"
           && normalizedRequestedSettingsTab(query.settings) === query.settings
           && query.settings !== ""
           && (query.recovery === undefined || (query.recovery === "import" && query.settings === "security"))) {
           activateSettingsTab(query.settings);
+          focusUpdateRequested = false;
+          if (query.focus === "update" && query.settings === "about") focusUpdateCard();
           if (query.settings === "security") {
             (query.recovery === "import" ? recoveryImportInput
               : (recoveryProfileRequired ? recoveryProfileName : recoveryDownloadButton))?.focus();
@@ -415,6 +425,7 @@ async function fetchJson(url, init) {
     const suffix = detail.trim() ? ` ${detail.trim()}` : ` ${response.statusText}`;
     const error = new Error(`request failed: ${response.status}${suffix}`);
     error.status = response.status;
+    error.detail = detail.trim();
     throw error;
   }
   return response.json();
@@ -451,6 +462,7 @@ function renderSystemSummary(systemSummary) {
   setRuntimeState(runtime);
   setSourceState(source);
   renderRuntimeUpdate(systemSummary.runtime_update);
+  renderUpdateNotice();
 }
 
 function setField(field, value, emptyText, titleValue) {
@@ -2532,7 +2544,6 @@ function renderAccounts(accounts) {
   const body = document.createElement("tbody");
   for (const account of activeAccounts) {
     body.append(accountRow(account, {
-      activeCount: activeAccounts.length,
       adminPasskeyCount,
       adminAccountCount,
       currentPrincipalId,
@@ -2608,12 +2619,19 @@ function accountRow(passkey, listState = {}) {
   remove.textContent = "Remove";
   remove.dataset.passkeyRevoke = passkey.proof_binding_id || "";
   remove.dataset.current = passkey.current ? "true" : "false";
+  remove.dataset.accountName = readText(passkey.display_name);
+  remove.dataset.ownAccount = passkey.current || ownAccount ? "true" : "false";
   const protectsLastAdmin = readText(passkey.role) === "admin"
-    && Number(listState.adminPasskeyCount) <= 1
-    && Number(listState.activeCount) > 1;
+    && Number(listState.adminPasskeyCount) <= 1;
   remove.disabled = !remove.dataset.passkeyRevoke || !hasShellAccess() || protectsLastAdmin;
   if (protectsLastAdmin) {
-    remove.title = "Remove guest passkeys before removing the last admin.";
+    const explanation = document.createElement("p");
+    explanation.className = "passkey-removal-note";
+    explanation.id = `passkey-removal-${passkey.proof_binding_id}`;
+    explanation.textContent = LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE;
+    nameWrap.append(explanation);
+    remove.title = explanation.textContent;
+    remove.setAttribute("aria-describedby", explanation.id);
   }
   actions.append(remove);
 
@@ -2652,7 +2670,7 @@ async function onAccountListClick(event) {
     "[data-passkey-demote]",
     "[data-passkey-revoke]",
   ].join(", "));
-  if (!button || !hasShellAccess()) {
+  if (!button || button.disabled || !hasShellAccess() || passkeyRemoveDialog.open) {
     return;
   }
   const promote = Boolean(button.dataset.passkeyPromote);
@@ -2670,9 +2688,13 @@ async function onAccountListClick(event) {
     return;
   }
   const revokingCurrent = button.dataset.current === "true";
-  button.disabled = true;
-  showPasskeyStatus(promote || demote ? "Updating" : "Removing", "muted");
   try {
+    if (!promote && !demote && !await confirmPasskeyRemoval(button)) {
+      button.focus();
+      return;
+    }
+    button.disabled = true;
+    showPasskeyStatus(promote || demote ? "Updating" : "Removing", "muted");
     await fetchJson(`/api/auth/passkeys/${encodeURIComponent(proofBindingId)}/${action}`, {
       method: "POST",
       headers: shellHeaders(),
@@ -2687,9 +2709,41 @@ async function onAccountListClick(event) {
     }
     notifyHomeSummaryChanged();
   } catch (error) {
-    showPasskeyStatus(String(error.message || error), "error");
+    const lastAdminRefusal = !promote && !demote && error.status === 409
+      && error.detail === LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE;
+    showPasskeyStatus(String(lastAdminRefusal ? error.detail : error.message || error), "error");
     button.disabled = false;
+    if (error.status === 409) {
+      try {
+        await refreshAccountList();
+      } catch (refreshError) {
+        showPasskeyStatus(refreshError, "error");
+      }
+    }
   }
+}
+
+function confirmPasskeyRemoval(button) {
+  const ownAccount = button.dataset.ownAccount === "true";
+  const accountName = readText(button.dataset.accountName);
+  passkeyRemoveDialog.querySelector('[data-field="passkey-remove-person"]').textContent =
+    ownAccount ? "Remove your passkey from this Home?"
+      : accountName ? `Remove the passkey for ${accountName} from this Home?`
+        : "Remove this passkey from this Home?";
+  const currentNote = passkeyRemoveDialog.querySelector('[data-field="passkey-remove-current"]');
+  currentNote.hidden = button.dataset.current !== "true";
+  passkeyRemoveDialog.querySelector('[data-field="passkey-remove-copy"]').textContent =
+    ownAccount
+      ? "If a copy remains on your device, security key or in your password manager, you can delete it there."
+      : "If a copy remains on their device, security key or in their password manager, they can delete it there.";
+  passkeyRemoveDialog.returnValue = "cancel";
+  return new Promise((resolve) => {
+    passkeyRemoveDialog.addEventListener("close", () => {
+      resolve(passkeyRemoveDialog.returnValue === "remove");
+    }, { once: true });
+    passkeyRemoveDialog.showModal();
+    passkeyRemoveDialog.querySelector('button[value="cancel"]').focus({ preventScroll: true });
+  });
 }
 
 async function onPasskeyAdd() {
@@ -3773,6 +3827,66 @@ async function onSourceChannelChange() {
   }
 }
 
+function focusUpdateCard() {
+  focusUpdateRequested = true;
+  if (runtimeUpdateNode && !runtimeUpdateNode.hidden) {
+    runtimeUpdateNode.scrollIntoView({ block: "center" });
+    runtimeUpdateNode.focus({ preventScroll: true });
+    focusUpdateRequested = false;
+  }
+}
+
+function backgroundSettingState(background) {
+  return JSON.stringify({ enabled: background?.enabled, readable: background?.readable, message: background?.message });
+}
+
+async function onBackgroundChange() {
+  if (backgroundBusy || !backgroundChoice || !runtimeUpdate?.background_checks) return;
+  const stateAtSave = backgroundSettingState(runtimeUpdate.background_checks);
+  backgroundBusy = true;
+  backgroundChoice.disabled = true;
+  try {
+    const settings = await fetchRuntimeUpdateJson({
+      method: "POST", headers: shellHeaders({ "content-type": "application/json" }), body: JSON.stringify({ enabled: backgroundChoice.checked }),
+    }, "/api/apps/system/update-background");
+    backgroundSaveError = "";
+    renderRuntimeUpdate({ ...runtimeUpdate, background_checks: settings });
+    renderUpdateNotice();
+  } catch (error) {
+    backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
+    backgroundSaveState = stateAtSave;
+    backgroundSaveError = error.status === 401 || error.status === 403
+      ? "Sign in as an admin of this Home, then open System again from Home."
+      : error.status === 409
+        ? runtimeUpdate.background_checks.save_error
+        : "Home could not confirm your change. Try again.";
+    renderUpdateNotice();
+  } finally {
+    backgroundBusy = false;
+    backgroundChoice.disabled = false;
+  }
+}
+
+function configureUpdateNotice() {
+  backgroundChoice?.addEventListener("change", onBackgroundChange);
+  if (requestedSettingsTab === "about" && readQueryParam("focus") === "update") focusUpdateRequested = true;
+}
+
+function renderUpdateNotice() {
+  const background = runtimeUpdate?.background_checks;
+  if (backgroundSettingState(background) !== backgroundSaveState) backgroundSaveError = "";
+  const backgroundNode = document.querySelector("#update-background");
+  if (backgroundNode) backgroundNode.hidden = runtimeUpdateNode.hidden || !background;
+  if (background && backgroundChoice) {
+    backgroundChoice.checked = background.enabled === true;
+    backgroundChoice.disabled = backgroundBusy;
+    document.querySelector("#update-background-label").textContent = background.label;
+    document.querySelector("#update-background-message").textContent = backgroundSaveError || background.message;
+    if (backgroundSaveError && runtimeUpdate?.message === background.message) showRuntimeUpdateStatus(runtimeUpdate.message);
+  }
+  if (focusUpdateRequested && !runtimeUpdateNode.hidden) focusUpdateCard();
+}
+
 function configureRuntimeUpdate() {
   sourceChannelChoice?.addEventListener("change", onSourceChannelChange);
   runtimeUpdateButton?.addEventListener("click", onRuntimeUpdateApply);
@@ -3882,7 +3996,7 @@ function renderRuntimeUpdate(update) {
     : inProgress ? readText(controller?.new_version) || readText(choice?.new_version)
       : readText(choice?.new_version);
   setTextFields("update-heading", newVersion && (inProgress || runtimeUpdatePending || runtimeUpdate?.available === true)
-    ? `${inProgress ? "Updating" : "Update"} to ${newVersion}` : "Home update");
+    ? `${inProgress ? "Updating to" : "Update to"} ElastOS ${newVersion}` : "ElastOS update");
   const publisher = readText(runtimeUpdatePending?.publisher || runtimeUpdate?.publisher);
   setTextFields("update-publisher", publisher);
   setHiddenFields("update-publisher-row", !publisher);
@@ -3905,7 +4019,7 @@ function renderRuntimeUpdate(update) {
       ? "Verify your passkey to start the update."
       : progress === "restarting" ? RUNTIME_UPDATE_RESTART_TEXT
         : ["downloading", "verifying"].includes(progress) ? readText(controller?.message)
-          || "Preparing the update. Home restarts when the update is ready."
+          || "Checking the update. Home restarts when the update is ready."
         : progress === "staging" ? "Checking the signed update. Keep Home open."
           : progress === "queued" ? "The update is queued. Keep Home open."
             : "Checking the update with Home. Keep Home open.");
@@ -3974,7 +4088,8 @@ function runtimeUpdateCanApply() {
 }
 
 function showRuntimeUpdateStatus(message) {
-  if (runtimeUpdateStatusNode) runtimeUpdateStatusNode.textContent = message;
+  if (runtimeUpdateStatusNode) runtimeUpdateStatusNode.textContent =
+    message === runtimeUpdate?.background_checks?.message && !backgroundSaveError ? "" : message;
 }
 
 function scheduleRuntimeUpdateRefresh(delay) {
@@ -4093,7 +4208,7 @@ async function onRuntimeUpdateApply() {
         : error.status === 410
           ? "This approval is no longer valid. Check for the update again and approve it once more."
         : error.status === 401 || error.status === 403
-          ? "Sign in as the Home owner to start the update."
+          ? "Sign in as an admin of this Home to start the update."
           : "The update could not start: the release was refused or verification failed. Select Update again.";
       runtimeUpdateFeedback = feedback;
     } else {
@@ -4220,7 +4335,7 @@ const HOSTED_KEY_CHECK_OUTCOMES = [
   [/Hosted external HTTPS is paused/, "External HTTPS is paused on this Home."],
   [/^request failed: 400 invalid (OpenRouter|Venice) key$/i, HOSTED_KEY_REJECTED],
   [/^request failed: 500 (OpenRouter|Venice) validation unavailable$/i, "The provider sent an unexpected response. Try again later."],
-  [/^request failed: 403 (admin passkey required|proof-bound passkey session required|.*fresh passkey|.*passkey step-up)/i, "Sign in with the Home admin passkey to check keys."],
+  [/^request failed: 403 (admin passkey required|proof-bound passkey session required|.*fresh passkey|.*passkey step-up)/i, "Sign in with an admin passkey to check keys."],
 ];
 
 function hostedProviderValidationError(value) {

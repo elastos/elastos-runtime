@@ -67,6 +67,50 @@ setup completes and prints the full command for opening Home later. On a Linux
 computer with no desktop, such as a Jetson used over SSH, it prints the SSH
 tunnel command for opening Home from another computer.
 
+An app that shows Home in its own window can start Runtime with:
+
+```bash
+elastos home --browser --no-open
+```
+
+`--no-open` starts the same Home and keeps the default browser closed. Runtime
+keeps this choice for its controller's update, previous-release restoration and
+interrupted-restart recovery. The starter still owns Home's foreground lifetime;
+keep it open while Home runs. This option registers no background service.
+Before every start, the app must check the option with the same executable that
+will start Home:
+
+```bash
+elastos home --browser --no-open --help
+```
+
+This capability check starts no Home and requires no parsing of help text. Exit
+code `0` means the executable supports `--no-open`; start it with
+`elastos home --browser --no-open`. Exit code `2` means the older CLI refuses the
+option; use `elastos home --browser` instead. Other failures need the app's
+normal startup-error handling. On a fresh fallback start, the person gets Home
+in the app window and one extra default-browser tab. Check capability rather
+than comparing version strings, so source builds and release candidates work.
+
+An executable without the option refuses it before starting Home or finishing
+pending recovery. This affects every later start after an Undo
+(`elastos update --rollback-to`) to such a release, including reopening the app
+or restarting the computer.
+
+Recovery uses the choice in the stored receipt, so a quiet command can open one
+tab if the receipt came from a normal start or an older release; the reverse
+can also happen once. The next fresh start uses its own command-line choice.
+
+For machine-readable readiness, run `elastos home --json` in a separate process
+with the same Home data directory. Wait for `runtime.running` to be `true`,
+`runtime.kind` to be `gateway`, and `runtime.version` to contain the expected
+release version; then wait for `http://localhost:8090/home/` to respond. The
+probe writes JSON to stdout and starts no Home. `elastos home --status` gives a
+human-readable probe. A source Home prints `Home: <url>` and the terminal-lifetime
+notice to stderr. An installed controller prints those notices to stdout after
+its readiness check and records child output in its private runtime log. Apps
+should use the probe instead of parsing startup output.
+
 So that `elastos` is found in new terminals and after a restart, the installer
 adds one line ending in `# Added by the ElastOS installer` to your login profile
 (`~/.zprofile` for zsh, the default on macOS; `~/.profile` for bash, the default

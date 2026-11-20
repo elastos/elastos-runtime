@@ -481,14 +481,14 @@ function walletApprovalPendingCount(summary) {
   const entries = Array.isArray(summary?.notifications?.entries)
     ? summary.notifications.entries
     : [];
-  return entries.filter((entry) => {
+  const requests = new Set();
+  for (const entry of entries) {
     const actionId = entry?.action_ref?.action_id;
-    return (
-      entry?.kind === "wallet_approval_request" &&
-      typeof actionId === "string" &&
-      actionId.startsWith("wallet-approve-request:")
-    );
-  }).length;
+    if (entry?.kind !== "wallet_approval_request" || typeof actionId !== "string") continue;
+    const prefix = ["wallet-approve-request:", "wallet-review-request:"].find(p => actionId.startsWith(p));
+    if (prefix && actionId.slice(prefix.length).trim()) requests.add(actionId.slice(prefix.length));
+  }
+  return requests.size;
 }
 
 function syncWalletBarBadge(count) {

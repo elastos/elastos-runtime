@@ -314,9 +314,13 @@ enum Commands {
 
     /// Launch Home
     Home {
-        /// Open local Home in the default web browser
+        /// Start local Home and open it in the default web browser
         #[arg(long, conflicts_with_all = &["status", "json"])]
         browser: bool,
+
+        /// Run Home in this terminal without opening a web browser
+        #[arg(long, requires = "browser")]
+        no_open: bool,
 
         /// Print a local Home-state probe without opening the home-cli surface
         #[arg(long)]
@@ -1366,6 +1370,7 @@ async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Commands::Home {
         browser: false,
+        no_open: false,
         status: false,
         json: false,
     });
@@ -1439,11 +1444,12 @@ async fn run() -> anyhow::Result<()> {
 
         Commands::Home {
             browser,
+            no_open,
             status,
             json,
         } => {
             if browser {
-                return gateway_entry::run_browser_home().await;
+                return gateway_entry::run_browser_home(no_open).await;
             }
             return home_cmd::run(status, json).await;
         }
@@ -2638,6 +2644,7 @@ mod tests {
             terminal.command,
             Some(super::Commands::Home {
                 browser: false,
+                no_open: false,
                 status: false,
                 json: false
             })
@@ -2653,13 +2660,104 @@ mod tests {
         }
     }
 
+    #[test]
+    fn home_browser_no_open_cli_contract() {
+        for args in [
+            vec!["elastos", "home", "--browser", "--no-open"],
+            vec!["elastos", "home", "--no-open", "--browser"],
+        ] {
+            let result = super::Cli::try_parse_from(&args);
+            assert!(
+                result.is_ok(),
+                "{args:?}: {:?}",
+                result.err().map(|error| error.to_string())
+            );
+        }
+        for args in [
+            vec!["elastos", "home", "--no-open"],
+            vec!["elastos", "home", "--browser", "--no-opne"],
+            vec!["elastos", "home", "--browser", "--no-open=true"],
+            vec!["elastos", "home", "--browser", "--no-open", "--status"],
+            vec!["elastos", "home", "--browser", "--no-open", "--json"],
+            vec!["elastos", "setup", "--browser", "--no-open"],
+            vec!["elastos", "gateway", "--no-open"],
+            vec!["elastos", "serve", "--no-open"],
+        ] {
+            assert!(super::Cli::try_parse_from(&args).is_err(), "{args:?}");
+        }
+        let help = super::Cli::try_parse_from(["elastos", "home", "--help"])
+            .err()
+            .expect("help exits through Clap")
+            .to_string();
+        assert!(help.contains("--no-open"), "{help}");
+    }
+
+    #[test]
+    fn home_browser_no_open_capability_probe_exits_with_help() {
+        let result =
+            super::Cli::try_parse_from(["elastos", "home", "--browser", "--no-open", "--help"])
+                .err()
+                .expect("capability probe must exit through Clap before startup");
+        assert_eq!(result.kind(), clap::error::ErrorKind::DisplayHelp);
+        assert_eq!(result.exit_code(), 0);
+        let unsupported =
+            super::Cli::try_parse_from(["elastos", "home", "--browser", "--no-opne", "--help"])
+                .err()
+                .expect("unknown option must fail before help");
+        assert_eq!(unsupported.kind(), clap::error::ErrorKind::UnknownArgument);
+        assert_eq!(unsupported.exit_code(), 2);
+    }
+
+    #[test]
+    fn home_browser_restart_marker_has_one_production_reader() {
+        // Structural guard: production may name this marker only at its setter
+        // and ready-callback reader. It catches another reader before startup,
+        // including one that would incorrectly bypass the port check.
+        fn visit(path: &std::path::Path, marker: &str, sites: &mut Vec<String>) {
+            for entry in std::fs::read_dir(path).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if path.file_name().unwrap() != "tests" {
+                        visit(&path, marker, sites);
+                    }
+                } else if path.extension().is_some_and(|ext| ext == "rs")
+                    && path.file_name().unwrap() != "tests.rs"
+                {
+                    let source = std::fs::read_to_string(&path).unwrap();
+                    let production = source.split("\n#[cfg(test)]\nmod tests {").next().unwrap();
+                    for _ in production.match_indices(marker) {
+                        sites.push(path.file_name().unwrap().to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
+        let marker = format!("\"{}{}\"", "ELASTOS_UPDATE_", "RESTART");
+        let mut sites = Vec::new();
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        for entry in std::fs::read_dir(crates).unwrap() {
+            let source = entry.unwrap().path().join("src");
+            if source.is_dir() {
+                visit(&source, &marker, &mut sites);
+            }
+        }
+        sites.sort();
+        assert_eq!(sites, ["gateway_entry.rs", "update_controller.rs"]);
+    }
+
     #[cfg(unix)]
     #[test]
     fn home_browser_process_group_keeps_the_terminal_frontdoor_policy() {
         use std::io::IsTerminal;
 
         let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-        for args in [Vec::new(), vec!["home"], vec!["home", "--browser"]] {
+        for args in [
+            Vec::new(),
+            vec!["home"],
+            vec!["home", "--browser"],
+            vec!["home", "--browser", "--no-open"],
+        ] {
             let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
             assert_eq!(super::should_isolate_process_group(&args), !interactive);
         }

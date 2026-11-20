@@ -570,10 +570,12 @@ def process_snapshot(pid, recorded_at=None):
 
 
 def matches_command(snapshot, binary, prefixes=PREFIXES):
-    for prefix in prefixes:
-        command = binary + " " + prefix
-        if snapshot[1] == command or snapshot[1].startswith(command + " "):
-            return True
+    binaries = (binary, os.path.realpath(binary)) if os.path.isabs(binary) else (binary,)
+    for executable in binaries:
+        for prefix in prefixes:
+            command = executable + " " + prefix
+            if snapshot[1] == command or snapshot[1].startswith(command + " "):
+                return True
     return False
 
 

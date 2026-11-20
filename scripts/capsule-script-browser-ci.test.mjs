@@ -22,8 +22,10 @@ test('capsule browser CI and recipe reuse the workspace test build', () => {
   assertWorkspaceSelection(recipe);
   const unit = job.indexOf('run: cargo test --workspace --no-fail-fast');
   const install = job.indexOf('- name: install content boundary browser fixture');
-  const browser = job.indexOf('run: cargo test --workspace content_sandbox_browser -- --ignored --nocapture');
+  const browser = job.indexOf('run: node ../scripts/run-browser-launch-harness.mjs cargo test --workspace content_sandbox_browser -- --ignored --nocapture');
   assert.ok(unit >= 0 && install > unit && browser > install, 'unit build, engine install, then cached browser tests');
+  assert.match(recipe, /node \.\.\/scripts\/run-browser-launch-harness\.mjs cargo test --workspace content_sandbox_browser_capsule_scripts -- --ignored --nocapture/,
+    'the recipe also shares one visible relaunch budget');
 });
 
 test('a package-only browser invocation changes the feature graph', () => {
@@ -36,4 +38,16 @@ test('feature and profile flag variants also change the build selection', () => 
     assert.throws(() => assertWorkspaceSelection(`cargo test --workspace ${flag} content_sandbox_browser -- --ignored`),
       /keep the same package, feature and profile selection/);
   }
+});
+
+test('shared view layout uses the WebKit-equipped content-sandbox harness',()=>{
+  const smoke=readFileSync(new URL('./capsule-script-browser-smoke.mjs',import.meta.url),'utf8');
+  assert(smoke.includes("await import('./wallet-connection-view-layout.test.mjs')"));
+  assert(smoke.includes("await import('./wallet-connection-view-origin.test.mjs')"));
+  assert(smoke.includes("await import('./wallet-connection-view-round4.test.mjs')"));
+  assert(smoke.includes("await import('./wallet-connection-view-live-needs.test.mjs')"));
+  assert(smoke.includes("await import('./wallet-connection-view-round5.test.mjs')"));
+  assert(smoke.includes("process.env.WALLET_VIEW_BROWSER_SMOKE='1'"));
+  assert(job.includes('playwright" install webkit --with-deps'));
+  assert(job.includes('ELASTOS_PLAYWRIGHT_MODULE:'));
 });

@@ -8,7 +8,18 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Fixed
 
+- Home and apps can enter full screen in Safari and the desktop app.
+- WalletConnect separates unfinished phone connections from linked wallets, can copy a connection link, and lets you cancel a phone wait and start again.
+- WalletConnect keeps its SDK in the connector capsule, uses capsule-scoped Runtime storage and relay access, and shows recovery instructions for interrupted transactions.
+- Home repairs sustained local Community failures automatically, keeps retrying for its lifetime, and shows the same reconnecting state in Chat and System. Startup logs identify each setup stage and explain when a Profile is not ready. Failed first joins keep Home running, missing local topics return through paced repair, and Chat reads explicit state independently of wording (#451).
 - Apps no longer open blank in Safari and other WebKit browsers.
+
+### Developer detail
+
+- The behaviour gate rejects incomplete or missing test results, early exits
+  and stalled files. Its completion supervisor reports the file and first
+  unfinished test, ends with one PASS or FAIL verdict, and stops its workers
+  when the gate exits. Plain smoke scripts finish naturally with process.exitCode.
 
 ## [2.0.1] - 2026-11-09
 

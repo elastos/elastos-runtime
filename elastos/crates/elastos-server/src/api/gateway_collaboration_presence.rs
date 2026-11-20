@@ -94,6 +94,9 @@ pub(super) async fn chat_room_presence_heartbeat(
         })
         .into_response();
     };
+    // A person has Community open in front of them, so History asks present
+    // Homes for earlier posts while somebody reads them.
+    port.record_community_open(now_ts());
     // Not shown is a successful heartbeat that announces nothing, not an
     // error: the person asked for this, and Chat has no failure to report.
     // Chat presents only a `/while-open` grant; "Always" is the timer's.
@@ -387,7 +390,7 @@ async fn set_community_presence(
     decision: crate::collaboration_presence_grant::PresenceDecision,
 ) -> anyhow::Result<()> {
     let (port, profile_did, scope) = presence_subject(state, context)?
-        .ok_or_else(|| anyhow::anyhow!("Community is not configured on this Home."))?;
+        .ok_or_else(|| anyhow::anyhow!("Community is unavailable on this Home."))?;
     let authority = port
         .presence_authority()
         .ok_or_else(|| anyhow::anyhow!("Community presence is not available on this Home."))?;
@@ -433,7 +436,7 @@ pub(super) async fn answer_community_presence_request(
         .find_map(|(prefix, decision)| Some((*decision, action_id.strip_prefix(prefix)?)))?;
     let answer = async {
         let (_, _, scope) = presence_subject(state, context)?
-            .ok_or_else(|| anyhow::anyhow!("Community is not configured on this Home."))?;
+            .ok_or_else(|| anyhow::anyhow!("Community is unavailable on this Home."))?;
         let open = crate::collaboration_presence_grant::open_request_at(
             &state.data_dir,
             &context.principal_id,
@@ -482,6 +485,7 @@ pub(super) fn community_presence_request_notification(
     )
     .ok()??;
     Some(HomeNotificationEntrySummary {
+        requesting_origin: None,
         id: format!("community-presence-request:{issued_at}"),
         source_app: CHAT_ROOM_CAPSULE_ID.to_string(),
         kind: "community_presence_request".to_string(),

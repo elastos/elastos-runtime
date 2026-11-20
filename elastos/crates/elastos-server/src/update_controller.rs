@@ -102,6 +102,12 @@ fn allowed_launch_key(key: &std::ffi::OsStr) -> bool {
         .any(|allowed| key == std::ffi::OsStr::new(allowed))
 }
 
+fn installed_runtime(install_path: &str, current: std::io::Result<PathBuf>) -> Option<PathBuf> {
+    let current = fs::canonicalize(current.ok()?).ok()?;
+    let installed = fs::canonicalize(install_path).ok()?;
+    (installed == current).then_some(current)
+}
+
 /// `elastos home --browser` hands a pending Home restart recovery to the retained
 /// update controller, which proves the old generation gone before starting Home.
 pub fn resume_restart_recovery() -> Result<()> {
@@ -112,12 +118,10 @@ pub fn resume_restart_recovery() -> Result<()> {
     let Some(source) = load_trusted_sources(&data)?.default_source().cloned() else {
         return Ok(());
     };
-    let current = std::env::current_exe()?;
-    if source.install_path.is_empty() || Path::new(&source.install_path) != current {
+    let Some(binary) = installed_runtime(&source.install_path, std::env::current_exe()) else {
         return Ok(());
-    }
+    };
     let data = fs::canonicalize(data)?;
-    let binary = fs::canonicalize(current)?;
     let Some(handoff) = restart_recovery_handoff(&data, &binary)? else {
         return Ok(());
     };
@@ -187,23 +191,29 @@ struct LaunchPlan {
 }
 
 impl LaunchPlan {
-    fn capture() -> Result<Self> {
+    fn capture(no_open: bool) -> Result<Self> {
         Ok(Self::capture_environment(
             std::env::vars_os(),
             std::env::current_dir()?,
+            no_open,
         ))
     }
 
     fn capture_environment(
         environment: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
         cwd: PathBuf,
+        no_open: bool,
     ) -> Self {
         let encode = |value: &std::ffi::OsStr| BASE64.encode(value.as_bytes());
+        let mut args = vec![
+            encode(std::ffi::OsStr::new("home")),
+            encode(std::ffi::OsStr::new("--browser")),
+        ];
+        if no_open {
+            args.push(encode(std::ffi::OsStr::new("--no-open")));
+        }
         Self {
-            args: vec![
-                encode(std::ffi::OsStr::new("home")),
-                encode(std::ffi::OsStr::new("--browser")),
-            ],
+            args,
             environment: environment
                 .into_iter()
                 .filter(|(key, _)| allowed_launch_key(key))
@@ -227,8 +237,12 @@ impl LaunchPlan {
             .env_clear()
             .current_dir(decode(&self.cwd)?)
             .stdin(Stdio::null());
+        let no_open_arg = BASE64.encode(b"--no-open");
+        let no_open = self.args.contains(&no_open_arg);
         for arg in &self.args {
-            command.arg(decode(arg)?);
+            if arg != &no_open_arg {
+                command.arg(decode(arg)?);
+            }
         }
         for (key, value) in &self.environment {
             let key = decode(key)?;
@@ -239,7 +253,16 @@ impl LaunchPlan {
         command
             .env(HOST_ENV, "1")
             .env("ELASTOS_UPDATE_GENERATION", generation)
-            .env("ELASTOS_UPDATE_RESTART", if restart { "1" } else { "0" });
+            // Older releases can read the unchanged receipt schema and accept
+            // home --browser with this controller-owned marker. The retained
+            // controller consumes --no-open before previous-release restoration.
+            // Invariant: gateway_entry::report_browser_home_ready is its only
+            // production reader, solely to suppress the opener and notices.
+            // Quiet initial starts set it too; never use it for restart-only work.
+            .env(
+                "ELASTOS_UPDATE_RESTART",
+                if restart || no_open { "1" } else { "0" },
+            );
         Ok(command)
     }
 
@@ -760,7 +783,7 @@ fn first_start_without_controller_authority(data: &Path) -> Result<bool> {
 }
 
 /// Used by the existing Home browser entry. Source Homes keep their current launcher.
-pub async fn enter_browser_home() -> Result<()> {
+pub async fn enter_browser_home(no_open: bool) -> Result<()> {
     if std::env::var(HOST_ENV).as_deref() == Ok("1") {
         return Ok(());
     }
@@ -768,62 +791,92 @@ pub async fn enter_browser_home() -> Result<()> {
     let Some(source) = load_trusted_sources(&data)?.default_source().cloned() else {
         return Ok(());
     };
-    let current = std::env::current_exe()?;
-    if source.install_path.is_empty() || Path::new(&source.install_path) != current {
+    let Some(binary) = installed_runtime(&source.install_path, std::env::current_exe()) else {
         return Ok(());
-    }
+    };
     let data = fs::canonicalize(data)?;
-    let binary = fs::canonicalize(current)?;
     if !crate::install_transaction::InstallTransaction::has_pending_recovery(&binary) {
         repair_installed_support(&data, &binary, &source).await?;
     }
+    enter_browser_home_controller(
+        no_open,
+        &data,
+        &binary,
+        &source,
+        || {
+            bootstrap_controller(
+                &data,
+                &binary,
+                &source,
+                controller_directory,
+                acquire_lease,
+                crate::install_transaction::InstallationGuard::acquire,
+            )
+        },
+        |directory, binary, expected| {
+            prepare_controller(directory, binary, expected, |path, needed| {
+                crate::install_transaction::require_controller_update_space(path, needed)
+            })
+        },
+        write_private,
+    )
+}
+
+fn enter_browser_home_controller(
+    no_open: bool,
+    data: &Path,
+    binary: &Path,
+    source: &TrustedSource,
+    bootstrap: impl FnOnce() -> Result<Option<ControllerBootstrap>>,
+    prepare: impl FnOnce(&Path, &Path, &str) -> Result<bool>,
+    write_receipt: impl FnOnce(&Path, &Receipt) -> Result<()>,
+) -> Result<()> {
     let Some(ControllerBootstrap {
         directory,
         lease,
         writer,
         signed,
         expected,
-    }) = bootstrap_controller(
-        &data,
-        &binary,
-        &source,
-        controller_directory,
-        acquire_lease,
-        crate::install_transaction::InstallationGuard::acquire,
-    )?
+    }) = bootstrap()?
     else {
-        eprintln!("Home will open. Free disk space before updating.");
+        eprintln!("{}", controller_space_notice(no_open));
         return Ok(());
     };
     let controller = directory.join("runtime");
-    if !prepare_controller(&directory, &binary, &expected, |path, needed| {
-        crate::install_transaction::require_controller_update_space(path, needed)
-    })? {
-        eprintln!("Home will open. Free disk space before updating.");
+    if !prepare(&directory, binary, &expected)? {
+        eprintln!("{}", controller_space_notice(no_open));
         return Ok(());
     }
-    let launch = LaunchPlan::capture()?;
+    let launch = LaunchPlan::capture(no_open)?;
     let receipt = Receipt {
         schema: "elastos.update-controller/v1".into(),
-        data_dir: data,
-        binary,
+        data_dir: data.to_path_buf(),
+        binary: binary.to_path_buf(),
         controller: controller.clone(),
         controller_sha256: expected,
         signed_controller_release: BASE64.encode(signed),
-        trusted_source: source,
+        trusted_source: source.clone(),
         launch_sha256: launch.sha256()?,
         launch,
     };
     let path = directory.join(RECEIPT);
-    if let Err(error) = write_private(&path, &receipt) {
+    if let Err(error) = write_receipt(&path, &receipt) {
         if controller_space_error(&error) {
-            eprintln!("Home will open. Free disk space before updating.");
+            eprintln!("{}", controller_space_notice(no_open));
             return Ok(());
         }
         return Err(error);
     }
     drop(writer);
     Err(exec_controller(&controller, &path, &lease))
+}
+
+fn controller_space_notice(no_open: bool) -> &'static str {
+    if no_open {
+        "Home will start. Free some disk space before updating."
+    } else {
+        "Home will open. Free some disk space before updating."
+    }
 }
 
 /// An older updater or an interrupted Undo can leave this release's support
@@ -1378,30 +1431,38 @@ impl Controller {
             {
                 bail!("Home stopped. Start Home again.");
             }
-            let path = self.directory.join(REQUEST);
-            if path_present(&path)? {
-                let request: UpdateRequest = read_private_json(&path)?;
-                anyhow::ensure!(
-                    !path_present(&self.directory.join(ACTIVE_REQUEST))?,
-                    "An earlier update requires recovery."
-                );
-                fs::rename(&path, self.directory.join(ACTIVE_REQUEST))?;
-                File::open(&self.directory)?.sync_all()?;
-                self.request = Some(request);
-                self.publish("staging", "Checking the signed update.")?;
-                let result = self.apply().await;
-                self.publish_apply_result(&result)?;
-                if !self.host_ready {
-                    return result;
-                }
-                // A pre-activation refusal keeps the current Home and recovery owner
-                // alive. Only a settled transaction can retire its consumed request.
-                if !InstallTransaction::has_pending_recovery(&self.receipt.binary) {
-                    self.finish_request()?;
-                }
+            if !self.process_request().await? {
+                return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    /// Process one queued request; false ends the controller's serving loop.
+    async fn process_request(&mut self) -> Result<bool> {
+        let path = self.directory.join(REQUEST);
+        if path_present(&path)? {
+            let request: UpdateRequest = read_private_json(&path)?;
+            anyhow::ensure!(
+                !path_present(&self.directory.join(ACTIVE_REQUEST))?,
+                "An earlier update requires recovery."
+            );
+            fs::rename(&path, self.directory.join(ACTIVE_REQUEST))?;
+            File::open(&self.directory)?.sync_all()?;
+            self.request = Some(request);
+            self.publish("staging", "Checking the signed update.")?;
+            let result = self.apply().await;
+            self.publish_apply_result(&result)?;
+            if !self.host_ready {
+                return result.map(|()| false);
+            }
+            // A pre-activation refusal keeps the current Home and recovery owner
+            // alive. Only a settled transaction can retire its consumed request.
+            if !InstallTransaction::has_pending_recovery(&self.receipt.binary) {
+                self.finish_request()?;
+            }
+        }
+        Ok(true)
     }
 
     async fn apply(&mut self) -> Result<()> {

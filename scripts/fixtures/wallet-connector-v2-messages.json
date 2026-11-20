@@ -1,0 +1,4441 @@
+{
+  "$comment": "N1 and N2 messages have not yet had their human security review and may change. Test data grants no authority. All accept labels assume the exact registered source, opaque origin, current token, nonce/generation and lifetime checks pass. N4 fields are additions to an otherwise verified body; N7 summaries are private display projections, not proof.",
+  "schema": "elastos.test.wallet-connector-v2-messages/v1",
+  "contractCommit": "c81a0c6db58dd13df1512e4bec43aca9941c2642",
+  "contracts": {
+    "docs/HOME_SHELL_HOST_CONTRACT.md": "b7cfec9e36e869d8f8520dde3d490d2d44259756350e4bcdf5f7b4aa88233930",
+    "docs/WALLET_PROVIDER.md": "b80d910766080a5d4fd8a058dd547d954d632a5655b4e58dd8111e834639a89f"
+  },
+  "messages": [
+    {
+      "id": "hello",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-hello",
+        "schema": "elastos.home.wallet-connector-hello/v2",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f"
+      }
+    },
+    {
+      "id": "ready",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-ready",
+        "schema": "elastos.home.wallet-connector-ready/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef"
+      }
+    },
+    {
+      "id": "hello-wallet-unisat",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-hello",
+        "schema": "elastos.home.wallet-connector-hello/v2",
+        "connectorId": "wallet-unisat",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f"
+      }
+    },
+    {
+      "id": "ready-wallet-unisat",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-ready",
+        "schema": "elastos.home.wallet-connector-ready/v2",
+        "connectorId": "wallet-unisat",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef"
+      }
+    },
+    {
+      "id": "hello-wallet-walletconnect",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-hello",
+        "schema": "elastos.home.wallet-connector-hello/v2",
+        "connectorId": "wallet-walletconnect",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f"
+      }
+    },
+    {
+      "id": "ready-wallet-walletconnect",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-ready",
+        "schema": "elastos.home.wallet-connector-ready/v2",
+        "connectorId": "wallet-walletconnect",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef"
+      }
+    },
+    {
+      "id": "check",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "check"
+        }
+      }
+    },
+    {
+      "id": "check-account",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "check",
+          "accountId": "account:fixture-1"
+        }
+      }
+    },
+    {
+      "id": "link",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "link"
+        }
+      }
+    },
+    {
+      "id": "link-account",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "link",
+          "accountId": "account:fixture-1"
+        }
+      }
+    },
+    {
+      "id": "approve",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "approve",
+          "approvalRequestId": "request:fixture-1"
+        }
+      }
+    },
+    {
+      "id": "stop",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "stop",
+          "effectRequestId": "old_effect_0123456789"
+        }
+      }
+    },
+    {
+      "id": "progress-checking",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": null,
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "progress-choosing_account",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "choosing_account",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": null,
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "progress-choosing_network",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "choosing_network",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": null,
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "progress-waiting_signature",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "waiting_signature",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": null,
+        "waitEnd": null,
+        "dispatch": "sent"
+      }
+    },
+    {
+      "id": "progress-waiting_transaction",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "waiting_transaction",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": null,
+        "waitEnd": null,
+        "dispatch": "sent"
+      }
+    },
+    {
+      "id": "progress-verifying",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "verifying",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": null,
+        "waitEnd": null,
+        "dispatch": "sent"
+      }
+    },
+    {
+      "id": "outcome-done",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "done",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-declined",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "declined",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-request_not_authorized",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "request_not_authorized",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-account_not_authorized",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "account_not_authorized",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-access_removed",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "access_removed",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-account_mismatch",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "account_mismatch",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-unknown_network",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "unknown_network",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-host_busy",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "host_busy",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-wallet_busy",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "wallet_busy",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-no_wallet",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "no_wallet",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-extensions_unavailable",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "extensions_unavailable",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": false
+    },
+    {
+      "id": "outcome-stopped",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "waiting_signature",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "stopped",
+        "waitEnd": "user",
+        "dispatch": "sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-unsupported_request",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "unsupported_request",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-request_expired",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "request_expired",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-request_unavailable",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "request_unavailable",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-invalid_request",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "invalid_request",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-denied",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "denied",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-replay",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "replay",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-retired",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "retired",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-unsupported_kind",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "unsupported_kind",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-unsupported_version",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "unsupported_version",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "outcome-failed",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "failed",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      },
+      "producible": true
+    },
+    {
+      "id": "handed-off",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": null,
+        "waitEnd": null,
+        "dispatch": "handed_off"
+      }
+    },
+    {
+      "id": "transaction-stopped-unknown",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "waiting_transaction",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "stopped",
+        "waitEnd": "deadline",
+        "dispatch": "unknown"
+      }
+    },
+    {
+      "id": "check-deadline",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": 1800000002000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": true,
+          "paymentPending": null
+        },
+        "outcome": "failed",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "state",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-io.metamask",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": "io.metamask",
+          "alternatives": [
+            "com.brave.wallet"
+          ],
+          "availability": "found",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": "eip155:1",
+          "networkIssue": null,
+          "access": "available",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-com.brave.wallet",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": "com.brave.wallet",
+          "alternatives": [
+            "io.metamask"
+          ],
+          "availability": "found",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": "eip155:1",
+          "networkIssue": null,
+          "access": "available",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-unisat",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-unisat",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": "unisat",
+          "alternatives": [],
+          "availability": "found",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": "bip122:000000000019d6689c085ae165831e93",
+          "networkIssue": null,
+          "access": "available",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-network-bitcoin_testnet",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-unisat",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": "unisat",
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": "bitcoin_testnet",
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-network-fractal",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-unisat",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": "unisat",
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": "fractal",
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-network-unrecognized",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-unisat",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": "unisat",
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": "unrecognized",
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "settled-answered",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "answered",
+          "receipt": null
+        }
+      }
+    },
+    {
+      "id": "settled-declined",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "declined",
+          "receipt": null
+        }
+      }
+    },
+    {
+      "id": "settled-failed",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "failed",
+          "receipt": null
+        }
+      }
+    },
+    {
+      "id": "transaction-recorded",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "answered",
+          "receipt": "recorded"
+        }
+      }
+    },
+    {
+      "id": "transaction-recording_failed",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "answered",
+          "receipt": "recording_failed"
+        }
+      }
+    },
+    {
+      "id": "navigation-result",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": true,
+        "reason": "accepted"
+      }
+    },
+    {
+      "id": "navigation-invalid_request",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": false,
+        "reason": "invalid_request"
+      }
+    },
+    {
+      "id": "navigation-denied",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": false,
+        "reason": "denied"
+      }
+    },
+    {
+      "id": "navigation-request_unavailable",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": false,
+        "reason": "request_unavailable"
+      }
+    },
+    {
+      "id": "navigation-target_unavailable",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": false,
+        "reason": "target_unavailable"
+      }
+    },
+    {
+      "id": "navigation-unsupported_version",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": false,
+        "reason": "unsupported_version"
+      }
+    },
+    {
+      "id": "navigation-delivery_failed",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": false,
+        "reason": "delivery_failed"
+      }
+    },
+    {
+      "id": "navigation-timeout",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": false,
+        "reason": "timeout"
+      }
+    },
+    {
+      "id": "hello-invalid-missing",
+      "valid": false,
+      "receiver": "no_reply",
+      "message": {
+        "type": "home:wallet-connector-hello",
+        "schema": "elastos.home.wallet-connector-hello/v2",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example"
+      }
+    },
+    {
+      "id": "hello-invalid-extra",
+      "valid": false,
+      "receiver": "no_reply",
+      "message": {
+        "type": "home:wallet-connector-hello",
+        "schema": "elastos.home.wallet-connector-hello/v2",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "unexpected": true
+      }
+    },
+    {
+      "id": "hello-invalid-type",
+      "valid": false,
+      "receiver": "no_reply",
+      "message": {
+        "type": "home:wallet-connector-hello",
+        "schema": "elastos.home.wallet-connector-hello/v2",
+        "connectorId": 3,
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f"
+      }
+    },
+    {
+      "id": "hello-invalid-old-version",
+      "valid": false,
+      "receiver": "no_reply",
+      "message": {
+        "type": "home:wallet-connector-hello",
+        "schema": "elastos.home.wallet-connector-hello/v1",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f"
+      }
+    },
+    {
+      "id": "hello-invalid-bound",
+      "valid": false,
+      "receiver": "no_reply",
+      "message": {
+        "type": "home:wallet-connector-hello",
+        "schema": "elastos.home.wallet-connector-hello/v2",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "documentNonce": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "id": "ready-invalid-missing",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-ready",
+        "schema": "elastos.home.wallet-connector-ready/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef"
+      }
+    },
+    {
+      "id": "ready-invalid-extra",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-ready",
+        "schema": "elastos.home.wallet-connector-ready/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "unexpected": true
+      }
+    },
+    {
+      "id": "ready-invalid-type",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-ready",
+        "schema": "elastos.home.wallet-connector-ready/v2",
+        "connectorId": 3,
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef"
+      }
+    },
+    {
+      "id": "ready-invalid-old-version",
+      "valid": false,
+      "receiver": "unsupported_version",
+      "message": {
+        "type": "home:wallet-connector-ready",
+        "schema": "elastos.home.wallet-connector-ready/v1",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef"
+      }
+    },
+    {
+      "id": "ready-invalid-bound",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-ready",
+        "schema": "elastos.home.wallet-connector-ready/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "generation": "generation_0123456789abcdef"
+      }
+    },
+    {
+      "id": "effect-invalid-missing",
+      "valid": false,
+      "receiver": "invalid_request",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "action": {
+          "kind": "check"
+        }
+      }
+    },
+    {
+      "id": "effect-invalid-extra",
+      "valid": false,
+      "receiver": "invalid_request",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "check"
+        },
+        "unexpected": true
+      }
+    },
+    {
+      "id": "effect-invalid-type",
+      "valid": false,
+      "receiver": "invalid_request",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": 3,
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "check"
+        }
+      }
+    },
+    {
+      "id": "effect-invalid-old-version",
+      "valid": false,
+      "receiver": "unsupported_version",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v1",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "check"
+        }
+      }
+    },
+    {
+      "id": "effect-invalid-bound",
+      "valid": false,
+      "receiver": "invalid_request",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "action": {
+          "kind": "check"
+        }
+      }
+    },
+    {
+      "id": "result-invalid-missing",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "done",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "result-invalid-extra",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "done",
+        "waitEnd": null,
+        "dispatch": "not_sent",
+        "unexpected": true
+      }
+    },
+    {
+      "id": "result-invalid-type",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": 3,
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "done",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "result-invalid-old-version",
+      "valid": false,
+      "receiver": "unsupported_version",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v1",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "done",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "result-invalid-bound",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "done",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "state-invalid-missing",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-invalid-extra",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null,
+        "unexpected": true
+      }
+    },
+    {
+      "id": "state-invalid-type",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": 3,
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-invalid-old-version",
+      "valid": false,
+      "receiver": "unsupported_version",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v1",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-invalid-bound",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "navigation-invalid-missing",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": true,
+        "reason": "accepted"
+      }
+    },
+    {
+      "id": "navigation-invalid-extra",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": true,
+        "reason": "accepted",
+        "unexpected": true
+      }
+    },
+    {
+      "id": "navigation-invalid-type",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": 3,
+        "reason": "accepted"
+      }
+    },
+    {
+      "id": "navigation-invalid-old-version",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v1",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "ok": true,
+        "reason": "accepted"
+      }
+    },
+    {
+      "id": "navigation-invalid-bound",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:open-target-result",
+        "schema": "elastos.home.open-target-result/v2",
+        "requestId": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "documentNonce": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "ok": true,
+        "reason": "accepted"
+      }
+    },
+    {
+      "id": "effect-unknown-kind",
+      "valid": false,
+      "receiver": "unsupported_kind",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "rpc"
+        }
+      }
+    },
+    {
+      "id": "effect-invalid-id",
+      "valid": false,
+      "receiver": "no_reply",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "short",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "check"
+        }
+      }
+    },
+    {
+      "id": "effect-extra-action",
+      "valid": false,
+      "receiver": "invalid_request",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "link",
+          "method": "eth_requestAccounts"
+        }
+      }
+    },
+    {
+      "id": "effect-selector-bound",
+      "valid": false,
+      "receiver": "invalid_request",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "check",
+          "accountId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "id": "effect-walletconnect",
+      "valid": false,
+      "receiver": "denied",
+      "message": {
+        "type": "home:wallet-connector-effect",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-walletconnect",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "link"
+        }
+      }
+    },
+    {
+      "id": "result-unknown-stage",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "finished",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "done",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "result-unknown-outcome",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "locked",
+        "waitEnd": null,
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "result-wait-end-without-stop",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "checking",
+        "deadlineAt": null,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "done",
+        "waitEnd": "user",
+        "dispatch": "not_sent"
+      }
+    },
+    {
+      "id": "state-extra-settlement-key",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "answered",
+          "receipt": null,
+          "hash": "private"
+        }
+      }
+    },
+    {
+      "id": "state-extra-snapshot-key",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "accounts": [],
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-too-many-alternatives",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [
+            "io.metamask",
+            "com.brave.wallet"
+          ],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-private-site",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null,
+        "requesting_origin": "https://shop.example"
+      }
+    },
+    {
+      "id": "exact-v1-home-reply",
+      "valid": false,
+      "receiver": "unsupported_version",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v1",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "error": "Check your wallet and Wallet's activity before continuing."
+      }
+    },
+    {
+      "id": "unknown-top-level-type",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-unknown",
+        "schema": "elastos.home.wallet-connector-effect/v2",
+        "requestId": "effect_0123456789abcdef",
+        "connectorId": "wallet-metamask",
+        "connectorToken": "fixture-carried-token",
+        "parentOrigin": "https://home.example",
+        "generation": "generation_0123456789abcdef",
+        "action": {
+          "kind": "check"
+        }
+      }
+    },
+    {
+      "id": "state-payment-true",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": true
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-payment-false",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": false
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-payment-none",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-payment-invalid-110",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": "false"
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-payment-invalid-111",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": 0
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-payment-invalid-112",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": {}
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-payment-invalid-113",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": []
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "state-payment-missing",
+      "valid": false,
+      "receiver": "ignore",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false
+        },
+        "settled": null
+      }
+    },
+    {
+      "id": "settled-declined-recorded",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "declined",
+          "receipt": "recorded"
+        }
+      },
+      "proposal": "NB1 default; human review pending"
+    },
+    {
+      "id": "settled-declined-recording_failed",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "declined",
+          "receipt": "recording_failed"
+        }
+      },
+      "proposal": "NB1 default; human review pending"
+    },
+    {
+      "id": "settled-refused-recorded",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "refused",
+          "receipt": "recorded"
+        }
+      },
+      "proposal": "NB1 default; human review pending"
+    },
+    {
+      "id": "settled-refused-recording_failed",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "refused",
+          "receipt": "recording_failed"
+        }
+      },
+      "proposal": "NB1 default; human review pending"
+    },
+    {
+      "id": "settled-failed-recorded",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "failed",
+          "receipt": "recorded"
+        }
+      },
+      "proposal": "NB1 default; human review pending"
+    },
+    {
+      "id": "settled-failed-recording_failed",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "failed",
+          "receipt": "recording_failed"
+        }
+      },
+      "proposal": "NB1 default; human review pending"
+    },
+    {
+      "id": "settled-refused",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-state",
+        "schema": "elastos.home.wallet-connector-state/v2",
+        "connectorId": "wallet-metamask",
+        "documentNonce": "b8646281-c628-4fd0-8291-72ceaf00962f",
+        "generation": "generation_0123456789abcdef",
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "settled": {
+          "effectRequestId": "effect_0123456789abcdef",
+          "result": "refused",
+          "receipt": null
+        }
+      }
+    },
+    {
+      "id": "transaction-ambiguous-none",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "verifying",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": null,
+        "waitEnd": null,
+        "dispatch": "unknown"
+      },
+      "proposal": "NB1 default; human review pending"
+    },
+    {
+      "id": "transaction-ambiguous-failed",
+      "valid": true,
+      "receiver": "accept",
+      "message": {
+        "type": "home:wallet-connector-effect-result",
+        "schema": "elastos.home.wallet-connector-effect-result/v2",
+        "connectorId": "wallet-metamask",
+        "generation": "generation_0123456789abcdef",
+        "requestId": "effect_0123456789abcdef",
+        "stage": "verifying",
+        "deadlineAt": 1800000300000,
+        "snapshot": {
+          "providerId": null,
+          "alternatives": [],
+          "availability": "unknown",
+          "firstAccount": null,
+          "requiredAccountAvailable": null,
+          "network": null,
+          "networkIssue": null,
+          "access": "unknown",
+          "busy": false,
+          "paymentPending": null
+        },
+        "outcome": "failed",
+        "waitEnd": null,
+        "dispatch": "unknown"
+      },
+      "proposal": "NB1 default; human review pending"
+    }
+  ],
+  "stages": [
+    "checking",
+    "choosing_account",
+    "choosing_network",
+    "waiting_signature",
+    "waiting_transaction",
+    "verifying"
+  ],
+  "outcomes": [
+    "done",
+    "declined",
+    "request_not_authorized",
+    "account_not_authorized",
+    "access_removed",
+    "account_mismatch",
+    "unknown_network",
+    "host_busy",
+    "wallet_busy",
+    "no_wallet",
+    "extensions_unavailable",
+    "stopped",
+    "unsupported_request",
+    "request_expired",
+    "request_unavailable",
+    "invalid_request",
+    "denied",
+    "replay",
+    "retired",
+    "unsupported_kind",
+    "unsupported_version",
+    "failed"
+  ],
+  "dispatch": [
+    "not_sent",
+    "handed_off",
+    "sent",
+    "unknown"
+  ],
+  "n1Queries": [
+    {
+      "id": "inbox-request",
+      "source": "inbox",
+      "target": "wallet",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "valid": true
+    },
+    {
+      "id": "wallet-connect-wallet-metamask",
+      "source": "wallet",
+      "target": "wallet-metamask",
+      "query": {},
+      "valid": true
+    },
+    {
+      "id": "wallet-request-wallet-metamask",
+      "source": "wallet",
+      "target": "wallet-metamask",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "valid": true,
+      "storedConnector": "wallet-metamask"
+    },
+    {
+      "id": "connector-request-wallet-metamask",
+      "source": "wallet-metamask",
+      "target": "wallet",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "valid": true,
+      "storedConnector": "wallet-metamask"
+    },
+    {
+      "id": "connector-activity-wallet-metamask",
+      "source": "wallet-metamask",
+      "target": "wallet",
+      "query": {
+        "tab": "activity"
+      },
+      "valid": true
+    },
+    {
+      "id": "connector-source-wallet-metamask",
+      "source": "wallet-metamask",
+      "target": "notes",
+      "query": {},
+      "valid": true,
+      "walletRequestId": "request:fixture-1",
+      "runtimeSource": "notes"
+    },
+    {
+      "id": "wallet-connect-wallet-unisat",
+      "source": "wallet",
+      "target": "wallet-unisat",
+      "query": {},
+      "valid": true
+    },
+    {
+      "id": "wallet-request-wallet-unisat",
+      "source": "wallet",
+      "target": "wallet-unisat",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "valid": true,
+      "storedConnector": "wallet-unisat"
+    },
+    {
+      "id": "connector-request-wallet-unisat",
+      "source": "wallet-unisat",
+      "target": "wallet",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "valid": true,
+      "storedConnector": "wallet-unisat"
+    },
+    {
+      "id": "connector-activity-wallet-unisat",
+      "source": "wallet-unisat",
+      "target": "wallet",
+      "query": {
+        "tab": "activity"
+      },
+      "valid": true
+    },
+    {
+      "id": "connector-source-wallet-unisat",
+      "source": "wallet-unisat",
+      "target": "notes",
+      "query": {},
+      "valid": true,
+      "walletRequestId": "request:fixture-1",
+      "runtimeSource": "notes"
+    },
+    {
+      "id": "wallet-connect-wallet-walletconnect",
+      "source": "wallet",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": true
+    },
+    {
+      "id": "wallet-request-wallet-walletconnect",
+      "source": "wallet",
+      "target": "wallet-walletconnect",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "valid": true,
+      "storedConnector": "wallet-walletconnect"
+    },
+    {
+      "id": "connector-request-wallet-walletconnect",
+      "source": "wallet-walletconnect",
+      "target": "wallet",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "valid": true,
+      "storedConnector": "wallet-walletconnect"
+    },
+    {
+      "id": "connector-activity-wallet-walletconnect",
+      "source": "wallet-walletconnect",
+      "target": "wallet",
+      "query": {
+        "tab": "activity"
+      },
+      "valid": true
+    },
+    {
+      "id": "connector-source-wallet-walletconnect",
+      "source": "wallet-walletconnect",
+      "target": "notes",
+      "query": {},
+      "valid": true,
+      "walletRequestId": "request:fixture-1",
+      "runtimeSource": "notes"
+    },
+    {
+      "id": "extension-walletconnect-wallet-metamask",
+      "source": "wallet-metamask",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": true,
+      "selection": {
+        "accountId": null,
+        "walletRequest": null,
+        "handedOff": false,
+        "paymentPending": false,
+        "ready": true,
+        "targetConfigured": true
+      }
+    },
+    {
+      "id": "extension-walletconnect-wallet-unisat",
+      "source": "wallet-unisat",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": false
+    },
+    {
+      "id": "inbox-after-internet",
+      "source": "inbox",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": true
+    },
+    {
+      "id": "walletconnect-internet",
+      "source": "wallet-walletconnect",
+      "target": "inbox",
+      "query": {
+        "notification_id": "walletconnect-internet:permission"
+      },
+      "valid": true
+    },
+    {
+      "id": "extra-query",
+      "source": "wallet-metamask",
+      "target": "wallet",
+      "query": {
+        "tab": "activity",
+        "wallet_request": "request:fixture-1"
+      },
+      "valid": false
+    },
+    {
+      "id": "unknown-query",
+      "source": "wallet-metamask",
+      "target": "wallet",
+      "query": {
+        "tab": "settings"
+      },
+      "valid": false
+    },
+    {
+      "id": "selector-type",
+      "source": "wallet-metamask",
+      "target": "wallet",
+      "query": {
+        "wallet_request": 1
+      },
+      "valid": false
+    },
+    {
+      "id": "selector-bound",
+      "source": "wallet-metamask",
+      "target": "wallet",
+      "query": {
+        "wallet_request": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "valid": false
+    },
+    {
+      "id": "source-target-substitution",
+      "source": "wallet-metamask",
+      "target": "people",
+      "query": {},
+      "valid": false,
+      "walletRequestId": "request:fixture-1",
+      "runtimeSource": "notes"
+    },
+    {
+      "id": "source-shell-excluded",
+      "source": "wallet-metamask",
+      "target": "home",
+      "query": {},
+      "valid": false,
+      "walletRequestId": "request:fixture-1",
+      "runtimeSource": "home"
+    },
+    {
+      "id": "wrong-connector",
+      "source": "wallet",
+      "target": "wallet-unisat",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "valid": false,
+      "storedConnector": "wallet-metamask"
+    },
+    {
+      "id": "reverse-extension-route",
+      "source": "wallet-walletconnect",
+      "target": "wallet-metamask",
+      "query": {},
+      "valid": false
+    },
+    {
+      "id": "alternative-near-miss-accountId-account:fixture-1",
+      "source": "wallet-metamask",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": false,
+      "selection": {
+        "accountId": "account:fixture-1",
+        "walletRequest": null,
+        "handedOff": false,
+        "paymentPending": false,
+        "ready": true,
+        "targetConfigured": true
+      }
+    },
+    {
+      "id": "alternative-near-miss-walletRequest-request:fixture-1",
+      "source": "wallet-metamask",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": false,
+      "selection": {
+        "accountId": null,
+        "walletRequest": "request:fixture-1",
+        "handedOff": false,
+        "paymentPending": false,
+        "ready": true,
+        "targetConfigured": true
+      }
+    },
+    {
+      "id": "alternative-near-miss-handedOff-true",
+      "source": "wallet-metamask",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": false,
+      "selection": {
+        "accountId": null,
+        "walletRequest": null,
+        "handedOff": true,
+        "paymentPending": false,
+        "ready": true,
+        "targetConfigured": true
+      }
+    },
+    {
+      "id": "alternative-near-miss-paymentPending-true",
+      "source": "wallet-metamask",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": false,
+      "selection": {
+        "accountId": null,
+        "walletRequest": null,
+        "handedOff": false,
+        "paymentPending": true,
+        "ready": true,
+        "targetConfigured": true
+      }
+    },
+    {
+      "id": "alternative-near-miss-paymentPending-none",
+      "source": "wallet-metamask",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": false,
+      "selection": {
+        "accountId": null,
+        "walletRequest": null,
+        "handedOff": false,
+        "paymentPending": null,
+        "ready": true,
+        "targetConfigured": true
+      }
+    },
+    {
+      "id": "alternative-near-miss-ready-false",
+      "source": "wallet-metamask",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": false,
+      "selection": {
+        "accountId": null,
+        "walletRequest": null,
+        "handedOff": false,
+        "paymentPending": false,
+        "ready": false,
+        "targetConfigured": true
+      }
+    },
+    {
+      "id": "alternative-near-miss-targetConfigured-false",
+      "source": "wallet-metamask",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": false,
+      "selection": {
+        "accountId": null,
+        "walletRequest": null,
+        "handedOff": false,
+        "paymentPending": false,
+        "ready": true,
+        "targetConfigured": false
+      }
+    },
+    {
+      "id": "alternative-missing-trusted-facts",
+      "source": "wallet-metamask",
+      "target": "wallet-walletconnect",
+      "query": {},
+      "valid": false
+    },
+    {
+      "id": "accounts-close-return-home-gui",
+      "source": "home-gui",
+      "target": "wallet",
+      "query": {
+        "tab": "accounts"
+      },
+      "delivery": "trusted-close-return",
+      "cmd": "review-request",
+      "valid": true
+    },
+    {
+      "id": "accounts-close-return-wallet-metamask",
+      "source": "wallet-metamask",
+      "target": "wallet",
+      "query": {
+        "tab": "accounts"
+      },
+      "delivery": "trusted-close-return",
+      "cmd": "review-request",
+      "valid": false
+    },
+    {
+      "id": "accounts-close-return-wallet-unisat",
+      "source": "wallet-unisat",
+      "target": "wallet",
+      "query": {
+        "tab": "accounts"
+      },
+      "delivery": "trusted-close-return",
+      "cmd": "review-request",
+      "valid": false
+    },
+    {
+      "id": "accounts-close-return-wallet-walletconnect",
+      "source": "wallet-walletconnect",
+      "target": "wallet",
+      "query": {
+        "tab": "accounts"
+      },
+      "delivery": "trusted-close-return",
+      "cmd": "review-request",
+      "valid": false
+    }
+  ],
+  "n4IdentityFields": [
+    {
+      "id": "io.metamask",
+      "actor": "wallet-metamask",
+      "operation": "link_verify",
+      "fields": {
+        "provider_id": "io.metamask"
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "com.brave.wallet",
+      "actor": "wallet-metamask",
+      "operation": "link_verify",
+      "fields": {
+        "provider_id": "com.brave.wallet"
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "unisat",
+      "actor": "wallet-unisat",
+      "operation": "link_verify",
+      "fields": {
+        "provider_id": "unisat"
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "legacy-identity",
+      "actor": "wallet-metamask",
+      "operation": "link_verify",
+      "fields": {},
+      "expect": "accept"
+    },
+    {
+      "id": "peer",
+      "actor": "wallet-walletconnect",
+      "operation": "link_verify",
+      "fields": {
+        "wallet_peer_name": "Trust Wallet"
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "peer-well-formed",
+      "actor": "wallet-walletconnect",
+      "operation": "link_verify",
+      "fields": {
+        "wallet_peer_name": "�Alice"
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "wrong-actor",
+      "actor": "wallet-unisat",
+      "operation": "link_verify",
+      "fields": {
+        "provider_id": "io.metamask"
+      },
+      "expect": "denied"
+    },
+    {
+      "id": "both-identities",
+      "actor": "wallet-walletconnect",
+      "operation": "link_verify",
+      "fields": {
+        "provider_id": "io.metamask",
+        "wallet_peer_name": "MetaMask"
+      },
+      "expect": "denied"
+    },
+    {
+      "id": "peer-bound",
+      "actor": "wallet-walletconnect",
+      "operation": "link_verify",
+      "fields": {
+        "wallet_peer_name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": "invalid_request"
+    },
+    {
+      "id": "peer-type",
+      "actor": "wallet-walletconnect",
+      "operation": "link_verify",
+      "fields": {
+        "wallet_peer_name": 3
+      },
+      "expect": "invalid_request"
+    },
+    {
+      "id": "peer-nonlink-completion",
+      "actor": "wallet-walletconnect",
+      "operation": "nonlink_complete",
+      "fields": {
+        "wallet_peer_name": "Trust Wallet"
+      },
+      "expect": "denied"
+    }
+  ],
+  "n7PrivateSummaries": [
+    {
+      "id": "site-wallet",
+      "audience": "wallet",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://shop.example"
+      },
+      "expect": "show_site"
+    },
+    {
+      "id": "site-inbox",
+      "audience": "inbox",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://shop.example"
+      },
+      "expect": "show_site"
+    },
+    {
+      "id": "site-wallet-metamask",
+      "audience": "wallet-metamask",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://shop.example"
+      },
+      "expect": "show_site"
+    },
+    {
+      "id": "bad-site-3",
+      "audience": "wallet",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": null
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "bad-site-4",
+      "audience": "wallet",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": 3
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "bad-site-5",
+      "audience": "wallet",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://shop.example/"
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "bad-site-6",
+      "audience": "wallet",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://user@shop.example"
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "bad-site-7",
+      "audience": "wallet",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://bücher.example"
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "bad-site-8",
+      "audience": "wallet",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "private-site-home",
+      "audience": "home",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://shop.example"
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "private-site-home-gui",
+      "audience": "home-gui",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://shop.example"
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "private-site-chat",
+      "audience": "chat",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://shop.example"
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "private-site-wallet-unisat",
+      "audience": "wallet-unisat",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://shop.example"
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "private-site-another-principal",
+      "audience": "another-principal",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://shop.example"
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "old-summary",
+      "audience": "wallet",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600
+      },
+      "expect": "omit_site"
+    },
+    {
+      "id": "literal-idn",
+      "audience": "wallet",
+      "summary": {
+        "request_id": "request:fixture-1",
+        "status": "pending",
+        "intent": "browser_personal_sign",
+        "capsule_id": "browser",
+        "resource": "wallet:account:fixture-1",
+        "reason": "Sign a message",
+        "account_id": "account:fixture-1",
+        "chain_namespace": "eip155",
+        "address": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "proof_type": "evm_personal_sign",
+        "connector_id": "wallet-metamask",
+        "created_at": 1800000000,
+        "expires_at": 1800000600,
+        "requesting_origin": "https://xn--bcher-kva.example"
+      },
+      "expect": "show_site"
+    }
+  ],
+  "n1CloseMessages": [
+    {
+      "id": "own-close",
+      "valid": true,
+      "message": {
+        "type": "home:close-self",
+        "homeToken": "fixture-current-token"
+      }
+    },
+    {
+      "id": "close-cannot-choose-query",
+      "valid": false,
+      "message": {
+        "type": "home:close-self",
+        "homeToken": "fixture-current-token",
+        "query": {
+          "tab": "accounts"
+        }
+      }
+    },
+    {
+      "id": "close-cannot-choose-target",
+      "valid": false,
+      "message": {
+        "type": "home:close-self",
+        "homeToken": "fixture-current-token",
+        "target": "wallet"
+      }
+    },
+    {
+      "id": "close-missing-token",
+      "valid": false,
+      "message": {
+        "type": "home:close-self"
+      }
+    }
+  ],
+  "oldHomeSource": {
+    "tag": "v2.0.1",
+    "commit": "bde18c7bae6564db934cd406c1070b32499473ec",
+    "path": "capsules/home/browser/home-wallet-connector-host.js",
+    "sha256": "1545f8a1dc56171deefe8ad5004ba0a024ca217112a346a7709c54d6acf12904",
+    "joinedTest": "n2_old_home_transaction_handoff_compatible",
+    "productProof": false,
+    "scope": "Source provenance only; Runtime/navigation owns real unchanged-module handoff/send/hash/completion compatibility after the human gate.",
+    "tagObject": "97cb28d2aaeba72f799d18d7e9d1902955f92bd1",
+    "fixturePath": "scripts/fixtures/wallet-home-v2.0.1-host.js.txt"
+  },
+  "handoffs": [
+    {
+      "id": "transaction-six-key",
+      "valid": true,
+      "message": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_handoff",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "evm_chains": [],
+        "handoff": {
+          "schema": "elastos.wallet.webconnect_handoff/v1",
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "intent": "transaction_intent",
+          "status": "awaiting_wallet_transaction",
+          "transaction": {
+            "from": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+            "to": "0x1212121212121212121212121212121212121212",
+            "value": "0x1",
+            "data": "0x",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "nonce": "0x0",
+            "chainId": "0x1"
+          }
+        }
+      }
+    },
+    {
+      "id": "signature-six-key",
+      "valid": true,
+      "message": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_handoff",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "evm_chains": [],
+        "handoff": {
+          "schema": "elastos.wallet.webconnect_handoff/v1",
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "intent": "browser_personal_sign",
+          "status": "awaiting_wallet_signature",
+          "message": "Fixture message",
+          "signature_type": "personal_sign"
+        }
+      }
+    },
+    {
+      "id": "unisat-six-key",
+      "valid": true,
+      "message": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_handoff",
+        "connector_id": "wallet-unisat",
+        "request_id": "request:fixture-1",
+        "evm_chains": [],
+        "handoff": {
+          "schema": "elastos.wallet.webconnect_handoff/v1",
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "bc1qcwnwu8vq8y66tr7a3mwn3j5p4yxz8prpukfnuv",
+          "intent": "bitcoin_bip322_proof",
+          "status": "awaiting_wallet_signature",
+          "message": "Fixture proof",
+          "signature_type": "bip322_simple"
+        }
+      }
+    },
+    {
+      "id": "handoff-seventh-deadline-invalid",
+      "valid": false,
+      "message": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_handoff",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "evm_chains": [],
+        "handoff": {
+          "schema": "elastos.wallet.webconnect_handoff/v1",
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "intent": "transaction_intent",
+          "status": "awaiting_wallet_transaction",
+          "transaction": {
+            "from": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+            "to": "0x1212121212121212121212121212121212121212",
+            "value": "0x1",
+            "data": "0x",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "nonce": "0x0",
+            "chainId": "0x1"
+          }
+        },
+        "external_result_deadline_at": 1800043200
+      }
+    },
+    {
+      "id": "handoff-nested-deadline-invalid",
+      "valid": false,
+      "message": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_handoff",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "evm_chains": [],
+        "handoff": {
+          "schema": "elastos.wallet.webconnect_handoff/v1",
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "intent": "transaction_intent",
+          "status": "awaiting_wallet_transaction",
+          "transaction": {
+            "from": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+            "to": "0x1212121212121212121212121212121212121212",
+            "value": "0x1",
+            "data": "0x",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "nonce": "0x0",
+            "chainId": "0x1"
+          },
+          "external_result_deadline_at": 1800043200
+        }
+      }
+    },
+    {
+      "id": "handoff-invalid-array-payload_hash",
+      "valid": false,
+      "message": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_handoff",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "evm_chains": [],
+        "handoff": {
+          "schema": "elastos.wallet.webconnect_handoff/v1",
+          "request_id": "request:fixture-1",
+          "payload_hash": [
+            "0xabababababababababababababababababababababababababababababababab"
+          ],
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "intent": "transaction_intent",
+          "status": "awaiting_wallet_transaction",
+          "transaction": {
+            "from": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+            "to": "0x1212121212121212121212121212121212121212",
+            "value": "0x1",
+            "data": "0x",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "nonce": "0x0",
+            "chainId": "0x1"
+          }
+        }
+      }
+    },
+    {
+      "id": "handoff-invalid-array-signer",
+      "valid": false,
+      "message": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_handoff",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "evm_chains": [],
+        "handoff": {
+          "schema": "elastos.wallet.webconnect_handoff/v1",
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": [
+            "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1"
+          ],
+          "intent": "transaction_intent",
+          "status": "awaiting_wallet_transaction",
+          "transaction": {
+            "from": [
+              "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1"
+            ],
+            "to": "0x1212121212121212121212121212121212121212",
+            "value": "0x1",
+            "data": "0x",
+            "gas": "0x5208",
+            "gasPrice": "0x1",
+            "nonce": "0x0",
+            "chainId": "0x1"
+          }
+        }
+      }
+    }
+  ],
+  "settlementProposal": "NB1 default proposal only; N1 and N2 have not yet had their human security review. Envelopes assume Home dual authorization and the stored result binding; these examples grant none. If the fallback is chosen, remove these producer/operation rows.",
+  "callSettlements": [
+    {
+      "id": "settlement-not_approved",
+      "valid": true,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "not_approved"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "not_approved"
+        }
+      }
+    },
+    {
+      "id": "settlement-not_authorized",
+      "valid": true,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "not_authorized"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_authorized"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "not_authorized"
+        }
+      }
+    },
+    {
+      "id": "settlement-unresolved",
+      "valid": true,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "unresolved"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "approved",
+        "outcome": "unresolved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "unresolved"
+        }
+      }
+    },
+    {
+      "id": "settlement-invalid-code",
+      "valid": false,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "not_approved",
+        "code": 4001
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "not_approved"
+        }
+      }
+    },
+    {
+      "id": "settlement-invalid-outcome",
+      "valid": false,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "cancelled"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "not_approved"
+        }
+      }
+    },
+    {
+      "id": "settlement-invalid-connector_id",
+      "valid": false,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-unisat",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "not_approved"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "not_approved"
+        }
+      }
+    },
+    {
+      "id": "settlement-wrong-status",
+      "valid": false,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "not_approved"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "approved",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "not_approved"
+        }
+      }
+    },
+    {
+      "id": "settlement-operation-extra",
+      "valid": false,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "not_approved"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "not_approved",
+          "code": 4001
+        }
+      }
+    },
+    {
+      "id": "settlement-invalid-array-payload_hash",
+      "valid": false,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": [
+          "0xabababababababababababababababababababababababababababababababab"
+        ],
+        "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+        "outcome": "not_approved"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": [
+            "0xabababababababababababababababababababababababababababababababab"
+          ],
+          "signer": "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1",
+          "outcome": "not_approved"
+        }
+      }
+    },
+    {
+      "id": "settlement-invalid-array-signer",
+      "valid": false,
+      "method": "POST",
+      "route": "/api/apps/home/wallet-connector/approvals/request:fixture-1/call-settlement",
+      "requestId": "request:fixture-1",
+      "body": {
+        "schema": "elastos.home.wallet-connector.call-settlement.request/v1",
+        "connector_id": "wallet-metamask",
+        "connector_token": "fixture-current-token",
+        "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+        "signer": [
+          "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1"
+        ],
+        "outcome": "not_approved"
+      },
+      "response": {
+        "schema": "elastos.home.wallet-connector.effect.result/v1",
+        "action": "approval_call_settlement",
+        "connector_id": "wallet-metamask",
+        "request_id": "request:fixture-1",
+        "status": "rejected",
+        "outcome": "not_approved"
+      },
+      "runtimeOperation": {
+        "name": "RecordExternalCallOutcome",
+        "data": {
+          "request_id": "request:fixture-1",
+          "payload_hash": "0xabababababababababababababababababababababababababababababababab",
+          "signer": [
+            "0x3d8c6dfe3630eb098c1bcc3d741928900197fed1"
+          ],
+          "outcome": "not_approved"
+        }
+      }
+    }
+  ],
+  "selectedResultReads": [
+    {
+      "id": "selected-result-wallet-metamask",
+      "connector": "wallet-metamask",
+      "method": "GET",
+      "route": "/api/apps/wallet-metamask/wallet/approvals",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "samePrincipal": true,
+      "storedConnector": "wallet-metamask",
+      "expect": "accept"
+    },
+    {
+      "id": "selected-result-wallet-unisat",
+      "connector": "wallet-unisat",
+      "method": "GET",
+      "route": "/api/apps/wallet-unisat/wallet/approvals",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "samePrincipal": true,
+      "storedConnector": "wallet-unisat",
+      "expect": "accept"
+    },
+    {
+      "id": "selected-result-wallet-walletconnect",
+      "connector": "wallet-walletconnect",
+      "method": "GET",
+      "route": "/api/apps/wallet-walletconnect/wallet/approvals",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "samePrincipal": true,
+      "storedConnector": "wallet-walletconnect",
+      "expect": "accept"
+    },
+    {
+      "id": "ordinary-bounded-feed",
+      "connector": "wallet-metamask",
+      "method": "GET",
+      "route": "/api/apps/wallet-metamask/wallet/approvals",
+      "query": {},
+      "samePrincipal": true,
+      "storedConnector": "wallet-metamask",
+      "expect": "accept"
+    },
+    {
+      "id": "selected-foreign-principal",
+      "connector": "wallet-metamask",
+      "method": "GET",
+      "route": "/api/apps/wallet-metamask/wallet/approvals",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "samePrincipal": false,
+      "storedConnector": "wallet-metamask",
+      "expect": "request_unavailable"
+    },
+    {
+      "id": "selected-other-connector",
+      "connector": "wallet-metamask",
+      "method": "GET",
+      "route": "/api/apps/wallet-metamask/wallet/approvals",
+      "query": {
+        "wallet_request": "request:fixture-1"
+      },
+      "samePrincipal": true,
+      "storedConnector": "wallet-unisat",
+      "expect": "request_unavailable"
+    },
+    {
+      "id": "selected-bad-type",
+      "connector": "wallet-metamask",
+      "method": "GET",
+      "route": "/api/apps/wallet-metamask/wallet/approvals",
+      "query": {
+        "wallet_request": 1
+      },
+      "samePrincipal": true,
+      "storedConnector": "wallet-metamask",
+      "expect": "invalid_request"
+    },
+    {
+      "id": "selected-extra-key",
+      "connector": "wallet-metamask",
+      "method": "GET",
+      "route": "/api/apps/wallet-metamask/wallet/approvals",
+      "query": {
+        "wallet_request": "request:fixture-1",
+        "deadline": true
+      },
+      "samePrincipal": true,
+      "storedConnector": "wallet-metamask",
+      "expect": "invalid_request"
+    },
+    {
+      "id": "selected-over-bound",
+      "connector": "wallet-metamask",
+      "method": "GET",
+      "route": "/api/apps/wallet-metamask/wallet/approvals",
+      "query": {
+        "wallet_request": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "samePrincipal": true,
+      "storedConnector": "wallet-metamask",
+      "expect": "invalid_request"
+    }
+  ]
+}

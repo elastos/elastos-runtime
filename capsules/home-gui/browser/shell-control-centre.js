@@ -441,6 +441,7 @@ function pendingApprovalEntries(summary) {
     ? summary.notifications.entries
     : [];
   return entries.filter((entry) => {
+    if (entry?.kind === "home_update_available") return false;
     const status = String(entry?.status || "").toLowerCase();
     if (status && status !== "pending" && status !== "open" && status !== "unread") {
       return false;

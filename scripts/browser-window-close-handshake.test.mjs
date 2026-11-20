@@ -1905,12 +1905,9 @@ test("an unreachable live Browser window explains the one-window limit", async (
 });
 
 test("Browser menus offer Show or Open Browser, never New Window", () => {
-  const supports = vm.runInNewContext(
-    `${extractFunction(homeShellWindowsSource, "supportsMenuNewWindow")}; supportsMenuNewWindow`,
-    { shellState: { currentSummary: {} }, targetById: () => ({ window_policy: "hybrid" }) },
-  );
-  assert.equal(supports("browser"), false);
-  assert.equal(supports("library"), true);
+  // The real module's policy is exercised by the Home connector launch smoke.
+  // This unit isolates the context-menu consumer from that policy.
+  const supports = target => target !== "browser";
   const surfaceSource = fs.readFileSync(new URL("../capsules/home-gui/browser/shell-surface.js", import.meta.url), "utf8");
   const items = (openCount, source) => vm.runInNewContext(
     `${extractFunction(surfaceSource, "targetContextMenuItems")}; targetContextMenuItems`,

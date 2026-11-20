@@ -4536,9 +4536,24 @@ fn mutate_auth_state<T>(
     let lock = lock_auth_state_file(open_auth_state_lock(data_dir)?)?;
     let (mut state, device_key_identity) = load_auth_state_with_identity(data_dir)?;
     let baseline = AuditBaseline::new(&state, device_key_identity);
+    let previous_principals = state
+        .principals
+        .iter()
+        .map(|p| p.principal_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     ensure_audit_chain_state(data_dir, &mut state)?;
     let value = mutation(&mut state)?;
     save_auth_state(data_dir, &state, Some(&baseline))?;
+    for principal in previous_principals {
+        if !state.principals.iter().any(|p| p.principal_id == principal)
+            && crate::api::gateway::clear_walletconnect_principal_storage(data_dir, &principal)
+                .is_err()
+        {
+            tracing::warn!(
+                "WalletConnect session cleanup requires operator retry after principal removal"
+            );
+        }
+    }
     unlock_auth_state_file(lock)?;
     Ok(value)
 }
@@ -6496,10 +6511,21 @@ fn active_passkey(principal: &PrincipalRecord) -> bool {
         .is_some_and(|passkey| passkey.revoked_at.is_none())
 }
 
+#[derive(Debug)]
+pub(crate) struct LastAdminPasskeyRemovalDenied;
+
+impl std::fmt::Display for LastAdminPasskeyRemovalDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Add another admin passkey before removing this one.")
+    }
+}
+
+impl std::error::Error for LastAdminPasskeyRemovalDenied {}
+
 /// Removes one passkey in one auth write. The actor's passkey, the permission
 /// and the last-admin rule are checked under the same lock as the
-/// revocation, so two concurrent removals cannot both pass and leave guests
-/// without an admin. A passkey already revoked returns its record unchanged,
+/// revocation, so two concurrent removals cannot both pass and leave the Home
+/// without an admin passkey. A passkey already revoked returns its record unchanged,
 /// so a retry can finish removing its credential.
 pub fn revoke_passkey_for_actor(
     data_dir: &Path,
@@ -6541,9 +6567,8 @@ pub fn revoke_passkey_for_actor(
         };
         if target.role == RuntimePrincipalRole::Admin
             && !others().any(|principal| principal.role == RuntimePrincipalRole::Admin)
-            && others().next().is_some()
         {
-            anyhow::bail!("last admin passkey cannot be removed while guest passkeys remain");
+            return Err(LastAdminPasskeyRemovalDenied.into());
         }
         revoke_binding_in_state(state, proof_binding_id, revoked_at)
     })
@@ -11544,6 +11569,37 @@ mod tests {
         assert!(verify_audit_chain_call_count(data) > before);
     }
 
+    /// A save must REPLACE the state file via rename, not rewrite it in place.
+    ///
+    /// `append_audit_event` persists by writing a temp file and renaming it over the
+    /// target, so the file identity (`dev`, `ino` on Unix) changes on every save. A
+    /// future in-place `std::fs::write` would leave the inode unchanged and fail this
+    /// assertion. Note that a delete-then-recreate also changes the inode, so this test
+    /// alone does not distinguish rename from delete-then-recreate; it proves only that
+    /// the file is not rewritten in place.
+    #[test]
+    fn auth_state_save_replaces_the_file_instead_of_rewriting_it() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path();
+        refresh_fixture(data, 3);
+        let path = auth_state_path(data).unwrap();
+        let before = observe_optional_regular_file_identity(&path, "auth state")
+            .unwrap()
+            .unwrap_or_else(|| panic!("auth state fixture was never written"));
+
+        append_audit_event(data, test_audit_event(4)).unwrap();
+
+        let after = observe_optional_regular_file_identity(&path, "auth state")
+            .unwrap()
+            .unwrap_or_else(|| panic!("auth state disappeared after save"));
+        #[cfg(unix)]
+        assert_ne!(
+            (before.dev, before.ino),
+            (after.dev, after.ino),
+            "auth state rewrites must swap the file in via atomic rename, not truncate in place"
+        );
+    }
+
     #[test]
     fn write_race_replacement_and_in_place_write_are_not_cached() {
         for replace in [false, true] {
@@ -15769,6 +15825,64 @@ mod tests {
         };
         let error = validate_principal_root_migration_plan(&plan).unwrap_err();
         assert!(error.to_string().contains("1-64 objects"));
+    }
+
+    #[test]
+    fn walletconnect_removed_principal_clears_only_its_session_file() {
+        let data = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let principal =
+            upsert_principal_for_binding(data.path(), passkey_binding(1, 100, 100), 100).unwrap();
+        let directory = data
+            .path()
+            .join("ElastOS/SystemServices/WalletConnect/sessions");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(format!(
+            "{}.json",
+            hex::encode(sha2::Sha256::digest(principal.principal_id.as_bytes()))
+        ));
+        std::fs::write(&path, b"{}").unwrap();
+        let other = directory.join(format!("{}.json", "aa".repeat(32)));
+        std::fs::write(&other, b"preserve").unwrap();
+        mutate_auth_state(data.path(), |state| {
+            state
+                .principals
+                .retain(|p| p.principal_id != principal.principal_id);
+            Ok(())
+        })
+        .unwrap();
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(other).unwrap(), b"preserve");
+    }
+
+    #[test]
+    fn walletconnect_principal_cleanup_failure_preserves_the_committed_auth_result() {
+        let data = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let principal =
+            upsert_principal_for_binding(data.path(), passkey_binding(1, 100, 100), 100).unwrap();
+        let directory = data
+            .path()
+            .join("ElastOS/SystemServices/WalletConnect/sessions");
+        std::fs::create_dir_all(directory.parent().unwrap()).unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let name = format!(
+            "{}.json",
+            hex::encode(sha2::Sha256::digest(principal.principal_id.as_bytes()))
+        );
+        std::fs::write(other.path().join(&name), b"preserve").unwrap();
+        std::os::unix::fs::symlink(other.path(), &directory).unwrap();
+        mutate_auth_state(data.path(), |state| {
+            state
+                .principals
+                .retain(|p| p.principal_id != principal.principal_id);
+            Ok(())
+        })
+        .unwrap();
+        assert!(!load_auth_state(data.path())
+            .unwrap()
+            .principals
+            .iter()
+            .any(|p| p.principal_id == principal.principal_id));
+        assert_eq!(std::fs::read(other.path().join(name)).unwrap(), b"preserve");
     }
 
     #[test]

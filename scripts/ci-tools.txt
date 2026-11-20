@@ -1,3 +1,16 @@
+# Programs this repository's own checks start, beyond the base tool set that
+# every box installs. One line per program: the program, then the Ubuntu
+# package that provides it. A box installs the package only when the program is
+# absent, so this list only adds. Write `a|b` when either program will do, and
+# `macos` as the package when only a Mac supplies the program.
+#
+# scripts/setup-source-home.sh refuses to install a source Home without ffmpeg
+# and ffprobe, and the Browser VM launcher looks for turnserver. The source-home
+# CI job installs the same packages through CI_APT_PACKAGES.
+ffmpeg ffmpeg
+ffprobe ffmpeg
+turnserver coturn
+ps procps
 # Commands needed by the isolated two-NAT Carrier journey on Linux.
 ip iproute2
 iptables iptables

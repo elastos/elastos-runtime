@@ -1778,6 +1778,22 @@ pub(in crate::api::gateway) fn transaction_request_binding(
     }))
 }
 
+pub(in crate::api::gateway) fn wallet_display_transaction_bound(
+    state: &GatewayState,
+    authority: &RuntimeWalletAuthority,
+    record: &Value,
+) -> bool {
+    let Ok(store) =
+        load_transaction_effect_store(state, authority.verified_context().principal_id())
+    else {
+        return false;
+    };
+    store.effects.iter().any(|effect| {
+        effect.source == BROWSER_TRANSACTION_SOURCE
+            && validate_approval_snapshot(effect, authority, record).is_ok()
+    })
+}
+
 fn validate_approval_snapshot(
     effect: &RuntimeTransactionEffect,
     authority: &RuntimeWalletAuthority,
@@ -3461,6 +3477,7 @@ mod approved_request_resume_tests {
             carrier_endpoint: None,
             collaboration_discovery_service: None,
             browser_internet: Default::default(),
+            walletconnect: Default::default(),
             identity_manager: Arc::new(OnceLock::new()),
             cache_dir: root.join("cache"),
             data_dir: root.join("data"),

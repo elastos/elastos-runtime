@@ -174,7 +174,8 @@ export function createRuntimeApi({ launchToken }) {
     return payload;
   }
 
-  return { fetchJson, homeHeaders, requireViewer: requireBrowserViewer };
+  return { fetchJson, homeHeaders, requireViewer: requireBrowserViewer,
+    setLaunchToken(value) { launchToken = value; } };
 }
 
 // Consent is separate from Engine readiness and viewer compatibility. The

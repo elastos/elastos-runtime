@@ -701,6 +701,7 @@ const RESERVED_RUNTIME_PROVIDER_TARGETS: &[&str] = &[
     "custody",
     "protected-content-decrypt",
     "collaboration.history",
+    "collaboration.link.status",
     "collaboration.shared",
 ];
 
@@ -4744,6 +4745,7 @@ mod tests {
             "custody",
             "protected-content-decrypt",
             "collaboration.history",
+            "collaboration.link.status",
             "collaboration.shared",
         ] {
             registry
@@ -4778,6 +4780,7 @@ mod tests {
             "custody",
             "protected-content-decrypt",
             "collaboration.history",
+            "collaboration.link.status",
             "collaboration.shared",
         ] {
             let protected = registry
@@ -4839,6 +4842,7 @@ mod tests {
             "custody",
             "protected-content-decrypt",
             "collaboration.history",
+            "collaboration.link.status",
             "collaboration.shared",
         ] {
             registry

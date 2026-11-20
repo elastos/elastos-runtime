@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,4 +95,74 @@ test("missing, malformed, ambiguous or invalid target config fails before Home i
     assert.match(result.stderr, /Cannot resolve Browser VM control socket/);
     assert.doesNotMatch(result.stderr, /HOME_PROBE|CONTROL_SOCKET=/);
   }
+});
+
+function probeSmokeProfiles(root, { explicit = "", inherited = "", cleanup = "" } = {}) {
+  const dataDir = path.join(root, "Home data");
+  const trace = path.join(root, "smoke-invocations.jsonl");
+  const nodeProbe = path.join(root, "node-probe.cjs");
+  // Replace only the two smoke processes. The actual proof script still
+  // chooses their environment. Stop after the second call, before VM proof
+  // evaluation; curl is inert throughout.
+  writeFileSync(nodeProbe, `#!/usr/bin/env node
+const fs = require("node:fs"), path = require("node:path");
+if (process.argv[2] !== "scripts/home-passkey-virtual-auth-smoke.mjs") throw Error("unexpected node call");
+const trace = process.env.PROFILE_PROBE_TRACE;
+const calls = fs.existsSync(trace) ? fs.readFileSync(trace, "utf8").trim().split("\\n").length : 0;
+const profile = process.env.HOME_VIRTUAL_AUTH_PROFILE || fs.mkdtempSync(path.join(path.dirname(trace), "temporary-profile-"));
+fs.mkdirSync(profile, { recursive: true });
+const credential = path.join(profile, "fixture-owner");
+const restored = fs.existsSync(credential);
+if (calls === 0) fs.writeFileSync(credential, "inert fixture");
+fs.appendFileSync(trace, JSON.stringify({ profile, restored,
+  preserve: process.env.HOME_VIRTUAL_AUTH_PRESERVE_PROFILE,
+  cleanup: process.env.HOME_VIRTUAL_AUTH_CLEANUP }) + "\\n");
+console.log(calls === 0 || restored ? JSON.stringify({ ok: true }) : "SKIP missing fixture owner");
+if (calls === 1) process.exit(77);
+`);
+  chmodSync(nodeProbe, 0o755);
+  const result = spawnSync("bash", ["-c", `
+curl() {
+  if [[ "$*" == *--unix-socket* ]]; then printf '{}'; else printf '200'; fi
+}
+export -f curl
+exec bash "$1"
+`, "proof-profile-test", proofPath], {
+    cwd: path.dirname(path.dirname(proofPath)),
+    env: { ...process.env, ELASTOS_NODE_BIN: nodeProbe,
+      ELASTOS_MAC_BROWSER_DATA_DIR: dataDir, ELASTOS_BROWSER_VM_CONTROL_SOCKET: "/fixture/control.sock",
+      ELASTOS_BROWSER_MAC_VM_PROOF_AUTH_PROFILE: explicit, HOME_VIRTUAL_AUTH_PROFILE: inherited,
+      HOME_VIRTUAL_AUTH_CLEANUP: cleanup, PROFILE_PROBE_TRACE: trace },
+    encoding: "utf8", timeout: 10_000,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 77, result.stderr);
+  const calls = readFileSync(trace, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(calls.length, 2);
+  return { calls, dataDir };
+}
+
+test("fresh proof restores the same owner profile for its second smoke without an option", t => {
+  const { calls, dataDir } = probeSmokeProfiles(fixture(t));
+  assert.deepEqual(calls.map(call => call.profile), Array(2).fill(path.join(dataDir, "browser-mac-vm-proof-auth")));
+  assert.deepEqual(calls.map(call => call.restored), [false, true]);
+  assert.ok(calls.every(call => call.preserve === "1" && call.cleanup === "0"));
+});
+
+test("explicit proof profile and cleanup override keep their existing behavior", t => {
+  for (const cleanup of ["", "1"]) {
+    const root = fixture(t);
+    const explicit = path.join(root, "explicit profile");
+    const { calls } = probeSmokeProfiles(root, { explicit, inherited: path.join(root, "other profile"), cleanup });
+    assert.deepEqual(calls.map(call => call.profile), [explicit, explicit]);
+    assert.ok(calls.every(call => call.preserve === "1" && call.cleanup === (cleanup || "0")));
+  }
+});
+
+test("an inherited virtual-auth profile is shared when the proof option is absent", t => {
+  const root = fixture(t);
+  const inherited = path.join(root, "inherited profile");
+  const { calls } = probeSmokeProfiles(root, { inherited });
+  assert.deepEqual(calls.map(call => call.profile), [inherited, inherited]);
+  assert.equal(calls[1].restored, true);
 });

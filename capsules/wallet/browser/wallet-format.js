@@ -71,16 +71,7 @@ export function accountName(account, index) {
   if (label) {
     return label;
   }
-  const connectorId = readText(account.connector_id);
-  if (connectorId === "wallet-walletconnect") {
-    return index === 0 ? "Connected Account" : "WalletConnect Account";
-  }
-  if (connectorId === "wallet-metamask" || (!connectorId && account.proof_type === "siwe")) {
-    return index === 0 ? "Family" : "MetaMask Account";
-  }
-  if (connectorId === "wallet-unisat") {
-    return "Cold Storage";
-  }
+  if (!isPasskeyManagedAccount(account)) return "Your wallet";
   if (account.chain_namespace === "eip155:8453") {
     return "Spending";
   }
@@ -281,25 +272,23 @@ export function requestTiming(request) {
 }
 
 export function requestTitle(request) {
-  if (request.intent === "browser_personal_sign") {
-    return "Browser signature";
-  }
-  if (request.intent === "browser_typed_data_sign") {
-    return "Browser typed data";
-  }
-  if (isManagedRequest(request)) {
-    return "Built-in approval";
-  }
-  if (isBitcoinProofRequest(request)) {
-    return "Bitcoin proof";
-  }
-  if (request.connector_id === "wallet-metamask") {
-    return "MetaMask approval";
-  }
-  if (request.connector_id === "wallet-unisat") {
-    return "Bitcoin approval";
-  }
-  return "Wallet approval";
+  return ({
+    auth_challenge: "Review sign-in request",
+    capability_grant: "Review access request",
+    credential: "Sign a credential",
+    publish_envelope: "Review publishing request",
+    transaction_intent: "Send transaction",
+    browser_account_access: "Share your wallet address with this site",
+    browser_personal_sign: "Sign a message",
+    browser_typed_data_sign: "Sign typed data",
+    bitcoin_bip322_proof: "Confirm this Bitcoin account is yours",
+    revocation: "Review request",
+  })[request.intent] || "Review request";
+}
+
+export function requestingAppName(request) {
+  const name = readText(request.requesting_app_name);
+  return name && [...name].length <= 128 ? name : "Requesting app";
 }
 
 export function isPasskeyManagedAccount(account) {
@@ -307,7 +296,21 @@ export function isPasskeyManagedAccount(account) {
 }
 
 export function isManagedRequest(request) {
-  return request.proof_type === "managed_evm" || request.proof_type === "managed_btc_p2wpkh";
+  return !request.connector_id && (request.proof_type === "managed_evm" || request.proof_type === "managed_btc_p2wpkh");
+}
+
+// A peer's display name belongs only in isolated identity labels. Account
+// operations use the person's account label or the generic account fallback.
+export function accountDisplayName(account) {
+  return isPasskeyManagedAccount(account) || cleanAccountLabel(account.label)
+    ? account.name : walletDisplay(account).name;
+}
+
+export function walletDisplay(account) {
+  const name = account?.wallet_display_name;
+  const valid = typeof name === "string" && name.length > 0
+    && [...name].length <= 40 && new TextEncoder().encode(name).length <= 160;
+  return { name: valid ? name : "Your wallet", mark: valid && ["wallet", "metamask", "unisat"].includes(account.wallet_mark) ? account.wallet_mark : "wallet" };
 }
 
 export function isBitcoinProofRequest(request) {
@@ -394,4 +397,18 @@ export function cssEscape(value) {
     return window.CSS.escape(value);
   }
   return String(value).replace(/["\\]/g, "\\$&");
+}
+
+export function requestOutcomeName(request) {
+  return ({
+    auth_challenge: "sign-in request",
+    capability_grant: "access request",
+    credential: "credential signing request",
+    publish_envelope: "publishing request",
+    transaction_intent: "transaction request",
+    browser_account_access: "address sharing request",
+    browser_personal_sign: "message signing request",
+    browser_typed_data_sign: "typed data signing request",
+    bitcoin_bip322_proof: "Bitcoin account confirmation",
+  })[request.intent] || "request";
 }

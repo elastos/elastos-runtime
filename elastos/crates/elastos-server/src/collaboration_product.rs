@@ -1,7 +1,6 @@
 //! Typed product boundary for the verified default collaboration conversation.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
@@ -26,8 +25,45 @@ pub(crate) const CHAT_MESSAGE_TTL_SECS: u64 = 300;
 pub struct CollaborationChatProductPort {
     core: Arc<CollaborationCore>,
     history_status: Arc<Mutex<crate::room_service::RoomHistoryView>>,
-    community_connected: Arc<AtomicBool>,
-    community_recovery_exhausted: Arc<AtomicBool>,
+    community_recovery: Arc<Mutex<crate::collaboration_carrier::CommunityRecoveryView>>,
+}
+
+/// Runtime's local health route reads the same cell as Chat and repair.
+pub(crate) enum CommunityStatusProvider {
+    Active(CollaborationChatProductPort),
+    WaitingForGrant,
+}
+
+#[async_trait::async_trait]
+impl elastos_runtime::provider::Provider for CommunityStatusProvider {
+    async fn handle(
+        &self,
+        _request: elastos_runtime::provider::ResourceRequest,
+    ) -> Result<elastos_runtime::provider::ResourceResponse, elastos_runtime::provider::ProviderError>
+    {
+        Err(elastos_runtime::provider::ProviderError::Provider(
+            "Runtime status read only".into(),
+        ))
+    }
+    fn name(&self) -> &'static str {
+        "community-link"
+    }
+    fn schemes(&self) -> Vec<&'static str> {
+        vec![]
+    }
+    async fn send_raw(
+        &self,
+        _request: &serde_json::Value,
+    ) -> Result<serde_json::Value, elastos_runtime::provider::ProviderError> {
+        Ok(match self {
+            Self::Active(port) => port.community_status(),
+            Self::WaitingForGrant => serde_json::json!({
+                "state":"waiting_for_grant", "connected":false,
+                "detail":"This Home needs permission from the Community network to join.",
+                "next_retry_seconds":null,
+            }),
+        })
+    }
 }
 
 /// Read-only result of durably preparing one outgoing Chat message.
@@ -72,8 +108,7 @@ impl CollaborationChatProductPort {
         }
         Ok(Self {
             core,
-            community_connected: Arc::new(AtomicBool::new(false)),
-            community_recovery_exhausted: Arc::new(AtomicBool::new(false)),
+            community_recovery: Arc::new(Mutex::new(Default::default())),
             history_status: Arc::new(Mutex::new(crate::room_service::RoomHistoryView {
                 status: "searching".to_string(),
                 // Chat says Live while history is searched or available.
@@ -111,21 +146,38 @@ impl CollaborationChatProductPort {
         .unwrap()
     }
 
+    pub(crate) fn community_status(&self) -> serde_json::Value {
+        let joined = self.community_membership().joined();
+        let recovery = *self
+            .community_recovery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let view = recovery.snapshot();
+        let connected = joined && view.connected;
+        serde_json::json!({
+            "state": if !joined { "left" } else { view.state },
+            "connected": connected,
+            "detail": if joined { view.detail } else { crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL.to_string() },
+            "next_retry_seconds": if !joined { None } else { view.next_retry_seconds },
+        })
+    }
+
     pub(crate) fn conversation_transport_view(&self) -> crate::room_service::RoomTransportView {
         let joined = self.community_membership().joined();
-        let connected = self.community_connected.load(Ordering::Relaxed);
+        let recovery = *self
+            .community_recovery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let view = recovery.snapshot();
         crate::room_service::RoomTransportView {
             configured: true,
-            available: joined && connected,
+            available: joined && view.connected,
             community_joined: Some(joined),
+            community_state: Some(if joined { view.state } else { "left" }.to_string()),
             status: Some(if !joined {
                 crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL.to_string()
-            } else if connected {
-                "Community is connected.".to_string()
-            } else if self.community_recovery_exhausted.load(Ordering::Relaxed) {
-                "Community can't connect. Restart Home to reconnect.".to_string()
             } else {
-                "Community is unreachable. Retained messages stay available.".to_string()
+                view.detail
             }),
             history: self.history_status.lock().ok().map(|status| status.clone()),
         }
@@ -139,20 +191,28 @@ impl CollaborationChatProductPort {
 
     pub(crate) fn set_community_joined(&self, joined: bool) -> anyhow::Result<()> {
         self.core.set_community_joined(joined)?;
-        self.set_community_connected(false);
+        self.set_community_recovery(Default::default());
         Ok(())
     }
 
-    pub(crate) fn set_community_connected(&self, connected: bool) {
-        if connected {
-            self.set_community_recovery_exhausted(false);
-        }
-        self.community_connected.store(connected, Ordering::Relaxed);
+    pub(crate) fn set_community_recovery(
+        &self,
+        view: crate::collaboration_carrier::CommunityRecoveryView,
+    ) {
+        *self
+            .community_recovery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = view;
     }
 
-    pub(crate) fn set_community_recovery_exhausted(&self, exhausted: bool) {
-        self.community_recovery_exhausted
-            .store(exhausted, Ordering::Relaxed);
+    // Fixture setup uses the same status cell as the worker.
+    #[cfg(test)]
+    pub(crate) fn set_community_connected(&self, connected: bool) {
+        self.set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+            connected,
+            reason: None,
+            ..Default::default()
+        });
     }
 
     #[cfg(test)]
@@ -1002,61 +1062,304 @@ mod tests {
         assert!(other_port.conversation_transport_view().available);
     }
 
-    #[test]
-    fn community_recovery_exhaustion_status_is_shared_and_clears_after_recovery() {
+    #[tokio::test(start_paused = true)]
+    async fn community_recovery_status_is_shared_expires_and_keeps_membership_priority() {
         let fixture = fixture();
-        let other_port = fixture.port.clone();
-        let unreachable = "Community is unreachable. Retained messages stay available.";
+        let other = fixture.port.clone();
         assert_eq!(
-            other_port.conversation_transport_view().status.as_deref(),
-            Some(unreachable)
+            other.conversation_transport_view().status.as_deref(),
+            Some("Connecting to Community…")
         );
-
-        fixture.port.set_community_recovery_exhausted(true);
-        let exhausted = serde_json::to_value(other_port.conversation_transport_view()).unwrap();
+        let now = tokio::time::Instant::now();
+        fixture
+            .port
+            .set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                connected: false,
+                checked_at: now,
+                checked_wall_at: std::time::SystemTime::now(),
+                wall_clock: Default::default(),
+                retry_at: now + std::time::Duration::from_secs(60),
+                reason: Some("bootstrap join timed out"),
+            });
+        let reconnecting = other.conversation_transport_view();
+        assert!(!reconnecting.available);
         assert_eq!(
-            exhausted["status"],
-            "Community can't connect. Restart Home to reconnect."
+            reconnecting.status.as_deref(),
+            Some("Reconnecting to Community. Next check in 60 seconds.")
         );
-        assert_eq!(exhausted["configured"], true);
-        assert_eq!(exhausted["available"], false);
-        assert_eq!(exhausted["community_joined"], true);
-
         fixture.port.set_community_connected(true);
-        let connected = other_port.conversation_transport_view();
-        assert!(connected.available);
-        assert_eq!(connected.status.as_deref(), Some("Community is connected."));
-        fixture.port.set_community_connected(false);
-        assert_eq!(
-            other_port.conversation_transport_view().status.as_deref(),
-            Some(unreachable)
+        assert!(other.conversation_transport_view().available);
+        tokio::time::advance(std::time::Duration::from_secs(46)).await;
+        assert!(
+            !other.conversation_transport_view().available,
+            "an observation gap cannot retain a connected label"
         );
-
-        fixture.port.set_community_recovery_exhausted(true);
-        fixture.port.set_community_recovery_exhausted(false);
-        assert_eq!(
-            other_port.conversation_transport_view().status.as_deref(),
-            Some(unreachable)
-        );
-    }
-
-    #[test]
-    fn community_recovery_exhaustion_keeps_connected_and_left_status_priority() {
-        let fixture = fixture();
-        fixture.port.set_community_connected(true);
-        fixture.port.set_community_recovery_exhausted(true);
-        let connected = fixture.port.conversation_transport_view();
-        assert!(connected.available);
-        assert_eq!(connected.status.as_deref(), Some("Community is connected."));
-
         fixture.port.set_community_joined(false).unwrap();
-        let left = fixture.port.conversation_transport_view();
+        fixture.port.set_community_connected(true);
+        let left = other.conversation_transport_view();
         assert!(!left.available);
-        assert_eq!(left.community_joined, Some(false));
         assert_eq!(
             left.status.as_deref(),
             Some(crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL)
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn community_fix1_chat_view_carries_state_and_countdown_never_says_zero() {
+        let f = fixture();
+        for (reason, expected) in [
+            (Some("starting"), "starting"),
+            (Some("waiting for Community peers"), "waiting_for_peers"),
+            (Some("bootstrap join timed out"), "reconnecting"),
+        ] {
+            f.port
+                .set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                    reason,
+                    ..Default::default()
+                });
+            let view = serde_json::to_value(f.port.conversation_transport_view()).unwrap();
+            assert_eq!(view["community_state"], expected);
+            let status = f.port.community_status();
+            assert_eq!(status["state"], expected);
+            if expected == "reconnecting" {
+                assert!(status["next_retry_seconds"].is_null());
+                assert!(status["detail"].as_str().unwrap().contains("Reconnecting"));
+                assert!(!status["detail"].as_str().unwrap().contains("0 seconds"));
+                let now = tokio::time::Instant::now();
+                f.port.set_community_recovery(
+                    crate::collaboration_carrier::CommunityRecoveryView {
+                        reason,
+                        retry_at: now + std::time::Duration::from_millis(500),
+                        ..Default::default()
+                    },
+                );
+                assert_eq!(f.port.community_status()["next_retry_seconds"], 1);
+                assert!(f.port.community_status()["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("1 second."));
+                tokio::time::advance(std::time::Duration::from_secs(10)).await;
+                assert!(f.port.community_status()["next_retry_seconds"].is_null());
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn community_fix1_snapshot_keeps_state_detail_and_deadline_consistent() {
+        let f = fixture();
+        for millis in [0, 1, 499, 500, 501, 1000] {
+            let now = tokio::time::Instant::now();
+            f.port
+                .set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                    reason: Some("bootstrap join timed out"),
+                    retry_at: now + std::time::Duration::from_millis(millis),
+                    ..Default::default()
+                });
+            let status = f.port.community_status();
+            assert_eq!(status["state"], "reconnecting");
+            assert_eq!(status["connected"], false);
+            let detail = status["detail"].as_str().unwrap();
+            if millis == 0 {
+                assert!(status["next_retry_seconds"].is_null());
+                assert!(detail.contains("Reconnecting"));
+            } else {
+                assert_eq!(status["next_retry_seconds"], 1);
+                assert!(detail.contains("1 second."));
+            }
+            let view = serde_json::to_value(f.port.conversation_transport_view()).unwrap();
+            assert_eq!(view["community_state"], status["state"]);
+            assert_eq!(view["status"], status["detail"]);
+            assert_eq!(view["available"], status["connected"]);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn community_recovery_status_values_through_the_authenticated_status_route() {
+        use axum::{body::Body, http::Request, Router};
+        use tower::ServiceExt;
+        let fixture = fixture();
+        let registry = Arc::new(elastos_runtime::provider::ProviderRegistry::new());
+        registry
+            .register_runtime_provider_target(
+                "collaboration.link.status",
+                Arc::new(CommunityStatusProvider::Active(fixture.port.clone())),
+            )
+            .await
+            .unwrap();
+        let sessions = Arc::new(elastos_runtime::session::SessionRegistry::new(Arc::new(
+            elastos_runtime::primitives::audit::AuditLog::new(),
+        )));
+        let owner = sessions
+            .create_session(elastos_runtime::session::SessionType::Shell, None)
+            .await;
+        let capsule = sessions
+            .create_session(elastos_runtime::session::SessionType::Capsule, None)
+            .await;
+        let isolated_app = crate::api::routes::community_status_router(None, sessions.clone());
+        let app = crate::api::routes::community_status_router(Some(registry), sessions.clone());
+        for (token, expected) in [
+            (None, axum::http::StatusCode::UNAUTHORIZED),
+            (
+                Some(capsule.token.as_str()),
+                axum::http::StatusCode::FORBIDDEN,
+            ),
+        ] {
+            let mut request = Request::builder().uri("/api/community/status");
+            if let Some(token) = token {
+                request = request.header("authorization", format!("Bearer {token}"));
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+        }
+        async fn read(app: &Router, token: &str) -> serde_json::Value {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/community/status")
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 8192)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap()
+        }
+        assert_eq!(read(&app, &owner.token).await["state"], "starting");
+        fixture.port.set_community_connected(true);
+        let status = read(&app, &owner.token).await;
+        assert_eq!(status["state"], "connected");
+        assert_eq!(status["connected"], true);
+        // The host's monotonic clock may pause during sleep. The real status
+        // route must expire the old proof even though that clock did not tick.
+        let now = tokio::time::Instant::now();
+        fixture
+            .port
+            .set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                connected: true,
+                checked_at: now,
+                checked_wall_at: std::time::SystemTime::now()
+                    .checked_sub(std::time::Duration::from_secs(60))
+                    .unwrap(),
+                wall_clock: Default::default(),
+                retry_at: now,
+                reason: None,
+            });
+        assert_eq!(
+            read(&app, &owner.token).await["state"],
+            "reconnecting",
+            "wall time expires the connected label while the monotonic clock is paused"
+        );
+        assert!(!fixture.port.conversation_transport_view().available);
+        let now = tokio::time::Instant::now();
+        fixture
+            .port
+            .set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                connected: false,
+                checked_at: now,
+                checked_wall_at: std::time::SystemTime::now(),
+                wall_clock: Default::default(),
+                retry_at: now + std::time::Duration::from_secs(60),
+                reason: Some("bootstrap join timed out"),
+            });
+        let status = read(&app, &owner.token).await;
+        assert_eq!(status["state"], "reconnecting");
+        assert_eq!(status["connected"], false);
+        assert_eq!(status["next_retry_seconds"], 60);
+        assert_eq!(
+            status["detail"],
+            fixture.port.conversation_transport_view().status.unwrap()
+        );
+        tokio::time::advance(std::time::Duration::from_secs(10)).await;
+        assert_eq!(read(&app, &owner.token).await["next_retry_seconds"], 50);
+        fixture
+            .port
+            .set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+                connected: false,
+                checked_at: tokio::time::Instant::now(),
+                checked_wall_at: std::time::SystemTime::now(),
+                wall_clock: Default::default(),
+                retry_at: tokio::time::Instant::now(),
+                reason: Some("waiting for Community peers"),
+            });
+        let waiting = read(&app, &owner.token).await;
+        assert_eq!(waiting["state"], "waiting_for_peers");
+        assert_eq!(waiting["detail"], "Community is waiting for another Home.");
+        assert!(waiting["next_retry_seconds"].is_null());
+        fixture.port.set_community_joined(false).unwrap();
+        let status = read(&app, &owner.token).await;
+        assert_eq!(status["state"], "left");
+        assert!(status["next_retry_seconds"].is_null());
+        let isolated = read(&isolated_app, &owner.token).await;
+        assert_eq!(isolated["state"], "isolated");
+        assert_eq!(isolated["connected"], false);
+        let waiting_registry = Arc::new(elastos_runtime::provider::ProviderRegistry::new());
+        waiting_registry
+            .register_runtime_provider_target(
+                "collaboration.link.status",
+                Arc::new(CommunityStatusProvider::WaitingForGrant),
+            )
+            .await
+            .unwrap();
+        let waiting_app =
+            crate::api::routes::community_status_router(Some(waiting_registry), sessions.clone());
+        let waiting = read(&waiting_app, &owner.token).await;
+        assert_eq!(waiting["state"], "waiting_for_grant");
+        assert_eq!(
+            waiting["detail"],
+            "This Home needs permission from the Community network to join."
+        );
+        assert_eq!(waiting["connected"], false);
+        assert!(waiting["next_retry_seconds"].is_null());
+        let retained = sessions.session_count().await;
+        for _ in 0..4 {
+            let status_session = sessions
+                .create_session(elastos_runtime::session::SessionType::Shell, None)
+                .await;
+            assert_eq!(read(&app, &status_session.token).await["state"], "left");
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/auth/detach")
+                        .header("authorization", format!("Bearer {}", status_session.token))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
+            assert!(sessions
+                .validate_token(&status_session.token)
+                .await
+                .is_none());
+            assert!(sessions.validate_token(&owner.token).await.is_some());
+            assert_eq!(sessions.session_count().await, retained);
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/detach")
+                    .header("authorization", format!("Bearer {}", capsule.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
     }
 
     #[test]

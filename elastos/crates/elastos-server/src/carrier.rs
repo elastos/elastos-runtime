@@ -124,6 +124,9 @@ const GOSSIP_ACTOR_TIMEOUT: Duration = Duration::from_secs(2);
 /// A gossip recovery that cannot take the state within this gives up rather
 /// than running later, right after another one.
 const GOSSIP_RECOVERY_START_TIMEOUT: Duration = Duration::from_secs(2);
+/// Includes the actor shutdown and every bounded topic subscription. It also
+/// releases a local lock if an unexpected lock holder stops making progress.
+const GOSSIP_RECOVERY_JOB_TIMEOUT: Duration = Duration::from_secs(600);
 /// A consumer that joins a CID topic after the holder announced still needs a
 /// window for bootstrap peers to form a gossip neighbor and for the signed fetch
 /// ticket to arrive. One absolute deadline covers late holders. Operator peer
@@ -752,6 +755,7 @@ pub struct GossipState {
     closed: bool,
     memory_lookup: MemoryLookup,
     relay_lookups: Option<relay::LookupPolicy>,
+    mdns_lookup: Option<MdnsAddressLookup>,
     signing_key: Option<ed25519_dalek::SigningKey>,
     joined_topics: std::collections::HashSet<String>,
     bootstrap_peers: Vec<iroh::EndpointId>,
@@ -791,6 +795,7 @@ impl GossipState {
             closed: false,
             memory_lookup,
             relay_lookups: None,
+            mdns_lookup: None,
             signing_key,
             joined_topics: std::collections::HashSet::new(),
             bootstrap_peers: Vec::new(),
@@ -1296,18 +1301,33 @@ async fn leave_and_rejoin_topic(state: &mut GossipState, topic_name: &str) -> Re
 /// Returns how many topics joined again.
 async fn rebuild_carrier_gossip(state: &mut GossipState) -> Result<usize> {
     anyhow::ensure!(!state.closed, "Carrier gossip is shut down");
-    // Leave first, so the old actor's Disconnects precede the new Joins.
-    let previous = state.gossip.clone();
-    if tokio::time::timeout(GOSSIP_ACTOR_TIMEOUT, previous.shutdown())
-        .await
-        .is_err()
-    {
-        warn!("carrier: gossip actor did not shut down for the rebuild; dropping it");
+    let lookups = state.endpoint.address_lookup()?;
+    let owned_lookup_count = if state.mdns_lookup.is_some() { 3 } else { 2 };
+    anyhow::ensure!(
+        lookups.len() == owned_lookup_count,
+        "Carrier rebuild requires Runtime-owned address lookups"
+    );
+    // Runtime owns this endpoint's Memory and mDNS lookups. Release every
+    // receiver and sender before the old actor, then remove its retained lookup
+    // and eviction task. The next actor adds exactly one new gossip lookup.
+    state.senders.clear();
+    for (_, task) in state.receiver_tasks.drain() {
+        task.abort();
+        let _ = task.await;
     }
+    state.topic_peers.lock().await.clear();
+    state.peers.lock().await.clear();
+    let previous = state.gossip.clone();
+    let _ = tokio::time::timeout(GOSSIP_ACTOR_TIMEOUT, previous.shutdown()).await;
+    lookups.clear();
     let approved_relay = if let Some(policy) = &state.relay_lookups {
         policy.install(&state.endpoint)?;
         policy.relay.clone()
     } else {
+        lookups.add(state.memory_lookup.clone());
+        if let Some(mdns) = &state.mdns_lookup {
+            lookups.add(mdns.clone());
+        }
         None
     };
     let replacement =
@@ -2005,9 +2025,8 @@ async fn start_carrier_node_with_network(
         }
     };
 
-    // LAN discovery exchanges IP addresses for direct connections.
-    // The endpoint's IP-only policy also filters the published addresses.
-    let mdns = if carrier_mdns_enabled() {
+    // Runtime retains these services across gossip actor replacement.
+    let mdns_lookup = if carrier_mdns_enabled() {
         MdnsAddressLookup::builder().build(endpoint.id()).ok()
     } else {
         info!("carrier: mDNS discovery disabled by ELASTOS_CARRIER_MDNS");
@@ -2036,7 +2055,7 @@ async fn start_carrier_node_with_network(
     let policy = relay::LookupPolicy {
         relay: approved.clone().map(iroh::RelayUrl::from),
         memory: memory_lookup.clone(),
-        mdns,
+        mdns: mdns_lookup.clone(),
     };
     if let Err(error) = policy.install(&endpoint) {
         endpoint.close().await;
@@ -2054,6 +2073,7 @@ async fn start_carrier_node_with_network(
     )));
     let gossip_handler = {
         let mut state = gossip_state.lock().await;
+        state.mdns_lookup = mdns_lookup;
         state.bootstrap_peers = bootstrap_peers;
         state.direct_only = network == CarrierNodeNetwork::Isolated;
         state.community_hub = community_hub;
@@ -6892,26 +6912,52 @@ impl CarrierGossipProvider {
     /// cannot leave a topic half joined, and starts within
     /// `GOSSIP_RECOVERY_START_TIMEOUT` or not at all.
     async fn recover_gossip(&self, rebuild: bool, topic: String) -> serde_json::Value {
+        self.recover_gossip_with_deadline(rebuild, topic, GOSSIP_RECOVERY_JOB_TIMEOUT)
+            .await
+    }
+
+    async fn recover_gossip_with_deadline(
+        &self,
+        rebuild: bool,
+        topic: String,
+        deadline: Duration,
+    ) -> serde_json::Value {
         let state = self.state.clone();
         let recovery = tokio::spawn(async move {
-            let mut state = tokio::time::timeout(GOSSIP_RECOVERY_START_TIMEOUT, state.lock())
+            let mut state = match tokio::time::timeout(GOSSIP_RECOVERY_START_TIMEOUT, state.lock())
                 .await
-                .context("Carrier gossip is busy")?;
-            if rebuild {
-                rebuild_carrier_gossip(&mut state)
-                    .await
-                    .map(|topics| serde_json::json!({"status":"ok","data":{"topics": topics}}))
-            } else {
-                leave_and_rejoin_topic(&mut state, &topic)
-                    .await
-                    .map(|()| serde_json::json!({"status":"ok","data":{"topic": topic}}))
-            }
+            {
+                Ok(state) => state,
+                Err(_) => {
+                    return Ok(serde_json::json!({
+                        "status":"error", "code":"recovery_busy", "message":"Carrier gossip is busy"
+                    }));
+                }
+            };
+            tokio::time::timeout(deadline, async {
+                if rebuild {
+                    rebuild_carrier_gossip(&mut state)
+                        .await
+                        .map(|topics| serde_json::json!({"status":"ok","data":{"topics": topics}}))
+                } else {
+                    leave_and_rejoin_topic(&mut state, &topic)
+                        .await
+                        .map(|()| serde_json::json!({"status":"ok","data":{"topic": topic}}))
+                }
+            })
+            .await
+            .context("gossip recovery deadline exceeded")?
         });
         match recovery.await {
             Ok(Ok(response)) => response,
-            Ok(Err(err)) => serde_json::json!({
-                "status":"error","code":"recovery_failed","message": format!("{err:#}")
-            }),
+            Ok(Err(err)) => {
+                let code = if err.is::<tokio::time::error::Elapsed>() {
+                    "recovery_timeout"
+                } else {
+                    "recovery_failed"
+                };
+                serde_json::json!({"status":"error","code":code,"message": format!("{err:#}")})
+            }
             Err(_) => serde_json::json!({
                 "status":"error","code":"recovery_failed","message":"gossip recovery stopped"
             }),
@@ -7577,6 +7623,7 @@ impl Provider for CarrierGossipProvider {
                     "topic": topic_name,
                     "peer_count": peer_count,
                     "received_frames": received_frames,
+                    "receiver_alive": state.receiver_tasks.get(topic_name).is_some_and(|task| !task.is_finished()),
                 }}))
             }
 
@@ -8286,6 +8333,59 @@ impl CarrierEndpointDrain {
         }
         task.take();
     }
+    // Update checking owns a finite drain. Abort and join the endpoint close
+    // itself, rather than leaving its task behind when a waiter times out.
+    async fn close_with_deadline(&self, deadline: Duration) -> Result<()> {
+        self.signal
+            .lock()
+            .expect("Carrier close signal poisoned")
+            .take();
+        let mut task = self.task.lock().await;
+        let Some(running) = task.as_mut() else {
+            return Ok(());
+        };
+        let result = match tokio::time::timeout(deadline, &mut *running).await {
+            Ok(result) => result.context("drain update check endpoint"),
+            Err(error) => {
+                warn!(
+                    timeout_seconds = deadline.as_secs(),
+                    "update check endpoint close timed out; cancelling drain"
+                );
+                running.abort();
+                let _ = running.await;
+                Err(anyhow::Error::new(error).context(crate::update::UpdateSourceUnavailable))
+            }
+        };
+        task.take();
+        result
+    }
+}
+
+#[cfg(test)]
+type TestClientClose = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+#[cfg(test)]
+tokio::task_local! {
+    static TEST_CLIENT_CLOSE: std::sync::Mutex<Option<TestClientClose>>;
+}
+
+#[cfg(test)]
+pub(crate) async fn with_test_client_close<T>(
+    close: impl std::future::Future<Output = ()> + Send + 'static,
+    work: impl std::future::Future<Output = T>,
+) -> T {
+    TEST_CLIENT_CLOSE
+        .scope(std::sync::Mutex::new(Some(Box::pin(close))), work)
+        .await
+}
+
+#[cfg(test)]
+pub(crate) async fn update_check_close_fixture(
+    close: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<()> {
+    CarrierEndpointDrain::new(close)
+        .close_with_deadline(Duration::from_secs(5))
+        .await
 }
 
 fn carrier_provider_invoke_message(
@@ -8470,7 +8570,14 @@ impl CarrierClient {
         timeout_secs: u64,
     ) -> Result<Self> {
         let closing = endpoint.clone();
-        let drain = CarrierEndpointDrain::new(async move { closing.close().await });
+        let close = async move { closing.close().await };
+        #[cfg(test)]
+        let close = TEST_CLIENT_CLOSE
+            .try_with(|fixture| fixture.lock().unwrap().take())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| Box::pin(close));
+        let drain = CarrierEndpointDrain::new(close);
         match Self::connect_known_endpoint(&endpoint, addr, timeout_secs).await {
             Ok(mut client) => {
                 client.owns_endpoint = true;
@@ -8493,6 +8600,17 @@ impl CarrierClient {
                 .close()
                 .await;
         }
+    }
+
+    pub(crate) async fn close_update_check(&self, deadline: Duration) -> Result<()> {
+        if self.owns_endpoint {
+            self.endpoint_drain
+                .as_ref()
+                .expect("owned Carrier endpoint retains its drain task")
+                .close_with_deadline(deadline)
+                .await?;
+        }
+        Ok(())
     }
 
     pub async fn connect(
@@ -11989,6 +12107,74 @@ pub(crate) mod tests {
         .await
         .expect("outer dial timeout did not finish endpoint shutdown");
         observer.close().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carrier_endpoint_update_check_close_deadline_joins_hung_task() {
+        let warning = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(std::sync::Mutex::new(warning.reopen().unwrap()))
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let (started, starting) = tokio::sync::oneshot::channel();
+        let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
+        let drain = Arc::new(CarrierEndpointDrain::new(async move {
+            let _lifetime = dropped;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        }));
+        let owner = drain.clone();
+        let close =
+            tokio::spawn(async move { owner.close_with_deadline(Duration::from_secs(5)).await });
+        starting.await.unwrap();
+        tokio::time::advance(Duration::from_millis(4999)).await;
+        assert!(!close.is_finished(), "close keeps its full deadline");
+        tokio::time::advance(Duration::from_millis(1)).await;
+        let error = tokio::time::timeout(Duration::from_millis(1), close)
+            .await
+            .expect("hung close ends at five seconds")
+            .unwrap()
+            .unwrap_err();
+        assert!(error.is::<crate::update::UpdateSourceUnavailable>());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), stopped)
+                .await
+                .expect("timed-out close must drop its future")
+                .is_err(),
+            "close future was dropped before returning"
+        );
+        assert!(drain.task.lock().await.is_none(), "no drain task remains");
+        let log = std::fs::read_to_string(warning.path()).unwrap();
+        assert_eq!(
+            log.matches("update check endpoint close timed out").count(),
+            1,
+            "{log}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn carrier_endpoint_update_check_close_normal_finishes_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let drain = CarrierEndpointDrain::new(async move {
+            count.fetch_add(1, Ordering::SeqCst);
+        });
+        let before = tokio::time::Instant::now();
+        drain
+            .close_with_deadline(Duration::from_secs(5))
+            .await
+            .unwrap();
+        drain
+            .close_with_deadline(Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(tokio::time::Instant::now(), before);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(drain.task.lock().await.is_none());
     }
 
     #[tokio::test]
@@ -19341,7 +19527,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         drop(held);
-        assert_eq!(busy["code"], "recovery_failed", "{busy}");
+        assert_eq!(busy["code"], "recovery_busy", "{busy}");
         let before = remote_frames(&provider2, topic).await;
         assert!(
             frames_flow(&provider1, &provider2, topic, before).await,
@@ -19872,6 +20058,75 @@ pub(crate) mod tests {
         assert_eq!(cursor.outstanding_peek, None);
         drop(cursors);
         drop(state);
+        shutdown_test_carrier_node(node).await;
+    }
+
+    /// A consumer cursor number is not a frame identity. `gossip_leave` drops
+    /// the topic buffer and every cursor on it, and the next join starts a
+    /// buffer at position 0, so the same consumer peeks position 0 again and
+    /// finds a frame it never read. The Community driver binds its progress to
+    /// the frames it ingested because of this.
+    #[tokio::test]
+    async fn test_gossip_leave_and_join_give_the_same_cursor_a_new_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signing_key, did) = elastos_identity::derive_did(&[66u8; 32]);
+        let node = start_carrier_node(&signing_key, &did, dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let provider = CarrierGossipProvider::new(node.gossip_state.clone());
+        let topic = "__test/gossip-cursor-reuse";
+        let consumer = "community-consumer";
+        let join = serde_json::json!({"op":"gossip_join_exact", "topic":topic, "peers":[]});
+        let peek = serde_json::json!({
+            "op":"gossip_peek", "topic":topic, "consumer_id":consumer, "limit":32
+        });
+        let send = |message: &str| serde_json::json!({"op":"gossip_send", "topic":topic, "message":message});
+        let read_one = |response: &serde_json::Value| {
+            (
+                response["data"]["cursor"].as_u64(),
+                response["data"]["next_cursor"].as_u64(),
+                response["data"]["messages"][0]["content"]
+                    .as_str()
+                    .map(str::to_string),
+            )
+        };
+
+        assert_eq!(provider.send_raw(&join).await.unwrap()["status"], "ok");
+        assert_eq!(
+            provider.send_raw(&send("first frame")).await.unwrap()["status"],
+            "ok"
+        );
+        assert_eq!(
+            read_one(&provider.send_raw(&peek).await.unwrap()),
+            (Some(0), Some(1), Some("first frame".to_string()))
+        );
+        assert_eq!(
+            provider
+                .send_raw(&serde_json::json!({
+                    "op":"gossip_ack", "topic":topic, "consumer_id":consumer,
+                    "cursor":0, "next_cursor":1
+                }))
+                .await
+                .unwrap()["status"],
+            "ok"
+        );
+        assert_eq!(
+            provider
+                .send_raw(&serde_json::json!({"op":"gossip_leave", "topic":topic}))
+                .await
+                .unwrap()["status"],
+            "ok"
+        );
+        assert_eq!(provider.send_raw(&join).await.unwrap()["status"], "ok");
+        assert_eq!(
+            provider.send_raw(&send("second frame")).await.unwrap()["status"],
+            "ok"
+        );
+        assert_eq!(
+            read_one(&provider.send_raw(&peek).await.unwrap()),
+            (Some(0), Some(1), Some("second frame".to_string())),
+            "the recreated topic hands the same consumer cursor a frame it never read"
+        );
         shutdown_test_carrier_node(node).await;
     }
 
@@ -20751,3 +21006,7 @@ pub(crate) mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "carrier_community_core_tests.rs"]
+mod community_core_tests;

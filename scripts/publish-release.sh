@@ -26,7 +26,7 @@ NC='\033[0m'
 # Default publish scope: runtime core + first-party Home app surface.
 # Wallet/Browser surfaces require chain-provider and wallet-provider authority.
 # Developer-only capsules such as GBA, and the items hidden in 0.8.0
-# (services, wallet-walletconnect, elacity-player, content-block-graph-provider
+# (services, elacity-player, content-block-graph-provider
 # and the protected-content providers), are published by the release asset and
 # support-binary loops below and installed with `elastos setup --with <name>`.
 # availability-provider, drm-provider, rights-provider, key-provider,
@@ -52,6 +52,7 @@ DEFAULT_CAPSULES=(
     people
     wallet-metamask
     wallet-unisat
+    wallet-walletconnect
     wallet
     browser
     documents
@@ -83,6 +84,7 @@ REQUIRED_SUPPORTED_CAPSULES=(
     people
     wallet-metamask
     wallet-unisat
+    wallet-walletconnect
     wallet
     browser
     documents
@@ -495,6 +497,9 @@ build_packaged_capsule_archive() {
         mkdir -p "${stage_root}/${capsule_name}/bin" || return
         install -m 755 "$native_renderer" "${stage_root}/${capsule_name}/bin/home-cli" || return
     fi
+    if [[ "$capsule_name" == wallet-walletconnect && -n "${ELASTOS_WALLETCONNECT_PROJECT_FILE:-}" ]]; then
+        node scripts/stage-walletconnect-release.mjs "${stage_root}/${capsule_name}" || return
+    fi
     create_capsule_tar "$archive" "$stage_root" "$capsule_name" || return
     echo "$archive"
 }
@@ -636,6 +641,7 @@ def normalize(info):
     info.uname = info.gname = ""
     info.pax_headers = {}
     info.mode = 0o777 if info.issym() else (
+        0o600 if info.isfile() and info.name == "wallet-walletconnect/vendor/connector.json" else
         0o755 if info.isdir() or info.mode & 0o111 else 0o644
     )
     return info
@@ -704,6 +710,9 @@ stage_wasm_capsule() {
     if [[ -d "${capsule_dir}/browser" ]]; then
         mkdir -p "${dest}/browser" || return
         copy_clean_capsule_tree "${capsule_dir}/browser" "${dest}/browser" || return
+    fi
+    if [[ "$capsule_name" == wallet-walletconnect && -d "${capsule_dir}/vendor" ]]; then
+        copy_clean_capsule_tree "${capsule_dir}/vendor" "${dest}/vendor" || return
     fi
     if [[ "$runtime_abi" == "elastos.runtime-projection/v1" ]]; then
         copy_release_source_file "$built_wasm" "${dest}/${entrypoint}" || return
@@ -969,7 +978,7 @@ build_platform_independent_direct_assets() {
         chat-room \
         assistant \
         elacity-player; do
-        if [[ -n "${ARTIFACTS_DIR:-}" && -f "${ARTIFACTS_DIR}/${capsule}.capsule.tar.gz" ]]; then
+        if [[ "$capsule" != wallet-walletconnect && -n "${ARTIFACTS_DIR:-}" && -f "${ARTIFACTS_DIR}/${capsule}.capsule.tar.gz" ]]; then
             archive="${ARTIFACTS_DIR}/${capsule}.capsule.tar.gz"
         else
             archive=$(build_packaged_capsule_archive "$platform" "$capsule") || return

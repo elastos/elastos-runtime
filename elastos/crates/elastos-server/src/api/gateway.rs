@@ -93,6 +93,8 @@ mod gateway_marketplace;
 mod gateway_model_remote;
 #[path = "gateway_model_service.rs"]
 mod gateway_model_service;
+#[path = "gateway_update_notice.rs"]
+mod gateway_update_notice;
 pub(in crate::api) use gateway_model_service::deny_grant_and_settle as deny_model_grant_and_settle;
 pub(crate) use gateway_model_service::{
     invoke as invoke_remote_model, model_grant_id, ModelServiceGrant, MODEL_AUTHORITY_TIMEOUT_CODE,
@@ -117,6 +119,8 @@ mod gateway_transaction_effects;
 mod gateway_wallet;
 #[path = "gateway_wallet_adapter.rs"]
 mod gateway_wallet_adapter;
+#[path = "gateway_walletconnect.rs"]
+mod gateway_walletconnect;
 #[cfg(test)]
 use gateway_browser::browser_runtime_stream_socket_path;
 use gateway_capsule_catalog::*;
@@ -126,6 +130,8 @@ use gateway_home_external_link::*;
 pub(crate) use gateway_home_runtime::is_wallet_connector_capsule_id;
 use gateway_home_runtime::*;
 use gateway_home_shared_content::*;
+pub(crate) use gateway_walletconnect::clear_principal_storage as clear_walletconnect_principal_storage;
+pub(super) use gateway_walletconnect::connector_launch_authority as walletconnect_connector_launch_authority;
 
 pub(crate) fn principal_root_protected_object_inventory(
     localhost_root: &str,
@@ -217,12 +223,30 @@ pub use gateway_server::GatewayCollaborationContext;
 use gateway_site::*;
 pub(super) use gateway_site::{content_type, validate_file_path};
 use gateway_transaction_effects::*;
-pub(crate) use gateway_wallet::ensure_wallet_connector_configured;
 use gateway_wallet::*;
+pub(crate) use gateway_wallet::{
+    ensure_wallet_connector_configured, ensure_wallet_connector_configured_async,
+};
 
 /// A capsule this Home does not offer is absent everywhere: not served, not
 /// launchable and not in the catalog. Services is hidden until sharing moves
 /// into People; WalletConnect waits for an operator-pinned config.
+// Async callers yield while synchronous inventory reads verify pinned assets.
+pub(crate) async fn blocking_capsule_inventory<T: Send + 'static>(
+    read: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    tokio::task::spawn_blocking(read)
+        .await
+        .expect("capsule inventory worker failed")
+}
+
+pub(crate) async fn capsule_is_offered_async(data_dir: &std::path::Path, name: &str) -> bool {
+    name != SERVICES_CAPSULE_ID
+        && ensure_wallet_connector_configured_async(data_dir, name)
+            .await
+            .is_ok()
+}
+
 pub(crate) fn capsule_is_offered(data_dir: &std::path::Path, name: &str) -> bool {
     name != SERVICES_CAPSULE_ID && ensure_wallet_connector_configured(data_dir, name).is_ok()
 }
@@ -454,7 +478,7 @@ pub(crate) const WALLETCONNECT_CONFIG_PATH: &str =
     "ElastOS/SystemServices/WalletConnect/config.json";
 pub(crate) const WALLETCONNECT_SDK_PATH: &str =
     "capsules/wallet-walletconnect/vendor/reown-appkit.js";
-pub(crate) const WALLETCONNECT_SDK_PACKAGE: &str = "@reown/appkit";
+pub(crate) const WALLETCONNECT_SDK_PACKAGE: &str = "@walletconnect/ethereum-provider";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -505,6 +529,7 @@ struct WalletPricePolicy {
 #[derive(Clone)]
 pub struct GatewayState {
     pub(crate) browser_internet: Arc<BrowserInternetService>,
+    pub(crate) walletconnect: Arc<gateway_walletconnect::WalletConnectService>,
     pub(crate) carrier_endpoint: Option<iroh::Endpoint>,
     pub provider_registry: Option<Arc<ProviderRegistry>>,
     pub(crate) collaboration_chat_product_port:
@@ -786,6 +811,10 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
                 .layer(DefaultBodyLimit::max(8 * 1024)),
         )
         .route(
+            "/api/apps/system/update-background",
+            post(gateway_update_notice::set_background).layer(DefaultBodyLimit::max(1024)),
+        )
+        .route(
             "/api/apps/system/update-channel",
             post(system_source_switch_channel).layer(DefaultBodyLimit::max(8 * 1024)),
         )
@@ -861,6 +890,24 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
         )
         .route("/api/apps/wallet/wallet/summary", get(wallet_app_summary))
         .route("/api/wallet/prices", get(wallet_prices))
+        .route(
+            "/api/apps/wallet-walletconnect/internet",
+            get(gateway_walletconnect::internet).post(gateway_walletconnect::internet),
+        )
+        .route(
+            "/api/apps/wallet-walletconnect/storage",
+            get(gateway_walletconnect::storage)
+                .post(gateway_walletconnect::storage)
+                .delete(gateway_walletconnect::storage),
+        )
+        .route(
+            "/api/apps/wallet-walletconnect/relay",
+            get(gateway_walletconnect::relay),
+        )
+        .route(
+            "/api/apps/wallet-walletconnect/relay-admission",
+            post(gateway_walletconnect::admission),
+        )
         .route("/api/wallet/qr", post(wallet_receive_qr))
         .route(
             "/api/apps/wallet/wallet/managed",
@@ -1433,6 +1480,9 @@ fn gateway_provider_error_status(scheme: &str, err: &anyhow::Error) -> StatusCod
 }
 
 fn inbox_error_response(err: anyhow::Error) -> Response {
+    if let Some(response) = gateway_walletconnect::consent_conflict_response(&err) {
+        return response;
+    }
     let profile_required = gateway_home_system::profile_required_message(&err);
     let text = profile_required
         .map(str::to_string)
@@ -1455,6 +1505,7 @@ fn inbox_error_response(err: anyhow::Error) -> Response {
     } else if text.contains("unknown inbox action")
         || text.contains("Open Wallet")
         || text.contains("is not pending")
+        || text.contains("cannot be rejected")
         || text.contains("is no longer pending")
         || text.contains("changed before Inbox approval")
         || text.contains("service access request")
@@ -1467,6 +1518,9 @@ fn inbox_error_response(err: anyhow::Error) -> Response {
 }
 
 fn system_error_response(err: anyhow::Error) -> Response {
+    if let Some(response) = gateway_walletconnect::consent_conflict_response(&err) {
+        return response;
+    }
     if let Some(text) = gateway_home_system::home_appearance_preference_request_message(&err) {
         return (StatusCode::BAD_REQUEST, text.to_string()).into_response();
     }

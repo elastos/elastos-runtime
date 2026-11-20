@@ -17,6 +17,20 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fmt;
 
+mod wallet_display;
+mod wallet_unicode;
+pub use wallet_display::{
+    validate_wallet_display_fields, wallet_display_identity, WalletDisplayIdentity,
+};
+
+/// Canonical reason when the owner dismisses an approved WalletConnect send.
+pub const WALLETCONNECT_DISMISSAL_REASON: &str =
+    "Wallet approval dismissed through Runtime authority";
+
+/// Time to retain an approved WalletConnect send receipt after its request expires.
+/// The phone can finish a send after expiry; an abandoned prompt releases its quota afterward.
+pub const WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS: u64 = 24 * 60 * 60;
+
 pub const WALLET_PROTOCOL_VERSION: &str = "2.3";
 pub const WALLET_BUS_OPERATION: &str = "wallet_contract";
 pub const WALLET_REQUEST_SCHEMA: &str = "elastos.wallet.provider-request/v2";
@@ -572,6 +586,10 @@ pub enum WalletProviderOperationV2 {
         proof_type: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wallet_peer_name: Option<String>,
     },
     RevokeAccount {
         account_id: String,
@@ -822,6 +840,7 @@ impl WalletProviderOperationV2 {
                 address,
                 proof_type,
                 label,
+                ..
             } => {
                 validate_required("proof_binding_id", proof_binding_id, 256)?;
                 validate_token("chain_namespace", chain_namespace, 64)?;
@@ -1652,6 +1671,9 @@ mod tests {
                     address: EVM_ADDRESS.to_string(),
                     proof_type: "siwe_eoa".to_string(),
                     label: Some("Connector".to_string()),
+
+                    provider_id: None,
+                    wallet_peer_name: None,
                 },
             ),
             (
@@ -2105,6 +2127,9 @@ mod tests {
                 address: EVM_ADDRESS.to_string(),
                 proof_type: "siwe_eoa".to_string(),
                 label: None,
+
+                provider_id: None,
+                wallet_peer_name: None,
             },
             WalletProviderOperationV2::ImportManagedRecoveryKey {
                 recovery_key: recovery_key(),

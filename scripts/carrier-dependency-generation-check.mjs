@@ -141,7 +141,7 @@ export function inspectMetadata(metadata, graphName) {
   requireReachable(
     metadata,
     graphName,
-    { name: "elastos-identity", version: "2.0.1" },
+    { name: "elastos-identity", version: "2.0.2" },
     { name: "ed25519-dalek", version: "2.2.0" },
   );
   requireReachable(

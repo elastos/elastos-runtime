@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { withBrowserLaunchRecovery } from './lib/browser-launch-recovery.mjs';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import { productSmokeLaunchOptions } from './product-smoke-browser.mjs';
 
-const { chromium } = await import(process.env.ELASTOS_PLAYWRIGHT_MODULE
-  ? pathToFileURL(process.env.ELASTOS_PLAYWRIGHT_MODULE).href : 'playwright');
+const { chromium } = withBrowserLaunchRecovery(await import(process.env.ELASTOS_PLAYWRIGHT_MODULE
+  ? pathToFileURL(process.env.ELASTOS_PLAYWRIGHT_MODULE).href : 'playwright'));
 const origin = process.env.ELASTOS_CONTENT_SANDBOX_URL;
 const cid = process.env.ELASTOS_CONTENT_SANDBOX_CID;
 assert.ok(origin && cid, 'the Rust fixture supplies its loopback gateway and CID');

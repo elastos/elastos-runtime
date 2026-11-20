@@ -196,6 +196,10 @@ class FakeElement {
     return Object.hasOwn(this, name) ? this[name] : null;
   }
 
+  hasAttribute(name) {
+    return Object.hasOwn(this, name);
+  }
+
   removeAttribute(name) {
     delete this[name];
   }
@@ -322,6 +326,9 @@ globalThis.window = {
     const listeners = windowEventListeners.get(type) || [];
     listeners.push(listener);
     windowEventListeners.set(type, listeners);
+  },
+  removeEventListener(type, listener) {
+    windowEventListeners.set(type, (windowEventListeners.get(type) || []).filter(candidate => candidate !== listener));
   },
   setTimeout,
   clearTimeout,
@@ -1581,6 +1588,15 @@ const restoredBrowserFrame = restoredBrowserEntry.node.querySelector(".window-fr
 const browserCloseMessages = [];
 restoredBrowserFrame.contentWindow = {
   postMessage(message, origin) {
+    if (message.type === "elastos.browser.authority-commit/v1") {
+      queueMicrotask(() => {
+        for (const listener of windowEventListeners.get("message") || []) listener({
+          source: restoredBrowserFrame.contentWindow, origin: "null",
+          data: { ...message, type: "elastos.browser.authority-committed/v1", ok: true },
+        });
+      });
+      return;
+    }
     browserCloseMessages.push({ message, origin });
   },
 };
@@ -1897,10 +1913,10 @@ const continuityWalletEntry = await shellWindows.attachAuthorizedTarget({
   launch_status: "launched",
 });
 const continuityWallet = windowModel(continuityWalletEntry);
-for (const target of ["wallet-metamask", "wallet-unisat"]) {
+for (const target of ["wallet-metamask", "wallet-unisat", "wallet-walletconnect"]) {
   const connectorEntry = await shellWindows.attachAuthorizedTarget({
     target,
-    title: target === "wallet-metamask" ? "MetaMask" : "UniSat",
+    title: ({ "wallet-metamask": "MetaMask", "wallet-unisat": "UniSat", "wallet-walletconnect": "WalletConnect" })[target],
     route:
       `/apps/${target}/?home_origin=http%3A%2F%2Flocalhost%3A61180` +
       `#home_token=deterministic-${target}-token`,

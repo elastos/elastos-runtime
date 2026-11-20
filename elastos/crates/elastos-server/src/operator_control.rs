@@ -47,6 +47,7 @@ const OPERATOR_AUDIT_FILE: &str = "operator-control-audit.jsonl";
 const OPERATOR_REQUEST_LOG_FILE: &str = "operator-control-requests.jsonl";
 const OPERATOR_CONNECT_TIMEOUT_SECS: u64 = 10;
 const OPERATOR_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+const OPERATOR_UPDATE_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_UPDATE_METADATA_BYTES: usize = 256 * 1024;
 /// A signed operator request is an action, a request id and small arguments.
 /// It is read before the signature is checked, so it stays small and quick.
@@ -155,15 +156,22 @@ pub struct OperatorUpdateCheck {
 /// task retains the close future until the short-lived endpoint has drained.
 struct OperatorCarrierDrain {
     signal: Option<tokio::sync::oneshot::Sender<()>>,
-    task: Option<tokio::task::JoinHandle<()>>,
+    task: Option<tokio::task::JoinHandle<Result<()>>>,
 }
 
 impl OperatorCarrierDrain {
     fn new(close: impl std::future::Future<Output = ()> + Send + 'static) -> Self {
+        Self::with_result(async move {
+            close.await;
+            Ok(())
+        })
+    }
+
+    fn with_result(close: impl std::future::Future<Output = Result<()>> + Send + 'static) -> Self {
         let (signal, shutdown) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
             let _ = shutdown.await;
-            close.await;
+            close.await
         });
         Self {
             signal: Some(signal),
@@ -177,7 +185,7 @@ impl OperatorCarrierDrain {
             .take()
             .expect("Carrier drain task remains owned")
             .await
-            .context("drain temporary operator Carrier client")
+            .context("drain temporary operator Carrier client")?
     }
 }
 
@@ -191,6 +199,17 @@ impl OperatorCarrierSession {
         let client = Arc::new(client);
         let closing = client.clone();
         let drain = OperatorCarrierDrain::new(async move { closing.close().await });
+        Self { client, drain }
+    }
+
+    fn for_update_check(client: crate::carrier::CarrierClient) -> Self {
+        let client = Arc::new(client);
+        let closing = client.clone();
+        let drain = OperatorCarrierDrain::with_result(async move {
+            closing
+                .close_update_check(OPERATOR_UPDATE_CLOSE_TIMEOUT)
+                .await
+        });
         Self { client, drain }
     }
 
@@ -535,7 +554,7 @@ pub async fn gather_local_update_check(data_dir: &Path) -> Result<OperatorUpdate
             source.name
         )
     }).context(crate::update::UpdateSourceUnavailable)?;
-    let session = OperatorCarrierSession::new(client);
+    let session = OperatorCarrierSession::for_update_check(client);
     let result = tokio::time::timeout(
         OPERATOR_UPDATE_CHECK_TIMEOUT,
         gather_update_check_with_client(&session.client, &source),
@@ -1911,6 +1930,24 @@ fn public_key_from_did(did: &str) -> Result<iroh::PublicKey> {
         .map_err(|err| anyhow::anyhow!("invalid operator DID '{}': {}", did, err))
 }
 
+// Gateway journey tests use these existing signed heads and releases through
+// the real System verifier, with only network delivery replaced.
+#[cfg(test)]
+pub(crate) fn signed_update_check_fixture(
+    channel: &str,
+    subscription: &str,
+    installed: &str,
+) -> (TrustedSource, Result<OperatorUpdateCheck>) {
+    let (mut source, head, release) = tests::signed_check_fixture(
+        |payload| payload["channel"] = serde_json::json!(channel),
+        |payload| payload["channel"] = serde_json::json!(channel),
+    );
+    source.channel = subscription.into();
+    source.installed_version = installed.into();
+    let result = verified_update_check(&source, &head, &release);
+    (source, result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1932,6 +1969,89 @@ mod tests {
         });
         drain.finish().await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn operator_carrier_drain_preserves_close_error() {
+        let drain = OperatorCarrierDrain::with_result(async {
+            Err(crate::update::UpdateSourceUnavailable.into())
+        });
+        assert!(drain
+            .finish()
+            .await
+            .unwrap_err()
+            .is::<crate::update::UpdateSourceUnavailable>());
+    }
+
+    #[tokio::test]
+    async fn operator_update_check_close_wiring_uses_deadline() {
+        use tokio::io::AsyncBufReadExt;
+        let dir = tempfile::tempdir().unwrap();
+        let server = Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .alpns(vec![b"elastos/carrier/1".to_vec()])
+            .bind()
+            .await
+            .unwrap();
+        let address = crate::carrier::tests::wait_for_direct_endpoint_addr(&server).await;
+        let (mut source, _, _) = signed_check_fixture(|_| {}, |_| {});
+        source.publisher_node_id = server.id().to_string();
+        source.connect_ticket = crate::carrier::tests::encode_ticket_for(address);
+        let mut sources = crate::sources::TrustedSourcesConfig::empty();
+        sources.upsert_source(source);
+        crate::sources::save_trusted_sources(dir.path(), &sources).unwrap();
+        let peer = server.clone();
+        let serving = tokio::spawn(async move {
+            let connection = peer.accept().await.unwrap().await.unwrap();
+            let (mut send, recv) = connection.accept_bi().await.unwrap();
+            let mut request = String::new();
+            BufReader::new(recv).read_line(&mut request).await.unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&request).unwrap()["op"],
+                "release_head"
+            );
+            send.write_all(b"{\"ok\":false}\n").await.unwrap();
+            send.finish().unwrap();
+            connection.closed().await;
+        });
+        let (started, starting) = tokio::sync::oneshot::channel();
+        let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
+        let path = dir.path().to_path_buf();
+        let mut check = tokio::spawn(async move {
+            crate::carrier::with_test_client_close(
+                async move {
+                    let _lifetime = dropped;
+                    let _ = started.send(());
+                    std::future::pending::<()>().await;
+                },
+                gather_local_update_check(&path),
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(10), starting)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::pause();
+        tokio::time::advance(OPERATOR_UPDATE_CLOSE_TIMEOUT).await;
+        let completed = tokio::time::timeout(Duration::from_millis(1), &mut check).await;
+        tokio::time::resume();
+        if completed.is_err() {
+            check.abort();
+            let _ = check.await;
+        }
+        let result = completed
+            .expect("real update check must use the bounded close")
+            .unwrap();
+        assert!(result.is_err(), "fixture has no signed release head");
+        assert!(tokio::time::timeout(Duration::from_secs(1), stopped)
+            .await
+            .unwrap()
+            .is_err());
+        server.close().await;
+        tokio::time::timeout(Duration::from_secs(5), serving)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -2009,7 +2129,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
-    fn signed_check_fixture(
+    pub(super) fn signed_check_fixture(
         change_release: impl FnOnce(&mut serde_json::Value),
         change_head: impl FnOnce(&mut serde_json::Value),
     ) -> (TrustedSource, crate::update::DiscoveredHead, Vec<u8>) {

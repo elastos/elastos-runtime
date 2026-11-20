@@ -100,7 +100,7 @@ pub async fn request_capability(
             request_id: None,
             token: None,
             reason: Some(
-                "The Home owner grants Browser internet access from its current Inbox request."
+                "An admin of this Home can allow Browser to use the internet from its request in Inbox."
                     .into(),
             ),
         }));

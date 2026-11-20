@@ -14,12 +14,12 @@ product_data() {
   node scripts/check-elastos-bus-wit.mjs
   node scripts/check-capsule-templates.mjs
   node scripts/carrier-dependency-generation-check.mjs
-  node --test scripts/carrier-dependency-generation-check.test.mjs
+  node scripts/run-node-tests.mjs scripts/carrier-dependency-generation-check.test.mjs
 }
 
 prepush() {
   python3 scripts/ci-local-prepush-test.py
-  node --test scripts/capsule-script-browser-ci.test.mjs
+  node scripts/run-node-tests.mjs scripts/capsule-script-browser-ci.test.mjs
 }
 
 product_ui() {
@@ -33,14 +33,16 @@ product_ui() {
   node scripts/home-shell-recovery-smoke.mjs
   node scripts/home-agent-shell-smoke.mjs
   node scripts/people-discovery-smoke.mjs
+  node scripts/run-node-tests.mjs scripts/walletconnect-capsule.test.mjs
   node scripts/home-clipboard-source-gate.mjs
-  node --test scripts/home-clipboard-source-gate.test.mjs
+  node scripts/run-node-tests.mjs scripts/home-clipboard-source-gate.test.mjs
   node scripts/public-copy-entropy-check.mjs
+  node scripts/run-node-tests.mjs scripts/lib/community-recovery-copy.test.mjs
   node scripts/library-product-behavior-smoke.mjs
 }
 
 release() {
-  node --test scripts/ci-model-package.test.mjs scripts/ci-installed-home-failure.test.mjs scripts/ci-installed-two-home.test.mjs
+  node scripts/run-node-tests.mjs scripts/ci-model-package.test.mjs scripts/ci-installed-home-failure.test.mjs scripts/ci-installed-two-home.test.mjs
   python3 scripts/ci-release-policy-test.py
   python3 scripts/ci-installed-two-home-test.py
   python3 scripts/ci-relay-journey-test.py

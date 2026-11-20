@@ -84,6 +84,13 @@ p {
   font-weight: 600;
 }
 
+#community-status {
+  flex: 0 0 auto;
+  padding: 0.55rem 1rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .reconnect {
   flex: 0 0 auto;
   align-self: flex-start;

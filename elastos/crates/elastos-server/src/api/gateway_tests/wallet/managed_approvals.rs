@@ -72,6 +72,7 @@ async fn test_system_approves_managed_wallet_request_and_executes_signature() {
             "proof_type": "managed_evm",
             "payload_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "principal_id": authority.principal_id.clone(),
+            "session_id": authority.session_id.clone(),
             "created_at": 10,
             "expires_at": 20
         })]),
@@ -168,6 +169,7 @@ async fn test_system_does_not_approve_external_wallet_request() {
             "connector_id": "wallet-metamask",
             "payload_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "principal_id": authority.principal_id.clone(),
+            "session_id": authority.session_id.clone(),
             "created_at": 10,
             "expires_at": 20
         })]),

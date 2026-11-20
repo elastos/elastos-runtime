@@ -36,7 +36,7 @@ pub(super) async fn system_source_switch_channel(
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({
-                "error":"Ask the Home owner to choose the update channel."
+                "error":"Ask an admin of this Home to choose the update channel."
             })),
         )
             .into_response();
@@ -160,11 +160,14 @@ struct CachedCheck {
     key: UpdateCheckKey,
     completed_at: std::time::Instant,
     check: Option<crate::operator_control::OperatorUpdateCheck>,
+    unavailable: bool,
+    observed_at: u64,
 }
 
 struct RunningCheck {
     key: UpdateCheckKey,
     task: tokio::task::JoinHandle<CachedCheck>,
+    finished: tokio::sync::watch::Receiver<()>,
 }
 
 pub(super) enum UpdateCheckSnapshot {
@@ -172,38 +175,55 @@ pub(super) enum UpdateCheckSnapshot {
     Completed(Option<Box<crate::operator_control::OperatorUpdateCheck>>),
 }
 
+pub(super) enum CheckOutcome {
+    Confirmed(Box<crate::operator_control::OperatorUpdateCheck>),
+    Unavailable,
+    Rejected,
+}
+
+impl From<Option<crate::operator_control::OperatorUpdateCheck>> for CheckOutcome {
+    fn from(check: Option<crate::operator_control::OperatorUpdateCheck>) -> Self {
+        check
+            .map(|check| Self::Confirmed(Box::new(check)))
+            .unwrap_or(Self::Rejected)
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct ConfirmedOffer {
+    key: UpdateCheckKey,
+    pub(super) check: crate::operator_control::OperatorUpdateCheck,
+    pub(super) observed_at: u64,
+}
+
 #[derive(Default)]
 pub(super) struct UpdateCheckCache {
     completed: Option<CachedCheck>,
     running: Option<RunningCheck>,
+    confirmed: Option<ConfirmedOffer>,
+    first_seen: std::collections::BTreeMap<String, u64>,
 }
 
 impl UpdateCheckCache {
+    #[cfg(test)]
+    pub(super) fn expire_response(&mut self) {
+        self.completed = None;
+    }
+
     /// A request only joins a task which has already finished. Policy changes
     /// keep the current worker until it drains, then admit one new worker.
-    pub(super) async fn read<F>(
+    pub(super) async fn read<F, O>(
         &mut self,
         key: UpdateCheckKey,
         now: std::time::Instant,
         work: impl FnOnce() -> F,
     ) -> UpdateCheckSnapshot
     where
-        F: std::future::Future<Output = Option<crate::operator_control::OperatorUpdateCheck>>
-            + Send
-            + 'static,
+        F: std::future::Future<Output = O> + Send + 'static,
+        O: Into<CheckOutcome> + Send + 'static,
     {
-        if self
-            .running
-            .as_ref()
-            .is_some_and(|running| running.task.is_finished())
-        {
-            let running = self.running.take().expect("finished update check is owned");
-            self.completed = Some(running.task.await.unwrap_or(CachedCheck {
-                key: running.key,
-                completed_at: now,
-                check: None,
-            }));
-        }
+        self.collect_finished(now).await;
+        self.reconcile_key(&key);
         if let Some(completed) = self.completed.as_ref().filter(|completed| {
             completed.key == key
                 && now.saturating_duration_since(completed.completed_at)
@@ -214,36 +234,194 @@ impl UpdateCheckCache {
         if self.running.is_none() {
             let task_key = key.clone();
             let check = work();
+            let (completion, finished) = tokio::sync::watch::channel(());
             self.running = Some(RunningCheck {
                 key,
+                finished,
                 task: tokio::spawn(async move {
-                    let check = check.await;
+                    // Closing the channel wakes every waiter, including on panic or abort.
+                    let _completion = completion;
+                    let outcome = check.await.into();
+                    let unavailable = matches!(outcome, CheckOutcome::Unavailable);
+                    let check = match outcome {
+                        CheckOutcome::Confirmed(check) => Some(*check),
+                        _ => None,
+                    };
                     CachedCheck {
                         key: task_key,
                         completed_at: std::time::Instant::now(),
                         check,
+                        unavailable,
+                        observed_at: gateway_update_notice::now_secs(),
                     }
                 }),
             });
         }
         UpdateCheckSnapshot::Checking
     }
+
+    pub(super) async fn cancel_for_home(
+        cache: &tokio::sync::Mutex<Self>,
+        data_dir: &std::path::Path,
+    ) {
+        let task = {
+            let mut cache = cache.lock().await;
+            if cache
+                .running
+                .as_ref()
+                .is_some_and(|running| running.key.data_dir == data_dir)
+            {
+                cache.running.take().map(|running| running.task)
+            } else {
+                None
+            }
+        };
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+
+    async fn collect_finished(&mut self, now: std::time::Instant) {
+        if self.running.as_ref().is_some_and(|running| {
+            running.task.is_finished() || running.finished.has_changed().is_err()
+        }) {
+            let running = self.running.take().expect("finished update check is owned");
+            let completed = running.task.await.unwrap_or(CachedCheck {
+                key: running.key,
+                completed_at: now,
+                check: None,
+                unavailable: false,
+                observed_at: gateway_update_notice::now_secs(),
+            });
+            if let Some(check) = &completed.check {
+                let observed_at = check
+                    .release_cid
+                    .as_ref()
+                    .map_or(completed.observed_at, |cid| {
+                        *self
+                            .first_seen
+                            .entry(cid.clone())
+                            .or_insert(completed.observed_at)
+                    });
+                self.confirmed = Some(ConfirmedOffer {
+                    key: completed.key.clone(),
+                    check: check.clone(),
+                    observed_at,
+                });
+            } else if !completed.unavailable {
+                self.confirmed = None;
+            }
+            self.completed = Some(completed);
+        }
+    }
+
+    fn reconcile_key(&mut self, key: &UpdateCheckKey) {
+        if self
+            .confirmed
+            .as_ref()
+            .is_some_and(|offer| offer.key != *key)
+        {
+            self.confirmed = None;
+        }
+    }
+
+    // Await one worker outside the mutex. True means this policy completed;
+    // false lets the background task recheck its switch before new admission.
+    pub(super) async fn check_and_store<F, O>(
+        cache: &tokio::sync::Mutex<Self>,
+        key: UpdateCheckKey,
+        work: impl FnOnce() -> F,
+    ) -> bool
+    where
+        F: std::future::Future<Output = O> + Send + 'static,
+        O: Into<CheckOutcome> + Send + 'static,
+    {
+        let (mut finished, running_key) = {
+            let mut cache = cache.lock().await;
+            if matches!(
+                cache
+                    .read(key.clone(), std::time::Instant::now(), work)
+                    .await,
+                UpdateCheckSnapshot::Completed(_)
+            ) {
+                return true;
+            }
+            let running = cache.running.as_ref().expect("pending check has a worker");
+            (running.finished.clone(), running.key.clone())
+        };
+        let _ = finished.changed().await;
+        cache
+            .lock()
+            .await
+            .collect_finished(std::time::Instant::now())
+            .await;
+        // Return admission to the background task, including after another
+        // policy's worker drains. It owns the saved switch and current policy.
+        running_key == key
+    }
+
+    pub(super) async fn confirmed_offer(
+        &mut self,
+        key: &UpdateCheckKey,
+        source: &crate::sources::TrustedSource,
+    ) -> Option<ConfirmedOffer> {
+        self.collect_finished(std::time::Instant::now()).await;
+        self.reconcile_key(key);
+        if self
+            .confirmed
+            .as_ref()
+            .is_some_and(|offer| !check_matches_source(source, &offer.check))
+        {
+            self.confirmed = None;
+        }
+        self.confirmed.clone()
+    }
 }
 
-static UPDATE_CHECK: std::sync::OnceLock<tokio::sync::Mutex<UpdateCheckCache>> =
+static UPDATE_CHECK: std::sync::OnceLock<std::sync::Arc<tokio::sync::Mutex<UpdateCheckCache>>> =
     std::sync::OnceLock::new();
 
-fn source_policy_sha256(config: &crate::sources::TrustedSourcesConfig) -> Option<String> {
+#[cfg(test)]
+tokio::task_local! {
+    static TEST_CHECK_CACHE: std::sync::Arc<tokio::sync::Mutex<UpdateCheckCache>>;
+}
+
+// A route fixture represents a separate Home process. Its account and task
+// journeys share one cache, while parallel fixtures retain their own state.
+#[cfg(test)]
+pub(super) async fn with_test_check_cache<T>(future: impl std::future::Future<Output = T>) -> T {
+    TEST_CHECK_CACHE
+        .scope(
+            std::sync::Arc::new(tokio::sync::Mutex::new(UpdateCheckCache::default())),
+            future,
+        )
+        .await
+}
+
+pub(super) fn update_check_cache() -> std::sync::Arc<tokio::sync::Mutex<UpdateCheckCache>> {
+    #[cfg(test)]
+    if let Ok(cache) = TEST_CHECK_CACHE.try_with(std::sync::Arc::clone) {
+        return cache;
+    }
+    UPDATE_CHECK
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(UpdateCheckCache::default())))
+        .clone()
+}
+
+pub(super) fn source_policy_sha256(
+    config: &crate::sources::TrustedSourcesConfig,
+) -> Option<String> {
     Some(hex::encode(Sha256::digest(
         serde_json::to_vec(config).ok()?,
     )))
 }
 
-async fn check_current_policy(
+pub(super) async fn check_current_policy(
     data_dir: std::path::PathBuf,
     policy_sha256: String,
     source: crate::sources::TrustedSource,
-) -> Option<crate::operator_control::OperatorUpdateCheck> {
+) -> CheckOutcome {
     let policy_matches = || {
         crate::sources::load_trusted_sources(&data_dir)
             .ok()
@@ -251,12 +429,28 @@ async fn check_current_policy(
             .is_some_and(|current| current == policy_sha256)
     };
     if !policy_matches() {
-        return None;
+        return CheckOutcome::Rejected;
     }
-    let check = crate::operator_control::gather_local_update_check(&data_dir)
-        .await
-        .ok()?;
-    (policy_matches() && check_matches_source(&source, &check)).then_some(check)
+    let result = crate::operator_control::gather_local_update_check(&data_dir).await;
+    if !policy_matches() {
+        return CheckOutcome::Rejected;
+    }
+    checked_outcome(&source, result)
+}
+
+pub(super) fn checked_outcome(
+    source: &crate::sources::TrustedSource,
+    result: anyhow::Result<crate::operator_control::OperatorUpdateCheck>,
+) -> CheckOutcome {
+    match result {
+        Ok(check) if check_matches_source(source, &check) => {
+            CheckOutcome::Confirmed(Box::new(check))
+        }
+        Err(error) if error.is::<crate::update::UpdateSourceUnavailable>() => {
+            CheckOutcome::Unavailable
+        }
+        _ => CheckOutcome::Rejected,
+    }
 }
 
 pub(super) fn check_matches_source(
@@ -274,46 +468,32 @@ pub(super) async fn system_runtime_update_summary(
     data_dir: &std::path::Path,
     context: &HomeLaunchTokenContext,
 ) -> Option<serde_json::Value> {
-    system_runtime_update_summary_with_cache(
-        data_dir,
-        context,
-        UPDATE_CHECK.get_or_init(|| tokio::sync::Mutex::new(UpdateCheckCache::default())),
-        check_current_policy,
-    )
-    .await
+    let cache = update_check_cache();
+    system_runtime_update_summary_with_cache(data_dir, context, &cache, check_current_policy).await
 }
 
-pub(super) async fn system_runtime_update_summary_with_cache<F>(
+pub(super) async fn system_runtime_update_summary_with_cache<F, O>(
     data_dir: &std::path::Path,
     context: &HomeLaunchTokenContext,
     cache: &tokio::sync::Mutex<UpdateCheckCache>,
     work: impl FnOnce(std::path::PathBuf, String, crate::sources::TrustedSource) -> F,
 ) -> Option<serde_json::Value>
 where
-    F: std::future::Future<Output = Option<crate::operator_control::OperatorUpdateCheck>>
-        + Send
-        + 'static,
+    F: std::future::Future<Output = O> + Send + 'static,
+    O: Into<CheckOutcome> + Send + 'static,
 {
     if require_admin_principal(data_dir, context).is_err() {
         return None;
     }
-    let controller = crate::update_controller::status(data_dir).ok()??;
-    let config = crate::sources::load_trusted_sources(data_dir).ok()?;
-    let source = config.default_source()?;
-    if source.installed_version.is_empty() || source.publisher_dids.is_empty() {
-        return None;
-    }
+    let (controller, source, key) = update_inputs(data_dir)?;
     if crate::update::installed_release_version(&source.installed_version).is_err() {
         return Some(serde_json::json!({
             "configured":true, "checking":false, "available":false, "can_apply":false,
             "current_version":source.installed_version,
-            "message":crate::update::InvalidInstalledVersion.to_string(),
+            "message":gateway_update_notice::INVALID_VERSION_TEXT,
+            "background_checks": gateway_update_notice::preference(data_dir),
         }));
     }
-    let key = UpdateCheckKey {
-        data_dir: data_dir.into(),
-        source_policy_sha256: source_policy_sha256(&config)?,
-    };
     let worker_key = key.clone();
     let worker_source = source.clone();
     let snapshot = cache
@@ -332,6 +512,40 @@ where
         UpdateCheckSnapshot::Checking => None,
         UpdateCheckSnapshot::Completed(check) => check.as_deref(),
     };
+    update_account_view(data_dir, context, &controller, &source, check, checking)
+}
+
+pub(super) fn update_inputs(
+    data_dir: &std::path::Path,
+) -> Option<(
+    crate::update_controller::UpdateStatus,
+    crate::sources::TrustedSource,
+    UpdateCheckKey,
+)> {
+    let controller = crate::update_controller::status(data_dir).ok()??;
+    let config = crate::sources::load_trusted_sources(data_dir).ok()?;
+    let source = config.default_source()?.clone();
+    if source.installed_version.is_empty() || source.publisher_dids.is_empty() {
+        return None;
+    }
+    let key = UpdateCheckKey {
+        data_dir: data_dir.into(),
+        source_policy_sha256: source_policy_sha256(&config)?,
+    };
+    Some((controller, source, key))
+}
+
+pub(super) fn update_account_view(
+    data_dir: &std::path::Path,
+    context: &HomeLaunchTokenContext,
+    controller: &crate::update_controller::UpdateStatus,
+    source: &crate::sources::TrustedSource,
+    check: Option<&crate::operator_control::OperatorUpdateCheck>,
+    checking: bool,
+) -> Option<serde_json::Value> {
+    if require_admin_principal(data_dir, context).is_err() {
+        return None;
+    }
     // A refused release can never install; offer again only when a different one appears.
     let refused = match check {
         Some(crate::operator_control::OperatorUpdateCheck {
@@ -356,6 +570,7 @@ where
         );
     Some(serde_json::json!({
         "configured":true,
+        "background_checks": gateway_update_notice::preference(data_dir),
         "checking":checking,
         "available":available,
         "can_apply":can_apply,
@@ -412,7 +627,7 @@ pub(super) async fn system_update_apply(
     if require_admin_principal(&state.data_dir, &launch.context).is_err() {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error":"Ask the Home owner to install this update."})),
+            Json(serde_json::json!({"error":"Ask an admin of this Home to install this update."})),
         )
             .into_response();
     }
@@ -431,10 +646,11 @@ pub(super) fn system_update_failure(error: &anyhow::Error) -> Response {
     } else if error.is::<crate::update_controller::ApprovalReplaced>() {
         (StatusCode::GONE, "This approval is no longer valid. Check for the update again and approve it once more.")
     } else if error.is::<crate::update::InvalidInstalledVersion>() {
+        tracing::warn!("{}", gateway_update_notice::INVALID_VERSION_REPAIR);
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
-                "error":crate::update::InvalidInstalledVersion.to_string(),
+                "error":gateway_update_notice::INVALID_VERSION_TEXT,
             })),
         )
             .into_response();
@@ -517,4 +733,49 @@ pub(super) fn choice_matches(
         && request.new_version == check.latest_version
         && Some(request.head_cid.as_str()) == check.head_cid.as_deref()
         && Some(request.release_cid.as_str()) == check.release_cid.as_deref()
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn update_notice_completed_worker_returns_after_response_ttl_expires() {
+        let cache = std::sync::Arc::new(tokio::sync::Mutex::new(UpdateCheckCache::default()));
+        let key = UpdateCheckKey {
+            data_dir: "fixture-home".into(),
+            source_policy_sha256: "fixture-policy".into(),
+        };
+        let (started, starting) = tokio::sync::oneshot::channel();
+        let (release, waiting) = tokio::sync::oneshot::channel();
+        let worker_cache = cache.clone();
+        let worker = tokio::spawn(async move {
+            UpdateCheckCache::check_and_store(&worker_cache, key, || async move {
+                let _ = started.send(());
+                waiting.await.unwrap();
+                CheckOutcome::Unavailable
+            })
+            .await;
+        });
+        starting.await.unwrap();
+        // Hold collection until the completed response has aged. This models
+        // a suspended waiter without sleeping for the response's real TTL.
+        let mut held = cache.lock().await;
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while !held.running.as_ref().unwrap().task.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        held.collect_finished(std::time::Instant::now()).await;
+        held.completed.as_mut().unwrap().completed_at =
+            std::time::Instant::now() - std::time::Duration::from_secs(CHECK_CACHE_SECONDS + 1);
+        drop(held);
+        tokio::time::timeout(std::time::Duration::from_secs(1), worker)
+            .await
+            .expect("completed check returns even after System response expires")
+            .expect("completion must not invoke its consumed work again");
+    }
 }

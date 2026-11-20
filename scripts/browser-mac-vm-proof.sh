@@ -47,7 +47,7 @@ Environment:
   HOME_VIRTUAL_AUTH_BROWSER_DIAGNOSTIC_CLICK_TEXT_RE optional text regex to click in page diagnostics
   HOME_VIRTUAL_AUTH_BROWSER_DIAGNOSTIC_CLICK_EXPECT_TEXT_RE optional text regex expected after diagnostic click
   ELASTOS_BROWSER_MAC_VM_PROFILE_RESET_PROOF default: 0; set 1 to reset the virtual test principal profile after proof pages close
-  ELASTOS_BROWSER_MAC_VM_PROOF_AUTH_PROFILE optional persistent virtual-auth profile dir for authenticated ela.city proof
+  ELASTOS_BROWSER_MAC_VM_PROOF_AUTH_PROFILE default: HOME_VIRTUAL_AUTH_PROFILE or <data-dir>/browser-mac-vm-proof-auth; kept between runs
   HOME_VIRTUAL_AUTH_BROWSER_DIAGNOSTIC_CLICK_OPTIONAL default: 1 for this proof
   ELASTOS_BROWSER_VM_CONTROL_SOCKET        optional override; default: browser-vm-product supervisor.control_socket_path in the target adapter config
   ELASTOS_MAC_BROWSER_DATA_DIR             default: ~/elastos-mac-test-home/Library/Application Support/elastos
@@ -163,7 +163,7 @@ control_after="$tmp_dir/control-after.json"
 embedded_json="$tmp_dir/embedded.json"
 open_json="$tmp_dir/open.json"
 proof_json="$tmp_dir/proof.json"
-auth_profile="${ELASTOS_BROWSER_MAC_VM_PROOF_AUTH_PROFILE:-}"
+auth_profile="${ELASTOS_BROWSER_MAC_VM_PROOF_AUTH_PROFILE:-${HOME_VIRTUAL_AUTH_PROFILE:-${data_dir}/browser-mac-vm-proof-auth}}"
 virtual_auth_env=()
 virtual_auth_persistent=0
 virtual_auth_cleanup="${HOME_VIRTUAL_AUTH_CLEANUP:-1}"

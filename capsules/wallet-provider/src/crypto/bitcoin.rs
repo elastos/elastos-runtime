@@ -43,6 +43,9 @@ pub(crate) fn sign_bip322_simple_p2wpkh_approval(
     validate_bitcoin_bip322_proof_payload(
         &request.payload,
         &LinkedAccount {
+            provider_id: None,
+            wallet_display_name: None,
+            wallet_mark: None,
             account_id: request.account_id.clone(),
             principal_id: request.principal_id.clone(),
             proof_binding_id: request.proof_binding_id.clone(),

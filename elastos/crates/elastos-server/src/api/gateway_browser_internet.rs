@@ -81,6 +81,11 @@ pub(crate) struct BrowserInternetService {
     generation: Mutex<Option<Generation>>,
 }
 impl BrowserInternetService {
+    pub(super) fn capability_manager(&self) -> anyhow::Result<Arc<CapabilityManager>> {
+        self.manager
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Runtime internet authority is unavailable"))
+    }
     pub(crate) fn new(manager: Option<Arc<CapabilityManager>>) -> Self {
         Self {
             manager,
@@ -294,7 +299,7 @@ pub(super) async fn answer(
     ensure_admin_context(&state.data_dir, &launch.context)?;
     anyhow::ensure!(
         launch.launch_context.executable_actor == INBOX_CAPSULE_ID,
-        "Inbox launch required"
+        "Open Inbox from Home, then try again."
     );
     if let Some(id) = action_id.strip_prefix("browser-internet-turn-off:") {
         revoke(state, launch, Some(id), token).await?;
@@ -380,9 +385,15 @@ pub(super) fn notification(
     resolve_capsule_dir(&state.data_dir, BROWSER_CAPSULE_ID)?;
     let record = load(&state.data_dir).ok()??;
     let (at, body, action_id) = match &record {
+        Consent::Requested { expires_at, at, .. } if *expires_at <= now_ts() => (
+            *at,
+            "This request expired. It was made.",
+            "browser-internet-request".into(),
+        ),
         Consent::Requested { request_id, at, .. } => {
             let request = grant_request(&record).ok()?;
             return Some(HomeNotificationEntrySummary {
+                requesting_origin: None,
                 id: "browser-internet:permission".into(),
                 source_app: BROWSER_CAPSULE_ID.into(),
                 kind: "browser_internet_request".into(),
@@ -424,6 +435,7 @@ pub(super) fn notification(
         ),
     };
     Some(HomeNotificationEntrySummary {
+        requesting_origin: None,
         id: "browser-internet:permission".into(),
         source_app: BROWSER_CAPSULE_ID.into(),
         kind: "browser_internet_decision".into(),
@@ -743,7 +755,7 @@ async fn action_inner(
     anyhow::ensure!(input.action == "revoke", "Invalid Browser internet action");
     anyhow::ensure!(
         launch.launch_context.executable_actor == INBOX_CAPSULE_ID,
-        "Inbox launch required"
+        "Open Inbox from Home, then try again."
     );
     revoke(state, &launch, None, input.step_up_token.as_deref()).await
 }
@@ -756,7 +768,7 @@ async fn revoke(
 ) -> anyhow::Result<serde_json::Value> {
     anyhow::ensure!(
         launch.launch_context.executable_actor == INBOX_CAPSULE_ID,
-        "Inbox launch required"
+        "Open Inbox from Home, then try again."
     );
     ensure_admin_context(&state.data_dir, &launch.context)?;
     let mut live = state.browser_internet.generation.lock().await;

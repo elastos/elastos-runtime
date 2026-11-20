@@ -33,6 +33,7 @@ import {
 } from "./shell-auth.js?v=home-wallpaper-20261030b";
 import {
   handleHomeWalletConnectorEffect,
+  notifyOpenWallets,
   WALLET_CONNECTOR_EFFECT_TYPE,
 } from "./home-wallet-connector-host.js?v=home-wallpaper-20261030b";
 import {
@@ -56,6 +57,9 @@ import {
   HOME_OPEN_EXTERNAL_TYPE,
   MAX_EXTERNAL_LINK_LENGTH,
 } from "./home-external-link.js?v=download-progress-20261112";
+
+// Home binds the permission return to the verified Browser frame that asked.
+let browserInternetRequester = null;
 
 const SUMMARY_REFRESH_DEBOUNCE_MS = 150;
 const SUMMARY_REFRESH_RETRY_MS = 700;
@@ -83,6 +87,7 @@ const HOME_GUI_AUTHORIZED_ATTACHMENT_SCHEMA =
 const WALLET_CONNECTOR_TARGET_TITLES = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
+  "wallet-walletconnect": "WalletConnect",
 });
 const WALLET_CONNECTOR_TARGETS = new Set(
   Object.keys(WALLET_CONNECTOR_TARGET_TITLES),
@@ -92,6 +97,7 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   "home-agent": new Set(["marketplace", "system", "inbox"]),
   "archive-manager": new Set(["library"]),
   browser: new Set(["library", "inbox"]),
+  "wallet-walletconnect": new Set(["inbox"]),
   "chat-room": new Set(["library", "people", "inbox"]),
   "gba-emulator": new Set(["library"]),
   "home-cli": "visible-target",
@@ -101,7 +107,7 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   marketplace: "runtime-target",
   people: new Set(["chat-room", "inbox", "system"]),
   system: "visible-target",
-  "wallet": new Set(["wallet-metamask", "wallet-unisat"]),
+  "wallet": new Set(["wallet-metamask", "wallet-unisat", "wallet-walletconnect"]),
 });
 const SHELL_MESSAGE_DELIVER_TARGET_SOURCES = Object.freeze({
   "chat-room": new Set(["documents"]),
@@ -206,7 +212,7 @@ async function switchToHomeGuiAndOpenTarget(context, target, options = {}) {
 async function launchWalletConnectorFromTrustedSource(context, target) {
   if (
     context.kind !== "app-frame" ||
-    context.targetId !== "wallet" ||
+    !(context.targetId === "wallet" || context.targetId === "inbox" && target === "wallet-walletconnect") ||
     !WALLET_CONNECTOR_TARGETS.has(target)
   ) {
     throw new Error("Home denied the Wallet connector launch");
@@ -553,7 +559,7 @@ async function showHostAuthGate(options = {}) {
   await unlockReady;
 }
 
-async function launchHomeTarget(target, query = {}) {
+async function launchHomeTarget(target, query = {}, { renewHomeToken = "" } = {}) {
   const pickerOwner = target === "library" && query.pickerRequestId
     ? [...launchedAppContexts.values()].map((context) => context.pickerRequest)
       .find((record) => record?.id === query.pickerRequestId && currentLibraryPicker(record))
@@ -572,6 +578,7 @@ async function launchHomeTarget(target, query = {}) {
     ? createHomeBackgroundImageReader() : null;
   const launched = await fetchJson("/api/apps/home/launch", {
     method: "POST",
+    ...(renewHomeToken ? { headers: { "x-elastos-browser-renew-token": renewHomeToken } } : {}),
     body: JSON.stringify(body),
   });
   if (launched?.attach_kind === "iframe") {
@@ -663,7 +670,7 @@ function settleBrowserAuthorityRenewal(record, result) {
   }
   window.clearTimeout(record.timeout);
   pendingBrowserAuthorityRenewals.delete(record.requestId);
-  if (result.ok) {
+  if (result.ok && record.frameToken !== result.freshHomeToken) {
     retireLaunchedAppContext(record.frameToken);
   }
   postBrowserAuthorityRenewalResult(record, result);
@@ -810,9 +817,9 @@ function handleBrowserAuthorityRenewalResult(context, message) {
     message.reason !== "" ||
     !message.freshHomeToken ||
     message.freshHomeToken === record.oldHomeToken ||
-    oldContext?.targetId !== "browser" ||
-    oldContext.browserInstance !== record.browserInstance ||
-    oldContext.source !== record.source ||
+    (oldContext ? (oldContext.targetId !== "browser" ||
+      oldContext.browserInstance !== record.browserInstance || oldContext.source !== record.source)
+      : record.frameToken !== message.freshHomeToken || freshContext?.source !== record.source) ||
     freshContext?.targetId !== "browser" ||
     freshContext.browserInstance !== record.browserInstance
   ) {
@@ -1912,7 +1919,19 @@ window.addEventListener("message", (event) => {
       return;
     }
     const query = data.query && typeof data.query === "object" ? data.query : {};
-    launchHomeTarget(target, query)
+    let renewHomeToken = "";
+    if (Object.hasOwn(data, "renewHomeToken")) {
+      const old = launchedAppContexts.get(data.renewHomeToken);
+      if (context.targetId !== HOME_GUI_SHELL_ID || target !== "browser" ||
+          !hasExactMessageKeys(data, ["type", "requestId", "target", "query", "homeToken", "renewHomeToken"]) ||
+          typeof data.renewHomeToken !== "string" || !data.renewHomeToken || data.renewHomeToken.length > 4096 ||
+          old?.targetId !== "browser" || !old.source || old.browserInstance !== query.browser_instance) {
+        replyToShellRequest(event, requestId, null, new Error("Home denied the Browser renewal"));
+        return;
+      }
+      renewHomeToken = data.renewHomeToken;
+    }
+    launchHomeTarget(target, query, { renewHomeToken })
       .then((launched) => replyToShellRequest(event, requestId, launched))
       .catch((error) => replyToShellRequest(event, requestId, null, error));
     return;
@@ -1936,6 +1955,7 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (data.type === "home:refresh-summary") {
+    notifyOpenWallets(context, broadcastHomeRuntimeEvents);
     requestShellSummaryRefresh({ reason: "child-message" });
     return;
   }
@@ -2148,8 +2168,12 @@ window.addEventListener("message", (event) => {
   }
   if (data.type === "home:focus-browser") {
     if (context.kind === "app-frame" && context.targetId === "inbox"
-      && hasExactMessageKeys(data, ["type", "homeToken"])) {
-      postToActiveShell({type:"home:gui-command", command:"focus-browser"});
+      && hasExactMessageKeys(data, ["type", "homeToken", "requestId"])
+      && typeof data.requestId === "string" && data.requestId.length > 0 && data.requestId.length <= 256) {
+      postToActiveShell({type:"home:gui-command", command:"focus-browser",
+        ...(browserInternetRequester?.requestId === data.requestId
+          ? {browserInstance:browserInternetRequester.browserInstance} : {})});
+      browserInternetRequester = null;
     }
     return;
   }
@@ -2176,8 +2200,22 @@ window.addEventListener("message", (event) => {
   if (context.targetId === "browser" && target === "inbox") {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
       || !data.query || typeof data.query !== "object" || Array.isArray(data.query)
-      || Object.keys(data.query).length !== 1
+      || !hasExactMessageKeys(data.query, data.query.browser_request_id === undefined
+        ? ["notification_id"] : ["notification_id", "browser_request_id"])
       || data.query.notification_id !== "browser-internet:permission") return;
+    if (data.query.browser_request_id !== undefined) {
+      if (typeof data.query.browser_request_id !== "string" || !data.query.browser_request_id
+        || data.query.browser_request_id.length > 256) return;
+      if (context.browserInstance && browserInternetRequester?.requestId !== data.query.browser_request_id) {
+        browserInternetRequester = {requestId:data.query.browser_request_id, browserInstance:context.browserInstance};
+      }
+    }
+  }
+  if (context.targetId === "wallet-walletconnect" && target === "inbox") {
+    if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      || !data.query || typeof data.query !== "object" || Array.isArray(data.query)
+      || !hasExactMessageKeys(data.query, ["notification_id"])
+      || data.query.notification_id !== "walletconnect-internet:permission") return;
   }
   if (context.targetId === "chat-room" && ["people", "inbox"].includes(target)) {
     if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
@@ -2202,10 +2240,12 @@ window.addEventListener("message", (event) => {
        !marketplaceAssistantHandoffQuery(data.query))) return;
   if (
     context.kind === "app-frame" &&
-    context.targetId === "wallet" &&
+    (context.targetId === "wallet" || context.targetId === "inbox" && target === "wallet-walletconnect") &&
     WALLET_CONNECTOR_TARGETS.has(target)
   ) {
-    if (!hasExactMessageKeys(data, ["type", "target", "homeToken"])) {
+    const inboxReturn = context.targetId === "inbox";
+    if (!hasExactMessageKeys(data, inboxReturn ? ["type", "target", "homeToken", "query"] : ["type", "target", "homeToken"])
+      || inboxReturn && (!data.query || typeof data.query !== "object" || Array.isArray(data.query) || Object.keys(data.query).length !== 0)) {
       console.warn("home ignored malformed Wallet connector launch", target);
       return;
     }
@@ -2214,7 +2254,9 @@ window.addEventListener("message", (event) => {
     });
     return;
   }
-  const query = data.query && typeof data.query === "object" ? data.query : {};
+  const query = context.targetId === "browser" && target === "inbox"
+    ? {notification_id: "browser-internet:permission"}
+    : data.query && typeof data.query === "object" ? data.query : {};
   if (target === "library" && query.mode && query.mode !== "browse") {
     Promise.resolve().then(() => openLibraryPicker(context, data)).catch((error) => {
       replyToShellRequest(event, data.requestId, null, error);
@@ -2307,6 +2349,16 @@ function homeMessageContext(event, data) {
       return null;
     }
     launched.source = event.source;
+    if (launched.targetId === "browser" && launched.browserInstance) {
+      // A renewal keeps the same document and its Home-owned associations.
+      for (const [oldToken, old] of launchedAppContexts) {
+        if (oldToken !== homeToken && old.targetId === "browser" && old.source === event.source &&
+            old.browserInstance === launched.browserInstance) {
+          transferFrameAssociations(old, launched, homeToken);
+          retireLaunchedAppContext(oldToken);
+        }
+      }
+    }
   } else if (launched.source !== event.source) {
     return null;
   }
@@ -2452,6 +2504,8 @@ function canOpenTargetFromHomeMessage(context, target) {
   if (context.kind === "home") {
     return true;
   }
+  // Inbox returns the user to the connector after its internet consent step.
+  if (context.kind === "app-frame" && context.targetId === "inbox" && target === "wallet-walletconnect") return true;
   const policy = SHELL_MESSAGE_OPEN_TARGET_SOURCES[context.targetId];
   if (!policy) {
     return false;

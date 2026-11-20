@@ -30,6 +30,64 @@ pub async fn health() -> Json<HealthResponse> {
     })
 }
 
+/// One authenticated Runtime status route for managed Home and gateway control.
+pub(crate) fn community_status_router(
+    registry: Option<Arc<elastos_runtime::provider::ProviderRegistry>>,
+    sessions: Arc<elastos_runtime::session::SessionRegistry>,
+) -> axum::Router {
+    let detach_sessions = sessions.clone();
+    axum::Router::new()
+        .route(
+            "/api/community/status",
+            axum::routing::get(move || community_status(registry.clone())),
+        )
+        .route(
+            "/api/auth/detach",
+            axum::routing::post(
+                move |Extension(session): Extension<elastos_runtime::session::Session>| {
+                    let sessions = detach_sessions.clone();
+                    async move {
+                        // The authenticated caller can release only its own token.
+                        sessions.invalidate_session(&session.token).await;
+                        StatusCode::NO_CONTENT
+                    }
+                },
+            ),
+        )
+        .layer(axum::middleware::from_fn(
+            super::middleware::shell_only_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            super::middleware::ApiState {
+                session_registry: sessions,
+            },
+            super::middleware::auth_middleware,
+        ))
+}
+
+pub(crate) async fn community_status(
+    registry: Option<Arc<elastos_runtime::provider::ProviderRegistry>>,
+) -> Json<serde_json::Value> {
+    Json(
+        match registry {
+            Some(registry) => registry
+                .send_runtime_provider_target_raw(
+                    "collaboration.link.status",
+                    &serde_json::json!({"op":"status"}),
+                )
+                .await
+                .ok(),
+            None => None,
+        }
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "state": "isolated", "connected": false,
+                "detail": "Community is unavailable on this Home.", "next_retry_seconds": null,
+            })
+        }),
+    )
+}
+
 // Capsule management
 
 #[derive(Serialize)]

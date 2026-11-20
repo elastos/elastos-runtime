@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { appendFileSync, readFileSync, statfsSync, writeFileSync, renameSync } from "node:fs";
@@ -8,7 +9,7 @@ import { assertJourneyEqual, publicJourneyFailure } from "./ci-installed-home-fa
 import { stopInstalledModelRun } from "./ci-installed-home-model-stop.mjs";
 import { openInstalledApp, openInstalledAssistant, reopenInstalledAssistant, resizeInstalledHome, returnInstalledHome } from "./ci-installed-home-navigation.mjs";
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = withBrowserLaunchRecovery(require("playwright"));
 const [base, evidence, data, mode, resourceControl] = process.argv.slice(2);
 assert(!mode || ["--home-only", "--memory-refusal", "--resource-lifecycle", "--model-repair"].includes(mode), "supported installed journey mode required");
 assert(Boolean(resourceControl) === ["--memory-refusal", "--resource-lifecycle", "--model-repair"].includes(mode));

@@ -110,7 +110,7 @@ fn home_terminal_policy_refusal() -> Response {
 fn home_terminal_guest_refusal() -> Response {
     (
         StatusCode::FORBIDDEN,
-        "Only the Home owner can use the web terminal.",
+        "Only an admin can use the web terminal.",
     )
         .into_response()
 }

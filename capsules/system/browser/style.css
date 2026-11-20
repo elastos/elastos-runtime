@@ -422,6 +422,15 @@ code {
   margin-top: 12px;
 }
 
+#update-background .pc2-card-row {
+  flex-direction: row;
+  align-items: center;
+}
+
+#update-background-label {
+  min-width: 0;
+}
+
 #runtime-update-progress {
   margin-top: 10px;
 }
@@ -1025,6 +1034,49 @@ input[type="file"].visually-hidden {
   color: var(--el-muted);
   font-size: 11px;
   white-space: nowrap;
+}
+
+.passkey-removal-note {
+  max-width: 24rem;
+  margin: 4px 0 0;
+  color: var(--el-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+#passkey-remove-dialog {
+  box-sizing: border-box;
+  width: min(28rem, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  padding: 24px;
+  border: 1px solid var(--el-hairline);
+  border-radius: 14px;
+  background: var(--el-surface-raised);
+  color: var(--el-text);
+}
+
+#passkey-remove-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+#passkey-remove-dialog h2 {
+  margin: 0 0 16px;
+  font-size: 18px;
+}
+
+#passkey-remove-dialog p {
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.passkey-remove-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
 }
 
 .account-role[data-role="admin"] {

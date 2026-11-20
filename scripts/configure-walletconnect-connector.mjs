@@ -5,7 +5,7 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
 const CONFIG_SCHEMA = "elastos.walletconnect.connector/v1";
-const SDK_PACKAGE = "@reown/appkit";
+const SDK_PACKAGE = "@walletconnect/ethereum-provider";
 const CONFIG_PATH = "ElastOS/SystemServices/WalletConnect/config.json";
 const SDK_PATH = "capsules/wallet-walletconnect/vendor/reown-appkit.js";
 

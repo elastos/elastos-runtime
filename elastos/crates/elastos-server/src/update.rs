@@ -1223,10 +1223,10 @@ async fn fetch_verified_update_binary(
         .context("Binary SHA-256 missing")?;
     let binary_size = binary_info["size"].as_u64();
     println!(
-        "  Downloading binary ({}){}...",
+        "  Downloading ElastOS for {}{}…",
         release_platform,
         binary_size
-            .map(|n| format!(" [{}]", format_bytes(n as usize)))
+            .map(|n| format!(" ({})", format_bytes(n as usize)))
             .unwrap_or_default()
     );
     if let Some(owner) = restart_owner.as_ref() {
@@ -1236,10 +1236,10 @@ async fn fetch_verified_update_binary(
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "verifying",
-            "Verifying the update. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when the update is ready.",
         )?;
     }
-    println!("  Downloaded binary: {}", format_bytes(binary_data.len()));
+    println!("  Downloaded {}.", format_bytes(binary_data.len()));
 
     // Verify SHA-256
     {
@@ -1459,27 +1459,27 @@ async fn run_upgrade_with_restart(
     let comp_size = comp_info["size"].as_u64();
 
     println!(
-        "  {} components.json{}...",
+        "  {} the update file list{}…",
         if restart_owner.is_some() {
             "Reading"
         } else {
             "Downloading"
         },
         comp_size
-            .map(|n| format!(" [{}]", format_bytes(n as usize)))
+            .map(|n| format!(" ({})", format_bytes(n as usize)))
             .unwrap_or_default()
     );
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "downloading",
-            "Checking the update files. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when the update is ready.",
         )?;
     }
     let comp_data = fetch_fn(comp_cid.to_string()).await?;
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "verifying",
-            "Verifying the update. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when the update is ready.",
         )?;
     }
     println!(
@@ -1587,9 +1587,9 @@ async fn run_upgrade_with_restart(
         )?;
         let records = crate::capsule_record::UpdateRecords::new(
             &previous.release,
-            next_admission
-                .take()
-                .context("update release admission missing")?,
+            next_admission.take().context(
+                "Home could not prepare the update. Update verification details are missing.",
+            )?,
             &source.publisher_dids,
         );
         let old_components = std::fs::read(data_dir.join("components.json"))?;
@@ -1632,7 +1632,7 @@ async fn run_upgrade_with_restart(
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "verifying",
-            "Checking update metadata. Home restarts when the update is ready.",
+            "Checking the update. Home restarts when the update is ready.",
         )?;
     }
 
@@ -1683,9 +1683,9 @@ async fn run_upgrade_with_restart(
         let old_components = std::fs::read(data_dir.join("components.json")).ok();
         let records = crate::capsule_record::UpdateRecords::new(
             &previous.release,
-            next_admission
-                .take()
-                .context("update release admission missing")?,
+            next_admission.take().context(
+                "Home could not prepare the update. Update verification details are missing.",
+            )?,
             &source.publisher_dids,
         );
         let changed_capsules =
@@ -1890,7 +1890,8 @@ async fn run_upgrade_with_restart(
             download_total,
         )?;
         owner.progress("downloading", DOWNLOAD_MESSAGE)?;
-        let support_plan = support_plan.context("update support plan missing")?;
+        let support_plan = support_plan
+            .context("Home could not prepare the update because its download plan is missing.")?;
         Some(
             on_heap(|| {
                 crate::setup::stage_planned_update_support(

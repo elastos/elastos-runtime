@@ -308,6 +308,7 @@ async fn test_gateway_carrier_bootstrap_route_returns_live_ticket() {
         carrier_endpoint: None,
         collaboration_discovery_service: None,
         browser_internet: Default::default(),
+        walletconnect: Default::default(),
         identity_manager: Arc::new(std::sync::OnceLock::new()),
         cache_dir: dir.path().to_path_buf(),
         data_dir: dir.path().to_path_buf(),
@@ -370,6 +371,7 @@ async fn test_gateway_carrier_bootstrap_prefers_managed_runtime_ticket() {
         carrier_endpoint: None,
         collaboration_discovery_service: None,
         browser_internet: Default::default(),
+        walletconnect: Default::default(),
         identity_manager: Arc::new(std::sync::OnceLock::new()),
         cache_dir: dir.path().to_path_buf(),
         data_dir: dir.path().to_path_buf(),
@@ -429,6 +431,7 @@ async fn test_gateway_carrier_bootstrap_publisher_role_uses_gateway_ticket() {
         carrier_endpoint: None,
         collaboration_discovery_service: None,
         browser_internet: Default::default(),
+        walletconnect: Default::default(),
         identity_manager: Arc::new(std::sync::OnceLock::new()),
         cache_dir: dir.path().to_path_buf(),
         data_dir: dir.path().to_path_buf(),
@@ -952,10 +955,7 @@ async fn test_chat_room_configured_send_uses_signed_home_authority_and_scoped_po
     let summary: serde_json::Value = serde_json::from_slice(&summary_body).unwrap();
     assert_eq!(summary["transport"]["configured"], true);
     assert_eq!(summary["transport"]["available"], false);
-    assert_eq!(
-        summary["transport"]["status"],
-        "Community is unreachable. Retained messages stay available."
-    );
+    assert_eq!(summary["transport"]["status"], "Connecting to Community…");
     assert!(summary["transport"].get("connected_peer_count").is_none());
     assert!(summary["transport"].get("topic").is_none());
     assert_eq!(summary["browser_access_allowed"], false);

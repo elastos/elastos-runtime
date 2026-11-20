@@ -378,9 +378,16 @@ pub(super) async fn home_shared_content_check(
         )
             .into_response();
     }
-    let (home, app) = match require_home_token_context(&state.data_dir, &headers).and_then(|home| {
-        home_external_link_app(&state.data_dir, &headers, &input.app_token).map(|app| (home, app))
-    }) {
+    let data = state.data_dir.clone();
+    let request_headers = headers.clone();
+    let token = input.app_token.clone();
+    let (home, app) = match blocking_capsule_inventory(move || {
+        require_home_token_context(&data, &request_headers).and_then(|home| {
+            home_external_link_app(&data, &request_headers, &token).map(|app| (home, app))
+        })
+    })
+    .await
+    {
         Ok(found) => found,
         Err(err) => return (StatusCode::FORBIDDEN, err.to_string()).into_response(),
     };

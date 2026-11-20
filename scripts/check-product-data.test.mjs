@@ -5,7 +5,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkProductData, parsePublishData, validatePublishData, validateCapsule, validateComponents, validateContracts } from "./check-product-data.mjs";
+import { checkProductData, parsePublishData, validatePublishData, validateCapsule, validateComponents, validateContracts, walletViewAssets, validateWalletViewAssets } from "./check-product-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const json = (path) => JSON.parse(readFileSync(resolve(root, path), "utf8"));
@@ -202,7 +202,7 @@ for (const [name, mutate, message] of [
   ["unknown profile component", (value) => value.profiles.home.components.push("missing-provider"), /unknown component/],
   ["missing Wallet dependency", (value) => value.profiles.home.components = value.profiles.home.components.filter((entry) => entry !== "wallet-provider"), /Wallet\/Browser dependency/],
   ["Elacity Player without its protected providers", (value) => value.profiles.home.components.push("elacity-player"), /must occur once/],
-  ...["services", "wallet-walletconnect", "content-block-graph-provider", "media-tools"].map((name) =>
+  ...["services", "content-block-graph-provider", "media-tools"].map((name) =>
     [`hidden ${name} in default Home`, (value) => value.profiles.home.components.push(name), /hidden in 0\.8\.0/]),
   ["hidden component no longer published", (value) => delete value.external["content-block-graph-provider"], /stays published for --with/],
   ["default public edge service", (value) => value.profiles.home.components.push("tunnel-provider"), /developer --with component/],
@@ -246,6 +246,13 @@ function dataFixture() {
     for (const path of ["components.json", "capsules/home/browser/manifest.webmanifest", "capsules/home/browser/elastos-home-icon-192.png", "capsules/home/browser/elastos-home-icon-512.png", "scripts/publish-release.sh", "elastos/crates/elastos-server/src/publish.rs"]) {
       mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
       copyFileSync(resolve(root, path), resolve(fixture, path));
+    }
+    for (const name of ['_shared', 'wallet-metamask/browser', 'wallet-unisat/browser', 'wallet-walletconnect/browser']) {
+      for (const asset of walletViewAssets) {
+        const path = `capsules/${name}/${asset}`;
+        mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
+        copyFileSync(resolve(root, path), resolve(fixture, path));
+      }
     }
     return fixture;
   } catch (error) {
@@ -307,6 +314,19 @@ test("product data accepts a symlink alias for its repository root", () => {
     rmSync(alias, { force: true });
     rmSync(fixture, { recursive: true, force: true });
   }
+});
+
+for (const kind of ['missing', 'drift', 'escaping symlink']) test(`product data refuses shared wallet view ${kind}`, () => {
+  const fixture = dataFixture();
+  const path = resolve(fixture, 'capsules/wallet-unisat/browser/wallet-connection-view.mjs');
+  try {
+    if (kind === 'drift') writeFileSync(path, '// changed copy');
+    else {
+      rmSync(path);
+      if (kind === 'escaping symlink') symlinkSync(resolve(root, 'capsules/_shared/wallet-connection-view.mjs'), path);
+    }
+    assert.throws(() => validateWalletViewAssets(fixture), /shared wallet view asset (missing|drift|stays in its capsule)/);
+  } finally { rmSync(fixture, {recursive:true, force:true}); }
 });
 
 for (const [name, path, type, message] of [

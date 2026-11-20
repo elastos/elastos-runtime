@@ -2,6 +2,7 @@
 // Run against the source Home served by content_sandbox_browser_capsule_scripts.
 // Documents and headers come from the product gateway, with no route fulfillment.
 import assert from 'node:assert/strict';
+import { describe } from 'node:test';
 import { createServer } from 'node:http';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -148,3 +149,20 @@ try {
   await new Promise(resolve => foreign.close(resolve));
 }
 assert.deepEqual(failures, [], failures.join('\n'));
+// Each imported test owns its fixtures and contexts. Overlap two top-level
+// tests so the layout and paint sweeps share the bounded harness time.
+process.env.WALLET_VIEW_BROWSER_SMOKE='1';
+await describe('capsule script browser regressions', { concurrency: 2 }, async () => {
+  await import('./home-fullscreen-browser.test.mjs');
+
+  // The Rust content-sandbox harness installs and requires Chromium and WebKit.
+  await import('./wallet-connection-view-layout.test.mjs');
+  // The bounded Rust smoke and standalone default run 48 origin cases.
+  // WALLET_VIEW_FULL_MATRIX=1 runs all 480; add WALLET_VIEW_EXHAUSTIVE_PAINT=1 for every paint check.
+  await import('./wallet-connection-view-origin.test.mjs');
+
+  await import('./wallet-connection-view-round4.test.mjs');
+  await import('./wallet-connection-view-live-needs.test.mjs');
+
+  await import('./wallet-connection-view-round5.test.mjs');
+});

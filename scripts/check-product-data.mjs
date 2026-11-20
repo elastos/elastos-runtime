@@ -212,7 +212,7 @@ const protectedProviders = ["protected-content-protect-provider", "media-provide
 const obsolete = ["browser-engine-supervisor", "browser-native-proxy-engine", "browser-stream-bridge", "chat", "agent", "esp-shell", "capsule-inspector", "gba-engine-provider", "ai-provider", "llama-provider"];
 const archiveAssets = ["home", "system", "services", "people", "documents", "library", "marketplace", "archive-manager", "inbox"];
 // Hidden in 0.8.0: fresh Homes do not install them; they stay published for `setup --with` and updates.
-const hiddenFromHome = ["services", "wallet-walletconnect", "content-block-graph-provider", "elacity-player", "protected-content-protect-provider", "protected-content-decrypt-provider", "media-provider", "media-tools"];
+const hiddenFromHome = ["services", "content-block-graph-provider", "elacity-player", "protected-content-protect-provider", "protected-content-decrypt-provider", "media-provider", "media-tools"];
 
 export function parsePublishData(shellSource, rustSource) {
   const shell = (name) => {
@@ -321,6 +321,19 @@ export function validateComponents(components, manifests) {
   }
 }
 
+export const walletViewAssets = ['wallet-connection-view.mjs', 'wallet-connection-screens.mjs', 'wallet-connection-view.css', 'connection-wallet.png', 'connection-walletconnect.png', 'connection-metamask.png', 'connection-unisat.png'];
+export function validateWalletViewAssets(repoRoot) {
+  for (const asset of walletViewAssets) {
+    const source = readFileSync(resolve(repoRoot, 'capsules/_shared', asset));
+    for (const name of ['wallet-metamask', 'wallet-unisat', 'wallet-walletconnect']) {
+      const path = resolve(repoRoot, 'capsules', name, 'browser', asset);
+      assert(existsSync(path), `shared wallet view asset missing: ${name}/${asset}`);
+      assert(realpathSync(path).startsWith(realpathSync(resolve(repoRoot, 'capsules', name)) + sep), `shared wallet view asset stays in its capsule: ${name}/${asset}`);
+      assert(source.equals(readFileSync(path)), `shared wallet view asset drift: ${name}/${asset}`);
+    }
+  }
+}
+
 export function checkProductData(repoRoot = root) {
   const json = (path) => JSON.parse(readFileSync(resolve(repoRoot, path), "utf8"));
   const manifests = {};
@@ -352,6 +365,7 @@ export function checkProductData(repoRoot = root) {
     }
   }
   validateContracts(manifests);
+  validateWalletViewAssets(repoRoot);
   const components = json("components.json");
   validateComponents(components, manifests);
   validatePublishData(components, manifests, parsePublishData(

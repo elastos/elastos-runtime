@@ -1,3 +1,4 @@
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {writeFileSync, readFileSync, renameSync} from 'node:fs';
@@ -21,12 +22,6 @@ export function assertSenderDelivery(message, detail) {
 export function assertMessageOrigins(bases, browserHost) {
   assert(browserHost && bases.every(base => new URL(base).hostname === browserHost), 'Home origins match the network arrangement browser host');
 }
-export async function registrationRefusal(response, home) {
-  const path = new URL(response.url()).pathname;
-  if (!path.startsWith('/api/auth/passkey/register/') || response.ok()) return;
-  return {home, method:response.request().method(), path, status:response.status(),
-    reason:(await response.text()).slice(0,512)};
-}
 export function browserOptions(chromium, namespace, control, environment=process.env) {
   const options = {headless:true, args:['--two-home-fixture='+control]};
   if (namespace) {
@@ -38,24 +33,23 @@ export function browserOptions(chromium, namespace, control, environment=process
 }
 async function run() {
   const require = createRequire(import.meta.url);
-  const {chromium} = require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE || '../elastos/tools/browser-playwright-engine/node_modules/playwright');
+  const {chromium} = withBrowserLaunchRecovery(require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE || '../elastos/tools/browser-playwright-engine/node_modules/playwright'));
   const [baseA, baseB, evidence, control, browserHost] = process.argv.slice(2);
-  const bases = [baseA, baseB];
-  const namespaces = JSON.parse(process.env.ELASTOS_TWO_HOME_NAMESPACES || '[]');
-  assert(namespaces.length===0 || namespaces.length===2, 'one browser namespace per Home');
-  assertMessageOrigins(bases, browserHost);
-  const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], registration_refusals:[], browser_cross_home_http_requests:0};
+  const namespaces = JSON.parse(process.env.ELASTOS_TWO_HOME_NAMESPACES || "[]");
+  assert(namespaces.length === 0 || namespaces.length === 3, "one namespace per Home");
+  assertMessageOrigins([baseA, baseB], browserHost);
+  const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], registration_refusals:[], exchanges:{}, browser_cross_home_http_requests:0};
   let sequence = 0;
   async function runtime(action) {
     const id = ++sequence;
     writeFileSync(join(control, 'request.json.next'), JSON.stringify({id, action}), {flag:'wx', mode:0o600});
     renameSync(join(control, 'request.json.next'), join(control, 'request.json'));
-    return (await until('owned Runtime action', async () => {
+    return until('owned Runtime action', async () => {
       let reply;
       try {reply = JSON.parse(readFileSync(join(control, 'response.json'), 'utf8'));}
       catch (error) {if (error.code !== 'ENOENT') throw error;}
       return reply?.id === id && reply.status === 'passed' && reply;
-    }, 120000)).observation;
+    }, 120000);
   }
   const sleep = ms => new Promise(resolve=>setTimeout(resolve,ms));
   async function until(label, fn, ms=150000) {
@@ -68,7 +62,8 @@ async function run() {
     result.stage='browser_launch';
     if (!namespaces.length) browsers.push(await chromium.launch(browserOptions(chromium,null,control)));
     const homes=[];
-    for(const [i,base] of bases.entries()) {
+    async function signIn(base) {
+      const i=homes.length, name='abc'[i];
       const browser = namespaces.length ? await chromium.launch(browserOptions(chromium,namespaces[i],control)) : browsers[0];
       if (namespaces.length) browsers.push(browser);
       const context=await browser.newContext({timezoneId:'UTC', serviceWorkers:'block', viewport:{width:1440,height:900}});
@@ -81,7 +76,7 @@ async function run() {
         return route.continue();
       });
       const page=await context.newPage();
-      page.on('response', async response => {
+      page.on("response", async response => {
         const refusal = await registrationRefusal(response, i);
         if (refusal) result.registration_refusals.push(refusal);
       });
@@ -91,7 +86,7 @@ async function run() {
       result.stage='home_frontdoor_'+i;
       await page.goto(base+'/home/',{waitUntil:'domcontentloaded'});
       result.stage='home_name_'+i;
-      await page.locator('#home-unlock-name').fill('Two Home '+(i?'B':'A'),{timeout:60000});
+      await page.locator('#home-unlock-name').fill('Two Home '+name.toUpperCase(),{timeout:60000});
       result.stage='passkey_registration_'+i;
       const registered=page.waitForResponse(r=>r.url().endsWith('/api/auth/passkey/register/complete'));
       await page.locator('#home-unlock-primary').click();
@@ -110,23 +105,27 @@ async function run() {
         return tab;
       }
       result.stage='people_launch_'+i;
-      const people=await app('people');
-      homes.push({context,page,people,app,base});
+      const home={name,context,page,people:await app('people'),app,base};
+      homes.push(home);
+      return home;
     }
+    const a=await signIn(baseA), b=await signIn(baseB);
     async function api(page,path,body) {
       return page.evaluate(async ({path,body})=>{
         const token=new URLSearchParams(location.hash.slice(1)).get('home_token');
-        const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','x-elastos-home-token':token,'accept':'application/json;elastos-direct-delivery-details=1'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
+        const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','accept':'application/json;elastos-direct-delivery-details=1','x-elastos-home-token':token},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
         if(!r.ok) throw new Error('product API '+path+' HTTP '+r.status);
         return r.json();
       },{path,body});
     }
-    const [a,b]=homes;
-    const communityA=await a.app('chat-room'), communityB=await b.app('chat-room');
+    async function joinCommunity(home) {
+      await api(home.community, '/api/apps/chat-room/session/start', {});
+      await home.community.locator('#message-input:enabled').waitFor({timeout:60000});
+    }
+    const communityA=a.community=await a.app('chat-room'), communityB=b.community=await b.app('chat-room');
     result.stage='community_post';
     await communityA.locator('#message-input:enabled').waitFor({timeout:90000});
-    await api(communityB, '/api/apps/chat-room/session/start', {});
-    await communityB.locator('#message-input:enabled').waitFor({timeout:60000});
+    await joinCommunity(b);
     const postText='Two Home Community '+crypto.randomUUID();
     const posted=await api(communityA, '/api/apps/chat-room/objects/send', {request_id:'two-home:'+crypto.randomUUID(),body:postText});
     let communityPoll;
@@ -163,7 +162,7 @@ async function run() {
     result.stage='direct_send';
     const sent=await api(ac,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text});
     result.observations.push({step:'direct_send',status:sent.status,text});
-    const path='/api/apps/chat-room/direct/conversations/'+encodeURIComponent(conversation.conversation_id)+'/messages?retry_details=true';
+    const path='/api/apps/chat-room/direct/conversations/'+encodeURIComponent(conversation.conversation_id)+'/messages';
     result.stage='direct_receive';
     let receivedMessages;
     const received=await until('B direct exact text',async()=> {
@@ -206,7 +205,7 @@ async function run() {
       },85000);
       const row=direct.locator('#message-list li.message.self-message').filter({has:direct.locator('.message-body').filter({hasText:blockedText})});
       assert.match(await row.innerText(),/Your Home cannot reach this contact/);
-      const observation=await runtime('observe_blocked');
+      const {observation}=await runtime('observe_blocked');
       assert.equal(observation.b_alive,true);
       assert.equal(observation.b_health,200);
       assert(observation.dropped_packets>0,'real Carrier packets hit the owned block');
@@ -232,6 +231,43 @@ async function run() {
       assertSenderDelivery(settled,time);
       result.results.network_recovery='passed';
     }
+    // One round after a transition: every Home posts, every other Home reads
+    // that exact text, and one direct message crosses the accepted contact.
+    async function exchange(transition) {
+      result.stage='exchange_'+transition;
+      const round={community:[]};
+      for(const sender of homes) {
+        const sent=`Two Home ${transition} ${sender.name} ${crypto.randomUUID()}`;
+        const post=await api(sender.community,'/api/apps/chat-room/objects/send',{request_id:'two-home:'+crypto.randomUUID(),body:sent});
+        for(const receiver of homes.filter(home=>home!==sender)) {
+          let poll;
+          await until(`Community ${transition} from ${sender.name} at ${receiver.name}`,async()=>{
+            poll=await api(receiver.community,'/api/apps/chat-room/poll',{since:0,mark_read:false});
+            return poll.objects.some(row=>row.message_id===post.message_id&&row.body===sent);
+          });
+          round.community.push({from:sender.name,to:receiver.name,sent,received:assertCommunityMessage(poll,post.message_id,sent).body});
+        }
+      }
+      const sent=`Two Home ${transition} direct ${crypto.randomUUID()}`;
+      await api(a.community,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text:sent});
+      let messages;
+      const arrived=await until(`direct ${transition} at b`,async()=>{
+        messages=(await api(b.community,path)).messages;
+        return messages.find(m=>m.text===sent&&m.direction==='incoming'&&m.delivery_state==='received');
+      });
+      round.direct={from:a.name,to:b.name,sent,received:assertReceivedDirect(messages,arrived.message_id,sent).text};
+      return round;
+    }
+    result.exchanges.start=await exchange('start');
+    await runtime('restart_community');
+    result.exchanges.node_restart=await exchange('node_restart');
+    const fresh=await runtime('start_c');
+    assertMessageOrigins([fresh.base], browserHost);
+    const c=await signIn(fresh.base);
+    result.stage='fresh_home_community';
+    c.community=await c.app('chat-room');
+    await joinCommunity(c);
+    result.exchanges.fresh_home=await exchange('fresh_home');
     result.stage='offline_pending';
     // Close B's projections before stopping its owned Runtime; retain only its passkey context.
     for(const page of b.context.pages()) if(page!==b.page) await page.close();
@@ -276,6 +312,9 @@ async function run() {
     assertSenderDelivery(settledAfterRestart,recoveredDetail);
     result.recovery={text:offlineText,recipient_state:recovered.delivery_state,sender_state:settledAfterRestart.delivery_state,sender_detail:recoveredDetail};
     result.results.restart_delivery='passed';
+    b.community=await b.app('chat-room');
+    await joinCommunity(b);
+    result.exchanges.restart_b=await exchange('restart_b');
     await direct.screenshot({path:join(evidence,'direct-a-desktop.png'),fullPage:true});
     await direct.setViewportSize({width:390,height:844});
     await direct.screenshot({path:join(evidence,'direct-a-phone.png'),fullPage:true});
@@ -287,7 +326,7 @@ async function run() {
     writeFileSync(join(control,'error.private.txt'),String(error.stack),{mode:0o600});
     process.exitCode=1;
   } finally {
-    await Promise.all(browsers.map(browser=>browser.close()));
+    for(const browser of browsers) await browser.close();
     writeFileSync(join(evidence,'two-home-ui.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});
     console.log(JSON.stringify({stage:result.stage,status:result.status}));
   }

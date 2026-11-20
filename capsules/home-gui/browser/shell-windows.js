@@ -53,6 +53,7 @@ import {
   toggleFullscreenStage,
   windowVisibleOnActiveSpace,
 } from "./shell-stages.js?v=home-20261101d";
+import { postShellLayout, shellLayout, capsuleFrameVisible } from "./shell-capsule-layout.js?v=home-20261101d";
 import { showAssistantFace } from "./shell-assistant-face.js?v=home-20261101d";
 
 let windowHooks = null;
@@ -372,20 +373,23 @@ const OPAQUE_CAPSULE_ORIGIN = "null";
 const HOME_AGENT_TARGET_ID = "assistant";
 const MAX_SESSION_WINDOWS = 24;
 function isSingleWindowTarget(targetId, summary = shellState.currentSummary) {
-  return targetById(summary, targetId)?.window_policy === "single";
+  const target = targetById(summary, targetId)
+    || (targetId === "wallet-walletconnect" ? summary?.capsule_catalog?.capsules?.find(capsule => capsule.launchable && capsule.launch_target === targetId) : undefined);
+  return target?.window_policy === "single";
 }
 
 /** Hybrid supplies a blank window. Multiple capsules own selection-aware
  * commands; absent policy retains the existing generic menu behavior.
  * Browser has one window (one live Browser page per user), so no New Window. */
-export function supportsMenuNewWindow(targetId) {
+export function supportsMenuNewWindow(targetId, summary = shellState.currentSummary) {
   if (targetId === "browser") return false;
-  const policy = targetById(shellState.currentSummary, targetId)?.window_policy;
-  return policy !== "single" && policy !== "multiple";
+  const policy = targetById(summary, targetId)?.window_policy;
+  return !isSingleWindowTarget(targetId, summary) && policy !== "multiple";
 }
 const WALLET_CONNECTOR_TARGETS = new Set([
   "wallet-metamask",
   "wallet-unisat",
+  "wallet-walletconnect",
 ]);
 const NON_RESTORABLE_SESSION_TARGETS = new Set(WALLET_CONNECTOR_TARGETS);
 const WALLET_CONNECTOR_WINDOW_WIDTH = 480;
@@ -402,7 +406,7 @@ const SYSTEM_IFRAME_SANDBOX_EXTRAS = [
   "allow-top-navigation-by-user-activation",
   "allow-top-navigation-to-custom-protocols",
 ];
-const COMMON_IFRAME_ALLOW = ["autoplay", "fullscreen"];
+const COMMON_IFRAME_ALLOW = ["autoplay", "fullscreen *"];
 const pendingWindowLaunches = new Map();
 const pendingBrowserWindowCloses = new Map();
 const pendingDocumentsWindowCloses = new Map();
@@ -1488,6 +1492,7 @@ export function renewBrowserWindowAuthority(id, options = {}) {
     return entry.browserAuthorityRenewal;
   }
   const launchQuery = normalizedLaunchQuery(entry.launchQuery);
+  launchQuery.browser_restore = "1";
   const browserInstance = launchQuery.browser_instance || "";
   const frame = entry.node.querySelector(".window-frame");
   const currentAuthority = browserLaunchAuthority(
@@ -1499,9 +1504,9 @@ export function renewBrowserWindowAuthority(id, options = {}) {
   let renewal;
   renewal = Promise.resolve()
     .then(() =>
-      requireWindowHooks().launchTarget("browser", launchQuery, options),
+      requireWindowHooks().launchTarget("browser", launchQuery, { ...options, renewHomeToken: currentAuthority.homeToken }),
     )
-    .then((launched) => {
+    .then(async (launched) => {
       if (shellState.windows.get(id) !== entry) {
         return false;
       }
@@ -1516,13 +1521,17 @@ export function renewBrowserWindowAuthority(id, options = {}) {
       ) {
         throw new Error("Browser authority renewal returned an invalid launch");
       }
+      await handoverBrowserAuthority(entry, frame, currentAuthority.homeToken, nextAuthority.homeToken,
+        browserInstance, options.timeoutMs);
+      if (shellState.windows.get(id) !== entry) return false;
       launched.title = canonicalTargetTitle(launched.target, launched.title);
       entry.title = launched.title;
       fitLaunchedWindow(entry);
       if (entry.browserCloseRequest) {
         settleBrowserWindowClose(entry.browserCloseRequest, false);
       }
-      syncBrowserWindow(entry, launched);
+      // The same document owns the address, pending permission and live display.
+      frame.dataset.route = launched.route;
       try {
         renderWindowTaskbar();
         persistBrowserSession();
@@ -1543,9 +1552,43 @@ export function renewBrowserWindowAuthority(id, options = {}) {
   return renewal;
 }
 
+function handoverBrowserAuthority(entry, frame, homeToken, freshHomeToken, browserInstance, timeoutMs = 30000) {
+  const requestId = window.crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const finish = error => {
+      window.clearTimeout(timer);
+      window.removeEventListener("message", receive);
+      frame.removeEventListener("load", unloaded);
+      if (error) reject(error); else resolve();
+    };
+    const unloaded = () => finish(new Error("Browser reloaded during session renewal"));
+    const receive = event => {
+      const data = event.data;
+      if (event.source !== frame.contentWindow || event.origin !== "null" ||
+          shellState.windows.get(entry.id) !== entry ||
+          !hasExactKeys(data, ["type", "requestId", "homeToken", "browserInstance", "freshHomeToken", "ok"]) ||
+          data.type !== "elastos.browser.authority-committed/v1" || data.requestId !== requestId ||
+          data.homeToken !== homeToken || data.freshHomeToken !== freshHomeToken ||
+          data.browserInstance !== browserInstance || typeof data.ok !== "boolean") return;
+      finish(data.ok ? null : new Error("Browser could not renew its page authority"));
+    };
+    const timer = window.setTimeout(() => finish(new Error("Browser session renewal timed out")), timeoutMs);
+    window.addEventListener("message", receive);
+    frame.addEventListener("load", unloaded, { once: true });
+    try {
+      frame.contentWindow.postMessage({ type: "elastos.browser.authority-commit/v1",
+        requestId, homeToken, freshHomeToken, browserInstance }, "*");
+    } catch (error) { finish(error); }
+  });
+}
+
 function activateTargetGroup(targetId) {
   const visibleTop = topBrowserWindowEntryForTarget(targetId, { includeHidden: false });
   const entry = visibleTop || topBrowserWindowEntryForTarget(targetId);
+  return activateWindowEntry(entry);
+}
+
+function activateWindowEntry(entry) {
   if (!entry) {
     return false;
   }
@@ -1892,7 +1935,14 @@ async function launchBrowserTargetWindow(targetId, options = {}) {
     }
   }
   if (shellState.windows.get(entry.id) !== entry) throw new Error("App window was closed");
-  if (!options.restoredPlacement) focusWindow(entry.id);
+  if (!options.restoredPlacement) {
+    if (targetId === "wallet-walletconnect" && options.authorizedLaunch) {
+      activateWindowEntry(entry);
+      const frame = entry.node.querySelector(".window-frame");
+      if (frame) postShellLayout(frame.contentWindow, { ...shellLayout(), visible: capsuleFrameVisible(frame) });
+    }
+    else focusWindow(entry.id);
+  }
   if (targetId === SYSTEM_APP_ID && Object.keys(options.query || {}).length > 0) {
     const ok = await requestSystemWindow(entry, "navigate", options.query);
     if (!ok) throw new Error("System could not open the requested settings");
@@ -2116,6 +2166,8 @@ function fitLaunchedWindow(entry) {
 
 function installFrameAutoFit(node, frame) {
   cleanupFrameAutoFit(node);
+  // Home owns geometry for opaque app frames; their documents stay private.
+  if (frame.hasAttribute("sandbox") && !frame.sandbox.contains("allow-same-origin")) return;
 
   let rafId = 0;
   const scheduleFit = () => {
@@ -2342,7 +2394,7 @@ function walletConnectorWindowSpec() {
 }
 
 function fitWindowToFrame(node, frame) {
-  if (!node || !frame || node.dataset.maximized === "true" || node.dataset.snap) {
+  if (!node || !frame || frame.hasAttribute("sandbox") && !frame.sandbox.contains("allow-same-origin") || node.dataset.maximized === "true" || node.dataset.snap) {
     return;
   }
   try {
@@ -2638,9 +2690,9 @@ export function handleShellResize() {
   persistBrowserSession();
 }
 
-export function focusOpenBrowserWindow() {
-  const entry = topBrowserWindowEntryForTarget("browser");
-  if (!entry) return false;
-  focusWindow(entry.id);
-  return true;
+export function focusOpenBrowserWindow(browserInstance = "") {
+  if (!browserInstance) return activateTargetGroup("browser");
+  const entry = browserWindowEntriesForTarget("browser")
+    .find(entry => entry.launchQuery?.browser_instance === browserInstance);
+  return activateWindowEntry(entry);
 }

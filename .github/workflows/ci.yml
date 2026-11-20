@@ -7,6 +7,10 @@ on:
         description: "Git ref to check out and test"
         required: false
         default: ""
+      mixed_version_tag:
+        description: "Released tag the mixed-version Community gate builds beside the head"
+        required: false
+        default: ""
   push:
     # develop pushes keep the shared build caches warm for every PR into develop.
     branches: [main, develop]
@@ -29,6 +33,8 @@ env:
   # Reviewed ARM64 archive pin, shared by the producer and every CI consumer.
   CI_LLAMA_AMD64_SHA256: 0dee60d855f864aa9e8a7200014baf9419e3a4c9ccb3f3609532aad0ed34f2c0
   CI_LLAMA_ARM64_SHA256: a92e404708feae91cbede43322e445971450de8a204f4ff51502a7f42f5df8b8
+  # The released Runtime the mixed-version Community gate pairs the head with.
+  CI_MIXED_VERSION_TAG: ${{ inputs.mixed_version_tag || 'v2.0.1' }}
   # An explicit dispatch ref may select a tag independently of the workflow ref.
   CI_USE_CACHE: ${{ github.ref_type != 'tag' && !(github.event_name == 'workflow_dispatch' && inputs.ref != '') }}
   # Only develop pushes write shared caches (Rust, apt, Kubo, engine). PR,
@@ -389,7 +395,7 @@ jobs:
         env:
           ELASTOS_PLAYWRIGHT_MODULE: ${{ runner.temp }}/content-sandbox-browser/node_modules/playwright/index.mjs
         # Match the unit suite's workspace feature graph and reuse its test binaries.
-        run: cargo test --workspace content_sandbox_browser -- --ignored --nocapture
+        run: node ../scripts/run-browser-launch-harness.mjs cargo test --workspace content_sandbox_browser -- --ignored --nocapture
       - name: Rust compile cache statistics
         if: always() && env.RUSTC_WRAPPER == 'sccache'
         run: sccache --show-stats
@@ -739,7 +745,8 @@ jobs:
   source-home-linux:
     name: source-home-linux (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    # The mixed-version steps add a second Runtime build and four arrangements.
+    timeout-minutes: 180
     needs: [source-gate, engine-llama-amd64]
     env:
       CI_APT_PACKAGES: coturn e2fsprogs ffmpeg musl-tools nasm pkg-config
@@ -905,14 +912,6 @@ jobs:
           scripts/setup-source-home.sh 2>&1 | tee "${RUNNER_TEMP}/source-home-logs/setup-source-home.log"
           ELASTOS_DATA_DIR="${XDG_DATA_HOME}/elastos" \
             scripts/installed-provider-verify.sh 2>&1 | tee "${RUNNER_TEMP}/source-home-logs/installed-provider-verify.log"
-      - name: local-carrier setup smoke
-        env:
-          ELASTOS_LLAMA_AMD64_BUNDLE: ${{ runner.temp }}/llama-amd64-bundle/llama-b10516-bin-ubuntu22.04-amd64-cpu.tar.gz
-          ELASTOS_LLAMA_ARM64_BUNDLE: ${{ runner.temp }}/llama-arm64-bundle/llama-b10516-bin-ubuntu22.04-arm64-cpu.tar.gz
-        run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/source-home-logs"
-          scripts/local-carrier-setup-smoke.sh 2>&1 | tee "${RUNNER_TEMP}/source-home-logs/local-carrier-setup-smoke.log"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
@@ -926,6 +925,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '26'
+      - name: local-carrier setup smoke
+        env:
+          ELASTOS_LLAMA_AMD64_BUNDLE: ${{ runner.temp }}/llama-amd64-bundle/llama-b10516-bin-ubuntu22.04-amd64-cpu.tar.gz
+          ELASTOS_LLAMA_ARM64_BUNDLE: ${{ runner.temp }}/llama-arm64-bundle/llama-b10516-bin-ubuntu22.04-arm64-cpu.tar.gz
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/source-home-logs"
+          scripts/local-carrier-setup-smoke.sh 2>&1 | tee "${RUNNER_TEMP}/source-home-logs/local-carrier-setup-smoke.log"
       - name: prepare signed SmolLM2 fixture
         timeout-minutes: 20
         env:
@@ -952,6 +959,39 @@ jobs:
         env:
           CI_SOURCE_HOME: ${{ runner.temp }}/elastos-source-home
         run: scripts/ci-installed-journeys.sh two-home-messages
+      # Homes and the Community node update at different times, so a release
+      # must hold for every pairing of this candidate and the last released
+      # Runtime. Merges and releases pay for the second build; a pull-request
+      # push runs the same-version journey above and skips these three steps.
+      - name: check out the released tag beside the candidate
+        id: released-tag
+        if: matrix.os == 'ubuntu-24.04' && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref_type == 'tag')))
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth 1 origin "refs/tags/$CI_MIXED_VERSION_TAG:refs/tags/$CI_MIXED_VERSION_TAG"
+          git worktree add --detach "$RUNNER_TEMP/released-tree" "refs/tags/$CI_MIXED_VERSION_TAG"
+          git -C "$RUNNER_TEMP/released-tree" rev-parse HEAD
+      - name: install the released Runtime beside the candidate
+        if: steps.released-tag.outcome == 'success'
+        timeout-minutes: 45
+        env:
+          ELASTOS_COLLABORATION_STARTUP_MODE: isolated
+        run: bash scripts/ci-mixed-version-source-home.sh "$RUNNER_TEMP/released-tree" "$RUNNER_TEMP/elastos-released-home"
+      - name: mixed-version Community and direct messages
+        if: steps.released-tag.outcome == 'success'
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          python3 scripts/gossip-mixed-version-journey.py \
+            --candidate-home "$RUNNER_TEMP/elastos-source-home" \
+            --candidate-data "$RUNNER_TEMP/elastos-source-home/.local/share/elastos" \
+            --candidate-repo "$GITHUB_WORKSPACE" \
+            --released-home "$RUNNER_TEMP/elastos-released-home" \
+            --released-data "$RUNNER_TEMP/elastos-released-home/.local/share/elastos" \
+            --released-repo "$RUNNER_TEMP/released-tree" \
+            --evidence "$RUNNER_TEMP/source-home-journeys/mixed-version" \
+            --fixture-root "$RUNNER_TEMP/mixed-version-fixture" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
       - name: summarize installed model journey
         if: always()
         env:

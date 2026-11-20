@@ -808,7 +808,7 @@ async fn test_home_cli_terminal_developer_mode_policy_matrix() {
                         .unwrap();
                     assert_eq!(
                         String::from_utf8_lossy(&body),
-                        "Only the Home owner can use the web terminal."
+                        "Only an admin can use the web terminal."
                     );
                 }
             }
@@ -5359,7 +5359,8 @@ async fn test_home_events_stream_requires_home_authority_and_serves_sse() {
 async fn test_home_summary_and_events_include_browser_wallet_approvals() {
     let dir = tempfile::tempdir().unwrap();
     let authority = passkey_authority(dir.path());
-    let browser_token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &authority);
+    let browser_token =
+        projection_launch_token_for_authority_context(dir.path(), BROWSER_CAPSULE_ID, &authority);
     let address = "0x1111111111111111111111111111111111111111";
     let account_id = format!("wallet:eip155:20:{address}");
     let provider = MockWalletProvider {
@@ -5443,7 +5444,12 @@ async fn test_home_summary_and_events_include_browser_wallet_approvals() {
     assert_eq!(summary_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Transaction approval request"
+        "Send transaction"
+    );
+    assert!(
+        home_entries_of_kind(&summary_json["notifications"], "wallet_approval_request")[0]
+            .get("requesting_origin")
+            .is_none()
     );
 
     let events = app
@@ -6034,6 +6040,30 @@ async fn system_community_membership_is_home_wide_and_requires_current_owner_aut
     let mut state = test_state(dir.path());
     state.collaboration_chat_product_port = Some(port.clone());
     let app = gateway_router(state);
+    port.set_community_recovery(crate::collaboration_carrier::CommunityRecoveryView {
+        reason: Some("bootstrap join timed out"),
+        ..Default::default()
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .uri("/api/apps/system/community")
+                .header("x-elastos-home-token", &authority.system_token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let summary: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(summary["detail"], port.community_status()["detail"]);
+    assert!(summary["detail"].as_str().unwrap().contains("Reconnecting"));
     let marker = dir
         .path()
         .join("collaboration-community-membership-v1.json");
@@ -9218,7 +9248,7 @@ async fn test_home_launch_starts_chat_room_capsule_and_reports_runtime_activity(
     assert!(payload["runtime_log"]["total_in_memory"].is_null());
     assert_eq!(
         payload["runtime_log"]["note"],
-        "Only the Home owner can see Runtime activity."
+        "Only an admin can see Home activity."
     );
 }
 
@@ -13512,4 +13542,61 @@ async fn a_published_file_is_served_only_to_the_publishers_contacts() {
     // Withdrawn: Alice no longer gets it.
     crate::library::withdraw_cid_for_test(bob_dir.path(), &cid);
     assert!(!read(device(&alice), cid, Some(&network)).await);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_exit_refresh_keeps_walletconnect_and_rechecks_browser_helper() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_walletconnect_connector_config(dir.path());
+    let relay = dir.path().join("browser.sock");
+    let config = json!({"backends":[{
+        "id":"source-home-browser-exit", "kind":"stream_relay", "allowed_hosts":["*"],
+        "relay_ipc":{"kind":"unix_socket","path":relay},
+        "adapter_ipc":{"kind":"unix_socket","path":dir.path().join("adapter.sock")}
+    }]});
+    let registry = Arc::new(elastos_runtime::provider::ProviderRegistry::new());
+    let provider = Arc::new(ServicesExitProvider::default());
+    registry
+        .register_sub_provider("exit", provider.clone())
+        .await
+        .unwrap();
+    // Each refresh uses the same durable config: stopped, running, then stopped.
+    for running in [false, true, false] {
+        let listener = running.then(|| std::os::unix::net::UnixListener::bind(&relay).unwrap());
+        let registry = registry.clone();
+        let data = dir.path().to_path_buf();
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || {
+            home_services_refresh_exit_config(&data, "darwin-arm64", &registry, &config)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let applied = provider.applied.lock().await.clone();
+        assert_eq!(applied["backends"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            applied["backends"][usize::from(running)]["id"],
+            "walletconnect-local-exit"
+        );
+        let parsed = exit_provider::parse_config(applied).unwrap();
+        let target = url::Url::parse("tls://relay.walletconnect.org:443").unwrap();
+        assert_eq!(
+            parsed
+                .backends
+                .iter()
+                .find(|backend| backend.allows_target(&target))
+                .unwrap()
+                .id,
+            if running {
+                "source-home-browser-exit"
+            } else {
+                "walletconnect-local-exit"
+            }
+        );
+        drop(listener);
+        if running {
+            std::fs::remove_file(&relay).unwrap();
+        }
+    }
 }
