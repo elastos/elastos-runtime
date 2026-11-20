@@ -213,7 +213,7 @@ export function connectionView(input) {
   const unknownRecovery=safety===null && !knownNotSent && unknownRecoveryStages.has(stage);
   let safetyNotice=transactionRisk&&screen.paymentSafeNotice!==undefined?notice:null;
   if(unknownRecovery){
-    notice=summary?.transaction&&stage==='request-busy'?'{{close}} The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Activity in Wallet before trying again.':'{{close}} An operation may still be waiting in {{wallet}}. Home cannot tell whether another window has payment work. Check your wallet and Activity in Wallet before trying again.';
+    notice=summary?.transaction&&stage==='request-busy'?'{{close}} The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Activity in Wallet before trying again.':'{{close}} A request may still be waiting in {{wallet}}. Home cannot tell whether another window has a transaction in progress. Check your wallet and Activity in Wallet before trying again.';
     safetyNotice=notice;
     actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over').map(a=>({...a,primary:a.id==='close-window',quiet:a.id==='close-window'?false:a.quiet}));
     const close=actions.find(a=>a.id==='close-window')||{id:'close-window',label:parts('Close window'),primary:true,quiet:false};
@@ -243,7 +243,7 @@ export function connectionView(input) {
   if(supported){
     const removed=actions.filter(a=>!supported.includes(a.id));actions=actions.filter(a=>supported.includes(a.id));
     if(removed.some(a=>['check-access','check-status'].includes(a.id))){
-      notice=answered?(window==='unisat'?'To try again, return to {{app}} and make a new request.':'To try again, go back to {{app}} and start a new request.'):screen.dispatched||/timeout|cancelled/.test(stage)?'An operation may still be waiting in {{wallet}}. Closing this window does not cancel it. Home will ignore a later answer.':'Open {{wallet}} to check its account and connection.';
+      notice=answered?(window==='unisat'?'To try again, return to {{app}} and make a new request.':'To try again, go back to {{app}} and start a new request.'):screen.dispatched||/timeout|cancelled/.test(stage)?'A request may still be waiting in {{wallet}}. Closing this window does not cancel it. Home will ignore a later answer.':'Open {{wallet}} to check its account and connection.';
       if(summary?.transaction&&!knownNotSent)notice='The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Activity in Wallet before trying again.';
     }
     if(window==='unisat'&&stage==='request-network-testnet'&&removed.some(a=>['check-access','check-status'].includes(a.id)))notice='Select Bitcoin mainnet in UniSat.';

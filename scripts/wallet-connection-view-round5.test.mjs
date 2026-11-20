@@ -20,7 +20,7 @@ function busyGuard(api=product){for(const window of ['metamask','unisat','wallet
  if(!api.stageNames[window].includes(stage))continue;
  for(const transaction of [false,true])for(const supportedActions of [undefined,...Array.from({length:8},(_,mask)=>['close-window','check-access','check-status'].filter((_,i)=>mask&(1<<i)))]){
   const v=reduce(window,transaction?{intent:'transaction_intent'}:{}, {stage,localSafety:null,waitSeconds:300,supportedActions},api);const notice=api.viewText(v.notice);
-  if(transaction&&stage==='request-busy'){assert.match(notice,/The transaction may still be waiting/);assert.doesNotMatch(notice,/another window/);}else{assert.match(notice,/An operation may still be waiting/);assert.match(notice,/Home cannot tell whether another window has payment work/);}
+  if(transaction&&stage==='request-busy'){assert.match(notice,/The transaction may still be waiting/);assert.doesNotMatch(notice,/another window/);}else{assert.match(notice,/A request may still be waiting/);assert.match(notice,/Home cannot tell whether another window has a transaction in progress/);}
   assert.match(notice,/Activity in Wallet/);assert.doesNotMatch(notice,/reload/i);
  }
 }}
