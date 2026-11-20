@@ -236,11 +236,11 @@ mod tests {
                 )
                 .to_ascii_lowercase()
         };
-        // The local provider retains its local hint; exported bootstrap data
-        // carries only the endpoint identity when no public address exists.
+        // With the meeting point off, exported bootstrap data retains the
+        // local provider's address so LAN and routed peers can still connect.
         let local_ticket =
             encode(iroh::EndpointAddr::new(id).with_ip_addr("127.0.0.1:0".parse().unwrap()));
-        let exported_ticket = encode(iroh::EndpointAddr::new(id));
+        let exported_ticket = local_ticket.clone();
         let provider = Arc::new(TicketProvider {
             requests: Mutex::new(Vec::new()),
             ticket: local_ticket,

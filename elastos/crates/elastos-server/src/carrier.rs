@@ -18884,15 +18884,19 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert_eq!(
-            restarted.relay_server.as_ref().unwrap().http_addr(),
+            restarted.relay_server.as_ref().unwrap().https_addr(),
             Some(http)
         );
+        let portal = restarted.relay_server.as_ref().unwrap().http_addr().unwrap();
+        assert!(portal.ip().is_loopback());
+        assert_ne!(portal, http, "the captive portal owns a separate loopback socket");
         assert_eq!(
             restarted.relay_server.as_ref().unwrap().quic_addr(),
             Some(discovery)
         );
         restarted.shutdown().await;
         std::net::TcpListener::bind(http).expect("HTTP released after shutdown");
+        std::net::TcpListener::bind(portal).expect("captive portal released after shutdown");
         std::net::UdpSocket::bind(discovery).expect("QAD released after shutdown");
     }
 
