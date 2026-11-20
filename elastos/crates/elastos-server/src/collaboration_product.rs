@@ -1297,7 +1297,10 @@ mod tests {
             });
         let waiting = read(&app, &owner.token).await;
         assert_eq!(waiting["state"], "waiting_for_peers");
-        assert_eq!(waiting["detail"], "Waiting for another Home to come online.");
+        assert_eq!(
+            waiting["detail"],
+            "Waiting for another Home to come online."
+        );
         assert!(waiting["next_retry_seconds"].is_null());
         fixture.port.set_community_joined(false).unwrap();
         let status = read(&app, &owner.token).await;
