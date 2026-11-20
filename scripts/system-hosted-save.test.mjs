@@ -254,8 +254,8 @@ test("hosted key check names each known Runtime outcome and hides unknown detail
     ["request failed: 400 invalid OpenRouter key", "The provider rejected this key."],
     ["request failed: 500 Venice validation unavailable", "The provider sent an unexpected response. Try again later."],
     ["request failed: 500 OpenRouter validation unavailable", "The provider sent an unexpected response. Try again later."],
-    ["request failed: 403 admin passkey required", "Sign in with the Home admin passkey to check keys."],
-    ["request failed: 403 proof-bound passkey session required", "Sign in with the Home admin passkey to check keys."],
+    ["request failed: 403 admin passkey required", "Sign in with an admin passkey to check keys."],
+    ["request failed: 403 proof-bound passkey session required", "Sign in with an admin passkey to check keys."],
     ["request failed: 400 Hosted external HTTPS is paused until Runtime network authority is available.",
       "External HTTPS is paused on this Home."],
   ];

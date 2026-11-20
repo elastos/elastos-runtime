@@ -257,7 +257,7 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     for(const status of [401,403]) {
       f.state.failStatus=status;
       await system.locator("label.system-switch:has(#update-background-choice)").click();
-      await system.getByText("Sign in as an admin to change this.",{exact:true}).waitFor();
+      await system.getByText("Sign in as an admin of this Home, then open System again from Home.",{exact:true}).waitFor();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
     }
     for(const status of [500,'drop','saved-drop']) {
