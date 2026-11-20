@@ -2,7 +2,7 @@ import { viewText } from '../../capsules/_shared/wallet-connection-view.mjs';
 
 // Independent acceptance facts: contract W:986, H:755-775; design's receipt stages.
 // These facts use the supplied input, never product answered/paymentRisk flags.
-const approvalStages={walletconnect:['request-waiting','request-multiple','transaction-waiting','request-selected-second'],metamask:['request-network-declined','request-waiting','request-multiple','request-unsendable','request-typed-data','transaction-waiting','request-selected-second','access-wrong-account'],unisat:['request-waiting','request-multiple','request-unsendable','request-selected-second'],panel:[]};
+const approvalStages={walletconnect:['request-waiting','request-multiple','transaction-waiting','request-selected-second'],metamask:['request-network-declined','request-waiting','request-multiple','request-typed-data','transaction-waiting','request-selected-second','access-wrong-account'],unisat:['request-waiting','request-multiple','request-unsendable','request-selected-second'],panel:[]};
 const receipts = new Set(['request-done','request-declined','request-access-error','request-wallet-error','request-expired','request-late-ignored','request-sent-wallet-removed','request-unavailable','request-next','transaction-done','transaction-declined','transaction-access-error','transaction-late-result']);
 const unresolved = new Set(['transaction-phone','transaction-extension','transaction-timeout','transaction-cancelled','transaction-reopened','transaction-wallet-error','transaction-wallet-removed','link-error','request-wallet-error']);
 const stopped = new Set(['preparing-qr','internet-clearing','disconnecting','extension-busy','link-busy','request-busy','transaction-busy','link-timeout','request-timeout','transaction-timeout','link-cancelled','request-cancelled','transaction-cancelled']);
@@ -17,7 +17,8 @@ export function ruleFacts(row, shared, expected) {
   const guardedAccount=!!row.local.account && (['site-access-ended','account-unavailable','link-wait','linked'].includes(row.stage)||expected?.inventory.some(text=>['Account to confirm','Required account'].includes(text)));
   const approval=approvalStages[row.window].includes(row.stage)&&request?.capsule_id==='browser'&&!!request.requesting_origin;
   const linkedFocus=['walletconnect','metamask','unisat'].includes(row.window)&&['linked','linked-multiple'].includes(row.stage)?row.window==='walletconnect'?'outcome':'close-window':undefined;
-  return {approval,wait:!!expected?.wait&&!answered&&!approval&&row.stage!=='request-list',payment,answered,notSent,capability:row.window!=='metamask'||!!request||guardedAccount,needsExit:stopped.has(row.stage),focus:linkedFocus??(approval?'close-window':answered?'outcome':expected?.focus)};
+  const compatibleFocus=row.window==='metamask'&&['extension-missing','extensions-unavailable','other-ethereum-wallet','request-unsendable'].includes(row.stage)?'refresh-status':row.window==='metamask'&&row.stage==='link-error'?(safety===false?'refresh-status':'close-window'):undefined;
+  return {approval,wait:!!expected?.wait&&!answered&&!approval&&row.stage!=='request-list',payment,answered,notSent,capability:row.window!=='metamask'||!!request||guardedAccount,needsExit:stopped.has(row.stage),focus:compatibleFocus??linkedFocus??(approval?'close-window':answered?'outcome':expected?.focus)};
 }
 export function ruleFailures(view, {row,shared,expected,facts}={}) {
   const f=facts || (row ? ruleFacts(row,shared,expected) : {});

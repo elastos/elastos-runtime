@@ -12,7 +12,9 @@ const A = '0x' + '1'.repeat(40), U = 'bc1q' + 'a'.repeat(38);
 // Approved, and :362 omits it from the pending list. Home checks the signer later.
 // This provider exercises the live Home controller with isolated test results.
 // Recorded peers below are kept separate and retain their exact parameters.
-function installProvider({ kind, address }) {
+function installProvider({ kind, address, dualAlt = false, wallets }) {
+  window.__ethereumDiscoveryRequests = 0;
+  window.addEventListener('eip6963:requestProvider', () => window.__ethereumDiscoveryRequests++);
   if (window !== window.top) return;
   window.testState = { mode: 'approve', address, chain: '0x1', linked: false, requests: [], calls: [], receipts: [], effects: [], copies: [], pending: [] };
   const listeners = new Map();
@@ -32,25 +34,58 @@ function installProvider({ kind, address }) {
     async signMessage() { testState.calls.push({ method: 'signMessage' }); return ask('signMessage', 'fixture-signature'); },
   };
   function ask(method, result) {
+    if (testState.requestError?.method === method) return Promise.reject(Object.assign(new Error(testState.requestError.message), {walletChoices:testState.requestError.walletChoices}));
     if (testState.mode === 'pending') return new Promise((resolve, reject) => testState.pending.push({ resolve, reject, method, result }));
     if (testState.mode === 'decline' || testState.mode === 'closed') return Promise.reject({ code: 4001, message: 'User rejected the request.' });
     return Promise.resolve(result);
   }
   window.emitWallet = (name, value) => listeners.get(name)?.(value);
-  window.addEventListener('eip6963:requestProvider', () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info: { rdns: 'io.metamask', uuid: 'test' }, provider } })));
+  const icon = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#7355ef"/></svg>');
+  testState.wallets = wallets ?? (dualAlt ? [
+    {rdns:'io.rabby', uuid:'rabby-1', name:'Rabby Wallet', icon},
+    {rdns:'com.brave.wallet', uuid:'brave-1', name:'Brave Wallet', icon},
+  ] : [{rdns:'io.metamask', uuid:'test', name:'MetaMask', icon}]);
+  const providers = new Map();
+  window.addEventListener('eip6963:requestProvider', () => {
+    testState.discoveryRequests = (testState.discoveryRequests || 0) + 1;
+    for (const info of testState.wallets) {
+      if (!providers.has(info.uuid)) providers.set(info.uuid, {
+        on: provider.on.bind(provider),
+        request(call) {
+          if (dualAlt || wallets) testState.calls.push({method:call.method,wallet:info.rdns});
+          if (call.method === 'eth_accounts' && info.probePending) return new Promise(()=>{});
+          if (call.method === 'eth_accounts' && info.accounts) return Promise.resolve(info.accounts);
+          return provider.request(call);
+        },
+      });
+      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', {detail:{info,provider:providers.get(info.uuid)}}));
+    }
+  });
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null, dualAlt = false, wallets, hostSource } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   const replay = recording ? await replayInput(recording) : null;
   const firstCase = replay?.fixture.cases.find(c => c.id === replay.spec.calls[0]?.id);
   const peerElapsed = firstCase?.snapshots.filter(s => s.call).at(-1)?.call.elapsed_ms;
   if (recording) {
-    await context.addInitScript(({ source, input }) => { if (window === window.top) (0, eval)(`(${source})`)(input); }, { source: installScriptedExtension.toString(), input: replay });
+    await context.addInitScript(({ source, input, kind }) => {
+      if (window !== window.top) return;
+      // Replay keeps its finite recorded timeline. This fixture re-announces
+      // those observed identities for each fresh Home action; RPC replies stay
+      // entirely under the recorded peer's original queue and timing.
+      const observed = new Map();
+      if (kind === 'metamask') window.addEventListener('eip6963:announceProvider', event => observed.set(event.detail.info.uuid, event.detail));
+      (0, eval)(`(${source})`)(input);
+      if (kind === 'metamask') {
+        window.addEventListener('eip6963:requestProvider', () => { for (const detail of observed.values()) window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail})); });
+        window.dispatchEvent(new Event('eip6963:requestProvider'));
+      }
+    }, { source: installScriptedExtension.toString(), input: replay, kind });
     await context.addInitScript(({ address }) => { if (window === window.top) window.testState = { address, linked: false, requests: [], receipts: [], effects: [], copies: [], calls: [] }; }, { address });
-  } else await context.addInitScript(installProvider, { kind, address });
+  } else await context.addInitScript(installProvider, { kind, address, dualAlt, wallets });
   const errors = [], reads = [];
   const top = await context.newPage(); top.on('pageerror', e => errors.push(e.message));
   await top.clock.install();
@@ -76,24 +111,26 @@ window.runtimeFetch=async(url,init)=>{
  state.runtimeCalls||=[];state.runtimeCalls.push({url,body:JSON.parse(init.body)});
  if (${noHomeWallet} && url.includes('/link/challenge')) throw Error('Create a Home wallet first.');
  const requestId=decodeURIComponent(url.split('/approvals/')[1]?.split('/')[0]||'');
+ const signerAddress=state.requests.find(r=>r.request_id===requestId)?.address ?? state.address;
  const body=JSON.parse(init.body), schema='elastos.home.wallet-connector.effect.result/v1';
  if(url.endsWith('/handoff')){
    const pending=state.requests.find(request=>request.request_id===requestId && request.status==='pending');
    if(!pending)throw Error('wallet approval request not found');
    pending.status='approved';
+   if(state.accountDuringHandoff){state.walletAddress=state.accountDuringHandoff;state.accountDuringHandoff=null;}
  }
  const action=url.includes('/link/challenge')?(kind==='metamask'?'evm_link_challenge':'bitcoin_link_challenge'):url.includes('/link/verify')?(kind==='metamask'?'evm_link_complete':'bitcoin_link_complete'):url.endsWith('/handoff')?'approval_handoff':'approval_complete';
  if(url.includes('/link/challenge') && state.accountDuringChallenge) state.walletAddress=state.accountDuringChallenge;
  if(url.includes('/link/challenge'))return {schema,action,connector_id:id,challenge:{schema:kind==='metamask'?'elastos.auth.challenge/v1':'elastos.wallet.bitcoin_challenge/v1',challenge_id:'fixture-challenge',message:'Isolated account proof',expires_at:Math.floor(Date.now()/1000)+300,resources:[],...(kind==='unisat'?{network:'bitcoin',address:state.address,proof_type:'bip322_simple'}:{})}};
  if(url.includes('/link/verify')){state.linked=true;state.receipts.push(body);return {schema,action,connector_id:id,status:'linked'};}
- if(url.endsWith('/handoff')&&${JSON.stringify(requests)}==='transaction') return {schema,action,connector_id:id,request_id:requestId,evm_chains:[{chainId:'0x14',chainName:'Elastos Smart Chain',nativeCurrency:{name:'ELA',symbol:'ELA',decimals:18},rpcUrls:['https://api.elastos.io/esc']}],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:'transaction_intent',payload_hash:'0x'+'ab'.repeat(32),signer:state.address,status:'awaiting_wallet_transaction',transaction:{from:state.address,to:'0x'+'2'.repeat(40),value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x0',chainId:'0x14'}}};
- if(url.endsWith('/handoff'))return {schema,action,connector_id:id,request_id:requestId,evm_chains:[],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',payload_hash:'0x'+'ab'.repeat(32),signer:state.address,status:'awaiting_wallet_signature',message:'Isolated app request',signature_type:kind==='metamask'?'personal_sign':'bip322_simple'}};
+ if(url.endsWith('/handoff')&&${JSON.stringify(requests)}==='transaction') return {schema,action,connector_id:id,request_id:requestId,evm_chains:[{chainId:'0x14',chainName:'Elastos Smart Chain',nativeCurrency:{name:'ELA',symbol:'ELA',decimals:18},rpcUrls:['https://api.elastos.io/esc']}],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:'transaction_intent',payload_hash:'0x'+'ab'.repeat(32),signer:signerAddress,status:'awaiting_wallet_transaction',transaction:{from:signerAddress,to:'0x'+'2'.repeat(40),value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x0',chainId:'0x14'}}};
+ if(url.endsWith('/handoff'))return {schema,action,connector_id:id,request_id:requestId,evm_chains:[],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',payload_hash:'0x'+'ab'.repeat(32),signer:signerAddress,status:'awaiting_wallet_signature',message:'Isolated app request',signature_type:kind==='metamask'?'personal_sign':'bip322_simple'}};
  state.receipts.push(body);state.requests=state.requests.filter(r=>r.request_id!==requestId);return {schema,action,connector_id:id,request_id:requestId,status:'completed'};
 };
 const frame=document.createElement('iframe');frame.style='width:480px;height:522px;border:0;display:block';frame.sandbox='allow-scripts';frame.src='/apps/'+id+'/?home_origin='+encodeURIComponent(location.origin)+${JSON.stringify(launch ? '#home_token=fixture-token' : '')};document.body.append(frame);
 </script>` });
     if (url.pathname.endsWith('/shell-core.js')) return route.fulfill({ contentType: 'text/javascript', body: 'export const fetchJson=(...args)=>window.runtimeFetch(...args);' });
-    if (url.pathname.endsWith('/home-clipboard-client.js')) return route.fulfill({ contentType: 'text/javascript', body: `export const createHomeClipboardClient=()=>({start(){},teardown(){},async writeText(value){window.top.postMessage({type:'fixture:copy',value},'http://extensions.test');}});` });
+    if (url.pathname.endsWith('/home-clipboard-client.js')) return route.fulfill({ contentType: 'text/javascript', body: `export const createHomeClipboardClient=()=>({start(){},teardown(){},async writeText(value){window.top.postMessage({type:'fixture:copy',value},'https://extensions.test');}});` });
     if (url.pathname.includes('/api/')) {
       const read={ url: url.pathname, headers: route.request().headers() };reads.push(read);
       if (readFailure) { await route.fulfill({ status: readFailure, json: { error: 'fixture read failure' } });return; }
@@ -107,6 +144,8 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:522
     let path = join(root, relative);
     if (url.pathname.endsWith('/')) path = join(path, 'index.html');
     let body = (oldHost && path.endsWith('/home-wallet-connector-host.js') || oldWindow && (path.endsWith('/index.html') || path.endsWith(`/wallet-${kind}.js`))) ? Buffer.from(baseFixture.files[path.slice(root.length+1)].source) : await readFile(path);
+    if (process.env.COMPAT_WALLET_PRODUCT_REF) body = execFileSync('git',['show',process.env.COMPAT_WALLET_PRODUCT_REF+':'+path.slice(root.length+1)]);
+    if (hostSource && path.endsWith('/home-wallet-connector-host.js')) body = Buffer.from(hostSource);
     if (path.endsWith('/wallet-connection-view.mjs')) body = Buffer.from(body.toString().replace('export function renderConnection(document, view)', 'function renderConnectionBase(document, view)') + `
 export function renderConnection(document,view) {
   window.__sharedElements ||= new WeakSet();
@@ -128,7 +167,7 @@ export function renderConnection(document,view) {
     }
     return route.fulfill({ body, contentType: ({ '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.png': 'image/png', '.woff2': 'font/woff2' })[extname(path)] || 'application/octet-stream' });
   });
-  await top.goto('http://extensions.test/');
+  await top.goto('https://extensions.test/');
   const frame = top.frames().find(f => f !== top.mainFrame());
   await frame.waitForSelector(oldWindow ? '#wallet-connect' : 'main[data-state]', { timeout: 3000 });
   // Home opens a 480 by 560 window with a 38px title bar (design's -window PNGs).

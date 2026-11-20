@@ -126,7 +126,36 @@ Safety recovery has final precedence over capability adaptation. `supportedActio
 
 Runtime `rejected` plus a numeric approval time reduces to `dismissed`. The added `request-rejected` and `request-dismissed` cards preserve identity, focus their non-action outcome and offer no Send. Their queue counts are `queueRejectedCount` and `queueDismissedCount`; these records stay selectable and are not work to review. A present requesting-app label wins over actor IDs. The shared request-title table is checked against the current raw Inbox and Wallet sources with exact equality; the fallback is Review request. Historical source blobs remain provenance only. Legacy reduced input titled Approval request is accepted and normalized.
 
-An extension's fixed brand comes from a found provider fact. Without that fact, the MetaMask window heading and tab title use MetaMask or Brave Wallet, and its instructions use your wallet. The UniSat heading is UniSat. Both use a generic mark until provider facts select one. Absence does not establish that the person can enable an extension. MetaMask-compatible discovery can identify Brave Wallet, which retains its verified fixed name and generic mark. A stored display label remains isolated account data and supplies no provider identity.
+Home owns EIP-6963 discovery for the MetaMask option. On each Connect or Send,
+Home requests fresh announcements, removes conflicting objects, UUIDs and rdns
+values, and bounds the list to 32 distinct entries. Connect uses `io.metamask`
+when present, then the only wallet, then the person's choice from a name-sorted
+list. The list carries Home-issued one-use handles bound to that frame and its
+launch lifetime. The window sends the selected handle with the link action.
+
+For Send, the window includes the linked address with the approval request ID.
+Before taking the Runtime handoff, Home asks at most eight discovered wallets
+for `eth_accounts`, in parallel with a one-second timeout. Home uses a wallet
+that reports the linked address first, preferring MetaMask among matches. If none
+reports it, the request stays pending and the window offers Check again and
+Close window. Home retains the signer check after the handoff. Each selected
+wallet is checked again before dispatch. UniSat uses its own provider contract.
+
+The window retains wallet identity only for its current action. A successful
+link or approval returns the selected wallet's name, rdns and optional data-image
+icon. The account card shows that name and icon after success in this window;
+a saved link starts as Your wallet with its address and network and an empty
+mark slot. Announced identity stays inside window content. Home's header, tab
+title and hidden page title remain MetaMask. Each window has a hidden page
+title and its content starts with the status line. Home owns wallet objects;
+Runtime owns account links and one-use approval authority.
+
+Names are trimmed, bounded to 80 UTF-16 units and 320 UTF-8 bytes, and rejected
+when they contain markup, control, private-use, surrogate or direction characters.
+Home reserves its own labels and known wallet brands for their connector identity.
+Icons are optional canonical base64 image data URIs up to 64 KiB; invalid icons
+leave the wallet selectable. The replay fixture records 3,686 characters for MetaMask and 6,006 for Rabby;
+the 64 KiB cap admits those marks and bounds each image.
 
 When a same-card redraw removes the focused action, the mount uses the new view's focus target. A consumed approval focuses its outcome. Its card keeps the existing scroll surface; the outcome stays visible, and a small presentation spacer retains an offset that would otherwise disappear as controls are removed. A new request or stage discards this presentation state. Callers using their own mount logic must apply the same fallback and scroll rule.
 

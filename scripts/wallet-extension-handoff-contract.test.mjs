@@ -9,22 +9,22 @@ const playwright=requireProductSmokePlaywright();
 // :362 excludes Approved from ListApprovals(false). Home calls handoff before
 // its signer check (home-wallet-connector-host.js:291-312 at the pinned base).
 async function refuse(f,kind) {
-  await f.top.evaluate(value=>testState.walletAddress=value,kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38));
+  await f.top.evaluate(value=>testState.accountDuringHandoff=value,kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38));
   await f.action('send-request').click();
   await f.frame.waitForFunction(()=>document.querySelector('main').dataset.state!=='request-extension',null,{timeout:3000});
 }
-async function consumed(f,kind) {
+async function consumed(f,kind,oldHost=false) {
   await f.state('request-consumed');
   assert.equal(await f.action('send-request').count(),0,'a consumed request cannot offer a dead retry');
   assert.equal(await f.top.evaluate(()=>testState.requests[0]?.status),'approved');
   assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);
   await f.top.evaluate(()=>testState.walletAddress=testState.address);
-  const result=await f.frame.evaluate(kind=>new Promise((resolve,reject)=>{
+  const result=await f.frame.evaluate(({kind,oldHost})=>new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>{removeEventListener('message',receive);reject(Error('one-use reply timeout'));},3000);
-    function receive(event){if(event.source===window.top&&event.origin==='http://extensions.test'&&event.data?.requestId==='one-use:retry'){clearTimeout(timer);removeEventListener('message',receive);resolve(event.data);}}
+    function receive(event){if(event.source===window.top&&event.origin==='https://extensions.test'&&event.data?.requestId==='one-use:retry'){clearTimeout(timer);removeEventListener('message',receive);resolve(event.data);}}
     addEventListener('message',receive);
-    window.top.postMessage({type:'home:wallet-connector-effect',schema:'elastos.home.wallet-connector-effect/v1',requestId:'one-use:retry',connectorId:'wallet-'+kind,connectorToken:'fixture-token',action:{kind:'approve',approvalRequestId:'approval-1'}},'http://extensions.test');
-  }),kind);
+    window.top.postMessage({type:'home:wallet-connector-effect',schema:'elastos.home.wallet-connector-effect/v1',requestId:'one-use:retry',connectorId:'wallet-'+kind,connectorToken:'fixture-token',action:{kind:'approve',approvalRequestId:'approval-1',...(!oldHost&&kind==='metamask'?{linkedAddress:'0x'+'1'.repeat(40)}:{})}},'https://extensions.test');
+  }),{kind,oldHost});
   assert.match(result.error,/not found|not pending/);
   const record=await f.top.evaluate(()=>({status:testState.requests[0].status,receipts:testState.receipts.length,calls:testState.calls}));
   assert.equal(record.status,'approved');assert.equal(record.receipts,0);
@@ -33,12 +33,13 @@ async function consumed(f,kind) {
 for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: pinned Home one-use handoff is not a retryable pending request`,{timeout:30000,skip:windowTestOptions(engine).skip},async t=>{
   const browser=await playwright[engine].launch({headless:true});
   try{
+    const oldAction = source => source.replace(", ...(kind === 'metamask' ? {linkedAddress:selected.address} : {})", '');
     for(const oldHost of [true,false]) {
-      const good=await fixture(browser,kind,{saved:true,requests:true,oldHost});try{await refuse(good,kind);await consumed(good,kind);}finally{await good.close();}
-      const bad=await fixture(browser,kind,{saved:true,requests:true,oldHost,pictures:false});try{
+      const good=await fixture(browser,kind,{saved:true,requests:true,oldHost,mutate:oldHost?oldAction:undefined});try{await refuse(good,kind);await consumed(good,kind,oldHost);}finally{await good.close();}
+      const bad=await fixture(browser,kind,{saved:true,requests:true,oldHost,pictures:false,mutate:oldHost?oldAction:undefined});try{
         await bad.top.evaluate(()=>{const send=runtimeFetch;window.runtimeFetch=async(url,init)=>{const result=await send(url,init);if(url.endsWith('/handoff'))testState.requests[0].status='pending';return result;};});
         await refuse(bad,kind);
-        await assert.rejects(consumed(bad,kind),error=>error.code==='ERR_ASSERTION'&&/approved/.test(error.message),'the former reusable-handoff model must fail the primary status oracle');
+        await assert.rejects(consumed(bad,kind,oldHost),error=>error.code==='ERR_ASSERTION'&&/approved/.test(error.message),'the former reusable-handoff model must fail the primary status oracle');
         t.diagnostic(`${oldHost?'pinned':'current'} Home: consumed cause retained; broken pending model fails the primary status oracle`);
       }finally{await bad.close();}
     }
@@ -79,7 +80,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
         const gate=new Promise(resolve=>release=resolve);
         await f.context.route('**/approvals',async route=>{await gate;await route.fulfill({json:{approval_requests:[]}});readFinished();});
         await f.top.evaluate(({kind,fault})=>{
-          if(fault==='account')testState.walletAddress=kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38);
+          if(fault==='account')testState.accountDuringHandoff=kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38);
           else if(kind==='metamask')testState.refuseSwitch=true;
           else testState.network='testnet';
         },{kind,fault});

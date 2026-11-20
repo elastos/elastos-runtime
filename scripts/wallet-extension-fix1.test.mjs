@@ -7,7 +7,7 @@ const breaks = {
   Y11:s=>s.replace("let providerAvailability = 'unknown';", "let providerAvailability = 'found';"),
   'Y11-discovery':s=>s.replaceAll("providerAvailability = 'found';", "providerAvailability = 'unknown';"),
   K17:s=>s.replace('const root = presentation.root;',"const root = presentation.root; root.append(document.createElement('button'));"),
-  K02:s=>s.replace('approvalRequestId: selected.id })','approvalRequestId: requests[0].request_id })'),
+  K02:s=>s.replace('approvalRequestId: selected.id,','approvalRequestId: requests[0].request_id,'),
   K07:s=>s.replace('data.value.length > 8','data.value.length > 800'),
   K12:s=>s.replace('mountConnection(mount, view, presentation)', 'mountConnection(mount, view, null)'),
   K14:s=>s.replace("event.source !== window.top || event.origin !== homeOrigin || data?.type !== 'home:wallet-connector-event'","data?.type !== 'home:wallet-connector-event'"),
@@ -17,7 +17,7 @@ const breaks = {
   X3:s=>s.replace("'Switch to the linked account before approving.', ", ""),
   'stop-copy':s=>s.replaceAll('Closing this window does not cancel it.', 'Home will ignore a later answer.'),
   saved:s=>s.replace('const rows = address ? row ? [row] : [] : candidates;', 'const rows = address ? row ? [row] : [] : [];'),
-  read:s=>s.replace("action === 'refresh-status') void refresh()","action === 'refresh-status') void perform({kind:'link'})"),
+  read:s=>s.replace("else { if (['request-unsendable','link-error'].includes(preflightFailure)) preflightFailure = null; void refresh(); }", "else { void perform({kind:'link'}); }"),
   disconnect:s=>s.replace('if (data.value.length) disconnected = false;',''),
   'link-request':s=>s.replace('if (next?.id !== selected?.id) preflightFailure = null;',''),
   'read-event':s=>s.replace('stage = chooseStage(); }', "stage = 'wallet-unavailable'; }"),
@@ -84,7 +84,7 @@ async function neutralMetaMaskIdentity(f) {
   await f.state('linked');
   assert.equal(await f.top.evaluate(() => testState.calls.length), 0);
   assert.equal(await visibleBrandMarkCount(f.frame, 'metamask'), 0);
-  assert.equal(await visibleBrandMarkCount(f.frame, 'wallet'), 1);
+  assert.equal(await f.frame.locator('img').count(), 0);
   // This window receives availability from Home, but no verified provider ID.
   await f.frame.evaluate(() => { window.__identityEventReceived=false; addEventListener('message', event => {
     if(event.data?.type==='home:wallet-connector-event')window.__identityEventReceived=true;
@@ -94,15 +94,15 @@ async function neutralMetaMaskIdentity(f) {
   }, '*'));
   await f.frame.waitForFunction(() => window.__identityEventReceived);
   assert.equal(await visibleBrandMarkCount(f.frame, 'metamask'), 0, 'availability alone does not identify MetaMask');
-  assert.equal(await visibleBrandMarkCount(f.frame, 'wallet'), 1, 'the unidentified provider keeps the generic account mark');
+  assert.equal(await f.frame.locator('img').count(), 0, 'the unidentified provider has no account mark');
 }
-for (const engine of ['chromium','webkit']) test(`${engine} MetaMask window: availability alone keeps the account mark generic`, {timeout:20000,skip:engineSkip(engine)}, async t => {
+for (const engine of ['chromium','webkit']) test(`${engine} MetaMask window: availability alone shows no account mark`, {timeout:20000,skip:engineSkip(engine)}, async t => {
   const browser=await playwright[engine].launch({headless:true});
   try {
     const good=await fixture(browser,'metamask',{saved:true});
     try { await neutralMetaMaskIdentity(good); } finally { await good.close(); }
     const bad=await baseFixture(browser,'metamask',{saved:true,mutate:source=>{
-      const broken=source.replace("providerId: kind === 'metamask' ? null : 'unisat'", "providerId: kind === 'metamask' ? 'io.metamask' : 'unisat'");
+      const broken=source.replace("walletIcon: kind === 'metamask' && linkObserved ? operationWallet?.icon ?? null : null", "walletIcon: 'data:image/png;base64,YQ=='");
       assert.notEqual(broken,source,'unverified provider-ID break applies');return broken;
     }});
     try { await assert.rejects(()=>neutralMetaMaskIdentity(bad),{code:'ERR_ASSERTION'}); } finally { await bad.close(); }
@@ -120,7 +120,7 @@ async function assertReadAfter(f,before) {
 async function preflight(f, kind, fault, type) {
   await f.state(type === 'transaction' ? 'transaction-waiting' : type === 'typed' ? 'request-typed-data' : 'request-waiting');
   await f.top.evaluate(({fault,other}) => {
-    if(fault==='account')testState.walletAddress=other;
+    if(fault==='account')testState.accountDuringHandoff=other;
     if(fault==='network')testState.network='testnet';
     if(fault==='switch')testState.refuseSwitch=true;
   }, {fault,other:other(kind)});
@@ -332,9 +332,9 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   try {
     const f=await fixture(browser,kind,{saved:true,requests:true});try{
       await f.state('request-waiting');await f.action('send-request').click();await f.state('request-done');
-      await assertNoVisibleWindowHeading(f.frame, kind==='metamask'?'MetaMask or Brave Wallet':'UniSat');
+      await assertNoVisibleWindowHeading(f.frame, kind==='metamask'?'MetaMask':'UniSat');
       // The old request-done mark belonged only to the removed window heading.
-      assert.equal(await f.frame.locator('img').count(), 0, 'request-done has no heading mark or account card mark');
+      assert.equal(await f.frame.locator('img').count(), kind==='metamask'?1:0, 'only the selected MetaMask-option wallet supplies its request card mark');
       assert.equal(await f.frame.locator('.connection-status').innerText(), 'Message signed.');
       // Existing response schema permits these statuses. This is a projection
       // check: today's pending-only Runtime endpoint normally omits them.
@@ -354,7 +354,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
 for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: an already queued request cannot erase the consumed cause`,{timeout:15000,skip:engineSkip(engine)},async()=>{
   const browser=await playwright[engine].launch({headless:true});try{const f=await fixture(browser,kind,{saved:true,requests:'multiple'});try{
     await f.state('request-list');await f.frame.locator('[data-focus-key="select-request:approval-1"]').click();await f.state('request-multiple');
-    await f.top.evaluate(value=>testState.walletAddress=value,other(kind));await f.action('send-request').click();await f.state('request-consumed');
+    await f.top.evaluate(value=>testState.accountDuringHandoff=value,other(kind));await f.action('send-request').click();await f.state('request-consumed');
     const text=await f.frame.locator('body').innerText();
     await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));await f.state('request-consumed');assert.equal(await f.frame.locator('body').innerText(),text);
     assert.equal(await f.top.evaluate(()=>testState.requests.filter(r=>r.status==='pending').length),1);
@@ -368,7 +368,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
     const before=await f.frame.evaluate(()=>window.__windowReadsFinished||0);
     await f.top.evaluate(()=>{testState.requests[0].capsule_id='notes';delete testState.requests[0].requesting_origin;delete testState.requests[0].requesting_app_name;});
     await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));await assertReadAfter(f,before);
-    await f.top.evaluate(value=>testState.walletAddress=value,other(kind));
+    await f.top.evaluate(value=>testState.accountDuringHandoff=value,other(kind));
     await f.action('send-request').click();await f.state('request-consumed');
     const text=await f.frame.locator('.connection-notice').innerText();
     assert.match(text,/Then (?:go back|return) to the app and (?:start|make) a new request/);

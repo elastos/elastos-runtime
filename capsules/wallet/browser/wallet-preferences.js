@@ -80,7 +80,7 @@ export function createWalletPreferences({
     const walletConnectAvailable = approvalMethods.walletconnect?.available === true;
     const methods = [
       { id: "passkey", label: "Built-in accounts", hint: "Passkey-controlled · Wallet Send", connected: namesForMethod(accounts, "passkey") },
-      { id: "metamask", label: "MetaMask", hint: "Link & approve in MetaMask", connected: namesForMethod(accounts, "metamask"), target: "wallet-metamask", addLabel: "Connect", openLabel: "Add account" },
+      { id: "metamask", label: "MetaMask", hint: "MetaMask or another wallet in this browser", connected: namesForMethod(accounts, "metamask"), target: "wallet-metamask", addLabel: "Connect", openLabel: "Add account" },
       { id: "btc", label: "UniSat", hint: "Link & approve in UniSat", connected: namesForMethod(accounts, "btc"), target: "wallet-unisat", addLabel: "Connect", openLabel: "Add account" },
       {
         id: "wc",

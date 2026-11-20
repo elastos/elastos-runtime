@@ -284,7 +284,7 @@ test('fixture close retires an in-flight Home read', { timeout: 10000 }, async (
       try { return await evaluate(...args); }
       finally { finished.resolve(); }
     };
-    await f.frame.evaluate(() => { void fetch('http://extensions.test/api/fixture-close').catch(() => {}); });
+    await f.frame.evaluate(() => { void fetch('https://extensions.test/api/fixture-close').catch(() => {}); });
     await entered.promise;
     await f.close();
     await finished.promise;
@@ -299,7 +299,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
         // Snapshot the first controller paint before any asynchronous refresh.
         assert.equal(await f.frame.locator('main').getAttribute('data-state'), 'ready');
       }],
-      ['control wired wrong', s => s.replace("void perform({ kind: 'approve', approvalRequestId: selected.id })", "void perform({ kind: 'link' })"), async f => {
+      ['control wired wrong', s => s.replace("void perform({ kind: 'approve', approvalRequestId: selected.id, ...(kind === 'metamask' ? {linkedAddress:selected.address} : {}) })", "void perform({ kind: 'link' })"), async f => {
         await f.action('send-request').click();
         await f.top.waitForFunction(() => testState.effects.length > 0);
         assert.equal(await f.top.evaluate(() => testState.effects[0].action.kind), 'approve');
@@ -342,14 +342,16 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
         await f.frame.waitForFunction(() => expiryEventSeen);
         await f.state('window-expired');
       }],
-      ['wrong linked signer', s => s.replace("if (accountEvent && selected && !sameAccount(accountEvent[0], selected.address)) return 'account-unavailable';", ''), async f => {
+      ['wrong linked signer', s => s.replace('&& !(walletEventAddress && selected && sameAccount(walletEventAddress, selected.address))', '&& true'), async f => {
         await secondRequest(f); await peerEvent(f, 'accountsChanged', [B]); await f.state('account-unavailable');
+        assert.equal(await f.action('send-request').count(),0);
       }],
-      ['expiry hidden by wallet state', s => s.replace('!fixedOutcome && isRequestExpired())', "!fixedOutcome && isRequestExpired() && ['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage))"), async f => {
-        await secondRequest(f); await peerEvent(f, 'accountsChanged', [B]); await f.state('account-unavailable');
+      ['expiry hidden by wallet state', s => s.replace('if (!operation && !uncertain && !fixedOutcome && isRequestExpired())', "if (!operation && !uncertain && !fixedOutcome && isRequestExpired() && ['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage))"), async f => {
+        await secondRequest(f); await f.top.evaluate(value=>testState.walletAddress=value,B);
+        await f.action('send-request').click();await f.state('request-unsendable');
         await f.top.clock.runFor(301000); await f.state('request-expired');
       }],
-      ['overdue event before timer', s => s.replace("if (isRequestExpired()) { fixedOutcome = true; return 'request-expired'; }", ''), async f => {
+      ['overdue event before timer', s => s.replace('function isRequestExpired() {', 'function isRequestExpired() { return false;'), async f => {
         await secondRequest(f); assert.equal(await overdueEvent(f, 'accountsChanged', [B]), 'request-expired');
       }],
       ['outcome focus lost', s => s.replace("root.querySelector('.connection-actions')?.append(close);", "root.querySelector('.connection-actions')?.append(close); close.focus();"), async f => {
@@ -376,19 +378,21 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
   } finally { await browser.close(); }
 });
 
-for (const kind of ['metamask', 'unisat']) test(`${kind}: actual old Home with new window, actual old window with new Home`, { timeout: 40000 }, async () => {
+for (const kind of ['metamask', 'unisat']) test(`${kind}: new window with pinned Home and retired-window result contract`, { timeout: 40000 }, async () => {
   const browser = await playwright.chromium.launch({ headless: true });
   try {
     const modern = await fixture(browser, kind, { oldHost: true });
-    try { await modern.action('connect').click(); await modern.state('linked'); }
+    try { await modern.action('connect').click(); await modern.state('linked');
+      if(kind==='metamask') {assert.equal(await modern.frame.locator('.connection-account-name').innerText(),'Your wallet');assert.equal(await modern.frame.locator('img').count(),0);} }
     finally { await modern.close(); }
     const legacy = await fixture(browser, kind, { oldWindow: true });
     try {
       await legacy.frame.locator('#wallet-connect').click();
-      await legacy.frame.locator('#wallet-status').filter({hasText:'Approval method added.'}).waitFor();
+      const expected = kind === 'metamask' ? 'Home returned an invalid wallet result.' : 'Approval method added.';
+      await legacy.frame.locator('#wallet-status').filter({hasText:expected}).waitFor();
       await legacy.top.evaluate(value => emitWallet('accountsChanged', [value]), kind === 'metamask' ? B : V);
       assert.equal(await legacy.top.evaluate(() => testState.receipts.length), 1);
-      assert.equal(await legacy.frame.locator('#wallet-status').innerText(), 'Approval method added.');
+      assert.equal(await legacy.frame.locator('#wallet-status').innerText(), expected);
     }finally{await legacy.close();}
   }finally{await browser.close();}
 });
@@ -459,7 +463,8 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
           }
           await f.top.clock.runFor(301000); await f.state('request-expired');
         }
-        await peerEvent(f, 'accountsChanged', [kind === 'metamask' ? A : U]); await f.state('request-expired');
+        await peerEvent(f, 'accountsChanged', [kind === 'metamask' ? A : U]);
+        await f.state('request-expired');
         assert.equal(await f.action('send-request').count(), 0);
         assert.equal(await f.top.evaluate(() => testState.effects.length), 1);
         assert.deepEqual(f.errors, []);

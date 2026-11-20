@@ -33,7 +33,7 @@ for(const engine of ['chromium','webkit']) {
   for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: refusal isolates the app name and does not rewrite its live region`,{skip:skip(engine)},async()=>{
     const browser=await playwright[engine].launch({headless:true});try{const f=await fixture(browser,kind,{saved:true,requests:true});try{
       await f.state('request-waiting');const app='Owner \u202Eapp';
-      await f.top.evaluate(({app,kind})=>{Object.assign(testState.requests[0],{capsule_id:'fixture-app',requesting_app_name:app,requesting_origin:null});testState.walletAddress=kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38);},{app,kind});
+      await f.top.evaluate(({app,kind})=>{Object.assign(testState.requests[0],{capsule_id:'fixture-app',requesting_app_name:app,requesting_origin:null});testState.accountDuringHandoff=kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38);},{app,kind});
       await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));
       await f.frame.waitForFunction(app=>document.querySelector('.connection-app')?.textContent===app,app);
       await f.action('send-request').click();await f.state('request-consumed');

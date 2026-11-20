@@ -16,7 +16,6 @@ h1, h2, p { margin: 0; }
   line-height: 1.5;
 }
 .connection-heading { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; }
-.connection-heading img { width: 36px; height: 36px; object-fit: contain; }
 h1 { font-size: var(--el-text-display); font-weight: 600; line-height: 1.25; }
 h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-network, .connection-note { color: var(--el-muted); font-size: var(--el-text-md); }
@@ -121,7 +120,6 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-compact { height:100svh; min-height:0; padding:6px 8px; justify-content:flex-start; gap:4px; font-size:12px; line-height:1.2; overflow:hidden; }
 .connection-compact .connection-heading { margin:0; gap:6px; flex-shrink:0; }
 .connection-compact h1 { font-size:16px; }
-.connection-compact .connection-heading img { width:18px; height:18px; }
 .connection-compact .connection-content { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; }
 .connection-compact .connection-feedback { flex-shrink:0; }
 .connection-compact .connection-status { margin:0 0 4px; font-size:12px; line-height:1.2; }
@@ -211,3 +209,7 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-hash { unicode-bidi:isolate; overflow-wrap:anywhere; -webkit-user-select:text; user-select:text; font-family:var(--el-font-mono); }
 /* A consumed same-card request keeps its scroll surface and visible outcome. */
 .connection-retained-feedback > .connection-feedback { position:sticky; top:0; bottom:0; background:var(--el-bg); }
+
+.connection-wallet-choice { width:100%; display:flex; align-items:center; justify-content:flex-start; gap:12px; margin-top:8px; padding:12px 16px; text-align:start; }
+.connection-wallet-choice + .connection-actions { margin-top:16px; }
+.connection-wallet-choice img { width:32px; height:32px; object-fit:contain; }

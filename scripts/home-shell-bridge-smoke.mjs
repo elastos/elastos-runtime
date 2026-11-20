@@ -1299,7 +1299,10 @@ assert(
   requests,
 );
 
+const announcedWallets = new Map();
+addWindowEventListener("eip6963:requestProvider", () => { for (const detail of announcedWallets.values()) dispatchWindowEvent({type:"eip6963:announceProvider",detail}); });
 function announceProvider(rdns, uuid, provider) {
+  announcedWallets.set(uuid,{info:{rdns,uuid,name:rdns},provider});
   dispatchWindowEvent({
     type: "eip6963:announceProvider",
     detail: {
@@ -1789,7 +1792,7 @@ function sendWalletEffect(frame, connectorId, connectorToken, requestId, action,
     requestId,
     connectorId,
     connectorToken,
-    action,
+    action: connectorId === "wallet-metamask" && action.kind === "approve" && !Object.hasOwn(action,"walletChoiceId") ? {...action,linkedAddress:metamaskAddress} : action,
     ...(extras.fields || {}),
   });
 }
@@ -2069,7 +2072,7 @@ const ambiguousReply = await waitForReply(
   "wallet-conflicting-provider",
 );
 assert(
-  String(ambiguousReply.payload?.error || "").includes("conflict")
+  /conflict|ambiguous/.test(String(ambiguousReply.payload?.error || ""))
     && requests.filter((request) =>
       request.url.includes("/api/apps/home/wallet-connector/")
     ).length === runtimeEffectsBeforeAmbiguity

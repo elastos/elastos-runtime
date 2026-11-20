@@ -74,7 +74,7 @@ such as MetaMask, UniSat, and WalletConnect remain launchable only as approval m
 from Wallet flows, not as separate top-level wallet products. Built-in
 Bitcoin accounts live beside EVM accounts in Wallet; external Bitcoin approval
 tools remain connector methods. The connector frames remain opaque and never
-receive browser-extension provider objects. For injected MetaMask/Brave and
+receive browser-extension provider objects. For injected compatible Ethereum wallets and
 UniSat, a closed connector intent asks the trusted top-level Home host to perform
 the exact Runtime challenge or typed approval effect. WalletConnect retains its
 configured connector-owned adapter path.
@@ -165,7 +165,7 @@ ceremony at the moment of use. `POST
 requests only when a fresh passkey-bound Home token is supplied; the provider
 then signs inside the wallet boundary and stores a receipt. External injected
 wallets are handled by dedicated opaque connector capsules plus the trusted Home
-host. MetaMask/Brave and UniSat frames can read their Runtime account and
+host. compatible Ethereum wallets and UniSat frames can read their Runtime account and
 approval summaries, but their only effect request is the closed
 `home:wallet-connector-effect` contract. Runtime's Home connector endpoints
 validate exact same-origin Home authority and a carried connector launch token
@@ -221,7 +221,31 @@ The default wallet path is now:
 
 The optional injected-wallet path is:
 
-`passkey unlock -> open opaque approval-method connector capsule -> send one closed link intent to trusted Home -> Home discovers exact MetaMask or Brave fallback -> Runtime validates matching Home + connector launch-token v4 authority -> Runtime issues SIWE challenge -> Home signs only that challenge -> wallet-provider verifies and links account + connector_id to the existing principal -> audit -> revoke -> prove replay/expiry/wrong-chain/wrong-origin/wrong-connector fail closed`
+`passkey unlock -> open opaque approval-method connector capsule -> send one closed link intent to trusted Home -> Home selects an announced EIP-6963 Ethereum wallet under the discovery rule below -> Runtime validates matching Home + connector launch-token v4 authority -> Runtime issues SIWE challenge -> Home signs only that challenge -> wallet-provider verifies and links account + connector_id to the existing principal -> audit -> revoke -> prove replay/expiry/wrong-chain/wrong-origin/wrong-connector fail closed`
+
+Home owns EIP-6963 discovery for the MetaMask option. On each Connect or Send,
+Home requests fresh announcements, removes conflicting objects, UUIDs and rdns
+values, and bounds the list to 32 distinct entries. Connect uses `io.metamask`
+when present, then the only wallet, then the person's choice from a name-sorted
+list. The list carries Home-issued one-use handles bound to that frame and its
+launch lifetime. The window sends the selected handle with the link action.
+
+For Send, the window includes the linked address with the approval request ID.
+Before taking the Runtime handoff, Home asks at most eight discovered wallets
+for `eth_accounts`, in parallel with a one-second timeout. Home uses a wallet
+that reports the linked address first, preferring MetaMask among matches. If none
+reports it, the request stays pending and the window offers Check again and
+Close window. Home retains the signer check after the handoff. Each selected
+wallet is checked again before dispatch. UniSat uses its own provider contract.
+
+The window retains wallet identity only for its current action. A successful
+link or approval returns the selected wallet's name, rdns and optional data-image
+icon. The account card shows that name and icon after success in this window;
+a saved link starts as Your wallet with its address and network and an empty
+mark slot. Announced identity stays inside window content. Home's header, tab
+title and hidden page title remain MetaMask. Each window has a hidden page
+title and its content starts with the status line. Home owns wallet objects;
+Runtime owns account links and one-use approval authority.
 
 The built-in Bitcoin proof path is now:
 
@@ -574,7 +598,7 @@ owns the exact unchanged envelope and old-page compatibility test.
 
 **After this work — default proposal, not approved authority.** Home reports
 only the actual settled result of the one eth_sendTransaction call made for
-that consumed MetaMask/Brave request. A valid returned hash uses the existing
+that consumed compatible Ethereum wallets request. A valid returned hash uses the existing
 completion route. A call without a usable hash uses the proposed Home-only
 call-settlement route and Runtime-private RecordExternalCallOutcome operation,
 with exactly request_id, payload_hash, signer and outcome as operation data.
@@ -680,7 +704,7 @@ end page delivery, not the stored record; a later session may inspect it
 read-only but receives no completion/report right. Approved no-answer and
 unresolved records have no Send/Retry/Reject/Dismiss; Dismiss stays WalletConnect-only.
 Wallet offers inspection of account, network, asking app, result deadline and
-Activity, plus guidance to check MetaMask/Brave itself. Selecting a retained
+Activity, plus guidance to check the selected wallet itself. Selecting a retained
 record shows that read-only result state, rather than an unavailable pending
 card or an invitation to resend.
 
