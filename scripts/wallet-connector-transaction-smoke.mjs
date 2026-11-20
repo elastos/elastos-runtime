@@ -21,7 +21,7 @@ try {
     assert.equal(send.chain,'0x14');assert.equal(send.signer,'0x'+'1'.repeat(40));
     assert.equal(send.params[0].from,send.signer);assert.equal(send.params[0].chainId,'0x14');
     assert.equal(observed.effects.length,1);
-    assert.deepEqual(observed.effects[0].action,{kind:'approve',approvalRequestId:'approval-1'});
+    assert.deepEqual(observed.effects[0].action,{kind:'approve',approvalRequestId:'approval-1',linkedAddress:'0x'+'1'.repeat(40)});
     assert.equal(observed.effects[0].connectorToken,'fixture-token');
     assert.equal(observed.receipts.length,1);
     assert.equal(observed.receipts[0].transaction_hash,'0x'+'aa'.repeat(32));
