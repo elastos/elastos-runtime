@@ -1401,7 +1401,7 @@ uninstall_installation() {
         || die "Close this installation's Runtime and retry; nothing was removed"
     if [[ "$remove_data" == true ]]; then
         warn "Deleting $(display_path "$data_dir"): your identity, wallets, recovery material and files"
-        warn "Only your Recovery Kit can restore this identity afterwards"
+        warn "Keep a Recovery Kit saved elsewhere if you want your identity and keys back. It does not restore your files."
     fi
     uninstall_files remove "$install_dir" "$data_dir" "$remove_data" \
         || die "Uninstall did not finish; run it again after fixing the reason above"
