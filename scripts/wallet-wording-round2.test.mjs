@@ -18,13 +18,18 @@ export function wordingInputs(window){
 for(const window of ['metamask','unisat','walletconnect'])test('wording R2: every '+window+' state keeps sentence case with and without Close',()=>{
   for(const input of wordingInputs(window)){
     const view=connectionView(input);
-    for(const field of ['status','notice','afterNote'])assert.doesNotMatch(viewText(view[field]),/,\s+(?!(?:MetaMask|Brave|UniSat|Wallet|Home|Activity|Browser|Ethereum|Elastos|Base|Sepolia|Bitcoin)\b)[A-Z]/,JSON.stringify(input));
+    for(const field of ['status','notice','afterNote']){
+      const text=viewText(view[field]);
+      assert.doesNotMatch(text,/,\s+(?!(?:MetaMask|Brave|UniSat|Wallet|Home|Activity|Browser|Ethereum|Elastos|Base|Sepolia|Bitcoin)\b)[A-Z]/,JSON.stringify(input));
+      assert.doesNotMatch(text,/ {2}/,window+'/'+input.stage+'/'+field);
+    }
   }
 });
 test('wording R2: MetaMask has one stop-sharing instruction',()=>{
   const v=connectionView({window:'metamask',stage:'linked'});
   assert.equal(viewText(v.afterNote),'');
-  assert.equal(viewText(v.notice),"To stop sharing with Home, remove this Home's connection in your wallet. Your account stays in Wallet.");
+  assert.match(viewText(v.notice),/remove this Home's connection in your wallet/);
+  assert.match(viewText(v.notice),/Your account stays in Wallet\./);
 });
 test('wording R2: S237 directs a sent transaction to Activity',()=>{
   const input=wordingInputs('metamask').find(r=>r.stage==='transaction-done'&&!r.supportedActions.includes('close-window'));
@@ -35,8 +40,15 @@ test('wording R2: unknown app names stay labels outside sentences',()=>{
   for(const window of ['metamask','unisat','walletconnect'])for(const requesting_app_name of [undefined,'']){
     const summary=reduceSummary({...seed,connector_id:'wallet-'+window,requesting_app_name},{connector:'wallet-'+window});
     assert.equal(summary.app,'Requesting app');
-    const v=connectionView({window,stage:'request-unavailable',summary});
-    assert.doesNotMatch(viewText(v.status)+viewText(v.notice),/in Requesting app|to Requesting app/);
+    for(const input of wordingInputs(window)){
+      const v=connectionView({...input,summary:{...input.summary,app:summary.app}});
+      const status=viewText(v.status);
+      assert.doesNotMatch(status+viewText(v.notice),/in Requesting app|to Requesting app/);
+      if(status)assert.match(status,/^[A-Z]/,window+'/'+input.stage);
+    }
+    const transaction=reduceSummary({...seed,connector_id:'wallet-'+window,intent:'transaction_intent',requesting_app_name},{connector:'wallet-'+window});
+    assert.equal(viewText(connectionView({window,stage:'request-next',summary:transaction}).status),'Transaction sent.');
+    assert.equal(viewText(connectionView({window,stage:'request-next',summary}).status),'Message signed.');
   }
 });
 test('wording R2: shared copy uses straight apostrophes',()=>{

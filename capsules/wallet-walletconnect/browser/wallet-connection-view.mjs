@@ -204,7 +204,7 @@ export function connectionView(input) {
   requireValue(!(transactionHash&&knownNotSent),'transaction hash conflicts with not-sent outcome');
   requireValue(!knownNotSent||!summary?.transaction||['transaction-declined','transaction-access-error'].includes(stage),'known transaction outcome stage');
   const transactionRisk = transactionHash!==null || safety !== false || (!knownNotSent && summary?.transaction && (screen.dispatched || /timeout|cancelled|reopened|error|removed/.test(stage)));
-  if (transactionRisk) notice = notice.replace(/If .*?Reload control\./g, '').replace(', then reload Home using the browser\'s Reload control.', '.');
+  if (transactionRisk) notice = notice.replace(/If .*?Reload control\./g, '').replace(', then reload Home using the browser\'s Reload control.', '.').trim();
   if(transactionRisk&&screen.paymentSafeNotice!==undefined)notice=screen.paymentSafeNotice;
   let actions = screen.requestPicker ? [] : [screen.primary, ...(screen.secondary || []), screen.requestAction, screen.reviewAction].filter(Boolean).map(action);
   if (window !== 'metamask' || input.alternativeAllowed !== true || requestScreen || screen.account || screen.selectedAccount || transactionRisk) actions = actions.filter(a => a.id !== 'use-walletconnect');
@@ -225,7 +225,7 @@ export function connectionView(input) {
   if(stage==='disconnecting')notice=window==='walletconnect'&&supported&&!supported.includes('close-window')?'Keep this window open until disconnecting finishes.':'Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed'){notice+=' Home cannot save that answer.';if(safetyNotice!==null)safetyNotice=notice;}
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
-  let outcome = parts(screen.status);
+  let outcome = parts(stage === 'request-next' && summary?.transaction ? 'Transaction sent.' : screen.status);
   if(summary?.transaction&&result.disposition==='answered'&&result.receipt!=='recorded'){
     outcome=parts('The wallet returned a transaction result. Home cannot save it.');
     notice='Check {{wallet}} and Activity in Wallet before sending again.';

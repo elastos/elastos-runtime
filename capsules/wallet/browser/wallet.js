@@ -568,7 +568,7 @@ function renderWalletReviewRequests() {
   if (reviewWalletRequestId && focusedRequestVisible) {
     showStatus("Review this request.", "muted");
   } else if (reviewWalletRequestId) {
-    showStatus("This request is unavailable. Check Activity and any wallet you used before trying again. If you still need to continue, return to the app for a new request.", "muted");
+    showStatus("This request is unavailable. Check Activity and any wallet you used before trying again. To continue, return to the app and make a new request.", "muted");
   }
 }
 
