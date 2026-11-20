@@ -149,6 +149,8 @@ for(const engine of ['chromium','webkit'])test('live needs: rendering and QR car
   const hashArgs=fixtureArguments(states.find(r=>r.designState==='walletconnect/transaction-wallet-error'),{compact:true});hashArgs[0].transactionHash='0x'+'ab'.repeat(32);await mount(hashArgs);
   const hash=f.page.locator('.connection-hash');assert.equal(await hash.textContent(),hashArgs[0].transactionHash);assert.equal(await hash.evaluate(e=>(getComputedStyle(e).userSelect||getComputedStyle(e).webkitUserSelect)),'text');assert.equal(await f.page.locator('a').count(),0);
   assert.equal(await hash.evaluate(e=>{const range=document.createRange();range.selectNodeContents(e);const s=getSelection();s.removeAllRanges();s.addRange(range);return s.toString();}),hashArgs[0].transactionHash);await hash.scrollIntoViewIfNeeded();await f.page.screenshot({path:proof.path+'/completion-failure-hash-'+engine+'.png'});
+  hashArgs[0].account.name='Personal wallet';hashArgs[0].currentSelection={address:'0x'+'12'.repeat(20),network:'Base'};await mount(hashArgs);
+  const selectionName=f.page.locator('.connection-current-selection .connection-wallet');assert.equal(await selectionName.textContent(),'Personal wallet');assert.equal(await selectionName.getAttribute('dir'),'auto','the wallet name stays isolated in the selection notice');
   receipts.push({engine,stages:live.length,supportedActionPaths:states.length+live.length,pickerRows:21,qr:box,result:'PASS'});
  }finally{await f.close();}
 });
