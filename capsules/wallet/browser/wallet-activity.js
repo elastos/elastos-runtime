@@ -53,7 +53,7 @@ export function activityTitle(request) {
   const status = readText(request.status);
   const capsule = requestingAppName(request);
   if (request.transaction_hash && status === "rejected" && decisionWasDismissed(request)) {
-    return `${capsule} · Dismissed request. Your wallet reported this transaction as sent`;
+    return `${capsule} · Dismissed, but your wallet reported it as sent`;
   }
   if (request.transaction_hash) {
     return `${capsule} · Sent transaction`;
