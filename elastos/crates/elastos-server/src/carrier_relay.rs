@@ -52,12 +52,57 @@ pub(super) async fn failed_route_reason(
     "no verified Carrier route to the requested peer"
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RelayPins {
+    primary: [u8; 32],
+    backup: Option<[u8; 32]>,
+}
+
+impl RelayPins {
+    fn parse(raw: &str) -> Result<Self> {
+        let pins = raw
+            .split(',')
+            .map(|raw| {
+                anyhow::ensure!(
+                    raw.len() == 64 && raw.bytes().all(|b| b.is_ascii_hexdigit()),
+                    "relay public-key identity must be 64 SHA-256 hex digits"
+                );
+                let mut pin = [0; 32];
+                for (i, byte) in pin.iter_mut().enumerate() {
+                    *byte = u8::from_str_radix(&raw[2 * i..2 * i + 2], 16)?;
+                }
+                Ok(pin)
+            })
+            .collect::<Result<Vec<[u8; 32]>>>()?;
+        anyhow::ensure!(
+            (1..=2).contains(&pins.len()),
+            "relay requires one primary and at most one backup pin"
+        );
+        Ok(Self {
+            primary: pins[0],
+            backup: pins.get(1).copied(),
+        })
+    }
+
+    fn accepts(self, cert: &CertificateDer<'_>) -> bool {
+        use sha2::Digest as _;
+        let Ok((remaining, parsed)) = x509_parser::parse_x509_certificate(cert.as_ref()) else {
+            return false;
+        };
+        if !remaining.is_empty() {
+            return false;
+        }
+        let actual: [u8; 32] = sha2::Sha256::digest(parsed.public_key().raw).into();
+        actual == self.primary || self.backup == Some(actual)
+    }
+}
+
 /// Release artifacts carry this pair inside their signed binary. Source Homes
 /// supply the pair explicitly. The release pair owns selection when present.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ClientSettings {
     pub relay: Option<url::Url>,
-    pub certificate: Option<[u8; 32]>,
+    pub certificate: Option<RelayPins>,
 }
 
 impl ClientSettings {
@@ -115,22 +160,10 @@ impl ClientSettings {
             None => explicit_url.context("relay mode requires its address")?,
         };
         let raw = release_certificate.or(certificate);
-        let certificate = raw
-            .map(|raw| {
-                anyhow::ensure!(
-                    raw.len() == 64 && raw.bytes().all(|b| b.is_ascii_hexdigit()),
-                    "relay identity must be 64 SHA-256 hex digits"
-                );
-                let mut pin = [0; 32];
-                for (i, byte) in pin.iter_mut().enumerate() {
-                    *byte = u8::from_str_radix(&raw[2 * i..2 * i + 2], 16)?;
-                }
-                Ok::<_, anyhow::Error>(pin)
-            })
-            .transpose()?;
+        let certificate = raw.map(RelayPins::parse).transpose()?;
         anyhow::ensure!(
             certificate.is_some() || (!released && cfg!(test) && relay.scheme() == "http"),
-            "relay mode requires its pinned certificate identity"
+            "relay mode requires its pinned public-key identity"
         );
         anyhow::ensure!(
             !released || relay.scheme() == "https",
@@ -146,9 +179,9 @@ impl ClientSettings {
         Self::from_inputs(
             std::env::var("ELASTOS_CARRIER_NETWORK").ok().as_deref(),
             std::env::var("ELASTOS_RELAY_URL").ok().as_deref(),
-            std::env::var("ELASTOS_RELAY_CERT_SHA256").ok().as_deref(),
+            std::env::var("ELASTOS_RELAY_SPKI_SHA256").ok().as_deref(),
             option_env!("ELASTOS_RELEASE_RELAY_URL"),
-            option_env!("ELASTOS_RELEASE_RELAY_CERT_SHA256"),
+            option_env!("ELASTOS_RELEASE_RELAY_SPKI_SHA256"),
         )
     }
 }
@@ -164,7 +197,7 @@ pub(super) fn apply_relay(
 pub(super) fn apply_relay_pinned(
     builder: iroh::endpoint::Builder,
     relay: &url::Url,
-    certificate: Option<[u8; 32]>,
+    certificate: Option<RelayPins>,
 ) -> Result<iroh::endpoint::Builder> {
     anyhow::ensure!(
         matches!(relay.scheme(), "http" | "https")
@@ -332,7 +365,7 @@ fn pinned_relay_tls(relay: &RelayUrl, roots: CaTlsConfig) -> CaTlsConfig {
 fn pinned_relay_identity_tls(
     relay: &RelayUrl,
     roots: CaTlsConfig,
-    certificate: Option<[u8; 32]>,
+    certificate: Option<RelayPins>,
 ) -> CaTlsConfig {
     let host = match relay.host() {
         Some(url::Host::Domain(name)) => name.to_string(),
@@ -354,7 +387,7 @@ fn pinned_relay_identity_tls(
 
 #[derive(Debug)]
 struct PinnedRelayHost {
-    certificate: Option<[u8; 32]>,
+    certificate: Option<RelayPins>,
     host: ServerName<'static>,
     inner: Arc<dyn ServerCertVerifier>,
 }
@@ -374,14 +407,12 @@ impl ServerCertVerifier for PinnedRelayHost {
             ));
         }
         if let Some(pin) = self.certificate {
-            use sha2::Digest as _;
-            let actual: [u8; 32] = sha2::Sha256::digest(cert.as_ref()).into();
-            if actual != pin {
+            if !pin.accepts(cert) {
                 return Err(rustls::Error::General(
                     "Carrier relay identity changed".into(),
                 ));
             }
-            // A pinned certificate is the trust anchor. TLS still verifies the
+            // The pinned SPKI is the trust anchor. TLS still verifies the
             // handshake signature through verify_tls12/13_signature below.
             return Ok(ServerCertVerified::assertion());
         }
@@ -565,16 +596,7 @@ pub(super) async fn configured_server(
         global.bytes_per_second.get() >= 640,
         "global byte rate must reserve 64 source budgets"
     );
-    let mut source = iroh_relay::server::ClientRateLimit::new(
-        std::num::NonZeroU32::new(global.bytes_per_second.get() / 64).expect("source rate"),
-    );
-    source.max_burst_bytes = std::num::NonZeroU32::new(
-        global
-            .max_burst_bytes
-            .expect("configured global burst")
-            .get()
-            .div_ceil(64),
-    );
+    let source = source_byte_limits(&config)?;
     anyhow::ensure!(
         global.max_burst_bytes.expect("configured burst").get() >= 2 * 1024 * 1024,
         "global burst must admit the largest relay frame"
@@ -592,6 +614,23 @@ pub(super) async fn configured_server(
         let _ = admission.clients.set(service.clients().clone());
     }
     Ok(Some(server))
+}
+
+fn source_byte_limits(config: &toml::Table) -> Result<iroh_relay::server::ClientRateLimit> {
+    let rate = setting(config, "carrier_relay_network_bytes_per_second", 16 * 1024)?;
+    anyhow::ensure!(
+        rate >= 10,
+        "source byte rate must refill at least one byte per tick"
+    );
+    let mut limit = iroh_relay::server::ClientRateLimit::new(
+        std::num::NonZeroU32::new(rate).expect("validated source rate"),
+    );
+    limit.max_burst_bytes = std::num::NonZeroU32::new(setting(
+        config,
+        "carrier_relay_network_burst_bytes",
+        32 * 1024,
+    )?);
+    Ok(limit)
 }
 
 fn setting(config: &toml::Table, key: &str, default: u32) -> Result<u32> {
@@ -852,7 +891,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(release.relay.unwrap().as_str(), "https://relay.example/");
-        assert_eq!(release.certificate, Some([0xab; 32]));
+        assert_eq!(
+            release.certificate,
+            Some(RelayPins {
+                primary: [0xab; 32],
+                backup: None
+            })
+        );
         assert!(ClientSettings::from_inputs(
             Some("relay"),
             Some("https://other.example/"),
@@ -909,6 +954,39 @@ mod tests {
             Some(&pin)
         )
         .is_err());
+    }
+
+    #[test]
+    fn source_byte_rate_has_independent_defaults_and_settings() {
+        let defaults = source_byte_limits(&toml::Table::new()).unwrap();
+        assert_eq!(defaults.bytes_per_second.get(), 16 * 1024);
+        assert_eq!(defaults.max_burst_bytes.unwrap().get(), 32 * 1024);
+        let mut config: toml::Table =
+            "carrier_relay_bytes_per_second = 4096\ncarrier_relay_burst_bytes = 2097152"
+                .parse()
+                .unwrap();
+        assert_eq!(
+            source_byte_limits(&config).unwrap().bytes_per_second,
+            defaults.bytes_per_second
+        );
+        config.insert(
+            "carrier_relay_network_bytes_per_second".into(),
+            toml::Value::Integer(65536),
+        );
+        config.insert(
+            "carrier_relay_network_burst_bytes".into(),
+            toml::Value::Integer(131072),
+        );
+        let configured = source_byte_limits(&config).unwrap();
+        assert_eq!(configured.bytes_per_second.get(), 65536);
+        assert_eq!(configured.max_burst_bytes.unwrap().get(), 131072);
+        for invalid in [0, 9, -1, i64::MAX] {
+            config.insert(
+                "carrier_relay_network_bytes_per_second".into(),
+                toml::Value::Integer(invalid),
+            );
+            assert!(source_byte_limits(&config).is_err());
+        }
     }
 
     #[test]
@@ -1818,19 +1896,59 @@ mod tests {
     fn relay_pin_survives_certificate_renewal_with_the_same_key() {
         use sha2::Digest as _;
         let key = rcgen::KeyPair::generate().unwrap();
-        let first = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap()
-            .self_signed(&key).unwrap();
+        let first = rcgen::CertificateParams::new(vec!["localhost".into()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
         let mut renewed = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap();
         renewed.serial_number = Some(42u64.into());
         let renewed = renewed.self_signed(&key).unwrap();
         assert_ne!(first.der(), renewed.der());
-        let pin = sha2::Sha256::digest(key.public_key_der()).into();
+        let pin = RelayPins {
+            primary: sha2::Sha256::digest(key.public_key_der()).into(),
+            backup: None,
+        };
         let relay: RelayUrl = "https://localhost/".parse().unwrap();
         let verifier = pinned_relay_identity_tls(&relay, CaTlsConfig::embedded(), Some(pin))
-            .server_cert_verifier(Arc::new(rustls::crypto::ring::default_provider())).unwrap();
+            .server_cert_verifier(Arc::new(rustls::crypto::ring::default_provider()))
+            .unwrap();
         for cert in [first.der(), renewed.der()] {
-            assert!(verifier.verify_server_cert(cert, &[], &ServerName::try_from("localhost").unwrap(), &[], UnixTime::now()).is_ok());
+            assert!(verifier
+                .verify_server_cert(
+                    cert,
+                    &[],
+                    &ServerName::try_from("localhost").unwrap(),
+                    &[],
+                    UnixTime::now()
+                )
+                .is_ok());
         }
+    }
+
+    #[test]
+    fn backup_spki_pin_accepts_rotation_and_refuses_a_third_key() {
+        use sha2::Digest as _;
+        let cert = |key: &rcgen::KeyPair| {
+            rcgen::CertificateParams::new(vec!["localhost".into()])
+                .unwrap()
+                .self_signed(key)
+                .unwrap()
+        };
+        let primary = rcgen::KeyPair::generate().unwrap();
+        let backup = rcgen::KeyPair::generate().unwrap();
+        let foreign = rcgen::KeyPair::generate().unwrap();
+        let pins = RelayPins::parse(&format!(
+            "{:x},{:x}",
+            sha2::Sha256::digest(primary.public_key_der()),
+            sha2::Sha256::digest(backup.public_key_der())
+        ))
+        .unwrap();
+        assert!(pins.accepts(cert(&primary).der()));
+        assert!(pins.accepts(cert(&backup).der()));
+        assert!(!pins.accepts(cert(&foreign).der()));
+        assert!(!pins.accepts(&CertificateDer::from(vec![0; 32])));
+        assert!(RelayPins::parse("").is_err());
+        assert!(RelayPins::parse(&format!("{0},{0},{0}", "ab".repeat(32))).is_err());
     }
 
     #[test]
@@ -1839,7 +1957,11 @@ mod tests {
         let (certs, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
         let (foreign, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
         let relay: RelayUrl = "https://localhost/".parse().unwrap();
-        let pin: [u8; 32] = sha2::Sha256::digest(certs[0].as_ref()).into();
+        let (_, parsed) = x509_parser::parse_x509_certificate(certs[0].as_ref()).unwrap();
+        let pin = RelayPins {
+            primary: sha2::Sha256::digest(parsed.public_key().raw).into(),
+            backup: None,
+        };
         let verifier = pinned_relay_identity_tls(
             &relay,
             CaTlsConfig::custom_roots(foreign.clone()),

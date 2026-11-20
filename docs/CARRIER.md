@@ -478,19 +478,19 @@ Peer discovery, gossip messaging, and peer-to-peer content transfer. Built into 
 - `tunnel-provider` capsule using **cloudflared** (HTTP tunnel to public internet)
 
 **Transport:** Carrier chooses direct Iroh QUIC when it works and the release's
-meeting point otherwise. A release carries one HTTPS origin and one SHA-256
-fingerprint of its DER TLS certificate inside the Runtime binary. The signed
+meeting point otherwise. A release carries one HTTPS origin and SHA-256 hashes
+of its primary and optional backup DER SubjectPublicKeyInfo (SPKI) inside the Runtime binary. The signed
 release binds that binary's checksum. Both long-lived and temporary endpoints
 use this pair; explicit dials, memory, mDNS and gossip accept that origin only.
-TLS verifies possession of the pinned certificate's key. The system resolver
+TLS verifies possession of an approved public key. The system resolver
 owns DNS, with public fallback disabled.
 
 A release without that pair uses direct routes from mDNS, local operator tickets
-and gossip. Its tickets preserve LAN, VPN and routed addresses when it has no
-public address, as direct-only Homes require. Relay-mode tickets share public IP
+and gossip. Its tickets preserve LAN, VPN and routed addresses alongside public
+addresses, as direct-only Homes require. Relay-mode tickets share public IP
 hints only; Runtime supplies the approved meeting point. Source Homes select
 `ELASTOS_CARRIER_NETWORK=relay`, `ELASTOS_RELAY_URL` and
-`ELASTOS_RELAY_CERT_SHA256` explicitly. Released Homes use their built-in pair;
+`ELASTOS_RELAY_SPKI_SHA256` explicitly. Released Homes use their built-in pair;
 an explicit direct-only setting uses IP routes and accepts an empty relay override. Conflicting relay settings stop startup with an explanation.
 
 Chat shows the message time after the recipient's signed receipt arrives. An
@@ -521,6 +521,8 @@ carrier_relay_home_bytes_per_second = 65536
 carrier_relay_home_burst_bytes = 131072
 carrier_relay_bytes_per_second = 1048576
 carrier_relay_burst_bytes = 2097152
+carrier_relay_network_bytes_per_second = 16384
+carrier_relay_network_burst_bytes = 32768
 ```
 
 The operator selects a free TLS listener before signing its origin. This example
@@ -538,32 +540,35 @@ most twice its live-connection allowance per minute. Home admission retains
 reconnect pacing across sockets. Discovery validates the source before holding
 bounded, timed state. An endpoint's frame budget survives reconnects; a second
 shared budget applies to every endpoint together. Each source allocation shares
-one sixty-fourth of the global rate and burst. Ping and Pong bypass application
+an independent rate and burst, set by `carrier_relay_network_bytes_per_second`
+and `carrier_relay_network_burst_bytes`. Defaults are 16 KiB/s and 32 KiB for a
+source, 64 KiB/s and 128 KiB for a Home, and 1 MiB/s and 2 MiB in total. Ping and Pong bypass application
 budgets, and control replies remain readable while one data frame waits. These rates count encoded
 client relay frames; forwarding sends a second copy, and TLS, handshake and
 control overhead add traffic. They are application traffic budgets, not an OS
 link shaper. Operators size the link for that overhead.
 
-Before building the signed release, compute the certificate identity:
+Before building the signed release, compute the public-key identity:
 
 ```sh
-openssl x509 -in meeting-point.crt -outform DER | openssl dgst -sha256
+openssl x509 -in meeting-point.crt -pubkey -noout |
+  openssl pkey -pubin -outform DER | openssl dgst -sha256
 ```
 
-Pass the approved HTTPS origin and hex digest as `carrier_relay_url` and
-`carrier_relay_cert_sha256` to the release-package workflow. Its native builders
-embed both in each Runtime. Source builds use `ELASTOS_RELEASE_RELAY_URL` and
-`ELASTOS_RELEASE_RELAY_CERT_SHA256` as explicit build inputs. The release signer
-compares the `carrier_relay` pair in each `platform-input.json` and the seed's
-`seed-input.json`. The seed's own Carrier uses the same pair as released Homes;
-its public listener still owns incoming connections and source accounting. The signer
-verifies the resulting artifacts and signs their checksums through the existing
-release ceremony. The operator then restarts the approved seed service. The process loads its
-certificate once at startup, so automatic certificate-file renewal changes the
-active identity only after an operator restart.
+Commit the hex digest in `carrier-relay-spki-sha256.txt`: the primary pin on
+the first data line and an optional backup pin on the second. Pass only the
+approved HTTPS origin as `carrier_relay_url` to the release-package workflow.
+Native builders read the pins from this repository file. A build with a meeting
+point address and an empty pin file fails. Source release builds use
+`ELASTOS_RELEASE_RELAY_URL` and the same file. The release signer compares the
+`carrier_relay` origin and `spki_sha256` list in each `platform-input.json` and
+the seed's `seed-input.json`, then signs the artifact checksums through the
+existing release ceremony. The seed uses the same approved keys as released
+Homes. Its listener owns incoming connections and source accounting. The
+operator restarts the approved seed service to load its certificate.
 
 From a different network, check `https://<approved-origin>/healthz` with a TLS
-client configured to trust that certificate and compare its DER digest with the
+client configured to trust that certificate and compare its SPKI digest with an
 release pin. With the approved origin, DNS host and port in
 `MEETING_POINT_ORIGIN`, `MEETING_POINT_HOST` and `MEETING_POINT_PORT`, run:
 
@@ -571,7 +576,7 @@ release pin. With the approved origin, DNS host and port in
 curl --fail --cacert meeting-point.crt "${MEETING_POINT_ORIGIN%/}/healthz"
 openssl s_client -connect "$MEETING_POINT_HOST:$MEETING_POINT_PORT" \
   -servername "$MEETING_POINT_HOST" </dev/null 2>/dev/null |
-  openssl x509 -outform DER | openssl dgst -sha256
+  openssl x509 -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256
 ```
 
 The digest must equal the signed build's approved pin. Then run the installed two-Home journey: send a unique message in
@@ -580,13 +585,11 @@ and repeat, then restore UDP and observe a direct route. The Linux CI journey
 also counts actual discovery packets. A public certificate check alone proves
 neither the pin nor delivery.
 
-Certificate renewal with the same key changes this certificate fingerprint.
-For rotation, build and sign a release with the replacement pair, distribute it
-through the existing signed update path, and coordinate the seed certificate
-change with the Homes under test. Old and new pins have a delivery interruption
-until both peers use the accepted meeting point. Keeping a separate replacement
-listener during rollout can preserve old release service. Irzhy approves the
-identity and rotation before enablement.
+Certificate renewal with the same key keeps the SPKI hash and requires no Home
+release. Before rotating keys, commit the new key as the backup pin and ship the
+signed update. After Homes accept that update, the operator can switch the seed
+to that key. A later release can promote it to primary and replace the backup.
+Irzhy approves the identity and rotation before enablement.
 
 To stop the service, remove its relay bind, discovery and TLS settings together,
 then restart the seed's existing Home service. Ship a signed release with both

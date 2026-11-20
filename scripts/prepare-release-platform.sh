@@ -245,11 +245,14 @@ else
 fi
 [[ "$CARGO_TARGET_DIR" == /* ]] || die "Cargo target directory must resolve to an absolute path"
 export CARGO_TARGET_DIR ELASTOS_RELEASE_VERSION="$VERSION"
-unset ELASTOS_RELEASE_RELAY_URL ELASTOS_RELEASE_RELAY_CERT_SHA256
-if [[ -n "${RELEASE_CARRIER_RELAY_URL:-}${RELEASE_CARRIER_RELAY_CERT_SHA256:-}" ]]; then
-  [[ -n "${RELEASE_CARRIER_RELAY_URL:-}" && "${RELEASE_CARRIER_RELAY_CERT_SHA256:-}" =~ ^[0-9a-fA-F]{64}$ ]] || die "Meeting point needs its address and certificate identity"
+unset ELASTOS_RELEASE_RELAY_URL ELASTOS_RELEASE_RELAY_CERT_SHA256 ELASTOS_RELEASE_RELAY_SPKI_SHA256
+if [[ -n "${RELEASE_CARRIER_RELAY_URL:-}" ]]; then
   export ELASTOS_RELEASE_RELAY_URL="$RELEASE_CARRIER_RELAY_URL"
-  export ELASTOS_RELEASE_RELAY_CERT_SHA256="$RELEASE_CARRIER_RELAY_CERT_SHA256"
+  # The same repository pin file supplies the build and the artifact receipt.
+  python3 - <<'PINS'
+import os, runpy
+runpy.run_path("scripts/release-platform-input.py")["relay_build_identity"](os.environ)
+PINS
 fi
 rustup target list --installed | grep -Fx "$TARGET" >/dev/null || die "Required Rust target is not installed: $TARGET"
 # Native macOS uses the same Cargo cache as normal source-home builds. Linux

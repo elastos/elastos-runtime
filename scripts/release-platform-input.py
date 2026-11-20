@@ -755,20 +755,26 @@ def source_identity(commit, tree):
             "lockfiles": {p: digest(SOURCE_ROOT / p) for p in locks}}
 
 
-def relay_build_identity(environment):
-    origin = environment.get("ELASTOS_RELEASE_RELAY_URL")
-    pin = environment.get("ELASTOS_RELEASE_RELAY_CERT_SHA256")
-    if origin is None and pin is None:
-        return None
-    if not isinstance(origin, str) or not isinstance(pin, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", pin):
-        raise ValueError("meeting point requires its origin and certificate identity")
+def relay_identity(origin, pins):
+    if (not isinstance(origin, str) or not isinstance(pins, list) or not 1 <= len(pins) <= 2
+            or any(not isinstance(pin, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", pin) for pin in pins)):
+        raise ValueError("meeting point requires its origin and repository SPKI identity")
     parsed = urlsplit(origin)
     if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
             or parsed.password is not None or parsed.path not in ("", "/") or parsed.query or parsed.fragment
             or any(character.isspace() for character in origin)):
         raise ValueError("meeting point requires an HTTPS origin")
-    _ = parsed.port  # Refuse malformed or out-of-range ports too.
-    return {"origin": origin, "certificate_sha256": pin.lower()}
+    _ = parsed.port
+    return {"origin": origin, "spki_sha256": [pin.lower() for pin in pins]}
+
+
+def relay_build_identity(environment):
+    origin = environment.get("ELASTOS_RELEASE_RELAY_URL")
+    if origin is None:
+        return None
+    pins = [line.split("#", 1)[0].strip() for line in
+            (SOURCE_ROOT / "carrier-relay-spki-sha256.txt").read_text().splitlines()]
+    return relay_identity(origin, [pin for pin in pins if pin])
 
 
 def record(args):
@@ -838,10 +844,9 @@ def verify_receipt_header(receipt):
         raise ValueError("platform receipt must be an object")
     if receipt.get("carrier_relay") is not None:
         relay = receipt["carrier_relay"]
-        if not isinstance(relay, dict) or set(relay) != {"origin", "certificate_sha256"}:
+        if not isinstance(relay, dict) or set(relay) != {"origin", "spki_sha256"}:
             raise ValueError("invalid meeting point build identity")
-        if relay_build_identity({"ELASTOS_RELEASE_RELAY_URL": relay["origin"],
-                                 "ELASTOS_RELEASE_RELAY_CERT_SHA256": relay["certificate_sha256"]}) != relay:
+        if relay_identity(relay["origin"], relay["spki_sha256"]) != relay:
             raise ValueError("invalid meeting point build identity")
     platform = receipt.get("platform")
     if receipt.get("schema") != SCHEMA or not isinstance(platform, str) or platform not in PLATFORMS:

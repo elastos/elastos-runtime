@@ -34,7 +34,7 @@ with open(os.environ["MOCK_LOG"], "a") as log:
     log.write(json.dumps({"cwd": str(pathlib.Path.cwd()), "args": args,
                           "target_dir": os.environ.get("CARGO_TARGET_DIR"),
                           "carrier_relay": {key: os.environ.get(key) for key in
-                              ("ELASTOS_RELEASE_RELAY_URL", "ELASTOS_RELEASE_RELAY_CERT_SHA256")}}) + "\n")
+                              ("ELASTOS_RELEASE_RELAY_URL", "ELASTOS_RELEASE_RELAY_SPKI_SHA256")}}) + "\n")
 if args == ["--version"]:
     print("cargo fixture 1.91")
 elif args[0] == "locate-project":
@@ -147,16 +147,15 @@ if __name__ == "__main__":
 class PrepareWorkerTest(unittest.TestCase):
     def test_runtime_build_and_receipt_own_only_explicit_release_pair(self):
         for name, pair in (("direct", {}), ("paired", {
-                "RELEASE_CARRIER_RELAY_URL": "https://meeting.fixture:4433/",
-                "RELEASE_CARRIER_RELAY_CERT_SHA256": "AB" * 32})):
+                "RELEASE_CARRIER_RELAY_URL": "https://meeting.fixture:4433/"})):
             environment = {**self.env, "ELASTOS_RELEASE_RELAY_URL": "https://unapproved.fixture/",
-                           "ELASTOS_RELEASE_RELAY_CERT_SHA256": "cd" * 32, **pair}
+                           "ELASTOS_RELEASE_RELAY_SPKI_SHA256": "cd" * 32, **pair}
             for key in ("RELEASE_CARRIER_RELAY_URL", "RELEASE_CARRIER_RELAY_CERT_SHA256"):
                 if key not in pair:
                     environment.pop(key, None)
             output, result = self.prepare(name, env=environment)
             self.assertEqual(result.returncode, 0, result.stderr)
-            expected = ({"origin": pair["RELEASE_CARRIER_RELAY_URL"], "certificate_sha256": "ab" * 32}
+            expected = ({"origin": pair["RELEASE_CARRIER_RELAY_URL"], "spki_sha256": ["ab" * 32]}
                         if pair else None)
             self.assertEqual(json.loads((output / "platform-input.json").read_text())["carrier_relay"], expected)
             builds = [json.loads(line) for line in (self.root / "cargo.log").read_text().splitlines()
@@ -166,7 +165,7 @@ class PrepareWorkerTest(unittest.TestCase):
             for build in builds:
                 self.assertEqual(build["carrier_relay"], {
                     "ELASTOS_RELEASE_RELAY_URL": pair.get("RELEASE_CARRIER_RELAY_URL"),
-                    "ELASTOS_RELEASE_RELAY_CERT_SHA256": pair.get("RELEASE_CARRIER_RELAY_CERT_SHA256")})
+                    "ELASTOS_RELEASE_RELAY_SPKI_SHA256": None})
             (self.root / "cargo.log").write_text("")
 
     def setUp(self):
@@ -176,6 +175,7 @@ class PrepareWorkerTest(unittest.TestCase):
         self.repo = self.root / "source"
         scripts = self.repo / "scripts"
         scripts.mkdir(parents=True)
+        (self.repo / "carrier-relay-spki-sha256.txt").write_text("ab" * 32 + "\n")
         for name in (
             "publish-release.sh", "prepare-release-platform.sh", "release-platform-input.py",
             "components-release-integrity-check.py", "release-platforms.json", "release-signer.py", "check-versioning.sh", "build-media-tools.sh",

@@ -1,23 +1,22 @@
 use std::env;
 
 fn main() {
-    for key in [
-        "ELASTOS_RELEASE_RELAY_URL",
-        "ELASTOS_RELEASE_RELAY_CERT_SHA256",
-    ] {
-        println!("cargo:rerun-if-env-changed={key}");
-        if let Ok(value) = env::var(key) {
-            assert!(
-                !value.contains(['\n', '\r']),
-                "invalid release meeting point"
-            );
-            println!("cargo:rustc-env={key}={value}");
-        }
-    }
-    assert_eq!(
-        env::var_os("ELASTOS_RELEASE_RELAY_URL").is_some(),
-        env::var_os("ELASTOS_RELEASE_RELAY_CERT_SHA256").is_some(),
-        "release meeting point needs address and identity"
+    println!("cargo:rerun-if-env-changed=ELASTOS_RELEASE_RELAY_URL");
+    let pin_file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../carrier-relay-spki-sha256.txt");
+    println!("cargo:rerun-if-changed={}", pin_file.display());
+    let pins = std::fs::read_to_string(pin_file).expect("repository meeting point pins");
+    let pins: Vec<_> = pins
+        .lines()
+        .map(|line| line.split('#').next().unwrap().trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert!(
+        pins.len() <= 2
+            && pins
+                .iter()
+                .all(|pin| pin.len() == 64 && pin.bytes().all(|b| b.is_ascii_hexdigit())),
+        "meeting point accepts one primary and at most one backup SPKI SHA-256 pin"
     );
     if let Ok(raw) = env::var("ELASTOS_RELEASE_RELAY_URL") {
         let relay = url::Url::parse(&raw).expect("invalid release meeting point origin");
@@ -31,11 +30,14 @@ fn main() {
                 && relay.fragment().is_none(),
             "release meeting point must be an HTTPS origin"
         );
-        let pin =
-            env::var("ELASTOS_RELEASE_RELAY_CERT_SHA256").expect("release meeting point identity");
         assert!(
-            pin.len() == 64 && pin.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "invalid release meeting point certificate identity"
+            !pins.is_empty(),
+            "release meeting point requires a repository SPKI pin"
+        );
+        println!("cargo:rustc-env=ELASTOS_RELEASE_RELAY_URL={raw}");
+        println!(
+            "cargo:rustc-env=ELASTOS_RELEASE_RELAY_SPKI_SHA256={}",
+            pins.join(",")
         );
     }
     println!("cargo:rerun-if-env-changed=ELASTOS_RELEASE_VERSION");

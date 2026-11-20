@@ -68,8 +68,8 @@ pub(super) enum DirectDeliveryIssue {
 impl DirectDeliveryIssue {
     fn detail(self) -> &'static str {
         match self {
-            Self::PeerUnreachable => " Your Home is still trying to deliver this message. Check that both Homes and their networks are on.",
-            Self::SystemDnsUnavailable => " Your system DNS cannot resolve the meeting point. Check your network DNS settings.",
+            Self::PeerUnreachable => " Check that both Homes and their networks are on.",
+            Self::SystemDnsUnavailable => " Check your network settings.",
             Self::ReceiptWaitPassed => " Your Home did not receive a delivery receipt in time.",
         }
     }
@@ -530,7 +530,11 @@ mod tests {
 
     #[test]
     fn delivery_note_has_one_retry_claim_and_none_for_removed_contacts() {
-        for issue in [DirectDeliveryIssue::PeerUnreachable, DirectDeliveryIssue::SystemDnsUnavailable, DirectDeliveryIssue::ReceiptWaitPassed] {
+        for issue in [
+            DirectDeliveryIssue::PeerUnreachable,
+            DirectDeliveryIssue::SystemDnsUnavailable,
+            DirectDeliveryIssue::ReceiptWaitPassed,
+        ] {
             let active = pending_delivery_note(true, true, None, Some(issue)).unwrap();
             assert_eq!(active.matches("trying").count(), 1);
             let removed = pending_delivery_note(true, false, None, Some(issue)).unwrap();
@@ -549,11 +553,11 @@ mod tests {
         for (issue, text) in [
             (
                 DirectDeliveryIssue::PeerUnreachable,
-                "still trying to deliver this message",
+                "Check that both Homes",
             ),
             (
                 DirectDeliveryIssue::SystemDnsUnavailable,
-                "system DNS cannot resolve",
+                "Check your network settings",
             ),
             (
                 DirectDeliveryIssue::ReceiptWaitPassed,

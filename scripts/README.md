@@ -530,7 +530,7 @@ set agree; `install.sh` stays byte-identical across gateway hosts.
 
 ### Isolated Carrier network journey
 
-`scripts/ci-relay-journey.sh two-nat` builds real Runtime and provider binaries,
+`scripts/ci-installed-journeys.sh two-home-messages` on Linux builds real Runtime and provider binaries,
 installs throwaway Homes, and runs the shared two-Home message assertions through
 separate Linux NAT namespaces. `forced-relay` blocks UDP. `relay-to-direct`
 starts with UDP blocked, then opens owned NAT mappings for pre-seeded local
@@ -539,9 +539,10 @@ It also blocks all Carrier paths while both Homes stay healthy, checks the
 visible failure and Retry, and recovers the same signed message before the
 separate stopped-recipient recovery check.
 
-A future Linux workflow needs namespace/mount/packet-filter support, the tools
+The Linux workflow needs namespace/mount/packet-filter support, the tools
 in `scripts/ci-tools.txt`, the shared behaviour browser inputs, enough build and
 fixture disk space, a finite job timeout, and acceptance of the exact candidate's
 journey receipt with cleanup and route observations. It should invoke the same
-script for each arrangement and retain its public receipt and screenshots.
+installed message entry point for all four arrangements and retain its receipt
+and screenshots. macOS uses the same message assertions in the same-host arrangement.
 Production Home and seed state remain outside this fixture.

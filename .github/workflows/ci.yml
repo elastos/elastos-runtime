@@ -956,10 +956,15 @@ jobs:
           CI_MODEL_REPAIR_JOURNEY: 'true'
         run: scripts/ci-installed-journeys.sh model-repair
       - name: installed two-Home Community and direct messages
-        timeout-minutes: 10
+        timeout-minutes: 40
         env:
           CI_SOURCE_HOME: ${{ runner.temp }}/elastos-source-home
-        run: scripts/ci-installed-journeys.sh two-home-messages
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y iproute2 iptables iputils-ping
+          fi
+          scripts/ci-installed-journeys.sh two-home-messages
       # Homes and the Community node update at different times, so a release
       # must hold for every pairing of this candidate and the last released
       # Runtime. Merges and releases pay for the second build; a pull-request
@@ -993,15 +998,6 @@ jobs:
             --evidence "$RUNNER_TEMP/source-home-journeys/mixed-version" \
             --fixture-root "$RUNNER_TEMP/mixed-version-fixture" \
             | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: installed Carrier across two home networks
-        if: matrix.os == 'ubuntu-24.04'
-        timeout-minutes: 40
-        env:
-          ELASTOS_RELAY_EVIDENCE: ${{ runner.temp }}/source-home-journeys/relay
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y iproute2 iptables iputils-ping
-          scripts/ci-relay-journey.sh matrix
       - name: summarize installed model journey
         if: always()
         env:

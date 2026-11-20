@@ -1,0 +1,3 @@
+# SHA-256 of DER SubjectPublicKeyInfo, one hex digest per line.
+# First: primary key. Second (optional): backup key.
+# The meeting point stays off until an approved primary pin is committed.

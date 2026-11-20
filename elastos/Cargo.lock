@@ -1857,6 +1857,7 @@ dependencies = [
  "webpki-roots 1.0.10",
  "x-wing",
  "x25519-dalek 2.0.1",
+ "x509-parser 0.18.1",
  "zeroize",
  "zip",
 ]

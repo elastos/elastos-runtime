@@ -1752,7 +1752,7 @@ fn short_lived_endpoint_builder_with_pin(
     secret_key: SecretKey,
     network: CarrierNodeNetwork,
     approved_relay: Option<&url::Url>,
-    certificate: Option<[u8; 32]>,
+    certificate: Option<relay::RelayPins>,
 ) -> anyhow::Result<iroh::endpoint::Builder> {
     anyhow::ensure!(
         network != CarrierNodeNetwork::Isolated || approved_relay.is_none(),
@@ -1810,7 +1810,7 @@ async fn bind_carrier_endpoint_with_pin(
     approved_relay: Option<&url::Url>,
     requested_bind_addr: std::net::SocketAddr,
     allow_ephemeral_fallback: bool,
-    certificate: Option<[u8; 32]>,
+    certificate: Option<relay::RelayPins>,
 ) -> anyhow::Result<Endpoint> {
     let builder = || {
         short_lived_endpoint_builder_with_pin(
@@ -2053,7 +2053,7 @@ pub(crate) async fn start_isolated_carrier_node_with_registry(
 struct CarrierNetworkPolicy {
     network: CarrierNodeNetwork,
     relay: Option<url::Url>,
-    certificate: Option<[u8; 32]>,
+    certificate: Option<relay::RelayPins>,
 }
 
 async fn start_carrier_node_with_network(
@@ -9144,9 +9144,16 @@ pub(crate) mod tests {
             .with_ip_addr("100.101.102.103:5000".parse().unwrap())
             .with_ip_addr("[2606:4700::123]:5000".parse().unwrap());
         assert_eq!(shared_endpoint_addr(mixed.clone()), mixed);
-        let ticket = serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":[mixed.clone()]})).unwrap();
-        let ticket = data_encoding::BASE32_NOPAD.encode(&ticket).to_ascii_lowercase();
-        assert_eq!(decode_ticket_endpoints(&export_connect_ticket(&ticket).unwrap()), vec![mixed]);
+        let ticket =
+            serde_json::to_vec(&serde_json::json!({"topic":null,"endpoints":[mixed.clone()]}))
+                .unwrap();
+        let ticket = data_encoding::BASE32_NOPAD
+            .encode(&ticket)
+            .to_ascii_lowercase();
+        assert_eq!(
+            decode_ticket_endpoints(&export_connect_ticket(&ticket).unwrap()),
+            vec![mixed]
+        );
         for address in [
             "192.168.4.5:5000",
             "100.64.1.5:5000",
