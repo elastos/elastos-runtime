@@ -13,7 +13,7 @@ const recovery = new URL("./lib/browser-launch-recovery.mjs", import.meta.url).h
 
 // Scan calls, independent of how a module obtains Playwright: static import,
 // dynamic import, require, and environment-selected paths all face this gate.
-const launchCalls = /\.\s*(?:launch|launchPersistentContext|connectOverCDP)\s*\(/;
+const launchCalls = /(?:\.\s*(?:launch|launchPersistentContext|connectOverCDP)|\[\s*["'](?:launch|launchPersistentContext|connectOverCDP)["']\s*\])\s*\(/;
 const boundaries = /withBrowserLaunchRecovery\s*\(|(?:require|import)ProductSmokePlaywright\s*\(|from\s*["'][^"']*system-uiux-fixture\.mjs["']/;
 const exceptions = new Map([
   ["browser-launch-measure.mjs", "raw failure-rate control"],
@@ -23,6 +23,21 @@ const exceptions = new Map([
   ["lib/browser-launch-recovery.test.mjs", "fake engines verify the recovery boundary"],
   ["lib/browser-launch-recovery.mjs", "the single native launch implementation"],
 ]);
+function checkRawImports(source, relative) {
+  // Check each acquisition. One wrapped import cannot cover a second raw one.
+  const acquisitions = [
+    /\bimport\s+([^;]+?)\s+from\s*["']([^"']*playwright[^"']*)["']/g,
+    /\b(?:const|let|var)\s+(\{[^}]*\}|[\w$]+)\s*=\s*(?:await\s*)?(?:import|require)\s*\(([^;]*)/g,
+  ];
+  for (const pattern of acquisitions) for (const match of source.matchAll(pattern)) {
+    if (!/playwright|chromium|firefox|webkit/i.test(match[0])) continue;
+    const bindings = match[1].replace(/[{}]/g, "").split(",").map(part => part.trim().split(/\s+as\s+|\s*:\s*/).at(-1));
+    for (const binding of bindings) {
+      const name = binding.replace(/[$]/g, "\\$");
+      assert.match(source, new RegExp(`withBrowserLaunchRecovery\\s*\\(\\s*(?:${name}\\s*[,)]|\\{[^}]*\\b${name}\\b[^}]*\\})`), `${relative}: raw ${binding} import`);
+    }
+  }
+}
 function checkLaunchCoverage(directory, prefix = "", testsOnly = false) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const relative = prefix + entry.name;
@@ -31,7 +46,10 @@ function checkLaunchCoverage(directory, prefix = "", testsOnly = false) {
       checkLaunchCoverage(new URL(entry.name + "/", directory), relative + "/", testsOnly);
     } else if (entry.isFile() && /\.[cm]?js$/.test(entry.name) && (!testsOnly || entry.name.endsWith(".test.mjs"))) {
       const source = readFileSync(path, "utf8");
-      if (launchCalls.test(source) && !exceptions.has(relative)) assert.match(source, boundaries, relative);
+      if (launchCalls.test(source) && !exceptions.has(relative)) {
+        assert.match(source, boundaries, relative);
+        checkRawImports(source, relative);
+      }
     }
   }
 }
