@@ -288,7 +288,8 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await page.evaluate(()=>document.querySelector('#system-frame').contentWindow.postMessage({
         type:'elastos:runtime-events',schema:'elastos.home.runtime-events/v1',events:[],
       },'*'));
-      await system.getByText(f.state.settings.message,{exact:true}).waitFor({timeout:5000});
+      await system.locator('#update-background-message').getByText(f.state.settings.message,{exact:true}).waitFor({timeout:5000});
+      assert.equal(await system.getByText(f.state.settings.message,{exact:true}).count(),1,field+' change shows the repair text once');
       assert.equal(await system.getByText(copy('SAVE_ERROR'),{exact:true}).count(),0,field+' change clears old feedback');
     }
     f.state.failWrite=false;f.state.settings=preference(false,false);await page.reload();
@@ -371,6 +372,11 @@ test("System preserves failed-update feedback when the installed version is unre
     await system.locator("#update-background-message").getByText(copy("INVALID_VERSION_TEXT"),{exact:true}).waitFor();
     assert.equal(await system.locator("#runtime-update-status").textContent(),f.state.updateController.message,
       "drawing the background setting keeps the failed-update message visible");
+    f.state.failWrite=true;f.state.failStatus=409;
+    await system.locator("label.system-switch:has(#update-background-choice)").click();
+    await system.locator('#update-background-message').getByText(copy('SAVE_ERROR'),{exact:true}).waitFor();
+    assert.equal(await system.locator("#runtime-update-status").textContent(),f.state.updateController.message,
+      "a failed setting save keeps the controller failure instead of replacing it with version repair text");
     assert.deepEqual(f.requestFailures,[]);
     await page.close();
   } finally {await browser?.close();await f.close();}

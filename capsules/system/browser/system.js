@@ -461,6 +461,8 @@ function renderSystemSummary(systemSummary) {
   acceptAppearance(appearance);
   setRuntimeState(runtime);
   setSourceState(source);
+  // A full setting snapshot owns feedback invalidation before either status draws.
+  if (backgroundSettingState(systemSummary.runtime_update?.background_checks) !== backgroundSaveState) backgroundSaveError = "";
   renderRuntimeUpdate(systemSummary.runtime_update);
   renderUpdateNotice();
 }
@@ -3860,6 +3862,7 @@ async function onBackgroundChange() {
       : error.status === 409
         ? runtimeUpdate.background_checks.save_error
         : "Home could not confirm your change. Try again.";
+    renderRuntimeUpdate(runtimeUpdate);
     renderUpdateNotice();
   } finally {
     backgroundBusy = false;
@@ -3874,7 +3877,6 @@ function configureUpdateNotice() {
 
 function renderUpdateNotice() {
   const background = runtimeUpdate?.background_checks;
-  if (backgroundSettingState(background) !== backgroundSaveState) backgroundSaveError = "";
   const backgroundNode = document.querySelector("#update-background");
   if (backgroundNode) backgroundNode.hidden = runtimeUpdateNode.hidden || !background;
   if (background && backgroundChoice) {
@@ -3882,7 +3884,6 @@ function renderUpdateNotice() {
     backgroundChoice.disabled = backgroundBusy;
     document.querySelector("#update-background-label").textContent = background.label;
     document.querySelector("#update-background-message").textContent = backgroundSaveError || background.message;
-    if (backgroundSaveError && runtimeUpdate?.message === background.message) showRuntimeUpdateStatus(runtimeUpdate.message);
   }
   if (focusUpdateRequested && !runtimeUpdateNode.hidden) focusUpdateCard();
 }
