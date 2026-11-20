@@ -556,6 +556,16 @@ for (const engine of ['chromium','webkit']) test(`${engine} MetaMask: typed data
       await typed.state('request-typed-data');await typed.action('send-request').click();await typed.state('request-done');
       assert.equal(await typed.top.evaluate(()=>testState.receipts[0].signature_type),'eip712');
     }finally{await typed.close();}
+    // A presentation label can change without changing the signing method.
+    const relabel=source=>source.replace('if (selected) return requests.length > 1', "if (selected) selected.title = 'Sign a message';\n    if (selected) return requests.length > 1");
+    const renamed=await fixture(browser,'metamask',{saved:true,requests:'typed',mutate:relabel});
+    try{
+      await renamed.state('request-typed-data');await renamed.action('send-request').click();await renamed.state('request-done');
+      assert.equal(await renamed.top.evaluate(()=>testState.receipts[0].signature_type),'eip712','intent owns signing after the heading changes');
+    }finally{await renamed.close();}
+    const sentenceDriven=await fixture(browser,'metamask',{saved:true,requests:'typed',mutate:source=>relabel(source).replace("requestIntents.get(selected.id) === 'browser_typed_data_sign'", "selected.title === 'Sign typed data'")});
+    try{await sentenceDriven.state('request-waiting');assert.notEqual(await sentenceDriven.frame.locator('main').getAttribute('data-state'),'request-typed-data','the former sentence comparison loses the typed-data state');}
+    finally{await sentenceDriven.close();}
     for(const mode of ['approve','decline','stop','timeout']){
       const f=await fixture(browser,'metamask',{saved:true,requests:'transaction'});
       try{
