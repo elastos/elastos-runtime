@@ -750,6 +750,7 @@ jobs:
     timeout-minutes: 180
     needs: [source-gate, engine-llama-amd64]
     env:
+      CI_TWO_HOME_NETWORK_MATRIX: 'true'
       CI_APT_PACKAGES: coturn e2fsprogs ffmpeg musl-tools nasm pkg-config
     strategy:
       fail-fast: false
@@ -1081,6 +1082,7 @@ jobs:
     timeout-minutes: 90
     needs: [source-gate, engine-llama-arm64]
     env:
+      CI_TWO_HOME_NETWORK_MATRIX: 'false'
       CI_APT_PACKAGES: coturn e2fsprogs ffmpeg musl-tools nasm pkg-config
     strategy:
       fail-fast: false

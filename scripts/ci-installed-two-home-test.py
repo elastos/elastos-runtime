@@ -50,6 +50,15 @@ class TwoHomeReceiptTests(unittest.TestCase):
             self.assertIn("CI_TWO_HOME_MESSAGES: 'true'", summary)
             self.assertNotIn('continue-on-error:', block.split('name: installed two-Home Community',1)[1].split('      - name:',1)[0])
 
+    def test_network_matrix_scope_stays_with_the_existing_x64_job(self):
+        source = (ROOT / '.github/workflows/ci.yml').read_text()
+        for job, enabled in [('source-home-linux', 'true'), ('source-home-linux-arm64', 'false')]:
+            block = source.split('\n  ' + job + ':\n', 1)[1].split('\n  source-home-', 1)[0]
+            self.assertIn("CI_TWO_HOME_NETWORK_MATRIX: '" + enabled + "'", block)
+        shell = (ROOT / 'scripts/ci-installed-journeys.sh').read_text()
+        self.assertIn('if [[ "${CI_TWO_HOME_NETWORK_MATRIX:-false}" == true ]]', shell)
+        self.assertIn('matrix_required = os.environ.get("CI_TWO_HOME_NETWORK_MATRIX") == "true"', shell)
+
     def identity(self):
         return {'candidate':'c'*40, 'source_tree':'d'*40, 'installed_runtime_sha256':'a'*64,
                 'source_components_sha256':'b'*64, 'installation_receipt_sha256':'e'*64}

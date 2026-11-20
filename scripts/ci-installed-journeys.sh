@@ -40,7 +40,7 @@ PY
         python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/model-repair" --model-repair
         ;;
     two-home-messages)
-        if [[ "$(uname -s)" == Linux ]]; then
+        if [[ "${CI_TWO_HOME_NETWORK_MATRIX:-false}" == true ]]; then
             python3 scripts/ci-installed-journeys.py --two-home-matrix --evidence-dir "$EVIDENCE/two-home-messages"
         else
             python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/two-home-messages" --two-home-messages
@@ -95,6 +95,7 @@ messages = json.loads(messages_path.read_text()) if messages_path.exists() else 
 matrix_path = root / "two-home-messages/matrix.json"
 matrix = json.loads(matrix_path.read_text()) if matrix_path.exists() else None
 messages_required = os.environ.get("CI_TWO_HOME_MESSAGES") == "true"
+matrix_required = os.environ.get("CI_TWO_HOME_NETWORK_MATRIX") == "true"
 results = {name: "failed or not run" for name in (
     "home_screenshots", "model_package_admission", *(["carrier_get"] if carrier else []),
     "installed_runtime_reply", "model_timing_observer", "process_cleanup", "disk_reserve")}
@@ -141,7 +142,7 @@ results["engine_absent_home"] = ("passed" if current(absence) and absence.get("e
 elapsed += absence.get("elapsed_seconds", 0) + absence.get("fixture_preparation_seconds", 0)
 if messages_required:
     try:
-        if sys.platform == "linux":
+        if matrix_required:
             message_current = (matrix is not None and set(matrix["arrangements"]) == set(journey["MESSAGE_NETWORKS"])
                 and matrix["identity"]["candidate"] == commit and matrix["identity"]["source_tree"] == tree
                 and all(journey["two_home_receipt_valid"](row, matrix["identity"], arrangement)
