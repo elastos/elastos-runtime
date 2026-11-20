@@ -30,16 +30,21 @@ const playwright = requireProductSmokePlaywright();
 const engineSkip = engine => windowTestOptions(engine).skip;
 const other = kind => kind === 'metamask' ? '0x'+'2'.repeat(40) : 'bc1q'+'b'.repeat(38);
 
+async function assertNoVisibleWindowHeading(frame, title) {
+  assert.equal(await frame.locator('main > header.connection-heading').count(), 0, 'no visible window heading');
+  assert.equal(await frame.locator('h1.connection-sr-only').innerText(), title);
+  const box = await frame.locator('h1.connection-sr-only').boundingBox();
+  assert.ok(!box || (box.width <= 1 && box.height <= 1), 'sr-only title is not visibly sized');
+}
+
 async function unisatIdentity(f, saved) {
   await f.state(saved ? 'linked' : 'ready');
-  assert.equal(await f.frame.locator('h1').innerText(), 'UniSat');
-  assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'), /connection-wallet/);
+  await assertNoVisibleWindowHeading(f.frame, 'UniSat');
   assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
   if (saved) return;
   await f.action('connect').click();
   await f.state('linked');
-  assert.equal(await f.frame.locator('h1').innerText(), 'UniSat');
-  assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'), /connection-unisat/);
+  await assertNoVisibleWindowHeading(f.frame, 'UniSat');
 }
 
 for (const engine of ['chromium', 'webkit']) test(`${engine} UniSat: identity waits for fresh Home discovery (Y11)`, { timeout: 20000, skip: engineSkip(engine) }, async t => {
@@ -281,8 +286,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   try {
     const f=await fixture(browser,kind,{saved:true,requests:true});try{
       await f.state('request-waiting');await f.action('send-request').click();await f.state('request-done');
-      assert.equal(await f.frame.locator('h1').innerText(),kind==='metamask'?'MetaMask or Brave Wallet':'UniSat');
-      assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'),new RegExp('connection-'+(kind==='metamask'?'wallet':kind)));
+      await assertNoVisibleWindowHeading(f.frame, kind==='metamask'?'MetaMask or Brave Wallet':'UniSat');
       // Existing response schema permits these statuses. This is a projection
       // check: today's pending-only Runtime endpoint normally omits them.
       for(const [status,approved_at,state] of [['rejected',null,'request-rejected'],['rejected',1,'request-dismissed']]) {

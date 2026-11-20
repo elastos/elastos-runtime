@@ -184,7 +184,6 @@ export function connectionView(input) {
   const extension=window==='metamask'||window==='unisat';
   const name = extension ? providerName||(window==='metamask'?'your wallet':'UniSat') : account?.name || (window==='walletconnect'?'your wallet':brands[window]);
   const title=extension?providerName||(window==='metamask'?'MetaMask or Brave Wallet':'UniSat'):brands[window];
-  const headingMark=extension?(providerName&&provider.providerId==='io.metamask'?'metamask':providerName&&provider.providerId==='unisat'?'unisat':'wallet'):window;
   const home = displayOrigin(input.homeOrigin);
   requireValue(input.targetNetwork===undefined||bounded(input.targetNetwork,80),'requested network label');
   const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: !summary && !context || (summary?.app || context?.app) === 'Requesting app' ? 'the app' : summary?.app || context?.app || 'the app', site: summary?.site || context?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
@@ -282,7 +281,7 @@ export function connectionView(input) {
   const queueRejectedCount=queued.filter(r=>r.status==='rejected').length;
   const queueDismissedCount=queued.filter(r=>r.status==='dismissed').length;
   const view = {
-    window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, transactionHash, localReturn:input.localReturn===true, title, headingMark, account, selectedAccount: !!screen.selectedAccount,
+    window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, transactionHash, localReturn:input.localReturn===true, title, account, selectedAccount: !!screen.selectedAccount,
     showAccount: !!screen.account, requiredAccount: !!screen.requiredAccount||!!(summary&&currentSelection&&(summary.address&&summary.address!==currentSelection.address||account?.accounts[0].networks[0]!==currentSelection.network)), disconnect: screen.disconnect !== false && window === 'walletconnect',
     request: requestScreen ? summary : null, transactionDisplay, choices, picker: !!screen.requestPicker,
     queueCount:queued.length, queuePendingCount, queueRecoveryCount, queueRejectedCount, queueDismissedCount, queueOtherCount:queued.length-queuePendingCount-queueRecoveryCount-queueRejectedCount-queueDismissedCount, queueOthers:!!(input.showNextRequests&&!screen.queueCount), status: outcome, notice: parts(effectiveNotice.trim()), afterNote: parts(screen.afterActionsNote),
@@ -335,9 +334,15 @@ export function renderConnection(document, view) {
   const approvalSite = (view.request?.site||view.context?.site) && !view.picker && view.actions.some(a=>approves(a.id));
   if(approvalSite)root.classList.add('connection-approval-window');if(view.picker)root.classList.add('connection-picker');
   root.dataset.state = view.stage;root.dataset.window=view.window;root.dataset.requestId=view.requestId||'';root.dataset.scrollKey='root';
-  const heading = el('header', null, 'connection-heading');
-  if (!view.panel) heading.append(icon(view.headingMark));
-  heading.append(el('h1', view.title)); root.append(heading);
+  let heading = null;
+  if (view.panel) {
+    heading = el('header', null, 'connection-heading');
+    heading.append(el('h1', view.title));
+    root.append(heading);
+  } else {
+    heading = el('h1', view.title, 'connection-sr-only');
+    root.append(heading);
+  }
   const status = el('p', view.status, 'connection-status'); status.dataset.focus = 'outcome'; status.tabIndex = -1; status.setAttribute('role','status');
   if(view.window==='walletconnect'&&!view.request&&!view.showAccount&&view.account&&view.status.some(p=>p.kind==='wallet'))status.prepend(icon('wallet'));
   status.setAttribute('aria-live','polite'); status.setAttribute('aria-atomic','true');
@@ -351,9 +356,7 @@ export function renderConnection(document, view) {
     const card = el('article',null,`connection-card ${selected ? 'connection-selected' : 'connection-account'}`);
     const h = el('div',null,'connection-account-header');
     if (!selected) h.append(icon(account.mark));
-    const joinedHeading = !view.panel && !selected && view.window !== 'walletconnect' && account.name === view.title && view.showAccount && !view.request && !view.context;
-    if(joinedHeading){h.replaceChildren(heading);if(!view.compact&&view.status.length)h.append(status);}
-    else h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(account.name,'wallet'),'connection-account-name'));
+    h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(account.name,'wallet'),'connection-account-name'));
     if(view.panel&&supports('open-wallet'))h.append(button({id:'open-wallet',label:isolated('Manage','copy'),quiet:true}));
     card.append(h);
     if(account.connection && (view.panel||view.window!=='walletconnect'))card.append(el('p','via WalletConnect','connection-note connection-via'));
