@@ -77,8 +77,14 @@ impl ClientSettings {
             "incomplete release meeting point"
         );
         if network == Some("direct") {
-            anyhow::ensure!(url.is_none() && certificate.is_none(), "direct Carrier rejects relay settings");
-            return Ok(Self { relay: None, certificate: None });
+            anyhow::ensure!(
+                url.is_none() && certificate.is_none(),
+                "direct Carrier rejects relay settings"
+            );
+            return Ok(Self {
+                relay: None,
+                certificate: None,
+            });
         }
         let released = release_url.is_some();
         if let Some(release_url) = release_url {
@@ -123,10 +129,7 @@ impl ClientSettings {
             })
             .transpose()?;
         anyhow::ensure!(
-            certificate.is_some()
-                || (!released
-                    && cfg!(test)
-                    && relay.scheme() == "http"),
+            certificate.is_some() || (!released && cfg!(test) && relay.scheme() == "http"),
             "relay mode requires its pinned certificate identity"
         );
         anyhow::ensure!(
@@ -462,10 +465,19 @@ pub(super) async fn configured_server(
         (Some(cert), Some(key)) => {
             let provider = Arc::new(rustls::crypto::ring::default_provider());
             use rustls::pki_types::pem::PemObject as _;
-            let certificate = CertificateDer::pem_file_iter(cert.as_str().context("carrier_relay_tls_cert must be a PEM path")?)?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            anyhow::ensure!(!certificate.is_empty(), "Carrier relay certificate is empty");
-            let private = rustls::pki_types::PrivateKeyDer::from_pem_file(key.as_str().context("carrier_relay_tls_key must be a PEM path")?)?;
+            let certificate = CertificateDer::pem_file_iter(
+                cert.as_str()
+                    .context("carrier_relay_tls_cert must be a PEM path")?,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+            anyhow::ensure!(
+                !certificate.is_empty(),
+                "Carrier relay certificate is empty"
+            );
+            let private = rustls::pki_types::PrivateKeyDer::from_pem_file(
+                key.as_str()
+                    .context("carrier_relay_tls_key must be a PEM path")?,
+            )?;
             Some(
                 rustls::ServerConfig::builder_with_provider(provider)
                     .with_safe_default_protocol_versions()?
@@ -473,9 +485,7 @@ pub(super) async fn configured_server(
                     .with_single_cert(certificate, private)?,
             )
         }
-        (None, None) if cfg!(test) && discovery.is_none() => {
-            None
-        }
+        (None, None) if cfg!(test) && discovery.is_none() => None,
         _ => anyhow::bail!(
             "Carrier relay needs its TLS certificate and key; it terminates TLS itself"
         ),
@@ -529,7 +539,10 @@ pub(super) async fn configured_server(
     relay.limits.connections = connections;
     let home_rate = setting(&config, "carrier_relay_home_bytes_per_second", 64 * 1024)?;
     let home_burst = setting(&config, "carrier_relay_home_burst_bytes", 128 * 1024)?;
-    anyhow::ensure!(home_rate >= 10, "Home byte rate must refill at least one byte per tick");
+    anyhow::ensure!(
+        home_rate >= 10,
+        "Home byte rate must refill at least one byte per tick"
+    );
     apply_byte_limits(&mut relay, home_rate, home_burst);
     let mut global = iroh_relay::server::ClientRateLimit::new(
         std::num::NonZeroU32::new(setting(
@@ -539,16 +552,33 @@ pub(super) async fn configured_server(
         )?)
         .expect("validated rate"),
     );
-    anyhow::ensure!(global.bytes_per_second.get() >= 10, "global byte rate must refill at least one byte per tick");
+    anyhow::ensure!(
+        global.bytes_per_second.get() >= 10,
+        "global byte rate must refill at least one byte per tick"
+    );
     global.max_burst_bytes = std::num::NonZeroU32::new(setting(
         &config,
         "carrier_relay_burst_bytes",
         2 * 1024 * 1024,
     )?);
-    anyhow::ensure!(global.bytes_per_second.get() >= 640, "global byte rate must reserve 64 source budgets");
-    let mut source = iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(global.bytes_per_second.get() / 64).expect("source rate"));
-    source.max_burst_bytes = std::num::NonZeroU32::new(global.max_burst_bytes.expect("configured global burst").get().div_ceil(64));
-    anyhow::ensure!(global.max_burst_bytes.expect("configured burst").get() >= 2 * 1024 * 1024, "global burst must admit the largest relay frame");
+    anyhow::ensure!(
+        global.bytes_per_second.get() >= 640,
+        "global byte rate must reserve 64 source budgets"
+    );
+    let mut source = iroh_relay::server::ClientRateLimit::new(
+        std::num::NonZeroU32::new(global.bytes_per_second.get() / 64).expect("source rate"),
+    );
+    source.max_burst_bytes = std::num::NonZeroU32::new(
+        global
+            .max_burst_bytes
+            .expect("configured global burst")
+            .get()
+            .div_ceil(64),
+    );
+    anyhow::ensure!(
+        global.max_burst_bytes.expect("configured burst").get() >= 2 * 1024 * 1024,
+        "global burst must admit the largest relay frame"
+    );
     relay.limits.network_rx = Some(source);
     relay.limits.global_rx = Some(global);
     let admission = Arc::new(RelayAdmission::new(connections.total));
@@ -831,8 +861,24 @@ mod tests {
             Some(&pin)
         )
         .is_err());
-        assert!(ClientSettings::from_inputs(Some("direct"), None, None, Some("https://relay.example/"), Some(&pin)).unwrap().relay.is_none());
-        assert!(ClientSettings::from_inputs(Some("direct"), Some("https://other.example/"), None, Some("https://relay.example/"), Some(&pin)).is_err());
+        assert!(ClientSettings::from_inputs(
+            Some("direct"),
+            None,
+            None,
+            Some("https://relay.example/"),
+            Some(&pin)
+        )
+        .unwrap()
+        .relay
+        .is_none());
+        assert!(ClientSettings::from_inputs(
+            Some("direct"),
+            Some("https://other.example/"),
+            None,
+            Some("https://relay.example/"),
+            Some(&pin)
+        )
+        .is_err());
         assert!(ClientSettings::from_inputs(None, None, None, None, None)
             .unwrap()
             .relay
@@ -1224,9 +1270,14 @@ mod tests {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
         // This owned CONNECT fixture binds the actual relay-facing TCP source.
         // Its input is bounded and contains no credentials.
-        async fn source_proxy(source: [u8; 4], destination: std::net::SocketAddr) -> (url::Url, tokio::task::JoinHandle<()>) {
+        async fn source_proxy(
+            source: [u8; 4],
+            destination: std::net::SocketAddr,
+        ) -> (url::Url, tokio::task::JoinHandle<()>) {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let url = format!("http://{}/", listener.local_addr().unwrap()).parse().unwrap();
+            let url = format!("http://{}/", listener.local_addr().unwrap())
+                .parse()
+                .unwrap();
             let task = tokio::spawn(async move {
                 let mut children = tokio::task::JoinSet::new();
                 loop {
@@ -1255,10 +1306,13 @@ mod tests {
             });
             (url, task)
         }
-        let mut relay = iroh_relay::server::RelayConfig::new("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap());
+        let mut relay = iroh_relay::server::RelayConfig::new(
+            "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
+        );
         apply_byte_limits(&mut relay, 64 * 1024, 128 * 1024);
         let rate = |bytes, burst| {
-            let mut rate = iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(bytes).unwrap());
+            let mut rate =
+                iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(bytes).unwrap());
             rate.max_burst_bytes = std::num::NonZeroU32::new(burst);
             rate
         };
@@ -1269,7 +1323,9 @@ mod tests {
         let server = iroh_relay::server::Server::spawn(config).await.unwrap();
         let address = server.http_addr().unwrap();
         let url: RelayUrl = format!("http://{address}/").parse().unwrap();
-        let tls = CaTlsConfig::embedded().client_config(Arc::new(rustls::crypto::ring::default_provider())).unwrap();
+        let tls = CaTlsConfig::embedded()
+            .client_config(Arc::new(rustls::crypto::ring::default_provider()))
+            .unwrap();
         let mut proxies = Vec::new();
         let mut sources = Vec::new();
         for last in [2, 3, 6, 4, 5] {
@@ -1277,13 +1333,22 @@ mod tests {
             sources.push(proxy);
             proxies.push(task);
         }
-        let connect = |key: u8, source: usize| iroh_relay::client::ClientBuilder::new(
-            url.clone(), iroh::SecretKey::from_bytes(&[key; 32]), system_dns())
-            .tls_client_config(tls.clone()).proxy_url(sources[source].clone());
+        let connect = |key: u8, source: usize| {
+            iroh_relay::client::ClientBuilder::new(
+                url.clone(),
+                iroh::SecretKey::from_bytes(&[key; 32]),
+                system_dns(),
+            )
+            .tls_client_config(tls.clone())
+            .proxy_url(sources[source].clone())
+        };
         let mut attackers = Vec::new();
         let absent = iroh::SecretKey::from_bytes(&[244; 32]).public();
         for index in 0..96u8 {
-            let client = connect(index + 1, usize::from(index / 32)).connect().await.unwrap();
+            let client = connect(index + 1, usize::from(index / 32))
+                .connect()
+                .await
+                .unwrap();
             let (mut stream, mut sink) = client.split();
             attackers.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -1310,7 +1375,12 @@ mod tests {
         let h_reader = tokio::spawn(async move {
             while let Some(message) = h_stream.next().await {
                 if let RelayToClientMsg::Ping(ping) = message.unwrap() {
-                    h_control.lock().await.send(ClientToRelayMsg::Pong(ping)).await.unwrap();
+                    h_control
+                        .lock()
+                        .await
+                        .send(ClientToRelayMsg::Pong(ping))
+                        .await
+                        .unwrap();
                     counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 }
             }
@@ -1321,8 +1391,12 @@ mod tests {
             let mut sink = p_sink;
             while let Some(message) = p_stream.next().await {
                 match message.unwrap() {
-                    RelayToClientMsg::Ping(ping) => sink.send(ClientToRelayMsg::Pong(ping)).await.unwrap(),
-                    RelayToClientMsg::Datagrams { datagrams, .. } => received.send(datagrams.contents).await.unwrap(),
+                    RelayToClientMsg::Ping(ping) => {
+                        sink.send(ClientToRelayMsg::Pong(ping)).await.unwrap()
+                    }
+                    RelayToClientMsg::Datagrams { datagrams, .. } => {
+                        received.send(datagrams.contents).await.unwrap()
+                    }
                     _ => {}
                 }
             }
@@ -1334,21 +1408,49 @@ mod tests {
         let heartbeats = h_pings.load(std::sync::atomic::Ordering::SeqCst);
         let started = Instant::now();
         let delivered = if live {
-            h_sink.lock().await.send(ClientToRelayMsg::Datagrams {
-                dst_endpoint_id: iroh::SecretKey::from_bytes(&[246; 32]).public(),
-                datagrams: Datagrams::from(vec![7; 1024]),
-            }).await.unwrap();
-            tokio::time::timeout(Duration::from_secs(1), arrivals.recv()).await.ok().flatten()
-        } else { None };
+            h_sink
+                .lock()
+                .await
+                .send(ClientToRelayMsg::Datagrams {
+                    dst_endpoint_id: iroh::SecretKey::from_bytes(&[246; 32]).public(),
+                    datagrams: Datagrams::from(vec![7; 1024]),
+                })
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(1), arrivals.recv())
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
         eprintln!("hostile source floods: sockets=96 networks=3 live={live} heartbeats={heartbeats} delivered={} elapsed_ms={}", delivered.as_ref().map_or(0, |bytes| bytes.len()), started.elapsed().as_millis());
-        for task in attackers { task.abort(); let _ = task.await; }
-        h_reader.abort(); let _ = h_reader.await;
-        p_reader.abort(); let _ = p_reader.await;
+        for task in attackers {
+            task.abort();
+            let _ = task.await;
+        }
+        h_reader.abort();
+        let _ = h_reader.await;
+        p_reader.abort();
+        let _ = p_reader.await;
         server.shutdown().await.unwrap();
-        for task in proxies { task.abort(); let _ = task.await; }
-        assert_eq!(active_flooders, 96, "the hostile load must remain active through the observation");
-        assert!(live && heartbeats >= 3, "healthy Home lost its relay heartbeat under three source floods");
-        assert_eq!(delivered.as_deref(), Some(&vec![7; 1024][..]), "another source must deliver within one second");
+        for task in proxies {
+            task.abort();
+            let _ = task.await;
+        }
+        assert_eq!(
+            active_flooders, 96,
+            "the hostile load must remain active through the observation"
+        );
+        assert!(
+            live && heartbeats >= 3,
+            "healthy Home lost its relay heartbeat under three source floods"
+        );
+        assert_eq!(
+            delivered.as_deref(),
+            Some(&vec![7; 1024][..]),
+            "another source must deliver within one second"
+        );
     }
 
     #[tokio::test]
@@ -1359,7 +1461,8 @@ mod tests {
         const BURST: u32 = 4096;
         let mut relay =
             iroh_relay::server::RelayConfig::new(std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
-        let mut rate = iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(RATE).unwrap());
+        let mut rate =
+            iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(RATE).unwrap());
         rate.max_burst_bytes = std::num::NonZeroU32::new(BURST);
         relay.limits.global_rx = Some(rate);
         let mut config = iroh_relay::server::ServerConfig::default();
@@ -1379,7 +1482,6 @@ mod tests {
         let mut receiver = build(receiver_key.clone()).connect().await.unwrap();
         let mut measurements = Vec::new();
         for (keep_replaced, key) in [(false, 218), (true, 230)] {
-
             let mut held = Vec::new();
             let mut delivered = 0usize;
             let started = std::time::Instant::now();
@@ -1730,13 +1832,31 @@ mod tests {
         let (foreign, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
         let relay: RelayUrl = "https://localhost/".parse().unwrap();
         let pin: [u8; 32] = sha2::Sha256::digest(certs[0].as_ref()).into();
-        let verifier = pinned_relay_identity_tls(&relay, CaTlsConfig::custom_roots(foreign.clone()), Some(pin))
-            .server_cert_verifier(Arc::new(rustls::crypto::ring::default_provider())).unwrap();
-        let verify = |cert: &CertificateDer<'_>, name: &str| verifier.verify_server_cert(cert, &[],
-            &ServerName::try_from(name.to_owned()).unwrap(), &[], UnixTime::now());
+        let verifier = pinned_relay_identity_tls(
+            &relay,
+            CaTlsConfig::custom_roots(foreign.clone()),
+            Some(pin),
+        )
+        .server_cert_verifier(Arc::new(rustls::crypto::ring::default_provider()))
+        .unwrap();
+        let verify = |cert: &CertificateDer<'_>, name: &str| {
+            verifier.verify_server_cert(
+                cert,
+                &[],
+                &ServerName::try_from(name.to_owned()).unwrap(),
+                &[],
+                UnixTime::now(),
+            )
+        };
         assert!(verify(&certs[0], "localhost").is_ok());
-        assert!(verify(&foreign[0], "localhost").is_err(), "a trusted CA cannot replace the pinned identity");
-        assert!(verify(&certs[0], "127.0.0.1").is_err(), "the address is pinned with the identity");
+        assert!(
+            verify(&foreign[0], "localhost").is_err(),
+            "a trusted CA cannot replace the pinned identity"
+        );
+        assert!(
+            verify(&certs[0], "127.0.0.1").is_err(),
+            "the address is pinned with the identity"
+        );
     }
 
     #[test]

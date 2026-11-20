@@ -85,7 +85,11 @@ struct ConnectionCounts {
 }
 
 #[derive(Debug, Default)]
-struct NetworkAdmission(Arc<Mutex<ConnectionCounts>>, super::ConnectionLimits, Option<ClientRateLimit>);
+struct NetworkAdmission(
+    Arc<Mutex<ConnectionCounts>>,
+    super::ConnectionLimits,
+    Option<ClientRateLimit>,
+);
 
 #[derive(Debug)]
 pub(super) struct ConnectionPermit {
@@ -117,13 +121,31 @@ impl NetworkAdmission {
         {
             return None;
         }
-        counts.budgets.retain(|_, bucket| Arc::strong_count(bucket) > 1
-            || bucket.lock().expect("source byte budget").full_at() > tokio::time::Instant::now());
+        counts.budgets.retain(|_, bucket| {
+            Arc::strong_count(bucket) > 1
+                || bucket.lock().expect("source byte budget").full_at()
+                    > tokio::time::Instant::now()
+        });
         let budget = if let Some(rate) = self.2 {
-            if !counts.budgets.contains_key(&network) && counts.budgets.len() >= self.1.total { return None; }
-            Some(counts.budgets.entry(network).or_insert_with(|| Arc::new(Mutex::new(
-                super::streams::Bucket::from_config(Some(rate)).expect("validated source budget").expect("source budget")))).clone())
-        } else { None };
+            if !counts.budgets.contains_key(&network) && counts.budgets.len() >= self.1.total {
+                return None;
+            }
+            Some(
+                counts
+                    .budgets
+                    .entry(network)
+                    .or_insert_with(|| {
+                        Arc::new(Mutex::new(
+                            super::streams::Bucket::from_config(Some(rate))
+                                .expect("validated source budget")
+                                .expect("source budget"),
+                        ))
+                    })
+                    .clone(),
+            )
+        } else {
+            None
+        };
         counts.recent.entry(network).or_insert((0, now)).0 += 1;
         counts.pending += 1;
         counts.networks.entry(network).or_default().0 += 1;
@@ -600,7 +622,8 @@ impl ServerBuilder {
         let mut service = service.with_home_rate_limit(self.home_rx_ratelimit);
         let inner = Arc::get_mut(&mut service.0).expect("new service owner");
         inner.network_admission.1 = self.connections;
-        super::streams::Bucket::from_config(self.network_rx).map_err(|error| e!(SpawnError::InvalidRateLimit, error))?;
+        super::streams::Bucket::from_config(self.network_rx)
+            .map_err(|error| e!(SpawnError::InvalidRateLimit, error))?;
         inner.network_admission.2 = self.network_rx;
         inner.global_budget = super::streams::Bucket::from_config(self.global_rx)
             .map_err(|error| e!(SpawnError::InvalidRateLimit, error))?
@@ -1062,7 +1085,9 @@ impl Inner {
         let mut guard = authentication
             .authorize_with(&request, &self.access, &mut io)
             .await?;
-        let network_budget = network_permit.as_ref().and_then(|permit| permit.budget.clone());
+        let network_budget = network_permit
+            .as_ref()
+            .and_then(|permit| permit.budget.clone());
         guard._network_permit = network_permit;
 
         trace!("accept: verified authorization");
@@ -1430,7 +1455,9 @@ mod tests {
         let mut admitted = 0;
         for source in 1..=4 {
             for _ in 0..4096 {
-                if let Some(permit) = admission.admit(std::net::Ipv4Addr::new(192, 0, 2, source).into()) {
+                if let Some(permit) =
+                    admission.admit(std::net::Ipv4Addr::new(192, 0, 2, source).into())
+                {
                     permit.establish();
                     admitted += 1;
                 }
@@ -1443,7 +1470,10 @@ mod tests {
                 admitted += 1;
             }
         }
-        assert!(admitted <= 5 * 64, "fresh identities escaped source pacing: {admitted}");
+        assert!(
+            admitted <= 5 * 64,
+            "fresh identities escaped source pacing: {admitted}"
+        );
         assert!(admitted < admission.1.total);
         assert!(admission.admit("198.51.100.1".parse().unwrap()).is_some());
     }

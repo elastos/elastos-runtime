@@ -466,7 +466,9 @@ impl Bucket {
     pub(super) fn try_consume(&mut self, bytes: usize) -> bool {
         self.update_state();
         let bytes = i64::try_from(bytes).unwrap_or(i64::MAX);
-        if self.fill < bytes { return false; }
+        if self.fill < bytes {
+            return false;
+        }
         self.fill -= bytes;
         true
     }
