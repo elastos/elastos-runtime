@@ -1588,7 +1588,7 @@ async fn run_upgrade_with_restart(
             &previous.release,
             next_admission
                 .take()
-                .context("Home could not prepare the update. Try again.")?,
+                .context("Home could not prepare the update. Update verification details are missing.")?,
             &source.publisher_dids,
         );
         let old_components = std::fs::read(data_dir.join("components.json"))?;
@@ -1684,7 +1684,7 @@ async fn run_upgrade_with_restart(
             &previous.release,
             next_admission
                 .take()
-                .context("Home could not prepare the update. Try again.")?,
+                .context("Home could not prepare the update. Update verification details are missing.")?,
             &source.publisher_dids,
         );
         let changed_capsules =
