@@ -50,6 +50,28 @@ class TwoHomeReceiptTests(unittest.TestCase):
             self.assertIn("CI_TWO_HOME_MESSAGES: 'true'", summary)
             self.assertNotIn('continue-on-error:', block.split('name: installed two-Home Community',1)[1].split('      - name:',1)[0])
 
+    def test_matrix_entry_reaches_its_first_external_step_and_cleans_the_fixture(self):
+        import types
+        import shutil
+        function = JOURNEY['two_home_message_matrix']
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            removed = []
+            def cleanup(path):
+                self.assertEqual(path.parent, root)
+                self.assertTrue(path.name.startswith('carrier-journey-'))
+                removed.append(path)
+                shutil.rmtree(path)
+            helpers = {'require_disk_space': mock.Mock(), 'remove_message_fixture': cleanup}
+            with mock.patch.dict(function.__globals__, {
+                    'sys': types.SimpleNamespace(platform='linux'),
+                    'runpy': types.SimpleNamespace(run_path=lambda _: helpers)}),                     mock.patch.object(Path, 'home', return_value=root),                     mock.patch.object(JOURNEY['subprocess'], 'run', side_effect=RuntimeError('stop before external build')) as run:
+                with self.assertRaisesRegex(RuntimeError, 'stop before external build'):
+                    function([])
+                self.assertEqual(run.call_args.args[0][:2], ['openssl', 'req'])
+            self.assertEqual(len(removed), 1)
+            self.assertFalse(removed[0].exists())
+
     def test_network_matrix_scope_stays_with_the_existing_x64_job(self):
         source = (ROOT / '.github/workflows/ci.yml').read_text()
         for job, enabled in [('source-home-linux', 'true'), ('source-home-linux-arm64', 'false')]:

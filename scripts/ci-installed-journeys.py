@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
