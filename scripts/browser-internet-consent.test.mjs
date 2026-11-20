@@ -550,9 +550,9 @@ test("Browser and WalletConnect confirmations keep Cancel as default after a pre
       const page=await browser.newPage({viewport:{width:1280,height:844}});
       await page.goto(f.url+"?app=inbox");
       const frame=page.frameLocator("iframe");
-      const off=frame.locator("#entry-detail").getByRole("button",{name:service === "browser" ? "Turn off internet access" : "Turn off internet access",exact:true});
+      const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn off internet access",exact:true});
       const dialog=frame.locator(`#${service}-internet-confirm`);
-      await off.click();await dialog.getByRole("button",{name:service === "browser" ? "Turn off internet access" : "Turn off internet access",exact:true}).click();
+      await off.click();await dialog.getByRole("button",{name:"Turn off internet access",exact:true}).click();
       await frame.locator("#entry-detail").getByRole("button",{name:"Allow",exact:true}).click();
       await off.click();
       assert.equal(await dialog.locator(":focus").innerText(),"Cancel");
