@@ -2973,7 +2973,7 @@ async fn update_repair_details_go_only_to_home_log() {
     for cause in [
         "not owner-only",
         "expected value at line 1 column 1",
-        "not a regular file",
+        "must be a regular non-symlink file",
     ] {
         assert!(
             output.contains(cause),
