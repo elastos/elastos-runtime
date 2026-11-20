@@ -2069,6 +2069,16 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host", node_
             and transition_evidence_valid(row))
 
 
+def observe_delivery_warnings(path, interval, blocking):
+    """Measure warnings only while this journey blocks the Carrier paths."""
+    log = bounded_text(path, 4 * 1024 * 1024)
+    if blocking:
+        interval["start"] = len(log)
+    else:
+        interval["delivery_warning_count"] = len(re.findall(
+            r'direct delivery is unconfirmed; Home will retry', log[interval["start"]:]))
+
+
 @message_termination()
 def two_home_messages(home_build, evidence, network="same-host", fixture_root=None, node_build=None):
     """Installed Community and Direct journey. Topology belongs to setup, not assertions.
@@ -2224,8 +2234,12 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
         assert observation["b_health"] == 200 and observation["dropped_packets"] > 0
         record["all_carrier_paths_blocked"] = True
         return {"observation": observation}
-    actions.update(promote=promote, block_paths=lambda: topology.block_paths(True),
-                   unblock_paths=lambda: topology.block_paths(False), observe_blocked=observe_blocked)
+    warning_interval = {}
+    def block_paths(blocking):
+        observe_delivery_warnings(fixtures["a"].home / "runtime.private.log", warning_interval, blocking)
+        topology.block_paths(blocking)
+    actions.update(promote=promote, block_paths=lambda: block_paths(True),
+                   unblock_paths=lambda: block_paths(False), observe_blocked=observe_blocked)
     start, *later = MESSAGE_TRANSITIONS
     entered = {transition.action: transition for transition in later}
     try:
@@ -2320,9 +2334,9 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
                 if network == "relay-to-direct":
                     assert record["route_observations"][0] == "relay" and "direct" in record["route_observations"][1:], "Carrier did not promote the actual DM route"
                 assert record["results"].get("visible_failure") == "passed"
-                warnings = re.findall(r'direct delivery is unconfirmed; Home will retry', log)
-                assert 1 <= len(warnings) <= 2, "blocked interval warn log must be present and rate limited"
-                record["delivery_warning_count"] = len(warnings)
+                record["delivery_warning_count"] = warning_interval["delivery_warning_count"]
+                assert 1 <= record["delivery_warning_count"] <= 2, \
+                    f"blocked interval warn log must be present and rate limited: {record['delivery_warning_count']}"
                 record["discovery_packets"] = topology.discovery_packets()
                 if network == "forced-relay":
                     assert record["discovery_packets"] == 0, "forced relay allowed Home discovery UDP"

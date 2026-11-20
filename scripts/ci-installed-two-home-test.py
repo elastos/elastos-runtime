@@ -21,6 +21,24 @@ JOURNEY = runpy.run_path(str(ROOT / 'scripts/ci-installed-journeys.py'))
 
 
 class TwoHomeReceiptTests(unittest.TestCase):
+    def test_delivery_warning_count_covers_only_the_blocked_network_interval(self):
+        observe = JOURNEY['observe_delivery_warnings']
+        warning = 'WARN direct delivery is unconfirmed; Home will retry\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / 'runtime.log'
+            log.write_text(warning)
+            interval = {}
+            observe(log, interval, True)
+            log.write_text(log.read_text() + warning * 2)
+            observe(log, interval, False)
+            log.write_text(log.read_text() + warning * 3)
+            self.assertEqual(interval['delivery_warning_count'], 2)
+            for count in (0, 3):
+                observe(log, interval, True)
+                log.write_text(log.read_text() + warning * count)
+                observe(log, interval, False)
+                self.assertEqual(interval['delivery_warning_count'], count)
+
     def test_fresh_home_and_data_are_private_with_the_operator_umask(self):
         fresh = JOURNEY['fresh_fixture']
         with tempfile.TemporaryDirectory() as temporary:
