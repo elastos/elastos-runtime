@@ -20,10 +20,10 @@ const NOTICE_TITLE: &str = "Update available";
 const NOTICE_BODY: &str = "ElastOS {version} is available.";
 const FOLDER_TEXT: &str = "Automatic update checks are off because Home cannot use its update settings. Check that the computer that runs Home has free disk space, then turn this on. Home's log has more steps.";
 const FOLDER_REPAIR: &str = "Update checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
-pub(super) const INVALID_VERSION_TEXT: &str = "Home cannot check for updates. The computer running Home needs attention. Check Home's log for repair details.";
+pub(super) const INVALID_VERSION_TEXT: &str = "Home cannot check for updates because it cannot read its installed version. Home's log has the repair steps.";
 pub(super) const INVALID_VERSION_REPAIR: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
 const UNREADABLE_TEXT: &str =
-    "Automatic update checks are off because Home could not read its settings. Turn automatic update checks on to try resetting the settings. If that fails, the computer running Home needs attention. Check Home's log for details.";
+    "Automatic update checks are off because Home could not read its settings. Turn the switch on to reset this setting. If that does not work, Home's log has the repair steps.";
 const UNREADABLE_REPAIR: &str = "Update checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
 
 #[derive(Default, Serialize, Deserialize)]
@@ -118,22 +118,24 @@ fn log_repair_change(
     fault: Option<(&'static str, &'static str, String)>,
 ) {
     use std::sync::{LazyLock, Mutex};
-    type Faults = BTreeMap<(PathBuf, &'static str), &'static str>;
+    type Faults = BTreeMap<(PathBuf, &'static str), (&'static str, String)>;
     static FAULTS: LazyLock<Mutex<Faults>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
     let mut faults = FAULTS.lock().unwrap_or_else(|error| error.into_inner());
     let key = (data_dir.to_owned(), operation);
     if let Some((kind, repair, error)) = fault {
-        if faults.insert(key, kind) != Some(kind) {
-            // Errors retain their cause in Home's private log. Hide the Home's
-            // absolute root, which can include private operator account names.
-            let error = error.replace(data_dir.to_string_lossy().as_ref(), "[Home data]");
+        // Compare the cause as well as the kind. Keep private Home paths out
+        // of the log and out of the retained fault identity.
+        let error = error.replace(data_dir.to_string_lossy().as_ref(), "[Home data]");
+        let current = (kind, error.clone());
+        if faults.insert(key, current.clone()) != Some(current) {
             tracing::warn!(operation, error = %error, "{repair}");
         }
-    } else if faults.remove(&key).is_some() {
-        let message = if operation == "save" {
-            "Update settings can be saved again."
-        } else {
-            "Update settings are readable again."
+    } else if let Some((kind, _)) = faults.remove(&key) {
+        let message = match kind {
+            "save" => "Update settings can be saved again.",
+            "folder" => "Update settings folder is usable again.",
+            "version" => "Installed version is readable again.",
+            _ => "Update settings are readable again.",
         };
         tracing::info!(operation, "{message}");
     }

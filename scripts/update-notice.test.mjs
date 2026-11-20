@@ -282,6 +282,8 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
       await system.getByText(copy('SAVE_ERROR'),{exact:true}).waitFor();
+      assert.equal(await system.getByText(initial.message,{exact:true}).count(),1,'a save error keeps the broken-version explanation visible');
+      await screen(page,'phone-save-error-and-invalid-version',true);
       f.state.settings={...initial,[field]:field==='message'?copy('OFF_TEXT'):!initial[field]};
       await page.evaluate(()=>document.querySelector('#system-frame').contentWindow.postMessage({
         type:'elastos:runtime-events',schema:'elastos.home.runtime-events/v1',events:[],

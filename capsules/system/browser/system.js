@@ -3882,6 +3882,7 @@ function renderUpdateNotice() {
     backgroundChoice.disabled = backgroundBusy;
     document.querySelector("#update-background-label").textContent = background.label;
     document.querySelector("#update-background-message").textContent = backgroundSaveError || background.message;
+    if (runtimeUpdate?.message === background.message) showRuntimeUpdateStatus(runtimeUpdate.message);
   }
   if (focusUpdateRequested && !runtimeUpdateNode.hidden) focusUpdateCard();
 }
@@ -4088,7 +4089,7 @@ function runtimeUpdateCanApply() {
 
 function showRuntimeUpdateStatus(message) {
   if (runtimeUpdateStatusNode) runtimeUpdateStatusNode.textContent =
-    message === runtimeUpdate?.background_checks?.message ? "" : message;
+    message === runtimeUpdate?.background_checks?.message && !backgroundSaveError ? "" : message;
 }
 
 function scheduleRuntimeUpdateRefresh(delay) {

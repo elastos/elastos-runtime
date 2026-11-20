@@ -755,7 +755,7 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
     assert!(response["error"]
         .as_str()
         .unwrap()
-        .contains("Home's log for repair details"));
+        .contains("Home's log has the repair steps"));
     assert_update_stays_unqueued(dir.path());
 }
 
@@ -1520,7 +1520,7 @@ async fn system_update_failures_explain_the_cause_without_private_error_details(
             anyhow::Error::from(crate::update::InvalidInstalledVersion)
                 .context("private source detail"),
             StatusCode::CONFLICT,
-            "Home's log for repair details",
+            "Home's log has the repair steps",
         ),
         (
             anyhow::anyhow!("private verification detail"),
@@ -2839,6 +2839,17 @@ async fn update_repair_details_go_only_to_home_log() {
             let mut views = (0..5)
                 .map(|_| notice::preference(dir.path()))
                 .collect::<Vec<_>>();
+            if fault == "unreadable" {
+                // A new cause of the same kind must be logged once too.
+                std::fs::write(
+                    &path,
+                    r#"{"schema":"unknown","background_checks":true,"release_cid":null,"accounts":{}}"#,
+                )
+                .unwrap();
+                for _ in 0..5 {
+                    views.push(notice::preference(dir.path()));
+                }
+            }
             if fault == "save" {
                 let app = gateway_router(test_state(dir.path()));
                 for _ in 0..5 {
@@ -2939,7 +2950,7 @@ async fn update_repair_details_go_only_to_home_log() {
                 "Update checks are off because Home could not read its settings. On the device"
             )
             .count(),
-        2,
+        3,
         "{output}"
     );
     assert_eq!(
@@ -2953,9 +2964,15 @@ async fn update_repair_details_go_only_to_home_log() {
         output
             .matches("Update settings are readable again.")
             .count(),
-        4,
+        2,
         "{output}"
     );
+    for recovery in [
+        "Update settings folder is usable again.",
+        "Installed version is readable again.",
+    ] {
+        assert_eq!(output.matches(recovery).count(), 1, "{output}");
+    }
     assert_eq!(
         output
             .matches("Home could not save update checks. On the device")
@@ -2977,6 +2994,7 @@ async fn update_repair_details_go_only_to_home_log() {
     for cause in [
         "not owner-only",
         "expected value at line 1 column 1",
+        "unknown update settings schema",
         "must be a regular non-symlink file",
     ] {
         assert!(
