@@ -2769,15 +2769,39 @@ async fn update_notice_settings_directory_reports_failed_repair_and_stays_off() 
 #[tokio::test]
 async fn update_repair_details_go_only_to_home_log() {
     use std::os::unix::fs::PermissionsExt;
-    use tracing::instrument::WithSubscriber;
+
+    // Home installs one global subscriber. Give this check its own process so
+    // parallel tests cannot change the callsite interests while it captures logs.
+    const CHILD: &str = "ELASTOS_WORDING_REPAIR_LOG_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "api::gateway::gateway_tests::home_update::update_repair_details_go_only_to_home_log",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(stdout.contains("test result: ok. 1 passed;"), "{stdout}");
+        return;
+    }
 
     let log = tempfile::NamedTempFile::new().unwrap();
     let writer = log.reopen().unwrap();
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
         .without_time()
+        .with_env_filter("off,elastos_server::api::gateway::gateway_update_notice=warn,elastos_server::api::gateway::gateway_home_update=warn")
         .with_writer(move || writer.try_clone().unwrap())
         .finish();
+    tracing::subscriber::set_global_default(subscriber).unwrap();
     async {
         for fault in ["folder", "unreadable", "save", "version"] {
             let dir = tempfile::Builder::new()
@@ -2842,7 +2866,6 @@ async fn update_repair_details_go_only_to_home_log() {
             }
         }
     }
-    .with_subscriber(subscriber)
     .await;
     let output = std::fs::read_to_string(log.path()).unwrap();
     for detail in [
