@@ -127,7 +127,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       root.dataset.extensionFeedback = 'consumed';
       const wallet = kind === 'metamask' ? 'your wallet' : 'UniSat';
       const needed = refusal.cause === 'account' ? refusal.address : refusal.network;
-      const app = selected.actor === 'browser' && selected.site ? selected.site : selected.app;
+      const app = selected.actor === 'browser' && selected.site ? selected.site : selected.app === 'Requesting app' ? 'the app' : selected.app;
       feedbackText(root.querySelector('.connection-status'), refusal.cause === 'account' ? [wallet[0].toUpperCase()+wallet.slice(1), ` was using a different ${refusal.cause}. This request needed ${refusal.cause} `, {value:needed}, '.'] : ['Home could not confirm that ', wallet, ' was on ', {value:needed}, '.']);
       feedbackText(root.querySelector('.connection-notice'), kind === 'metamask' ? [`This request can no longer be sent. In ${wallet}, switch to `, {value:needed}, '. Then go back to ', {value:app}, ' and start a new request.'] : [`This request can no longer be sent. Select ${refusal.cause} `, {value:needed}, ` in ${wallet}. Then return to `, {value:app}, ' and make a new request.']);
     } else if (stage === 'network-changed' && preflightFailure === stage && networkEvent !== 'testnet') {

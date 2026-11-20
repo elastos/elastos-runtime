@@ -307,3 +307,19 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
     assert.equal(await f.top.evaluate(()=>testState.requests.filter(r=>r.status==='pending').length),1);
   }finally{await f.close();}}finally{await browser.close();}
 });
+
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: consumed requests with no app name return to the app`,windowTestOptions(engine,20000),async()=>{
+  const browser=await playwright[engine].launch({headless:true});
+  try{const f=await fixture(browser,kind,{saved:true,requests:true});try{
+    await f.state('request-waiting');
+    const before=await f.frame.evaluate(()=>window.__windowReadsFinished||0);
+    await f.top.evaluate(()=>{testState.requests[0].capsule_id='notes';delete testState.requests[0].requesting_origin;delete testState.requests[0].requesting_app_name;});
+    await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));await assertReadAfter(f,before);
+    await f.top.evaluate(value=>testState.walletAddress=value,other(kind));
+    await f.action('send-request').click();await f.state('request-consumed');
+    const text=await f.frame.locator('.connection-notice').innerText();
+    assert.match(text,/Then (?:go back|return) to the app and (?:start|make) a new request/);
+    assert.doesNotMatch(text,/Requesting app/);
+    assert.equal(await f.action('send-request').count(),0);
+  }finally{await f.close();}}finally{await browser.close();}
+});
