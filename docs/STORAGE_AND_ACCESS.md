@@ -239,6 +239,11 @@ Loss of a device is different from compromise of a root or recovery authority:
 the latter can require wider credential and data-key changes. Identity recovery
 alone is insufficient when object keys or encrypted data are missing.
 
+Today's Recovery Kit restores the same Profile signing seed and the same
+built-in Wallet private keys that were in the export; a new passkey does not
+replace them. See [Security: stored keys and recovery](../SECURITY.md#stored-keys-and-recovery)
+for disk encryption, Kit contents, and what needs separate backups.
+
 Recovery can use the owner's other devices or explicitly selected people or
 services. Explain which parties or threshold can restore access, what they
 could recover together, and what remains possible if they disappear. Test the

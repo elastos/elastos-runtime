@@ -79,6 +79,16 @@ archive key is in `recovery-archive.key` beside it. Before that protection exist
 Assistant, direct messages, and People refuse saves. Documents, Library, and
 Home settings can instead write plain data.
 
+After protection exists, Home encrypts each file it writes. For existing plain
+files in protected folders, Home encrypts in place only when the file is 16 MiB
+or less and the batch is at most 64 files and 64 MiB. Larger files stay plain
+until you move them out and upload them again in Library, which encrypts uploads
+of up to 100 MiB. Library can encrypt a surviving plain file when it reads it.
+Migration scans only the folders Library declares under each person
+(Desktop, Documents, Pictures, Videos, Downloads, Public, Trash, and Library
+under AppData). Plain files in other folders under that person can stay plain
+until Library migrates or rewrites them.
+
 System's **Download Recovery Kit** saves one recovery file, with optional password
 protection. Its coverage is listed below. Keys are stored next to the data they
 protect, in the same Home data folder; the person's data key is in the Auth archive above.
@@ -90,14 +100,14 @@ protect, in the same Home data folder; the person's data key is in the Auth arch
 | Direct messages: `Users/<person>/.AppData/ElastOS/Chat/direct-messages.json` | Yes | Person's data key | Data key; files separate |
 | Community history: `collaboration/default-conversation/history-v1.json` | No | None | Omitted |
 | Contacts and Profile: `Users/<person>/.AppData/ElastOS/People`, `Users/<person>/.AppData/ElastOS/Profile` | Yes | Person's data key; Profile signing key inside the protected file | Profile identity and contacts present at export |
-| Documents: `Users/<person>/Documents`; titles and file names in `ElastOS/Documents/<document>/document.json`; published bytes in `ipfs-repo` | Bodies when protection exists; metadata and published bytes are plain | Person's data key for bodies | Data key; files separate |
-| Library files and records under `Users/<person>`; publication index under `ElastOS/SystemServices/Library`; published bytes in `ipfs-repo` | Private files/records when protection exists; published bytes and shared index are plain | Person's data key for private files/records | Data key; files separate |
+| Documents: `Users/<person>/Documents`; titles and file names in `ElastOS/Documents/<document>/document.json`; published bytes in `ipfs-repo` | Bodies Home writes after protection exists; existing files over 16 MiB and over batch limits stay plain until re-written; metadata and published bytes are plain | Person's data key for bodies | Data key; files separate |
+| Library files and records under `Users/<person>`; publication index under `ElastOS/SystemServices/Library`; published bytes in `ipfs-repo` | Private files/records Library writes after protection exists; earlier plain files outside declared migration folders can remain plain until Library migrates or rewrites them; published bytes and shared index are plain | Person's data key for private files/records | Data key; files separate |
 | Notifications: `Local/Shared/System/Notifications` | No | None | Omitted |
-| Built-in Wallet: `ElastOS/SystemServices/Wallet/wallet-state.json` | Signing keys only; account and approval records are plain | Derived from nearby `wallet-key.hex` and the person's account ID | Built-in Wallet keys present at export |
+| Built-in Wallet: `ElastOS/SystemServices/Wallet/wallet-state.json` | Signing keys only; account and approval records are plain | Derived from nearby `wallet-key.hex` and the person's account ID | Active built-in Wallet account keys at export; export a key before removing an account |
 | Browser profile: `Users/<person>/BrowserProfiles/default/profile.ext4` | No | None | Omitted |
 | Model run records: `providers/model-provider/journal` | No; retains answers, events, and a hash of the input under its retention policy | None | Omitted |
 | Model provider credentials: `providers/model-provider/secrets` | No; files restricted to the host account | None | Omitted |
-| Home settings: `Users/<person>/.AppData/ElastOS/Home` | When protection exists; browser preferences are separate | Person's data key | Data key; files separate |
+| Home settings: `Users/<person>/.AppData/ElastOS/Home` | Settings Home writes after protection exists; same in-place limits as Documents; browser preferences are separate | Person's data key | Data key; files separate |
 
 Community history, notifications, document metadata, and the Wallet file are
 shared Home files, outside each person's private folder.
@@ -110,7 +120,11 @@ their host software. Protection against
 hosted operators and root belongs to [hosted protection (#209)](https://github.com/elastos/elastos-runtime/issues/209);
 protection against other software or OS users while a self-hosted Home is locked
 belongs to [locked Home protection (#210)](https://github.com/elastos/elastos-runtime/issues/210).
-Recovery from a stolen device or Profile key requires a new identity.
+The Recovery Kit restores the same Profile signing seed and the same built-in
+Wallet private keys that were in the export. A new passkey controls sign-in
+only; it does not replace those keys. If your device or a Recovery Kit copy was
+stolen, move funds to new wallet keys and create a new Profile before you treat
+the old identity as closed.
 
 A complete data-folder copy contains the keys needed to read the protected data.
 Protect that backup and your Recovery Kit as secrets. Use hosted accounts only for public

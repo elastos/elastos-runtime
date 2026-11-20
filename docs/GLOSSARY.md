@@ -27,9 +27,11 @@ for the canonical definition.
 ## Runtime
 
 The trusted base (`elastos` binary). It checks signatures,
-capabilities, routing, lifecycle, and audit. Capsules and providers run outside
-the trusted core. Native host and engine adapters may also sit outside it, but
-they do not become capsules merely because they are separate processes.
+capabilities, routing, lifecycle, and audit. Providers run outside the trusted
+core as native processes. Release capsules run as WASM components inside the
+Runtime process with memory and fuel limits. Native host and engine adapters may
+also sit outside the trusted core, but they do not become capsules merely
+because they are separate processes.
 Also called the ElastOS kernel. In this repository, ElastOS alone means the
 whole system, not only the Runtime. A PC² Host is the computer the Runtime runs
 on: today an app on macOS or Linux, later possibly a dedicated appliance image.
@@ -61,10 +63,11 @@ The stable person/contact identity used by signed People, discovery, accepted
 contacts, and direct-conversation identity. A Profile DID belongs to a
 principal-owned signed Profile document and can remain stable across device
 replacement or revocation; see the
-[recovery coverage](../SECURITY.md#stored-keys-and-recovery). A stolen profile key
-requires a new identity. It is not the passkey and not the local principal
-identifier. It represents the person in collaboration, but the signed Profile
-document is not the human actor or the delivery device.
+[recovery coverage](../SECURITY.md#stored-keys-and-recovery). Recovery restores
+the same Profile signing seed from the Kit; a new passkey does not replace it.
+It is not the passkey and not the local principal identifier. It represents the
+person in collaboration, but the signed Profile document is not the human actor
+or the delivery device.
 
 ## WebAuthn PRF
 

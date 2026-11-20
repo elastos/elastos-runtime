@@ -6,6 +6,106 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 const security = read("SECURITY.md");
 const browser = read("elastos/crates/elastos-server/src/api/gateway_browser.rs");
 
+const STORAGE_TABLE_ROWS = [
+  {
+    name: "Home recovery authority",
+    encrypted: "Recovery material only; other auth state is plain",
+    recovery: "Home recovery authority and data key (not passkeys or sessions)",
+    recoveryPartial: true,
+  },
+  {
+    name: "Assistant conversations",
+    encrypted: "Yes; answers also appear in model run records",
+    recovery: "Data key; files separate",
+  },
+  {
+    name: "Direct messages",
+    encrypted: "Yes",
+    recovery: "Data key; files separate",
+  },
+  {
+    name: "Community history",
+    encrypted: "No",
+    recovery: "Omitted",
+  },
+  {
+    name: "Contacts and Profile",
+    encrypted: "Yes",
+    recovery: "Profile identity and contacts present at export",
+  },
+  {
+    name: "Documents:",
+    encrypted:
+      "Bodies Home writes after protection exists; existing files over 16 MiB and over batch limits stay plain until re-written; metadata and published bytes are plain",
+    recovery: "Data key; files separate",
+  },
+  {
+    name: "Library files",
+    encrypted:
+      "Private files/records Library writes after protection exists; earlier plain files outside declared migration folders can remain plain until Library migrates or rewrites them; published bytes and shared index are plain",
+    recovery: "Data key; files separate",
+  },
+  {
+    name: "Notifications:",
+    encrypted: "No",
+    recovery: "Omitted",
+  },
+  {
+    name: "Built-in Wallet",
+    encrypted: "Signing keys only; account and approval records are plain",
+    recovery:
+      "Active built-in Wallet account keys at export; export a key before removing an account",
+  },
+  {
+    name: "Browser profile:",
+    encrypted: "No",
+    recovery: "Omitted",
+  },
+  {
+    name: "Model run records:",
+    encrypted: "No; retains answers, events, and a hash of the input under its retention policy",
+    recovery: "Omitted",
+  },
+  {
+    name: "Model provider credentials:",
+    encrypted: "No; files restricted to the host account",
+    recovery: "Omitted",
+  },
+  {
+    name: "Home settings:",
+    encrypted:
+      "Settings Home writes after protection exists; same in-place limits as Documents; browser preferences are separate",
+    recovery: "Data key; files separate",
+  },
+];
+
+function storageTable(document) {
+  const table = document.split("| Data and storage path |", 2)[1].split("\n\n", 1)[0];
+  assert.match(table, /\| Recovery Kit restores \|/);
+  return table;
+}
+
+function rowCells(document, rowPrefix) {
+  const table = storageTable(document);
+  const row = table.split("\n").find((line) => line.startsWith(`| ${rowPrefix}`));
+  assert.ok(row, `find the ${rowPrefix} row`);
+  const cells = row.split("|").map((cell) => cell.trim());
+  return { row, encrypted: cells[2], recovery: cells[4] };
+}
+
+export function checkStorageTableCells(document) {
+  for (const expected of STORAGE_TABLE_ROWS) {
+    const { encrypted, recovery } = rowCells(document, expected.name);
+    assert.equal(encrypted, expected.encrypted, `${expected.name}: encrypted column`);
+    if (expected.recoveryPartial) {
+      assert.ok(recovery.includes("Home recovery authority and data key"), `${expected.name}: recovery`);
+      assert.match(recovery, /\bnot passkeys or sessions\b/i, "exclude sign-in state from recovery");
+    } else {
+      assert.equal(recovery, expected.recovery, `${expected.name}: recovery column`);
+    }
+  }
+}
+
 // Path-name and source-descriptor checks only. These do not prove write-time
 // encryption for every row, successful import, or installed behavior.
 test("Security storage path parts occur in source literals (not a write or encryption check)", () => {
@@ -25,7 +125,7 @@ test("Security storage path parts occur in source literals (not a write or encry
     ["Model provider credentials", "api/model_provider_config.rs"],
     ["Home settings", "api/gateway_home_system.rs"],
   ];
-  const table = security.split("| Data and storage path |", 2)[1].split("\n\n", 1)[0];
+  const table = securityTableSlice(security);
   const rows = table.split("\n").filter((line) => /^\| [A-Z]/.test(line));
   assert.equal(rows.length, sources.length, "cover each storage row");
   for (const [name, ...paths] of sources) {
@@ -44,6 +144,10 @@ test("Security storage path parts occur in source literals (not a write or encry
     }
   }
 });
+
+function securityTableSlice(document) {
+  return document.split("| Data and storage path |", 2)[1].split("\n\n", 1)[0];
+}
 
 // Source contract only: this does not prove installed encryption or recovery.
 function checkBrowserRow(document) {
@@ -77,27 +181,25 @@ test("the storage check rejects false Browser path, encryption, and recovery cla
   }
 });
 
-function checkRecoveryCoverage(document) {
-  const table = document.split("| Data and storage path |", 2)[1].split("\n\n", 1)[0];
-  assert.match(table, /\| Recovery Kit restores \|/);
-  for (const [name, coverage] of [
-    ["Home recovery authority", "Home recovery authority and data key"],
-    ["Contacts and Profile", "Profile identity and contacts present at export"],
-    ["Built-in Wallet", "Built-in Wallet keys present at export"],
-  ]) {
-    const row = table.split("\n").find((line) => line.startsWith(`| ${name}`));
-    assert.ok(row, `find the ${name} row`);
-    const actual = row.split("|")[4].trim();
-    if (name === "Home recovery authority") {
-      assert.ok(actual.includes(coverage), `${name}: single-file export coverage`);
-      assert.match(actual, /\bnot passkeys or sessions\b/i, "exclude sign-in state from recovery");
-    } else {
-      assert.equal(actual, coverage, `${name}: single-file export coverage`);
-    }
-  }
-}
+test("Security storage table locked encrypted and recovery cells", () => checkStorageTableCells(security));
 
-test("Security Recovery Kit coverage matches System's single-file export and product name", () => {
+test("the storage table check rejects false encrypted and recovery cells", () => {
+  const documents = rowCells(security, "Documents:");
+  const mutatedEncrypted = security.replace(
+    documents.row,
+    documents.row.replace(documents.encrypted, "All document files encrypted on disk"),
+  );
+  assert.throws(() => checkStorageTableCells(mutatedEncrypted), /encrypted column/);
+
+  const community = rowCells(security, "Community history");
+  const mutatedRecovery = security.replace(
+    community.row,
+    community.row.replace(community.recovery, "All community history"),
+  );
+  assert.throws(() => checkStorageTableCells(mutatedRecovery), /recovery column/);
+});
+
+test("Security Recovery Kit export markers, product name, and storage table cells", () => {
   const system = read("capsules/system/browser/system.js");
   const gateway = read("elastos/crates/elastos-server/src/api/gateway.rs");
   const auth = read("elastos/crates/elastos-server/src/api/auth_gateway.rs");
@@ -111,15 +213,22 @@ test("Security Recovery Kit coverage matches System's single-file export and pro
   assert.match(auth, /"data_kit": kit,/);
   assert.match(auth, /"wallet_recovery_keys": wallet_recovery_keys,/);
   assert.match(auth, /\.insert\("people_identity"\.to_string\(\), people_identity\)/);
-  checkRecoveryCoverage(security);
+  assert.doesNotMatch(auth, /"community_history"/,
+    "full export must not claim Community history in the bundle object");
+  checkStorageTableCells(security);
   for (const path of ["SECURITY.md", "docs/INSTALL.md", "docs/GLOSSARY.md", "docs/STORAGE_AND_ACCESS.md"]) {
     assert.doesNotMatch(read(path), /full (?:recovery )?bundle/i,
       `${path}: use System's Recovery Kit name for the recovery file`);
+    assert.match(
+      read(path),
+      /new passkey[\s\S]{0,120}does not[\s\S]{0,24}replace/i,
+      `${path}: passkey does not rotate Profile or Wallet keys restored from the Kit`,
+    );
   }
 });
 
 test("the recovery coverage check rejects the internal-record-only description", () => {
-  assert.throws(() => checkRecoveryCoverage(security.replace(
+  assert.throws(() => checkStorageTableCells(security.replace(
     "Profile identity and contacts present at export", "Data key; files separate",
   )));
 });

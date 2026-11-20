@@ -551,7 +551,11 @@ Passkeys control sign-in. Locking Home stops UI use; the Runtime account and roo
 retain access to stored data and keys. The protection target covers hosted
 operators and root, and other software or OS users while a self-hosted Home is
 locked. An unlocked self-hosted Home trusts its owner and their host software.
-A stolen device or profile key requires a new identity.
+The Recovery Kit restores the same Profile signing seed and the same built-in
+Wallet private keys that were in the export. A new passkey controls sign-in
+only; it does not replace those keys. If your device or a Recovery Kit copy was
+stolen, move funds to new wallet keys and create a new Profile before you treat
+the old identity as closed.
 
 If you lose every passkey, use your Recovery Kit on the same Home, even when guest
 accounts are off:
