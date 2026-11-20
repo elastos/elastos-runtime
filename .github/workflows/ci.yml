@@ -999,9 +999,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y iproute2 iptables iputils-ping
-          for arrangement in two-nat forced-relay relay-to-direct; do
-            scripts/ci-relay-journey.sh "$arrangement"
-          done
+          scripts/ci-relay-journey.sh matrix
       - name: summarize installed model journey
         if: always()
         env:

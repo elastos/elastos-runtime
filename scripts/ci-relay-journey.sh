@@ -11,10 +11,11 @@ import os
 s = os.statvfs('.')
 assert s.f_bavail * s.f_frsize >= 12 * 1024 ** 3, 'build needs 10 GiB plus 2 GiB reserve'
 PY
-(cd elastos && cargo build --locked --release -p elastos-server -p localhost-provider)
-export ELASTOS_RELAY_RUNTIME="$(realpath "${CARGO_TARGET_DIR:-elastos/target}/release/elastos")"
-export ELASTOS_RELAY_PROVIDER="$(realpath "${CARGO_TARGET_DIR:-elastos/target}/release/localhost-provider")"
 scripts/test-behaviour.sh inputs
 export NODE_PATH="${BEHAVIOUR_INPUTS:-${HOME}/.cache/elastos-runtime/behaviour}/browser/node_modules"
 export BROWSER_OPERATOR_PLAYWRIGHT_CORE="${BEHAVIOUR_INPUTS:-${HOME}/.cache/elastos-runtime/behaviour}/core/node_modules/playwright-core"
-python3 scripts/ci-relay-journey.py --network-arrangement "${1:-two-nat}"
+if [[ "${1:-}" == matrix ]]; then
+    python3 scripts/ci-relay-journey.py --matrix
+else
+    python3 scripts/ci-relay-journey.py --network-arrangement "${1:-two-nat}"
+fi

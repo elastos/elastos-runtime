@@ -5,6 +5,7 @@ The shared installer and capsule stamper bind the real installed bytes to HEAD.
 This reduced fixture proves messaging only; it makes no full-install claim.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -49,7 +50,8 @@ def prepare_assets(root, data, binary):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--network-arrangement", choices=("same-host", "two-nat", "forced-relay", "relay-to-direct"), required=True)
+    parser.add_argument("--network-arrangement", choices=("same-host", "two-nat", "forced-relay", "relay-to-direct"), default="two-nat")
+    parser.add_argument("--matrix", action="store_true")
     args = parser.parse_args()
     root = Path.cwd().resolve()
     journey = runpy.run_path(str(root / "scripts/ci-installed-journeys.py"))
@@ -62,28 +64,51 @@ def main():
     (data / "bin").mkdir(mode=0o700)
     (data / "receipts").mkdir(mode=0o700)
     try:
-        prepare_assets(root, data, Path(os.environ.get("ELASTOS_RELAY_PROVIDER", str(root / "elastos/target/release/localhost-provider"))))
-        runtime_input = stage_runtime_input(Path(os.environ.get("ELASTOS_RELAY_RUNTIME", str(root / "elastos/target/release/elastos"))), work / "runtime-input")
+        # One disposable signed-build input pair serves the complete matrix.
+        # Runtime receives neither a client URL nor a client pin in its environment.
+        certificate, key = work / "relay.crt", work / "relay.key"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ed25519", "-nodes", "-keyout", str(key),
+            "-out", str(certificate), "-days", "1", "-subj", "/CN=carrier-release-fixture", "-addext", "subjectAltName=IP:203.0.113.1"],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=20)
+        key.chmod(0o600)
+        der = subprocess.run(["openssl", "x509", "-in", str(certificate), "-outform", "DER"], check=True, capture_output=True, timeout=10).stdout
+        origin = "https://203.0.113.1:4433/"
+        build_environment = dict(os.environ, ELASTOS_RELEASE_RELAY_URL=origin,
+                                 ELASTOS_RELEASE_RELAY_CERT_SHA256=hashlib.sha256(der).hexdigest())
+        subprocess.run(["cargo", "build", "--locked", "--release", "-p", "elastos-server", "-p", "localhost-provider"],
+                       cwd=root / "elastos", env=build_environment, check=True, timeout=1800)
+        target = Path(os.environ.get("CARGO_TARGET_DIR", str(root / "elastos/target")))
+        if not target.is_absolute():
+            target = root / "elastos" / target
+        prepare_assets(root, data, target / "release/localhost-provider")
+        runtime_input = stage_runtime_input(target / "release/elastos", work / "runtime-input")
         subprocess.run(["python3", "scripts/install-source-home-runtime.py", "--source-root", str(root), "--data-dir", str(data),
                         "--built-runtime", str(runtime_input), "--platform", "linux-amd64"], check=True, timeout=60)
-        # All changes to links, routers and packet filters stay inside these
-        # namespaces. Their lifetime ends with this one subprocess.
+        fixture_environment = dict(os.environ, ELASTOS_RELAY_FIXTURE_RELEASE="1", ELASTOS_RELAY_FIXTURE_URL=origin,
+                                   ELASTOS_RELAY_FIXTURE_CERT=str(certificate), ELASTOS_RELAY_FIXTURE_KEY=str(key))
         setup = 'set -eu; mount --make-rprivate /; mount -t tmpfs tmpfs /run; mkdir /run/netns; exec "$@"'
-        command = ["unshare", "--user", "--map-root-user", "--mount", "--net", "sh", "-c", setup, "journey",
-                   "python3", "scripts/ci-installed-journeys.py", str(home), str(data), str(work / "evidence"),
-                   "--two-home-messages", "--network-arrangement", args.network_arrangement]
-        result = subprocess.run(command, timeout=1020, check=False)
-        receipt_path = work / "evidence/installed-journeys.json"
-        if receipt_path.exists():
-            record = json.loads(receipt_path.read_text())
-            print(json.dumps({key: record.get(key) for key in (
-                "candidate", "source_tree", "installed_runtime_sha256", "network_arrangement", "results",
-                "route_observations", "meeting_point", "discovery_packets", "automatic_direct", "transitions", "visible_failure", "delivery_warning_count", "all_carrier_paths_blocked", "promotion_setup", "status", "failure", "browser_failure", "registration_refusals", "process_cleanup", "fixture_removed")}), flush=True)
-            if result.returncode == 0:
-                assert journey["two_home_receipt_valid"](record, journey["installed_message_identity"](data), args.network_arrangement), "installed relay receipt failed its complete acceptance guard"
-        if result.returncode:
-            raise RuntimeError("real two-NAT installed journey failed")
-        print("two-NAT installed message journey: PASS", flush=True)
+        arrangements = ("two-nat", "forced-relay", "relay-to-direct", "same-host") if args.matrix else (args.network_arrangement,)
+        for arrangement in arrangements:
+            evidence = work / ("evidence-" + arrangement)
+            command = ["unshare", "--user", "--map-root-user", "--mount", "--net", "sh", "-c", setup, "journey",
+                       "python3", "scripts/ci-installed-journeys.py", str(home), str(data), str(evidence),
+                       "--two-home-messages", "--network-arrangement", arrangement]
+            result = subprocess.run(command, env=fixture_environment, timeout=1020, check=False)
+            receipt_path = evidence / "installed-journeys.json"
+            if receipt_path.exists():
+                record = json.loads(receipt_path.read_text())
+                print(json.dumps({key: record.get(key) for key in (
+                    "candidate", "source_tree", "installed_runtime_sha256", "network_arrangement", "relay_selection", "results",
+                    "route_observations", "meeting_point", "discovery_packets", "automatic_direct", "transitions", "visible_failure",
+                    "delivery_warning_count", "all_carrier_paths_blocked", "promotion_setup", "status", "failure", "browser_failure",
+                    "registration_refusals", "process_cleanup", "fixture_removed")}), flush=True)
+                if result.returncode == 0:
+                    assert journey["two_home_receipt_valid"](record, journey["installed_message_identity"](data), arrangement), "installed relay receipt failed its complete acceptance guard"
+                    if arrangement != "same-host":
+                        assert record["relay_selection"] == "compiled_release_default"
+            if result.returncode:
+                raise RuntimeError("installed message journey failed: " + arrangement)
+            print("installed message journey: PASS " + arrangement, flush=True)
     finally:
         # The shared removal guard checks parent links and live fixture processes.
         journey["remove_message_fixture"](work)

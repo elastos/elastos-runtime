@@ -2078,10 +2078,14 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
     started = time.monotonic()
     # Explicit environment excludes ambient relay, public-network and provider overrides.
     def environment(owner):
+        selection = dict(settings["environment"])
+        compiled = topology and os.environ.get("ELASTOS_RELAY_FIXTURE_RELEASE") == "1"
+        if compiled:
+            selection.pop("ELASTOS_CARRIER_NETWORK")
         return {"PATH": os.environ["PATH"], "HOME": str(owner.home), "XDG_DATA_HOME": str(owner.data.parent),
-                **settings["environment"], "ELASTOS_QUIET_RUNTIME_NOTICES": "1",
+                **selection, "ELASTOS_QUIET_RUNTIME_NOTICES": "1",
                 "RUST_LOG": "warn,elastos_carrier_path=debug",
-                **({"ELASTOS_RELAY_URL": relay_url, "ELASTOS_RELAY_CERT_SHA256": relay_identity} if relay_url else {})}
+                **({"ELASTOS_RELAY_URL": relay_url, "ELASTOS_RELAY_CERT_SHA256": relay_identity} if relay_url and not compiled else {})}
     def launch(name):
         assert name not in children, "Home already has an owned Runtime"
         owner = fixtures[name]
@@ -2207,11 +2211,17 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
                 topology = runpy.run_path(str(Path(__file__).with_name("ci-two-nat-network.py")))["MessageNetwork"](network)
                 topology.home_ips["c"] = topology.home_ips["b"]
                 topology.names["c"] = topology.names["b"]
-                relay_url = f"https://203.0.113.1:{free_port()}/"
+                relay_url = os.environ.get("ELASTOS_RELAY_FIXTURE_URL", f"https://203.0.113.1:{free_port()}/")
                 certificate, key = root / "relay.crt", root / "relay.key"
-                subprocess.run(["openssl", "req", "-x509", "-newkey", "ed25519", "-nodes", "-keyout", str(key),
-                    "-out", str(certificate), "-days", "1", "-subj", "/CN=carrier-fixture", "-addext", "subjectAltName=IP:203.0.113.1"],
-                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=20)
+                if os.environ.get("ELASTOS_RELAY_FIXTURE_RELEASE") == "1":
+                    shutil.copyfile(os.environ["ELASTOS_RELAY_FIXTURE_CERT"], certificate)
+                    shutil.copyfile(os.environ["ELASTOS_RELAY_FIXTURE_KEY"], key)
+                    record["relay_selection"] = "compiled_release_default"
+                else:
+                    subprocess.run(["openssl", "req", "-x509", "-newkey", "ed25519", "-nodes", "-keyout", str(key),
+                        "-out", str(certificate), "-days", "1", "-subj", "/CN=carrier-fixture", "-addext", "subjectAltName=IP:203.0.113.1"],
+                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=20)
+                    record["relay_selection"] = "explicit_source"
                 key.chmod(0o600)
                 der = subprocess.run(["openssl", "x509", "-in", str(certificate), "-outform", "DER"],
                     check=True, capture_output=True, timeout=10).stdout

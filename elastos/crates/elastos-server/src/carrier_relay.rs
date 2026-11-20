@@ -1309,12 +1309,9 @@ mod tests {
         let counted = h_pings.clone();
         let h_reader = tokio::spawn(async move {
             while let Some(message) = h_stream.next().await {
-                match message.unwrap() {
-                    RelayToClientMsg::Ping(ping) => {
-                        h_control.lock().await.send(ClientToRelayMsg::Pong(ping)).await.unwrap();
-                        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    }
-                    _ => {}
+                if let RelayToClientMsg::Ping(ping) = message.unwrap() {
+                    h_control.lock().await.send(ClientToRelayMsg::Pong(ping)).await.unwrap();
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 }
             }
             panic!("honest Home disconnected during source floods");
@@ -1333,6 +1330,7 @@ mod tests {
         });
         tokio::time::sleep(Duration::from_secs(65)).await;
         let live = !h_reader.is_finished() && !p_reader.is_finished();
+        let active_flooders = attackers.iter().filter(|task| !task.is_finished()).count();
         let heartbeats = h_pings.load(std::sync::atomic::Ordering::SeqCst);
         let started = Instant::now();
         let delivered = if live {
@@ -1348,6 +1346,7 @@ mod tests {
         p_reader.abort(); let _ = p_reader.await;
         server.shutdown().await.unwrap();
         for task in proxies { task.abort(); let _ = task.await; }
+        assert_eq!(active_flooders, 96, "the hostile load must remain active through the observation");
         assert!(live && heartbeats >= 3, "healthy Home lost its relay heartbeat under three source floods");
         assert_eq!(delivered.as_deref(), Some(&vec![7; 1024][..]), "another source must deliver within one second");
     }
