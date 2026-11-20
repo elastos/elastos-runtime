@@ -10,7 +10,7 @@ if (!vm.SourceTextModule) {
     const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
     const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--test-reporter=tap', '--test', import.meta.filename], { env, encoding: 'utf8', timeout: 60000 });
     assert.equal(result.error, undefined);
-    assert.match(result.stdout, /# tests 6/);
+    assert.match(result.stdout, /# tests 9/);
     assert.match(result.stdout, /# fail 0/);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     t.diagnostic('Child executed host wallet compatibility tests.');
@@ -20,21 +20,21 @@ if (!vm.SourceTextModule) {
 async function hostWithProviders(announcements) {
   const calls = [];
   const providers = new Map();
-  for (const spec of announcements) {
+  for (const [index, spec] of announcements.entries()) {
     const provider = spec.provider ?? {
       request(call) { calls.push({ rdns: spec.rdns, call }); return Promise.resolve(spec.reply?.(call) ?? []); },
       on() {},
     };
-    providers.set(spec.rdns, provider);
+    providers.set(index, provider);
   }
   const source = await readFile(new URL('../capsules/home/browser/home-wallet-connector-host.js', import.meta.url), 'utf8');
   const windowListeners = new Map();
   const window = {
     addEventListener(name, cb) { windowListeners.set(name, cb); },
-    dispatchEvent() {},
+    dispatchEvent() { announce(); },
   };
   const context = vm.createContext({
-    window, Event, Set, Map, WeakSet, Number, Object, TextEncoder, crypto,
+    window, Event, Set, Map, WeakSet, Number, Object, TextEncoder, crypto, setTimeout, clearTimeout,
   });
   context.fetchJson = async () => { throw new Error('network'); };
   const module = new vm.SourceTextModule(source, { context });
@@ -45,14 +45,17 @@ async function hostWithProviders(announcements) {
     return dependency;
   });
   await module.evaluate();
-  for (const spec of announcements) {
+  function announce() {
+  for (const [index, spec] of announcements.entries()) {
     windowListeners.get('eip6963:announceProvider')({
       detail: {
         info: { rdns: spec.rdns, uuid: spec.uuid, name: spec.name ?? spec.rdns },
-        provider: providers.get(spec.rdns),
+        provider: providers.get(index),
       },
     });
   }
+  }
+  announce();
   return { module, calls, providers, window };
 }
 
@@ -201,6 +204,48 @@ test('wallet names with markup characters are rejected at the view boundary', ()
     window: 'metamask', stage: 'extension-choose-wallet',
     walletChoices: [{ id: 'x', name: '<evil>', icon: null }],
   }), /closed wallet choice/);
-  assert.equal(view.title, 'Rabby Wallet');
+  assert.equal(view.title, 'MetaMask');
   assert.doesNotMatch(viewText(view.notice), /MetaMask or Brave/);
+});
+async function send(h, action={kind:'link'}, context) {
+  const messages=[];
+  context ||= {kind:'app-frame',targetId:'wallet-metamask',homeToken:'token',source:{postMessage(data){messages.push(data);}},clipboardState:{retired:false,generation:'g1'},walletEffectState:{inFlight:false,requestIds:new Set()}};
+  h.module.namespace.handleHomeWalletConnectorEffect({source:context.source},context,{
+    type:'home:wallet-connector-effect',schema:'elastos.home.wallet-connector-effect/v1',requestId:'req:'+crypto.randomUUID(),connectorId:context.targetId,connectorToken:context.homeToken,action,
+  });
+  await new Promise(resolve=>setTimeout(resolve,5));
+  return {reply:messages.at(-1),context};
+}
+if(vm.SourceTextModule) test('fresh discovery deduplicates before cap and drops cross-object identities only',async()=>{
+  for(const collision of ['uuid','rdns','object']) {
+    const common={request(){return Promise.resolve([]);}};
+    const a={rdns:'io.first',uuid:'first',name:'First',...(collision==='object'?{provider:common}:{})};
+    const b={rdns:collision==='rdns'?'io.first':'io.second',uuid:collision==='uuid'?'first':'second',name:'Second',...(collision==='object'?{provider:common}:{})};
+    const h=await hostWithProviders([a,b,{rdns:'io.other',uuid:'other',name:'Other'}]);
+    await send(h);assert.equal(h.calls[0].rdns,'io.other');
+  }
+  const specs=Array.from({length:32},(_,i)=>({rdns:'io.wallet'+i,uuid:'w'+i,name:'Wallet '+i}));
+  const shared={request(){return Promise.resolve([]);}};
+  const duplicate={rdns:'io.wallet0',uuid:'w0',name:'Wallet 0',provider:shared};
+  const h=await hostWithProviders([...Array(33).fill(duplicate),...specs.slice(1)]);const {reply}=await send(h);assert.equal(reply.walletChoices.length,32);
+  specs.push({rdns:'io.extra',uuid:'extra',name:'Extra'});
+  const overflow=await hostWithProviders(specs);assert.match((await send(overflow)).reply.error,/ambiguous/);assert.equal(overflow.calls.length,0);
+});
+if(vm.SourceTextModule) test('choice handles are one-use and bound to frame lifetime, with disappeared-wallet recovery',async()=>{
+  const specs=[{rdns:'io.first',uuid:'first',name:'First'},{rdns:'io.second',uuid:'second',name:'Second'}];
+  const h=await hostWithProviders(specs);const offer=await send(h);const id=offer.reply.walletChoices[0].id;
+  assert.match((await send(h,{kind:'link',walletChoiceId:id})).reply.error,/not available/);
+  offer.context.clipboardState.generation='g2';
+  await send(h,{kind:'link',walletChoiceId:id},offer.context);assert.equal(h.calls.length,0);
+  const fresh=await send(h);specs.length=0;
+  await send(h,{kind:'link',walletChoiceId:fresh.reply.walletChoices[0].id},fresh.context);assert.equal(h.calls.length,0);
+});
+if(vm.SourceTextModule) test('approval probes at most eight wallets in parallel and stops after a bounded wait',async()=>{
+  let started=0;
+  const specs=Array.from({length:10},(_,i)=>({rdns:'io.wallet'+i,uuid:'w'+i,name:'Wallet '+i,provider:{request(){started++;return new Promise(()=>{});}}}));
+  const h=await hostWithProviders(specs),messages=[];
+  const context={kind:'app-frame',targetId:'wallet-metamask',homeToken:'token',source:{postMessage(d){messages.push(d);}},clipboardState:{retired:false,generation:'g'},walletEffectState:{inFlight:false,requestIds:new Set()}};
+  await send(h,{kind:'approve',approvalRequestId:'pending',linkedAddress:'0x'+'1'.repeat(40)},context);
+  assert.equal(started,8);await new Promise(resolve=>setTimeout(resolve,1100));
+  assert.equal(messages.length,1);assert.match(messages[0].error,/cannot confirm access/);
 });

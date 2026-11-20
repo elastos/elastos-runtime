@@ -380,7 +380,7 @@ for (const kind of ['metamask', 'unisat']) test(`${kind}: actual old Home with n
   const browser = await playwright.chromium.launch({ headless: true });
   try {
     const modern = await fixture(browser, kind, { oldHost: true });
-    try { await modern.action('connect').click(); await modern.state('linked'); }
+    try { await modern.action('connect').click(); await modern.state(kind==='metamask'?'link-error':'linked'); }
     finally { await modern.close(); }
     const legacy = await fixture(browser, kind, { oldWindow: true });
     try {

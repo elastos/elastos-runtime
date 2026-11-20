@@ -16,10 +16,9 @@ const MAX_EIP6963_PROVIDERS = 32;
 const MAX_EFFECT_REQUESTS_PER_FRAME = 64;
 const OPAQUE_FRAME_TARGET = "*";
 const eip6963Providers = [];
-const walletChoiceOffers = new Map();
-const lastLinkedEvmProviders = new Map();
+const walletChoiceOffers = new WeakMap();
 const WALLET_CHOICE_ID_PATTERN = /^wchoice-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const WALLET_LABEL_RESERVED = /^(home|wallet|inbox|elastos)$/i;
+const WALLET_LABEL_RESERVED = /^(?:wallet$|(?:home|inbox|elastos)(?:$| ))/i;
 // Only an already admitted effect can identify the recipient. The existing
 // clipboard lifetime binds this subscription to that same live document.
 const walletEventRecipients = new Map();
@@ -90,7 +89,10 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
   }
   const requestId = readText(data.requestId);
   const connectorId = readText(data.connectorId);
-  const action = data.action;
+  // Current windows request display facts in their action. Legacy windows keep
+  // their exact terminal result shape; this adds no pre-click exchange.
+  const includeWallet = data.action?.includeWallet === true;
+  const action = includeWallet ? Object.fromEntries(Object.entries(data.action).filter(([key]) => key !== 'includeWallet')) : data.action;
   const state = context?.walletEffectState;
   if (
     context?.kind !== "app-frame"
@@ -110,6 +112,8 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
     || data.connectorToken !== context.homeToken
     || !validRequestId(requestId)
     || !validAction(action)
+    || connectorId === UNISAT_CONNECTOR_ID && (includeWallet || action.walletChoiceId || action.linkedAddress)
+    || connectorId === METAMASK_CONNECTOR_ID && action.kind === "approve" && !/^0x[0-9a-fA-F]{40}$/.test(action.linkedAddress)
     || !state
   ) {
     replyToConnector(event, requestId, connectorId, null, "Home denied the wallet request.");
@@ -131,8 +135,11 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
   rememberWalletEventRecipient(event, context);
   state.requestIds.add(requestId);
   state.inFlight = true;
-  performConnectorEffect(connectorId, context.homeToken, action)
-    .then((result) => replyToConnector(event, requestId, connectorId, result))
+  performConnectorEffect(connectorId, context.homeToken, action, context)
+    .then((result) => {
+      const {wallet, ...legacyResult} = result;
+      replyToConnector(event, requestId, connectorId, includeWallet ? result : legacyResult);
+    })
     .catch((error) => {
       replyToConnector(
         event,
@@ -151,237 +158,127 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
 
 function boundedWalletName(value) {
   const name = readText(value);
-  if (!name || name.length > 80) {
-    return null;
-  }
-  const bytes = new TextEncoder().encode(name);
-  if (bytes.length > 320 || /[<>&]/.test(name)) {
-    return null;
-  }
-  return name;
+  return name && name.length <= 80 && new TextEncoder().encode(name).length <= 320
+    && !/[<>&\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}]/u.test(name) ? name : null;
 }
 
 function boundedWalletIcon(value) {
   const icon = readText(value);
-  if (!icon || icon.length > 4096) {
-    return null;
-  }
-  if (!/^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/]+=*$/.test(icon)) {
-    return null;
-  }
-  return icon;
+  // 64 KiB allows larger wallet marks; the measured MetaMask mark is 3,687 chars.
+  return icon.length <= 65536 && /^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,(?=[A-Za-z0-9+/])(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$/.test(icon) ? icon : null;
 }
 
 function presentWalletName(value, rdns) {
-  const raw = boundedWalletName(value) || boundedWalletName(rdns) || readText(rdns);
-  if (!raw) {
-    return null;
-  }
-  const stripped = raw
-    .replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cs}]/gu, "")
-    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
-  return boundedWalletName(stripped) || boundedWalletName(rdns) || null;
+  const name = boundedWalletName(value);
+  if (!name) return null;
+  const normalized = name.normalize('NFKC').toLowerCase();
+  const brands = {metamask:'io.metamask', 'brave wallet':'com.brave.wallet', unisat:'unisat', walletconnect:'walletconnect'};
+  return WALLET_LABEL_RESERVED.test(normalized) || brands[normalized] && brands[normalized] !== rdns ? null : name;
 }
 
 function walletDisplayForEntry(entry) {
-  if (!entry) {
-    return null;
-  }
-  const name = presentWalletName(entry.name, entry.rdns) || entry.rdns;
-  return Object.freeze({
-    name: WALLET_LABEL_RESERVED.test(name) ? entry.rdns : name,
-    rdns: entry.rdns,
-  });
+  return entry ? Object.freeze({name:entry.name, rdns:entry.rdns, icon:entry.icon}) : null;
 }
 
 class WalletChoiceRequired extends Error {
-  constructor(message, walletChoices) {
-    super(message);
+  constructor(walletChoices) {
+    super("Choose a browser wallet in the connection window.");
     this.walletChoices = walletChoices;
   }
 }
 
 function installEip6963Discovery() {
   window.addEventListener("eip6963:announceProvider", (event) => {
-    const info = event?.detail?.info;
-    const provider = event?.detail?.provider;
-    const rdns = readText(info?.rdns).toLowerCase();
-    const uuid = readText(info?.uuid);
-    const name = boundedWalletName(info?.name);
-    if (
-      !rdns
-      || rdns.length > 128
-      || !EIP6963_RDNS_PATTERN.test(rdns)
-      || !uuid
-      || uuid.length > 128
-      || !provider
-      || typeof provider.request !== "function"
-    ) {
-      return;
-    }
-    if (eip6963Providers.length >= MAX_EIP6963_PROVIDERS) {
-      eip6963Overflow = true;
-      return;
-    }
-    const icon = boundedWalletIcon(info?.icon);
-    if (!eip6963Providers.some((entry) => (
-      entry.provider === provider && entry.rdns === rdns && entry.uuid === uuid
-    ))) {
-      eip6963Providers.push({ provider, rdns, uuid, name, icon });
-    }
+    const info = event?.detail?.info, provider = event?.detail?.provider;
+    const rdns = readText(info?.rdns).toLowerCase(), uuid = readText(info?.uuid);
+    if (!EIP6963_RDNS_PATTERN.test(rdns) || rdns.length > 128 || !uuid || uuid.length > 128
+      || !provider || typeof provider.request !== 'function') return;
+    if (eip6963Providers.some(e => e.provider === provider && e.rdns === rdns && e.uuid === uuid)) return;
+    if (eip6963Providers.length >= MAX_EIP6963_PROVIDERS) { eip6963Overflow = true; return; }
+    eip6963Providers.push({provider, rdns, uuid, name:presentWalletName(info.name, rdns), icon:boundedWalletIcon(info.icon)});
   });
-  requestEip6963Providers();
 }
 
-function requestEip6963Providers() {
-  if (typeof window.dispatchEvent !== "function") {
-    return;
-  }
+function discoverWallets() {
+  eip6963Providers.length = 0;
+  eip6963Overflow = false;
   window.dispatchEvent(new Event("eip6963:requestProvider"));
+  if (eip6963Overflow) throw new Error("Injected wallet provider discovery is ambiguous.");
+  const entries = eip6963Providers.filter(entry => !eip6963Providers.some(other => other !== entry && (
+    other.provider === entry.provider || other.uuid === entry.uuid || other.rdns === entry.rdns
+  ))).filter(entry => entry.name);
+  if (!entries.length && eip6963Providers.length) throw new Error("Injected wallet provider discovery is ambiguous.");
+  return entries;
 }
 
-function filterConsistentProviders(entries) {
-  const byProvider = new Map();
-  for (const entry of entries) {
-  if (!byProvider.has(entry.provider)) {
-      byProvider.set(entry.provider, []);
-    }
-    byProvider.get(entry.provider).push(entry);
-  }
-  const kept = [];
-  for (const related of byProvider.values()) {
-    const identities = new Set(related.map((candidate) => candidate.rdns));
-    const uuidsByRdns = new Map();
-    let conflicting = identities.size !== 1;
-    if (!conflicting) {
-      for (const candidate of related) {
-        if (!uuidsByRdns.has(candidate.rdns)) {
-          uuidsByRdns.set(candidate.rdns, new Set());
-        }
-        uuidsByRdns.get(candidate.rdns).add(candidate.uuid);
-        if (uuidsByRdns.get(candidate.rdns).size > 1) {
-          conflicting = true;
-          break;
-        }
-      }
-    }
-    if (conflicting) {
-      continue;
-    }
-    const seen = new Set();
-    for (const candidate of related) {
-      const key = `${candidate.rdns}\0${candidate.uuid}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      kept.push(candidate);
-    }
-  }
-  return kept;
+function sameWallet(a, b) {
+  return a.provider === b.provider && a.rdns === b.rdns && a.uuid === b.uuid;
 }
 
-function issueWalletChoices(connectorToken, candidates) {
-  const choices = new Map();
-  const list = [];
-  for (const entry of candidates) {
-    const id = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? `wchoice-${crypto.randomUUID()}`
-      : `wchoice-${Date.now().toString(36)}-${list.length}`;
-    choices.set(id, entry);
-    list.push({
-      id,
-      name: presentWalletName(entry.name, entry.rdns) || entry.rdns,
-      icon: entry.icon ?? null,
-    });
-  }
-  walletChoiceOffers.set(connectorToken, { choices });
-  return list;
+function ensureWalletPresent(selected) {
+  let present = false;
+  try { present = discoverWallets().some(entry => sameWallet(entry, selected)); } catch {}
+  if (!present) throw new Error("The selected browser wallet is not available.");
 }
 
-function resolveWalletChoice(connectorToken, walletChoiceId, entries) {
-  const offer = walletChoiceOffers.get(connectorToken);
-  const entry = offer?.choices?.get(walletChoiceId);
-  if (!entry) {
-    return null;
+function selectMetaMaskCompatibleProvider(context, walletChoiceId) {
+  let entries;
+  try { entries = discoverWallets(); } catch (error) {
+    if (walletChoiceId) throw new Error("The selected browser wallet is not available.");
+    throw error;
   }
-  return entries.find((candidate) => (
-    candidate.provider === entry.provider
-    && candidate.rdns === entry.rdns
-    && candidate.uuid === entry.uuid
-  )) || null;
-}
-
-function uniqueProvidersForRdns(entries, rdns) {
-  return [...new Set(entries.filter((entry) => entry.rdns === rdns).map((entry) => entry.provider))];
-}
-
-function selectMetaMaskCompatibleProvider(connectorToken, walletChoiceId, linkedProvider = null) {
-  requestEip6963Providers();
-  if (eip6963Overflow) {
-    throw new Error("Injected wallet provider discovery is ambiguous.");
-  }
-  const entries = filterConsistentProviders(eip6963Providers);
-  const chosenId = walletChoiceId ? readText(walletChoiceId) : "";
-  if (chosenId) {
-    if (!validWalletChoiceId(chosenId)) {
-      throw new Error("The selected browser wallet is not available.");
-    }
-    const selected = resolveWalletChoice(connectorToken, chosenId, entries);
-    if (!selected) {
-      throw new Error("The selected browser wallet is not available.");
-    }
+  const scope = context.walletEffectState;
+  const offer = walletChoiceOffers.get(scope);
+  walletChoiceOffers.delete(scope);
+  if (walletChoiceId) {
+    const selected = offer?.source === context.source && offer?.token === context.homeToken && offer?.lifetime === context.clipboardState && offer?.generation === context.clipboardState?.generation
+      && !context.clipboardState?.retired && offer.choices.get(walletChoiceId);
+    if (!selected || !entries.some(entry => sameWallet(entry, selected))) throw new Error("The selected browser wallet is not available.");
     return selected;
   }
-  if (linkedProvider && entries.some((entry) => entry.provider === linkedProvider)) {
-    const linked = entries.filter((entry) => entry.provider === linkedProvider);
-    return linked.find((entry) => entry.rdns === METAMASK_RDNS) || linked[0];
-  }
-  const metamaskProviders = uniqueProvidersForRdns(entries, METAMASK_RDNS);
-  if (metamaskProviders.length > 1) {
-    throw new Error("Injected wallet provider discovery is ambiguous.");
-  }
-  if (metamaskProviders.length === 1) {
-    return entries.find((entry) => entry.provider === metamaskProviders[0] && entry.rdns === METAMASK_RDNS);
-  }
-  const byProvider = new Map();
-  for (const entry of entries.filter((item) => item.rdns !== METAMASK_RDNS)) {
-    if (!byProvider.has(entry.provider)) {
-      byProvider.set(entry.provider, entry);
-    }
-  }
-  const candidates = [...byProvider.values()];
-  if (candidates.length === 1) {
-    return candidates[0];
-  }
-  if (candidates.length > 1) {
-  throw new WalletChoiceRequired(
-      "Choose a browser wallet in the connection window.",
-      issueWalletChoices(connectorToken, candidates),
-    );
-  }
-  throw new Error("Home could not find a browser wallet in this browser.");
+  if (!entries.length) throw new Error("Home could not find a browser wallet in this browser.");
+  const metamask = entries.find(entry => entry.rdns === METAMASK_RDNS);
+  if (metamask || entries.length === 1) return metamask || entries[0];
+  const choices = new Map();
+  for (const entry of entries.sort((a,b) => a.name.localeCompare(b.name))) choices.set(`wchoice-${crypto.randomUUID()}`, entry);
+  walletChoiceOffers.set(scope, {source:context.source, token:context.homeToken, lifetime:context.clipboardState, generation:context.clipboardState?.generation, choices});
+  throw new WalletChoiceRequired([...choices].map(([id, entry]) => ({id, name:entry.name, icon:entry.icon})));
 }
 
-async function performConnectorEffect(connectorId, connectorToken, action) {
+async function walletForAccount(address) {
+  const entries = discoverWallets().slice(0, 8);
+  const results = await Promise.all(entries.map(async entry => {
+    let timer;
+    try {
+      const accounts = await Promise.race([
+        Promise.resolve().then(() => entry.provider.request({method:'eth_accounts'})),
+        new Promise(resolve => { timer = setTimeout(() => resolve([]), 1000); }),
+      ]);
+      return Array.isArray(accounts) && accounts.length <= 32 && accounts.some(a => typeof a === 'string' && normalizeAddress(a) === normalizeAddress(address)) ? entry : null;
+    } catch { return null; } finally { clearTimeout(timer); }
+  }));
+  const matches = results.filter(Boolean);
+  const selected = matches.find(entry => entry.rdns === METAMASK_RDNS) || matches[0];
+  if (!selected) throw new Error("Home cannot confirm access to the account this request needs in your wallet.");
+  return selected;
+}
+
+async function performConnectorEffect(connectorId, connectorToken, action, context) {
   if (connectorId === METAMASK_CONNECTOR_ID && action.kind === "link") {
-    return linkEvmWallet(connectorToken, action.walletChoiceId ?? null);
+    return linkEvmWallet(connectorToken, action.walletChoiceId ?? null, context);
   }
   if (connectorId === UNISAT_CONNECTOR_ID && action.kind === "link") {
     return linkBitcoinWallet(connectorToken);
   }
   if (action.kind === "approve") {
-    return completeApproval(connectorId, connectorToken, action.approvalRequestId, action.walletChoiceId ?? null);
+    return completeApproval(connectorId, connectorToken, action.approvalRequestId, action.linkedAddress);
   }
   throw new Error("Unsupported wallet request.");
 }
 
-async function linkEvmWallet(connectorToken, walletChoiceId) {
-  const selected = selectMetaMaskCompatibleProvider(
-    connectorToken,
-    walletChoiceId,
-    lastLinkedEvmProviders.get(connectorToken) ?? null,
-  );
+async function linkEvmWallet(connectorToken, walletChoiceId, context) {
+  const selected = selectMetaMaskCompatibleProvider(context, walletChoiceId);
+  ensureWalletPresent(selected);
   const provider = selected.provider;
   observeWalletProvider(provider, METAMASK_CONNECTOR_ID);
   const accounts = await provider.request({ method: "eth_requestAccounts" });
@@ -397,6 +294,7 @@ async function linkEvmWallet(connectorToken, walletChoiceId) {
   const challenge = requireEvmChallenge(challengeResult);
   const signer = requireEvmAddress(await currentEvmAccount(provider));
   ensureSameAddress(signer, address, "Wallet account changed before signing.");
+  ensureWalletPresent(selected);
   const signature = requireProviderResult(await provider.request({
     method: "personal_sign",
     params: [challenge.message, signer],
@@ -409,7 +307,6 @@ async function linkEvmWallet(connectorToken, walletChoiceId) {
     }),
   );
   requireRuntimeCompletion(verified, "evm_link_complete", METAMASK_CONNECTOR_ID, "linked");
-  lastLinkedEvmProviders.set(connectorToken, provider);
   const wallet = walletDisplayForEntry(selected);
   return Object.freeze({ status: "linked", ...(wallet ? { wallet } : {}) });
 }
@@ -442,14 +339,9 @@ async function linkBitcoinWallet(connectorToken) {
   return Object.freeze({ status: "linked" });
 }
 
-async function completeApproval(connectorId, connectorToken, approvalRequestId, walletChoiceId) {
-  const selected = connectorId === METAMASK_CONNECTOR_ID
-    ? selectMetaMaskCompatibleProvider(
-      connectorToken,
-      walletChoiceId,
-      lastLinkedEvmProviders.get(connectorToken) ?? null,
-    )
-    : null;
+async function completeApproval(connectorId, connectorToken, approvalRequestId, linkedAddress) {
+  const selected = connectorId === METAMASK_CONNECTOR_ID ? await walletForAccount(linkedAddress) : null;
+  if (selected) ensureWalletPresent(selected);
   const provider = connectorId === METAMASK_CONNECTOR_ID
     ? selected.provider
     : requireUniSatProvider();
@@ -482,6 +374,7 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
       handoff.signer,
       "Switch to the linked account before approving.",
     );
+    ensureWalletPresent(selected);
     const transactionHash = requireProviderResult(await provider.request({
       method: "eth_sendTransaction",
       params: [handoff.transaction],
@@ -502,6 +395,7 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
   const params = method === "eth_signTypedData_v4"
     ? [signer, handoff.message]
     : [handoff.message, signer];
+  ensureWalletPresent(selected);
   const signature = requireProviderResult(await provider.request({ method, params }), 16 * 1024,
     "Wallet returned an invalid signature.");
   const completed = await runtimePost(path, connectorBody(METAMASK_CONNECTOR_ID, connectorToken, {
@@ -921,9 +815,9 @@ function validAction(action) {
       && validApprovalRequestId(action.approvalRequestId)) {
       return true;
     }
-    return hasExactKeys(action, ["kind", "approvalRequestId", "walletChoiceId"])
+    return hasExactKeys(action, ["kind", "approvalRequestId", "linkedAddress"])
       && validApprovalRequestId(action.approvalRequestId)
-      && validWalletChoiceId(action.walletChoiceId);
+      && /^0x[0-9a-fA-F]{40}$/.test(action.linkedAddress);
   }
   return false;
 }
@@ -1011,7 +905,7 @@ function reduceWalletChoiceForWire(choice) {
   if (!choice || typeof choice !== "object" || !validWalletChoiceId(choice.id)) {
     return null;
   }
-  const name = presentWalletName(choice.name, choice.id) || readText(choice.name);
+  const name = boundedWalletName(choice.name);
   if (!name) {
     return null;
   }

@@ -937,8 +937,8 @@ receive only the final transaction hash. Runtime submits the Wallet approval as
 a typed `RequestApproval` through the private Wallet Bus; the approval resource
 shown to the user remains the chain effect:
 `elastos://chain/<network>/broadcast_transaction`. External EVM accounts use
-connector handoff after Wallet/Inbox approval. For injected MetaMask/Brave, the
-opaque connector capsule sends only the exact approval request id through the
+connector handoff after Wallet/Inbox approval. For compatible injected Ethereum wallets, the
+opaque connector capsule sends the exact approval request ID and linked address through the
 closed Home wallet-effect message. Runtime validates matching launch-token v4
 Home and connector authorities and returns a typed handoff to the trusted
 top-level Home host; Home performs only the fixed provider effect and completes
@@ -958,7 +958,7 @@ tracks the active chain. This complements connector-level transaction smokes; it
 does not expose connector SDKs or raw wallet RPC to the page.
 
 `scripts/wallet-connector-transaction-smoke.mjs` is the connector-level
-authority proof. It checks that MetaMask/Brave and UniSat frames remain opaque,
+authority proof. It checks that compatible Ethereum wallet and UniSat frames remain opaque,
 carry their launch token through the Home message, and cannot submit arbitrary
 methods, messages, or transaction payloads. The Home shell bridge smoke covers
 exact WindowProxy/origin/token/connector binding, bounded replay and

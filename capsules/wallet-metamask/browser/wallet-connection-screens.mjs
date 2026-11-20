@@ -841,8 +841,10 @@ const definitions = {
       }
     },
     "extension-choose-wallet": {
-      "status": "Choose a browser wallet.",
-      "notice": "Several browser wallets are available in this browser. Choose one to connect through the MetaMask option.",
+      "status": "Home could not find MetaMask in this browser.",
+      "notice": "Choose a wallet.",
+      "primary": {"id":"refresh-status","label":"Check again","quiet":true},
+      "secondary": [{"id":"close-window","label":"Close window","quiet":true}],
       "walletPicker": true,
       "focus": "select-wallet"
     },
@@ -2306,8 +2308,8 @@ const requestRecovery='To try again, go back to {{app}} and start a new request.
 for(const window of ['metamask','unisat']){
   for(const screen of Object.values(definitions[window]))if(['To try again, return to {{app}}.','Start a new request in {{app}} to try again.'].includes(screen.notice))screen.notice=requestRecovery;
   for(const stage of ['extension-missing','extensions-unavailable',...(window==='metamask'?['other-ethereum-wallet']:[])]){
-    const screen=definitions[window][stage];screen.status=window==='metamask'?'Home could not find a browser wallet for the MetaMask option in this browser.':'Home could not find UniSat in this browser.';
-    screen.notice=window==='metamask'?'{{close}} Open Home in a browser where a compatible wallet is available, then choose MetaMask in Wallet.':'{{close}} Open Home in a browser where UniSat is available, then open this connection from Wallet.';screen.paymentSafeNotice=screen.notice;
+    const screen=definitions[window][stage];screen.status=window==='metamask'?'Home could not find a wallet in this browser.':'Home could not find UniSat in this browser.';
+    screen.notice=window==='metamask'?'Open Home in a browser where your wallet is available, then choose MetaMask in Wallet.':'{{close}} Open Home in a browser where UniSat is available, then open this connection from Wallet.';screen.paymentSafeNotice=screen.notice;
   }
 }
 for(const window of ['walletconnect','metamask','unisat']){
@@ -2316,5 +2318,10 @@ for(const window of ['walletconnect','metamask','unisat']){
 }
 
 definitions.unisat['request-dismissed'].notice='A request may still be waiting in UniSat. Before trying again, check UniSat and Activity in Wallet. Open Wallet from Home to review this request.';
+for (const stage of ['extension-missing','extensions-unavailable','other-ethereum-wallet']) {
+  Object.assign(definitions.metamask[stage], {account:true, primary:{id:'refresh-status',label:'Check again',quiet:false}, secondary:[{id:'close-window',label:'Close window',quiet:true}], focus:'refresh-status'});
+}
+Object.assign(definitions.metamask['request-unsendable'], {status:'Home cannot confirm access to the account this request needs in your wallet.',notice:'',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:true}],focus:'refresh-status'});
+Object.assign(definitions.metamask['link-error'], {primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:true}]});
 const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const screens = freeze(definitions);

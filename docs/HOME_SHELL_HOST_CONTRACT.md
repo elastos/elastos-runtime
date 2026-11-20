@@ -237,13 +237,33 @@ succeeds.
 
 ### Injected wallet connector effects (N2)
 
-**Today.** The v1 edge accepts link and approve from registered MetaMask/Brave
-and UniSat frames. Home selects the unique `io.metamask` provider, then the
-unique `com.brave.wallet` alternative; UniSat uses `window.unisat`. Discovery
-has a 32-entry bound and rejects conflicts. Home forwards bounded error text,
-checks account/network after consuming approval, and can finish an answer after
-the window's separate 60-second timer. WalletConnect runs its SDK in its own
-opaque capsule. The following v2 rules are build requirements.
+Home owns EIP-6963 discovery for the MetaMask option. On each Connect or Send,
+Home requests fresh announcements, removes conflicting objects, UUIDs and rdns
+values, and bounds the list to 32 distinct entries. Connect uses `io.metamask`
+when present, then the only wallet, then the person's choice from a name-sorted
+list. The list carries Home-issued one-use handles bound to that frame and its
+launch lifetime. The window sends the selected handle with the link action.
+
+For Send, the window includes the linked address with the approval request ID.
+Before taking the Runtime handoff, Home asks at most eight discovered wallets
+for `eth_accounts`, in parallel with a one-second timeout. Home uses a wallet
+that reports the linked address, preferring MetaMask among matches. If none
+reports it, the request stays pending and the window offers Check again and
+Close window. Home retains the signer check after the handoff. Each selected
+wallet is checked again before dispatch. UniSat uses its own provider contract.
+
+The window retains wallet identity only for its current action. A current MetaMask-option action includes `includeWallet:true` to request
+display facts in that same response. Legacy callers keep the exact terminal
+status shape. A successful
+link or approval returns the selected wallet's name, rdns and optional data-image
+icon. The account card shows that name and icon after success in this window;
+a saved link starts as Your wallet with its address and network and an empty
+mark slot. Announced identity stays inside window content. Home's header, tab
+title and hidden page title remain MetaMask. Each window has a hidden page
+title and its content starts with the status line. Home owns wallet objects;
+Runtime owns account links and one-use approval authority.
+
+The following v2 rules remain build requirements for their separate protocol.
 
 #### N2 readiness and authority renewal
 
@@ -407,15 +427,11 @@ account data. A call on another provider leaves its busy fact false.
 Caches remain confined to their verified principal/session/connector and
 canonical selector. They are observations, not signing authority.
 
-**After this work.** `providerId` is `io.metamask`, `com.brave.wallet`, `unisat`
-or null. The MetaMask connector may report only its selected MetaMask/Brave
-provider and at most the other eligible EVM identifier in `alternatives`.
-UniSat has no alternative in this set. A MetaMask check learns nothing about
-UniSat or another connector's extensions. MetaMask remains preferred when both
-EVM providers exist; a Brave-linked account then may be unavailable to this
-selected provider. This is a known limit, not a wallet-selection API. Stable
-identifiers name providers; EIP-6963 UUIDs and object identity are page-local
-conflict checks, not reload-stable identity or cryptographic authentication.
+**After this work.** The separate v2 snapshot keeps its closed provider set
+(`io.metamask`, `com.brave.wallet`, `unisat`, or null). The current v1 selection
+above carries optional announced display facts in its action result, rather
+than widening that v2 snapshot. Page-local UUIDs and rdns are conflict checks;
+Runtime account authority comes from the linked address and launch token.
 
 **After this work.** `availability` is `found`, `absent`, `unknown` or
 `unavailable`. Found means an allowed provider object is present; it does not
@@ -456,7 +472,7 @@ request/account details through their existing scoped Runtime reads.
 Bitcoin mainnet. UniSat's three issue values stay distinct even if a design
 later groups their screens. EVM ordering-only account changes do not imply
 unavailability; membership decides. `access` is unknown, available, empty or
-lost. For MetaMask/Brave, previously confirmed required-account membership
+lost. For the selected Ethereum wallet, previously confirmed required-account membership
 followed by an empty list yields lost/access_removed before the generic
 account_not_authorized outcome. Otherwise a missing required account yields
 account_not_authorized. UniSat empty accounts after linking always yield

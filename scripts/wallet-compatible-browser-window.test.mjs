@@ -15,17 +15,17 @@ for (const engine of ['chromium']) {
       try {
         await f.top.evaluate(() => window.dispatchEvent(new Event('eip6963:requestProvider')));
         await f.frame.locator('main[data-state="ready"] [data-action="connect"]').click();
-        await f.frame.locator('main[data-state="extension-choose-wallet"]').waitFor({ timeout: 15000 });
-        const names = await f.frame.locator('.connection-wallet-choice h2').allTextContents();
+        await f.state('extension-choose-wallet');
+        const names = await f.frame.locator('.connection-wallet-choice').allTextContents();
         assert.deepEqual(names.sort(), ['Brave Wallet', 'Rabby Wallet']);
         const choiceKey = await f.frame.locator('.connection-wallet-choice', { hasText: 'Brave Wallet' })
-          .locator('[data-action="select-wallet"]').getAttribute('data-focus-key');
+          .getAttribute('data-focus-key');
         assert.match(choiceKey, /^select-wallet:wchoice-/);
         await f.frame.locator(`[data-focus-key="${choiceKey}"]`).click();
-        await f.frame.locator('main[data-state="extension-wait"],main[data-state="linked"]').waitFor({ timeout: 5000 });
+        await f.state('linked');
         const action = await f.top.evaluate(() => testState.effects.at(-1)?.action);
         assert.equal(action?.walletChoiceId, choiceKey.slice('select-wallet:'.length));
-        assert.equal((await f.top.evaluate(() => testState.calls.find((row) => row.wallet === 'brave')?.method)), 'eth_requestAccounts');
+        assert.equal((await f.top.evaluate(() => testState.calls.find((row) => row.wallet === 'com.brave.wallet')?.method)), 'eth_requestAccounts');
       } finally {
         await f.close();
       }
@@ -34,3 +34,109 @@ for (const engine of ['chromium']) {
     }
   });
 }
+import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+const A = '0x' + '1'.repeat(40), B = '0x' + '2'.repeat(40);
+const mm = {rdns:'io.metamask',uuid:'mm',name:'MetaMask'};
+const rabby = {rdns:'io.rabby',uuid:'rabby',name:'Rabby Wallet'};
+const icon = 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#7355ef"/></svg>').toString('base64');
+async function windowCase(options, check, kind='metamask') {
+  const browser=await playwright.chromium.launch({headless:true});
+  try { const f=await fixture(browser,kind,options);try {await check(f);}finally{await f.close();} }finally{await browser.close();}
+}
+async function click(f,action,state) {await f.action(action).click();await f.state(state);}
+async function namedCalls(f) {return f.top.evaluate(()=>testState.calls.filter(c=>c.wallet));}
+
+test('V2-1 Home-only choice is a whole-row button and completes the chosen link',async()=>windowCase({dualAlt:true},async f=>{
+  assert.equal(await f.top.evaluate(()=>testState.effects.length),0);
+  await click(f,'connect','extension-choose-wallet');
+  assert.deepEqual(await f.frame.locator('.connection-wallet-choice').allTextContents(),['Brave Wallet','Rabby Wallet']);
+  assert.equal(await f.action('close-window').count(),1);assert.equal(await f.action('refresh-status').count(),1);
+  assert.deepEqual(await namedCalls(f),[]);
+  await f.frame.getByRole('button',{name:'Rabby Wallet',exact:true}).click();await f.state('linked');
+  assert.equal((await namedCalls(f))[0].wallet,'io.rabby');
+  assert.equal(await f.frame.locator('.connection-account-name').innerText(),'Rabby Wallet');
+}));
+
+test('V2-2 MetaMask alone keeps the build request bytes and has no list',async()=>{
+  const traces=[];
+  for(const hostSource of [execFileSync('git',['show','9b855f6ca:capsules/home/browser/home-wallet-connector-host.js'],{encoding:'utf8'}),undefined]) {
+    await windowCase({hostSource,mutate:hostSource?source=>source.replace("if (kind === 'metamask') action = {...action,includeWallet:true};",''):undefined},async f=>{
+      await click(f,'connect','linked');
+      traces.push(await f.top.evaluate(()=>({calls:testState.calls,receipts:testState.receipts,runtime:testState.runtimeCalls})));
+      assert.equal(await f.frame.locator('.connection-wallet-choice').count(),0);
+      assert.equal(await f.frame.locator('h1').textContent(),'MetaMask');
+    });
+  }
+  assert.deepEqual(traces[1],traces[0]);
+});
+
+test('V2-3 MetaMask plus another wallet connects to MetaMask without a question',async()=>windowCase({wallets:[rabby,mm]},async f=>{
+  assert.equal(await f.frame.locator('h1').textContent(),'MetaMask');
+  await click(f,'connect','linked');assert((await namedCalls(f)).every(c=>c.wallet==='io.metamask'));
+  assert.equal(await f.frame.locator('.connection-wallet-choice').count(),0);
+  assert.equal(await f.frame.locator('h1').textContent(),'MetaMask');
+}));
+
+test('V2-4 approval finds the linked account before handoff and keeps an unmatched request pending',async()=>{
+  await windowCase({wallets:[{...rabby,accounts:[A]}]},async f=>{
+    await click(f,'connect','linked');
+    await f.top.evaluate(mm=>{
+      testState.calls=[];
+      testState.wallets.push({...mm,accounts:['0x'+'2'.repeat(40)]});
+      testState.requests=[{request_id:'approval-1',status:'pending',intent:'browser_personal_sign',proof_type:'siwe',capsule_id:'browser',reason:'Test signing',requesting_origin:'https://shop.example.com',connector_id:'wallet-metamask',address:testState.address,chain_namespace:'eip155:1',expires_at:Math.floor(Date.now()/1000)+300}];
+    },mm);
+    const url=new URL(f.frame.url());url.searchParams.set('approve','1');await f.frame.goto(url.href);await f.state('request-waiting');
+    await click(f,'send-request','request-done');
+    const calls=await namedCalls(f);assert.equal(calls.find(c=>c.method==='personal_sign').wallet,'io.rabby');
+    assert.equal(calls.filter(c=>c.method==='eth_accounts').length,3); // two probes, then existing signer check
+    assert.equal(await f.frame.locator('.connection-wallet-choice').count(),0);
+  });
+  await windowCase({saved:true,requests:true,wallets:[{...rabby,accounts:[B]}, {...mm,accounts:[]}]},async f=>{
+    await f.state('request-waiting');await click(f,'send-request','request-unsendable');
+    assert.equal(await f.frame.locator('.connection-status').innerText(),'Home cannot confirm access to the account this request needs in your wallet.');
+    assert.deepEqual(await f.top.evaluate(()=>testState.requests.map(r=>r.status)),['pending']);
+    assert.equal(await f.top.evaluate(()=>testState.runtimeCalls?.filter(c=>c.url.endsWith('/handoff')).length||0),0);
+    assert((await namedCalls(f)).every(c=>c.method==='eth_accounts'));
+    assert.equal(await f.frame.locator('img').count(),0);
+    await f.top.evaluate(A=>testState.wallets[0].accounts=[A],A);
+    await click(f,'refresh-status','request-waiting');await click(f,'send-request','request-done');
+  });
+});
+
+test('V2-5 forged brands, markup, direction controls and reserved names are refused',async()=>{
+  for(const name of ['MetaMask','Brave Wallet','UniSat','WalletConnect','Home security','Wallet','Inbox notice','ElastOS help','<b>Rabby</b>','Rabby\u202e']) {
+    await windowCase({wallets:[{...rabby,name}]},async f=>{
+      await click(f,'connect','link-error');assert.equal(await f.top.evaluate(()=>testState.calls.length),0,name);
+    });
+  }
+});
+
+test('V2-6 saved cards have no mark; only a wallet linked in this window supplies name and icon',async()=>windowCase({wallets:[{...rabby,icon}]},async f=>{
+  await f.state('ready');
+  await click(f,'connect','linked');
+  assert.equal(await f.frame.locator('.connection-account-name').innerText(),'Rabby Wallet');
+  assert.equal(await f.frame.locator('.connection-account-header img').getAttribute('src'),icon);
+  const url=new URL(f.frame.url());url.searchParams.set('fresh','1');await f.frame.goto(url.href);await f.state('linked');
+  assert.equal(await f.frame.locator('img').count(),0);
+  assert.equal(await f.frame.locator('.connection-account-name').innerText(),'Your wallet');
+  assert.equal(await f.frame.locator('.connection-status').innerText(),'Account saved in Wallet.');
+}));
+
+test('V2-7 UniSat window has no Ethereum discovery or calls',async()=>windowCase({wallets:[rabby]},async f=>{
+  await f.state('ready');await click(f,'connect','linked');
+  assert.equal(await f.frame.evaluate(()=>window.__ethereumDiscoveryRequests),0);
+  assert.equal(await f.top.evaluate(()=>testState.discoveryRequests||0),0);
+  assert.equal(await f.top.evaluate(()=>testState.calls.some(c=>c.method.startsWith('eth_'))),false);
+  assert.equal(await f.frame.evaluate(()=>document.title),'UniSat · ElastOS');
+  for(const kind of ['metamask','unisat'])assert.doesNotMatch(await readFile(`capsules/wallet-${kind}/browser/extension-window.mjs`,'utf8'),/eip6963|requestProvider/);
+} ,'unisat'));
+
+test('V2-8 four shared copies and the switched extension controller are byte identical',async()=>{
+  for(const file of ['wallet-connection-view.mjs','wallet-connection-screens.mjs','wallet-connection-view.css']) {
+    const shared=await readFile('capsules/_shared/'+file);
+    for(const kind of ['metamask','unisat','walletconnect'])assert.deepEqual(await readFile(`capsules/wallet-${kind}/browser/${file}`),shared);
+  }
+  assert.deepEqual(await readFile('capsules/wallet-unisat/browser/extension-window.mjs'),await readFile('capsules/wallet-metamask/browser/extension-window.mjs'));
+  assert.match(process.env.COMPAT_WALLET_PRODUCT_REF ? execFileSync('git',['show',process.env.COMPAT_WALLET_PRODUCT_REF+':capsules/wallet/browser/wallet-preferences.js'],{encoding:'utf8'}) : await readFile('capsules/wallet/browser/wallet-preferences.js','utf8'),/MetaMask or another wallet in this browser/);
+});

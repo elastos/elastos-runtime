@@ -30,7 +30,7 @@ export const wireTypes = {
   result: 'wallet-connector-effect-result', state: 'wallet-connector-state', navigation: 'open-target-result',
 };
 export const nestedKeys = {
-  snapshot: ['providerId', 'displayName', 'alternatives', 'availability', 'firstAccount', 'requiredAccountAvailable', 'network', 'networkIssue', 'access', 'busy', 'paymentPending'],
+  snapshot: ['providerId', 'alternatives', 'availability', 'firstAccount', 'requiredAccountAvailable', 'network', 'networkIssue', 'access', 'busy', 'paymentPending'],
   settled: ['effectRequestId', 'result', 'receipt'],
 };
 export const runtimeKeys = {
@@ -43,15 +43,11 @@ export const runtimeKeys = {
   settlementResult: ['schema', 'action', 'connector_id', 'request_id', 'status', 'outcome'],
   settlementOperation: ['request_id', 'payload_hash', 'signer', 'outcome'],
 };
-const extensionRdns = (value) => typeof value === 'string' && value.length <= 128 && /^[a-z0-9]+(?:\.[a-z0-9-]+)+$/.test(value);
-const plainWalletName = (value) => value === null || (typeof value === 'string' && value.length > 0 && value.length <= 80
-  && new TextEncoder().encode(value).length <= 320 && !/[<>&]/.test(value));
 function snapshot(s, connector) {
   if (!exact(s, nestedKeys.snapshot)) return false;
-  const providerOk = connector === 'wallet-unisat' ? (p) => p === 'unisat' : (p) => p === null || extensionRdns(p);
-  const altOk = connector === 'wallet-unisat' ? (p) => p === 'unisat' : (p) => extensionRdns(p);
-  if (!nullable(s.providerId, providerOk) || !plainWalletName(s.displayName) || !Array.isArray(s.alternatives) || s.alternatives.length > 1
-    || s.alternatives.some((p) => !altOk(p) || p === s.providerId) || (connector === 'wallet-unisat' && s.alternatives.length)) return false;
+  const allowed = connector === 'wallet-unisat' ? ['unisat'] : ['io.metamask', 'com.brave.wallet'];
+  if (!nullable(s.providerId, (p) => allowed.includes(p)) || !Array.isArray(s.alternatives) || s.alternatives.length > 1
+    || s.alternatives.some((p) => !allowed.includes(p) || p === s.providerId) || (connector === 'wallet-unisat' && s.alternatives.length)) return false;
   return oneOf(s.availability, ['found', 'absent', 'unknown', 'unavailable'])
     && nullable(s.firstAccount, (v) => typeof v === 'string' && v.length <= 128 && (/^0x[0-9a-f]{40}$/.test(v) || /^(bc1|[13])[A-Za-z0-9]+$/.test(v)))
     && nullable(s.requiredAccountAvailable, bool)
@@ -188,7 +184,7 @@ export function identityDecision(v) {
   }
   if ('provider_id' in f) {
     if (typeof f.provider_id !== 'string') return 'invalid_request';
-    return (v.actor === 'wallet-metamask' && extensionRdns(f.provider_id)
+    return (v.actor === 'wallet-metamask' && ['io.metamask', 'com.brave.wallet'].includes(f.provider_id)
       || v.actor === 'wallet-unisat' && f.provider_id === 'unisat') ? 'accept' : 'denied';
   }
   return 'accept';

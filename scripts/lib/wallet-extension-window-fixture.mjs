@@ -12,7 +12,9 @@ const A = '0x' + '1'.repeat(40), U = 'bc1q' + 'a'.repeat(38);
 // Approved, and :362 omits it from the pending list. Home checks the signer later.
 // This provider exercises the live Home controller with isolated test results.
 // Recorded peers below are kept separate and retain their exact parameters.
-function installProvider({ kind, address, dualAlt = false }) {
+function installProvider({ kind, address, dualAlt = false, wallets }) {
+  window.__ethereumDiscoveryRequests = 0;
+  window.addEventListener('eip6963:requestProvider', () => window.__ethereumDiscoveryRequests++);
   if (window !== window.top) return;
   window.testState = { mode: 'approve', address, chain: '0x1', linked: false, requests: [], calls: [], receipts: [], effects: [], copies: [], pending: [] };
   const listeners = new Map();
@@ -37,22 +39,30 @@ function installProvider({ kind, address, dualAlt = false }) {
     return Promise.resolve(result);
   }
   window.emitWallet = (name, value) => listeners.get(name)?.(value);
-  if (dualAlt && kind === 'metamask') {
-    const rabby = { on: provider.on.bind(provider), request(call) { testState.calls.push({ method: call.method, wallet: 'rabby' }); return provider.request(call); } };
-    const brave = { on: provider.on.bind(provider), request(call) { testState.calls.push({ method: call.method, wallet: 'brave' }); return provider.request(call); } };
-    const announceAltWallets = () => {
-      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info: { rdns: 'io.rabby', uuid: 'rabby-1', name: 'Rabby Wallet' }, provider: rabby } }));
-      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info: { rdns: 'com.brave.wallet', uuid: 'brave-1', name: 'Brave Wallet' }, provider: brave } }));
-    };
-    window.addEventListener('eip6963:requestProvider', announceAltWallets);
-    announceAltWallets();
-  } else {
-    window.addEventListener('eip6963:requestProvider', () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info: { rdns: 'io.metamask', uuid: 'test' }, provider } })));
-  }
+  const icon = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#7355ef"/></svg>');
+  testState.wallets = wallets ?? (dualAlt ? [
+    {rdns:'io.rabby', uuid:'rabby-1', name:'Rabby Wallet', icon},
+    {rdns:'com.brave.wallet', uuid:'brave-1', name:'Brave Wallet', icon},
+  ] : [{rdns:'io.metamask', uuid:'test', name:'MetaMask', icon}]);
+  const providers = new Map();
+  window.addEventListener('eip6963:requestProvider', () => {
+    testState.discoveryRequests = (testState.discoveryRequests || 0) + 1;
+    for (const info of testState.wallets) {
+      if (!providers.has(info.uuid)) providers.set(info.uuid, {
+        on: provider.on.bind(provider),
+        request(call) {
+          if (dualAlt || wallets) testState.calls.push({method:call.method,wallet:info.rdns});
+          if (call.method === 'eth_accounts' && info.accounts) return Promise.resolve(info.accounts);
+          return provider.request(call);
+        },
+      });
+      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', {detail:{info,provider:providers.get(info.uuid)}}));
+    }
+  });
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null, dualAlt = false } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null, dualAlt = false, wallets, hostSource } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   const replay = recording ? await replayInput(recording) : null;
@@ -61,7 +71,7 @@ export async function fixture(browser, kind, { saved = false, requests = false, 
   if (recording) {
     await context.addInitScript(({ source, input }) => { if (window === window.top) (0, eval)(`(${source})`)(input); }, { source: installScriptedExtension.toString(), input: replay });
     await context.addInitScript(({ address }) => { if (window === window.top) window.testState = { address, linked: false, requests: [], receipts: [], effects: [], copies: [], calls: [] }; }, { address });
-  } else await context.addInitScript(installProvider, { kind, address, dualAlt });
+  } else await context.addInitScript(installProvider, { kind, address, dualAlt, wallets });
   const errors = [], reads = [];
   const top = await context.newPage(); top.on('pageerror', e => errors.push(e.message));
   await top.clock.install();
@@ -92,6 +102,7 @@ window.runtimeFetch=async(url,init)=>{
    const pending=state.requests.find(request=>request.request_id===requestId && request.status==='pending');
    if(!pending)throw Error('wallet approval request not found');
    pending.status='approved';
+   if(state.accountDuringHandoff){state.walletAddress=state.accountDuringHandoff;state.accountDuringHandoff=null;}
  }
  const action=url.includes('/link/challenge')?(kind==='metamask'?'evm_link_challenge':'bitcoin_link_challenge'):url.includes('/link/verify')?(kind==='metamask'?'evm_link_complete':'bitcoin_link_complete'):url.endsWith('/handoff')?'approval_handoff':'approval_complete';
  if(url.includes('/link/challenge') && state.accountDuringChallenge) state.walletAddress=state.accountDuringChallenge;
@@ -104,7 +115,7 @@ window.runtimeFetch=async(url,init)=>{
 const frame=document.createElement('iframe');frame.style='width:480px;height:522px;border:0;display:block';frame.sandbox='allow-scripts';frame.src='/apps/'+id+'/?home_origin='+encodeURIComponent(location.origin)+${JSON.stringify(launch ? '#home_token=fixture-token' : '')};document.body.append(frame);
 </script>` });
     if (url.pathname.endsWith('/shell-core.js')) return route.fulfill({ contentType: 'text/javascript', body: 'export const fetchJson=(...args)=>window.runtimeFetch(...args);' });
-    if (url.pathname.endsWith('/home-clipboard-client.js')) return route.fulfill({ contentType: 'text/javascript', body: `export const createHomeClipboardClient=()=>({start(){},teardown(){},async writeText(value){window.top.postMessage({type:'fixture:copy',value},'http://extensions.test');}});` });
+    if (url.pathname.endsWith('/home-clipboard-client.js')) return route.fulfill({ contentType: 'text/javascript', body: `export const createHomeClipboardClient=()=>({start(){},teardown(){},async writeText(value){window.top.postMessage({type:'fixture:copy',value},'https://extensions.test');}});` });
     if (url.pathname.includes('/api/')) {
       const read={ url: url.pathname, headers: route.request().headers() };reads.push(read);
       if (readFailure) { await route.fulfill({ status: readFailure, json: { error: 'fixture read failure' } });return; }
@@ -118,6 +129,8 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:522
     let path = join(root, relative);
     if (url.pathname.endsWith('/')) path = join(path, 'index.html');
     let body = (oldHost && path.endsWith('/home-wallet-connector-host.js') || oldWindow && (path.endsWith('/index.html') || path.endsWith(`/wallet-${kind}.js`))) ? Buffer.from(baseFixture.files[path.slice(root.length+1)].source) : await readFile(path);
+    if (process.env.COMPAT_WALLET_PRODUCT_REF) body = execFileSync('git',['show',process.env.COMPAT_WALLET_PRODUCT_REF+':'+path.slice(root.length+1)]);
+    if (hostSource && path.endsWith('/home-wallet-connector-host.js')) body = Buffer.from(hostSource);
     if (path.endsWith('/wallet-connection-view.mjs')) body = Buffer.from(body.toString().replace('export function renderConnection(document, view)', 'function renderConnectionBase(document, view)') + `
 export function renderConnection(document,view) {
   window.__sharedElements ||= new WeakSet();
@@ -139,7 +152,7 @@ export function renderConnection(document,view) {
     }
     return route.fulfill({ body, contentType: ({ '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.png': 'image/png', '.woff2': 'font/woff2' })[extname(path)] || 'application/octet-stream' });
   });
-  await top.goto('http://extensions.test/');
+  await top.goto('https://extensions.test/');
   const frame = top.frames().find(f => f !== top.mainFrame());
   await frame.waitForSelector(oldWindow ? '#wallet-connect' : 'main[data-state]', { timeout: 3000 });
   // Home opens a 480 by 560 window with a 38px title bar (design's -window PNGs).
