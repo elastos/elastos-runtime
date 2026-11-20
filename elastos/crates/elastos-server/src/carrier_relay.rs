@@ -1240,7 +1240,7 @@ mod tests {
             iroh_relay::client::ClientBuilder::new(url.clone(), key, system_dns())
                 .tls_client_config(tls.clone())
         };
-        let receiver_key = iroh::SecretKey::from_bytes(&[220; 32]);
+        let receiver_key = iroh::SecretKey::from_bytes(&[240; 32]);
         let mut receiver = build(receiver_key.clone()).connect().await.unwrap();
         let mut measurements = Vec::new();
         for (keep_replaced, key) in [(false, 218), (true, 230)] {

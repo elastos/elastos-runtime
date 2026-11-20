@@ -36,7 +36,7 @@
       "src/relay_map.rs": "e522ba25196003a32bf10176ae1ed8c9fdf4ed3349ed8781b50a25fb11c7e2e9",
       "src/server/client.rs": "5ace67654c9f55dec497363c2afb80376eea5a1bf404e5917b45f7ed74814f5a",
       "src/server/clients.rs": "f9cfe61fd0c450eaf5c1443d02126e5da99b1629ae9e9fd5bf1f9fb9b340393a",
-      "src/server/http_server.rs": "5e22626ca723c86da2476ee2293949527fd30877c2beb11c179d17ca403a41f1",
+      "src/server/http_server.rs": "0cfc682c9a460841abf0cd27e963caaf1654cf44d07fb9f640ccefc95530f613",
       "src/server/metrics.rs": "c0c1dc13a6e32054f4d8433cdd1ed0c073650dfe5ac53d479c636c481b83a54f",
       "src/server/resolver.rs": "910d31d30a4bcbf531158a779fd4011c73447c42d54d6f720ad34fdd58febe02",
       "src/server/streams.rs": "6acd9515a14636cb57c74d99400c671e17c2327614e2840ba0d785b58116614d",
