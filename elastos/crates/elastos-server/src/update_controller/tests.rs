@@ -4132,9 +4132,9 @@ fn home_browser_no_open_space_notices_follow_real_start_choice() {
             assert!(output.status.success(), "{output:?}");
             let stderr = String::from_utf8(output.stderr).unwrap();
             let expected = if no_open {
-                "Home is starting. Free some disk space before you update.\n"
+                "Home will start. Free some disk space before updating.\n"
             } else {
-                "Home is opening. Free some disk space before you update.\n"
+                "Home will open. Free some disk space before updating.\n"
             };
             assert_eq!(stderr, expected, "{step}, no_open={no_open}");
         }

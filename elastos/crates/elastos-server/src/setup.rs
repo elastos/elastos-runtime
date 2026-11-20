@@ -4111,7 +4111,7 @@ pub(crate) async fn stage_planned_update_support(
         } = asset;
         let name = row.name();
         let info = row.info();
-        println!("  Downloading {name}…");
+        println!("  Downloading {name} ({})…", relative.display());
         let bytes = fetch_admitted_row(fetch, &row, &mut *owner).await?;
         let dest = stage.path().join(&relative);
         if let Some(component) = component {
