@@ -1,7 +1,7 @@
 use super::*;
 
 fn home_projection_token_error(err: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
-    if err.to_string() == "home launch token auth session is not active" {
+    if gateway_home_token::home_launch_token_needs_reopen(&err) {
         (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "invalid or expired session" })),
@@ -37,6 +37,18 @@ pub(super) async fn home_launch(
             Json(serde_json::json!({ "error": "invalid Home target" })),
         ));
     }
+    let renewed_browser_token = gateway_home_token::renew_browser_launch_for_home(
+        &state.data_dir,
+        &headers,
+        target,
+        &context,
+    )
+    .map_err(|_| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error":"Home could not renew Browser authority"})),
+        )
+    })?;
 
     let mut target_summary = home_launch_target_for_platform(&state.data_dir, target, platform);
     if target_summary.is_none() || state.data_dir.join("capsules").join(target).exists() {
@@ -123,13 +135,16 @@ pub(super) async fn home_launch(
         .viewer
         .as_deref()
         .unwrap_or(target_summary.target.as_str());
-    let token = issue_home_projection_launch_token_with_context(
-        &state.data_dir,
-        &target_summary.target,
-        executable_actor,
-        &context,
-    )
-    .map_err(home_projection_token_error)?;
+    let token = match renewed_browser_token {
+        Some(token) => token,
+        None => issue_home_projection_launch_token_with_context(
+            &state.data_dir,
+            &target_summary.target,
+            executable_actor,
+            &context,
+        )
+        .map_err(home_projection_token_error)?,
+    };
     let expires_at = gateway_home_token::require_carried_home_launch_token(
         &state.data_dir,
         &token,
@@ -1961,6 +1976,20 @@ mod tests {
             home_projection_token_error(anyhow::anyhow!("failed to load signing key"));
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body["error"], "failed to load signing key");
+    }
+
+    #[test]
+    fn home_token_projection_error_mapping_is_type_based() {
+        // The mapping must key off the marker type, not the message string.
+        let (status, Json(body)) = home_projection_token_error(
+            anyhow::Error::new(gateway_home_token::HomeLaunchTokenError::SessionInactive)
+                .context("some different wording"),
+        );
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "invalid or expired session");
+
+        let (status, _) = home_projection_token_error(anyhow::anyhow!("unrelated failure"));
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]

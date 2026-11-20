@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import vm from "node:vm";
+import { navigateBrowserAddress } from "./browser-address-navigation.js";
 import test from "node:test";
 
-const source = fs.readFileSync(new URL("./browser.js", import.meta.url), "utf8");
-const start = source.indexOf("async function navigateAddress(");
-const end = source.indexOf("\nasync function navigateBrowser(", start);
 function harness() {
   const pending = [], statusNode = { dataset: {}, firstChild: null };
-  const context = vm.createContext({
-    browserInternetAllowed: true,
+  const context = {
+    browserInternetAllowed: true, browserInternetInterrupted: false,
     normalizeUrl: value => value, currentBrowserUrl: () => "https://example.test/",
     sameBrowserStreamTarget: () => true, clearAddressDraft() {},
     currentPage: { page_id: "page:one" }, selectedBrowserEngineId: "engine:one",
@@ -20,9 +16,8 @@ function harness() {
     sendBrowserInput: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
     startPageStatusPolling() {}, friendlyOpenError: error => error.message,
     requestRuntimeOpen: () => { throw new Error("Existing page must be retained"); },
-  });
-  vm.runInContext(source.slice(start, end), context);
-  return { pending, statusNode, navigate: url => context.navigateAddress(url),
+  };
+  return { pending, statusNode, state: context, navigate: url => navigateBrowserAddress(context, url),
     message: text => context.showStatus(text) };
 }
 
@@ -47,4 +42,13 @@ test("failed navigation retains its actionable error", async () => {
   await assert.rejects(action, /Exit permission expired/);
   assert.equal(h.statusNode.firstChild.textContent, "Exit permission expired");
   assert.equal(h.statusNode.dataset.visible, "true");
+});
+
+test("a stopped connection opens the next address through Runtime once", async () => {
+  const h = harness(), opens = [];
+  h.state.browserInternetInterrupted = true;
+  h.state.requestRuntimeOpen = async url => opens.push(url);
+  await h.navigate("https://example.test/allowed-again");
+  assert.deepEqual(opens, ["https://example.test/allowed-again"]);
+  assert.equal(h.pending.length, 0);
 });

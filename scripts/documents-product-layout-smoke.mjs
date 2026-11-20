@@ -917,6 +917,7 @@ async function run() {
     resetDocumentsFixture();
     const manualPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     trackPage(manualPage, consoleErrors, pageErrors, failedRequests, errorResponses);
+    await manualPage.clock.install();
     try {
       await manualPage.goto(`http://127.0.0.1:${port}/apps/documents/?home_origin=${encodeURIComponent("https://home.example")}#home_token=documents-layout-token`);
       await manualPage.locator('.document-list-item[data-doc-did="doc-beta"]').click();
@@ -973,12 +974,20 @@ async function run() {
 
       // New keeps an edited document too, and a new one is listed until saved.
       await manualPage.locator("#editor").fill("# Alpha\n\nAlso kept.");
+      await manualPage.clock.pauseAt(await manualPage.evaluate(() => Date.now() + 1000));
       await manualPage.locator("#new-document").click();
       await manualPage.waitForFunction(() => document.getElementById("title-input")?.value === "" &&
         document.getElementById("editor")?.value === "", null, { timeout: 5000 });
       assert(!(await manualPage.locator("#confirm-modal.open").count()), "New must not ask.");
       await manualPage.locator("#title-input").fill("Fresh");
-      await manualPage.locator("#editor").fill("A new idea.");
+      // A pending New focus action must respect the person's next input target.
+      await manualPage.locator("#editor").focus();
+      await manualPage.clock.runFor(20);
+      await manualPage.keyboard.insertText("A new idea.");
+      await manualPage.clock.resume();
+      assert(await manualPage.locator("#title-input").inputValue() === "Fresh" &&
+        await manualPage.locator("#editor").inputValue() === "A new idea.",
+        "New must keep body typing in the editor after the person focuses it.");
       await manualPage.locator('.document-list-item[data-doc-did="doc-beta"]').click();
       await manualPage.waitForFunction(() => document.getElementById("title-input")?.value === "Beta");
       assert(await manualPage.locator("#editor").inputValue() === "# Beta\n\nFirst manual edit.",

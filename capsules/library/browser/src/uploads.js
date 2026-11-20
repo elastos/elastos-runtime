@@ -1,4 +1,5 @@
-import { escapeHtml } from "./model.js";
+import { createTransferProgress, announceTransferProgress } from "../transfer-progress.js?v=download-progress-20261112";
+import { escapeHtml } from "./model.js?v=download-progress-20261112";
 
 export function createLibraryUploads({ container, perf, state }) {
   let uploadRenderFrame = 0;
@@ -24,6 +25,7 @@ export function createLibraryUploads({ container, perf, state }) {
     if (!state.uploads.length) {
       container.classList.add("hidden");
       container.innerHTML = "";
+      announceTransferProgress(container.parentElement, null, null, "File upload");
       return;
     }
     container.classList.remove("hidden");
@@ -33,11 +35,18 @@ export function createLibraryUploads({ container, perf, state }) {
           <div class="upload-name">${escapeHtml(upload.name)}</div>
           <div>${escapeHtml(upload.status)}</div>
         </div>
-        <div class="upload-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(upload.progress)}">
-          <div class="upload-fill" style="--progress: ${Math.max(0, Math.min(100, upload.progress))}%"></div>
-        </div>
+        <div class="upload-meter"></div>
       </div>
     `).join("");
+    const active = state.uploads.filter(upload => upload.total_bytes !== 0 && ["Queued", "Preparing", "Uploading", "Saving"].includes(upload.status));
+    announceTransferProgress(container.parentElement, active.length ? active.reduce((sum, upload) => sum + (upload.completed_bytes || 0), 0) : null,
+      active.every(upload => Number.isFinite(upload.total_bytes)) ? active.reduce((sum, upload) => sum + upload.total_bytes, 0) : null, "File upload");
+    container.querySelectorAll(".upload-meter").forEach((meter, index) => {
+      const upload = state.uploads[index];
+      const active = ["Queued", "Preparing", "Uploading", "Saving"].includes(upload.status);
+      meter.hidden = !active || upload.total_bytes === 0;
+      if (!meter.hidden) meter.append(createTransferProgress(upload.completed_bytes, upload.total_bytes, `Upload progress for ${upload.name}`));
+    });
   }
 
   function setUploadProgress(id, patch) {

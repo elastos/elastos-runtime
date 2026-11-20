@@ -1734,13 +1734,13 @@ dial_proof_one() {
         DIAL_PROOF_DETAIL="$out"
         return 0
     fi
-    if printf '%s' "$out" | grep -Eq "$DENIAL_RE"; then
+    if printf '%s' "$out" | grep -E "$DENIAL_RE" >/dev/null; then
         log "dial proof $did -> pass (signed denial, dial+dispatch proven): $out"
         DIAL_PROOF_RESULT="pass:denial"
         DIAL_PROOF_DETAIL="$out"
         return 0
     fi
-    if printf '%s' "$out" | grep -Eq "$CONNECT_FAIL_RE"; then
+    if printf '%s' "$out" | grep -E "$CONNECT_FAIL_RE" >/dev/null; then
         fail "dial proof for $did did not reach the peer (connection-level failure): $out ; diagnostic: $ELASTOS_BIN node status --peer $did --json"
     fi
     fail "dial proof for $did returned an unrecognized error (treating as failure -- neither a known signed denial nor a known connect failure): $out ; diagnostic: $ELASTOS_BIN node status --peer $did --json"
@@ -2809,7 +2809,7 @@ print(json.dumps({
 
 docker_service_ps_json() {
     local svc="$1"
-    docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null | head -1 || true
+    docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null | sed -n 1p || true
 }
 
 phase_drill_custody() {
@@ -2849,7 +2849,7 @@ phase_drill_custody() {
     # Fail-closed below quorum is the negative phase's two-nodes-down case.
     local attempt1_first_json="$CURL_BODY" attempt1_first_status="$PROVIDER_STATUS"
     if [ "$PROVIDER_STATUS" != "ok" ]; then
-        if ! printf '%s' "$CURL_BODY" | grep -Fq "$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE"; then
+        if ! printf '%s' "$CURL_BODY" | grep -F "$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE" >/dev/null; then
             docker_start_service custody-b
             fail "drill-custody attempt 1 (custody-b stopped) failed with an unexpected message (expected ok or '$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE'): $CURL_BODY"
         fi
@@ -3022,9 +3022,9 @@ phase_drill_replica() {
     # request is deliberately never approved here, so that pending answer is
     # the third admissible (recorded) outcome.
     if [ "$PROVIDER_STATUS" != "ok" ] \
-        && ! printf '%s' "$CURL_BODY" | grep -Fq "$RUNTIME_CUSTODY_PURCHASE_DENIED_MESSAGE" \
-        && ! printf '%s' "$CURL_BODY" | grep -Fq "$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE" \
-        && ! printf '%s' "$CURL_BODY" | grep -Fq "pending exact Wallet or Chain settlement"; then
+        && ! printf '%s' "$CURL_BODY" | grep -F "$RUNTIME_CUSTODY_PURCHASE_DENIED_MESSAGE" >/dev/null \
+        && ! printf '%s' "$CURL_BODY" | grep -F "$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE" >/dev/null \
+        && ! printf '%s' "$CURL_BODY" | grep -F "pending exact Wallet or Chain settlement" >/dev/null; then
         docker_start_service custody-a
         fail "buy while degraded failed with an unexpected message (expected ok, pending settlement, '$RUNTIME_CUSTODY_PURCHASE_DENIED_MESSAGE' or '$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE'): $CURL_BODY"
     fi
@@ -3050,7 +3050,7 @@ phase_drill_replica() {
         fi
         log "open_viewer while degraded served on the surviving replicas (recorded): $degraded_open_json"
     else
-        if ! printf '%s' "$CURL_BODY" | grep -Fq "$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE"; then
+        if ! printf '%s' "$CURL_BODY" | grep -F "$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE" >/dev/null; then
             docker_start_service custody-a
             fail "open_viewer while degraded failed with an unexpected message (expected ok or '$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE'): $CURL_BODY"
         fi
@@ -3137,7 +3137,7 @@ negative_below_quorum() {
     # protected_content_runtime.rs:5559/5677) is the path that fails here,
     # not the decrypt-share path drill-custody's single-node-loss case
     # might also hit.
-    if ! printf '%s' "$body" | grep -Fq "$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE"; then
+    if ! printf '%s' "$body" | grep -F "$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE" >/dev/null; then
         fail "open_viewer failed below quorum, but not with the expected message ('$RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE'): $body"
     fi
     log "open_viewer correctly failed closed below quorum: $body"
@@ -3154,7 +3154,7 @@ negative_denial() {
     if [ "$PROVIDER_STATUS" = "ok" ]; then
         fail "open_viewer unexpectedly succeeded for the denial principal, who never purchased: $CURL_BODY"
     fi
-    if ! printf '%s' "$CURL_BODY" | grep -Fq "$RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE"; then
+    if ! printf '%s' "$CURL_BODY" | grep -F "$RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE" >/dev/null; then
         fail "open_viewer failed for the denial principal but not with RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE ('$RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE'): $CURL_BODY"
     fi
     log "open_viewer correctly denied the non-purchasing principal: $CURL_BODY"
@@ -3202,8 +3202,8 @@ negative_foreign() {
     # denied "before purchase" (confirmed live); a principal with its own
     # purchase but a foreign handle hits the session gate instead. Both are
     # specific fail-closed answers.
-    if ! printf '%s' "$foreign_json" | grep -Fq "$RUNTIME_CUSTODY_VIEWER_SESSION_UNAVAILABLE_MESSAGE" \
-        && ! printf '%s' "$foreign_json" | grep -Fq "$RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE"; then
+    if ! printf '%s' "$foreign_json" | grep -F "$RUNTIME_CUSTODY_VIEWER_SESSION_UNAVAILABLE_MESSAGE" >/dev/null \
+        && ! printf '%s' "$foreign_json" | grep -F "$RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE" >/dev/null; then
         fail "read_viewer correctly denied cross-principal access, but not with an expected message ('$RUNTIME_CUSTODY_VIEWER_SESSION_UNAVAILABLE_MESSAGE' or '$RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE'): $foreign_json"
     fi
     log "read_viewer correctly denied cross-principal access to another principal's viewer session: $foreign_json"
@@ -3239,7 +3239,7 @@ negative_stale() {
     if [ "$PROVIDER_STATUS" = "ok" ]; then
         fail "read_viewer unexpectedly succeeded replaying a captured op (same token/handle) after close_viewer already settled the session: $CURL_BODY"
     fi
-    if ! printf '%s' "$CURL_BODY" | grep -Fq "$RUNTIME_CUSTODY_VIEWER_SESSION_UNAVAILABLE_MESSAGE"; then
+    if ! printf '%s' "$CURL_BODY" | grep -F "$RUNTIME_CUSTODY_VIEWER_SESSION_UNAVAILABLE_MESSAGE" >/dev/null; then
         fail "post-close read_viewer replay failed as expected, but not with the expected message ('$RUNTIME_CUSTODY_VIEWER_SESSION_UNAVAILABLE_MESSAGE'): $CURL_BODY"
     fi
     log "read_viewer correctly rejected a stale replay after close_viewer settled the session: $CURL_BODY"
@@ -3261,13 +3261,9 @@ find_tamper_target() {
     # integrity actually rides on, and this journey provisions exactly one
     # mint, so its share is the newest file there. $cid is kept for the log.
     log "+ docker compose -f '$COMPOSE_FILE' exec -T $svc ls -t .../node-shares (newest custody share; cid=$cid)"
-    # `|| true` at the end (matching docker_service_ps_json's existing
-    # idiom in this file) so `head -1` closing the pipe early can never
-    # SIGPIPE the `docker exec find` stage into a spurious failure under
-    # `set -o pipefail` (minor 13 in the fix round) -- fails in the safe
-    # direction either way (empty TAMPER_TARGET aborts before tampering),
-    # this just removes an avoidable flake.
-    TAMPER_TARGET="$(docker compose -f "$COMPOSE_FILE" exec -T "$svc" sh -c 'd=/home/custody/.local/share/elastos/protected-content/custody-provider/inactive/data/node-shares; ls -t "$d" 2>/dev/null | grep -vE "^\\.|\\.lock$|\\.tmp$" | head -1 | sed "s|^|$d/|"' 2>/dev/null | head -1 | tr -d '\r' || true)"
+    # Read both streams fully before selecting their first line. Keep discovery
+    # best-effort; an empty TAMPER_TARGET aborts before tampering.
+    TAMPER_TARGET="$(docker compose -f "$COMPOSE_FILE" exec -T "$svc" sh -c 'd=/home/custody/.local/share/elastos/protected-content/custody-provider/inactive/data/node-shares; ls -t "$d" 2>/dev/null | grep -vE "^\\.|\\.lock$|\\.tmp$" | sed -n 1p | sed "s|^|$d/|"' 2>/dev/null | sed -n 1p | tr -d '\r' || true)"
 }
 
 negative_tamper() {
@@ -3336,7 +3332,7 @@ with open(sys.argv[2], "wb") as handle:
             provider_call object close_viewer "$player_token" "$tamper_close_body"
         fi
         log "open_viewer served on the intact 2-of-3 with one byte of $svc's custody share tampered (recorded): $tamper_json"
-    elif printf '%s' "$tamper_json" | grep -Fq "$RUNTIME_CUSTODY_RELEASE_APPROVAL_UNAVAILABLE_MESSAGE"; then
+    elif printf '%s' "$tamper_json" | grep -F "$RUNTIME_CUSTODY_RELEASE_APPROVAL_UNAVAILABLE_MESSAGE" >/dev/null; then
         log "open_viewer failed closed with one byte of $svc's custody share tampered (recorded): $tamper_json"
     else
         fail "open_viewer after tampering one byte of $TAMPER_TARGET on $svc answered neither ok (2-of-3) nor '$RUNTIME_CUSTODY_RELEASE_APPROVAL_UNAVAILABLE_MESSAGE': $tamper_json"

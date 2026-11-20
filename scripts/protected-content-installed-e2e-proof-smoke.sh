@@ -315,7 +315,7 @@ wallet_call_rc=$?
 set -e
 { [ "$wallet_call_rc" -eq 0 ] && grep -q "WALLET_CALL_OK" <<<"$wallet_call_out"; } \
     || fail_smoke "wallet_call's empty-body curl-arg path failed under $SMOKE_BASH (bash-3.2 unbound-array regression?): $wallet_call_out"
-pass "wallet_call's empty-body curl-arg path is bash-3.2 set -u safe ($SMOKE_BASH: $("$SMOKE_BASH" --version | head -1))"
+pass "wallet_call's empty-body curl-arg path is bash-3.2 set -u safe ($SMOKE_BASH: $("$SMOKE_BASH" --version | sed -n 1p))"
 
 # --- 7. record_transcript redacts secrets ---------------------------------
 #

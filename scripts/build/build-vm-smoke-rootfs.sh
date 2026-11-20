@@ -76,7 +76,7 @@ fi
 
 [[ -n "$BUSYBOX" ]] || die "busybox not found"
 if command -v file >/dev/null 2>&1; then
-    file "$BUSYBOX" | grep -Eq "statically linked|static-pie linked" \
+    file "$BUSYBOX" | grep -E "statically linked|static-pie linked" >/dev/null \
         || die "busybox must be static or static-pie: ${BUSYBOX}"
 fi
 

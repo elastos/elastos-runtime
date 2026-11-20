@@ -63,7 +63,7 @@ function createUploadHarness(t) {
 }
 
 const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
-const file = (name) => ({ name, type: "text/plain" });
+const file = (name) => ({ name, size: 1000, type: "text/plain" });
 
 test("Library keeps an upload batch bound to the folder chosen at start", async (t) => {
   const harness = createUploadHarness(t);
@@ -99,7 +99,8 @@ test("Library keeps overlapping upload batches and their cleanup independent", a
   const rows = [...harness.state.uploads];
   harness.calls[0].onProgress(0.5);
   harness.calls[1].onProgress(0.25);
-  assert.deepEqual(rows.map((row) => row.progress), [48, 0, 24]);
+  assert.deepEqual(rows.map((row) => row.progress), [50, 0, 25]);
+  assert.deepEqual(rows.map(row => [row.completed_bytes, row.total_bytes]), [[500, 1000], [0, 1000], [250, 1000]]);
 
   harness.calls[0].resolve();
   await nextTurn();
@@ -112,7 +113,7 @@ test("Library keeps overlapping upload batches and their cleanup independent", a
   assert.equal(rows[1].status, "Preparing");
 
   harness.calls[2].onProgress(0.75);
-  assert.equal(rows[1].progress, 72);
+  assert.equal(rows[1].progress, 75);
   harness.calls[2].resolve();
   await first;
   harness.timers.shift()();
@@ -169,7 +170,7 @@ test("Library retires inactive upload results while preserving a concurrent acti
     assert.equal(activeRow.status, "Preparing");
   }
   harness.calls[0].onProgress(0.5);
-  assert.equal(activeRow.progress, 48);
+  assert.equal(activeRow.progress, 50);
   harness.calls[0].resolve();
   await active;
   harness.timers.shift()();
@@ -202,4 +203,18 @@ test("Library reports confirmed uploads separately from a failed folder refresh"
   assert.equal(harness.statuses.at(-1), "Uploaded 1 file. Refresh Library to see the latest items.");
   harness.timers[0]();
   assert.deepEqual(harness.state.uploads, []);
+});
+
+test("Library retains an unconfirmed upload after all bytes were sent", async t => {
+  const harness = createUploadHarness(t);
+  const pending = harness.actions.uploadFiles([file("one.txt")]);
+  harness.calls[0].onProgress(1);
+  assert.equal(harness.state.uploads[0].completed_bytes, 1000);
+  assert.equal(harness.state.uploads[0].status, "Saving");
+  harness.calls[0].reject(new Error("server refused upload"));
+  await assert.rejects(pending, /server refused upload/);
+  harness.timers[0]();
+  assert.equal(harness.state.uploads.length, 1);
+  assert.equal(harness.state.uploads[0].confirmed, false);
+  assert.equal(harness.state.uploads[0].status, "Upload not confirmed. Check the destination before retrying.");
 });

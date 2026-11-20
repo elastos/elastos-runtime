@@ -323,6 +323,9 @@ globalThis.window = {
     listeners.push(listener);
     windowEventListeners.set(type, listeners);
   },
+  removeEventListener(type, listener) {
+    windowEventListeners.set(type, (windowEventListeners.get(type) || []).filter(candidate => candidate !== listener));
+  },
   setTimeout,
   clearTimeout,
   clearInterval: () => {},
@@ -1581,6 +1584,15 @@ const restoredBrowserFrame = restoredBrowserEntry.node.querySelector(".window-fr
 const browserCloseMessages = [];
 restoredBrowserFrame.contentWindow = {
   postMessage(message, origin) {
+    if (message.type === "elastos.browser.authority-commit/v1") {
+      queueMicrotask(() => {
+        for (const listener of windowEventListeners.get("message") || []) listener({
+          source: restoredBrowserFrame.contentWindow, origin: "null",
+          data: { ...message, type: "elastos.browser.authority-committed/v1", ok: true },
+        });
+      });
+      return;
+    }
     browserCloseMessages.push({ message, origin });
   },
 };

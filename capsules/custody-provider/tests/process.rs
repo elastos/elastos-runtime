@@ -36,8 +36,7 @@ use elastos_protected_content_provider_contracts::{
     CustodyProviderRequestV1, CustodyProviderResponseStatusV1, CustodyProviderResponseV1,
 };
 use k256::ecdsa::SigningKey as WalletSigningKey;
-use sha2::Digest as _;
-use sha3::Keccak256;
+use sha3::{Digest as _, Keccak256};
 use zeroize::Zeroizing;
 
 fn now_unix_seconds() -> u64 {

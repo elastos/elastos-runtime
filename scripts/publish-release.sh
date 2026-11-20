@@ -106,7 +106,6 @@ SUPPORT_BINARY_ASSETS=(
     object-provider
     chain-provider
     wallet-provider
-    object-provider
     content-block-graph-provider
     drm-provider
     rights-provider
@@ -227,7 +226,7 @@ file_size() {
 
 ensure_rust_target_installed() {
     local target="$1"
-    if ! rustup target list --installed 2>/dev/null | grep -qx "$target"; then
+    if ! rustup target list --installed 2>/dev/null | grep -x "$target" >/dev/null; then
         info "Installing Rust target ${target}..."
         rustup target add "$target" || die "Failed to add Rust target ${target}"
     fi

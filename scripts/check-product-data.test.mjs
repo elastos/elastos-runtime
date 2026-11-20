@@ -277,6 +277,27 @@ test("CLI exits unsuccessfully on a broken manifest and missing declared icon fi
   }
 });
 
+for (const [name, mutate, message] of [
+  ["duplicate release support entry", (source) => source.replace("SUPPORT_BINARY_ASSETS=(", "SUPPORT_BINARY_ASSETS=(\n    shell"), /shell exactly once/],
+  ["duplicate release provider on a shared line with a comment", (source) => source.replace("SUPPORT_BINARY_ASSETS=(", 'SUPPORT_BINARY_ASSETS=(\n    "media-provider" media-provider # duplicate'), /media-provider exactly once/],
+  ...["custody-provider", "media-provider", "protected-content-protect-provider", "protected-content-decrypt-provider"].map((provider) =>
+    [`missing required release provider ${provider}`, (source) => source.replace(`\n    ${provider}\n`, "\n"), new RegExp(`${provider} exactly once`)]),
+]) {
+  test(`product data CLI refuses ${name}`, () => {
+    const fixture = dataFixture();
+    try {
+      const source = mutate(shellPublish);
+      assert.notEqual(source, shellPublish);
+      writeFileSync(resolve(fixture, "scripts/publish-release.sh"), source);
+      const result = spawnSync(process.execPath, [resolve(root, "scripts/check-product-data.mjs"), fixture], { encoding: "utf8" });
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, message);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+}
+
 test("product data accepts a symlink alias for its repository root", () => {
   const fixture = dataFixture(), alias = `${fixture}-alias`;
   try {

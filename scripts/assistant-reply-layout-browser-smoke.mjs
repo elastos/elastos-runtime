@@ -460,7 +460,7 @@ try {
   seen.firstChunk = { before: held, after: await scrollState() };
   assert.equal(seen.firstChunk.after.top, held.top, JSON.stringify(seen.firstChunk));
 
-  const readerMovesUp = async (label, move, prepare = async () => {}, { sampleAfter = false } = {}) => {
+  const readerMovesUp = async (label, move, prepare = async () => {}, { sampleAfter = false, sampleOnInput = false } = {}) => {
     stage = `a reader who moves up with ${label} while a reply streams`;
     const runId = `run-sent-${fixture.runs.size + 1}`;
     const marker = `End of the reply read with ${label}.`;
@@ -489,7 +489,7 @@ try {
     // From the first move on, every frame: the reader is never pulled back
     // toward the end. A reversing gesture samples after the gesture, so the
     // reverse itself is not counted as a pull.
-    const startSample = () => frame.evaluate(() => {
+    const startSample = () => frame.evaluate(waitForInput => {
       const scroller = document.querySelector("#agent-harness-stream");
       window.__reader = { on: true, tops: [] };
       const sample = () => {
@@ -497,8 +497,21 @@ try {
         window.__reader.tops.push(scroller.scrollTop);
         requestAnimationFrame(sample);
       };
-      sample();
-    });
+      const begin = () => {
+        scroller.removeEventListener("pointerdown", begin);
+        scroller.removeEventListener("scroll", moved);
+        sample();
+      };
+      const moved = () => {
+        if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 8) begin();
+      };
+      if (waitForInput) {
+        // Follow may grow the reply while the pointer is still approaching.
+        // Native controls can deliver the scroll without a DOM pointerdown.
+        scroller.addEventListener("pointerdown", begin);
+        scroller.addEventListener("scroll", moved);
+      } else sample();
+    }, sampleOnInput);
     if (!sampleAfter) await startSample();
     await move(pushChunk);
     const gestureEnd = sampleAfter ? await scrollState() : null;
@@ -531,6 +544,7 @@ try {
       };
     });
     const pulledBackPx = pulled.pulled;
+    assert.ok(pulled.n > 0, `${label}: the reader's movement has frame samples`);
     assert.ok(pulledBackPx <= 2, `${label}: the reader is never pulled back toward the end (${pulledBackPx} px): ${JSON.stringify({ before, end, pulled })}`);
     const place = gestureEnd || before;
     assert.ok(end.top <= place.top + 2 && (gestureEnd ? end.fromEnd > 300 : end.top < before.top - 30 && end.fromEnd > 300),
@@ -596,11 +610,26 @@ try {
     // its draggable area, even when the scrollbar uses no layout gutter.
     const startY = Math.round(box.y + box.height - 20);
     const endY = Math.round(box.y + Math.max(24, box.height * 0.12));
+    await frame.evaluate(() => {
+      const scroller = document.querySelector("#agent-harness-stream");
+      window.__nativeDrag = { startTop: scroller.scrollTop, moved: false };
+      scroller.addEventListener("scroll", function moved() {
+        if (scroller.scrollTop < window.__nativeDrag.startTop - 300) {
+          window.__nativeDrag.moved = true;
+          scroller.removeEventListener("scroll", moved);
+        }
+      });
+    });
     await page.mouse.move(x, startY);
-    await page.waitForTimeout(120);
     await page.mouse.down();
-    await page.mouse.move(x, endY, { steps: 14 });
-    await page.mouse.up();
+    try {
+      await page.mouse.move(x, endY, { steps: 14 });
+      // A real upward scroll proves the native thumb took the drag. Keep
+      // the final position and per-frame pull checks even after this event.
+      await frame.waitForFunction(() => window.__nativeDrag.moved, null, { timeout: 5000 });
+    } finally {
+      await page.mouse.up();
+    }
     await settled();
     const dragged = await scrollState();
     seen.scrollbarDragFromEnd = dragged.fromEnd;
@@ -619,10 +648,22 @@ try {
     seen.scrollbarGutterPx = gutter;
     assert.equal(gutter.overlay, 0, `the overlay scrollbar gutter takes no layout width: ${JSON.stringify(gutter)}`);
     await settled();
-    // The status line appears on a timer and pins the room. Let that land first.
-    await page.waitForTimeout(700);
     await atEnd().catch(async () => assert.fail(`an overlay scrollbar: the room follows after the gutter change: ${JSON.stringify(await scrollState())}`));
-  });
+    // Reveal the native overlay with actual scrolling, then return to follow
+    // before sampling the drag. Hover and paint can leave a faded thumb inert.
+    const box = await room.locator("#agent-harness-stream").boundingBox();
+    await page.mouse.move(box.x + box.width - 40, box.y + box.height / 2);
+    const startTop = (await scrollState()).top;
+    await page.mouse.wheel(0, -40);
+    await frame.waitForFunction(top => document.querySelector("#agent-harness-stream").scrollTop < top - 10,
+      startTop, { timeout: 5000 });
+    await room.locator("[data-agent-jump-latest]").click();
+    await frame.waitForFunction(() => {
+      const scroller = document.querySelector("#agent-harness-stream");
+      return scroller.classList.contains("is-follow-bottom")
+        && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 8;
+    }, null, { timeout: 5000 });
+  }, { sampleOnInput: true });
   await frame.evaluate(() => {
     const scroller = document.querySelector("#agent-harness-stream");
     for (const property of ["height", "max-height", "flex"]) scroller.style.removeProperty(property);

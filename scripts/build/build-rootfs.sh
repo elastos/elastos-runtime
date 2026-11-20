@@ -125,7 +125,7 @@ fi
 CARGO_TARGET_DIR=""
 if [[ -f "${PROJECT_ROOT}/elastos/.cargo/config.toml" ]]; then
     CARGO_TARGET_DIR=$(grep -E '^\s*target-dir\s*=' "${PROJECT_ROOT}/elastos/.cargo/config.toml" 2>/dev/null \
-        | head -1 | sed 's/.*=\s*"\(.*\)"/\1/' | sed "s|.*=\s*'\(.*\)'|\1|" | tr -d ' ' || true)
+        | sed -n 1p | sed 's/.*=\s*"\(.*\)"/\1/' | sed "s|.*=\s*'\(.*\)'|\1|" | tr -d ' ' || true)
 fi
 
 COMPONENTS_JSON="${PROJECT_ROOT}/components.json"
@@ -240,7 +240,7 @@ fi
 
 # VM rootfs has no shared libc. Enforce static binary to avoid immediate boot-time exits.
 if command -v file >/dev/null 2>&1; then
-    if file "${BINARY_PATH}" | grep -q "dynamically linked"; then
+    if file "${BINARY_PATH}" | grep "dynamically linked" >/dev/null; then
         die "selected binary is dynamically linked (${BINARY_PATH}); expected static musl artifact for ${RUST_TARGET}"
     fi
 fi
@@ -432,7 +432,7 @@ else
 
     # Verify busybox is statically linked
     if command -v file >/dev/null 2>&1; then
-        if file "$BUSYBOX_PATH" | grep -q "dynamically linked"; then
+        if file "$BUSYBOX_PATH" | grep "dynamically linked" >/dev/null; then
             die "busybox at $BUSYBOX_PATH is dynamically linked — rootfs has no shared libs. Install: apt install busybox-static"
         fi
     fi
@@ -498,7 +498,7 @@ for entry in "${DEPENDENCY_ENTRIES[@]}"; do
     if [ "$CROSS_COMPILING" = true ]; then
         # Cross mode: host ldd gives wrong libraries. Use pre-populated libs
         # from the cross cache if available.
-        if [ -f "${dest_path}" ] && file "${dest_path}" 2>/dev/null | grep -q "dynamically linked"; then
+        if [ -f "${dest_path}" ] && file "${dest_path}" 2>/dev/null | grep "dynamically linked" >/dev/null; then
             if [ -d "${CROSS_CACHE_DIR}/lib" ]; then
                 echo "  Bundling cross-compiled libraries for '${dep}'..."
                 # Copy all libs from cross cache — these are target-arch libraries.
@@ -513,7 +513,7 @@ for entry in "${DEPENDENCY_ENTRIES[@]}"; do
             fi
         fi
     elif [ -f "${dest_path}" ] && command -v ldd >/dev/null 2>&1; then
-        if file "${dest_path}" 2>/dev/null | grep -q "dynamically linked"; then
+        if file "${dest_path}" 2>/dev/null | grep "dynamically linked" >/dev/null; then
             echo "  Bundling shared libraries for '${dep}'..."
             ldd "${dest_path}" 2>/dev/null | while read -r line; do
                 # Parse ldd output: "libfoo.so.1 => /lib/x86_64-linux-gnu/libfoo.so.1 (0x...)"

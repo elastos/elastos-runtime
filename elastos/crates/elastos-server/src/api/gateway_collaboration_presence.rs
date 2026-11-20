@@ -94,6 +94,9 @@ pub(super) async fn chat_room_presence_heartbeat(
         })
         .into_response();
     };
+    // A person has Community open in front of them, so History asks present
+    // Homes for earlier posts while somebody reads them.
+    port.record_community_open(now_ts());
     // Not shown is a successful heartbeat that announces nothing, not an
     // error: the person asked for this, and Chat has no failure to report.
     // Chat presents only a `/while-open` grant; "Always" is the timer's.

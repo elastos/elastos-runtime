@@ -110,14 +110,14 @@ fetch_one() {
     release_json=$(curl -fsSL "$api_url") || die "Failed to fetch release metadata from GitHub API"
     tag=$(echo "$release_json" | jq -r '.tag_name')
 
-    download_url=$(echo "$release_json" | jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .browser_download_url' | head -1)
+    download_url=$(echo "$release_json" | jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .browser_download_url' | sed -n 1p)
     if [[ -z "$download_url" || "$download_url" == "null" ]]; then
         die "Asset not found for ${platform}: ${asset_name} (tag: ${tag})"
     fi
 
     # Look for SHA256SUMS asset for checksum verification
     local sums_url
-    sums_url=$(echo "$release_json" | jq -r '.assets[] | select(.name | endswith("SHA256SUMS")) | .browser_download_url' | head -1)
+    sums_url=$(echo "$release_json" | jq -r '.assets[] | select(.name | endswith("SHA256SUMS")) | .browser_download_url' | sed -n 1p)
 
     out_dir="capsules/tunnel-provider/bin/${platform}"
     mkdir -p "$out_dir"
@@ -138,7 +138,7 @@ fetch_one() {
         curl -fsSL -o "$sums_file" "$sums_url" \
             || die "Failed to download SHA256SUMS file"
         actual_hash=$(sha256_of_file "$tmp")
-        expected_hash=$(grep -F "$asset_name" "$sums_file" | awk '{print $1}' | head -1 || true)
+        expected_hash=$(grep -F "$asset_name" "$sums_file" | awk '{print $1}' | sed -n 1p || true)
         rm -f "$sums_file"
         if [[ -z "$expected_hash" ]]; then
             warn "No checksum entry for ${asset_name} in SHA256SUMS — skipping verification"

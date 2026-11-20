@@ -21,7 +21,7 @@ import {
   unresolvedModelTurn,
 } from "./agent-live.js";
 import { stampMessageNode, contentHash, newTurnId, createTurnManifest, turnStorePut, turnStorePatch, turnStoreGet, TurnState, cheapTurnSnapshot, resolveReasoningPolicy } from "./agent-context.js";
-import { setAgentComposerProcessing } from "./agent-shelf.js";
+import { setAgentComposerProcessing } from "./agent-shelf.js?v=download-progress-20261112";
 import { renderHarnessPage } from "./agent-configure.js";
 import { postToHome, openInboxFromAgent, openModelsFromAgent } from "./harness-host.js";
 import {

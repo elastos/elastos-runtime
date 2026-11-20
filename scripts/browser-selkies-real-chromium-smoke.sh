@@ -139,7 +139,7 @@ python3 -m selkies \
 
 for ((attempt = 0; attempt < timeout_seconds * 10; attempt += 1)); do
   if curl -fsS -m 1 "http://127.0.0.1:$cdp_port/json/version" >/dev/null 2>&1 \
-    && curl -sS -m 1 -i "http://127.0.0.1:$selkies_port/health" 2>/dev/null | grep -Eq 'HTTP/[0-9.]+ (200|401)'; then
+    && curl -sS -m 1 -i "http://127.0.0.1:$selkies_port/health" 2>/dev/null | grep -E 'HTTP/[0-9.]+ (200|401)' >/dev/null; then
     break
   fi
   sleep 0.1
@@ -148,7 +148,7 @@ if ! curl -fsS -m 2 "http://127.0.0.1:$cdp_port/json/version" >/dev/null 2>&1; t
   echo "Chromium CDP endpoint did not become reachable within ${timeout_seconds}s" >&2
   exit 1
 fi
-if ! curl -sS -m 2 -i "http://127.0.0.1:$selkies_port/health" 2>/dev/null | grep -Eq 'HTTP/[0-9.]+ (200|401)'; then
+if ! curl -sS -m 2 -i "http://127.0.0.1:$selkies_port/health" 2>/dev/null | grep -E 'HTTP/[0-9.]+ (200|401)' >/dev/null; then
   echo "Selkies endpoint did not become reachable within ${timeout_seconds}s" >&2
   exit 1
 fi
