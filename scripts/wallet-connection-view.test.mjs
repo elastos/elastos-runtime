@@ -24,7 +24,6 @@ test('wallet_windows_state_producers_and_controls: render-only matrix', async t 
     assert(['window-local: produced by the window lane','reducer over shared fixture','provisional'].includes(row.origin));
     if(row.origin === 'provisional')assert(row.provisional.every(p=>p.startsWith('needs an example from the foundation lane:')));
   });
-  await t.test('actual producers and live controls await window lanes and N1/N2 review', {skip:'render-only enabling lane'},()=>{});
 });
 
 test('rule oracles reject deliberate broken states, one mutation per rule', () => {
