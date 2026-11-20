@@ -4088,8 +4088,10 @@ function runtimeUpdateCanApply() {
 }
 
 function showRuntimeUpdateStatus(message) {
+  const currentSaveError = backgroundSaveError
+    && backgroundSettingState(runtimeUpdate?.background_checks) === backgroundSaveState;
   if (runtimeUpdateStatusNode) runtimeUpdateStatusNode.textContent =
-    message === runtimeUpdate?.background_checks?.message && !backgroundSaveError ? "" : message;
+    message === runtimeUpdate?.background_checks?.message && !currentSaveError ? "" : message;
 }
 
 function scheduleRuntimeUpdateRefresh(delay) {
