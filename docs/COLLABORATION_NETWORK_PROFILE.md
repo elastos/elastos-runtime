@@ -89,9 +89,12 @@ person chooses isolation.
 
 The release network lists one bootstrap peer: the Community node on the seed
 host. This node runs its own Runtime with its own account, data root, Carrier
-port and resource limits, apart from the release and update service. In 0.8.0
-Carrier is direct-only: a Home reaches this node over a direct Carrier path,
-with no relay. Carrier owns connection policy and peer resolution through one
+port and resource limits, apart from the release and update service. The default
+Carrier policy uses direct paths. With the meeting point off, local bootstrap
+receipts carry the endpoint ID and the Home's direct addresses, including LAN,
+VPN and public IP addresses. With a meeting point selected, receipts carry
+public IP hints or the endpoint ID alone; Runtime supplies the approved meeting
+point. A private Community route can also come from local mDNS or operator state. Carrier owns connection policy and peer resolution through one
 connect-by-DID entry point. Relay support and cross-network acceptance are
 planned in [#345](https://github.com/elastos/elastos-runtime/issues/345) and
 [#354](https://github.com/elastos/elastos-runtime/issues/354).

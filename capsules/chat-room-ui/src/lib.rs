@@ -1554,13 +1554,15 @@ impl App {
             return Err(403);
         }
         let mark_read = self.can_mark_read(Some(&conversation_id));
+        let mut message_headers = self.home_token_headers();
+        message_headers.push(("accept", direct::DELIVERY_DETAILS_ACCEPT.to_string()));
         let messages_result: Result<DirectMessageList, u16> = direct_get_json(
             &format!(
                 "{DIRECT_API_BASE}/conversations/{}/messages?retry_details=true&mark_read={}",
                 encode_path_segment(&conversation_id),
                 mark_read
             ),
-            &self.home_token_headers(),
+            &message_headers,
         )
         .await;
         if self.home_token() != request_token || !self.selection_guard_is_current(guard) {
@@ -5106,14 +5108,21 @@ impl App {
                 .request_id
                 .as_ref()
                 .is_some_and(|id| state.direct_in_flight.contains_key(id));
-            detail.set_text_content(Some(&if in_flight {
-                "Sending".to_string()
-            } else {
-                message
-                    .delivery_state
-                    .label()
-                    .map_or_else(|| format_time(message.created_at), str::to_string)
-            }));
+            let note_due = seen
+                .get(&message.message_id)
+                .is_some_and(|at| pending_note_wait_ms(*at, now_ms) == 0.0);
+            detail.set_text_content(Some(
+                &if message.delivery_state == DirectDeliveryState::Pending && note_due {
+                    "Unconfirmed".to_string()
+                } else if in_flight {
+                    "Sending".to_string()
+                } else {
+                    message
+                        .delivery_state
+                        .label()
+                        .map_or_else(|| format_time(message.created_at), str::to_string)
+                },
+            ));
             meta.append_child(&sender)?;
             meta.append_child(&detail)?;
             let body = self.document.create_element("div")?;
@@ -5155,6 +5164,7 @@ impl App {
                                 .get(request_id)
                                 .map(|at| format_time(*at))
                                 .as_deref(),
+                            message.delivery_issue,
                         )
                     });
                     if let Some(detail) = terminal.map(str::to_string).or(pending_note.flatten()) {

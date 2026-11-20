@@ -94,6 +94,8 @@ struct DirectServiceInner {
     registry: Arc<ProviderRegistry>,
     contexts: Mutex<BTreeMap<String, DirectContext>>,
     retry_offsets: Mutex<BTreeMap<String, usize>>,
+    failure_warning: Mutex<Option<std::time::Instant>>,
+    delivery_issues: Mutex<BTreeMap<String, DirectDeliveryIssue>>,
 }
 
 #[derive(Clone)]
@@ -148,6 +150,16 @@ pub(crate) struct DirectMessageRecord {
     pub(crate) incoming: bool,
     pub(crate) recorded_at: u64,
     pub(crate) receipt_settled: bool,
+}
+
+/// Local attempt diagnostics. Signed messages and peer receipts keep their
+/// original bytes. Only these fixed reasons cross the app boundary.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DirectDeliveryIssue {
+    PeerUnreachable,
+    SystemDnsUnavailable,
+    ReceiptWaitPassed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,6 +232,8 @@ pub(crate) struct DirectMessageSummary {
     pub(crate) text: String,
     pub(crate) created_at: u64,
     pub(crate) delivery_state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) delivery_issue: Option<DirectDeliveryIssue>,
 }
 
 pub(crate) struct DirectSendAuthority<'a> {
@@ -829,6 +843,8 @@ impl CollaborationDirectMessageService {
             registry: registry.clone(),
             contexts: Mutex::new(BTreeMap::new()),
             retry_offsets: Mutex::new(BTreeMap::new()),
+            failure_warning: Mutex::new(None),
+            delivery_issues: Mutex::new(BTreeMap::new()),
         });
         let provider: Arc<dyn Provider> = Arc::new(CollaborationDirectMessageProvider {
             inner: inner.clone(),
@@ -1215,6 +1231,20 @@ impl CollaborationDirectMessageService {
                 },
                 text: payload.text,
                 created_at: envelope.payload.created_at,
+                delivery_issue: (!record.incoming
+                    && !record.receipt_settled
+                    && envelope.payload.expires_at > now)
+                    .then(|| {
+                        self.inner
+                            .delivery_issues
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .get(&collaboration_message_envelope_sha256(
+                                &record.envelope_bytes,
+                            ))
+                            .copied()
+                    })
+                    .flatten(),
                 // `expired` is terminal: retry_pending stops re-delivering the
                 // moment the envelope's TTL passes, so the product must stop
                 // saying "Sending". A settled receipt still wins — expiry only
@@ -1383,6 +1413,19 @@ impl CollaborationDirectMessageService {
         }
     }
 
+    fn should_warn_delivery_failure(&self, now: std::time::Instant) -> bool {
+        let mut last = self
+            .inner
+            .failure_warning
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if last.is_some_and(|last| now.duration_since(last) < std::time::Duration::from_secs(60)) {
+            return false;
+        }
+        *last = Some(now);
+        true
+    }
+
     async fn deliver(
         &self,
         context: &DirectContext,
@@ -1439,27 +1482,36 @@ impl CollaborationDirectMessageService {
                 transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::PeerDid {
                     peer_did: recipient_endpoint_did.to_string(),
                     timeout_ms: Some(DIRECT_PROVIDER_TIMEOUT_MS),
-                    reply_wait_ms: None,
+                    reply_wait_ms: Some(DIRECT_PROVIDER_TIMEOUT_MS),
                 }),
             })
             .await
         {
             Ok(response) => response,
             Err(err) => {
-                // Pending is correct — the bounded retry pass owns durability —
-                // but a swallowed error made the cold-path stall undiagnosable:
-                // a measured idle pair stayed in "Sending" past six minutes on
-                // the 5s dial budget and past two minutes on a 30s one, so the
-                // dial is failing outright, not running out of time. A
-                // same-endpoint PeerDid stays on the Carrier provider plane but
-                // Carrier loops it through authenticated admission without a
-                // network dial, so a remaining failure here is an admission or
-                // foreign route problem.
-                tracing::debug!(
-                    peer_did = %recipient_endpoint_did,
-                    error = %err,
-                    "direct message delivery attempt failed; envelope stays pending"
-                );
+                let issue = if err.to_string().contains("carrier_system_dns_unavailable") {
+                    DirectDeliveryIssue::SystemDnsUnavailable
+                } else if err
+                    .to_string()
+                    .contains("Carrier provider answer wait passed")
+                {
+                    DirectDeliveryIssue::ReceiptWaitPassed
+                } else {
+                    DirectDeliveryIssue::PeerUnreachable
+                };
+                let mut issues = self
+                    .inner
+                    .delivery_issues
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                if issues.len() >= MAX_DIRECT_MESSAGES && !issues.contains_key(&message_hash) {
+                    issues.pop_first();
+                }
+                issues.insert(message_hash.clone(), issue);
+                drop(issues);
+                if self.should_warn_delivery_failure(std::time::Instant::now()) {
+                    tracing::warn!(reason = ?issue, "direct delivery is unconfirmed; Home will retry");
+                }
                 return Ok(DirectDeliveryStatus::Pending);
             }
         };
@@ -1483,6 +1535,11 @@ impl CollaborationDirectMessageService {
         context
             .message_store
             .persist_receipt(&message_hash, &receipt_bytes, now)?;
+        self.inner
+            .delivery_issues
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&message_hash);
         Ok(DirectDeliveryStatus::ReceiptSettled)
     }
 

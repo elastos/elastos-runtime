@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 pub(super) const DIRECT_API_BASE: &str = "/api/apps/chat-room/direct";
+pub(super) const DELIVERY_DETAILS_ACCEPT: &str =
+    "application/json;elastos-direct-delivery-details=1";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct DirectUiState {
@@ -51,6 +53,26 @@ pub(super) struct DirectMessageView {
     pub(super) text: String,
     pub(super) created_at: u64,
     pub(super) delivery_state: DirectDeliveryState,
+    #[serde(default)]
+    pub(super) delivery_issue: Option<DirectDeliveryIssue>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum DirectDeliveryIssue {
+    PeerUnreachable,
+    SystemDnsUnavailable,
+    ReceiptWaitPassed,
+}
+
+impl DirectDeliveryIssue {
+    fn detail(self) -> &'static str {
+        match self {
+            Self::PeerUnreachable => " Check that both Homes and their networks are on.",
+            Self::SystemDnsUnavailable => " Check your network settings.",
+            Self::ReceiptWaitPassed => " Your Home did not receive a delivery receipt in time.",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -148,11 +170,15 @@ pub(super) fn pending_delivery_note(
     due: bool,
     contact_current: bool,
     retried_at: Option<&str>,
+    issue: Option<DirectDeliveryIssue>,
 ) -> Option<String> {
     if !due && retried_at.is_none() {
         return None;
     }
     let mut note = String::from("Delivery unconfirmed.");
+    if let Some(issue) = issue {
+        note.push_str(issue.detail());
+    }
     if contact_current {
         note.push_str(" Your Home keeps trying while it is on, for up to 24 hours.");
     }
@@ -485,21 +511,67 @@ mod tests {
 
     #[test]
     fn pending_note_claims_retries_only_for_a_current_contact() {
-        assert_eq!(pending_delivery_note(false, true, None), None);
+        assert_eq!(pending_delivery_note(false, true, None, None), None);
         assert_eq!(
-            pending_delivery_note(true, true, None).unwrap(),
+            pending_delivery_note(true, true, None, None).unwrap(),
             "Delivery unconfirmed. Your Home keeps trying while it is on, for up to 24 hours."
         );
         // The Runtime does not retry a removed contact's messages.
         assert_eq!(
-            pending_delivery_note(true, false, None).unwrap(),
+            pending_delivery_note(true, false, None, None).unwrap(),
             "Delivery unconfirmed."
         );
         // A manual Retry shows when it ran, even before the threshold.
         assert_eq!(
-            pending_delivery_note(false, true, Some("14:03")).unwrap(),
+            pending_delivery_note(false, true, Some("14:03"), None).unwrap(),
             "Delivery unconfirmed. Your Home keeps trying while it is on, for up to 24 hours. Tried again at 14:03."
         );
+    }
+
+    #[test]
+    fn delivery_note_has_one_retry_claim_and_none_for_removed_contacts() {
+        for issue in [
+            DirectDeliveryIssue::PeerUnreachable,
+            DirectDeliveryIssue::SystemDnsUnavailable,
+            DirectDeliveryIssue::ReceiptWaitPassed,
+        ] {
+            let active = pending_delivery_note(true, true, None, Some(issue)).unwrap();
+            assert_eq!(active.matches("trying").count(), 1);
+            let removed = pending_delivery_note(true, false, None, Some(issue)).unwrap();
+            assert!(!removed.contains("trying"));
+            assert!(!removed.contains("DNS"));
+        }
+    }
+
+    #[test]
+    fn failed_delivery_explains_only_fixed_reasons_and_keeps_retry_window() {
+        let uncertain =
+            pending_delivery_note(true, true, None, Some(DirectDeliveryIssue::PeerUnreachable))
+                .unwrap();
+        assert!(!uncertain.contains("cannot reach"));
+        assert!(!uncertain.contains("is off"));
+        for (issue, text) in [
+            (
+                DirectDeliveryIssue::PeerUnreachable,
+                "Check that both Homes",
+            ),
+            (
+                DirectDeliveryIssue::SystemDnsUnavailable,
+                "Check your network settings",
+            ),
+            (
+                DirectDeliveryIssue::ReceiptWaitPassed,
+                "delivery receipt in time",
+            ),
+        ] {
+            assert!(pending_delivery_note(true, true, None, Some(issue))
+                .unwrap()
+                .contains(text));
+            assert!(pending_delivery_note(true, true, None, Some(issue))
+                .unwrap()
+                .contains("24 hours"));
+            assert_eq!(pending_delivery_note(false, true, None, Some(issue)), None);
+        }
     }
 
     #[test]

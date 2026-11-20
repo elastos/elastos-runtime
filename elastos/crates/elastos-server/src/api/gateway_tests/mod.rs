@@ -330,6 +330,61 @@ async fn gateway_allows_opaque_capsule_preflight_without_granting_unrelated_orig
         .is_none());
 }
 
+#[tokio::test]
+async fn direct_delivery_profile_preflight_keeps_the_released_header_names_and_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    let path = "/api/apps/chat-room/direct/conversations/fixture/messages?retry_details=true";
+    let requested = ["content-type", "x-elastos-home-token"];
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri(path)
+                .header("origin", "null")
+                .header("access-control-request-method", "GET")
+                .header("access-control-request-headers", requested.join(","))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(response.headers()["access-control-allow-origin"], "null");
+    let allowed = response.headers()["access-control-allow-headers"]
+        .to_str()
+        .unwrap();
+    for name in requested {
+        assert!(
+            allowed
+                .split(',')
+                .any(|item| item.trim().eq_ignore_ascii_case(name)),
+            "missing requested header {name}"
+        );
+    }
+    // Accept's token-only media parameter is CORS-safelisted. It changes the
+    // requested representation and carries no Home authority of its own.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(path)
+                .header("origin", "null")
+                .header(
+                    "accept",
+                    "application/json;elastos-direct-delivery-details=1",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_client_error(),
+        "content negotiation cannot grant authority"
+    );
+}
+
 async fn documents_test_state(cache_dir: &std::path::Path) -> GatewayState {
     seed_test_browser_capsules(cache_dir);
     let registry = Arc::new(ProviderRegistry::new());

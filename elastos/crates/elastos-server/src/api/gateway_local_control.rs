@@ -188,6 +188,8 @@ mod tests {
 
     struct TicketProvider {
         requests: Mutex<Vec<serde_json::Value>>,
+        ticket: String,
+        node_id: String,
     }
 
     #[async_trait::async_trait]
@@ -215,8 +217,8 @@ mod tests {
             Ok(serde_json::json!({
                 "status": "ok",
                 "data": {
-                    "ticket": "private-test-ticket",
-                    "node_id": "private-test-node"
+                    "ticket": self.ticket,
+                    "node_id": self.node_id
                 }
             }))
         }
@@ -225,8 +227,24 @@ mod tests {
     #[tokio::test]
     async fn gateway_coordinate_is_exact_private_narrow_and_cleaned_up() {
         let temp = tempfile::tempdir().unwrap();
+        let id = iroh::SecretKey::from_bytes(&[247; 32]).public();
+        let encode = |addr: iroh::EndpointAddr| {
+            data_encoding::BASE32_NOPAD
+                .encode(
+                    &serde_json::to_vec(&serde_json::json!({"topic": null, "endpoints": [addr]}))
+                        .unwrap(),
+                )
+                .to_ascii_lowercase()
+        };
+        // With the meeting point off, exported bootstrap data retains the
+        // local provider's address so LAN and routed peers can still connect.
+        let local_ticket =
+            encode(iroh::EndpointAddr::new(id).with_ip_addr("127.0.0.1:0".parse().unwrap()));
+        let exported_ticket = local_ticket.clone();
         let provider = Arc::new(TicketProvider {
             requests: Mutex::new(Vec::new()),
+            ticket: local_ticket,
+            node_id: id.to_string(),
         });
         let registry = Arc::new(ProviderRegistry::new());
         registry
@@ -279,8 +297,8 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(ticket, "private-test-ticket");
-        assert_eq!(node_id, "private-test-node");
+        assert_eq!(ticket, exported_ticket);
+        assert_eq!(node_id, id.to_string());
         assert_eq!(
             provider.requests.lock().unwrap().as_slice(),
             &[serde_json::json!({"op": "get_ticket"})]
@@ -300,10 +318,7 @@ mod tests {
             )
             .await
             .unwrap(),
-            (
-                "private-test-ticket".to_string(),
-                "private-test-node".to_string()
-            )
+            (exported_ticket, id.to_string())
         );
 
         let client = reqwest::Client::new();

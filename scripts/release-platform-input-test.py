@@ -18,6 +18,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -68,6 +69,30 @@ guest_inputs = importlib.util.module_from_spec(_GUEST_SPEC)
 _GUEST_SPEC.loader.exec_module(guest_inputs)
 
 class PlatformInputTest(unittest.TestCase):
+    def test_meeting_point_build_identity_is_complete_and_retained(self):
+        self.assertIsNone(inputs.relay_build_identity({}))
+        origin = "https://meeting.fixture:4433/"
+        expected = {"origin": origin, "spki_sha256": ["ab" * 32, "cd" * 32]}
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(inputs, "SOURCE_ROOT", Path(directory)):
+            pin_file = Path(directory) / "carrier-relay-spki-sha256.txt"
+            for empty in ("", "# awaiting approval\n"):
+                pin_file.write_text(empty)
+                with self.assertRaises(ValueError): inputs.relay_build_identity({"ELASTOS_RELEASE_RELAY_URL": origin})
+            pin_file.write_text("# primary, then backup\n" + "AB" * 32 + "\n" + "cd" * 32 + "\n")
+            self.assertEqual(inputs.relay_build_identity({"ELASTOS_RELEASE_RELAY_URL": origin,
+                "ELASTOS_RELEASE_RELAY_SPKI_SHA256": "ef" * 32}), expected)
+        for invalid_origin, pins in ((origin, []), (origin, ["wrong"]), (origin, ["ab" * 32] * 3),
+                                    ("http://meeting.fixture/", expected["spki_sha256"]),
+                                    ("https://user@meeting.fixture/", expected["spki_sha256"]),
+                                    ("https://meeting.fixture/other", expected["spki_sha256"])):
+            with self.assertRaises(ValueError): inputs.relay_identity(invalid_origin, pins)
+        for root in self.bundles.values():
+            receipt = json.loads((root / "platform-input.json").read_text())
+            receipt["carrier_relay"] = expected
+            inputs.verify_receipt_header(receipt)
+            receipt["carrier_relay"] = {**expected, "spki_sha256": ["wrong"]}
+            with self.assertRaises(ValueError): inputs.verify_receipt_header(receipt)
+
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)

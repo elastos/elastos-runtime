@@ -22,12 +22,29 @@ export function assertSenderDelivery(message, detail) {
 export function assertMessageOrigins(bases, browserHost) {
   assert(browserHost && bases.every(base => new URL(base).hostname === browserHost), 'Home origins match the network arrangement browser host');
 }
+export async function registrationRefusal(response, home) {
+  const path = new URL(response.url()).pathname;
+  if (!path.startsWith('/api/auth/passkey/register/') || response.ok()) return;
+  return {home, method:response.request().method(), path, status:response.status(),
+    reason:(await response.text()).slice(0,512)};
+}
+export function browserOptions(chromium, namespace, control, environment=process.env) {
+  const options = {headless:true, args:['--two-home-fixture='+control]};
+  if (namespace) {
+    options.executablePath = fileURLToPath(new URL('./ci-two-home-browser.sh', import.meta.url));
+    options.env = {...environment, ELASTOS_BROWSER_NAMESPACE:namespace,
+      ELASTOS_BROWSER_EXECUTABLE:chromium.executablePath()};
+  }
+  return options;
+}
 async function run() {
   const require = createRequire(import.meta.url);
   const {chromium} = withBrowserLaunchRecovery(require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE || '../elastos/tools/browser-playwright-engine/node_modules/playwright'));
   const [baseA, baseB, evidence, control, browserHost] = process.argv.slice(2);
+  const namespaces = JSON.parse(process.env.ELASTOS_TWO_HOME_NAMESPACES || "[]");
+  assert(namespaces.length === 0 || namespaces.length === 3, "one namespace per Home");
   assertMessageOrigins([baseA, baseB], browserHost);
-  const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], exchanges:{}, browser_cross_home_http_requests:0};
+  const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], registration_refusals:[], exchanges:{}, browser_cross_home_http_requests:0};
   let sequence = 0;
   async function runtime(action) {
     const id = ++sequence;
@@ -46,13 +63,15 @@ async function run() {
     while(Date.now()<end) {const value=await fn(); if(value) return value; await sleep(500);}
     throw new Error(label+' deadline');
   }
-  let browser;
+  const browsers=[];
   try {
     result.stage='browser_launch';
-    browser = await chromium.launch({headless:true, args:['--two-home-fixture='+control]});
+    if (!namespaces.length) browsers.push(await chromium.launch(browserOptions(chromium,null,control)));
     const homes=[];
     async function signIn(base) {
       const i=homes.length, name='abc'[i];
+      const browser = namespaces.length ? await chromium.launch(browserOptions(chromium,namespaces[i],control)) : browsers[0];
+      if (namespaces.length) browsers.push(browser);
       const context=await browser.newContext({timezoneId:'UTC', serviceWorkers:'block', viewport:{width:1440,height:900}});
       await context.route('**/*', route => {
         const url = new URL(route.request().url());
@@ -63,6 +82,10 @@ async function run() {
         return route.continue();
       });
       const page=await context.newPage();
+      page.on("response", async response => {
+        const refusal = await registrationRefusal(response, i);
+        if (refusal) result.registration_refusals.push(refusal);
+      });
       const cdp=await context.newCDPSession(page);
       await cdp.send('WebAuthn.enable');
       await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
@@ -96,7 +119,7 @@ async function run() {
     async function api(page,path,body) {
       return page.evaluate(async ({path,body})=>{
         const token=new URLSearchParams(location.hash.slice(1)).get('home_token');
-        const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','x-elastos-home-token':token},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
+        const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','accept':'application/json;elastos-direct-delivery-details=1','x-elastos-home-token':token},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
         if(!r.ok) throw new Error('product API '+path+' HTTP '+r.status);
         return r.json();
       },{path,body});
@@ -173,6 +196,57 @@ async function run() {
     assertSenderDelivery(settled,senderDetail);
     result.results.sender_delivered='passed';
     result.direct={text,recipient_state:received.delivery_state,sender_state:settled.delivery_state,sender_detail:senderDetail};
+    if (process.env.ELASTOS_TWO_HOME_PROMOTION === '1') await runtime('promote');
+    if (process.env.ELASTOS_TWO_HOME_FAILURE_CHECK === '1') {
+      result.stage='visible_failure';
+      await runtime('block_paths');
+      const started=Date.now();
+      const blockedText='Two Home blocked network '+crypto.randomUUID();
+      const blockedSend=await api(ac,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text:blockedText});
+      assert.equal(blockedSend.status,'pending');
+      assert(Date.now()-started<15000,'failed attempt returns within its dial and receipt budgets');
+      const reason=await until('bounded visible delivery failure',async()=>{
+        const message=await senderMessage(blockedText);
+        return message?.delivery_issue==='peer_unreachable' && await detail(blockedText)==='Unconfirmed' && message;
+      },85000);
+      const row=direct.locator('#message-list li.message.self-message').filter({has:direct.locator('.message-body').filter({hasText:blockedText})});
+      const explanation=await row.innerText();
+      assert.match(explanation,/Check that both Homes and their networks are on/);
+      assert.match(explanation,/Your Home keeps trying while it is on, for up to 24 hours/);
+      assert.equal(explanation.match(/\btrying\b/g)?.length,1,'one retry claim');
+      await direct.screenshot({path:join(evidence,'direct-unconfirmed-desktop.png'),fullPage:true});
+      await direct.setViewportSize({width:375,height:812});
+      assert(await direct.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'phone delivery view fits its viewport');
+      const retryBox=await row.getByRole('button',{name:'Retry',exact:true}).boundingBox();
+      assert(retryBox&&retryBox.x>=0&&retryBox.x+retryBox.width<=375,'phone Retry stays reachable');
+      await direct.screenshot({path:join(evidence,'direct-unconfirmed-phone.png'),fullPage:true});
+      await direct.setViewportSize({width:1440,height:900});
+      const {observation}=await runtime('observe_blocked');
+      assert.equal(observation.b_alive,true);
+      assert.equal(observation.b_health,200);
+      assert(observation.dropped_packets>0,'real Carrier packets hit the owned block');
+      await row.getByRole('button',{name:'Retry',exact:true}).click();
+      await until('manual retry returns',async()=>await row.getByRole('button',{name:'Retry',exact:true}).isEnabled(),20000);
+      assert.equal((await senderMessage(blockedText)).message_id,reason.message_id);
+      result.visible_failure={reason:reason.delivery_issue,ui_detail:await detail(blockedText),elapsed_ms:Date.now()-started,retry_same_message:true,...observation};
+      result.results.visible_failure='passed';
+      await runtime('unblock_paths');
+      const recovered=await until('same running B receives after network recovery',async()=> {
+        const messages=(await api(bc,path)).messages;
+        return messages.find(message=>message.text===blockedText&&message.direction==='incoming');
+      });
+      assertReceivedDirect([recovered],reason.message_id,blockedText);
+      const settled=await until('network recovery settles original receipt',async()=> {
+        const message=await senderMessage(blockedText);
+        return message?.delivery_state==='receipt_settled' && message;
+      });
+      const time=await until('network recovery replaces failure with time',async()=> {
+        const value=await detail(blockedText);
+        return /^\d{2}:\d{2}$/.test(value) && value;
+      });
+      assertSenderDelivery(settled,time);
+      result.results.network_recovery='passed';
+    }
     // One round after a transition: every Home posts, every other Home reads
     // that exact text, and one direct message crosses the accepted contact.
     async function exchange(transition) {
@@ -198,6 +272,17 @@ async function run() {
         return messages.find(m=>m.text===sent&&m.direction==='incoming'&&m.delivery_state==='received');
       });
       round.direct={from:a.name,to:b.name,sent,received:assertReceivedDirect(messages,arrived.message_id,sent).text};
+      const back=`Two Home ${transition} answer ${crypto.randomUUID()}`;
+      const backSent=await api(b.community,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text:back});
+      await until(`direct ${transition} at a`,async()=>{
+        const rows=(await api(a.community,path)).messages;
+        const message=rows.find(m=>m.text===back&&m.direction==='incoming');
+        return message && assertReceivedDirect(rows,message.message_id,back);
+      });
+      for(const [page,expected] of [[a.community,sent],[b.community,back]]) {
+        await until(`receipt ${transition}`,async()=> (await api(page,path)).messages.some(m=>m.text===expected&&m.delivery_state==='receipt_settled'));
+      }
+      round.reverse={sent:back,received:back,accepted:backSent.status};
       return round;
     }
     result.exchanges.start=await exchange('start');
@@ -268,7 +353,7 @@ async function run() {
     writeFileSync(join(control,'error.private.txt'),String(error.stack),{mode:0o600});
     process.exitCode=1;
   } finally {
-    if(browser) await browser.close();
+    for(const browser of browsers) await browser.close();
     writeFileSync(join(evidence,'two-home-ui.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});
     console.log(JSON.stringify({stage:result.stage,status:result.status}));
   }

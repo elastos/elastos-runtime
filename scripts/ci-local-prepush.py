@@ -28,6 +28,10 @@ def run(args, cwd, capture=False, lease=None):
         target = str(Path(cwd).resolve() / "target")
         environment["CARGO_TARGET_DIR"] = target
         environment["CARGO_BUILD_TARGET_DIR"] = target
+        # Standalone vendor workspaces resolve their own lock graphs. Their
+        # intermediates must not replace same-version dependencies of Home.
+        if Path(cwd).resolve().parent.name == "vendor":
+            environment["CARGO_BUILD_BUILD_DIR"] = target
         # Use the same flags as CI. Caller lint caps, individual allows and
         # encoded flags can otherwise weaken -D warnings or change the source.
         environment.pop("CARGO_ENCODED_RUSTFLAGS", None)
@@ -510,6 +514,9 @@ def crate_units(root, workspace, package, paths, lease):
     executed = 0
     for target, selectors, prefixes, touched in plan:
         args = ["cargo", "test", "-p", package["name"], *selectors]
+        required_features = target.get("required-features", [])
+        if required_features:
+            args.extend(["--features", ",".join(required_features)])
         listed = run([*args, "--", "--list"], workspace, capture=True, lease=lease)
         tests = re.findall(r"(?m)^(.+): test$", listed)
         if not tests:

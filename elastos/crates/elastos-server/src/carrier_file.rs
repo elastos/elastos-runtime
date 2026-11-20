@@ -481,7 +481,7 @@ mod tests {
         assert!(format!("{error:#}").contains("not found"));
         let source: TrustedSource = serde_json::from_value(serde_json::json!({
             "name":"test", "publisher_node_id":iroh::SecretKey::from_bytes(&[140; 32]).public().to_string(),
-            "connect_ticket":super::super::carrier_connect_ticket(&node.endpoint)
+            "connect_ticket":super::super::local_carrier_connect_ticket(&node.endpoint)
         })).unwrap();
         let error = fetch_file_from_trusted_source_to_bound(
             &source,

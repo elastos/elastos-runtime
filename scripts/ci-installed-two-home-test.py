@@ -21,6 +21,24 @@ JOURNEY = runpy.run_path(str(ROOT / 'scripts/ci-installed-journeys.py'))
 
 
 class TwoHomeReceiptTests(unittest.TestCase):
+    def test_delivery_warning_count_covers_only_the_blocked_network_interval(self):
+        observe = JOURNEY['observe_delivery_warnings']
+        warning = 'WARN direct delivery is unconfirmed; Home will retry\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / 'runtime.log'
+            log.write_text(warning)
+            interval = {}
+            observe(log, interval, True)
+            log.write_text(log.read_text() + warning * 2)
+            observe(log, interval, False)
+            log.write_text(log.read_text() + warning * 3)
+            self.assertEqual(interval['delivery_warning_count'], 2)
+            for count in (0, 3):
+                observe(log, interval, True)
+                log.write_text(log.read_text() + warning * count)
+                observe(log, interval, False)
+                self.assertEqual(interval['delivery_warning_count'], count)
+
     def test_fresh_home_and_data_are_private_with_the_operator_umask(self):
         fresh = JOURNEY['fresh_fixture']
         with tempfile.TemporaryDirectory() as temporary:
@@ -42,13 +60,47 @@ class TwoHomeReceiptTests(unittest.TestCase):
         source = (ROOT/'.github/workflows/ci.yml').read_text()
         linux = source.split('\n  source-home-linux:\n',1)[1].split('\n  source-home-',1)[0]
         self.assertLess(linux.index('run: scripts/ci-installed-journeys.sh model-repair'),
-                        linux.index('run: scripts/ci-installed-journeys.sh two-home-messages'))
+                        linux.index('scripts/ci-installed-journeys.sh two-home-messages'))
         for job in ('source-home-linux', 'source-home-macos'):
             block = source.split('\n  '+job+':\n', 1)[1].split('\n  source-home-', 1)[0]
-            self.assertIn('run: scripts/ci-installed-journeys.sh two-home-messages', block)
+            self.assertIn('scripts/ci-installed-journeys.sh two-home-messages', block)
             summary = block.split('name: summarize installed model journey', 1)[1]
             self.assertIn("CI_TWO_HOME_MESSAGES: 'true'", summary)
             self.assertNotIn('continue-on-error:', block.split('name: installed two-Home Community',1)[1].split('      - name:',1)[0])
+
+    def test_matrix_entry_reaches_its_first_external_step_and_cleans_the_fixture(self):
+        import types
+        import shutil
+        function = JOURNEY['two_home_message_matrix']
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            removed = []
+            def cleanup(path):
+                self.assertEqual(path.parent, root)
+                self.assertTrue(path.name.startswith('carrier-journey-'))
+                removed.append(path)
+                shutil.rmtree(path)
+            helpers = {'require_disk_space': mock.Mock(), 'remove_message_fixture': cleanup}
+            with mock.patch.dict(function.__globals__, {
+                    'runpy': types.SimpleNamespace(run_path=lambda _: helpers)}),                     mock.patch.object(Path, 'home', return_value=root),                     mock.patch.object(JOURNEY['subprocess'], 'run', side_effect=RuntimeError('stop before external build')) as run:
+                with self.assertRaisesRegex(RuntimeError, 'stop before external build'):
+                    function([], platform="linux")
+                self.assertEqual(run.call_args.args[0][:2], ['openssl', 'req'])
+            self.assertEqual(len(removed), 1)
+            self.assertFalse(removed[0].exists())
+
+    def test_network_matrix_scope_stays_with_the_existing_x64_job(self):
+        source = (ROOT / '.github/workflows/ci.yml').read_text()
+        for job, enabled in [('source-home-linux', 'true'), ('source-home-linux-arm64', 'false')]:
+            block = source.split('\n  ' + job + ':\n', 1)[1].split('\n  source-home-', 1)[0]
+            self.assertIn("CI_TWO_HOME_NETWORK_MATRIX: '" + enabled + "'", block)
+        shell = (ROOT / 'scripts/ci-installed-journeys.sh').read_text()
+        self.assertIn('if [[ "${CI_TWO_HOME_NETWORK_MATRIX:-false}" == true ]]', shell)
+        self.assertIn('matrix_required = os.environ.get("CI_TWO_HOME_NETWORK_MATRIX") == "true"', shell)
+        matrix = shell.split('    two-home-messages)', 1)[1].split('    home)', 1)[0]
+        self.assertLess(matrix.index('scripts/test-behaviour.sh inputs'), matrix.index('--two-home-matrix'))
+        self.assertIn('export NODE_PATH=', matrix)
+        self.assertIn('export BROWSER_OPERATOR_PLAYWRIGHT_CORE=', matrix)
 
     def identity(self):
         return {'candidate':'c'*40, 'source_tree':'d'*40, 'installed_runtime_sha256':'a'*64,
@@ -66,7 +118,8 @@ class TwoHomeReceiptTests(unittest.TestCase):
                           'community':[{'from':sender, 'to':receiver, 'sent':f'{name} post from {sender}',
                                         'received':f'{name} post from {sender}'}
                                        for sender in members for receiver in members if sender != receiver],
-                          'direct':{'from':'a', 'to':'b', 'sent':name+' direct', 'received':name+' direct'}}
+                          'direct':{'from':'a', 'to':'b', 'sent':name+' direct', 'received':name+' direct'},
+                          'reverse':{'sent':name+' answer', 'received':name+' answer'}}
         return rows
 
     def receipt(self, identity=None, node=None):
@@ -79,7 +132,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
                          for index,name in enumerate(('a','b','c','community'))],
                 'process_cleanup':[{'status':'passed', 'after':{'runtime':0}} for _ in range(7)],
                 'browser_cross_home_http_requests':0,
-                'direct_endpoint_observations':[{'home':name,'ticket_addresses':[{'Ip':f'127.0.0.1:{1025+index}'}]}
+                'direct_endpoint_observations':[{'home':name,'endpoint_id':{'community':'0','a':'a','b':'b','c':'c'}[name]*64,'ticket_addresses':[{'Ip':f'127.0.0.1:{1025+index}'}]}
                     for index,name in ((3,'community'),(3,'community'),(0,'a'),(1,'b'),(3,'community'),(2,'c'),(1,'b'))],
                 'transitions':self.transitions(),
                 'results':{name:'passed' for name in ('community_post','direct_received','sender_delivered',
@@ -315,6 +368,48 @@ class TwoHomeReceiptTests(unittest.TestCase):
         changed['homes'][0]['carrier_bind_address'] = '192.0.2.1:1234'
         self.assertFalse(check(changed, self.identity()))
 
+    def test_promotion_receipt_needs_observed_relay_then_direct_and_failure_proof(self):
+        row = self.receipt()
+        row['network_arrangement'] = 'relay-to-direct'
+        for home in row['homes']:
+            host = {'community':'203.0.113.1', 'a':'10.0.1.2', 'b':'10.0.2.2', 'c':'10.0.2.2'}[home['home']]
+            home['carrier_bind_address'] = host + ':' + home['carrier_bind_address'].rsplit(':', 1)[1]
+        for observed in row['direct_endpoint_observations']:
+            observed['ticket_addresses'] = [{'Relay':'https://203.0.113.1:8443/'}]
+        row.update(promotion_candidates={'a':'a'*64,'b':'b'*64}, meeting_point={'origin':'https://203.0.113.1:8443/', 'spki_sha256':['a'*64]}, route_observations=['relay', 'direct'], all_carrier_paths_blocked=True, discovery_packets=12,
+                   delivery_warning_count=2,
+                   visible_failure={'reason':'peer_unreachable', 'ui_detail':'Unconfirmed',
+                                    'elapsed_ms':65000, 'retry_same_message':True, 'b_alive':True, 'b_health':200, 'dropped_packets':12})
+        row['results']['visible_failure'] = 'passed'
+        row['results']['network_recovery'] = 'passed'
+        check = JOURNEY['two_home_receipt_valid']
+        self.assertTrue(check(row, self.identity(), 'relay-to-direct'))
+        changed = copy.deepcopy(row)
+        changed['promotion_candidates'] = {}
+        self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
+        changed = copy.deepcopy(row)
+        changed['promotion_candidates']['a'] = 'other'
+        self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
+        changed = copy.deepcopy(row)
+        changed['direct_endpoint_observations'][0]['ticket_addresses'] = [{'Relay':'https://foreign.invalid/'}]
+        self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
+        for routes in (['relay'], ['direct'], ['direct', 'relay']):
+            changed = copy.deepcopy(row)
+            changed['route_observations'] = routes
+            self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
+        for key, value in [('all_carrier_paths_blocked',False), ('delivery_warning_count',0),
+                           ('delivery_warning_count',3), ('visible_failure',{})]:
+            changed = copy.deepcopy(row)
+            changed[key] = value
+            self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
+
+    def test_each_reverse_exchange_is_required_and_exact(self):
+        for name in self.TRANSITIONS:
+            for reverse in ({}, {'sent':'answer', 'received':'other'}):
+                row = self.receipt()
+                row['transitions'][name]['reverse'] = reverse
+                self.assertFalse(JOURNEY['two_home_receipt_valid'](row, self.identity()))
+
     def test_fixture_removal_refuses_nested_home_process(self):
         remove = JOURNEY['remove_message_fixture']
         with tempfile.TemporaryDirectory() as temporary:
@@ -512,6 +607,89 @@ class TwoHomeReceiptTests(unittest.TestCase):
             runtime.write_bytes(b'stale binary')
             with self.assertRaises(AssertionError):
                 observe()
+
+
+INSTALL = runpy.run_path(str(ROOT / "scripts/install-source-home-runtime.py"))
+NETWORK = runpy.run_path(str(ROOT / "scripts/ci-two-nat-network.py"))
+
+class FixtureManifestTests(unittest.TestCase):
+    def test_model_holder_keeps_its_original_http_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            data = home / "data"
+            data.mkdir()
+            (data / "gateway-runtime-coords.json").write_text(json.dumps({
+                "api_url": "http://localhost:1234", "attach_secret": "disposable-fixture"}))
+            child = mock.Mock()
+            post = mock.Mock(side_effect=[{"token": "fixture-token"}, {"data": {"ticket": "fixture-ticket"}}])
+            owner = JOURNEY["start_holder"]
+            with mock.patch.dict(owner.__globals__, {"wait_healthy": mock.Mock(), "post_json": post}), \
+                    mock.patch.object(JOURNEY["subprocess"], "Popen", return_value=child), \
+                    mock.patch.object(JOURNEY["subprocess"], "check_output", return_value='{"did":"did:fixture:holder"}'), \
+                    mock.patch.object(JOURNEY["subprocess"], "run"):
+                started, receipt = owner(home, data, home / "consumer", {})
+            self.assertIs(started, child)
+            self.assertEqual(receipt["holder_did"], "did:fixture:holder")
+            self.assertEqual(post.call_args_list, [
+                mock.call("http://localhost:1234/api/auth/attach", {"secret": "disposable-fixture", "scope": "shell"}),
+                mock.call("http://localhost:1234/api/provider/peer/get_ticket", {}, "fixture-token")])
+
+    def test_success_requires_a_bounded_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            with self.assertRaisesRegex(RuntimeError, "no receipt"):
+                JOURNEY["require_message_receipt"](path)
+            path.write_text('{"status":"passed"}')
+            self.assertEqual(JOURNEY["require_message_receipt"](path), {"status":"passed"})
+            path.write_bytes(b"x" * (1024 * 1024 + 1))
+            with self.assertRaisesRegex(RuntimeError, "exceeds its bound"):
+                JOURNEY["require_message_receipt"](path)
+
+    def test_management_socket_is_opened_inside_the_home_namespace_with_secret_on_stdin(self):
+        topology = NETWORK["MessageNetwork"].__new__(NETWORK["MessageNetwork"])
+        topology.names = {"a": "fixture-home-a"}
+        with mock.patch.object(NETWORK["subprocess"], "run", return_value=mock.Mock(stdout='{"token":"fixture"}')) as run:
+            self.assertEqual(topology.http_json("a", "http://localhost/api/auth/attach",
+                                                {"secret":"disposable-fixture-input"}), {"token":"fixture"})
+        arguments, = run.call_args.args
+        self.assertEqual(arguments[:4], ["ip", "netns", "exec", "fixture-home-a"])
+        self.assertNotIn("disposable-fixture-input", " ".join(arguments))
+        self.assertEqual(json.loads(run.call_args.kwargs["input"])["body"], {"secret":"disposable-fixture-input"})
+        self.assertEqual(run.call_args.kwargs["timeout"], 65)
+
+    def test_runtime_input_preserves_bytes_and_passes_the_single_link_artifact_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            built = root / "cargo-output"
+            built.write_bytes(b"checksum fixture only; never executed")
+            built.chmod(0o755)
+            os.link(built, root / "cargo-deps-twin")
+            with self.assertRaises(INSTALL["InstallError"]):
+                INSTALL["hash_file"](built, 1024, executable=True, trusted_runtime=True)
+            staged = JOURNEY["stage_runtime_input"](built, root / "runtime-input")
+            self.assertEqual(staged.stat().st_nlink, 1)
+            self.assertEqual(stat.S_IMODE(staged.stat().st_mode), 0o700)
+            self.assertEqual(staged.read_bytes(), built.read_bytes())
+            INSTALL["hash_file"](staged, 1024, executable=True, trusted_runtime=True)
+
+    def test_fixture_contains_only_copied_apps_and_passes_the_shared_source_validator(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            data = root / "data"
+            (data / "bin").mkdir(parents=True)
+            binary = root / "checksum-input"
+            binary.write_bytes(b"fixture for hashing only; this is never executed")
+            JOURNEY["prepare_assets"](ROOT, data, binary)
+            manifest = json.loads((data / "components.json").read_text())
+            self.assertEqual(set(manifest["capsules"]), set(JOURNEY["MESSAGE_CAPSULES"]))
+            INSTALL["validate_source_components"](manifest, "linux-amd64")
+            # A stray source capsule from the full catalogue reopens the gap.
+            manifest["capsules"]["uninstalled"] = {
+                "entrypoint_sha256": "sha256:" + "a" * 64, "sha256": "", "cid": ""}
+            manifest["external"]["uninstalled"] = {
+                "platforms": {"linux-amd64": {"checksum": "sha256:" + "b" * 64}}}
+            with self.assertRaises(INSTALL["InstallError"]):
+                INSTALL["validate_source_components"](manifest, "linux-amd64")
 
 
 if __name__ == '__main__':

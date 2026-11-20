@@ -7503,8 +7503,11 @@ fn services_attach_peer_runtime_blocking(
             peer_cap: cap,
         }
     };
-    let response =
-        services_peer_provider_request_blocking(&transport, "get_ticket", serde_json::json!({}))?;
+    let response = services_peer_provider_request_blocking(
+        &transport,
+        "get_ticket",
+        serde_json::json!({"shared": true}),
+    )?;
     let peer_id = response
         .get("data")
         .and_then(|data| data.get("node_id"))

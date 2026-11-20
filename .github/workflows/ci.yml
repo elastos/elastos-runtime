@@ -141,6 +141,7 @@ jobs:
             cargo-audit audit --db "$db" --file "../$lock" || failed=1
             echo "::endgroup::"
           done
+          python3 ../scripts/check-carrier-vendor.py --audit --db "$db" || failed=1
           exit "$failed"
 
   # One reviewed input per Linux architecture. PRs restore their develop base's cache;
@@ -749,6 +750,7 @@ jobs:
     timeout-minutes: 180
     needs: [source-gate, engine-llama-amd64]
     env:
+      CI_TWO_HOME_NETWORK_MATRIX: 'true'
       CI_APT_PACKAGES: coturn e2fsprogs ffmpeg musl-tools nasm pkg-config
     strategy:
       fail-fast: false
@@ -955,10 +957,15 @@ jobs:
           CI_MODEL_REPAIR_JOURNEY: 'true'
         run: scripts/ci-installed-journeys.sh model-repair
       - name: installed two-Home Community and direct messages
-        timeout-minutes: 10
+        timeout-minutes: 40
         env:
           CI_SOURCE_HOME: ${{ runner.temp }}/elastos-source-home
-        run: scripts/ci-installed-journeys.sh two-home-messages
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y iproute2 iptables iputils-ping
+          fi
+          scripts/ci-installed-journeys.sh two-home-messages
       # Homes and the Community node update at different times, so a release
       # must hold for every pairing of this candidate and the last released
       # Runtime. Merges and releases pay for the second build; a pull-request
@@ -1075,6 +1082,7 @@ jobs:
     timeout-minutes: 90
     needs: [source-gate, engine-llama-arm64]
     env:
+      CI_TWO_HOME_NETWORK_MATRIX: 'false'
       CI_APT_PACKAGES: coturn e2fsprogs ffmpeg musl-tools nasm pkg-config
     strategy:
       fail-fast: false

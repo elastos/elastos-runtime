@@ -37,16 +37,28 @@ fn direct_conversation_read_payload(
     payload
 }
 
+const DIRECT_DELIVERY_DETAILS_ACCEPT: &str = "application/json;elastos-direct-delivery-details=1";
+
+fn direct_delivery_details(headers: &HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::ACCEPT)
+        .is_some_and(|value| value == DIRECT_DELIVERY_DETAILS_ACCEPT)
+}
+
 fn direct_message_read_payload(
     mut messages: Vec<crate::collaboration_direct_messages::DirectMessageSummary>,
     conversation_id: &str,
     retry_details: bool,
+    delivery_details: bool,
 ) -> serde_json::Value {
-    // Older Chat bundles reject unknown message fields. Retry identity is
-    // opt-in on this same authenticated read endpoint.
-    if !retry_details {
-        for message in &mut messages {
+    // Released Chat already opts into retry identity and rejects unknown
+    // fields. Delivery diagnostics have their own opt-in on this endpoint.
+    for message in &mut messages {
+        if !retry_details {
             message.request_id = None;
+        }
+        if !delivery_details {
+            message.delivery_issue = None;
         }
     }
     serde_json::json!({"conversation_id": conversation_id, "messages": messages})
@@ -116,6 +128,26 @@ mod direct_retry_wire_tests {
             &"/messages?retry_details=yes".parse().unwrap()
         )
         .is_err());
+        // Accept's token-only parameter is CORS-safelisted. Both released
+        // query parsing and opaque-origin preflight keep their existing shape.
+        let options = Query::<ChatDirectMessageReadOptions>::try_from_uri(
+            &"/messages?retry_details=true".parse().unwrap(),
+        )
+        .unwrap()
+        .0;
+        assert!(options.retry_details);
+        let mut headers = HeaderMap::new();
+        assert!(!direct_delivery_details(&headers));
+        headers.insert(
+            axum::http::header::ACCEPT,
+            DIRECT_DELIVERY_DETAILS_ACCEPT.parse().unwrap(),
+        );
+        assert!(direct_delivery_details(&headers));
+        headers.insert(
+            axum::http::header::ACCEPT,
+            "application/json".parse().unwrap(),
+        );
+        assert!(!direct_delivery_details(&headers));
     }
 
     #[test]
@@ -181,6 +213,34 @@ mod direct_retry_wire_tests {
     }
 
     #[test]
+    fn delivery_profile_uses_the_released_uri_and_safelisted_accept_header() {
+        let options = Query::<ChatDirectMessageReadOptions>::try_from_uri(
+            &"/messages?retry_details=true&mark_read=false"
+                .parse()
+                .unwrap(),
+        )
+        .unwrap()
+        .0;
+        assert!(options.retry_details);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::ACCEPT,
+            "application/json;elastos-direct-delivery-details=1"
+                .parse()
+                .unwrap(),
+        );
+        assert!(
+            direct_delivery_details(&headers),
+            "delivery details must use the CORS-safelisted Accept profile"
+        );
+        headers.insert(
+            axum::http::header::ACCEPT,
+            "application/json".parse().unwrap(),
+        );
+        assert!(!direct_delivery_details(&headers));
+    }
+
+    #[test]
     fn old_direct_reads_omit_retry_identity_and_opt_in_reads_expose_only_outgoing_identity() {
         use crate::collaboration_direct_messages::DirectMessageSummary;
         let messages = vec![
@@ -191,6 +251,9 @@ mod direct_retry_wire_tests {
                 text: "hello".into(),
                 created_at: 10,
                 delivery_state: "pending",
+                delivery_issue: Some(
+                    crate::collaboration_direct_messages::DirectDeliveryIssue::PeerUnreachable,
+                ),
             },
             DirectMessageSummary {
                 message_id: "message:in".into(),
@@ -199,9 +262,10 @@ mod direct_retry_wire_tests {
                 text: "hi".into(),
                 created_at: 11,
                 delivery_state: "received",
+                delivery_issue: None,
             },
         ];
-        let legacy = direct_message_read_payload(messages.clone(), "direct:one", false);
+        let legacy = direct_message_read_payload(messages.clone(), "direct:one", false, false);
         for message in legacy["messages"].as_array().unwrap() {
             assert_eq!(
                 message
@@ -219,9 +283,19 @@ mod direct_retry_wire_tests {
                 ]
             );
         }
-        let retry = direct_message_read_payload(messages, "direct:one", true);
+        let retry = direct_message_read_payload(messages.clone(), "direct:one", true, false);
         assert_eq!(retry["messages"][0]["request_id"], "request:out");
+        assert!(
+            retry["messages"][0].get("delivery_issue").is_none(),
+            "the released retry-details reader rejects new message fields"
+        );
         assert!(retry["messages"][1].get("request_id").is_none());
+        let detailed = direct_message_read_payload(messages, "direct:one", true, true);
+        assert_eq!(
+            detailed["messages"][0]["delivery_issue"],
+            "peer_unreachable"
+        );
+        assert!(detailed["messages"][1].get("delivery_issue").is_none());
     }
 
     #[tokio::test]
@@ -376,6 +450,7 @@ pub(super) async fn chat_direct_conversation_messages(
                 messages,
                 &conversation_id,
                 options.retry_details,
+                direct_delivery_details(&headers),
             ))
             .into_response()
         }

@@ -1090,7 +1090,7 @@ async fn fetch_ticket_and_node_id(
         .and_then(|value| value.as_str())
         .map(|value| value.to_string())
         .ok_or_else(|| anyhow::anyhow!("ticket response missing node_id"))?;
-    Ok((ticket, node_id))
+    Ok((crate::carrier::export_connect_ticket(&ticket)?, node_id))
 }
 
 pub(crate) async fn fetch_local_carrier_bootstrap(
@@ -1824,7 +1824,7 @@ fn finalize_reserved_request(
 
 fn local_endpoint_ticket(endpoint: &Endpoint) -> Option<String> {
     let mut watcher = endpoint.watch_addr();
-    let addr = watcher.get();
+    let addr = crate::carrier::shared_endpoint_addr(watcher.get());
     let ticket_json = serde_json::json!({
         "topic": null,
         "endpoints": [addr],
@@ -2432,10 +2432,19 @@ mod tests {
 
     #[tokio::test]
     async fn ticket_provider_helper_requests_only_get_ticket_and_redacts_failure() {
+        let node = iroh::SecretKey::from_bytes(&[217; 32]).public();
+        let ticket = data_encoding::BASE32_NOPAD
+            .encode(
+                &serde_json::to_vec(&serde_json::json!({
+                    "topic":null,"endpoints":[iroh::EndpointAddr::new(node)]
+                }))
+                .unwrap(),
+            )
+            .to_ascii_lowercase();
         let (api_url, task) = start_ticket_provider(
             StatusCode::OK,
             serde_json::json!({
-                "data": {"ticket": "ticket-secret", "node_id": "node-public"}
+                "data": {"ticket": ticket, "node_id": node.to_string()}
             }),
         )
         .await;
@@ -2444,7 +2453,7 @@ mod tests {
             fetch_ticket_and_node_id(&client, &api_url, "shell-test")
                 .await
                 .unwrap(),
-            ("ticket-secret".to_string(), "node-public".to_string())
+            (ticket, node.to_string())
         );
         task.abort();
 
@@ -2626,7 +2635,7 @@ mod tests {
         let node = start_carrier_node(&sk, &did, dir.path().to_path_buf())
             .await
             .unwrap();
-        let ticket = local_endpoint_ticket(&node.endpoint).unwrap();
+        let ticket = crate::carrier::local_carrier_connect_ticket(&node.endpoint);
         let addr = decode_ticket_endpoints(&ticket).remove(0);
         let client = OperatorClient::connect_endpoint_addr(addr, 10)
             .await
@@ -2675,7 +2684,7 @@ mod tests {
         let node = start_carrier_node(&sk, &did, dir.path().to_path_buf())
             .await
             .unwrap();
-        let ticket = local_endpoint_ticket(&node.endpoint).unwrap();
+        let ticket = crate::carrier::local_carrier_connect_ticket(&node.endpoint);
         let addr = decode_ticket_endpoints(&ticket).remove(0);
         let client = OperatorClient::connect_endpoint_addr(addr, 10)
             .await
@@ -2817,7 +2826,7 @@ mod tests {
         let node2 = start_carrier_node(&sk2, &did2, dir2.path().to_path_buf())
             .await
             .unwrap();
-        let ticket2 = local_endpoint_ticket(&node2.endpoint).unwrap();
+        let ticket2 = crate::carrier::local_carrier_connect_ticket(&node2.endpoint);
 
         upsert_peer(
             dir1.path(),

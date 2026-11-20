@@ -11,3 +11,7 @@ ffmpeg ffmpeg
 ffprobe ffmpeg
 turnserver coturn
 ps procps
+# Commands needed by the isolated two-NAT Carrier journey on Linux.
+ip iproute2
+iptables iptables
+ping iputils-ping

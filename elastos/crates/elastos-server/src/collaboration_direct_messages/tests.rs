@@ -1408,6 +1408,25 @@ async fn durable_pending_restarts_with_the_exact_envelope_and_settles_once() {
             .unwrap(),
         DirectDeliveryStatus::Pending,
     );
+    let summary = direct_a
+        .message_summaries(
+            pair.store_a.as_ref(),
+            &pair.profile_a,
+            &pair.conversation_id,
+            now_ts(),
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&summary).unwrap()[0]["delivery_issue"],
+        "peer_unreachable",
+        "a bounded failed attempt must explain the missing route"
+    );
+    let warning_now = std::time::Instant::now();
+    assert!(!direct_a.should_warn_delivery_failure(warning_now));
+    assert!(direct_a.should_warn_delivery_failure(warning_now + std::time::Duration::from_secs(61)));
+    assert!(
+        !direct_a.should_warn_delivery_failure(warning_now + std::time::Duration::from_secs(62))
+    );
     let before = direct_a
         .context(&pair.profile_a.document().profile_did, now_ts())
         .unwrap()
@@ -1417,6 +1436,30 @@ async fn durable_pending_restarts_with_the_exact_envelope_and_settles_once() {
     assert_eq!(before.len(), 1);
     assert!(!before[0].incoming);
     assert!(!before[0].receipt_settled);
+    // Rollback readers deny unknown stored fields. Local diagnostics stay in
+    // bounded memory, so a failed attempt preserves the existing store schema.
+    let stored = serde_json::to_value(
+        direct_a
+            .context(&pair.profile_a.document().profile_did, now_ts())
+            .unwrap()
+            .message_store
+            .load()
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let keys: std::collections::BTreeSet<_> = stored["messages"][0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["envelope", "incoming", "recorded_at"]
+            .into_iter()
+            .collect()
+    );
     let exact_envelope = before[0].envelope_bytes.clone();
     let exact_message: SignedCollaborationMessage =
         serde_json::from_slice(&exact_envelope).unwrap();
@@ -1476,6 +1519,19 @@ async fn durable_pending_restarts_with_the_exact_envelope_and_settles_once() {
         .unwrap();
     assert_eq!(after.len(), 1);
     assert_eq!(after[0].envelope_bytes, exact_envelope);
+    assert_eq!(
+        restarted
+            .message_summaries(
+                pair.store_a.as_ref(),
+                &pair.profile_a,
+                &pair.conversation_id,
+                now_ts()
+            )
+            .unwrap()[0]
+            .delivery_issue,
+        None,
+        "a verified receipt clears the visible failure"
+    );
     assert!(after[0].receipt_settled);
     let after_message: SignedCollaborationMessage =
         serde_json::from_slice(&after[0].envelope_bytes).unwrap();

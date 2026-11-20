@@ -31,6 +31,10 @@ on:
         description: Exact archive bytes
         required: true
         type: string
+      carrier_relay_url:
+        description: Approved HTTPS meeting point origin, or empty for direct only
+        type: string
+        default: ''
       seed_package:
         description: Also build the Linux seed package (only to upgrade the seed Runtime)
         type: boolean
@@ -53,6 +57,7 @@ env:
   BROWSER_IMAGE_PUBLISHER_DID: ${{ vars.BROWSER_IMAGE_PUBLISHER_DID }}
   BROWSER_IMAGE_PUBLISHER_NODE_ID: ${{ vars.BROWSER_IMAGE_PUBLISHER_NODE_ID }}
   BROWSER_IMAGE_CONNECT_TICKET: ${{ secrets.BROWSER_IMAGE_CONNECT_TICKET }}
+  RELEASE_CARRIER_RELAY_URL: ${{ inputs.carrier_relay_url }}
   CARGO_BUILD_JOBS: '4'
   PYTHONDONTWRITEBYTECODE: '1'
   # Shipped release builds stay hermetic: no compiler wrapper or cache.
@@ -565,6 +570,14 @@ jobs:
         run: |
           set -euo pipefail
           cd "$SEED_SOURCE_ROOT"
+          unset ELASTOS_RELEASE_RELAY_URL ELASTOS_RELEASE_RELAY_CERT_SHA256 ELASTOS_RELEASE_RELAY_SPKI_SHA256
+          if [[ -n "${RELEASE_CARRIER_RELAY_URL:-}" ]]; then
+            export ELASTOS_RELEASE_RELAY_URL="$RELEASE_CARRIER_RELAY_URL"
+            python3 - <<'PINS'
+          import os, runpy
+          runpy.run_path("scripts/release-platform-input.py")["relay_build_identity"](os.environ)
+          PINS
+          fi
           cargo build --locked --release --manifest-path elastos/Cargo.toml -p elastos-server --bin elastos
           cargo build --locked --release --manifest-path capsules/ipfs-provider/Cargo.toml
           [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]]
@@ -584,7 +597,7 @@ jobs:
           if ldd "$package/elastos" "$package/ipfs-provider" | grep 'not found'; then exit 1; fi
           tar -czf "$package/source.tar.gz" -C "$SEED_SOURCE_ROOT" .
           python3 -I -S - "$package" "$SOURCE_COMMIT" "$SOURCE_TREE" "$INSTALL_VERSION" <<'PYTHON'
-          import hashlib, json, pathlib, sys
+          import hashlib, json, os, pathlib, sys
           root = pathlib.Path(sys.argv[1])
           files = {}
           for name in ("elastos", "ipfs-provider", "source.tar.gz"):
@@ -595,7 +608,9 @@ jobs:
                       digest.update(chunk)
               files[name] = {"sha256": digest.hexdigest(), "size": path.stat().st_size}
           receipt = {"schema": "elastos.release-seed-input/v1", "source": {"commit": sys.argv[2], "tree": sys.argv[3]},
-                     "version": sys.argv[4], "files": files}
+                     "version": sys.argv[4], "files": files,
+                     "carrier_relay": __import__("runpy").run_path(str(pathlib.Path(os.environ["SEED_SOURCE_ROOT"]) / "scripts/release-platform-input.py"))["relay_build_identity"](
+                         {"ELASTOS_RELEASE_RELAY_URL": os.environ["RELEASE_CARRIER_RELAY_URL"]} if os.environ.get("RELEASE_CARRIER_RELAY_URL") else {})}
           (root / "seed-input.json").write_text(json.dumps(receipt, sort_keys=True) + "\n")
           PYTHON
           (cd "$package" && sha256sum elastos ipfs-provider source.tar.gz > SHA256SUMS)

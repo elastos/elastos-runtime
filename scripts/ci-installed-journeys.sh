@@ -40,7 +40,15 @@ PY
         python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/model-repair" --model-repair
         ;;
     two-home-messages)
-        python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/two-home-messages" --two-home-messages
+        if [[ "${CI_TWO_HOME_NETWORK_MATRIX:-false}" == true ]]; then
+            scripts/test-behaviour.sh inputs
+            inputs="${BEHAVIOUR_INPUTS:-${RUNNER_TEMP:-${HOME}/.cache/elastos-runtime}/behaviour}"
+            export NODE_PATH="$inputs/browser/node_modules"
+            export BROWSER_OPERATOR_PLAYWRIGHT_CORE="$inputs/core/node_modules/playwright-core"
+            python3 scripts/ci-installed-journeys.py --two-home-matrix --evidence-dir "$EVIDENCE/two-home-messages"
+        else
+            python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/two-home-messages" --two-home-messages
+        fi
         ;;
     home)
         python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/engine-absent-home" --home-only
@@ -88,7 +96,10 @@ finite = os.environ.get("CI_FINITE_MEMORY") == "true"
 repair = os.environ.get("CI_MODEL_REPAIR_JOURNEY") == "true"
 messages_path = root / "two-home-messages/installed-journeys.json"
 messages = json.loads(messages_path.read_text()) if messages_path.exists() else {}
+matrix_path = root / "two-home-messages/matrix.json"
+matrix = json.loads(matrix_path.read_text()) if matrix_path.exists() else None
 messages_required = os.environ.get("CI_TWO_HOME_MESSAGES") == "true"
+matrix_required = os.environ.get("CI_TWO_HOME_NETWORK_MATRIX") == "true"
 results = {name: "failed or not run" for name in (
     "home_screenshots", "model_package_admission", *(["carrier_get"] if carrier else []),
     "installed_runtime_reply", "model_timing_observer", "process_cleanup", "disk_reserve")}
@@ -135,7 +146,14 @@ results["engine_absent_home"] = ("passed" if current(absence) and absence.get("e
 elapsed += absence.get("elapsed_seconds", 0) + absence.get("fixture_preparation_seconds", 0)
 if messages_required:
     try:
-        message_current = journey["two_home_receipt_valid"](messages, journey["installed_message_identity"](data))
+        if matrix_required:
+            message_current = (matrix is not None and set(matrix["arrangements"]) == set(journey["MESSAGE_NETWORKS"])
+                and matrix["identity"]["candidate"] == commit and matrix["identity"]["source_tree"] == tree
+                and all(journey["two_home_receipt_valid"](row, matrix["identity"], arrangement)
+                        for arrangement, row in matrix["arrangements"].items()))
+            messages = matrix
+        else:
+            message_current = journey["two_home_receipt_valid"](messages, journey["installed_message_identity"](data))
     except (OSError, ValueError, KeyError, AssertionError):
         message_current = False
     for name in ("community_post", "direct_received", "sender_delivered", "offline_pending", "restart_delivery"):
@@ -165,6 +183,8 @@ if repair:
 }, indent=2) + "\n")
 with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
     summary.write(f"### Installed journeys\n\nCandidate: `{commit}`\n\nSource tree: `{tree}`\n\nInstalled Runtime SHA-256: `{sha}`\n\n")
+    if matrix_required and matrix:
+        summary.write(f"Message-journey fixture Runtime SHA-256: `{matrix['identity']['installed_runtime_sha256']}`. Its compiled meeting point uses disposable test pins.\n\n")
     summary.write("| Journey | Result |\n| --- | --- |\n")
     for name, result in results.items():
         summary.write(f"| {name} | {result} |\n")
