@@ -49,8 +49,12 @@ test('R5: canonical titles equal both raw integration sources including the unkn
  assertTitleSourceBlobs();await titleGuard();
  const broken=structuredClone(currentTitleSources);broken[rustPath].source=broken[rustPath].source.replace(/(_\s*=>\s*")[^"]+(")/,'$1Wrong unknown title$2');await assert.rejects(()=>titleGuard(product,broken),/Wallet and Inbox/);
 });
-function commonGuard(api=product){for(const stage of ['request-expired','request-wallet-error']){const models=['metamask','unisat'].map(window=>reduce(window,{requesting_app_name:'Browser'}, {stage},api));assert.equal(api.viewText(models[0].notice),'To try again, go back to Browser and start a new request.');assert.equal(api.viewText(models[1].notice),'To try again, return to Browser and make a new request.');}}
-test('R5: extension recovery uses one common sentence',()=>commonGuard());
+function commonGuard(api=product){for(const window of ['metamask','unisat'])for(const stage of ['request-expired','request-wallet-error']){
+ const v=reduce(window,{requesting_app_name:'Browser'},{stage},api);
+ assert(v.notice.some(p=>p.kind==='app'&&p.text==='Browser'),'recovery names the requesting app');
+ assert.match(api.viewText(v.notice),/new request/);assert(!v.actions.some(a=>a.id==='send-request'));
+}}
+test('R5: extension recovery names the app and requires a new request',()=>commonGuard());
 function neutralGuard(api=product){
  for(const window of ['metamask','unisat'])for(const stage of ['extension-missing','extensions-unavailable','link-wait']){const v=api.connectionView({window,stage,waitSeconds:300});assert.doesNotMatch([api.viewText(v.status),api.viewText(v.notice)].join(' '),/Enable/);assert.equal(v.title,window==='metamask'?'MetaMask or Brave Wallet':'UniSat');}
  const provider=shared.messages.find(r=>r.id==='state-com.brave.wallet').message.snapshot;const v=api.connectionView({window:'metamask',stage:'link-wait',provider,waitSeconds:300});assert.equal(v.title,'Brave Wallet');assert.match(api.viewText(v.status)+api.viewText(v.notice),/Brave Wallet/);assert.doesNotMatch(api.viewText(v.status)+api.viewText(v.notice),/MetaMask/);

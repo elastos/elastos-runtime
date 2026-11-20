@@ -811,7 +811,7 @@ const definitions = {
       "focus": "connect"
     },
     "request-unavailable": {
-      "status": "This request can't be used here. Start a new one in {{app}}.",
+      "status": "This request is unavailable here. To try again, start a new request in {{app}}.",
       "request": true,
       "account": true,
       "focusOutcome": true,
@@ -1157,7 +1157,7 @@ const definitions = {
       "choices": 0
     },
     "request-unsendable": {
-      "status": "Home cannot reach the account this request needs in {{wallet}}.",
+      "status": "Home cannot confirm access to the account this request needs in {{wallet}}.",
       "notice": "In {{wallet}}, open Account options → Permissions → {{home}} → Manage connected accounts. Select the required account, then Save.",
       "account": true,
       "request": true,

@@ -44,7 +44,7 @@ export function contractCopy(expected, row, view) {
       'request-internet-off':{status:'Internet access for WalletConnect is off.',notice:'Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.'},
       'request-internet-pending':{notice:'Allow internet access in Inbox to continue with this request.'},
       'guest-access':{status:'You cannot turn on internet access for WalletConnect.',notice:'Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.'},
-      'request-unavailable':{status:`This request can't be used here. Start a new one in ${app}.`},
+      'request-unavailable':{status:`This request is unavailable here. To try again, start a new request in ${app}.`},
     }[row.stage];
     Object.assign(result,copy);
     result.status=result.status.replace('Internet access is off for WalletConnect.','Internet access for WalletConnect is off.').replace('Transaction result unknown.','Home could not confirm the transaction result.').replace('You stopped waiting. Result unknown.','You stopped waiting. The transaction may have been sent.');
@@ -61,9 +61,9 @@ export function contractCopy(expected, row, view) {
     if(['extension-wait','link-wait'].includes(row.stage))result.notice=`Find ${name} in your browser's extensions menu. Unlock it if asked. Stopping here does not cancel the request in ${name}.`;
     if(row.stage==='request-extension')result.notice=`Open ${name} from your browser's extensions menu. Stopping here does not cancel the request in ${name}.`;
     if(row.stage==='account-unavailable')result.status=metamask?`Home cannot confirm access to this account in ${name}.`:'Home cannot use this UniSat account right now.';
-    if(row.stage==='request-unsendable')result.status=metamask?`Home cannot reach the account this request needs in ${name}.`:'Home cannot use the UniSat account this request needs.';
+    if(row.stage==='request-unsendable')result.status=metamask?`Home cannot confirm access to the account this request needs in ${name}.`:'Home cannot use the UniSat account this request needs.';
     if(metamask){
-      if(row.stage==='linked'){result.afterNote='';result.status='Account saved in Wallet.';result.notice=`To stop sharing with Home, remove this Home's connection in ${name}. Your account stays in Wallet.`;}
+      if(row.stage==='linked'){result.afterNote='';result.status='Account saved in Wallet.';result.notice=`To stop sharing, remove this Home's connection in ${name}. Your account stays in Wallet.`;}
       if(row.stage==='request-network-declined')result.status=`Home could not confirm the requested network in ${name}.`;
       if(row.stage==='transaction-extension')result.notice=`Check the transaction in ${name}. Stopping here does not cancel the request in ${name}.`;
       if(['transaction-timeout','transaction-wallet-error'].includes(row.stage))result.status='Home does not know if the transaction was sent.';
@@ -76,6 +76,7 @@ export function contractCopy(expected, row, view) {
     if([`To try again, return to ${app}.`,`Start a new request in ${app} to try again.`,`To try again, return to ${app} and make a new request.`].includes(result.notice))result.notice=metamask?`To try again, go back to ${app} and start a new request.`:`To try again, return to ${app} and make a new request.`;
   }
   if(!['linked','linked-multiple'].includes(row.stage)&&view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${result.status} ${result.notice}`))result.notice=`Close this window. ${result.notice}`.trim();
+  if(row.stage==='request-next')result.status=raw.intent==='transaction_intent'?'Transaction sent.':'Message signed.';
   if(row.stage==='disconnecting')result.notice='Disconnecting continues after you close this window.';
   return result;
 }

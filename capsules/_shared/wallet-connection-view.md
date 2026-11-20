@@ -102,7 +102,7 @@ The window lanes produce `wallet-loading`, `wallet-unavailable`, `home-wallet-re
 
 The request picker keeps every supplied summary (up to 100 other requests plus the selected one); other designed cards keep their short preview and View requests intent. Account cards accept up to 100 supplied rows and scroll; greater input is refused, not truncated. This is a bounded presentation batch, not a claim about Runtime's maximum account count. A producer needing a larger list needs paging and an agreed source bound. The pure summary reducer preserves Runtime's expired status and known request-kind titles; an unknown intent is Review request. Runtime rejected records with an approval time reduce to dismissed; explicit dismissed input remains compatible with legacy callers.
 
-The default site label element is exactly Site reported by Browser. Its following colon and space are separate fixed punctuation. “From app:” labels app-written content. “Requesting app” is a standalone fallback label; instructions use “the app”. WalletConnect recovery says “This request can't be used here. Start a new one in {app}.”
+The default site label element is exactly Site reported by Browser. Its following colon and space are separate fixed punctuation. “From app:” labels app-written content. “Requesting app” is a standalone fallback label; instructions use “the app”. WalletConnect recovery says “This request is unavailable here. To try again, start a new request in {app}.”
 
 
 `transport-reconnecting` is an additional connectionNotice value: WalletConnect is reconnecting. The window adds/removes it from its existing SDK transport events in idle, wait or result states. A latent request summary never substitutes an account address or request identity on a non-request screen; an expired latent summary does not turn a link screen into an expired request.
@@ -138,8 +138,10 @@ address with this site, Sign a message, Sign typed data, Confirm this Bitcoin
 account is yours, and Review request for revocation or an unknown intent.
 Activity in Wallet is the external name; inside Wallet the list is Activity.
 The connected MetaMask screen gives one instruction to remove Home's connection
-in the wallet. Home cannot reach the required account describes an access failure,
-without claiming the account was deleted or locked.
+in the wallet. Home cannot confirm access to the required account describes an
+access failure without claiming the account was deleted or locked. A completed
+message says Message signed. A completed transaction says Transaction sent.
+The app's name remains in the request identity.
 
 Dismissal templates use `{{close}}` for a sentence and `{{closeThen}}` for a
 sequence. The available controls and window choose those fragments before text
