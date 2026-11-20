@@ -20,13 +20,13 @@ function busyGuard(api=product){for(const window of ['metamask','unisat','wallet
  for(const transaction of [false,true])for(const supportedActions of [undefined,...Array.from({length:8},(_,mask)=>['close-window','check-access','check-status'].filter((_,i)=>mask&(1<<i)))]){
   const v=reduce(window,transaction?{intent:'transaction_intent'}:{}, {stage,localSafety:null,waitSeconds:300,supportedActions},api);const notice=api.viewText(v.notice);
   if(transaction&&stage==='request-busy'){assert.match(notice,/The transaction may still be waiting/);assert.doesNotMatch(notice,/another window/);}else{assert.match(notice,/An operation may still be waiting/);assert.match(notice,/Home cannot tell whether another window has payment work/);}
-  assert.match(notice,/Wallet activity/);assert.doesNotMatch(notice,/reload/i);
+  assert.match(notice,/Activity in Wallet/);assert.doesNotMatch(notice,/reload/i);
  }
 }}
 test('R5 F-B: every unknown busy notice survives every supported-action subset',()=>busyGuard());
 test('R5: later capability adaptation preserves link-error and unsafe-retry recovery once',()=>{
  for(const window of ['metamask','unisat','walletconnect'])for(const stage of ['link-error','account-changed','account-unavailable-unknown'])for(const supportedActions of [[],['close-window'],['check-access']]){
-  const v=product.connectionView({window,stage,localSafety:null,supportedActions});const text=words(v);assert.match(text,/Wallet activity/);assert.equal((text.match(/Close this window/g)||[]).length,1);assert.doesNotMatch(text,/Open .* to check its account and connection/);
+  const v=product.connectionView({window,stage,localSafety:null,supportedActions});const text=words(v);assert.match(text,/Activity in Wallet/);assert.equal((text.match(/Close this window/g)||[]).length,1);assert.doesNotMatch(text,/Open .* to check its account and connection/);
  }
 });
 function rejectedGuard(api=product){for(const window of ['walletconnect','metamask','unisat'])for(const transaction of [false,true]){
@@ -103,7 +103,7 @@ test('R5: direct guards reject every escaped source break',async t=>{
   ['K6 live selection replaces signer',s=>s.replace('const account = accountDisplay(input.account, window, requestScreen?summary:null);','const account = accountDisplay(input.account, window, requestScreen?summary:null);if(account&&currentSelection){account.accounts[0].address=currentSelection.address;account.accounts[0].networks=[currentSelection.network];}'),accountGuard],
   ['K8 actor map replaces app label',s=>s.replace("? summary.requesting_app_name : 'Requesting app'","? ({browser:'Browser',notes:'Notes'}[summary.capsule_id]||summary.requesting_app_name) : 'Requesting app'"),nameGuard],
   ['K21 rejected transaction becomes recovery',s=>s.replace("queued.filter(r=>r.status==='approved'&&r.transaction)","queued.filter(r=>['approved','rejected'].includes(r.status)&&r.transaction)"),queueGuard],
-  ['unknown title diverges',s=>s.replace("requestTitles[summary.intent]:'Wallet approval request'","requestTitles[summary.intent]:'Approval request'"),titleGuard],
+  ['unknown title diverges',s=>s.replace("requestTitles[summary.intent]:'Review request'","requestTitles[summary.intent]:'Approval request'"),titleGuard],
  ];
  for(const[name,mutate,guard]of mutations)await t.test(name,()=>withTestView({mutateSource:source=>{const changed=mutate(source);assert.notEqual(changed,source,'source break applies');return changed;}},async api=>{await assert.rejects(async()=>guard(api),assert.AssertionError);t.diagnostic(name+': CAUGHT');}));
 });
@@ -113,7 +113,7 @@ test('R5: corrected F-B guard rejects the pinned round-four product notice',()=>
 test('R5: capability copy cannot replace a returned transaction recovery or its save failure',()=>{
  for(const window of ['metamask','walletconnect'])for(const supportedActions of [[],['close-window'],['check-access']]){
   const summary=product.reduceSummary(raw(window,{intent:'transaction_intent'}),{connector:'wallet-'+window});
-  const v=product.connectionView({window,stage:'transaction-timeout',summary,walletResult:{disposition:'answered',receipt:'recording_failed'},supportedActions});assert.match(product.viewText(v.status),/returned a transaction result/);assert.match(words(v),/Wallet activity before sending again/);assert.doesNotMatch(words(v),/still be waiting|account and connection/);
+  const v=product.connectionView({window,stage:'transaction-timeout',summary,walletResult:{disposition:'answered',receipt:'recording_failed'},supportedActions});assert.match(product.viewText(v.status),/returned a transaction result/);assert.match(words(v),/Activity in Wallet before sending again/);assert.doesNotMatch(words(v),/still be waiting|account and connection/);
   const refused=product.connectionView({window,stage:'transaction-declined',summary,walletResult:{disposition:'declined',receipt:'recording_failed'},supportedActions});assert.match(words(refused),/Home cannot save that answer/);
  }
 });

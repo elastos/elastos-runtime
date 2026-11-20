@@ -15,8 +15,8 @@ import { screens } from './wallet-connection-screens.mjs';
 
 const renderedViews = new WeakSet();
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
-const requestTitles={auth_challenge:'Wallet sign-in request',capability_grant:'Wallet access request',credential:'Credential signing request',publish_envelope:'Publish approval request',transaction_intent:'Send transaction',browser_account_access:'Browser account access request',browser_personal_sign:'Sign a message',browser_typed_data_sign:'Sign typed data',bitcoin_bip322_proof:'Bitcoin proof request',revocation:'Revocation approval request'};
-const requestTitleValues=[...Object.values(requestTitles),'Wallet approval request','Approval request'];
+const requestTitles={auth_challenge:'Review sign-in request',capability_grant:'Review access request',credential:'Sign a credential',publish_envelope:'Review publishing request',transaction_intent:'Send transaction',browser_account_access:'Share your wallet address with this site',browser_personal_sign:'Sign a message',browser_typed_data_sign:'Sign typed data',bitcoin_bip322_proof:'Confirm this Bitcoin account is yours',revocation:'Review request'};
+const requestTitleValues=[...Object.values(requestTitles),'Review request','Approval request'];
 const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','network-unsupported':'This network is not supported here.','network-unknown':'Your wallet’s network could not be identified.','transport-unavailable':'The connection to your wallet was lost.','transport-reconnecting':'WalletConnect is reconnecting.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your browser wallet is unavailable.'};
 const copyFeedbacks={'link-copied':'Link copied.','address-copied':'Address copied.','copy-failed':'Could not copy. Try again.'};
 const brands = { walletconnect: 'WalletConnect', metamask: 'MetaMask', unisat: 'UniSat', panel: 'Wallet' };
@@ -59,7 +59,7 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
   const app = bounded(summary.requesting_app_name, 128) && summary.requesting_app_name ? summary.requesting_app_name : 'Requesting app';
   return {
     id: summary.request_id, app, actor: summary.capsule_id,
-    title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Wallet approval request', transaction,
+    title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Review request', transaction,
     detail: bounded(summary.reason, 2048) ? summary.reason : '',
     site: summary.capsule_id === 'browser' ? displayOrigin(summary.requesting_origin) : null,
     address: bounded(summary.address, 128) ? summary.address : null,
@@ -73,7 +73,7 @@ function summaryProjection(value) {
   requireValue(plain(value)&&Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k)), 'closed reduced request');
   requireValue(bounded(value.id,256)&&bounded(value.app,128)&&bounded(value.actor,128)&&bounded(value.detail,2048)&&typeof value.transaction==='boolean'&&requestTitleValues.includes(value.title), 'reduced request fields');
   requireValue(value.site===null||value.actor==='browser'&&displayOrigin(value.site)===value.site, 'reduced site');
-  const result=clone(value);if(result.title==='Approval request')result.title='Wallet approval request';return result;
+  const result=clone(value);if(result.title==='Approval request')result.title='Review request';return result;
 }
 
 /** Derive contract-owned fields; presentation stage/context remains window-owned. */
@@ -142,6 +142,12 @@ function accountDisplay(account, window, summary) {
   return { name, mark, connection: account.connection === 'WalletConnect' ? 'WalletConnect' : null, accounts };
 }
 
+function windowManualClose(window) {
+  return window === 'metamask'
+    ? "Close this window with Home's window controls, or close this tab if you opened it separately."
+    : "Close this window with Home's window controls.";
+}
+
 export function connectionView(input) {
   const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests','linkedConnection'];
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
@@ -203,27 +209,27 @@ export function connectionView(input) {
   const unknownRecovery=safety===null && !knownNotSent && unknownRecoveryStages.has(stage);
   let safetyNotice=transactionRisk&&screen.paymentSafeNotice!==undefined?notice:null;
   if(unknownRecovery){
-    notice=summary?.transaction&&stage==='request-busy'?'Close this window. The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Wallet activity before trying again.':'Close this window. An operation may still be waiting in {{wallet}}. Home cannot tell whether another window has payment work. Check your wallet and Wallet activity before trying again.';
+    notice=summary?.transaction&&stage==='request-busy'?'Close this window. The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Activity in Wallet before trying again.':'Close this window. An operation may still be waiting in {{wallet}}. Home cannot tell whether another window has payment work. Check your wallet and Activity in Wallet before trying again.';
     safetyNotice=notice;
     actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over').map(a=>({...a,primary:a.id==='close-window',quiet:a.id==='close-window'?false:a.quiet}));
     const close=actions.find(a=>a.id==='close-window')||{id:'close-window',label:parts('Close window'),primary:true,quiet:false};
     actions=[close,...actions.filter(a=>a.id!=='close-window')];
   }
-  if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Wallet activity before trying again.';safetyNotice=notice;actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
+  if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Activity in Wallet before trying again.';safetyNotice=notice;actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
   const unknownLinkRecovery=safety===null&&stage==='link-error';
-  if(unknownLinkRecovery){notice='Close this window. Check your wallet and Wallet activity before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
+  if(unknownLinkRecovery){notice='Close this window. Check your wallet and Activity in Wallet before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
   if(stage==='disconnecting')notice=window==='walletconnect'&&supported&&!supported.includes('close-window')?'Keep this window open until disconnecting finishes.':'Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed'){notice+=' Home cannot save that answer.';if(safetyNotice!==null)safetyNotice=notice;}
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
   let outcome = parts(screen.status);
   if(summary?.transaction&&result.disposition==='answered'&&result.receipt!=='recorded'){
     outcome=parts('The wallet returned a transaction result. Home cannot save it.');
-    notice='Check {{wallet}} and Wallet activity before sending again.';
+    notice='Check {{wallet}} and Activity in Wallet before sending again.';
     safetyNotice=notice;
     actions=actions.filter(a=>a.id!=='send-request'&&a.id!=='use-walletconnect');
   }
   const consumedSend = summary && summary.status !== 'pending' && actions.some(a=>a.id==='send-request');
-  if(consumedSend){actions=actions.filter(a=>!['send-request','open-wallet'].includes(a.id));actions.unshift({id:'open-wallet',label:parts('Review in Wallet'),primary:true,quiet:false});outcome=parts('Review this request in Wallet.');notice=summary.transaction?'Check {{wallet}} and Wallet activity before sending again.':'';}
+  if(consumedSend){actions=actions.filter(a=>!['send-request','open-wallet'].includes(a.id));actions.unshift({id:'open-wallet',label:parts('Review in Wallet'),primary:true,quiet:false});outcome=parts('Review this request in Wallet.');notice=summary.transaction?'Check {{wallet}} and Activity in Wallet before sending again.':'';}
   if (screen.qr) actions = [{id:'copy-link',label:parts('Copy link'),primary:false,quiet:false},{id:'cancel',label:parts('Cancel'),primary:false,quiet:false}];
   if(screen.requiresSafeRetry&&safety!==false){const close=actions.find(a=>a.id==='close-window');if(close){close.primary=true;close.quiet=false;}}
   if(transactionHash)actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over'&&a.id!=='use-walletconnect');
@@ -234,7 +240,7 @@ export function connectionView(input) {
     const removed=actions.filter(a=>!supported.includes(a.id));actions=actions.filter(a=>supported.includes(a.id));
     if(removed.some(a=>['check-access','check-status'].includes(a.id))){
       notice=answered?'Return to {{app}} to make a new request.':screen.dispatched||/timeout|cancelled/.test(stage)?'An operation may still be waiting in {{wallet}}. Closing this window does not cancel it. Home will ignore a later answer.':'Open {{wallet}} to check its account and connection.';
-      if(summary?.transaction&&!knownNotSent)notice='The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Wallet activity before trying again.';
+      if(summary?.transaction&&!knownNotSent)notice='The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Activity in Wallet before trying again.';
     }
     if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
@@ -242,8 +248,8 @@ export function connectionView(input) {
   }
   let effectiveNotice = safetyNotice ?? notice;
   if(supported&&!supported.includes('close-window')&&!(window==='walletconnect'&&stage==='disconnecting')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){
-    const manualClose='Close this window with Home’s window controls';
-    effectiveNotice=/Close this window(?=[.,])/.test(effectiveNotice)?effectiveNotice.replace(/Close this window(?=[.,])/,manualClose):effectiveNotice+' '+manualClose+'.';
+    const manualClose=windowManualClose(window);
+    effectiveNotice=/Close this window(?=[.,])/.test(effectiveNotice)?effectiveNotice.replace(/Close this window[.,] ?/,manualClose+' ').replace(/ then /, ' Then ').trim():effectiveNotice+' '+manualClose;
   }
   const approvalSite = !screen.requestPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
   if(approvalSite&&(!supported||supported.includes('close-window'))&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});
@@ -398,12 +404,12 @@ export function renderConnection(document, view) {
       if(view.account){const a=el('div',null,'connection-request-account');if(view.window==='walletconnect')a.append(icon('wallet'));const parts=[];if(view.requiredAccount)parts.push({kind:'copy',text:'Required account · '});if(view.account.name!==view.title)parts.push({kind:'wallet',text:view.account.name},{kind:'copy',text:' · '});parts.push({kind:'address',text:short(view.account.accounts[0].address)},{kind:'copy',text:' · '},...view.account.accounts[0].networks.flatMap((network,i)=>[...(i?[{kind:'copy',text:' · '}]:[]),{kind:'network',text:network}]));a.append(el('span',parts));identity.append(a);}content.append(card);destination=card;}
     if(view.context&&!view.request){const card=el('article',null,'connection-card connection-request');card.dataset.requestId=view.context.id;const identity=el('div',null,'connection-identity');identity.dataset.scrollKey='context:'+view.context.id;const context=el('div',null,'connection-context');if(!view.context.site||view.context.app!=='Browser'){const app=el('bdi',view.context.app,'connection-isolated connection-app');app.dir='auto';context.append(app);}if(view.context.site&&!approvalSite)context.append(siteIdentity(view.context.site));identity.append(context);card.append(identity);content.append(card);destination=card;}
     if(view.connectionNotice.length)destination.append(el('p',view.connectionNotice,'connection-note connection-change'));
-    if(view.currentSelection){const p=el('p',null,'connection-note connection-current-selection');p.append(document.createTextNode('Wallet now shows '),el('bdi',view.currentSelection.address,'connection-isolated connection-address'),document.createTextNode(' · '),el('bdi',view.currentSelection.network,'connection-isolated connection-network'));for(const bdi of p.querySelectorAll('bdi'))bdi.dir='auto';destination.append(p);}
+    if(view.currentSelection){const p=el('p',null,'connection-note connection-current-selection');p.append(document.createTextNode(`${view.account?.name || 'Your wallet'} now shows `),el('bdi',view.currentSelection.address,'connection-isolated connection-address'),document.createTextNode(' · '),el('bdi',view.currentSelection.network,'connection-isolated connection-network'));for(const bdi of p.querySelectorAll('bdi'))bdi.dir='auto';destination.append(p);}
     if(view.transactionHash){const p=el('p',null,'connection-note connection-transaction-hash');const hash=el('bdi',view.transactionHash,'connection-hash');hash.dir='ltr';p.append(document.createTextNode('Transaction hash: '),hash);destination.append(p);}
     if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-note connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');destination.append(p);}
     if(view.queueCount){const queue=el('div',null,'connection-queue');if(view.queuePendingCount)queue.append(el('h2',`${view.queuePendingCount} ${view.queueOthers?'other ':''}request${view.queuePendingCount===1?'':'s'} waiting`));if(view.queueRecoveryCount)queue.append(el('p',`${view.queueRecoveryCount} transaction${view.queueRecoveryCount===1?'':'s'} to review`));if(view.queueRejectedCount)queue.append(el('p',`${view.queueRejectedCount} rejected request${view.queueRejectedCount===1?'':'s'}`));if(view.queueDismissedCount)queue.append(el('p',`${view.queueDismissedCount} dismissed request${view.queueDismissedCount===1?'':'s'}`));if(view.queueOtherCount)queue.append(el('p',`${view.queueOtherCount} request${view.queueOtherCount===1?'':'s'} to review`));if(!view.picker&&supports('view-requests'))queue.append(button({id:'view-requests',label:isolated('View requests','copy'),quiet:true}));content.prepend(queue);}
     if(approvalSite){
-      const top=el('div',null,'connection-card-start');top.append(el('p','More below.','connection-more'));const close=view.actions.find(a=>a.id==='close-window');if(close)top.append(button(close));else{const manual=el('p','Close with Home’s window controls.','connection-note');manual.dataset.focus='dismissal';manual.tabIndex=-1;top.append(manual);}root.insertBefore(top,heading);
+      const top=el('div',null,'connection-card-start');top.append(el('p','More below.','connection-more'));const close=view.actions.find(a=>a.id==='close-window');if(close)top.append(button(close));else{const manual=el('p',windowManualClose(view.window),'connection-note');manual.dataset.focus='dismissal';manual.tabIndex=-1;top.append(manual);}root.insertBefore(top,heading);
       if(view.status.length)destination.prepend(status);
       if(wait)destination.append(wait);if(notice)destination.append(notice);
       const other=el('div',null,'connection-actions');for(const a of view.actions.filter(a=>!approves(a.id)&&a.id!=='close-window'))other.append(button(a));destination.append(other);
@@ -416,7 +422,7 @@ export function renderConnection(document, view) {
   }
   root.append(content);
   if(view.compact&&!approvalSite)root.append(feedback);
-  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');const title=el('h2','WalletConnect');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan this QR Code with your phone'),el('p','Or paste the copied link into a wallet app on this computer.'));if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');dialog.append(p);}if(!view.compact)dialog.append(controls);content.append(dialog);}
+  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');const title=el('h2','WalletConnect');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan this QR code with the wallet app on your phone.'),el('p','Or paste the copied link into a wallet app on this computer.'));if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');dialog.append(p);}if(!view.compact)dialog.append(controls);content.append(dialog);}
   return root;
 }
 

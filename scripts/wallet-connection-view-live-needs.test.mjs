@@ -32,9 +32,9 @@ test('live needs: stopped recovery retains the unanswered operation without a de
 test('live needs: request kind titles and expired status use Runtime vocabulary',async()=>{
  const titles={...canonicalRequestTitles,new_unknown_intent:canonicalRequestTitles.unknown_kind};
  for(const [intent,title]of Object.entries(titles))assert.equal(projection({intent}).title,title);
- for(const word of ['constructor','__proto__','toString']){assert.equal(projection({intent:word}).title,'Wallet approval request');assert.equal(projection({capsule_id:word,requesting_app_name:undefined}).app,'Requesting app');}
+ for(const word of ['constructor','__proto__','toString']){assert.equal(projection({intent:word}).title,'Review request');assert.equal(projection({capsule_id:word,requesting_app_name:undefined}).app,'Requesting app');}
  const {withTestView}=await import('./lib/wallet-connection-test-module.mjs');
- await withTestView({mutateSource:source=>source.replace("title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Wallet approval request'","title: requestTitles[summary.intent]||'Wallet approval request'")},module=>{assert.throws(()=>assert.equal(module.reduceSummary({...seed,intent:'constructor'},{connector:'wallet-metamask'}).title,'Wallet approval request'),assert.AssertionError,'inherited dictionary lookup must fail the vocabulary oracle');});
+ await withTestView({mutateSource:source=>source.replace("title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Review request'","title: requestTitles[summary.intent]||'Review request'")},module=>{assert.throws(()=>assert.equal(module.reduceSummary({...seed,intent:'constructor'},{connector:'wallet-metamask'}).title,'Review request'),assert.AssertionError,'inherited dictionary lookup must fail the vocabulary oracle');});
  const view=reduceConnection({window:'metamask',stage:'request-waiting'},{summary:{...seed,status:'expired'},nowSeconds:1800000001});assert.equal(view.stage,'request-expired');assert.equal(view.request.status,'expired');assert(!view.actions.some(a=>a.id==='send-request'));
 });
 test('live needs: connection notices preserve a recorded transaction and its required account',()=>{

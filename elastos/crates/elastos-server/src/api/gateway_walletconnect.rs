@@ -397,7 +397,7 @@ fn ensure_consent_request(
     if current.as_ref().is_none_or(|c| {
         c.status != "granted" && (c.status != "requested" || c.at + 1800 <= now_ts())
     }) {
-        ensure_admin_context(&state.data_dir, context).map_err(|_| anyhow::anyhow!("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox."))?;
+        ensure_admin_context(&state.data_dir, context).map_err(|_| anyhow::anyhow!("Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox."))?;
         anyhow::ensure!(
             inner.sockets.values().all(|s| *s.done.borrow()),
             "Finish stopping WalletConnect first"

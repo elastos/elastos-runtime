@@ -10,11 +10,11 @@ export const walletConnectMessages = {
   signatureDeclined: 'Your phone wallet declined this signature request. Ask the app to send a new request.',
   signatureTimeout: 'Your phone wallet did not answer in time. Ask the app to send a new signature request.',
   signatureError: 'Home could not finish this signature request. Ask the app to send a new request.',
-  transactionDeclined: 'Your phone wallet declined this transaction. Check your phone wallet and Wallet activity before you send again.',
-  transactionTimeout: 'Your phone wallet did not answer in time. Check your phone wallet and Wallet activity before you send again.',
-  transactionError: 'Home could not confirm this transaction. Check your phone wallet and Wallet activity before you send again.',
-  consumed: 'This request is no longer available for review here. Check your phone wallet and Wallet activity before you ask the app for a new request.',
-  transactionRecovery: 'Check your phone wallet and Wallet activity before you send again.',
+  transactionDeclined: 'Your phone wallet declined this transaction. Check your phone wallet and Activity in Wallet before you send again.',
+  transactionTimeout: 'Your phone wallet did not answer in time. Check your phone wallet and Activity in Wallet before you send again.',
+  transactionError: 'Home could not confirm this transaction. Check your phone wallet and Activity in Wallet before you send again.',
+  consumed: 'This request is no longer available for review here. Check your phone wallet and Activity in Wallet before you ask the app for a new request.',
+  transactionRecovery: 'Check your phone wallet and Activity in Wallet before you send again.',
   unsupportedNetwork: id => `${unavailableNetwork(id)} Open Wallet to check your requests and activity.`,
   pendingUnsupportedNetwork: id => `${unavailableNetwork(id)} Reject this request in Wallet.`,
   unapprovedNetwork: name => `This wallet connection has no approved account on ${name}. Select Connect wallet for a new QR code and choose the requested account and network.`,
@@ -131,7 +131,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     const config = await waitFor(api('wallet/config'),signal);
     const permission = await waitFor(api('internet'),signal);
     latestPermission = permission;
-    if (permission.status !== 'granted') throw muted('WalletConnect needs internet access. The Home owner can allow it in Inbox. Then select Connect wallet.');
+    if (permission.status !== 'granted') throw muted('WalletConnect needs internet access. An admin of this Home can allow it in Inbox. Then select Connect wallet.');
     if (activeRevision !== undefined && activeRevision !== config.walletconnect.storage_revision) {
       provider = undefined;
       await waitFor(retireAdapter(),signal);

@@ -291,7 +291,7 @@ async function requestCapsuleWalletEffect(action) {
       if (consent.status !== 'granted') {
         pendingEffect={requestId:consent.request?.id,expiresAt:(consent.request?.issued_at+1800)*1000,action,run:action.kind === 'link' ? ()=>onConnect({fresh:action.fresh !== false}) : ()=>onRequestClick(action.approvalRequestId)};
         watchConnection();showInternetRequest();
-        throw Object.assign(new Error('WalletConnect needs internet access. The Home owner can allow it in Inbox. Then continue here.'),{tone:'muted'});
+        throw Object.assign(new Error('WalletConnect needs internet access. An admin of this Home can allow it in Inbox. Then continue here.'),{tone:'muted'});
       }
     }
     const result=await connector.effect(action);
@@ -328,9 +328,9 @@ async function fetchJson(url,init) {
   const response=await fetch(url,init);
   if (!response.ok) {
     const detail=await response.text().catch(()=>'');
-    if (detail.trim() === "Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.") {
+    if (detail.trim() === "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.") {
       ownerConsentNeeded=true;permissionStatus='off';pendingEffect=undefined;draw();watchConnection();
-      throw Object.assign(new Error('The Home owner can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
+      throw Object.assign(new Error('An admin of this Home can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
     }
     if (response.status === 403) {launchExpired=true;draw();watchConnection();}
     throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open WalletConnect again.' : detail.trim() || 'ElastOS could not complete this request. Try again.');

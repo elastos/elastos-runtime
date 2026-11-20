@@ -14,7 +14,7 @@ const breaks = {
   X1:s=>s.replace("root.dataset.extensionFeedback = 'consumed';", "root.dataset.extensionFeedback = 'consumed'; root.querySelector('.connection-actions').append(renderConnection(document, connectionView({window:kind,stage:'request-waiting',summary:selected,account:accountView(),waitSeconds:remaining(),supportedActions:['send-request']})).querySelector('button'));"),
   X2:s=>s.replace("if (!next) { draw(); return; }", "if (!next) { refusal = null; stage = 'request-unavailable'; draw(); return; }"),
   X3:s=>s.replace("'Switch to the linked account before approving.', ", ""),
-  'stop-copy':s=>s.replace('An operation may still be waiting in your wallet. Closing this window does not cancel it. Check your wallet and Wallet activity.', 'Home will ignore a later answer.'),
+  'stop-copy':s=>s.replace('An operation may still be waiting in your wallet. Closing this window does not cancel it. Check your wallet and Activity in Wallet.', 'Home will ignore a later answer.'),
   saved:s=>s.replace('const rows = address ? row ? [row] : [] : candidates;', 'const rows = address ? row ? [row] : [] : [];'),
   read:s=>s.replace("action === 'refresh-status') void refresh()","action === 'refresh-status') void perform({kind:'link'})"),
   disconnect:s=>s.replace('if (data.value.length) disconnected = false;',''),

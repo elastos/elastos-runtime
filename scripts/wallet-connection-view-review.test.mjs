@@ -27,9 +27,9 @@ test('8: message answers select receipt stages before rendering',()=>{
   }
 });
 
-test('8: unknown cross-window safety states uncertainty and names Wallet activity',()=>{
+test('8: unknown cross-window safety states uncertainty and names Activity in Wallet',()=>{
   const v=fixtureView({...state('metamask/extension-busy'),safety:'state-payment-none'});
-  assert.match(viewText(v.notice),/cannot tell/i);assert.match(viewText(v.notice),/Wallet activity/);assert.doesNotMatch(viewText(v.notice),/reload/i);
+  assert.match(viewText(v.notice),/cannot tell/i);assert.match(viewText(v.notice),/Activity in Wallet/);assert.doesNotMatch(viewText(v.notice),/reload/i);
 });
 
 test('9: renderer rejects forged and copied views before touching the document',()=>{

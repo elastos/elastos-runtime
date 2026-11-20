@@ -29,7 +29,7 @@ test('R4: current transaction busy copy keeps its own pending-wallet sentence on
   const view=reduceConnection(...args),notice=viewText(view.notice);
   assert.equal((notice.match(/may still be waiting in/g)||[]).length,1);
   assert(!notice.includes('another window'),'the transaction is in this window');
-  assert(notice.includes('Wallet activity'));
+  assert(notice.includes('Activity in Wallet'));
  }
 });
 test('R4: unknown link-error withholds Connect pending contract-owner retry decision',()=>{
