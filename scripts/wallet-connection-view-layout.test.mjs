@@ -116,7 +116,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           // The design receipt is an independent control-order oracle.
           const labels=(expected?.inventory||[`Open ${view.request.app} [primary]`]).filter(s=>/\[(primary|quiet secondary|bordered secondary)\]$/.test(s)).filter(s=>!((facts.capability||facts.payment)&&s.startsWith('WalletConnect [')));
           const normalized=label=>{
-            const text=label.replace(/^\[mark:[^\]]+\]\s*/,'').replace(/\s+/g,' ');
+            const text=label.replace('Show Request','Show request').replace('Wallet activity','Activity in Wallet').replace(/^\[mark:[^\]]+\]\s*/,'').replace(/\s+/g,' ');
             return row.window==='panel'?text:text.replaceAll('MetaMask',view.account?.name||'MetaMask').replaceAll('UniSat',view.account?.name||'UniSat').replaceAll('Browser',view.request?.app||'Browser').replaceAll('Notes',view.request?.app||'Notes');
           };
           let expectedControls=labels.map(s=>({label:normalized(s.replace(/ \[(primary|quiet secondary|bordered secondary)\]$/,'')),primary:s.endsWith('[primary]')}));
