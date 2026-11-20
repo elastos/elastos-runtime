@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const product = new URL("./product-smoke-browser.mjs", import.meta.url).href;
 const runner = fileURLToPath(new URL("./run-node-tests.mjs", import.meta.url));
+const harnessRunner = fileURLToPath(new URL("./run-browser-launch-harness.mjs", import.meta.url));
+const recovery = new URL("./lib/browser-launch-recovery.mjs", import.meta.url).href;
 
 // Scan calls, independent of how a module obtains Playwright: static import,
 // dynamic import, require, and environment-selected paths all face this gate.
@@ -57,6 +59,67 @@ for (const [form, acquisition] of [
     assert.doesNotThrow(() => checkLaunchCoverage(directory));
   }
 });
+test("coverage guard catches a second raw Playwright import beside a wrapped import", t => {
+  const root = mkdtempSync(join(tmpdir(), "browser-launch-coverage-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, "second-import.mjs"), `
+    const {chromium} = withBrowserLaunchRecovery(await import('playwright'));
+    await chromium.launch({});
+    import {chromium as rawChromium} from 'playwright';
+    await rawChromium.launch({});`);
+  assert.throws(() => checkLaunchCoverage(pathToFileURL(root + "/")), /second-import\.mjs/);
+});
+
+test("coverage guard catches a computed chromium launch", t => {
+  const root = mkdtempSync(join(tmpdir(), "browser-launch-coverage-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, "computed-launch.mjs"), `
+    import {chromium} from 'playwright';
+    await chromium["launch"]({});`);
+  assert.throws(() => checkLaunchCoverage(pathToFileURL(root + "/")), /computed-launch\.mjs/);
+});
+
+for (const [crashes, smokeExit] of [[[2, 1], 0], [[2, 2], 0], [[1, 0], 7]]) {
+  test(`Rust harness shares relaunches ${crashes} and reports captured output with exit ${smokeExit}`, t => {
+    const root = mkdtempSync(join(tmpdir(), "browser-launch-harness-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const smoke = join(root, "smoke.mjs");
+    writeFileSync(smoke, `import {withBrowserLaunchRecovery} from ${JSON.stringify(recovery)};
+      let attempts=0;
+      const {chromium}=withBrowserLaunchRecovery({chromium:{name:()=> 'chromium',async launch(){
+        if(++attempts%2)throw Error('<process did exit: exitCode=null, signal=SIGSEGV>');
+        return {close:async()=>{}};
+      }}});
+      for(let i=0;i<Number(process.argv[2]);i++)await (await chromium.launch()).close();
+      process.exitCode=Number(process.argv[3]);`);
+    const harness = join(root, "harness.mjs");
+    // Like command.output() in Rust, this caller captures successful stdout.
+    // Its smokes inherit the harness environment without clearing the ledger.
+    writeFileSync(harness, `import {spawnSync} from 'node:child_process';
+      let failed=0;
+      for(const crashes of ${JSON.stringify(crashes)}){
+        const r=spawnSync(process.execPath,[${JSON.stringify(smoke)},String(crashes),${JSON.stringify(String(smokeExit))}],
+          {encoding:'utf8',timeout:10000});
+        if(r.error)throw r.error;
+        if(r.status!==0)failed=r.status??1;
+      }
+      process.exitCode=failed;`);
+    const env = { ...process.env };
+    delete env.ELASTOS_BROWSER_LAUNCH_LEDGER;
+    const r = spawnSync(process.execPath, [harnessRunner, process.execPath, harness], {
+      env, encoding: "utf8", timeout: 30_000,
+    });
+    assert.ifError(r.error);
+    const count = crashes.reduce((a, b) => a + b, 0);
+    const output = r.stdout + r.stderr;
+    assert.equal(r.status, count > 3 ? 1 : smokeExit, output);
+    assert.equal((output.match(/Browser launch relaunch:/g) ?? []).length, count, output);
+    assert.match(output, new RegExp(`Browser launch summary: ${count} relaunch\\(es\\); limit 3; ${count > 3 ? "FAIL" : "PASS"}`));
+    assert.match(output, /engine=chromium; signal=SIGSEGV; attempt=2\/2/);
+    console.log(`Rust harness proof: crashes=${crashes}; child exit=${smokeExit}; run exit=${r.status}\n${output}`);
+  });
+}
+
 function fixture(t, scenario, files = 1) {
   const root = mkdtempSync(join(tmpdir(), "browser-launch-recovery-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
