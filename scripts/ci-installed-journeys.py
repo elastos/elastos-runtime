@@ -1921,6 +1921,21 @@ MESSAGE_NETWORKS = {
 }
 
 
+class Transition(NamedTuple):
+    """A control action and the Homes that must prove themselves after it."""
+    name: str
+    action: "str | None"  # None: the journey's own first launch
+    homes: tuple
+
+
+MESSAGE_TRANSITIONS = (
+    Transition("start", None, (NODE, "a", "b")),
+    Transition("node_restart", "restart_community", (NODE, "a", "b")),
+    Transition("fresh_home", "start_c", (NODE, "a", "b", "c")),
+    Transition("restart_b", "start_b", (NODE, "a", "b", "c")),
+)
+
+
 def message_endpoints_valid(homes, observations, arrangement, relay=None):
     settings = MESSAGE_NETWORKS.get(arrangement)
     if settings is None:
