@@ -1,3 +1,5 @@
+// Exact storage-table cell comparison is the strong check. Wording lists reject
+// known false sentences only; a pass does not prove every recovery sentence true.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -48,7 +50,7 @@ const STORAGE_TABLE_ROWS = [
   },
   {
     name: "Contacts and Profile",
-    encrypted: "Yes",
+    encrypted: "Yes for Home-written bodies; a copied plain file stays plain until re-written",
     recovery: "Profile identity and contacts present at export",
   },
   {
@@ -102,12 +104,12 @@ const PASSKEY_DOES_NOT_REPLACE =
   /new passkey[\s\S]{0,120}does not[\s\S]{0,24}replace/i;
 const KIT_PROMISE_BROADER =
   /restores the encrypted user root and every|encrypted user root and every recoverable/i;
-const KIT_MUST_NOT_CLAIM_USER_FILE_RESTORE =
-  /(?:Recovery Kit|The Recovery Kit)\s+restores\s+(?:all\s+)?(?:your\s+)?(?:(?:Library|library)\s+)?files\b|(?:Recovery Kit|The Recovery Kit)\s+restores\s+(?:your\s+)?(?:documents|files|everything|the\s+Library|the\s+whole\s+Home)\b/i;
-const KIT_MUST_NOT_CLAIM_EXTERNAL_WALLET_LINK_RESTORE =
-  /(?:Recovery Kit|The Recovery Kit)\s+restores[^.\n]{0,160}\b(?:MetaMask|WalletConnect|Ledger|Essentials|UniSat)[^.\n]{0,80}\blinks?\b|restore only their links(?:\/metadata)?/i;
-const UNINSTALL_DELETES_ALL_ON_COMPUTER =
-  /deletes your identity, wallets and recovery material on this computer/i;
+const KIT_REJECT_USER_FILE_RESTORE_WORDINGS =
+  /(?:Recovery Kit|The Recovery Kit)\s+(?:restores|(?:will|can)\s+restore)\s+(?:all\s+)?(?:your\s+)?(?:(?:Library|library)\s+)?files\b|(?:Recovery Kit|The Recovery Kit)\s+restores\s+(?:all\s+)?(?:your\s+)?(?:documents|photos|Desktop files|files|everything|the\s+Library|the\s+whole\s+Home)\b|(?:Recovery Kit|The Recovery Kit)\s+restores\s+every\s+file\s+in\s+the\s+encrypted\s+user\s+root/i;
+const KIT_REJECT_EXTERNAL_WALLET_LINK_WORDINGS =
+  /(?:Recovery Kit|The Recovery Kit)\s+restores[^.\n]{0,200}\b(?:MetaMask|WalletConnect|Ledger|Essentials|UniSat|Brave|Phantom|external[- ]wallet)\b[^.\n]{0,120}\blinks?\b|(?:Recovery Kit|The Recovery Kit)\s+can\s+restore\s+(?:your\s+)?(?:MetaMask|WalletConnect|Ledger|Essentials|UniSat|Brave|Phantom)\s+links?\b|restore only their links(?:\/metadata)?/i;
+const UNINSTALL_REJECT_WHOLE_COMPUTER_DELETION_WORDING =
+  /deletes your identity, wallets,?\s+and recovery material on this computer/i;
 
 function storageTable(document) {
   const table = document.split("| Data and storage path |", 2)[1].split("\n\n", 1)[0];
@@ -183,7 +185,7 @@ export function checkKitPromiseNotBroaderThanCode(
   }
 }
 
-export function checkKitMustNotClaimUserFileRestore(
+export function checkRejectsListedKitUserFileRestoreWordings(
   paths = trackedDocumentationPaths(),
   readDocument = read,
 ) {
@@ -191,13 +193,16 @@ export function checkKitMustNotClaimUserFileRestore(
     const document = readDocument(path);
     assert.doesNotMatch(
       document,
-      KIT_MUST_NOT_CLAIM_USER_FILE_RESTORE,
-      `${path}: docs must not claim the Recovery Kit restores user files, Library files, or a whole-Home file backup`,
+      KIT_REJECT_USER_FILE_RESTORE_WORDINGS,
+      `${path}: rejects these listed wordings about the Recovery Kit restoring user, Library, or whole-Home files`,
     );
   }
 }
 
-export function checkKitMustNotClaimExternalWalletLinkRestore(
+/** @deprecated use checkRejectsListedKitUserFileRestoreWordings */
+export const checkKitMustNotClaimUserFileRestore = checkRejectsListedKitUserFileRestoreWordings;
+
+export function checkRejectsListedKitExternalWalletLinkWordings(
   paths = trackedDocumentationPaths(),
   readDocument = read,
 ) {
@@ -205,16 +210,18 @@ export function checkKitMustNotClaimExternalWalletLinkRestore(
     const document = readDocument(path);
     assert.doesNotMatch(
       document,
-      KIT_MUST_NOT_CLAIM_EXTERNAL_WALLET_LINK_RESTORE,
-      `${path}: docs must not claim the Recovery Kit restores external-wallet links`,
+      KIT_REJECT_EXTERNAL_WALLET_LINK_WORDINGS,
+      `${path}: rejects these listed wordings about the Recovery Kit restoring external-wallet links`,
     );
   }
 }
 
-/** @deprecated use checkKitMustNotClaimExternalWalletLinkRestore */
-export const checkExternalWalletLinksNotRestoredByKit = checkKitMustNotClaimExternalWalletLinkRestore;
+/** @deprecated use checkRejectsListedKitExternalWalletLinkWordings */
+export const checkKitMustNotClaimExternalWalletLinkRestore = checkRejectsListedKitExternalWalletLinkWordings;
 
-export function checkUninstallScopeHonest(
+export const checkExternalWalletLinksNotRestoredByKit = checkRejectsListedKitExternalWalletLinkWordings;
+
+export function checkRejectsListedUninstallWholeComputerDeletionWordings(
   paths = trackedDocumentationPaths(),
   readDocument = read,
 ) {
@@ -222,11 +229,14 @@ export function checkUninstallScopeHonest(
     const document = readDocument(path);
     assert.doesNotMatch(
       document,
-      UNINSTALL_DELETES_ALL_ON_COMPUTER,
-      `${path}: uninstall docs must not claim every recovery file on the computer is deleted`,
+      UNINSTALL_REJECT_WHOLE_COMPUTER_DELETION_WORDING,
+      `${path}: rejects these listed wordings about uninstall deleting every recovery file on the computer`,
     );
   }
 }
+
+/** @deprecated use checkRejectsListedUninstallWholeComputerDeletionWordings */
+export const checkUninstallScopeHonest = checkRejectsListedUninstallWholeComputerDeletionWordings;
 
 // Path-name and source-descriptor checks only. These do not prove write-time
 // encryption for every row, successful import, or installed behavior.
@@ -373,9 +383,9 @@ test("Security Recovery Kit export markers, product name, and storage table cell
   checkPrincipalRootEncryptionLead(security);
   checkRecoveryStolenDeviceStatements();
   checkKitPromiseNotBroaderThanCode();
-  checkKitMustNotClaimUserFileRestore();
-  checkKitMustNotClaimExternalWalletLinkRestore();
-  checkUninstallScopeHonest();
+  checkRejectsListedKitUserFileRestoreWordings();
+  checkRejectsListedKitExternalWalletLinkWordings();
+  checkRejectsListedUninstallWholeComputerDeletionWordings();
   for (const path of ["SECURITY.md", "docs/INSTALL.md", "docs/GLOSSARY.md", "docs/STORAGE_AND_ACCESS.md"]) {
     assert.doesNotMatch(read(path), /full (?:recovery )?bundle/i,
       `${path}: use System's Recovery Kit name for the recovery file`);
@@ -425,59 +435,66 @@ test("the Kit user-root promise check rejects an encrypted-user-root claim outsi
   );
 });
 
-test("the Kit user-file restore check rejects a Library-files sentence", () => {
-  const probe = "docs/WALLET_PROVIDER.md";
-  const mutated = `${read(probe)}\nThe Recovery Kit restores all your Library files.`;
-  assert.throws(
-    () => checkKitMustNotClaimUserFileRestore([probe], () => mutated),
-    /must not claim the Recovery Kit restores user files/,
-  );
-  checkKitMustNotClaimUserFileRestore();
-});
-
-test("the Kit user-file restore check rejects documents, Library, and whole-Home variants", () => {
+test("the Kit user-file wording list rejects round-six counterexamples", () => {
   const probe = "docs/STORAGE_AND_ACCESS.md";
   const variants = [
+    "The Recovery Kit restores all your documents.",
+    "The Recovery Kit can restore all your Library files.",
+    "The Recovery Kit restores your photos.",
+    "The Recovery Kit restores your Desktop files.",
+    "The Recovery Kit will restore your files.",
+    "The Recovery Kit restores every file in the encrypted user root.",
     "The Recovery Kit restores your documents.",
     "The Recovery Kit restores the Library.",
     "The Recovery Kit restores everything.",
     "The Recovery Kit restores the whole Home.",
     "The Recovery Kit restores your files.",
+    "The Recovery Kit restores all your Library files.",
   ];
   for (const sentence of variants) {
     const mutated = `${read(probe)}\n${sentence}`;
     assert.throws(
-      () => checkKitMustNotClaimUserFileRestore([probe], () => mutated),
-      /must not claim the Recovery Kit restores user files/,
+      () => checkRejectsListedKitUserFileRestoreWordings([probe], () => mutated),
+      /listed wordings about the Recovery Kit restoring user/,
       sentence,
     );
   }
+  checkRejectsListedKitUserFileRestoreWordings();
 });
 
-test("the Kit external-wallet link check rejects MetaMask and WalletConnect link sentences", () => {
+test("the Kit external-wallet wording list rejects round-six counterexamples", () => {
   const probe = "docs/WALLET_PROVIDER.md";
-  const mutated = `${read(probe)}\nThe Recovery Kit restores your MetaMask and WalletConnect links.`;
-  assert.throws(
-    () => checkKitMustNotClaimExternalWalletLinkRestore([probe], () => mutated),
-    /must not claim the Recovery Kit restores external-wallet links/,
-  );
-  const legacy = `${read(probe)}\nExternal wallets such as MetaMask restore only their links/metadata because their private keys stay in those wallets.`;
-  assert.throws(
-    () => checkKitMustNotClaimExternalWalletLinkRestore([probe], () => legacy),
-    /must not claim the Recovery Kit restores external-wallet links/,
-  );
-  checkKitMustNotClaimExternalWalletLinkRestore();
+  const variants = [
+    "The Recovery Kit restores your external-wallet links.",
+    "The Recovery Kit restores your external wallet links.",
+    "The Recovery Kit restores Brave and Phantom links.",
+    "The Recovery Kit can restore your MetaMask links.",
+    "The Recovery Kit restores your MetaMask and WalletConnect links.",
+    "External wallets such as MetaMask restore only their links/metadata because their private keys stay in those wallets.",
+  ];
+  for (const sentence of variants) {
+    const mutated = `${read(probe)}\n${sentence}`;
+    assert.throws(
+      () => checkRejectsListedKitExternalWalletLinkWordings([probe], () => mutated),
+      /listed wordings about the Recovery Kit restoring external-wallet links/,
+      sentence,
+    );
+  }
+  checkRejectsListedKitExternalWalletLinkWordings();
 });
 
-test("the uninstall scope check rejects a whole-computer deletion claim", () => {
-  checkUninstallScopeHonest();
+test("the uninstall wording list rejects the round-six whole-computer deletion sentence", () => {
+  checkRejectsListedUninstallWholeComputerDeletionWordings();
   const probe = "docs/INSTALL.md";
-  const mutated = read(probe).replace(
-    /This deletes the ElastOS data directory[\s\S]*?want it gone\./,
+  for (const sentence of [
     "This deletes your identity, wallets and recovery material on this computer.",
-  );
-  assert.throws(
-    () => checkUninstallScopeHonest([probe], () => mutated),
-    /every recovery file on the computer/,
-  );
+    "Uninstall deletes your identity, wallets, and recovery material on this computer.",
+  ]) {
+    const mutated = `${read(probe)}\n${sentence}`;
+    assert.throws(
+      () => checkRejectsListedUninstallWholeComputerDeletionWordings([probe], () => mutated),
+      /listed wordings about uninstall deleting every recovery file/,
+      sentence,
+    );
+  }
 });

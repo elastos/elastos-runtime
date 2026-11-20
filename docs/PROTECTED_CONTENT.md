@@ -207,7 +207,9 @@ principal, root, object URI and recovery data key. Runtime can restore the
 original plaintext during migration recovery. It keeps the rollback payload
 through release recovery and Home acceptance. Every Home start, local or public
 and whether the installed Home controller, the installer or the owner started
-it, then removes verified payload files and keeps the migration receipts.
+it, tries to remove verified migration rollback payload once that Home
+generation is ready. Runtime keeps the migration receipts. After repeated
+cleanup failures Runtime keeps the rollback payload and logs a warning instead.
 
 Home start, `elastos update` and Recovery status read the label at the start
 of each file in the protected folders, a few kilobytes for an encrypted file.
@@ -217,7 +219,8 @@ files. A file left over once that is spent is named as not checked in this
 pass and treated as damaged until a later pass checks it. They check three
 things: no unencrypted file was found, each encrypted file is labelled for this
 Home's current key and for the place where it is stored, and no interrupted
-encryption step is waiting. Large files and large totals do not stop Home.
+encryption step is waiting. The size of an encrypted file and the total size do
+not stop Home; an unencrypted file in a protected folder does, whatever its size.
 File contents are checked when a file is opened: Home runs the full AES-GCM
 check over the whole file and uses none of it unless the check passes. A file
 that looks encrypted but does not carry a correct label is damaged. This

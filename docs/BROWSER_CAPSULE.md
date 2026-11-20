@@ -897,8 +897,9 @@ or Recovery Kit state.
 
 For the VM Browser path, the concrete storage boundary is a Runtime-owned
 profile disk. Runtime derives a non-reversible SHA-256 profile key from the
-signed Browser launch principal, attaches `<profile-key>.ext4` as the VM data
-disk, and requires the guest to mount it before Chromium starts. The Browser
+signed Browser launch principal, attaches
+`Users/<principal>/BrowserProfiles/default/profile.ext4` as the VM data disk,
+and requires the guest to mount it before Chromium starts. The Browser
 capsule does not receive a host path, disk path, cookie jar, or reset handle. It
 can only request the
 high-level reset route, `POST /api/apps/browser/profile/reset`, with its Browser

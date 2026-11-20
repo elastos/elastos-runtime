@@ -90,7 +90,7 @@ them out and upload them again in Library, which encrypts uploads of up to 100
 MiB. Library can encrypt a surviving plain file of 16 MiB or less when it reads
 it. Migration and
 Recovery Kit export scan Library folders under each person (Desktop,
-Documents, Pictures, Videos, Downloads, Public, Trash, and Library under
+Documents, Pictures, Videos, Downloads, Public, `.Trash`, and Library under
 AppData) and also Assistant, Home, Profile, Home Agent, transaction effects,
 GBA, and declared capsule storage roots. Chat and People folders are not in
 that declared inventory; only their service writers use principal-root
@@ -113,7 +113,7 @@ readable on disk.
 | Assistant conversations and drafts: `Users/<person>/.AppData/ElastOS/Assistant/workspace-v2.json` and legacy `workspace.json` | Yes; answers also appear in model run records | Person's data key | Data key; files separate |
 | Direct messages: `Users/<person>/.AppData/ElastOS/Chat/direct-messages.json` | Yes | Person's data key | Data key; files separate |
 | Community history: `collaboration/default-conversation/history-v1.json` and plain message envelopes in `state-v1.json` | No | None | Omitted |
-| Contacts and Profile: `Users/<person>/.AppData/ElastOS/People`, `Users/<person>/.AppData/ElastOS/Profile` | Yes | Person's data key; Profile signing key inside the protected file | Profile identity and contacts present at export |
+| Contacts and Profile: `Users/<person>/.AppData/ElastOS/People`, `Users/<person>/.AppData/ElastOS/Profile` | Yes for Home-written bodies; a copied plain file stays plain until re-written | Person's data key; Profile signing key inside the protected file | Profile identity and contacts present at export |
 | Documents: `Users/<person>/Documents`; titles and file names in `ElastOS/Documents/<document>/document.json`; published bytes in `ipfs-repo` | Bodies Home writes after protection exists use principal-root protection; existing files stay plain if over 16 MiB or if the batch is over 64 files or 64 MiB until re-written; only plain files inside scanned roots for these reasons block Kit export; metadata and published bytes are plain | Person's data key for bodies | Data key; files separate |
 | Library files and records under `Users/<person>`; publication index under `ElastOS/SystemServices/Library`; published bytes in `ipfs-repo` | Private files and records Library writes after protection exists use principal-root protection; an earlier plain file stays plain if it is over 16 MiB, if its batch is over 64 files or 64 MiB, or if it is outside the migration folders; only plain files inside scanned roots block Kit export; files outside those roots remain unchecked and may stay plain; published bytes and shared index are plain | Person's data key for private files/records | Data key; files separate |
 | Notifications: `Local/Shared/System/Notifications` | No | None | Omitted |
