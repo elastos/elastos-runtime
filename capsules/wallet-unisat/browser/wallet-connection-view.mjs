@@ -17,7 +17,7 @@ const renderedViews = new WeakSet();
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 const requestTitles={auth_challenge:'Review sign-in request',capability_grant:'Review access request',credential:'Sign a credential',publish_envelope:'Review publishing request',transaction_intent:'Send transaction',browser_account_access:'Share your wallet address with this site',browser_personal_sign:'Sign a message',browser_typed_data_sign:'Sign typed data',bitcoin_bip322_proof:'Confirm this Bitcoin account is yours',revocation:'Review request'};
 const requestTitleValues=[...Object.values(requestTitles),'Review request','Approval request'];
-const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','network-unsupported':'This network is not supported here.','network-unknown':'Your wallet’s network could not be identified.','transport-unavailable':'The connection to your wallet was lost.','transport-reconnecting':'WalletConnect is reconnecting.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your wallet is unavailable.'};
+const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','network-unsupported':'This network is not supported here.','network-unknown':'Your wallet\'s network could not be identified.','transport-unavailable':'The connection to your wallet was lost.','transport-reconnecting':'WalletConnect is reconnecting.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your wallet is unavailable.'};
 const copyFeedbacks={'link-copied':'Link copied.','address-copied':'Address copied.','copy-failed':'Could not copy. Try again.'};
 const brands = { walletconnect: 'WalletConnect', metamask: 'MetaMask', unisat: 'UniSat', panel: 'Wallet' };
 // H:754 (busy recovery), H:767-779 (unknown cross-window work).
@@ -187,10 +187,14 @@ export function connectionView(input) {
   const headingMark=extension?(providerName&&provider.providerId==='io.metamask'?'metamask':providerName&&provider.providerId==='unisat'?'unisat':'wallet'):window;
   const home = displayOrigin(input.homeOrigin);
   requireValue(input.targetNetwork===undefined||bounded(input.targetNetwork,80),'requested network label');
-  const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: summary?.app || context?.app || 'Browser', site: summary?.site || context?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
-  const parts = text => (text || '').split(/(\{\{(?:wallet|alternative|app|site|home|network)\}\})/).filter(Boolean).map((value,index) => {
+  const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: !summary && !context || (summary?.app || context?.app) === 'Requesting app' ? 'the app' : summary?.app || context?.app || 'the app', site: summary?.site || context?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
+  const manualClose = supported !== null && !supported.includes('close-window');
+  const close = manualClose ? windowManualClose(window) : 'Close this window.';
+  values.close = close;
+  values.closeThen = manualClose && window === 'metamask' ? close + ' Then' : close.slice(0, -1) + ', then';
+  const parts = text => (text || '').split(/(\{\{(?:wallet|alternative|app|site|home|network|close|closeThen)\}\})/).filter(Boolean).map((value,index) => {
     const key = value.match(/^\{\{(.+)\}\}$/)?.[1];
-    return key ? { kind: key === 'alternative' ? 'wallet' : key, text: key==='wallet'&&index===0&&values[key]==='your wallet'?'Your wallet':values[key] } : { kind: 'copy', text: value };
+    return key ? { kind: ['close','closeThen'].includes(key) ? 'copy' : key === 'alternative' ? 'wallet' : key, text: key==='wallet'&&index===0&&values[key]==='your wallet'?'Your wallet':values[key] } : { kind: 'copy', text: value };
   });
   const action = a => ({ id: a.id, label: parts(a.label), primary: a === screen.primary || a === screen.requestAction, quiet: a.quiet });
   let notice = screen.notice || '';
@@ -200,24 +204,24 @@ export function connectionView(input) {
   requireValue(!(transactionHash&&knownNotSent),'transaction hash conflicts with not-sent outcome');
   requireValue(!knownNotSent||!summary?.transaction||['transaction-declined','transaction-access-error'].includes(stage),'known transaction outcome stage');
   const transactionRisk = transactionHash!==null || safety !== false || (!knownNotSent && summary?.transaction && (screen.dispatched || /timeout|cancelled|reopened|error|removed/.test(stage)));
-  if (transactionRisk) notice = notice.replace(/If .*?Reload control\./g, '').replace(', then reload Home using the browser’s Reload control.', '.');
+  if (transactionRisk) notice = notice.replace(/If .*?Reload control\./g, '').replace(', then reload Home using the browser\'s Reload control.', '.');
   if(transactionRisk&&screen.paymentSafeNotice!==undefined)notice=screen.paymentSafeNotice;
   let actions = screen.requestPicker ? [] : [screen.primary, ...(screen.secondary || []), screen.requestAction, screen.reviewAction].filter(Boolean).map(action);
   if (window !== 'metamask' || input.alternativeAllowed !== true || requestScreen || screen.account || screen.selectedAccount || transactionRisk) actions = actions.filter(a => a.id !== 'use-walletconnect');
   if (!screen.qr && !screen.requestPicker && !actions.length && !screen.afterAnswer && window !== 'panel') actions.push({id:'close-window',label:parts('Close window'),primary:true,quiet:false});
-  if(!['linked','linked-multiple'].includes(stage)&&actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${screen.status||''} ${notice}`))notice=`Close this window. ${notice}`.trim();
+  if(!['linked','linked-multiple'].includes(stage)&&actions.some(a=>a.primary&&a.id==='close-window')&&!notice.includes('{{close')&&!/close (this )?window/i.test(`${screen.status||''} ${notice}`))notice=`{{close}} ${notice}`.trim();
   const unknownRecovery=safety===null && !knownNotSent && unknownRecoveryStages.has(stage);
   let safetyNotice=transactionRisk&&screen.paymentSafeNotice!==undefined?notice:null;
   if(unknownRecovery){
-    notice=summary?.transaction&&stage==='request-busy'?'Close this window. The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Activity in Wallet before trying again.':'Close this window. An operation may still be waiting in {{wallet}}. Home cannot tell whether another window has payment work. Check your wallet and Activity in Wallet before trying again.';
+    notice=summary?.transaction&&stage==='request-busy'?'{{close}} The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Activity in Wallet before trying again.':'{{close}} An operation may still be waiting in {{wallet}}. Home cannot tell whether another window has payment work. Check your wallet and Activity in Wallet before trying again.';
     safetyNotice=notice;
     actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over').map(a=>({...a,primary:a.id==='close-window',quiet:a.id==='close-window'?false:a.quiet}));
     const close=actions.find(a=>a.id==='close-window')||{id:'close-window',label:parts('Close window'),primary:true,quiet:false};
     actions=[close,...actions.filter(a=>a.id!=='close-window')];
   }
-  if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Activity in Wallet before trying again.';safetyNotice=notice;actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
+  if(screen.requiresSafeRetry&&safety!==false){notice='{{close}} Check {{wallet}} and Activity in Wallet before trying again.';safetyNotice=notice;actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
   const unknownLinkRecovery=safety===null&&stage==='link-error';
-  if(unknownLinkRecovery){notice=window==='metamask'?'Close this window. Before you try again, check your wallet, then open Wallet from Home and check Activity.':window==='unisat'?'Close this window. Before you try again, check UniSat and Activity in Wallet.':'Close this window. Check your wallet and Activity in Wallet before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
+  if(unknownLinkRecovery){notice=window==='metamask'?'{{close}} Before you try again, check your wallet, then open Wallet from Home and check Activity.':window==='unisat'?'{{close}} Before you try again, check UniSat and Activity in Wallet.':'{{close}} Check your wallet and Activity in Wallet before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
   if(stage==='disconnecting')notice=window==='walletconnect'&&supported&&!supported.includes('close-window')?'Keep this window open until disconnecting finishes.':'Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed'){notice+=' Home cannot save that answer.';if(safetyNotice!==null)safetyNotice=notice;}
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
@@ -243,14 +247,13 @@ export function connectionView(input) {
       if(summary?.transaction&&!knownNotSent)notice='The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Activity in Wallet before trying again.';
     }
     if(window==='unisat'&&stage==='request-network-testnet'&&removed.some(a=>['check-access','check-status'].includes(a.id)))notice='Select Bitcoin mainnet in UniSat.';
-    if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
+    if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=window==='metamask'&&stage==='transaction-done'?' Open Wallet from Home and check Activity for this transaction.':' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
     if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
   }
   let effectiveNotice = safetyNotice ?? notice;
   if(supported&&!supported.includes('close-window')&&!(window==='walletconnect'&&stage==='disconnecting')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){
-    const manualClose=windowManualClose(window);
-    effectiveNotice=window!=='metamask'&&effectiveNotice.includes('Close this window,')?effectiveNotice.replace('Close this window',manualClose.slice(0,-1)):/Close this window(?=[.,])/.test(effectiveNotice)?effectiveNotice.replace(/Close this window[.,] ?/,manualClose+' ').replace(/ then /, ' Then ').trim():effectiveNotice+' '+manualClose;
+    if(!effectiveNotice.includes('{{close'))effectiveNotice+=' {{close}}';
   }
   const approvalSite = !screen.requestPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
   if(approvalSite&&(!supported||supported.includes('close-window'))&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});

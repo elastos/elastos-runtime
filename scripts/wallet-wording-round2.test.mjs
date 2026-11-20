@@ -43,3 +43,26 @@ test('wording R2: shared copy uses straight apostrophes',()=>{
     for(const field of ['status','notice','afterNote','connectionNotice'])assert.doesNotMatch(viewText(v[field]),/’/);
   }
 });
+
+for(const engine of ['chromium','webkit'])test('wording R2: render all three windows in '+engine,async t=>{
+  const {windowTestOptions}=await import('./lib/walletconnect-window-resources.mjs');
+  const options=windowTestOptions(engine);
+  if(options.skip){t.skip(options.skip);return;}
+  const {browserFixture}=await import('./lib/wallet-connection-browser-fixture.mjs');
+  const f=await browserFixture(engine);
+  try{
+    for(const window of ['metamask','unisat','walletconnect']){
+      const rows=wordingInputs(window);
+      const result=await f.page.evaluate(async rows=>{
+        const m=await import('/capsules/_shared/wallet-connection-view.mjs');
+        return rows.map(input=>{
+          const v=m.connectionView(input),root=m.renderConnection(document,v);
+          document.querySelector('#mount').replaceChildren(root);
+          return {stage:input.stage,close:input.supportedActions.includes('close-window'),text:root.textContent};
+        });
+      },rows);
+      for(const row of result)assert.doesNotMatch(row.text,/,\s+(?:Then|Choose|Open|Return|Check|Start|Close)\b/,window+'/'+row.stage+'/'+row.close);
+      t.diagnostic(window+': '+result.length+' rendered states');
+    }
+  }finally{await f.close();}
+});
