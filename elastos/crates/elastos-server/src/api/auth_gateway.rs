@@ -2259,11 +2259,8 @@ fn recovery_kit_get_or_create_for_principal(
             return Ok(kit);
         }
     }
-    let kit = create_recovery_kit_for_principal(
-        &principal.principal_id,
-        &principal.localhost_root,
-        now,
-    )?;
+    let kit =
+        create_recovery_kit_for_principal(&principal.principal_id, &principal.localhost_root, now)?;
     let archive = crate::auth::recovery_archive_from_kit(&state.data_dir, &kit)?;
     let protection = protection_from_recovery_kit(&kit, label, delivery, now, Some(archive))?;
     crate::auth::store_principal_root_protection(&state.data_dir, protection)?;
