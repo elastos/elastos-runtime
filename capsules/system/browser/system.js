@@ -3859,7 +3859,7 @@ async function onBackgroundChange() {
       ? "Sign in as an admin to change this."
       : error.status === 409
         ? runtimeUpdate.background_checks.save_error
-        : "Home could not save this setting. Try again.";
+        : "Home could not check if this setting was saved. Try again.";
     renderUpdateNotice();
   } finally {
     backgroundBusy = false;
