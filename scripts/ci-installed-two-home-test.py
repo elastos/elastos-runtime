@@ -66,7 +66,8 @@ class TwoHomeReceiptTests(unittest.TestCase):
                           'community':[{'from':sender, 'to':receiver, 'sent':f'{name} post from {sender}',
                                         'received':f'{name} post from {sender}'}
                                        for sender in members for receiver in members if sender != receiver],
-                          'direct':{'from':'a', 'to':'b', 'sent':name+' direct', 'received':name+' direct'}}
+                          'direct':{'from':'a', 'to':'b', 'sent':name+' direct', 'received':name+' direct'},
+                          'reverse':{'sent':name+' answer', 'received':name+' answer'}}
         return rows
 
     def receipt(self, identity=None, node=None):
@@ -319,11 +320,11 @@ class TwoHomeReceiptTests(unittest.TestCase):
         row = self.receipt()
         row['network_arrangement'] = 'relay-to-direct'
         for home in row['homes']:
-            host = {'community':'203.0.113.1', 'a':'10.0.1.2', 'b':'10.0.2.2'}[home['home']]
+            host = {'community':'203.0.113.1', 'a':'10.0.1.2', 'b':'10.0.2.2', 'c':'10.0.2.2'}[home['home']]
             home['carrier_bind_address'] = host + ':' + home['carrier_bind_address'].rsplit(':', 1)[1]
         for observed in row['direct_endpoint_observations']:
             observed['ticket_addresses'] = [{'Relay':'http://relay.invalid/'}]
-        row.update(route_observations=['relay', 'direct'], all_carrier_paths_blocked=True,
+        row.update(route_observations=['relay', 'direct'], all_carrier_paths_blocked=True, discovery_packets=12,
                    delivery_warning_count=2,
                    visible_failure={'reason':'peer_unreachable', 'ui_detail':'Unconfirmed',
                                     'elapsed_ms':65000, 'retry_same_message':True, 'b_alive':True, 'b_health':200, 'dropped_packets':12})
@@ -336,10 +337,17 @@ class TwoHomeReceiptTests(unittest.TestCase):
             changed['route_observations'] = routes
             self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
         for key, value in [('all_carrier_paths_blocked',False), ('delivery_warning_count',0),
-                           ('delivery_warning_count',3), ('visible_failure',{})]:
+                           ('delivery_warning_count',3), ('visible_failure',{}), ('discovery_packets',0)]:
             changed = copy.deepcopy(row)
             changed[key] = value
             self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
+
+    def test_each_reverse_exchange_is_required_and_exact(self):
+        for name in self.TRANSITIONS:
+            for reverse in ({}, {'sent':'answer', 'received':'other'}):
+                row = self.receipt()
+                row['transitions'][name]['reverse'] = reverse
+                self.assertFalse(JOURNEY['two_home_receipt_valid'](row, self.identity()))
 
     def test_fixture_removal_refuses_nested_home_process(self):
         remove = JOURNEY['remove_message_fixture']

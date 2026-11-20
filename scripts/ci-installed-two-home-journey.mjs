@@ -22,6 +22,12 @@ export function assertSenderDelivery(message, detail) {
 export function assertMessageOrigins(bases, browserHost) {
   assert(browserHost && bases.every(base => new URL(base).hostname === browserHost), 'Home origins match the network arrangement browser host');
 }
+export async function registrationRefusal(response, home) {
+  const path = new URL(response.url()).pathname;
+  if (!path.startsWith('/api/auth/passkey/register/') || response.ok()) return;
+  return {home, method:response.request().method(), path, status:response.status(),
+    reason:(await response.text()).slice(0,512)};
+}
 export function browserOptions(chromium, namespace, control, environment=process.env) {
   const options = {headless:true, args:['--two-home-fixture='+control]};
   if (namespace) {

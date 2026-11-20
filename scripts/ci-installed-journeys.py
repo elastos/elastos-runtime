@@ -1995,7 +1995,10 @@ def transition_evidence_valid(row):
         texts = {post["from"]: post["sent"] for post in posts}
         if any(post["sent"] != texts[post["from"]] for post in posts):
             return False
-        fresh += [*texts.values(), direct["sent"]]
+        reverse = evidence.get("reverse", {})
+        if not isinstance(reverse.get("sent"), str) or not reverse["sent"] or reverse.get("received") != reverse["sent"]:
+            return False
+        fresh += [*texts.values(), direct["sent"], reverse["sent"]]
     return len(set(fresh)) == len(fresh)
 
 
@@ -2299,7 +2302,11 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
         raise
     finally:
         record["process_cleanup"] = cleanup
-        finish_message_fixture(root, data, evidence, record, children, fixtures, stop, browser, browser_processes, started)
+        try:
+            finish_message_fixture(root, data, evidence, record, children, fixtures, stop, browser, browser_processes, started)
+        finally:
+            if topology:
+                topology.close()
 
 
 def repeat(home, data, evidence, count):
