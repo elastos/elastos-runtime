@@ -428,13 +428,13 @@ impl Drop for OnDisconnectGuard {
     }
 }
 
-/// IPv4 peers own one address budget; IPv6 peers share a /64 budget so
+/// IPv4 peers own one address budget; IPv6 peers share a /48 budget so
 /// rotating interface addresses cannot mint a fresh admission allowance.
 pub(crate) fn source_network(ip: std::net::IpAddr) -> std::net::IpAddr {
     match ip.to_canonical() {
         std::net::IpAddr::V4(ip) => ip.into(),
         std::net::IpAddr::V6(ip) => {
-            std::net::Ipv6Addr::from(u128::from(ip) & (u128::MAX << 64)).into()
+            std::net::Ipv6Addr::from(u128::from(ip) & (u128::MAX << 80)).into()
         }
     }
 }
@@ -502,6 +502,10 @@ impl TlsConfig {
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Limits {
+    /// Transport quotas retain room for independent source networks.
+    pub connections: ConnectionLimits,
+    /// Shared receive budget across every authenticated relay connection.
+    pub global_rx: Option<ClientRateLimit>,
     /// Rate limits for incoming traffic from a client connection.
     pub client_rx: Option<ClientRateLimit>,
     /// Shared authenticated-endpoint budget for encoded relay frames. Retained
@@ -515,6 +519,35 @@ pub struct Limits {
     ///
     /// Not currently implemented, setting this has no effect.
     pub accept_conn_burst: Option<usize>,
+}
+
+/// Public ingress capacity. IPv6 callers share their /48 allocation.
+#[derive(Debug, Clone, Copy)]
+pub struct ConnectionLimits {
+    /// All live transport connections.
+    pub total: usize,
+    /// Connections that have not authenticated yet.
+    pub pending: usize,
+    /// Live connections from one source allocation.
+    pub per_network: usize,
+    /// Pending connections from one source allocation.
+    pub pending_per_network: usize,
+}
+
+impl Default for ConnectionLimits {
+    fn default() -> Self {
+        Self { total: 4096, pending: 512, per_network: 32, pending_per_network: 8 }
+    }
+}
+
+impl ConnectionLimits {
+    /// Keep capacity for at least 64 independent source allocations.
+    pub fn validate(self) -> bool {
+        self.total <= 65536 && self.pending <= 8192 && self.per_network > 0 && self.pending_per_network > 0
+            && self.total >= self.per_network.saturating_mul(64)
+            && self.pending >= self.pending_per_network.saturating_mul(64)
+            && self.pending <= self.total && self.pending_per_network <= self.per_network
+    }
 }
 
 /// Per-client rate limit configuration.
@@ -680,6 +713,8 @@ pub struct Server {
 #[stack_error(derive, add_meta, std_sources)]
 #[non_exhaustive]
 pub enum SpawnError {
+    #[error("Invalid receive budget")]
+    InvalidRateLimit { source: streams::InvalidBucketConfig },
     #[error("Unable to get local address")]
     LocalAddr { source: std::io::Error },
     #[error("Failed to bind QAD listener")]
@@ -781,6 +816,8 @@ impl Server {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
                 builder = builder.home_rx_ratelimit(relay_config.limits.home_rx);
+                builder.connections = relay_config.limits.connections;
+                builder.global_rx = relay_config.limits.global_rx;
                 let (http_addr, tls_config) = match relay_config.tls {
                     Some(tls_config) => {
                         let server_tls_config = match tls_config.cert {
@@ -1372,7 +1409,7 @@ mod tests {
     }
 
     #[test]
-    fn source_budgets_canonicalize_mapped_ipv4_and_group_ipv6_by_64() {
+    fn source_budgets_canonicalize_mapped_ipv4_and_group_ipv6_by_48() {
         assert_eq!(
             super::source_network("::ffff:192.0.2.8".parse().unwrap()),
             "192.0.2.8".parse::<std::net::IpAddr>().unwrap()
@@ -1381,9 +1418,13 @@ mod tests {
             super::source_network("2001:db8:1234:5::1".parse().unwrap()),
             super::source_network("2001:db8:1234:5::ffff".parse().unwrap())
         );
-        assert_ne!(
+        assert_eq!(
             super::source_network("2001:db8:1234:5::1".parse().unwrap()),
             super::source_network("2001:db8:1234:6::1".parse().unwrap())
+        );
+        assert_ne!(
+            super::source_network("2001:db8:1234:5::1".parse().unwrap()),
+            super::source_network("2001:db8:1235:5::1".parse().unwrap())
         );
     }
 

@@ -143,4 +143,6 @@ bytes = "1.7"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std"] }
 
 [features]
+# Isolated installed fixtures only; release builds use the default feature set.
+carrier-test-relay = []
 default = []

@@ -70,6 +70,7 @@ pub struct Config<S> {
     /// becomes non-zero.
     pub(crate) rate_limited: Option<watch::Receiver<u64>>,
     pub(crate) home_budget: Option<super::streams::HomeBucket>,
+    pub(crate) global_budget: Option<super::streams::HomeBucket>,
     pub(crate) server_shutdown: CancellationToken,
 }
 
@@ -90,6 +91,7 @@ impl<S> Config<S> {
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             rate_limited: None,
             home_budget: None,
+            global_budget: None,
             server_shutdown: CancellationToken::new(),
         }
     }
@@ -137,6 +139,7 @@ impl Client {
             protocol_version,
             rate_limited,
             home_budget,
+            global_budget,
             server_shutdown,
         } = config;
         let endpoint_id = guard.endpoint_id;
@@ -158,6 +161,7 @@ impl Client {
             protocol_version,
             rate_limited,
             home_budget,
+            global_budget,
             server_shutdown,
             metrics,
         };
@@ -345,6 +349,7 @@ struct Actor<S> {
     /// Optional signal counting how often the connection has been rate-limited.
     rate_limited: Option<watch::Receiver<u64>>,
     home_budget: Option<super::streams::HomeBucket>,
+    global_budget: Option<super::streams::HomeBucket>,
     server_shutdown: CancellationToken,
     metrics: Arc<Metrics>,
 }
@@ -422,8 +427,10 @@ where
                 maybe_frame = self.stream.next(), if pending_frame.is_none() => {
                     match maybe_frame {
                         Some(Ok(frame)) => {
-                            let deadline = self.home_budget.as_ref().and_then(|budget| budget.lock()
-                                .expect("Home byte bucket").consume(frame.encoded_len()).err());
+                            let deadline = [&self.home_budget, &self.global_budget].into_iter()
+                                .filter_map(|budget| budget.as_ref().and_then(|budget| budget.lock()
+                                    .expect("relay byte bucket").consume(frame.encoded_len()).err()))
+                                .max();
                             if let Some(deadline) = deadline {
                                 pending_frame = Some(frame);
                                 budget_wait.as_mut().reset(deadline);
@@ -704,6 +711,7 @@ mod tests {
             protocol_version: ProtocolVersion::V2,
             rate_limited: None,
             home_budget: None,
+            global_budget: None,
             server_shutdown: CancellationToken::new(),
             metrics,
         };

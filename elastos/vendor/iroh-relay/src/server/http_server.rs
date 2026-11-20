@@ -66,9 +66,13 @@ use crate::{
 // These transport slots cover idle TCP, TLS, HTTP upgrade, authenticated
 // handshakes and established relays. A proxy shares its source-network budget;
 // untrusted Forwarded headers never grant a separate slot.
-const TCP_CONNECTIONS: usize = 128;
-const TCP_PENDING: usize = 32;
+#[cfg(test)]
+const TCP_CONNECTIONS: usize = 4096;
+#[cfg(test)]
+const TCP_PENDING: usize = 512;
+#[cfg(test)]
 const TCP_PER_NETWORK: usize = 32;
+#[cfg(test)]
 const TCP_PENDING_PER_NETWORK: usize = 8;
 
 #[derive(Debug, Default)]
@@ -76,10 +80,11 @@ struct ConnectionCounts {
     pending: usize,
     established: usize,
     networks: HashMap<IpAddr, (usize, usize)>,
+    recent: HashMap<IpAddr, (usize, std::time::Instant)>,
 }
 
 #[derive(Debug, Default)]
-struct NetworkAdmission(Arc<Mutex<ConnectionCounts>>);
+struct NetworkAdmission(Arc<Mutex<ConnectionCounts>>, super::ConnectionLimits);
 
 #[derive(Debug)]
 pub(super) struct ConnectionPermit {
@@ -93,13 +98,19 @@ impl NetworkAdmission {
         let network = super::source_network(ip);
         let mut counts = self.0.lock().expect("TCP admission");
         let (pending, established) = counts.networks.get(&network).copied().unwrap_or_default();
-        if counts.pending >= TCP_PENDING
-            || counts.pending + counts.established >= TCP_CONNECTIONS
-            || pending >= TCP_PENDING_PER_NETWORK
-            || pending + established >= TCP_PER_NETWORK
+        let now = std::time::Instant::now();
+        counts.recent.retain(|_, (_, started)| now.duration_since(*started) < Duration::from_secs(60));
+        if !self.1.validate()
+            || counts.pending >= self.1.pending
+            || counts.pending + counts.established >= self.1.total
+            || pending >= self.1.pending_per_network
+            || pending + established >= self.1.per_network
+            || counts.recent.get(&network).is_some_and(|(count, _)| *count >= self.1.per_network.saturating_mul(2))
+            || (!counts.recent.contains_key(&network) && counts.recent.len() >= self.1.total)
         {
             return None;
         }
+        counts.recent.entry(network).or_insert((0, now)).0 += 1;
         counts.pending += 1;
         counts.networks.entry(network).or_default().0 += 1;
         Some(Arc::new(ConnectionPermit {
@@ -456,6 +467,8 @@ pub(super) struct ServerBuilder {
     /// configuration applies to a single client connection.
     client_rx_ratelimit: Option<ClientRateLimit>,
     home_rx_ratelimit: Option<super::HomeRateLimit>,
+    pub(super) connections: super::ConnectionLimits,
+    pub(super) global_rx: Option<ClientRateLimit>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
     /// Access control for endpoints.
@@ -474,6 +487,8 @@ impl ServerBuilder {
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
             home_rx_ratelimit: None,
+            connections: super::ConnectionLimits::default(),
+            global_rx: None,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: Arc::new(AllowAll),
             metrics: None,
@@ -565,7 +580,12 @@ impl ServerBuilder {
             self.metrics.unwrap_or_default(),
         );
 
-        let service = service.with_home_rate_limit(self.home_rx_ratelimit);
+        let mut service = service.with_home_rate_limit(self.home_rx_ratelimit);
+        let inner = Arc::get_mut(&mut service.0).expect("new service owner");
+        inner.network_admission.1 = self.connections;
+        inner.global_budget = super::streams::Bucket::from_config(self.global_rx)
+            .map_err(|error| e!(SpawnError::InvalidRateLimit, error))?
+            .map(|bucket| Arc::new(Mutex::new(bucket)));
         let addr = self.addr;
         let tls_config = self.tls_config;
 
@@ -653,6 +673,7 @@ struct Inner {
     write_timeout: Duration,
     rate_limit: watch::Sender<Option<ClientRateLimit>>,
     home_budgets: Option<super::streams::HomeBuckets>,
+    global_budget: Option<super::streams::HomeBucket>,
     network_admission: NetworkAdmission,
     handshakes: TaskTracker,
     closing: CancellationToken,
@@ -1044,6 +1065,7 @@ impl Inner {
                     .ok_or_else(|| e!(AcceptError::HomeBudgetCapacity))
             })
             .transpose()?;
+        client_conn_builder.global_budget = self.global_budget.clone();
         client_conn_builder.server_shutdown = self.closing.clone();
         trace!(endpoint_id = %request.endpoint_id().fmt_short(), "create client");
 
@@ -1084,6 +1106,7 @@ impl RelayService {
             write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit: watch::Sender::new(rate_limit),
             home_budgets: None,
+            global_budget: None,
             network_admission: NetworkAdmission::default(),
             handshakes: TaskTracker::new(),
             closing: CancellationToken::new(),
@@ -1417,6 +1440,8 @@ mod tests {
     #[test]
     fn network_admission_keeps_upgraded_slots_bounds_pending_and_releases_exact_owners() {
         let admission = super::NetworkAdmission::default();
+        assert_eq!(admission.1.total, super::TCP_CONNECTIONS);
+        assert_eq!(admission.1.pending_per_network, super::TCP_PENDING_PER_NETWORK);
         let ip = "192.0.2.8".parse().unwrap();
         let mut established = Vec::new();
         for _ in 0..super::TCP_PER_NETWORK {
