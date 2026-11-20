@@ -241,7 +241,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await invoke('connect');
       await walletFrame.waitForFunction(()=>typeof window.finishPhone==='function');
       releaseConnectionStatus();await walletFrame.evaluate(()=>window.heldStatusPoll);
-      assert.equal(await wallet.locator('[data-focus=outcome]').textContent(),'Open your wallet on your phone and sign the message to confirm this account is yours.','an older Allow response cannot replace an active connection instruction');
+      assert.equal(await wallet.locator('[data-focus=outcome]').textContent(),'Open your wallet and sign the message to confirm this account is yours.','an older Allow response cannot replace an active connection instruction');
       assert.equal(await wallet.locator('[data-action=connect]:enabled,[data-action=start-over]:enabled').count(),0);
       await walletFrame.evaluate(()=>{window.phoneWait=false;window.finishPhone();});
       try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Connected.'}).waitFor({timeout:10000}); } catch { assert.fail('After the phone reply: '+await wallet.locator('[data-focus=outcome]').textContent()); }

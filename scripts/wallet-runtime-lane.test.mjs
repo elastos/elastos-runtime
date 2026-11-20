@@ -188,7 +188,7 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   const confirmation = r.frame.getByRole("heading", { name:`Remove ${name}?`, exact:true });
   await confirmation.waitFor();
   assert.match(await r.frame.locator("#wallet-modal .wallet-modal-body").textContent(), /fed1/);
-  assert.match(await r.frame.locator(".wallet-modal-header").textContent(), /Your wallet and funds stay unchanged/);
+  assert.match(await r.frame.locator(".wallet-modal-header").textContent(), /Your funds stay unchanged/);
   assert.doesNotMatch(await r.frame.locator(".wallet-modal-header").textContent(), /recovery key/);
   assert.equal(await confirmation.textContent(), `Remove ${name}?`, "the confirmation names the same isolated display identity as its row");
   assert.equal(await confirmation.locator("bdi").textContent(), name);

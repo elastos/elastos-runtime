@@ -7,7 +7,7 @@ const linkedWindow=(t,engine,options={})=>fixtureWindow(t,engine,{...options,sou
 for(const engine of ['chromium','webkit']) {
  test(`linked window has true copy and useful controls in ${engine}`,{timeout:60000},async t=>{
   const r=await linkedWindow(t,engine);await r.link();await r.capture('just-linked');
-  assert.match(await r.frame.locator('main').innerText(),/Close this window with Home’s window controls/);
+  assert.match(await r.frame.locator('main').innerText(),/Close this window with Home['’]s window controls/);
   assert.doesNotMatch(await r.frame.locator('main').innerText(),/review this request|Back to connection|Manage in Inbox/i);
   assert.equal(await r.frame.locator('[data-action=connect]').count(),0);
   assert.equal(await r.frame.locator('button.el-button-primary').count(),0,'completed connection has no highlighted action');
@@ -57,7 +57,7 @@ for(const engine of ['chromium','webkit']) {
   await r.openFromWallet();const connector=r.frame;
   if(await connector.locator('[data-action=add-account]').count())await connector.locator('[data-action=add-account]').click();
   await r.capture('same-phone-add-instructions');
-  assert.match((await connector.locator('main').innerText()).replace(/\s+/g,' '),/select another account in Trust Wallet/i,'the add path names the phone step before ending anything');
+  assert.match((await connector.locator('main').innerText()).replace(/\s+/g,' '),/choose another account in Trust Wallet/i,'the add path names the phone step before ending anything');
   await r.peer.changeAccount();await connector.locator('[data-state=account-changed]').waitFor();await r.capture('account-changed');
   assert.equal(await connector.locator('.connection-current-selection').count(),0,'the account card already shows the selected account');
   assert.equal(await connector.getByRole('button',{name:'Replace connection',exact:true}).count(),1);
@@ -76,9 +76,9 @@ for(const engine of ['chromium','webkit']) {
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
   await r.openFromWallet();
   await r.click('add-account');await r.state('add-account');await r.capture('add-account');
-  assert.doesNotMatch(await r.frame.locator('main').innerText(),/Home’s window controls/,'the visible return action is enough on the add instructions');
-  assert.match(await r.frame.locator('main').innerText(),/disconnect this connection first/i);
-  assert.match(await r.frame.locator('main').innerText(),/linked accounts stay in Wallet/i);
+  assert.doesNotMatch(await r.frame.locator('main').innerText(),/Home['’]s window controls/,'the visible return action is enough on the add instructions');
+  assert.match(await r.frame.locator('main').innerText(),/disconnect here first/i);
+  assert.match(await r.frame.locator('main').innerText(),/Your accounts stay in Wallet/i);
   assert.equal(r.fixture.state.verified,1,'opening the add instructions preserves the first account and session');
   await r.click('back-to-connection');await r.state('linked');await r.click('add-account');await r.state('add-account');
   const clearing=r.holdApi('/api/apps/wallet-walletconnect/storage','DELETE');await r.click('disconnect');await clearing.entered;await r.state('disconnecting');await r.capture('disconnecting');clearing.release();await r.state('disconnected');await r.capture('disconnected');
