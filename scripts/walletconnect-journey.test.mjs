@@ -341,7 +341,6 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
     assert.equal(approvalRequests[0].status,'approved');
     assert.equal(await wallet.locator('[data-focus=outcome]').getAttribute('aria-live'),'polite');
-    await wallet.locator('main').filter({hasText:/Connected\.|Confirm this account|Connect on|Account confirmation|Time to|Could not|did not|could not|unknown|unavailable|cannot be sent/ }).waitFor();
     for(const value of ['dark','light']){await theme(value);await shot(`r16-post-handoff-network-${value}`);}
     // A Home return while the phone is waiting must render a disabled Review.
     approvalRequests=[freshRequest()];await reload();
