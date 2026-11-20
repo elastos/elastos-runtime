@@ -81,7 +81,7 @@ export function friendlyOpenError(error) {
   ) {
     const required = formatBytes(refusal.required_bytes, Math.ceil);
     const available = formatBytes(refusal.available_bytes, Math.floor);
-    return `Browser needs ${required} free on this computer to open; ${available} are free. Free some space, then open Browser again.`;
+    return `Browser needs ${required} free on the computer that opens its websites. That computer has ${available} free. Free some space there, then open Browser again.`;
   }
   if (outcome?.state === "terminal_pre_effect_failure" && error?.payload?.stage === "viewer_compatibility") {
     return error.payload.code === "unsupported_viewer_display_mode"

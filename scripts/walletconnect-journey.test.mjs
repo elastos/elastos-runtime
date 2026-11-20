@@ -109,7 +109,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await page.evaluate(()=>inbox.style.display='none');await shot('r4-waiting-dark');await page.evaluate(()=>inbox.style.display='block');
     await theme('light');await shot('r4-r5-permission-light');
     await page.evaluate(()=>inbox.style.display='none');await shot('r4-waiting-light');await page.evaluate(()=>inbox.style.display='block');
-    await inbox.locator('#entry-detail').getByRole('button',{name:"Don't Allow",exact:true}).click();
+    await inbox.locator('#entry-detail').getByRole('button',{name:"Don't allow",exact:true}).click();
     await inbox.locator('#entry-detail').getByRole('button',{name:'Allow',exact:true}).waitFor();
     await shot('r12-off-light');await theme('dark');await shot('r12-off-dark');
     // A refusal clears the saved action. A later Allow from the off entry cannot resume it.
@@ -155,13 +155,13 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await invoke('connect');
     await wallet.locator('.connection-qr').waitFor({timeout:20000});
     await page.evaluate(()=>{inbox.style.display='block';inbox.contentWindow.location.reload();});
-    const turnOff=inbox.locator('#entry-detail').getByRole('button',{name:'Turn Off',exact:true});await turnOff.click();
+    const turnOff=inbox.locator('#entry-detail').getByRole('button',{name:'Turn off internet access',exact:true});await turnOff.click();
     const dialog=inbox.locator('#walletconnect-internet-confirm');await dialog.waitFor();
     assert.equal(await dialog.locator(':focus').textContent(),'Cancel');
     const before=passkeys;
     for(const value of ['dark','light']){await theme(value);await shot(`r5-r14-confirm-${value}`);}
     await dialog.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(passkeys,before);
-    await turnOff.click();await dialog.getByRole('button',{name:'Turn Off',exact:true}).click();
+    await turnOff.click();await dialog.getByRole('button',{name:'Turn off internet access',exact:true}).click();
     await wallet.locator('[data-focus=outcome]').filter({hasText:turnedOff}).waitFor({timeout:10000});
     assert.equal(await wallet.locator('[role=dialog]').count(),0);assert.equal(passkeys,before+1);
     await inbox.locator('#entry-detail').getByRole('button',{name:'Allow',exact:true}).waitFor();

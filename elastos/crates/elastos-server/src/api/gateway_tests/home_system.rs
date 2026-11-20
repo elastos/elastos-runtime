@@ -808,7 +808,7 @@ async fn test_home_cli_terminal_developer_mode_policy_matrix() {
                         .unwrap();
                     assert_eq!(
                         String::from_utf8_lossy(&body),
-                        "Only the Home owner can use the web terminal."
+                        "Only an admin can use the web terminal."
                     );
                 }
             }
@@ -6063,7 +6063,7 @@ async fn system_community_membership_is_home_wide_and_requires_current_owner_aut
     )
     .unwrap();
     assert_eq!(summary["detail"], port.community_status()["detail"]);
-    assert!(summary["detail"].as_str().unwrap().contains("reconnecting"));
+    assert!(summary["detail"].as_str().unwrap().contains("Reconnecting"));
     let marker = dir
         .path()
         .join("collaboration-community-membership-v1.json");
@@ -9248,7 +9248,7 @@ async fn test_home_launch_starts_chat_room_capsule_and_reports_runtime_activity(
     assert!(payload["runtime_log"]["total_in_memory"].is_null());
     assert_eq!(
         payload["runtime_log"]["note"],
-        "Only the Home owner can see Runtime activity."
+        "Only an admin can see Home activity."
     );
 }
 

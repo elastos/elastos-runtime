@@ -36,7 +36,7 @@ pub(super) async fn system_source_switch_channel(
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({
-                "error":"Ask the Home owner to choose the update channel."
+                "error":"Ask an admin to choose the update channel."
             })),
         )
             .into_response();
@@ -490,7 +490,7 @@ where
         return Some(serde_json::json!({
             "configured":true, "checking":false, "available":false, "can_apply":false,
             "current_version":source.installed_version,
-            "message":crate::update::InvalidInstalledVersion.to_string(),
+            "message":gateway_update_notice::INVALID_VERSION_TEXT,
             "background_checks": gateway_update_notice::preference(data_dir),
         }));
     }
@@ -627,7 +627,7 @@ pub(super) async fn system_update_apply(
     if require_admin_principal(&state.data_dir, &launch.context).is_err() {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error":"Ask the Home owner to install this update."})),
+            Json(serde_json::json!({"error":"Ask an admin to install this update."})),
         )
             .into_response();
     }
@@ -646,10 +646,11 @@ pub(super) fn system_update_failure(error: &anyhow::Error) -> Response {
     } else if error.is::<crate::update_controller::ApprovalReplaced>() {
         (StatusCode::GONE, "This approval is no longer valid. Check for the update again and approve it once more.")
     } else if error.is::<crate::update::InvalidInstalledVersion>() {
+        tracing::warn!("{}", gateway_update_notice::INVALID_VERSION_REPAIR);
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
-                "error":crate::update::InvalidInstalledVersion.to_string(),
+                "error":gateway_update_notice::INVALID_VERSION_TEXT,
             })),
         )
             .into_response();

@@ -555,9 +555,9 @@ async fn dispatch_inbox_action(
             },
         )?;
         return Ok(if dismissed {
-            "Request dismissed. Check your connected wallet before sending again."
+            "Request dismissed. This does not cancel the transaction in your wallet. Check your wallet before making a new request."
         } else {
-            "Rejected wallet request."
+            "Request rejected."
         }
         .to_string());
     }

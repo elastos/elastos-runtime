@@ -390,7 +390,7 @@ async fn set_community_presence(
     decision: crate::collaboration_presence_grant::PresenceDecision,
 ) -> anyhow::Result<()> {
     let (port, profile_did, scope) = presence_subject(state, context)?
-        .ok_or_else(|| anyhow::anyhow!("Community is not configured on this Home."))?;
+        .ok_or_else(|| anyhow::anyhow!("Community is not set up on this Home."))?;
     let authority = port
         .presence_authority()
         .ok_or_else(|| anyhow::anyhow!("Community presence is not available on this Home."))?;
@@ -436,7 +436,7 @@ pub(super) async fn answer_community_presence_request(
         .find_map(|(prefix, decision)| Some((*decision, action_id.strip_prefix(prefix)?)))?;
     let answer = async {
         let (_, _, scope) = presence_subject(state, context)?
-            .ok_or_else(|| anyhow::anyhow!("Community is not configured on this Home."))?;
+            .ok_or_else(|| anyhow::anyhow!("Community is not set up on this Home."))?;
         let open = crate::collaboration_presence_grant::open_request_at(
             &state.data_dir,
             &context.principal_id,

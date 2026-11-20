@@ -18,8 +18,8 @@
         const labels = {
           not_joined: "Community not joined",
           left: "Left Community",
-          reconnecting: "Reconnecting to Community",
-          starting: "Home is starting Community. It is checking the link.",
+          reconnecting: "Reconnecting to Community…",
+          starting: "Connecting to Community…",
           waiting_for_peers: "Community is waiting for another Home.",
           live: "Community live",
         };

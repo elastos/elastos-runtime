@@ -713,8 +713,6 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
         })
         .await
         .unwrap();
-    assert_eq!(summary["background_checks"]["message"],
-        "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.");
     let app = gateway_router(test_state(dir.path()));
     for enabled in [false, true] {
         let (status, settings) = home_test_post_json(
@@ -733,11 +731,12 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
         );
     }
     assert_eq!(summary["available"], false);
+    assert_eq!(summary["message"], summary["background_checks"]["message"]);
     assert_eq!(summary["can_apply"], false);
-    assert!(summary["message"]
+    assert!(!summary["message"]
         .as_str()
         .unwrap()
-        .contains("elastos update --force"));
+        .contains("elastos update"));
     assert_update_stays_unqueued(dir.path());
     let intent = update_intent();
     let approval = step_up_token_for_app_context(
@@ -756,7 +755,7 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
     assert!(response["error"]
         .as_str()
         .unwrap()
-        .contains("elastos update --force"));
+        .contains("Home's log for repair details"));
     assert_update_stays_unqueued(dir.path());
 }
 
@@ -1066,7 +1065,7 @@ async fn system_update_post_requires_system_launch_and_admin_role() {
         (
             member.system_token.as_str(),
             StatusCode::FORBIDDEN,
-            Some("Ask the Home owner to install this update."),
+            Some("Ask an admin to install this update."),
         ),
     ] {
         let response = app
@@ -1521,7 +1520,7 @@ async fn system_update_failures_explain_the_cause_without_private_error_details(
             anyhow::Error::from(crate::update::InvalidInstalledVersion)
                 .context("private source detail"),
             StatusCode::CONFLICT,
-            "elastos update --force",
+            "Home's log for repair details",
         ),
         (
             anyhow::anyhow!("private verification detail"),
@@ -1538,6 +1537,10 @@ async fn system_update_failures_explain_the_cause_without_private_error_details(
         let message = value["error"].as_str().unwrap();
         assert!(message.contains(expected_cause));
         assert!(!message.contains("private"));
+        assert!(
+            !message.contains("elastos update"),
+            "terminal repair command on screen: {message}"
+        );
     }
 }
 
@@ -2411,24 +2414,34 @@ async fn update_notice_first_confirmation_date_survives_rechecks_and_rejection()
 async fn update_notice_folder_failure_gives_action_that_can_work() {
     with_test_check_cache(async {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap(); configure_update_summary(dir.path());
+        let dir = tempfile::tempdir().unwrap();
+        configure_update_summary(dir.path());
         let app = gateway_router(test_state(dir.path()));
         let owner = passkey_authority_with_name(dir.path(), Some("notice-folder"));
         let path = notice::state_path(dir.path()).unwrap();
         assert_eq!(notice::preference(dir.path())["enabled"], true);
-        for target in [path.parent().unwrap().to_path_buf(), path.parent().unwrap().join(".notice.lock")] {
+        for target in [
+            path.parent().unwrap().to_path_buf(),
+            path.parent().unwrap().join(".notice.lock"),
+        ] {
             std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
             let settings = notice::preference(dir.path());
             assert_eq!(settings["enabled"], false);
             assert_eq!(settings["readable"], false);
-            assert_eq!(settings["message"], "Background checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.");
-            let (status, _) = home_test_post_json(&app, "/api/apps/system/update-background",
-                &owner.system_token, "null", json!({"enabled":true})).await;
+            let (status, _) = home_test_post_json(
+                &app,
+                "/api/apps/system/update-background",
+                &owner.system_token,
+                "null",
+                json!({"enabled":true}),
+            )
+            .await;
             assert_eq!(status, StatusCode::CONFLICT);
             let mode = if target.is_dir() { 0o700 } else { 0o600 };
             std::fs::set_permissions(target, std::fs::Permissions::from_mode(mode)).unwrap();
         }
-    }).await;
+    })
+    .await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -2743,10 +2756,6 @@ async fn update_notice_settings_directory_reports_failed_repair_and_stays_off() 
         std::fs::create_dir(&path).unwrap();
         let settings = notice::preference(dir.path());
         assert_eq!(settings["readable"], false);
-        assert!(settings["message"]
-            .as_str()
-            .unwrap()
-            .contains("repair or move aside"));
         let (status, result) = home_test_post_json(
             &app,
             "/api/apps/system/update-background",
@@ -2756,12 +2765,225 @@ async fn update_notice_settings_directory_reports_failed_repair_and_stays_off() 
         )
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
-        assert!(result["error"]
-            .as_str()
-            .unwrap()
-            .contains("Move notice.json aside if it is a folder"));
         assert_ne!(result["error"], settings["message"]);
         assert_eq!(notice::preference(dir.path())["enabled"], false);
     })
     .await;
+}
+
+#[tokio::test]
+async fn update_repair_details_go_only_to_home_log() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Home installs one global subscriber. Give this check its own process so
+    // parallel tests cannot change the callsite interests while it captures logs.
+    const CHILD: &str = "ELASTOS_WORDING_REPAIR_LOG_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "api::gateway::gateway_tests::home_update::update_repair_details_go_only_to_home_log",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(stdout.contains("test result: ok. 1 passed;"), "{stdout}");
+        return;
+    }
+
+    let log = tempfile::NamedTempFile::new().unwrap();
+    let writer = log.reopen().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_env_filter("off,elastos_server::api::gateway::gateway_update_notice=info,elastos_server::api::gateway::gateway_home_update=warn")
+        .with_writer(move || writer.try_clone().unwrap())
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+    async {
+        for fault in ["folder", "unreadable", "save", "version"] {
+            let dir = tempfile::Builder::new()
+                .prefix("private-path-sentinel-")
+                .tempdir()
+                .unwrap();
+            configure_update_summary(dir.path());
+            let owner = passkey_authority_with_name(dir.path(), Some("repair-log"));
+            let path = notice::state_path(dir.path()).unwrap();
+            notice::preference(dir.path());
+            match fault {
+                "folder" => std::fs::set_permissions(
+                    path.parent().unwrap(),
+                    std::fs::Permissions::from_mode(0o755),
+                )
+                .unwrap(),
+                "unreadable" => {
+                    std::fs::write(&path, "private-content-sentinel").unwrap();
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                        .unwrap();
+                }
+                "save" => std::fs::create_dir(&path).unwrap(),
+                "version" => {
+                    let mut sources = crate::sources::load_trusted_sources(dir.path()).unwrap();
+                    sources.sources[0].installed_version = "broken".into();
+                    crate::sources::save_trusted_sources(dir.path(), &sources).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let mut views = (0..5)
+                .map(|_| notice::preference(dir.path()))
+                .collect::<Vec<_>>();
+            if fault == "save" {
+                let app = gateway_router(test_state(dir.path()));
+                for _ in 0..5 {
+                    let (status, response) = home_test_post_json(
+                        &app,
+                        "/api/apps/system/update-background",
+                        &owner.system_token,
+                        "null",
+                        json!({"enabled":true}),
+                    )
+                    .await;
+                    assert_eq!(status, StatusCode::CONFLICT);
+                    views.push(response);
+                }
+            }
+            match fault {
+                "folder" => std::fs::set_permissions(
+                    path.parent().unwrap(),
+                    std::fs::Permissions::from_mode(0o700),
+                )
+                .unwrap(),
+                "unreadable" => std::fs::remove_file(&path).unwrap(),
+                "save" => std::fs::remove_dir(&path).unwrap(),
+                "version" => {
+                    let mut sources = crate::sources::load_trusted_sources(dir.path()).unwrap();
+                    sources.sources[0].installed_version = "2.0.1".into();
+                    crate::sources::save_trusted_sources(dir.path(), &sources).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            if fault == "save" {
+                let app = gateway_router(test_state(dir.path()));
+                for _ in 0..5 {
+                    let (status, _) = home_test_post_json(
+                        &app,
+                        "/api/apps/system/update-background",
+                        &owner.system_token,
+                        "null",
+                        json!({"enabled":true}),
+                    )
+                    .await;
+                    assert_eq!(status, StatusCode::OK);
+                }
+            }
+            for _ in 0..5 {
+                notice::preference(dir.path());
+            }
+            for view in views {
+                for field in ["message", "save_error", "error"] {
+                    if let Some(text) = view[field].as_str() {
+                        if ["save_error", "error"].contains(&field)
+                            || (field == "message" && ["folder", "version"].contains(&fault))
+                        {
+                            assert!(
+                                text.contains("Home's log"),
+                                "missing repair handoff: {text}"
+                            );
+                        }
+                        for detail in [
+                            "Local/",
+                            ".notice.lock",
+                            "notice.json",
+                            "elastos update",
+                            "private-",
+                        ] {
+                            assert!(!text.contains(detail), "repair detail on screen: {text}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    .await;
+    let output = std::fs::read_to_string(log.path()).unwrap();
+    for detail in [
+        "Local/Shared/System/Updates",
+        ".notice.lock",
+        "notice.json",
+        "elastos update --force",
+        "write access",
+        "Move notice.json aside",
+    ] {
+        assert!(
+            output.contains(detail),
+            "repair detail missing from Home log: {detail}; captured log: {output}"
+        );
+    }
+    assert_eq!(
+        output
+            .matches("Update checks are off because Home cannot use Local/")
+            .count(),
+        1,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches(
+                "Update checks are off because Home could not read its settings. On the device"
+            )
+            .count(),
+        2,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches("Home cannot check for updates until you repair")
+            .count(),
+        1,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches("Update settings are readable again.")
+            .count(),
+        4,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches("Home could not save update checks. On the device")
+            .count(),
+        1,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches("Update settings can be saved again.")
+            .count(),
+        1,
+        "{output}"
+    );
+    assert!(
+        output.contains("error="),
+        "failure detail missing: {output}"
+    );
+    for cause in [
+        "not owner-only",
+        "expected value at line 1 column 1",
+        "must be a regular non-symlink file",
+    ] {
+        assert!(
+            output.contains(cause),
+            "missing actual failure cause {cause}: {output}"
+        );
+    }
+    assert!(!output.contains("private-path-sentinel"));
+    assert!(!output.contains("private-content-sentinel"));
 }

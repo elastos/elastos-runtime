@@ -13,7 +13,7 @@ function checkProofSource() {
     || execFileSync("git", ["status", "--porcelain"], { cwd:root, encoding:"utf8" }).trim())) throw new Error("Source changed during rendered proof");
 }
 const types = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html", ".png": "image/png", ".woff2": "font/woff2", ".svg": "image/svg+xml" };
-const consentText = "WalletConnect needs the internet to link this Home to your phone wallet. The WalletConnect service that carries the messages can see this computer's internet address. Your keys stay in your phone wallet, and you approve each request there. You can turn this off at any time here in Inbox.";
+const consentText = "WalletConnect needs internet access to connect your wallet to this Home. The WalletConnect service carries the messages and can see this computer's internet address. Your keys stay in your wallet, where you approve each request. You can turn this off at any time in Inbox.";
 
 // Serve the real capsule files. The fixture supplies only Runtime HTTP and
 // Home's existing passkey reply; it does not implement a capsule renderer.
@@ -74,7 +74,7 @@ export async function runtimeView(t, app, state = {}) {
       }
       if (url.pathname === "/api/apps/inbox/actions") {
         if (state.conflict) { state.conflictSeen = true; return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409); }
-        let message = "WalletConnect internet choice saved.";
+        let message = "Saved.";
         if (input.action_id?.startsWith("walletconnect-internet-allow:")) {
           if (state.permission !== "requested" || input.action_id !== `walletconnect-internet-allow:${state.question}`) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
           if (input.step_up_token !== "fixture-proof") return plain(input.step_up_token ? "invalid passkey step-up token encoding" : "missing passkey step-up token", 403);
@@ -94,12 +94,12 @@ export async function runtimeView(t, app, state = {}) {
           state.permission = "revoked";
           state.cleanup = false;
           state.entries = [permissionEntry("revoked", state.question)];
-          message = "WalletConnect connection turned off.";
+          message = "Internet access for WalletConnect is off.";
         } else if (input.action_id?.startsWith("wallet-reject-request:")) {
           const id = `wallet-approval-request:${input.action_id.slice("wallet-reject-request:".length)}`;
           if (!state.entries.some(e => e.id === id)) return json({ error:"request unavailable" }, 404);
           state.entries = state.entries.filter(e => e.id !== id);
-          message = "Rejected wallet request.";
+          message = "Request rejected.";
         } else if (input.action_id?.startsWith("notification-read:")) {
           // Generated permission entries have no persisted notification row.
           message = "That inbox entry was already read or is no longer present.";
@@ -194,7 +194,7 @@ export function permissionEntry(status, id = "consent:current") {
   const asked = status === "requested";
   return { id: "walletconnect-internet:permission", source_app: "wallet-walletconnect", kind: `walletconnect_internet_${asked ? "request" : "decision"}`,
     title: "WalletConnect internet access", body: asked ? consentText : status === "granted" ? "WalletConnect can use the internet."
-      : status === "cleanup" ? "WalletConnect is off. Select Turn Off again to finish clearing its saved session." : "Internet access for WalletConnect is off.",
+      : status === "cleanup" ? "Internet access for WalletConnect is off. Choose Finish disconnecting to remove the saved connection." : "Internet access for WalletConnect is off.",
     severity: asked ? "attention" : "info", read: !asked, created_at: Math.floor(Date.now() / 1000),
     action_ref: asked ? { app: "inbox", action_id: `walletconnect-internet-allow:${id}` }
       : ["granted", "cleanup"].includes(status) ? { app: "inbox", action_id: `walletconnect-internet-turn-off:${id}` } : null };

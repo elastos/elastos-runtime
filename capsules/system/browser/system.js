@@ -3856,10 +3856,10 @@ async function onBackgroundChange() {
     backgroundChoice.checked = runtimeUpdate.background_checks.enabled === true;
     backgroundSaveState = stateAtSave;
     backgroundSaveError = error.status === 401 || error.status === 403
-      ? "Sign in as the Home owner to change background checks."
+      ? "Sign in as an admin of this Home, then open System again from Home."
       : error.status === 409
         ? runtimeUpdate.background_checks.save_error
-        : "Home could not confirm the setting change. Try again.";
+        : "Home could not confirm your change. Try again.";
     renderUpdateNotice();
   } finally {
     backgroundBusy = false;
@@ -3995,7 +3995,7 @@ function renderRuntimeUpdate(update) {
     : inProgress ? readText(controller?.new_version) || readText(choice?.new_version)
       : readText(choice?.new_version);
   setTextFields("update-heading", newVersion && (inProgress || runtimeUpdatePending || runtimeUpdate?.available === true)
-    ? `${inProgress ? "Updating" : "Update"} to ${newVersion}` : "Home update");
+    ? `${inProgress ? "Updating to" : "Update to"} ElastOS ${newVersion}` : "ElastOS update");
   const publisher = readText(runtimeUpdatePending?.publisher || runtimeUpdate?.publisher);
   setTextFields("update-publisher", publisher);
   setHiddenFields("update-publisher-row", !publisher);
@@ -4018,7 +4018,7 @@ function renderRuntimeUpdate(update) {
       ? "Verify your passkey to start the update."
       : progress === "restarting" ? RUNTIME_UPDATE_RESTART_TEXT
         : ["downloading", "verifying"].includes(progress) ? readText(controller?.message)
-          || "Preparing the update. Home restarts when the update is ready."
+          || "Checking the update. Home restarts when the update is ready."
         : progress === "staging" ? "Checking the signed update. Keep Home open."
           : progress === "queued" ? "The update is queued. Keep Home open."
             : "Checking the update with Home. Keep Home open.");
@@ -4087,7 +4087,8 @@ function runtimeUpdateCanApply() {
 }
 
 function showRuntimeUpdateStatus(message) {
-  if (runtimeUpdateStatusNode) runtimeUpdateStatusNode.textContent = message;
+  if (runtimeUpdateStatusNode) runtimeUpdateStatusNode.textContent =
+    message === runtimeUpdate?.background_checks?.message ? "" : message;
 }
 
 function scheduleRuntimeUpdateRefresh(delay) {
@@ -4206,7 +4207,7 @@ async function onRuntimeUpdateApply() {
         : error.status === 410
           ? "This approval is no longer valid. Check for the update again and approve it once more."
         : error.status === 401 || error.status === 403
-          ? "Sign in as the Home owner to start the update."
+          ? "Sign in as an admin of this Home to start the update."
           : "The update could not start: the release was refused or verification failed. Select Update again.";
       runtimeUpdateFeedback = feedback;
     } else {
@@ -4333,7 +4334,7 @@ const HOSTED_KEY_CHECK_OUTCOMES = [
   [/Hosted external HTTPS is paused/, "External HTTPS is paused on this Home."],
   [/^request failed: 400 invalid (OpenRouter|Venice) key$/i, HOSTED_KEY_REJECTED],
   [/^request failed: 500 (OpenRouter|Venice) validation unavailable$/i, "The provider sent an unexpected response. Try again later."],
-  [/^request failed: 403 (admin passkey required|proof-bound passkey session required|.*fresh passkey|.*passkey step-up)/i, "Sign in with the Home admin passkey to check keys."],
+  [/^request failed: 403 (admin passkey required|proof-bound passkey session required|.*fresh passkey|.*passkey step-up)/i, "Sign in with an admin passkey to check keys."],
 ];
 
 function hostedProviderValidationError(value) {

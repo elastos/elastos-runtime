@@ -97,8 +97,8 @@ impl CommunityState {
         match self {
             Self::NotJoined => "Not joined",
             Self::Left => "Left Community",
-            Self::Reconnecting => "Reconnecting to Community",
-            Self::Starting => "Home is starting Community. It is checking the link.",
+            Self::Reconnecting => "Reconnecting to Community…",
+            Self::Starting => "Connecting to Community…",
             Self::Waiting => "Community is waiting for another Home.",
             Self::Live => "Live",
         }
@@ -7931,7 +7931,7 @@ mod tests {
         // A released Runtime omits the state. Unavailable still fails closed.
         let old: RoomTransportView = serde_json::from_value(serde_json::json!({
             "configured": true, "available": false, "community_joined": true,
-            "status": "Home is starting Community. It is checking the link."
+            "status": "Connecting to Community…"
         }))
         .unwrap();
         assert_eq!(old.community_state(), CommunityState::Reconnecting);
@@ -7947,7 +7947,7 @@ mod tests {
         state.direct.selected_conversation_id = Some("direct:sha256:a".into());
         let direct = state.direct.clone();
         let drafts = state.drafts.clone();
-        let detail = "Home is starting Community. It is checking the link.";
+        let detail = "Connecting to Community…";
         let mut poll = shared_poll(0);
         poll.transport = serde_json::from_value(serde_json::json!({
             "configured": true,

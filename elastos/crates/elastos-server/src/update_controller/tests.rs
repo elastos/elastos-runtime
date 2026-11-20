@@ -4115,18 +4115,6 @@ async fn home_browser_no_open_ready_recovery_initial_start_keeps_choice() {
 }
 
 #[test]
-fn home_browser_no_open_space_notice_preserves_normal_text() {
-    assert_eq!(
-        controller_space_notice(false),
-        "Home will open. Free disk space before updating."
-    );
-    assert_eq!(
-        controller_space_notice(true),
-        "Home will start. Free disk space before updating."
-    );
-}
-
-#[test]
 fn home_browser_no_open_space_notices_follow_real_start_choice() {
     for step in ["bootstrap", "prepare", "receipt"] {
         for no_open in [false, true] {
@@ -4144,9 +4132,9 @@ fn home_browser_no_open_space_notices_follow_real_start_choice() {
             assert!(output.status.success(), "{output:?}");
             let stderr = String::from_utf8(output.stderr).unwrap();
             let expected = if no_open {
-                "Home will start. Free disk space before updating.\n"
+                "Home is starting. Free some disk space before you update.\n"
             } else {
-                "Home will open. Free disk space before updating.\n"
+                "Home is opening. Free some disk space before you update.\n"
             };
             assert_eq!(stderr, expected, "{step}, no_open={no_open}");
         }
@@ -6609,7 +6597,7 @@ async fn restarting_network_update(symlinked_parent: bool) {
                     assert!(progress.completed_bytes <= payload_completed);
                     assert_eq!(
                         progress.message,
-                        "Checking update metadata. Home restarts when the update is ready."
+                        "Checking the update. Home restarts when the update is ready."
                     );
                     observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     // The network comes with the other downloads, while the

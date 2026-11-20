@@ -56,10 +56,10 @@ test("fix1 JB14 an older Inbox read cannot replace a newer permission decision",
   r.state.beforeInboxSummary=async()=>{r.state.beforeInboxSummary=null;entered();await gate;};
   await event(r); await held;
   await r.frame.getByRole("button",{name:"Allow",exact:true}).click();
-  await r.frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
+  await r.frame.getByRole("button",{name:"Turn off internet access",exact:true}).waitFor();
   const response=r.page.waitForResponse(u=>u.url().endsWith("/api/apps/inbox/summary"));
   release(); await response; await settled(r);
-  assert.equal(await r.frame.getByRole("button",{name:"Turn Off",exact:true}).count(),1);
+  assert.equal(await r.frame.getByRole("button",{name:"Turn off internet access",exact:true}).count(),1);
   assert.equal(await r.frame.getByRole("button",{name:"Allow",exact:true}).count(),0);
 });
 
@@ -124,7 +124,7 @@ test("fix1 passkey-begin consent conflict keeps the fixed Inbox sentence",async 
     passkeyError:'request failed: 409 Conflict {"schema":"elastos.home.wallet-connector.effect.error/v1","code":"conflict"}'});
   await r.frame.getByRole("button",{name:"Allow",exact:true}).click();
   await r.frame.locator("#refresh:enabled").waitFor();
-  assert.equal(await r.frame.locator("#status-text").textContent(),"This request has changed. Refresh Inbox and review the current request.");
+  assert.equal(await r.frame.locator("#status-text").textContent(),"Refresh Inbox and review the current request before trying again.");
   assert.equal(r.calls.filter(c=>c.path.endsWith("/actions")&&c.input.action_id.includes("allow")).length,0);
 });
 

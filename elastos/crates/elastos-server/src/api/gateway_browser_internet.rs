@@ -387,7 +387,7 @@ pub(super) fn notification(
     let (at, body, action_id) = match &record {
         Consent::Requested { expires_at, at, .. } if *expires_at <= now_ts() => (
             *at,
-            "This expired request was made.",
+            "This request expired. It was made.",
             "browser-internet-request".into(),
         ),
         Consent::Requested { request_id, at, .. } => {
