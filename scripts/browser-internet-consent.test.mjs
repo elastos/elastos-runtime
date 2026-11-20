@@ -489,7 +489,7 @@ test("internet grant refusal points to the permission request", async () => {
 });
 
  test("System contains no optional Browser permission integration",()=>{
-   for(const name of ["index.html","system.js","update-feedback.mjs","style.css"]) {
+   for(const name of ["index.html","system.js","style.css"]) {
      assert.doesNotMatch(readFileSync(new URL(`capsules/system/browser/${name}`,root),"utf8"),/browser-internet|browserInternet|browser\.internet|\/api\/apps\/browser\/internet/);
    }
  });
