@@ -353,7 +353,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       let receipt;
       try { receipt = await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,transaction_hash:hash})}); }
       catch { throw Object.assign(new Error(`Wallet returned transaction hash ${hash}. Runtime could not confirm it. Keep this hash and check it before sending again.`),{transactionHash:hash}); }
-      return {status:receipt.receipt_status || 'completed',effect:'transaction',message:receipt.receipt_status === 'sent_after_dismissal' ? 'Request dismissed. Transaction sent from wallet.' : 'Transaction sent.'};
+      return {status:receipt.receipt_status || 'completed',effect:'transaction',message:receipt.receipt_status === 'sent_after_dismissal' ? 'Request dismissed. Your wallet reported this transaction as sent.' : 'Transaction sent.'};
     }
     if (handoff.signature_type !== 'personal_sign' || typeof handoff.message !== 'string') throw new Error('Runtime returned an invalid signature request.');
     operationDispatched = true;
