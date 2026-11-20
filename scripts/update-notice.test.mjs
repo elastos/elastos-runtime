@@ -360,8 +360,9 @@ test("System keeps repair paths and commands out of the setting hint", async () 
 
 
 test("System preserves failed-update feedback when the installed version is unreadable", async () => {
-  const f=await fixture();const browser=await chromium.launch(productSmokeLaunchOptions());
+  const f=await fixture();let browser;
   try {
+    browser=await chromium.launch(productSmokeLaunchOptions());
     f.state.settings={...preference(false),message:copy("INVALID_VERSION_TEXT")};
     f.state.updateController={phase:"failed",message:"Home could not finish the update. Open System again to check its status."};
     const page=await browser.newPage({viewport:{width:390,height:844}});
@@ -372,5 +373,5 @@ test("System preserves failed-update feedback when the installed version is unre
       "drawing the background setting keeps the failed-update message visible");
     assert.deepEqual(f.requestFailures,[]);
     await page.close();
-  } finally {await browser.close();await f.close();}
+  } finally {await browser?.close();await f.close();}
 });
