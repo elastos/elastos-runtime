@@ -13,7 +13,7 @@ function checkProofSource() {
     || execFileSync("git", ["status", "--porcelain"], { cwd:root, encoding:"utf8" }).trim())) throw new Error("Source changed during rendered proof");
 }
 const types = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html", ".png": "image/png", ".woff2": "font/woff2", ".svg": "image/svg+xml" };
-const consentText = "WalletConnect needs the internet to link this Home to your phone wallet. The WalletConnect service that carries the messages can see this computer's internet address. Your keys stay in your phone wallet, and you approve each request there. You can turn this off at any time here in Inbox.";
+const consentText = "WalletConnect needs internet access to connect your wallet to this Home. The WalletConnect service carries the messages and can see this computer's internet address. Your keys stay in your wallet, where you approve each request. You can turn this off at any time in Inbox.";
 
 // Serve the real capsule files. The fixture supplies only Runtime HTTP and
 // Home's existing passkey reply; it does not implement a capsule renderer.
