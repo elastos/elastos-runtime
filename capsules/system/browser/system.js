@@ -461,6 +461,8 @@ function renderSystemSummary(systemSummary) {
   acceptAppearance(appearance);
   setRuntimeState(runtime);
   setSourceState(source);
+  // A full setting snapshot owns feedback invalidation before either status draws.
+  if (backgroundSettingState(systemSummary.runtime_update?.background_checks) !== backgroundSaveState) backgroundSaveError = "";
   renderRuntimeUpdate(systemSummary.runtime_update);
   renderUpdateNotice();
 }
@@ -3944,7 +3946,6 @@ function runtimeUpdateControllerBusy() {
 function renderRuntimeUpdate(update) {
   const previous = runtimeUpdate?.controller;
   runtimeUpdate = update && typeof update === "object" ? update : null;
-  if (backgroundSettingState(runtimeUpdate?.background_checks) !== backgroundSaveState) backgroundSaveError = "";
   const current = runtimeUpdate?.controller;
   // An atomic advisory-file replacement can leave one poll without counters.
   // Keep this update's received count; the latest poll owns its total.
