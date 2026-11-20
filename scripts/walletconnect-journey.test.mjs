@@ -143,7 +143,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await invoke('connect');
     await wallet.locator('.connection-qr').waitFor({timeout:20000});
     // Accelerate only the app's 180s deadline; the SDK and production handler stay real.
-    await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
+    await invoke('cancel');
     await walletFrame.evaluate(()=>{const native=window.r14NativeTimeout=setTimeout;window.setTimeout=(fn,ms,...args)=>{if(ms===180000)window.r14Expire=fn;return native(fn,ms,...args);};});
     await invoke('connect');
     await wallet.locator('.connection-qr').waitFor({timeout:20000});
@@ -171,7 +171,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await allowed;
     assert.equal(status,'granted');
     failSummary=true;await drainForReload();await Promise.all([walletFrame.waitForNavigation({waitUntil:'load'}),walletFrame.evaluate(()=>location.reload())]);
-    try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Home could not load your wallet requests.'}).waitFor({timeout:5000}); } catch(error) {console.log({status:await wallet.locator('main').innerText(),hasLaunch:await walletFrame.evaluate(()=>!!location.hash),errors});throw error;}
+    try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Home could not load the wallet details.'}).waitFor({timeout:5000}); } catch(error) {console.log({status:await wallet.locator('main').innerText(),hasLaunch:await walletFrame.evaluate(()=>!!location.hash),errors});throw error;}
     for(const value of ['dark','light']){await theme(value);await shot(`r16-error-${value}`);}
     assert.deepEqual(errors,[]);
     assert.equal(actions.filter(action=>action.action_id.includes('-turn-off:')).length,1);
@@ -216,7 +216,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     // The visible Cancel consumes the saved Connect before a fresh Connect after Allow.
     status='off';await reload();await invoke('connect');
     await wallet.locator('[data-state=internet-pending] [data-action=inbox]:enabled,[data-state=request-internet-pending] [data-action=inbox]:enabled').waitFor();await page.evaluate(()=>inbox.style.display='none');
-    await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
+    await invoke('cancel');
     status='granted';
     await invoke('connect');
     await wallet.locator('[data-focus=outcome]').filter({hasText:'Connected.'}).waitFor();

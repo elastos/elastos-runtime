@@ -29,8 +29,8 @@ for(const engine of ['chromium','webkit']){
  test(`F1 blocked-first and phone-declined transaction keep connection controls reachable in ${engine}`,windowTestOptions(engine,90000),async t=>{
   const r=await setup(t,engine);await r.link();
   r.request('typed',{intent:'browser_typed_data_sign'});await r.refresh();await r.state('linked');await r.choose('typed');await r.state('request-unsendable');
-  await r.click('Back to connection');await r.state('linked');await r.click('Back to connection');await r.state('internet-ready');
-  await r.click('Manage in Inbox');assert.equal(await r.page.evaluate(()=>window.events.some(event=>event.type==='home:open-target'&&event.target==='inbox')),true,'Manage uses the existing Inbox message');assert.equal(await r.frame.getByRole('button',{name:'Connect wallet',exact:true}).isVisible(),true);
+  await r.click('Back to connection');await r.state('linked');assert.equal(await r.frame.getByRole('button',{name:'Back to connection',exact:true}).count(),0);
+  assert.equal(await r.frame.getByRole('button',{name:'Manage in Inbox',exact:true}).count(),0);await r.click('Add account');await r.state('add-account');
   await r.click('Back to connection');await r.state('linked');assert.equal(await r.frame.getByRole('button',{name:'Disconnect',exact:true}).isVisible(),true);
   r.request('transaction',{intent:'transaction_intent'});await r.choose('transaction');await r.state('request-multiple');assert.equal(await r.frame.locator('main').getAttribute('data-request-id'),'transaction');assert.match(await r.frame.locator('main').innerText(),/Send transaction/);r.peer.choose({request:'reject'});await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('transaction-declined');
   assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='transaction').status,'approved');

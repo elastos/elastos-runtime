@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -21,6 +22,7 @@ const connectorTitles = Object.freeze({
   "wallet-unisat": "UniSat",
   "wallet-walletconnect": "WalletConnect",
 });
+const issuedLaunchTokens = new Map();
 const state = {
   launches: {
     "home-gui": 0,
@@ -31,6 +33,8 @@ const state = {
   },
   connectorEffects: 0,
   approvalRequests: [],
+  walletAccounts: [],
+  walletSummaryReads: 0,
   homeStateWrites: [],
   serverErrors: [],
 };
@@ -184,6 +188,9 @@ function launchResponse(origin, target, query) {
     params.set(key, String(value));
   }
   params.set("home_origin", origin);
+  const ownerToken = launchToken(target);
+  const issuedToken = `${ownerToken}-${state.launches[target]}`;
+  issuedLaunchTokens.set(issuedToken, ownerToken);
   return {
     target,
     title: connectorTitles[target] || (target === "home-gui" ? "Desktop" : "Wallet"),
@@ -191,12 +198,12 @@ function launchResponse(origin, target, query) {
     launch_status: "launched",
     route:
       `/apps/${target}/?${params.toString()}` +
-      `#home_token=${encodeURIComponent(launchToken(target))}`,
+      `#home_token=${encodeURIComponent(issuedToken)}`,
   };
 }
 
 function requireToken(req, token, res) {
-  if (req.headers["x-elastos-home-token"] === token) {
+  if (req.headers["x-elastos-home-token"] === token || issuedLaunchTokens.get(req.headers["x-elastos-home-token"]) === token) {
     return true;
   }
   json(res, 401, { error: "fixture launch owner rejected" });
@@ -206,7 +213,7 @@ function requireToken(req, token, res) {
 async function handleApi(req, res, url) {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
-      "access-control-allow-headers": "content-type,x-elastos-home-token",
+      "access-control-allow-headers": "content-type,x-elastos-home-token,if-match",
       "access-control-allow-methods": "GET,POST,OPTIONS",
       "access-control-allow-origin": "*",
     });
@@ -259,8 +266,9 @@ async function handleApi(req, res, url) {
     if (!requireToken(req, walletToken, res)) {
       return true;
     }
+    state.walletSummaryReads++;
     json(res, 200, {
-      wallet_accounts: { accounts: [], default_accounts: [] },
+      wallet_accounts: { accounts: state.walletAccounts, default_accounts: [] },
       wallet_approvals: { approval_requests: state.approvalRequests },
       approval_methods: { walletconnect: { available: true } },
     });
@@ -281,7 +289,7 @@ async function handleApi(req, res, url) {
     }
     if (target === "wallet-walletconnect" && req.method === "GET" && ["wallet/config", "storage"].some(resource => url.pathname === `/api/apps/${target}/${resource}`)) {
       if (!requireToken(req, token, res)) return true;
-      json(res, 200, url.pathname.endsWith("/wallet/config") ? { walletconnect: { project_id: "fixture-project", storage_revision: '\"0\"' } } : {});
+      json(res, 200, url.pathname.endsWith("/wallet/config") ? { walletconnect: { project_id: "fixture-project", storage_revision: JSON.stringify("0") } } : {});
       return true;
     }
     if (
@@ -324,7 +332,9 @@ const server = createServer(async (req, res) => {
       json(res, 404, { error: "fixture route not found", path: url.pathname });
       return;
     }
-    const body = readFileSync(path);
+    const body = process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
+      ? execFileSync("git", ["show", "0db7eb247c8d89f367d5458acb03339605cc216e:capsules/home/browser/home-shell-host.js"])
+      : readFileSync(path);
     res.writeHead(200, {
       "access-control-allow-origin": "*",
       "cache-control": "no-store",
@@ -481,10 +491,13 @@ function rectangleIntersectionRatio(subject, overlay) {
 const origin = await listen();
 let browser = null;
 try {
-  const { chromium } = await importProductSmokePlaywright();
+  const engines = await importProductSmokePlaywright();
+  const engine = process.env.HOME_WALLET_CONNECTOR_ENGINE || "chromium";
+  assert(["chromium", "webkit"].includes(engine), "named browser engine required");
   const executablePath = configuredBrowserExecutable();
-  browser = await chromium.launch({
+  browser = await engines[engine].launch({
     headless: true,
+    ...(engine === "chromium" ? {
     ...productSmokeLaunchOptions(),
     ...(executablePath ? { executablePath } : {}),
     args: [
@@ -498,6 +511,7 @@ try {
       "--no-first-run",
       "--no-proxy-server",
     ],
+    } : {}),
   });
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -567,6 +581,7 @@ try {
     }, { connectorTarget: target });
     await waitFor(() => frameFor(page, target), 15_000, `${target} connector UI`);
     const connector = frameFor(page, target);
+    const connectorHomeToken = await connector.evaluate(() => new URLSearchParams(location.hash.slice(1)).get("home_token"));
     const connectSelector = '[data-action="connect"]';
     await connector.waitForSelector(connectSelector, { timeout: 15_000 });
     assert(
@@ -690,6 +705,40 @@ try {
           await page.screenshot({path:join(process.env.WALLETCONNECT_SCREENSHOTS, `r15-home-return-${theme}.png`)});
         }
       }
+    }
+
+    if (target === "wallet-walletconnect") {
+      for (const observed of [page.mainFrame(), homeGui, wallet]) await observed.evaluate(() => {
+        window.fixtureAccountHints = [];
+        addEventListener("message", event => {
+          if (!["elastos:runtime-events", "home:refresh-summary"].includes(event.data?.type)) return;
+          window.fixtureAccountHints.push({type:event.data.type,origin:event.origin,parent:event.source===window.parent,top:event.source===window.top,hasToken:!!event.data.homeToken,kinds:(event.data.events||[]).slice(0,5).map(row=>row.kind)});
+          window.fixtureAccountHints = window.fixtureAccountHints.slice(-8);
+        });
+      });
+      const notify = () => connector.evaluate(homeToken => window.top.postMessage({
+        type: "home:refresh-summary", homeToken,
+      }, new URLSearchParams(location.search).get("home_origin")), connectorHomeToken);
+      state.walletAccounts = [{account_id:"fixture-linked-account",address:"0x1212121212121212121212121212121212121212",chain_namespace:"eip155:1",connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"WalletConnect",wallet_mark:"wallet",linked_at:1}];
+      const readsBeforeSibling = state.walletSummaryReads;
+      await connector.evaluate(() => {
+        for (let i=0;i<window.parent.length;i++) window.parent.frames[i].postMessage({
+          type:"elastos:runtime-events",events:[{kind:"wallet.accounts.changed",scope:"wallet"}],
+        },"*");
+        window.parent.postMessage({type:"elastos:runtime-events",events:[{kind:"wallet.accounts.changed",scope:"wallet"}]},"*");
+      });
+      await page.waitForTimeout(150);
+      assert(state.walletSummaryReads === readsBeforeSibling, "a sibling connector cannot forward Home GUI events");
+      await notify();
+      try {
+        await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "1 account", null, {timeout:4000});
+      } catch (cause) {
+        const frames = await Promise.all([page.mainFrame(),homeGui,wallet].map(frame=>frame.evaluate(()=>({hints:window.fixtureAccountHints,label:document.querySelector("#wallet-account-state")?.textContent,status:document.querySelector("#wallet-status")?.textContent}))));
+        throw new Error("Account refresh failed: "+JSON.stringify({readsBefore:readsBeforeSibling,readsAfter:state.walletSummaryReads,frames}),{cause});
+      }
+      state.walletAccounts = [];
+      await notify();
+      await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "0 accounts", null, {timeout:4000});
     }
 
     const connectorClose = homeGui.locator(

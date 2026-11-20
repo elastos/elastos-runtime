@@ -93,6 +93,8 @@ export async function walletWindowLifetime(page,fixture,{holdRetirement=false}={
  await page.route('**/vendor/reown-appkit.js?*',async route=>{
   assert.equal(new URL(route.request().url()).origin,fixture.origin);const response=await route.fetch(),source=await response.text(),exported=source.match(/([\w$]+) as restoreWalletConnectEvm/);assert.ok(exported,'observe the real pinned provider export');
   let body=source.replace(exported[0],exported[1]+' as originalRestoreWalletConnectEvm')+`\nexport async function restoreWalletConnectEvm(...args){window.__walletFixtureLifetime.restoreCalls++;const provider=await ${exported[1]}(...args);window.__walletFixtureLifetime.observe(provider);return provider;}`;
+  const connected=source.match(/([\w$]+) as connectWalletConnectEvm/);assert.ok(connected,'observe the real pinned connect export');
+  body=body.replace(connected[0],connected[1]+' as originalConnectWalletConnectEvm')+`\nexport async function connectWalletConnectEvm(...args){const provider=await ${connected[1]}(...args);window.__walletFixtureLifetime.observe(provider);return provider;}`;
   if(holdRetirement){
    const disconnected=source.match(/([\w$]+) as disconnectWalletConnectEvm/);assert.ok(disconnected,'observe the real pinned disconnect export');
    body=body.replace(disconnected[0],disconnected[1]+' as originalDisconnectWalletConnectEvm')+`\nexport async function disconnectWalletConnectEvm(...args){try{await ${disconnected[1]}(...args);}finally{const life=window.__walletFixtureLifetime;if(life.holdRetirement)await new Promise(resolve=>{life.retirementHeld=true;life.releaseRetirement=resolve;});}}`;

@@ -77,7 +77,8 @@ async function setup(t,engine,mutation){
   if(!output)return;
   await mkdir(`${output}/${engine}`,{recursive:true});
   for(const theme of ['dark','light']){
-   await frame.evaluate(theme=>document.documentElement.dataset.elTheme=theme,theme);
+   await frame.evaluate(theme=>window.elastosTheme.set(theme),theme);
+   assert.equal(await frame.evaluate(()=>window.elastosTheme.resolved()),theme);
    const before=await frame.evaluate(()=>({top:document.querySelector('main').scrollTop,key:document.activeElement?.dataset.focusKey,focus:document.activeElement?.dataset.focus,focused:document.hasFocus()}));
    const wanted=await frame.locator('button:visible:enabled').evaluateAll(nodes=>nodes.map(node=>node.dataset.focusKey));
    await frame.locator('body').evaluate(body=>{body.tabIndex=-1;body.focus();});
@@ -89,7 +90,7 @@ async function setup(t,engine,mutation){
    }
    for(const key of wanted)assert.ok(reached.has(key),`${name}: ${key} is reachable with Tab`);
    await frame.evaluate(before=>{document.querySelector('main').scrollTop=before.top;const nodes=[...document.querySelectorAll('[data-focus-key]')];const node=nodes.find(node=>node.dataset.focusKey===before.key)||[...document.querySelectorAll('[data-focus]')].find(node=>node.dataset.focus===before.focus);if(node)node.focus({preventScroll:true});else if(before.focused)document.body.focus({preventScroll:true});},before);
-   await pause(40);await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`});
+   await pause(40);await page.screenshot({path:`${output}/${engine}/${name}-${theme}.png`,animations:'disabled'});
    const result=await frame.locator('main').evaluate(main=>({state:main.dataset.state,text:main.innerText,actions:[...main.querySelectorAll('button')].map(b=>({action:b.dataset.action,text:b.innerText,disabled:b.disabled})),width:main.scrollWidth,viewport:innerWidth,frameHeight:innerHeight,bodyScroll:document.body.scrollHeight>innerHeight}));
    assert.equal(result.frameHeight,522,`${name}: 38px Home title bar leaves 522px`);assert.ok(result.width<=result.viewport+1,`${name}: horizontal fit`);assert.equal(result.bodyScroll,false,`${name}: single scroll owner`);
    records.push({name,theme,...result,sourceIdentity,sourceHashes,environment:{node:process.version,platform:process.platform,arch:process.arch,browser:browser.version()}});
@@ -97,7 +98,7 @@ async function setup(t,engine,mutation){
   await writeFile(`${output}/${engine}/${name}.json`,JSON.stringify(records.filter(row=>row.name===name),null,2));
   await writeFile(`${output}/${engine}/states.json`,JSON.stringify(records,null,2));
  }
- async function qr(){for(let i=0;i<2&&!await frame.locator('[data-action=connect]').count();i++)await click('back-to-connection');await click('connect');await state('qr-shown');assert.equal(await frame.locator('dialog').count(),0,'no old dialog');assert.equal(await frame.locator('main img.connection-qr').count(),1);}
+ async function qr(){if(!await frame.locator('[data-action=connect],[data-action=start-over]').count()&&await frame.locator('[data-action=back-to-connection]').count())await click('back-to-connection');if(!await frame.locator('[data-action=connect],[data-action=start-over]').count()&&await frame.locator('[data-action=disconnect]').count()){await click('disconnect');await state('disconnected');}await click(await frame.locator('[data-action=start-over]').count()?'start-over':'connect');await state('qr-shown');assert.equal(await frame.locator('dialog').count(),0,'no old dialog');assert.equal(await frame.locator('main img.connection-qr').count(),1);}
  async function pair(){await page.evaluate(()=>window.copied='');await click('copy-link');await until(()=>page.evaluate(()=>window.copied.startsWith('wc:')),'clipboard gets pairing URI');await peer.pair(await page.evaluate(()=>window.copied));}
  async function link(){peer.choose({proposal:'approve',request:'sign'});await qr();await pair();await state('linked');assert.ok(fixture.state.verified>0);assert.ok(await frame.evaluate(()=>window.__walletFixtureLifetime.payloadStarts>0),'the barrier observes real pinned SDK payload work');assert.ok(await frame.evaluate(()=>window.__walletFixtureLifetime.engineStarts>0),'the barrier observes the real SDK message handlers');}
  async function approval(id='message',extra={}){fixture.state.approvals=[{request_id:id,connector_id:'wallet-walletconnect',capsule_id:'browser',requesting_origin:'https://example.test',reason:'Review the scripted message',status:'pending',intent:'credential',proof_type:'siwe',address:peer.address,chain_namespace:'eip155:8453',expires_at:Math.floor(Date.now()/1000)+600,...extra}];await refresh();if(extra.status==='approved'||extra.intent==='browser_typed_data_sign'||extra.expires_at<=Math.floor(Date.now()/1000)||extra.intent==='transaction_intent'&&extra.expires_at-Math.floor(Date.now()/1000)<300){await frame.getByRole('button',{name:'View requests',exact:true}).click();await frame.locator(`[data-focus-key="select-request:${id}"]`).click();}}
@@ -252,7 +253,8 @@ for(const engine of ['chromium','webkit'])test(`remaining live states and transa
  assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])test(`guest off and expired window in ${engine}`,windowTestOptions(engine,60000),async t=>{
- const r=await setup(t,engine);r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-off');await r.capture('internet-off');
+ const r=await setup(t,engine);r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('access-revoked');
+ r.fixture.setPermission('requested');await r.refresh();await r.state('internet-off');await r.capture('internet-off');
  r.fixture.state.guest=true;await r.frame.locator('[data-action=inbox]').click();r.fixture.setPermission('granted');await r.refresh();await r.state('internet-ready');
  r.fixture.setPermission('off');await r.click('connect');await r.state('guest-access');assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0,'owner-only recovery offers its real status check');await r.capture('guest-access');
  r.fixture.state.expiredLaunch=true;await r.reopen();await r.state('window-expired');await r.capture('window-expired');assert.equal(await r.frame.locator('button').count(),0,'unavailable N1 Close stays with the shell');
@@ -297,7 +299,7 @@ for(const engine of ['chromium','webkit'])test(`background wallet redraw keeps H
 for(const engine of ['chromium','webkit'])test(`unsupported wallet network is named and cannot be linked in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.peer.choose({chains:['eip155:8453','eip155:137']});await r.link();await r.peer.changeChain('eip155:137');await r.state('network-unsupported');
  assert.match(await r.frame.locator('main').innerText(),/Unsupported network.*137/);assert.equal(await r.frame.locator('[data-action=finish]').count(),0);assert.equal(r.fixture.state.verified,1);
- await r.capture('network-unsupported');await r.click('back-to-connection');await r.state('internet-ready');await r.click('connect');await r.state('qr-shown');assert.deepEqual(r.errors,[]);
+ await r.capture('network-unsupported');assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0);await r.peer.changeChain('eip155:8453');await r.state('linked');assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership','signature','result'])test(`relay drops and returns during ${phase} in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);
@@ -505,7 +507,7 @@ for(const engine of ['chromium','webkit'])test(`final shared loading retry and c
  await r.page.route('**/wallet/accounts',async route=>{entered();await held;await route.continue();});
  await r.reopen();await reading;await r.state('wallet-loading');await r.capture('wallet-loading');release();await r.state('linked');await r.page.unroute('**/wallet/accounts');
  await r.page.route('**/wallet/accounts',route=>route.fulfill({status:503,body:'Home unavailable'}));await r.reopen();await r.state('home-read-unavailable');await r.capture('home-read-unavailable');await r.page.unroute('**/wallet/accounts');await r.click('refresh-status');await r.state('linked');
- await r.click('back-to-connection');await r.state('internet-ready');await r.capture('connection-internet-controls');
+ await r.click('add-account');await r.state('add-account');await r.capture('connection-add-account');await r.click('back-to-connection');await r.state('linked');
 });
 
 for(const engine of ['chromium','webkit'])test(`a known hash survives leaving for the next request in ${engine}`,windowTestOptions(engine,60000),async t=>{

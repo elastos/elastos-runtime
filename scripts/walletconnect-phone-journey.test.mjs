@@ -62,7 +62,7 @@ test('round19 Turn Off cancels a silent ownership wait before the SDK deadline',
  const r=await setup(t);r.peer.choose({request:'silent'});await r.frame.locator('[data-action=connect],[data-action=start-over]').click();await r.pair();await until(()=>r.peer.trace.some(e=>e.kind==='request'),'phone receives ownership request');
  await r.frame.evaluate(()=>window.__walletFixtureLifetime.holdRetirement=true);
  t.after(()=>r.frame.evaluate(()=>window.__walletFixtureLifetime.releaseRetirement?.()).catch(()=>{}));
- r.fixture.setPermission('revoked');await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await r.frame.locator('[data-state=internet-off]').waitFor({timeout:5000});
+ r.fixture.setPermission('revoked');await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await r.frame.locator('[data-state=internet-refused]').waitFor({timeout:5000});
  await r.frame.waitForFunction(()=>window.__walletFixtureLifetime.retirementHeld);
  await r.frame.evaluate(()=>{const life=window.__walletFixtureLifetime;life.holdRetirement=false;life.releaseRetirement();});
  r.fixture.setPermission('granted');await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await r.frame.locator('[data-action=connect],[data-action=start-over]').click({timeout:2000});await r.frame.locator('[data-state=qr-shown]').waitFor({timeout:15000});
@@ -99,17 +99,18 @@ test('round19 an approval on another network offers a working new-connection act
  await r.frame.locator('[data-action=connect],[data-action=start-over]').click();await r.frame.locator('[data-state=qr-shown]').waitFor({timeout:15000});
 });
 
-test('round19 Review during saved-session restore waits for the same live adapter',{timeout:60000},async t=>{
+test('round19 saved-session restore withholds Review until the same live adapter is ready',{timeout:60000},async t=>{
  const r=await setup(t);await r.link();await r.leave();
  r.fixture.state.approvals=[{request_id:'restore-review',status:'pending',address:r.peer.address,chain_namespace:'eip155:8453',intent:'credential',proof_type:'siwe',connector_id:'wallet-walletconnect',expires_at:Math.floor(Date.now()/1000)+600}];
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),restoring=new Promise(resolve=>{entered=resolve;});let first=true;
  await r.page.route('**/relay-admission',async route=>{if(first){first=false;entered();await held;}await route.continue();});
  t.after(()=>release());await r.reopen({ready:false});await restoring;
  try{
- await r.frame.locator('[data-state=request-waiting]').waitFor();const configReads=r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length;await r.frame.getByRole('button',{name:/^Send to / }).click();
- await r.frame.locator('[data-state=preparing-request]').waitFor();await delay(300);assert.equal(r.fixture.state.completed,0);assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length,configReads,'Review waits before preparing a second adapter');assert.equal(r.peer.trace.filter(e=>e.kind==='proposal').length,1,'Send waits for the restoring adapter');
+ await r.frame.locator('[data-state=wallet-loading]').waitFor();const configReads=r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length;
+ await delay(300);assert.equal(r.fixture.state.completed,0);assert.equal(await r.frame.locator('[data-action=send-request]').count(),0,'Review is withheld until the saved session is known');assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length,configReads,'restoration keeps one adapter');assert.equal(r.peer.trace.filter(e=>e.kind==='proposal').length,1,'restoration never starts a new proposal');
  }finally{release();}
- await r.frame.locator('[data-state=request-done]').waitFor({timeout:15000});
+ await r.frame.locator('[data-state=request-waiting]').waitFor();await r.frame.getByRole('button',{name:/^Send to / }).click();
+ await r.frame.locator('[data-state=request-done]').waitFor({timeout:15000});assert.equal(r.peer.trace.filter(e=>e.kind==='proposal').length,1,'Review reuses the restored phone session');
  assert.equal(await r.frame.locator('iframe').count(),0,'optional website attestation has no direct frame route');
  assert.equal(r.fixture.state.completed,1);assert.equal(r.peer.trace.some(event=>event.kind==='deleted'),false,'restoring for Review keeps the phone session');
 });

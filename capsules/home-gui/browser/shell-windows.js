@@ -2166,6 +2166,8 @@ function fitLaunchedWindow(entry) {
 
 function installFrameAutoFit(node, frame) {
   cleanupFrameAutoFit(node);
+  // Home owns geometry for opaque app frames; their documents stay private.
+  if (frame.hasAttribute("sandbox") && !frame.sandbox.contains("allow-same-origin")) return;
 
   let rafId = 0;
   const scheduleFit = () => {
@@ -2392,7 +2394,7 @@ function walletConnectorWindowSpec() {
 }
 
 function fitWindowToFrame(node, frame) {
-  if (!node || !frame || node.dataset.maximized === "true" || node.dataset.snap) {
+  if (!node || !frame || frame.hasAttribute("sandbox") && !frame.sandbox.contains("allow-same-origin") || node.dataset.maximized === "true" || node.dataset.snap) {
     return;
   }
   try {
