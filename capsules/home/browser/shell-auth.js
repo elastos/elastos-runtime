@@ -421,7 +421,7 @@ function renderUnlockChecking() {
     unlockTitle.textContent = "Sign in";
   }
   if (unlockCopy) {
-    unlockCopy.textContent = "Use your passkey to unlock your data, apps and desktop.";
+    unlockCopy.textContent = "Use your passkey to sign in to your apps and desktop.";
   }
   if (unlockPrimary) {
     unlockPrimary.textContent = "Use passkey";
@@ -465,7 +465,7 @@ function renderUnlockMode({ registered, guestRegistrationEnabled }) {
       unlockCopy.textContent = "Use a passkey to create your own guest account.";
     } else {
       unlockCopy.textContent = registered
-        ? "Use your passkey to unlock your data, apps and desktop."
+        ? "Use your passkey to sign in to your apps and desktop."
         : "Create the admin passkey for this Home.";
     }
   }

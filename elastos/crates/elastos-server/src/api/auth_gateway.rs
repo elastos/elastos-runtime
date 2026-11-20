@@ -1839,8 +1839,8 @@ async fn full_recovery_bundle_export_inner(
         },
         "created_at": now,
         "instructions": [
-            "Keep this Full Recovery Bundle offline. Anyone with it can recover this ElastOS user root, included built-in Wallet accounts, and the signed People identity with its contacts.",
-            "Import it only through ElastOS System recovery on a runtime you control."
+            "Keep this Recovery Kit private and offline. It restores the included keys and any saved Profile and contacts. Keep copies of your files elsewhere.",
+            "To use it, choose Recover this Home with your Recovery Kit on the Home sign-in screen, or Import Recovery Kit in System."
         ]
     });
     if let Some(people_identity) = people_identity {
@@ -3307,10 +3307,8 @@ fn create_recovery_kit_for_principal(
         crypto,
         created_at,
         instructions: vec![
-            format!(
-                "Keep this {label} offline. Anyone with it can recover this ElastOS user root."
-            ),
-            "Import it only through ElastOS System recovery on a runtime you control.".to_string(),
+            "Keep this Recovery Kit private and offline. It restores access to encrypted files that you kept separately.".to_string(),
+            "To use it, choose Recover this Home with your Recovery Kit on the Home sign-in screen, or Import Recovery Kit in System.".to_string(),
         ],
     })
 }

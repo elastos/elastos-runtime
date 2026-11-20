@@ -124,7 +124,7 @@ show_help() {
     echo "  --install-only        Install Runtime without setup or opening Home"
     echo "  --isolated            Keep this Home out of the shared Community room"
     echo "  --uninstall           Remove the Runtime and its components; keep your data"
-    echo "  --remove-data         With --uninstall, also delete your identity, wallets and files."
+    echo "  --remove-data         With --uninstall, also delete your identity, wallets and files"
     echo "  --help                Show this help"
     echo ""
     echo -e "${BOLD}What gets installed:${NC}"
@@ -1401,7 +1401,7 @@ uninstall_installation() {
         || die "Close this installation's Runtime and retry; nothing was removed"
     if [[ "$remove_data" == true ]]; then
         warn "Deleting $(display_path "$data_dir"): your identity, wallets, recovery material and files"
-        warn "A Recovery Kit you saved earlier brings back your identity and keys. It does not bring back your files."
+        warn "A Recovery Kit restores the keys and any Profile saved in it. It does not contain your files."
     fi
     uninstall_files remove "$install_dir" "$data_dir" "$remove_data" \
         || die "Uninstall did not finish; run it again after fixing the reason above"

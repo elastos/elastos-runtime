@@ -2829,11 +2829,11 @@ const RECOVERY_ROOT_CHECKED_SENTENCE = "No unencrypted file was found in your pr
 function recoveryAttentionNote(status) {
   const notes = [];
   if (status?.required_actions?.includes("finish_interrupted_principal_root_migration")) {
-    notes.push("An earlier encryption step did not finish. Home will not start again until it is finished or undone. Reinstalling ElastOS does that and keeps your files. If install stops with a message that it recovered an incomplete principal-root migration, run install once more.");
+    notes.push('An earlier encryption step did not finish. Home will not start again until it is finished or undone. Reinstalling ElastOS does that and keeps your files. If the installer stops with "recovered an incomplete principal-root migration", run it once more.');
   }
   if (status?.required_actions?.includes("migrate_declared_plaintext_objects")) {
     const notStarting = status.protection_configured === true ? "; until they are, Home will not start again" : "";
-    notes.push(`Some files in your protected Home folders are not encrypted yet${notStarting}. Saving your Recovery Kit encrypts them after you approve with your passkey. One save takes at most 64 files and 64 MiB in total, each file up to 16 MiB. If more are waiting, or one is larger, the save is refused and Home names the file. Move it out of your protected Home folders and save again (Library takes uploads up to 100 MiB).`);
+    notes.push(`Some files in your protected Home folders are not encrypted yet${notStarting}. Save your Recovery Kit and confirm with your passkey to encrypt them. If the save is refused, Home names the files and says what to move. Follow that message and save again.`);
   }
   const count = Number(status?.objects_needing_attention_count) || 0;
   const first = Array.isArray(status?.objects_needing_attention) ? status.objects_needing_attention[0] : null;
@@ -3152,8 +3152,8 @@ function recoveryImportSuccessMessage(response) {
   const people = response && response.people_identity_restore;
   if (people && readText(people.status) === "restored") {
     parts.push(people.contact_store_restored
-      ? "Restored your signed People identity and contacts."
-      : "Restored your signed People identity.");
+      ? "Restored your Profile and contacts."
+      : "Restored your Profile.");
     if (people.rebound_device === true) {
       parts.push("This device is now authorized for your Profile; contacts learn it automatically.");
     }
