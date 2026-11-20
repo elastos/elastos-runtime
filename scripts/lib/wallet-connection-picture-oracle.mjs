@@ -5,7 +5,7 @@ export function contractCopy(expected, row, view) {
   const facts=ruleFacts(row,shared,expected);
   const provider=shared.messages.find(r=>r.id===row.provider)?.message.snapshot;
   const known=provider?.availability==='found'?({'io.metamask':'MetaMask','com.brave.wallet':'Brave Wallet',unisat:'UniSat'}[provider.providerId]):null;
-  const name=row.window==='walletconnect'?row.local.account?.name||'WalletConnect':known||(row.window==='unisat'?'UniSat':'your wallet');
+  const name=row.window==='walletconnect'?row.local.account?.name||'your wallet':known||(row.window==='unisat'?'UniSat':'your wallet');
   const seed=row.summaryInput||shared.n7PrivateSummaries.find(r=>r.id===(row.summary||row.summarySeed))?.summary;
   const raw={...seed,...(!row.summary?row.provisionalSummary:{})};
   const app=raw?.requesting_app_name||({browser:'Browser',notes:'Notes'}[raw?.capsule_id])||'Browser',site=raw?.requesting_origin||'the requesting site';

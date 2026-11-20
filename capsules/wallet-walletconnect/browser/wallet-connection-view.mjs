@@ -182,7 +182,7 @@ export function connectionView(input) {
   requireValue(boolOrNull(safety), 'payment safety');
   const providerName=provider?.availability==='found'?providerCopy[provider.providerId]:null;
   const extension=window==='metamask'||window==='unisat';
-  const name = extension ? providerName||(window==='metamask'?'your wallet':'UniSat') : account?.name || brands[window];
+  const name = extension ? providerName||(window==='metamask'?'your wallet':'UniSat') : account?.name || (window==='walletconnect'?'your wallet':brands[window]);
   const title=extension?providerName||(window==='metamask'?'MetaMask or Brave Wallet':'UniSat'):brands[window];
   const headingMark=extension?(providerName&&provider.providerId==='io.metamask'?'metamask':providerName&&provider.providerId==='unisat'?'unisat':'wallet'):window;
   const home = displayOrigin(input.homeOrigin);
