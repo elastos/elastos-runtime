@@ -63,7 +63,7 @@ export function contractCopy(expected, row, view) {
     if(row.stage==='account-unavailable')result.status=metamask?`Home cannot confirm access to this account in ${name}.`:'Home cannot use this UniSat account right now.';
     if(row.stage==='request-unsendable')result.status=metamask?`Home cannot confirm access to the account this request needs in ${name}.`:'Home cannot use the UniSat account this request needs.';
     if(metamask){
-      if(row.stage==='linked'){result.status='Account saved in Wallet.';result.notice="To stop sharing with Home, remove this Home's connection in your wallet. Your account stays in Wallet.";}
+      if(row.stage==='linked'){result.status='Account saved in Wallet.';result.notice=`To stop sharing with Home, remove this Home's connection in ${name}. Your account stays in Wallet.`;}
       if(row.stage==='request-network-declined')result.status=`Home could not confirm the requested network in ${name}.`;
       if(row.stage==='transaction-extension')result.notice=`Check the transaction in ${name}. Stopping here does not cancel the request in ${name}.`;
       if(row.stage==='transaction-timeout')result.status='Home does not know if the transaction was sent.';
