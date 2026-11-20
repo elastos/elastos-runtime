@@ -77,6 +77,12 @@ class MessageNetwork:
     def run(self, name, *args):
         return command(*self.prefix(name), *args)
 
+    def free_port(self, name, kind):
+        script = "import socket,sys; s=socket.socket(socket.AF_INET,int(sys.argv[1])); s.bind(('127.0.0.1' if int(sys.argv[1])==socket.SOCK_STREAM else sys.argv[2],0)); print(s.getsockname()[1])"
+        result = subprocess.run([*self.prefix(name), sys.executable, "-c", script, str(kind), self.home_ips[name]],
+                                check=True, capture_output=True, text=True, timeout=10)
+        return int(result.stdout)
+
     def block_paths(self, blocked):
         # This rule affects Carrier across the owned NAT only. The browser and
         # gateway share loopback and stay available throughout the failure.

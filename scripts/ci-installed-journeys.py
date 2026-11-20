@@ -2028,6 +2028,9 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host", node_
                     for name in ("sender_delivered",))
             and row["negative_controls"]["sender_delivered"].get("api_state") == "pending"
             and row["negative_controls"]["sender_delivered"].get("ui_detail") == "Sending"
+            and (network_arrangement != "relay-to-direct" or all(
+                observation.get("endpoint_id") == row.get("promotion_candidates", {}).get(observation.get("home"))
+                for observation in row.get("direct_endpoint_observations", []) if observation.get("home") in ("a", "b")))
             and (network_arrangement == "same-host" or
                  bool(row.get("route_observations")) and
                  all(route in {"direct", "relay"} for route in row["route_observations"]) and
@@ -2099,12 +2102,14 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
         decoded = json.loads(base64.b32decode(ticket.upper() + "=" * (-len(ticket) % 8)))
         endpoints = decoded["endpoints"]
         assert len(endpoints) == 1, "fixture ticket must describe one installed Home"
+        if name in record.get("promotion_candidates", {}):
+            assert endpoints[0]["id"] == record["promotion_candidates"][name], "operator hint identity differs from the actual Home"
         observed = endpoints[0]["addrs"]
         if topology:
             assert any(addr.get("Relay") == relay_url for addr in observed), "ticket lacks the real fixture relay"
         else:
             assert observed == [{settings["ticket_transport"]: owner.carrier}], "ticket differs from configured Carrier address"
-        record["direct_endpoint_observations"].append({"home": name, "ticket_addresses": observed})
+        record["direct_endpoint_observations"].append({"home": name, "ticket_addresses": observed, "endpoint_id": endpoints[0]["id"]})
     def seed_promotion_routes():
         # A mapping-availability fixture, not a second discovery system. Seed
         # operator-owned direct candidates while UDP is still blocked; the live
@@ -2157,7 +2162,8 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
         copied = fresh_fixture(build.home, build.data, destination, include_engine=False)
         assert installed_message_identity(copied, build.repo) == build.identity
         bind_host = topology.home_ips[name] if topology else settings["bind_host"]
-        carrier = f"{bind_host}:{free_port(socket.SOCK_DGRAM)}"
+        carrier_port = topology.free_port(name, socket.SOCK_DGRAM) if topology else free_port(socket.SOCK_DGRAM)
+        carrier = f"{bind_host}:{carrier_port}"
         with (copied / "config.toml").open("a") as config:
             config.write(f'carrier_bind_addr = "{carrier}"\n')
             if topology and name == NODE:
@@ -2166,7 +2172,8 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
                 config.write(f'carrier_relay_tls_cert = "{root / "relay.crt"}"\n')
                 config.write(f'carrier_relay_tls_key = "{root / "relay.key"}"\n')
                 config.write('carrier_relay_discovery_bind_addr = "203.0.113.1:7842"\n')
-        fixtures[name] = Owner(destination, copied, f"127.0.0.1:{free_port()}", carrier, build)
+        api_port = topology.free_port(name, socket.SOCK_STREAM) if topology else free_port()
+        fixtures[name] = Owner(destination, copied, f"127.0.0.1:{api_port}", carrier, build)
         record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos"),
                                 "carrier_bind_address": carrier})
     def admit(name):

@@ -80,7 +80,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
                          for index,name in enumerate(('a','b','c','community'))],
                 'process_cleanup':[{'status':'passed', 'after':{'runtime':0}} for _ in range(7)],
                 'browser_cross_home_http_requests':0,
-                'direct_endpoint_observations':[{'home':name,'ticket_addresses':[{'Ip':f'127.0.0.1:{1025+index}'}]}
+                'direct_endpoint_observations':[{'home':name,'endpoint_id':{'community':'0','a':'a','b':'b','c':'c'}[name]*64,'ticket_addresses':[{'Ip':f'127.0.0.1:{1025+index}'}]}
                     for index,name in ((3,'community'),(3,'community'),(0,'a'),(1,'b'),(3,'community'),(2,'c'),(1,'b'))],
                 'transitions':self.transitions(),
                 'results':{name:'passed' for name in ('community_post','direct_received','sender_delivered',
@@ -324,7 +324,7 @@ class TwoHomeReceiptTests(unittest.TestCase):
             home['carrier_bind_address'] = host + ':' + home['carrier_bind_address'].rsplit(':', 1)[1]
         for observed in row['direct_endpoint_observations']:
             observed['ticket_addresses'] = [{'Relay':'https://203.0.113.1:8443/'}]
-        row.update(meeting_point={'origin':'https://203.0.113.1:8443/', 'certificate_sha256':'a'*64}, route_observations=['relay', 'direct'], all_carrier_paths_blocked=True, discovery_packets=12,
+        row.update(promotion_candidates={'a':'a'*64,'b':'b'*64}, meeting_point={'origin':'https://203.0.113.1:8443/', 'certificate_sha256':'a'*64}, route_observations=['relay', 'direct'], all_carrier_paths_blocked=True, discovery_packets=12,
                    delivery_warning_count=2,
                    visible_failure={'reason':'peer_unreachable', 'ui_detail':'Unconfirmed',
                                     'elapsed_ms':65000, 'retry_same_message':True, 'b_alive':True, 'b_health':200, 'dropped_packets':12})
@@ -332,6 +332,9 @@ class TwoHomeReceiptTests(unittest.TestCase):
         row['results']['network_recovery'] = 'passed'
         check = JOURNEY['two_home_receipt_valid']
         self.assertTrue(check(row, self.identity(), 'relay-to-direct'))
+        changed = copy.deepcopy(row)
+        changed['promotion_candidates']['a'] = 'other'
+        self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
         changed = copy.deepcopy(row)
         changed['direct_endpoint_observations'][0]['ticket_addresses'] = [{'Relay':'https://foreign.invalid/'}]
         self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
