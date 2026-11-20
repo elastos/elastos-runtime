@@ -13,15 +13,15 @@ const SWITCH_LABEL: &str = "Check for updates automatically";
 const ON_TEXT: &str = "Home checks every 6 to 7 hours while it runs. The update server sees your internet address, not your name or version.";
 const OFF_TEXT: &str = "Home checks only when you open System.";
 const SAVE_ERROR: &str = "Home could not save this setting. Free some disk space on the computer that runs Home, then try again.";
-const SAVE_REPAIR: &str = "Home could not save background checks. On the device that runs Home, check free disk space, write access and private ownership of Local/Shared/System/Updates and its .notice.lock file inside this Home's data folder. Move notice.json aside if it is a folder, then try again.";
+const SAVE_REPAIR: &str = "Home could not save update checks. On the device that runs Home, check free disk space, write access and private ownership of Local/Shared/System/Updates and its .notice.lock file inside this Home's data folder. Move notice.json aside if it is a folder, then try again.";
 const NOTICE_TITLE: &str = "Update available";
 const NOTICE_BODY: &str = "ElastOS {version} is ready to install.";
 const FOLDER_TEXT: &str = "Update checks are off because Home cannot save its settings. Free some disk space on the computer that runs Home, then turn this on.";
-const FOLDER_REPAIR: &str = "Background checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
+const FOLDER_REPAIR: &str = "Update checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
 pub(super) const INVALID_VERSION_TEXT: &str = "Home cannot check for updates. Ask an admin to repair ElastOS on the computer that runs Home. Home's log has the repair steps.";
 const INVALID_VERSION_REPAIR: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
 const UNREADABLE_TEXT: &str = "Update checks are off because Home could not read this setting. Turn it on to try again.";
-const UNREADABLE_REPAIR: &str = "Background checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
+const UNREADABLE_REPAIR: &str = "Update checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,7 +85,7 @@ fn read_state(path: &Path) -> anyhow::Result<NoticeState> {
     anyhow::ensure!(state.schema == SCHEMA, "unknown update settings schema");
     anyhow::ensure!(
         state.accounts.len() <= 256,
-        "too many update acknowledgements"
+        "Home could not dismiss this notice."
     );
     Ok(state)
 }
