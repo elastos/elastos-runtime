@@ -808,7 +808,7 @@ async fn test_home_cli_terminal_developer_mode_policy_matrix() {
                         .unwrap();
                     assert_eq!(
                         String::from_utf8_lossy(&body),
-                        "Only the Home owner can use the web terminal."
+                        "Only an admin can use the web terminal."
                     );
                 }
             }
