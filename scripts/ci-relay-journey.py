@@ -97,7 +97,7 @@ def main():
                         "--built-runtime", str(runtime_input), "--platform", "linux-amd64"], check=True, timeout=60)
         fixture_environment = dict(os.environ, ELASTOS_RELAY_FIXTURE_RELEASE="1", ELASTOS_RELAY_FIXTURE_URL=origin,
                                    ELASTOS_RELAY_FIXTURE_CERT=str(certificate), ELASTOS_RELAY_FIXTURE_KEY=str(key))
-        setup = 'set -eu; mount --make-rprivate /; mount -t tmpfs tmpfs /run; mkdir /run/netns; exec "$@"'
+        setup = 'set -eu; mount --make-rprivate /; mount -t tmpfs tmpfs /run; mkdir /run/netns; ip link set lo up; exec "$@"'
         arrangements = ("two-nat", "forced-relay", "relay-to-direct", "same-host") if args.matrix else (args.network_arrangement,)
         for arrangement in arrangements:
             evidence = work / ("evidence-" + arrangement)
