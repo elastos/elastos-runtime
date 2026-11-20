@@ -731,6 +731,7 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
         );
     }
     assert_eq!(summary["available"], false);
+    assert_eq!(summary["message"], summary["background_checks"]["message"]);
     assert_eq!(summary["can_apply"], false);
     assert!(!summary["message"]
         .as_str()

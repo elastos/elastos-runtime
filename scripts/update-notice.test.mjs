@@ -69,7 +69,7 @@ async function fixture() {
       if(summary.runtime_update && state.settings.message===copy("INVALID_VERSION_TEXT")) {
         summary.source.installed_version="broken";
         summary.runtime_update={configured:true,available:false,can_apply:false,checking:false,current_version:"broken",
-          message:"Home cannot check for updates. The computer running Home needs attention. Check Home's log for repair details.",background_checks:state.settings};
+          message:copy("INVALID_VERSION_TEXT"),background_checks:state.settings};
       }
       jsonResponse(response,summary);return true;
     }
@@ -278,6 +278,7 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       f.state.settings=initial;f.state.failWrite=true;f.state.failStatus=409;
       await page.reload();
       await system.getByText(initial.message,{exact:true}).waitFor();
+      assert.equal(await system.getByText(initial.message,{exact:true}).count(),1,"the repair text appears once");
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
       await system.getByText(copy('SAVE_ERROR'),{exact:true}).waitFor();

@@ -4087,7 +4087,8 @@ function runtimeUpdateCanApply() {
 }
 
 function showRuntimeUpdateStatus(message) {
-  if (runtimeUpdateStatusNode) runtimeUpdateStatusNode.textContent = message;
+  if (runtimeUpdateStatusNode) runtimeUpdateStatusNode.textContent =
+    message === runtimeUpdate?.background_checks?.message ? "" : message;
 }
 
 function scheduleRuntimeUpdateRefresh(delay) {
