@@ -6,12 +6,14 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 const security = read("SECURITY.md");
 const browser = read("elastos/crates/elastos-server/src/api/gateway_browser.rs");
 
+const PRINCIPAL_ROOT_ENCRYPTION_LEAD =
+  "After protection exists, Home encrypts a write only when the write goes through\nprincipal-root protection.";
+
 const STORAGE_TABLE_ROWS = [
   {
     name: "Home recovery authority",
     encrypted: "Recovery material only; other auth state is plain",
     recovery: "Home recovery authority and data key (not passkeys or sessions)",
-    recoveryPartial: true,
   },
   {
     name: "Assistant conversations",
@@ -36,13 +38,13 @@ const STORAGE_TABLE_ROWS = [
   {
     name: "Documents:",
     encrypted:
-      "Bodies Home writes after protection exists; existing files over 16 MiB and over batch limits stay plain until re-written; metadata and published bytes are plain",
+      "Bodies Home writes after protection exists use principal-root protection; existing files over 16 MiB and over batch limits stay plain until re-written; a file left plain for these reasons also blocks Recovery Kit export; metadata and published bytes are plain",
     recovery: "Data key; files separate",
   },
   {
     name: "Library files",
     encrypted:
-      "Private files/records Library writes after protection exists; earlier plain files outside declared migration folders can remain plain until Library migrates or rewrites them; published bytes and shared index are plain",
+      "Private files and records Library writes after protection exists use principal-root protection; an earlier plain file stays plain if it is over 16 MiB, if its batch is over 64 files or 64 MiB, or if it is outside the migration folders; a file left plain for one of these reasons also blocks Recovery Kit export; published bytes and shared index are plain",
     recovery: "Data key; files separate",
   },
   {
@@ -74,9 +76,20 @@ const STORAGE_TABLE_ROWS = [
   {
     name: "Home settings:",
     encrypted:
-      "Settings Home writes after protection exists; same in-place limits as Documents; browser preferences are separate",
+      "Settings Home writes after protection exists use principal-root protection, including `preferences.json`; same in-place limits as Documents; the Browser profile disk stays plain",
     recovery: "Data key; files separate",
   },
+];
+
+const RECOVERY_STOLEN_DEVICE_PATHS = [
+  "SECURITY.md",
+  "docs/INSTALL.md",
+  "docs/GLOSSARY.md",
+  "docs/STORAGE_AND_ACCESS.md",
+  "docs/ARCHITECTURE.md",
+  "docs/CAPSULE_MODEL.md",
+  "docs/CAPSULE_AUTHORING.md",
+  "README.md",
 ];
 
 function storageTable(document) {
@@ -97,12 +110,38 @@ export function checkStorageTableCells(document) {
   for (const expected of STORAGE_TABLE_ROWS) {
     const { encrypted, recovery } = rowCells(document, expected.name);
     assert.equal(encrypted, expected.encrypted, `${expected.name}: encrypted column`);
-    if (expected.recoveryPartial) {
-      assert.ok(recovery.includes("Home recovery authority and data key"), `${expected.name}: recovery`);
-      assert.match(recovery, /\bnot passkeys or sessions\b/i, "exclude sign-in state from recovery");
-    } else {
-      assert.equal(recovery, expected.recovery, `${expected.name}: recovery column`);
-    }
+    assert.equal(recovery, expected.recovery, `${expected.name}: recovery column`);
+  }
+}
+
+export function checkPrincipalRootEncryptionLead(document) {
+  assert.ok(
+    document.includes(PRINCIPAL_ROOT_ENCRYPTION_LEAD),
+    "SECURITY must name principal-root protection instead of whole-Home encryption",
+  );
+  assert.doesNotMatch(
+    document,
+    /After protection exists, Home encrypts each file it writes/,
+    "SECURITY must not promise encryption for every write",
+  );
+}
+
+export function checkRecoveryStolenDeviceStatements(
+  paths = RECOVERY_STOLEN_DEVICE_PATHS,
+  readDocument = read,
+) {
+  for (const path of paths) {
+    const document = readDocument(path);
+    assert.doesNotMatch(
+      document,
+      /stolen device or profile key requires a new identity/i,
+      `${path}: stolen-device recovery must not require a new identity`,
+    );
+    assert.match(
+      document,
+      /new passkey[\s\S]{0,120}does not[\s\S]{0,24}replace/i,
+      `${path}: passkey does not rotate Profile or Wallet keys restored from the Kit`,
+    );
   }
 }
 
@@ -181,7 +220,10 @@ test("the storage check rejects false Browser path, encryption, and recovery cla
   }
 });
 
-test("Security storage table locked encrypted and recovery cells", () => checkStorageTableCells(security));
+test("Security storage table locks every encrypted and recovery cell exactly", () => {
+  checkStorageTableCells(security);
+  checkPrincipalRootEncryptionLead(security);
+});
 
 test("the storage table check rejects false encrypted and recovery cells", () => {
   const documents = rowCells(security, "Documents:");
@@ -197,6 +239,26 @@ test("the storage table check rejects false encrypted and recovery cells", () =>
     community.row.replace(community.recovery, "All community history"),
   );
   assert.throws(() => checkStorageTableCells(mutatedRecovery), /recovery column/);
+
+  const home = rowCells(security, "Home recovery authority");
+  const mutatedHomeRecovery = security.replace(
+    home.row,
+    home.row.replace(home.recovery, `${home.recovery}; restores all document files`),
+  );
+  assert.throws(() => checkStorageTableCells(mutatedHomeRecovery), /recovery column/);
+
+  const library = rowCells(security, "Library files");
+  const mutatedLibraryEncrypted = security.replace(
+    library.row,
+    library.row.replace(library.encrypted, "All Library files encrypted on disk"),
+  );
+  assert.throws(() => checkStorageTableCells(mutatedLibraryEncrypted), /encrypted column/);
+
+  const strongerLead = security.replace(
+    PRINCIPAL_ROOT_ENCRYPTION_LEAD,
+    "After protection exists, Home encrypts each file it writes.",
+  );
+  assert.throws(() => checkPrincipalRootEncryptionLead(strongerLead));
 });
 
 test("Security Recovery Kit export markers, product name, and storage table cells", () => {
@@ -215,15 +277,21 @@ test("Security Recovery Kit export markers, product name, and storage table cell
   assert.match(auth, /\.insert\("people_identity"\.to_string\(\), people_identity\)/);
   assert.doesNotMatch(auth, /"community_history"/,
     "full export must not claim Community history in the bundle object");
+  assert.match(
+    auth,
+    /download_password[\s\S]*?filter\(\|value\| !value\.is_empty\(\)\)[\s\S]*?None => bundle,/,
+    "empty Kit password writes plain JSON",
+  );
+  assert.match(
+    security,
+    /leave the password empty[\s\S]{0,80}plain JSON that includes Wallet private keys/,
+  );
   checkStorageTableCells(security);
+  checkPrincipalRootEncryptionLead(security);
+  checkRecoveryStolenDeviceStatements();
   for (const path of ["SECURITY.md", "docs/INSTALL.md", "docs/GLOSSARY.md", "docs/STORAGE_AND_ACCESS.md"]) {
     assert.doesNotMatch(read(path), /full (?:recovery )?bundle/i,
       `${path}: use System's Recovery Kit name for the recovery file`);
-    assert.match(
-      read(path),
-      /new passkey[\s\S]{0,120}does not[\s\S]{0,24}replace/i,
-      `${path}: passkey does not rotate Profile or Wallet keys restored from the Kit`,
-    );
   }
 });
 
@@ -231,4 +299,13 @@ test("the recovery coverage check rejects the internal-record-only description",
   assert.throws(() => checkStorageTableCells(security.replace(
     "Profile identity and contacts present at export", "Data key; files separate",
   )));
+});
+
+test("the recovery stolen-device check rejects a restored new-identity claim", () => {
+  const path = "docs/ARCHITECTURE.md";
+  const mutated = `${read(path)}\nRecovery from a stolen device or profile key requires a new identity.`;
+  assert.throws(
+    () => checkRecoveryStolenDeviceStatements([path], () => mutated),
+    /stolen-device recovery/,
+  );
 });
