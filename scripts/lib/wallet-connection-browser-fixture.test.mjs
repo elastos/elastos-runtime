@@ -1,12 +1,12 @@
+import {windowTestOptions} from './walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync} from 'node:fs';
 import {browserFixture,playwright,closeSmokeBrowsers} from './wallet-connection-browser-fixture.mjs';
 
 test.after(closeSmokeBrowsers);
 
 for(const engine of ['chromium','webkit'])test(`reused ${engine} keeps fresh contexts and closes each fixture independently`,{
- skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in content-sandbox CI':false,
+ skip:windowTestOptions(engine).skip,
 },async()=>{
  let first,second;
  try{

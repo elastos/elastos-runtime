@@ -1,6 +1,6 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync} from 'node:fs';
 import {writeFile} from 'node:fs/promises';
 import {browserFixture,playwright,temporaryProof} from './lib/wallet-connection-browser-fixture.mjs';
 import {approvalArguments,approvalCatalog,reviewOrigin} from './lib/wallet-connection-approval-cases.mjs';
@@ -58,7 +58,7 @@ test('R4: timeout notices have no trailing whitespace',()=>{
 });
 
 for(const engine of ['chromium','webkit']){
- const skip=engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit runs in content-sandbox CI':false;
+ const skip=windowTestOptions(engine).skip;
  test(`R4 F-A: caller-owned redraw continuity in ${engine} at 320x182`,{skip,timeout:120000},async t=>{
   const f=await browserFixture(engine,{width:320,height:182});
   try{

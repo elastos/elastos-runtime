@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
+
 import { createServer } from "node:http";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -7,6 +9,12 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
+const engine = process.env.HOME_WALLET_CONNECTOR_ENGINE || "chromium";
+const {skip} = windowTestOptions(engine);
+if (skip) console.log(`Home wallet connector launch smoke in ${engine} # SKIP ${skip}`);
+else await runSmoke();
+
+async function runSmoke() {
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const principalId = "did:elastos:fixture-wallet-connector-launch";
 const homeAuthorityToken = "fixture-home-authority-token";
@@ -492,7 +500,6 @@ const origin = await listen();
 let browser = null;
 try {
   const engines = await importProductSmokePlaywright();
-  const engine = process.env.HOME_WALLET_CONNECTOR_ENGINE || "chromium";
   assert(["chromium", "webkit"].includes(engine), "named browser engine required");
   const executablePath = configuredBrowserExecutable();
   browser = await engines[engine].launch({
@@ -901,4 +908,6 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   await new Promise((resolveClose) => server.close(resolveClose));
+}
+
 }

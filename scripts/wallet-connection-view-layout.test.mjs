@@ -1,5 +1,5 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -25,7 +25,7 @@ const frameGeometry = {};
 const interactionChecks = [];
 test.after(()=>proofDirectory.cleanup());
 
-for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_view: render-only ${engine}, both themes and all states`, {skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in test-elastos content-sandbox browser job':false}, async () => {
+for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_view: render-only ${engine}, both themes and all states`, {skip:windowTestOptions(engine).skip}, async () => {
   const browser = await playwright[engine].launch({headless:true});
   try {
     const context = await browser.newContext({serviceWorkers:'block'});
@@ -189,7 +189,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
   }
 });
 
-for(const engine of ['chromium','webkit'])test(`isolated names share text baselines and linked screens retain their design spacing in ${engine}`,{skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in test-elastos content-sandbox browser job':false},async()=>{
+for(const engine of ['chromium','webkit'])test(`isolated names share text baselines and linked screens retain their design spacing in ${engine}`,{skip:windowTestOptions(engine).skip},async()=>{
  const {browserFixture}=await import('./lib/wallet-connection-browser-fixture.mjs');
  const f=await browserFixture(engine);
  try{

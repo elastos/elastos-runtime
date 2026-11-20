@@ -1,6 +1,6 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
 import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
 import { fixture as baseFixture } from './lib/wallet-extension-window-fixture.mjs';
 const breaks = {
@@ -27,7 +27,7 @@ const fixture = (browser,kind,options={}) => baseFixture(browser,kind,{...option
   const mutate=breaks[process.env.EXTENSION_WINDOW_BREAK];assert(mutate,'known break');const broken=mutate(source);assert.notEqual(broken,source,'break applies');return broken;
 }:options.mutate});
 const playwright = requireProductSmokePlaywright();
-const engineSkip = engine => engine === 'webkit' && !existsSync(playwright.webkit.executablePath()) ? 'WebKit input is required for the explicit Mac acceptance run.' : false;
+const engineSkip = engine => windowTestOptions(engine).skip;
 const other = kind => kind === 'metamask' ? '0x'+'2'.repeat(40) : 'bc1q'+'b'.repeat(38);
 
 async function unisatIdentity(f, saved) {
