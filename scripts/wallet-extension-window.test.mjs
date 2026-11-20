@@ -342,7 +342,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
         await f.frame.waitForFunction(() => expiryEventSeen);
         await f.state('window-expired');
       }],
-      ['wrong linked signer', s => s.replace("if (kind === 'metamask' && !operation && !operationWallet) {", 'if (false) {'), async f => {
+      ['wrong linked signer', s => s.replace("if (kind === 'metamask' && !operation && !operationWallet && !uncertain) {", 'if (false) {'), async f => {
         await secondRequest(f); await peerEvent(f, 'accountsChanged', [B]); await f.state('request-waiting');
       }],
       ['expiry hidden by wallet state', s => s.replace('if (!operation && !uncertain && !fixedOutcome && isRequestExpired())', "if (!operation && !uncertain && !fixedOutcome && isRequestExpired() && ['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage))"), async f => {
