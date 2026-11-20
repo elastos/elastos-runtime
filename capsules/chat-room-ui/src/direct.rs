@@ -68,7 +68,7 @@ pub(super) enum DirectDeliveryIssue {
 impl DirectDeliveryIssue {
     fn detail(self) -> &'static str {
         match self {
-            Self::PeerUnreachable => " Your Home cannot reach this contact. Check that both Homes and their networks are on.",
+            Self::PeerUnreachable => " Your Home is still trying to deliver this message. Check that both Homes and their networks are on.",
             Self::SystemDnsUnavailable => " Your system DNS cannot resolve the meeting point. Check your network DNS settings.",
             Self::ReceiptWaitPassed => " Your Home did not receive a delivery receipt in time.",
         }
@@ -530,10 +530,13 @@ mod tests {
 
     #[test]
     fn failed_delivery_explains_only_fixed_reasons_and_keeps_retry_window() {
+        let uncertain = pending_delivery_note(true, true, None, Some(DirectDeliveryIssue::PeerUnreachable)).unwrap();
+        assert!(!uncertain.contains("cannot reach"));
+        assert!(!uncertain.contains("is off"));
         for (issue, text) in [
             (
                 DirectDeliveryIssue::PeerUnreachable,
-                "cannot reach this contact",
+                "still trying to deliver this message",
             ),
             (
                 DirectDeliveryIssue::SystemDnsUnavailable,

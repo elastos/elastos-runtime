@@ -528,6 +528,7 @@ pub(super) async fn configured_server(
     relay.limits.connections = connections;
     let home_rate = setting(&config, "carrier_relay_home_bytes_per_second", 64 * 1024)?;
     let home_burst = setting(&config, "carrier_relay_home_burst_bytes", 128 * 1024)?;
+    anyhow::ensure!(home_rate >= 10, "Home byte rate must refill at least one byte per tick");
     apply_byte_limits(&mut relay, home_rate, home_burst);
     let mut global = iroh_relay::server::ClientRateLimit::new(
         std::num::NonZeroU32::new(setting(
@@ -537,6 +538,7 @@ pub(super) async fn configured_server(
         )?)
         .expect("validated rate"),
     );
+    anyhow::ensure!(global.bytes_per_second.get() >= 10, "global byte rate must refill at least one byte per tick");
     global.max_burst_bytes = std::num::NonZeroU32::new(setting(
         &config,
         "carrier_relay_burst_bytes",
@@ -1214,6 +1216,90 @@ mod tests {
             "fresh sockets must share the Home's byte bucket"
         );
     }
+    #[tokio::test]
+    async fn global_byte_budget_survives_many_homes_and_reconnects() {
+        use futures_util::SinkExt as _;
+        use iroh_relay::protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg};
+        const RATE: u32 = 1024;
+        const BURST: u32 = 4096;
+        let mut relay =
+            iroh_relay::server::RelayConfig::new(std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
+        let mut rate = iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(RATE).unwrap());
+        rate.max_burst_bytes = std::num::NonZeroU32::new(BURST);
+        relay.limits.global_rx = Some(rate);
+        let mut config = iroh_relay::server::ServerConfig::default();
+        config.relay = Some(relay);
+        let server = iroh_relay::server::Server::spawn(config).await.unwrap();
+        let url: RelayUrl = format!("http://{}/", server.http_addr().unwrap())
+            .parse()
+            .unwrap();
+        let tls = CaTlsConfig::embedded()
+            .client_config(Arc::new(rustls::crypto::ring::default_provider()))
+            .unwrap();
+        let build = |key: iroh::SecretKey| {
+            iroh_relay::client::ClientBuilder::new(url.clone(), key, system_dns())
+                .tls_client_config(tls.clone())
+        };
+        let receiver_key = iroh::SecretKey::from_bytes(&[220; 32]);
+        let mut receiver = build(receiver_key.clone()).connect().await.unwrap();
+        let mut measurements = Vec::new();
+        for (keep_replaced, key) in [(false, 218), (true, 230)] {
+
+            let mut held = Vec::new();
+            let mut delivered = 0usize;
+            let started = std::time::Instant::now();
+            for attempt in 0..4 {
+                let key = iroh::SecretKey::from_bytes(&[key + attempt; 32]);
+                let mut sender = build(key.clone()).connect().await.unwrap();
+                sender
+                    .send(ClientToRelayMsg::Datagrams {
+                        dst_endpoint_id: receiver_key.public(),
+                        datagrams: Datagrams::from(vec![42; 2048]),
+                    })
+                    .await
+                    .unwrap();
+                delivered += tokio::time::timeout(std::time::Duration::from_secs(20), async {
+                    loop {
+                        match receiver.next().await.unwrap().unwrap() {
+                            RelayToClientMsg::Datagrams {
+                                remote_endpoint_id,
+                                datagrams,
+                            } => {
+                                assert_eq!(remote_endpoint_id, key.public());
+                                break datagrams.contents.len();
+                            }
+                            RelayToClientMsg::Ping(value) => {
+                                receiver.send(ClientToRelayMsg::Pong(value)).await.unwrap()
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .await
+                .expect("real relay packet delivery");
+                if keep_replaced {
+                    held.push(sender);
+                } else {
+                    let _ = sender.close().await;
+                }
+            }
+            let elapsed = started.elapsed().as_secs_f64();
+            let allowed = f64::from(BURST) + f64::from(RATE) * elapsed;
+            eprintln!("Global byte budget: replacement={keep_replaced} delivered={delivered} elapsed={elapsed:.3}s allowed={allowed:.0}");
+            measurements.push((delivered as f64, allowed));
+            for mut sender in held {
+                let _ = sender.close().await;
+            }
+        }
+        let _ = receiver.close().await;
+        server.shutdown().await.unwrap();
+        assert!(
+            measurements
+                .iter()
+                .all(|(delivered, allowed)| delivered <= allowed),
+            "all identities must share the relay byte bucket"
+        );
+    }
 
     async fn real_relay() -> (iroh_relay::server::Server, url::Url) {
         let mut config = iroh_relay::server::ServerConfig::default();
@@ -1500,6 +1586,22 @@ mod tests {
             &"a".repeat(crate::collaboration_network::MAX_CONNECT_TICKET_BYTES + 1)
         )
         .is_err());
+    }
+
+    #[test]
+    fn relay_certificate_identity_rejects_a_different_key_at_the_same_address() {
+        use sha2::Digest as _;
+        let (certs, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+        let (foreign, _) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+        let relay: RelayUrl = "https://localhost/".parse().unwrap();
+        let pin: [u8; 32] = sha2::Sha256::digest(certs[0].as_ref()).into();
+        let verifier = pinned_relay_identity_tls(&relay, CaTlsConfig::custom_roots(foreign.clone()), Some(pin))
+            .server_cert_verifier(Arc::new(rustls::crypto::ring::default_provider())).unwrap();
+        let verify = |cert: &CertificateDer<'_>, name: &str| verifier.verify_server_cert(cert, &[],
+            &ServerName::try_from(name.to_owned()).unwrap(), &[], UnixTime::now());
+        assert!(verify(&certs[0], "localhost").is_ok());
+        assert!(verify(&foreign[0], "localhost").is_err(), "a trusted CA cannot replace the pinned identity");
+        assert!(verify(&certs[0], "127.0.0.1").is_err(), "the address is pinned with the identity");
     }
 
     #[test]

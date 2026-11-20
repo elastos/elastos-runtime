@@ -141,6 +141,7 @@ jobs:
             cargo-audit audit --db "$db" --file "../$lock" || failed=1
             echo "::endgroup::"
           done
+          python3 ../scripts/check-carrier-vendor.py --audit --db "$db" || failed=1
           exit "$failed"
 
   # One reviewed input per Linux architecture. PRs restore their develop base's cache;
@@ -992,6 +993,15 @@ jobs:
             --evidence "$RUNNER_TEMP/source-home-journeys/mixed-version" \
             --fixture-root "$RUNNER_TEMP/mixed-version-fixture" \
             | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: installed Carrier across two home networks
+        if: matrix.os == 'ubuntu-24.04'
+        timeout-minutes: 35
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y iproute2 iptables iputils-ping
+          for arrangement in two-nat forced-relay relay-to-direct; do
+            scripts/ci-relay-journey.sh "$arrangement"
+          done
       - name: summarize installed model journey
         if: always()
         env:

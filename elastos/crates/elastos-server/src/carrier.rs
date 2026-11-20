@@ -1302,7 +1302,8 @@ async fn leave_and_rejoin_topic(state: &mut GossipState, topic_name: &str) -> Re
 async fn rebuild_carrier_gossip(state: &mut GossipState) -> Result<usize> {
     anyhow::ensure!(!state.closed, "Carrier gossip is shut down");
     let lookups = state.endpoint.address_lookup()?;
-    let owned_lookup_count = if state.mdns_lookup.is_some() { 3 } else { 2 };
+    let owned_lookup_count = 2 + usize::from(state.mdns_lookup.is_some())
+        + usize::from(state.relay_lookups.as_ref().is_some_and(|policy| policy.relay.is_some()));
     anyhow::ensure!(
         lookups.len() == owned_lookup_count,
         "Carrier rebuild requires Runtime-owned address lookups"

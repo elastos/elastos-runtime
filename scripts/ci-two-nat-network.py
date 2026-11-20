@@ -29,6 +29,9 @@ class MessageNetwork:
         self.router_ips = {"a": "203.0.113.11", "b": "203.0.113.12"}
         try:
             command("ip", "link", "set", "lo", "up")
+            command("iptables", "-N", "carrier-qad")
+            command("iptables", "-A", "INPUT", "-p", "udp", "--dport", "7842", "-j", "carrier-qad")
+            command("iptables", "-A", "carrier-qad", "-j", "ACCEPT")
             command("ip", "link", "add", "wan", "type", "bridge")
             command("ip", "addr", "add", "203.0.113.1/24", "dev", "wan")
             command("ip", "link", "set", "wan", "up")
@@ -79,6 +82,10 @@ class MessageNetwork:
         for side in ("a", "b"):
             self.run("nat-" + side, "iptables", "-I" if blocked else "-D", "FORWARD",
                      *( ["1"] if blocked else [] ), "-j", "DROP")
+
+    def discovery_packets(self):
+        output = subprocess.run(["iptables", "-nvxL", "carrier-qad"], check=True, capture_output=True, text=True, timeout=15).stdout
+        return sum(int(parts[0]) for line in output.splitlines() if (parts := line.split()) and parts[0].isdigit())
 
     def blocked_packets(self):
         packets = 0

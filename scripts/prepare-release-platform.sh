@@ -245,6 +245,11 @@ else
 fi
 [[ "$CARGO_TARGET_DIR" == /* ]] || die "Cargo target directory must resolve to an absolute path"
 export CARGO_TARGET_DIR ELASTOS_RELEASE_VERSION="$VERSION"
+if [[ -n "${RELEASE_CARRIER_RELAY_URL:-}${RELEASE_CARRIER_RELAY_CERT_SHA256:-}" ]]; then
+  [[ -n "${RELEASE_CARRIER_RELAY_URL:-}" && "${RELEASE_CARRIER_RELAY_CERT_SHA256:-}" =~ ^[0-9a-fA-F]{64}$ ]] || die "Meeting point needs its address and certificate identity"
+  export ELASTOS_RELEASE_RELAY_URL="$RELEASE_CARRIER_RELAY_URL"
+  export ELASTOS_RELEASE_RELAY_CERT_SHA256="$RELEASE_CARRIER_RELAY_CERT_SHA256"
+fi
 rustup target list --installed | grep -Fx "$TARGET" >/dev/null || die "Required Rust target is not installed: $TARGET"
 # Native macOS uses the same Cargo cache as normal source-home builds. Linux
 # keeps its explicit musl target; the receipt still records the actual target.

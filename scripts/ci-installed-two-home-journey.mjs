@@ -204,7 +204,7 @@ async function run() {
         return message?.delivery_issue==='peer_unreachable' && await detail(blockedText)==='Unconfirmed' && message;
       },85000);
       const row=direct.locator('#message-list li.message.self-message').filter({has:direct.locator('.message-body').filter({hasText:blockedText})});
-      assert.match(await row.innerText(),/Your Home cannot reach this contact/);
+      assert.match(await row.innerText(),/Your Home is still trying to deliver this message/);
       const {observation}=await runtime('observe_blocked');
       assert.equal(observation.b_alive,true);
       assert.equal(observation.b_health,200);
@@ -256,6 +256,17 @@ async function run() {
         return messages.find(m=>m.text===sent&&m.direction==='incoming'&&m.delivery_state==='received');
       });
       round.direct={from:a.name,to:b.name,sent,received:assertReceivedDirect(messages,arrived.message_id,sent).text};
+      const back=`Two Home ${transition} answer ${crypto.randomUUID()}`;
+      const backSent=await api(b.community,'/api/apps/chat-room/direct/messages/send',{request_id:'two-home:'+crypto.randomUUID(),conversation_id:conversation.conversation_id,text:back});
+      await until(`direct ${transition} at a`,async()=>{
+        const rows=(await api(a.community,path)).messages;
+        const message=rows.find(m=>m.text===back&&m.direction==='incoming');
+        return message && assertReceivedDirect(rows,message.message_id,back);
+      });
+      for(const [page,expected] of [[a.community,sent],[b.community,back]]) {
+        await until(`receipt ${transition}`,async()=> (await api(page,path)).messages.some(m=>m.text===expected&&m.delivery_state==='receipt_settled'));
+      }
+      round.reverse={sent:back,received:back,accepted:backSent.status};
       return round;
     }
     result.exchanges.start=await exchange('start');

@@ -31,6 +31,14 @@ on:
         description: Exact archive bytes
         required: true
         type: string
+      carrier_relay_url:
+        description: Approved HTTPS meeting point origin, or empty for direct only
+        type: string
+        default: ''
+      carrier_relay_cert_sha256:
+        description: Approved DER certificate SHA-256, paired with the origin
+        type: string
+        default: ''
       seed_package:
         description: Also build the Linux seed package (only to upgrade the seed Runtime)
         type: boolean
@@ -53,6 +61,8 @@ env:
   BROWSER_IMAGE_PUBLISHER_DID: ${{ vars.BROWSER_IMAGE_PUBLISHER_DID }}
   BROWSER_IMAGE_PUBLISHER_NODE_ID: ${{ vars.BROWSER_IMAGE_PUBLISHER_NODE_ID }}
   BROWSER_IMAGE_CONNECT_TICKET: ${{ secrets.BROWSER_IMAGE_CONNECT_TICKET }}
+  RELEASE_CARRIER_RELAY_URL: ${{ inputs.carrier_relay_url }}
+  RELEASE_CARRIER_RELAY_CERT_SHA256: ${{ inputs.carrier_relay_cert_sha256 }}
   CARGO_BUILD_JOBS: '4'
   PYTHONDONTWRITEBYTECODE: '1'
   # Shipped release builds stay hermetic: no compiler wrapper or cache.

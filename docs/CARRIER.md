@@ -477,40 +477,114 @@ Peer discovery, gossip messaging, and peer-to-peer content transfer. Built into 
   mDNS for local IP discovery
 - `tunnel-provider` capsule using **cloudflared** (HTTP tunnel to public internet)
 
-**Transport:** direct Iroh QUIC by default. With `ELASTOS_CARRIER_NETWORK`
-unset or `direct`, Carrier uses Iroh's Minimal preset and direct routes from
-mDNS, local operator tickets and filtered gossip. The direct setting rejects
-relay configuration. The retired `public` setting is invalid.
+**Transport:** Carrier chooses direct Iroh QUIC when it works and the release's
+meeting point otherwise. A release carries one HTTPS origin and one SHA-256
+fingerprint of its DER TLS certificate inside the Runtime binary. The signed
+release binds that binary's checksum. Both long-lived and temporary endpoints
+use this pair; explicit dials, memory, mDNS and gossip accept that origin only.
+TLS verifies possession of the pinned certificate's key. The system resolver
+owns DNS, with public fallback disabled.
 
-The experimental `relay` setting requires `ELASTOS_RELAY_URL`. Runtime owns
-that single origin and filters explicit dials, memory, mDNS and received gossip
-routes through the same policy. HTTPS uses the configured hostname or IP and
-trusted Web PKI certificates. Plain HTTP is limited to literal loopback and
-documentation-network test addresses. Both long-lived and temporary endpoints
-use the system DNS resolver with public fallback disabled. A failed system DNS
-lookup stays within that policy and produces a bounded delivery reason.
+A release without that pair uses direct routes from mDNS, local operator tickets
+and gossip. Its tickets preserve LAN, VPN and routed addresses when it has no
+public address, as direct-only Homes require. Relay-mode tickets share public IP
+hints only; Runtime supplies the approved meeting point. Source Homes select
+`ELASTOS_CARRIER_NETWORK=relay`, `ELASTOS_RELAY_URL` and
+`ELASTOS_RELAY_CERT_SHA256` explicitly. Released Homes use their built-in pair;
+conflicting environment settings stop startup with an explanation.
 
-Public tickets contain public IP addresses only. A Home without one exports
-its endpoint ID alone. LAN and VPN routes stay in local mDNS and operator state;
-a direct-only peer on another subnet needs a local route to that ID. This
-privacy rule also applies to public bootstrap and operator status receipts.
+Chat shows the message time after the recipient's signed receipt arrives. An
+unconfirmed message retains its signed envelope and retries while Home is on,
+for up to 24 hours. After one minute Chat shows Unconfirmed, the current reason
+and Retry. A missing answer does not establish whether the other Home is off or
+its network is unreachable. Warnings are limited to one per minute per Home.
 
-The public-publisher role can explicitly configure `carrier_relay_bind_addr`
-for the relay service. Discovery additionally needs
-`carrier_relay_discovery_bind_addr`, `carrier_relay_tls_cert` and
-`carrier_relay_tls_key`. Discovery validates source addresses before reserving
-bounded handshake and session slots. Relay transport limits cover pending TCP,
-TLS, upgraded and authenticated sockets, with IPv6 budgets shared by /64.
-A reverse proxy shares its source-network budget; forwarded headers carry no
-admission authority. The authenticated endpoint's byte budget survives socket
-replacement and reconnects. These experimental settings stay separate from the
-release's default direct policy and its future signed relay pin.
+#### Meeting point operator
 
-A pending direct message keeps its original signed envelope and retries for
-its delivery window. After the existing one-minute wait, Chat shows
-“Unconfirmed” with the current local failure reason and a Retry control.
-Receipt settlement replaces that state with the message time. Runtime limits
-these failure warnings to one per minute per Home.
+The seed operator installs the reviewed Runtime at its stable installed path,
+keeps its existing data and identity, and makes the following additions to its
+existing `config.toml`. Certificate and key paths belong to the operator and
+have access restricted to the service account. The meeting point terminates TLS
+directly; its socket peer address owns source accounting.
+
+```toml
+gateway_public_publisher_bootstrap = true
+carrier_relay_bind_addr = "0.0.0.0:443"
+carrier_relay_tls_cert = "/etc/elastos/meeting-point.crt"
+carrier_relay_tls_key = "/etc/elastos/meeting-point.key"
+carrier_relay_discovery_bind_addr = "0.0.0.0:7842"
+carrier_relay_connections = 4096
+carrier_relay_pending = 512
+carrier_relay_per_network = 32
+carrier_relay_pending_per_network = 8
+carrier_relay_home_bytes_per_second = 65536
+carrier_relay_home_burst_bytes = 131072
+carrier_relay_bytes_per_second = 1048576
+carrier_relay_burst_bytes = 2097152
+```
+
+The OS grants the service permission to bind TCP 443. The firewall admits TCP
+443 and UDP 7842 directly to this process. Existing Home gateway routes retain
+their own listener. Discovery uses the protocol's fixed UDP port. Clear HTTP is
+available only in unit tests or binaries built with `carrier-test-relay` for
+isolated fixtures; the release builder uses default features. TLS mode keeps
+its captive-portal helper on an ephemeral loopback port.
+
+Ingress keeps total and pending capacity for at least 64 source allocations;
+IPv4 uses the actual address and IPv6 uses /48. Each allocation can start at
+most twice its live-connection allowance per minute. Home admission retains
+reconnect pacing across sockets. Discovery validates the source before holding
+bounded, timed state. An endpoint's frame budget survives reconnects; a second
+shared budget applies to every endpoint together. These rates count encoded
+client relay frames; forwarding sends a second copy, and TLS, handshake and
+control overhead add traffic. They are application traffic budgets, not an OS
+link shaper. Operators size the link for that overhead.
+
+Before building the signed release, compute the certificate identity:
+
+```sh
+openssl x509 -in meeting-point.crt -outform DER | openssl dgst -sha256
+```
+
+Pass the approved HTTPS origin and hex digest as `carrier_relay_url` and
+`carrier_relay_cert_sha256` to the release-package workflow. Its native builders
+embed both in each Runtime. Source builds use `ELASTOS_RELEASE_RELAY_URL` and
+`ELASTOS_RELEASE_RELAY_CERT_SHA256` as explicit build inputs. The release signer
+verifies the resulting artifacts and signs their checksums through the existing
+release ceremony. The operator then restarts the approved seed service.
+
+From a different network, check `https://<approved-origin>/healthz` with a TLS
+client configured to trust that certificate and compare its DER digest with the
+release pin. Then run the installed two-Home journey: send a unique message in
+each direction, observe receipt settlement, block direct UDP at the test routers
+and repeat, then restore UDP and observe a direct route. The Linux CI journey
+also counts actual discovery packets. A public certificate check alone proves
+neither the pin nor delivery.
+
+Certificate renewal with the same key changes this certificate fingerprint.
+For rotation, build and sign a release with the replacement pair, distribute it
+through the existing signed update path, and coordinate the seed certificate
+change with the Homes under test. Old and new pins have a delivery interruption
+until both peers use the accepted meeting point. Keeping a separate replacement
+listener during rollout can preserve old release service. Irzhy approves the
+identity and rotation before enablement.
+
+To stop the service, remove its relay bind, discovery and TLS settings together,
+then restart the seed's existing Home service. Ship a signed release with both
+build inputs absent to return Homes to direct-only behavior. The seed operator
+and release signer own these operations.
+
+Availability, TLS ingress, capacity, signed identity, test-only HTTP, system DNS
+and direct-only ticket compatibility are independent policies. Capacity changes
+need configuration and restart; source grouping or pacing changes need a rebuilt
+relay. Identity and address changes need a signed release and coordinated seed
+rollout. DNS or HTTP policy changes need a rebuilt Runtime and renewed tests.
+Direct-only ticket behavior stays part of compatibility testing.
+
+The relay remains part of the Home binary. A separate seed program would reduce
+Home dependencies and allow separate relay upgrades; it would add a packaging,
+service lifecycle and release-signing contract. That ownership decision remains
+with the architecture owner.
 
 ### 3. Data plane (host to VM networking)
 

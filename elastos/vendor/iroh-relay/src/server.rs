@@ -1420,7 +1420,7 @@ mod tests {
     }
 
     #[test]
-    fn source_budgets_canonicalize_mapped_ipv4_and_group_ipv6_by_48() {
+    fn source_budgets_canonicalize_mapped_ipv4_and_group_ipv6_by_64() {
         assert_eq!(
             super::source_network("::ffff:192.0.2.8".parse().unwrap()),
             "192.0.2.8".parse::<std::net::IpAddr>().unwrap()

@@ -49,7 +49,7 @@ def prepare_assets(root, data, binary):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--network-arrangement", choices=("two-nat", "forced-relay", "relay-to-direct"), required=True)
+    parser.add_argument("--network-arrangement", choices=("same-host", "two-nat", "forced-relay", "relay-to-direct"), required=True)
     args = parser.parse_args()
     root = Path.cwd().resolve()
     journey = runpy.run_path(str(root / "scripts/ci-installed-journeys.py"))
@@ -62,8 +62,8 @@ def main():
     (data / "bin").mkdir(mode=0o700)
     (data / "receipts").mkdir(mode=0o700)
     try:
-        prepare_assets(root, data, root / "elastos/target/release/localhost-provider")
-        runtime_input = stage_runtime_input(root / "elastos/target/release/elastos", work / "runtime-input")
+        prepare_assets(root, data, Path(os.environ.get("ELASTOS_RELAY_PROVIDER", str(root / "elastos/target/release/localhost-provider"))))
+        runtime_input = stage_runtime_input(Path(os.environ.get("ELASTOS_RELAY_RUNTIME", str(root / "elastos/target/release/elastos"))), work / "runtime-input")
         subprocess.run(["python3", "scripts/install-source-home-runtime.py", "--source-root", str(root), "--data-dir", str(data),
                         "--built-runtime", str(runtime_input), "--platform", "linux-amd64"], check=True, timeout=60)
         # All changes to links, routers and packet filters stay inside these
@@ -72,13 +72,13 @@ def main():
         command = ["unshare", "--user", "--map-root-user", "--mount", "--net", "sh", "-c", setup, "journey",
                    "python3", "scripts/ci-installed-journeys.py", str(home), str(data), str(work / "evidence"),
                    "--two-home-messages", "--network-arrangement", args.network_arrangement]
-        result = subprocess.run(command, timeout=660, check=False)
+        result = subprocess.run(command, timeout=1020, check=False)
         receipt_path = work / "evidence/installed-journeys.json"
         if receipt_path.exists():
             record = json.loads(receipt_path.read_text())
             print(json.dumps({key: record.get(key) for key in (
                 "candidate", "source_tree", "installed_runtime_sha256", "network_arrangement", "results",
-                "route_observations", "visible_failure", "delivery_warning_count", "all_carrier_paths_blocked", "promotion_setup", "status", "failure", "browser_failure", "registration_refusals", "process_cleanup", "fixture_removed")}), flush=True)
+                "route_observations", "discovery_packets", "automatic_direct", "transitions", "visible_failure", "delivery_warning_count", "all_carrier_paths_blocked", "promotion_setup", "status", "failure", "browser_failure", "registration_refusals", "process_cleanup", "fixture_removed")}), flush=True)
         if result.returncode:
             raise RuntimeError("real two-NAT installed journey failed")
         print("two-NAT installed message journey: PASS", flush=True)

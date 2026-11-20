@@ -2030,6 +2030,8 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host", node_
                  all(route in {"direct", "relay"} for route in row["route_observations"]) and
                  (network_arrangement != "forced-relay" or set(row["route_observations"]) == {"relay"}) and
                  (network_arrangement != "relay-to-direct" or row["route_observations"][0] == "relay" and "direct" in row["route_observations"][1:]))
+            and (network_arrangement == "same-host" or row.get("discovery_packets", 0) > 0)
+            and (network_arrangement != "two-nat" or row.get("automatic_direct") is True)
             and (network_arrangement == "same-host" or (
                 row.get("all_carrier_paths_blocked") is True and
                 row.get("results", {}).get("visible_failure") == "passed" and
@@ -2068,7 +2070,7 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
                   homes=[], negative_controls={}, direct_endpoint_observations=[], transitions={})
     children, fixtures, browser = {}, {}, None
     browser_processes = {}
-    topology, relay_url = None, None
+    topology, relay_url, relay_identity = None, None, None
     cleanup = []
     started = time.monotonic()
     # Explicit environment excludes ambient relay, public-network and provider overrides.
@@ -2076,7 +2078,7 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
         return {"PATH": os.environ["PATH"], "HOME": str(owner.home), "XDG_DATA_HOME": str(owner.data.parent),
                 **settings["environment"], "ELASTOS_QUIET_RUNTIME_NOTICES": "1",
                 "RUST_LOG": "warn,elastos_carrier_path=debug",
-                **({"ELASTOS_RELAY_URL": relay_url} if relay_url else {})}
+                **({"ELASTOS_RELAY_URL": relay_url, "ELASTOS_RELAY_CERT_SHA256": relay_identity} if relay_url else {})}
     def launch(name):
         assert name not in children, "Home already has an owned Runtime"
         owner = fixtures[name]
@@ -2154,6 +2156,9 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
             if topology and name == NODE:
                 config.write('gateway_public_publisher_bootstrap = true\n')
                 config.write(f'carrier_relay_bind_addr = "203.0.113.1:{urllib.parse.urlsplit(relay_url).port}"\n')
+                config.write(f'carrier_relay_tls_cert = "{root / "relay.crt"}"\n')
+                config.write(f'carrier_relay_tls_key = "{root / "relay.key"}"\n')
+                config.write('carrier_relay_discovery_bind_addr = "203.0.113.1:7842"\n')
         fixtures[name] = Owner(destination, copied, f"127.0.0.1:{free_port()}", carrier, build)
         record["homes"].append({"home": name, "installed_runtime_sha256": digest(copied / "bin/elastos"),
                                 "carrier_bind_address": carrier})
@@ -2199,7 +2204,15 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
                 topology = runpy.run_path(str(Path(__file__).with_name("ci-two-nat-network.py")))["MessageNetwork"](network)
                 topology.home_ips["c"] = topology.home_ips["b"]
                 topology.names["c"] = topology.names["b"]
-                relay_url = f"http://203.0.113.1:{free_port()}/"
+                relay_url = f"https://203.0.113.1:{free_port()}/"
+                certificate, key = root / "relay.crt", root / "relay.key"
+                subprocess.run(["openssl", "req", "-x509", "-newkey", "ed25519", "-nodes", "-keyout", str(key),
+                    "-out", str(certificate), "-days", "1", "-subj", "/CN=carrier-fixture", "-addext", "subjectAltName=IP:203.0.113.1"],
+                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=20)
+                key.chmod(0o600)
+                der = subprocess.run(["openssl", "x509", "-in", str(certificate), "-outform", "DER"],
+                    check=True, capture_output=True, timeout=10).stdout
+                relay_identity = hashlib.sha256(der).hexdigest()
             for name in (NODE, "a", "b"):
                 stage(name)
             if network == "relay-to-direct":
@@ -2275,6 +2288,11 @@ def two_home_messages(home_build, evidence, network="same-host", fixture_root=No
                 warnings = re.findall(r'direct delivery is unconfirmed; Home will retry', log)
                 assert 1 <= len(warnings) <= 2, "blocked interval warn log must be present and rate limited"
                 record["delivery_warning_count"] = len(warnings)
+                record["discovery_packets"] = topology.discovery_packets()
+                assert record["discovery_packets"] > 0, "HTTPS fixture did not exercise address discovery"
+                if network == "two-nat":
+                    assert "direct" in record["route_observations"], "automatic direct path was not observed"
+                    record["automatic_direct"] = True
             assert transition_evidence_valid(record), "two-Home transition evidence is incomplete"
     except BaseException as error:
         record["failure"] = observer_failure("two_home_messages", error, [str(root), str(home_build.home), str(node_build.home)])
