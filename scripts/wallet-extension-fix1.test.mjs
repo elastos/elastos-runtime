@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
 import { fixture as baseFixture } from './lib/wallet-extension-window-fixture.mjs';
 const breaks = {
-  Y11:s=>s.replace("let providerAvailability = 'unknown';", "let providerAvailability = 'found';"),
+  Y11:s=>s.replace("let providerAvailability = 'unknown';", "let providerAvailability = 'found';").replace('const root = presentation.root;', "const root = presentation.root; if(providerAvailability==='found'&&!accountView()){const probe=document.createElement('img');probe.src='./connection-'+kind+'.png';root.querySelector('.connection-content')?.prepend(probe);}"),
   K17:s=>s.replace('const root = presentation.root;',"const root = presentation.root; root.append(document.createElement('button'));"),
   K02:s=>s.replace('approvalRequestId: selected.id })','approvalRequestId: requests[0].request_id })'),
   K07:s=>s.replace('data.value.length > 8','data.value.length > 800'),
@@ -37,29 +37,50 @@ async function assertNoVisibleWindowHeading(frame, title) {
   assert.ok(!box || (box.width <= 1 && box.height <= 1), 'sr-only title is not visibly sized');
 }
 
-async function unisatIdentity(f, saved) {
-  await f.state(saved ? 'linked' : 'ready');
-  await assertNoVisibleWindowHeading(f.frame, 'UniSat');
-  assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
-  if (saved) return;
-  await f.action('connect').click();
-  await f.state('linked');
-  await assertNoVisibleWindowHeading(f.frame, 'UniSat');
+async function visibleBrandMarkCount(frame, mark) {
+  return frame.locator(`img[src$="connection-${mark}.png"]`).evaluateAll(imgs => imgs.filter(img => {
+    const box = img.getBoundingClientRect();
+    return box.width > 1 && box.height > 1;
+  }).length);
 }
 
-for (const engine of ['chromium', 'webkit']) test(`${engine} UniSat: identity waits for fresh Home discovery (Y11)`, { timeout: 20000, skip: engineSkip(engine) }, async t => {
+async function assertNoEarlyWalletIdentity(frame, kind) {
+  assert.equal(await frame.locator('.connection-account').count(), 0, 'no account card before fresh Home discovery');
+  if (kind === 'unisat') assert.equal(await visibleBrandMarkCount(frame, 'unisat'), 0, 'no visible UniSat mark before fresh Home discovery');
+  if (kind === 'metamask') assert.equal(await visibleBrandMarkCount(frame, 'metamask'), 0, 'no visible MetaMask mark before fresh Home discovery');
+}
+
+async function assertLinkedWalletIdentity(frame, kind) {
+  assert.ok(await frame.locator('.connection-account').count() >= 1, 'account card after link');
+  const mark = kind === 'unisat' ? 'unisat' : 'wallet';
+  assert.ok(await visibleBrandMarkCount(frame, mark) >= 1, `visible ${mark} mark in account card after link`);
+}
+
+async function walletIdentity(f, kind, saved) {
+  const title = kind === 'metamask' ? 'MetaMask or Brave Wallet' : 'UniSat';
+  await f.state(saved ? 'linked' : 'ready');
+  await assertNoVisibleWindowHeading(f.frame, title);
+  assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
+  if (!saved) await assertNoEarlyWalletIdentity(f.frame, kind);
+  else { await assertLinkedWalletIdentity(f.frame, kind); return; }
+  await f.action('connect').click();
+  await f.state('linked');
+  await assertLinkedWalletIdentity(f.frame, kind);
+}
+
+for (const engine of ['chromium', 'webkit']) for (const kind of ['unisat', 'metamask']) test(`${engine} ${kind}: identity waits for fresh Home discovery (Y11)`, { timeout: 20000, skip: engineSkip(engine) }, async t => {
   const browser = await playwright[engine].launch({ headless: true });
   try {
     for (const saved of [false, true]) {
       const options = { saved };
-      const good = await fixture(browser, 'unisat', options);
-      try { await unisatIdentity(good, saved); } finally { await good.close(); }
-      const bad = await baseFixture(browser, 'unisat', { ...options, mutate: source => {
+      const good = await fixture(browser, kind, options);
+      try { await walletIdentity(good, kind, saved); } finally { await good.close(); }
+      const bad = await baseFixture(browser, kind, { ...options, mutate: source => {
         const broken = breaks.Y11(source); assert.notEqual(broken, source, 'Y11 applies'); return broken;
       } });
-      try { await assert.rejects(unisatIdentity(bad, saved), { code: 'ERR_ASSERTION' }); }
+      if (!saved) try { await assert.rejects(async () => walletIdentity(bad, kind, saved), { code: 'ERR_ASSERTION' }); }
       finally { await bad.close(); }
-      t.diagnostic(`Y11 ${saved ? 'saved link' : 'Ready'}: clean oracle passed; deliberate break failed`);
+      t.diagnostic(`Y11 ${kind} ${saved ? 'saved link' : 'Ready'}: clean oracle passed; deliberate break failed`);
     }
   } finally { await browser.close(); }
 });
