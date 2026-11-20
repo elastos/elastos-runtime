@@ -4,19 +4,54 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const product = new URL("./product-smoke-browser.mjs", import.meta.url).href;
 const runner = fileURLToPath(new URL("./run-node-tests.mjs", import.meta.url));
 
+// Scan calls, independent of how a module obtains Playwright: static import,
+// dynamic import, require, and environment-selected paths all face this gate.
+const launchCalls = /\.\s*(?:launch|launchPersistentContext|connectOverCDP)\s*\(/;
+const boundaries = /withBrowserLaunchRecovery\s*\(|(?:require|import)ProductSmokePlaywright\s*\(|from\s*["'][^"']*system-uiux-fixture\.mjs["']/;
+const exceptions = new Map([
+  ["browser-launch-measure.mjs", "raw failure-rate control"],
+  ["browser-hosted-product-navigation-smoke.mjs", "CDP attaches an existing browser; preserve its first result"],
+  ["browser-window-close-handshake.test.mjs", "Home launch routing fixture, not a native browser"],
+  ["browser-launch-recovery.test.mjs", "injected launch fixtures exercise this boundary"],
+  ["lib/browser-launch-recovery.test.mjs", "fake engines verify the recovery boundary"],
+  ["lib/browser-launch-recovery.mjs", "the single native launch implementation"],
+]);
+function checkLaunchCoverage(directory, prefix = "") {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const relative = prefix + entry.name;
+    const path = new URL(entry.name, directory);
+    if (entry.isDirectory() && entry.name !== "node_modules") {
+      checkLaunchCoverage(new URL(entry.name + "/", directory), relative + "/");
+    } else if (entry.isFile() && /\.[cm]?js$/.test(entry.name)) {
+      const source = readFileSync(path, "utf8");
+      if (launchCalls.test(source) && !exceptions.has(relative)) assert.match(source, boundaries, relative);
+    }
+  }
+}
+
 test("native Playwright test launch imports use the shared recovery boundary", () => {
-  const scripts = new URL("./", import.meta.url);
-  for (const file of readdirSync(scripts).filter(file => file.endsWith(".mjs"))) {
-    const source = readFileSync(new URL(file, scripts), "utf8");
-    if (!/\.launch(?:PersistentContext)?\(/.test(source) || !/(?:require\([^\n]*(?:playwright|PLAYWRIGHT_MODULE)|from [^\n]*node_modules\/playwright)/.test(source)) continue;
-    // This probe measures the unmodified failure rate, outside recovery.
-    if (file === "browser-launch-measure.mjs") continue;
-    assert.match(source, /withBrowserLaunchRecovery/, file);
+  checkLaunchCoverage(new URL("./", import.meta.url));
+});
+
+for (const [form, acquisition] of [
+  ["static import", 'import { chromium } from "playwright";'],
+  ["dynamic core import", 'const { chromium } = await import(corePath);'],
+  ["environment core require", 'const { chromium } = require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE);'],
+  ["dynamic environment import", 'const { chromium } = await import(process.env.ELASTOS_PLAYWRIGHT_MODULE);'],
+]) test(`coverage guard discovers a new ${form} launch without a filename list`, t => {
+  const root = mkdtempSync(join(tmpdir(), "browser-launch-coverage-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = pathToFileURL(root + "/");
+  for (const method of ["launch", "launchPersistentContext", "connectOverCDP"]) {
+    writeFileSync(join(root, "new-launch.mjs"), `${acquisition}\nawait chromium.${method}({});`);
+    assert.throws(() => checkLaunchCoverage(directory), /new-launch\.mjs/);
+    writeFileSync(join(root, "new-launch.mjs"), `${acquisition}\nconst recovered = withBrowserLaunchRecovery({chromium});\nawait recovered.chromium.${method}({});`);
+    assert.doesNotThrow(() => checkLaunchCoverage(directory));
   }
 });
 function fixture(t, scenario, files = 1) {
