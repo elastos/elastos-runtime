@@ -57,11 +57,11 @@ test("damaged files are named once with their action", () => {
 test("a pending encryption step is explained", () => {
   const shown = render({ ...ready, root_encrypted: false, required_actions: ["finish_interrupted_principal_root_migration"] });
   assert.equal(shown.status, "Needs attention");
-  assert.equal(shown.note, "An earlier encryption step did not finish. Home will not start again until it is finished or undone; reinstalling ElastOS does that, and your files are kept.");
+  assert.equal(shown.note, 'An earlier encryption step did not finish. Home will not start again until it is finished or undone. Reinstalling ElastOS does that and keeps your files. If the installer stops with "recovered an incomplete principal-root migration", run it once more.');
 });
 
 test("plaintext that arrived while Home runs is explained", () => {
-  const encrypts = "Saving your Recovery Kit encrypts files of up to 16 MiB after you approve with your passkey; a larger file is named so you can move it out of your protected folders (Library takes uploads up to 100 MiB).";
+  const encrypts = "Save your Recovery Kit and confirm with your passkey to encrypt them. One save takes at most 64 files and 64 MiB in total, each file up to 16 MiB. If more are waiting, move some out of your protected Home folders, save, then move them back and save again. Move a file over 16 MiB out and upload it again in Library (up to 100 MiB).";
   const shown = render({ ...ready, root_encrypted: false, required_actions: ["migrate_declared_plaintext_objects"] });
   assert.equal(shown.status, "Needs attention");
   assert.equal(shown.note, `Some files in your protected Home folders are not encrypted yet; until they are, Home will not start again. ${encrypts}`);

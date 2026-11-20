@@ -162,10 +162,10 @@ function rememberSetupReminder() {
     homeRecoveryStatus(shellState.currentSummary) === "unavailable";
   rememberChromeNotification({
     id: SETUP_REMINDER_ID, kind: "home_setup",
-    title: unavailable ? "Check Home setup" : profileReady ? "Back up your Home" : "Continue recovery",
+    title: unavailable ? "Check Home setup" : profileReady ? "Save your Recovery Kit" : "Continue recovery",
     body: unavailable ? "Open System to check setup."
       : profileReady
-      ? "Save a Recovery Kit in System when you are ready. Without it, losing this device can mean losing your identity and keys."
+      ? "Open System to save it. Without it, losing this device can mean losing your identity and keys. Keep copies of your files elsewhere."
       : "Open System to finish setup or restore your Profile from a Recovery Kit.",
   });
 }
