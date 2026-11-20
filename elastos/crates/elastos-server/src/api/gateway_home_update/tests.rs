@@ -2819,7 +2819,11 @@ async fn update_repair_details_go_only_to_home_log() {
                     std::fs::Permissions::from_mode(0o755),
                 )
                 .unwrap(),
-                "unreadable" => std::fs::write(&path, "private-content-sentinel").unwrap(),
+                "unreadable" => {
+                    std::fs::write(&path, "private-content-sentinel").unwrap();
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                        .unwrap();
+                }
                 "save" => std::fs::create_dir(&path).unwrap(),
                 "version" => {
                     let mut sources = crate::sources::load_trusted_sources(dir.path()).unwrap();
@@ -2966,6 +2970,16 @@ async fn update_repair_details_go_only_to_home_log() {
         output.contains("error="),
         "failure detail missing: {output}"
     );
+    for cause in [
+        "not owner-only",
+        "expected value at line 1 column 1",
+        "not a regular file",
+    ] {
+        assert!(
+            output.contains(cause),
+            "missing actual failure cause {cause}: {output}"
+        );
+    }
     assert!(!output.contains("private-path-sentinel"));
     assert!(!output.contains("private-content-sentinel"));
 }
