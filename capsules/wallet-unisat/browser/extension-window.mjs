@@ -21,7 +21,6 @@ export function startExtensionWindow(kind, homeClipboard) {
   let preflightFailure = null, refusal = null;
   let providerAvailability = 'unknown';
   const requestNetworks = new Map();
-  const requestIntents = new Map();
   let presentation = null;
   const mount = document.querySelector('#connection-root');
 
@@ -76,7 +75,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (accountEvent && accounts.length && !accounts.some(a => sameAccount(a.address, accountEvent[0]))) return 'account-unavailable';
     if (kind === 'unisat' && networkEvent !== null && networkEvent !== 'livenet') return networkEvent === 'testnet' ? 'network-changed' : 'network-unknown';
     if (requests.length > 1 && !picked) return 'request-list';
-    if (selected) return requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : requestIntents.get(selected.id) === 'browser_typed_data_sign' ? 'request-typed-data' : 'request-waiting';
+    if (selected) return requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : requests.find(request => request.request_id === selected.id)?.intent === 'browser_typed_data_sign' ? 'request-typed-data' : 'request-waiting';
     return accountView() ? 'linked' : 'ready';
   }
 
@@ -164,7 +163,7 @@ export function startExtensionWindow(kind, homeClipboard) {
         if (a?.available === false || !Array.isArray(a?.accounts)) throw new Error('Home accounts are unavailable.');
         const approvals = approvalList(r);
         accounts = a.accounts;
-        for (const request of approvals) { requestNetworks.set(request.request_id, request.chain_namespace); requestIntents.set(request.request_id, request.intent); }
+        for (const request of approvals) requestNetworks.set(request.request_id, request.chain_namespace);
         requests = approvals.filter(signable).filter(r => !fixedOutcome || r.request_id !== selected?.id);
 
         if (refusal) {
