@@ -53,9 +53,15 @@ test('every behaviour-suite WebKit entry uses the shared missing-engine rule',{t
  // Import the real modules through node:test. All their WebKit callbacks must
  // remain skipped even on a developer machine that has WebKit installed.
  const output=probe(['--test','--test-concurrency=1','--test-reporter=tap','--test-name-pattern=webkit|WebKit',...files],env);
- const skips=[...output.matchAll(/^\s*ok .*?(?:webkit|WebKit).*?# SKIP (.*)$/gm)];
+ const results=[...output.matchAll(/^ *ok .*?(?:webkit|WebKit).*$/gm)];
+ const skips=[];
+ assert.ok(results.length>0,'WebKit cases report their results');
+ for(const result of results){
+  const details=output.slice(result.index+result[0].length).split('...')[0];
+  if(!result[0].includes('# SKIP')&&/type: '?suite'?/.test(details))continue;
+  assert.ok(result[0].endsWith('# SKIP '+reason),result[0]);skips.push(result);
+ }
  assert.ok(skips.length>0,'WebKit cases report their skip reason');
- for(const [,skip] of skips)assert.equal(skip,reason);
  for(const {path,source} of entries.filter(({path})=>path.endsWith('-smoke.mjs'))){
   const variable=source.match(/process\.env\.(\w*ENGINE\w*)/);
   assert.ok(variable,relative(root,path)+' exposes its engine selection');
